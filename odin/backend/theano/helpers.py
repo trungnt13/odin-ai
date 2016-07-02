@@ -5,7 +5,6 @@ import warnings
 import numbers
 from collections import OrderedDict
 from itertools import chain
-from picklable_itertools.extras import equizip
 from toolz import unique
 
 import numpy as np
@@ -218,7 +217,7 @@ class ComputationGraph(object):
     @property
     def inputs(self):
         """Inputs to the graph, excluding constants and shared variables."""
-        return [var for var in self.variables if is_graph_input(var)]
+        return [var for var in self.variables if is_placeholder(var)]
 
     @property
     def intermediary_variables(self):
@@ -228,7 +227,7 @@ class ComputationGraph(object):
 
     @property
     def shared_variables(self):
-        return [var for var in self.variables if is_shared_variable(var)]
+        return [var for var in self.variables if is_trainable_variable(var)]
 
     @property
     def parameters(self):
@@ -253,8 +252,8 @@ class ComputationGraph(object):
         """
         updates = OrderedDict()
 
-        shared_outputs = [o for o in self.outputs if is_shared_variable(o)]
-        usual_outputs = [o for o in self.outputs if not is_shared_variable(o)]
+        shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
+        usual_outputs = [o for o in self.outputs if not is_trainable_variable(o)]
         variables = shared_outputs
 
         if usual_outputs:
@@ -296,10 +295,10 @@ class ComputationGraph(object):
         # it to get the real numpy array value, hence, try to trace back
         # original shared variable
         def shared_variable_filter(var):
-            if is_shared_variable(var) and hasattr(var, 'default_update'):
+            if is_trainable_variable(var) and hasattr(var, 'default_update'):
                 for annotation in var.tag.annotations:
                     if hasattr(annotation, var.name) and \
-                       is_shared_variable(getattr(annotation, var.name)):
+                       is_trainable_variable(getattr(annotation, var.name)):
                         return getattr(annotation, var.name)
             return var
         self.variables = map(shared_variable_filter, variables)
@@ -412,30 +411,30 @@ class ComputationGraph(object):
         return theano.function(self.inputs, self.outputs, updates=updates,
                                **kwargs)
 
-    def get_snapshot(self, data):
-        """Evaluate all role-carrying Theano variables on given data.
+    # def get_snapshot(self, data):
+    #     """Evaluate all role-carrying Theano variables on given data.
 
-        Parameters
-        ----------
-        data : dict of (data source, data) pairs
-            Data for input variables. The sources should match with the
-            names of the input variables.
+    #     Parameters
+    #     ----------
+    #     data : dict of (data source, data) pairs
+    #         Data for input variables. The sources should match with the
+    #         names of the input variables.
 
-        Returns
-        -------
-        Dictionary of (variable, variable value on given data) pairs.
+    #     Returns
+    #     -------
+    #     Dictionary of (variable, variable value on given data) pairs.
 
-        """
-        role_variables = [var for var in self.variables
-                          if hasattr(var.tag, "roles") and
-                          not is_shared_variable(var)]
-        value_holders = [shared_like(var) for var in role_variables]
-        function = self.get_theano_function(equizip(value_holders,
-                                                    role_variables))
-        function(*(data[input_.name] for input_ in self.inputs))
-        return OrderedDict([(var, value_holder.get_value(borrow=True))
-                            for var, value_holder in equizip(role_variables,
-                                                             value_holders)])
+    #     """
+    #     role_variables = [var for var in self.variables
+    #                       if hasattr(var.tag, "roles") and
+    #                       not is_trainable_variable(var)]
+    #     value_holders = [shared_like(var) for var in role_variables]
+    #     function = self.get_theano_function(equizip(value_holders,
+    #                                                 role_variables))
+    #     function(*(data[input_.name] for input_ in self.inputs))
+    #     return OrderedDict([(var, value_holder.get_value(borrow=True))
+    #                         for var, value_holder in equizip(role_variables,
+    #                                                          value_holders)])
 
     def has_inputs(self, variable):
         """Check if a variable depends on input variables.
@@ -449,7 +448,7 @@ class ComputationGraph(object):
         """
         if variable not in self._has_inputs:
             self._has_inputs[variable] = False
-            if is_graph_input(variable):
+            if is_placeholder(variable):
                 self._has_inputs[variable] = True
             elif getattr(variable, 'owner', None):
                 for dependancy in variable.owner.inputs:
