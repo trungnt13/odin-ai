@@ -71,7 +71,7 @@ def auto_config(config=None):
     backend = 'theano'
     optimizer = 'fast_run'
     epsilon = 10e-8
-    device = []
+    device = 'cpu'
     cnmem = 0.
     seed = 1208251813
 

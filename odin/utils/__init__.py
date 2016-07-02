@@ -241,8 +241,8 @@ def as_shape_tuple(shape):
         raise ValueError('We only accept shape in tuple or list form.')
     if not isinstance(shape, (tuple, list)):
         raise ValueError('We only accept shape in tuple or list form.')
-    shape = tuple([int(i) if i is not None and i >= 0 else -1 for i in shape])
-    if len([i for i in shape if i == -1]) >= 2:
+    shape = tuple([int(i) if i is not None and i >= 0 else None for i in shape])
+    if len([i for i in shape if i is None]) >= 2:
         raise Exception('Shape tuple can only have 1 unknown dimension.')
     return shape
 

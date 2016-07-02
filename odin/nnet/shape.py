@@ -3,8 +3,9 @@ from __future__ import division, absolute_import
 
 import numpy as np
 
-from blocks import backend as K
-from blocks.utils.decorators import autoinit
+from odin import backend as K
+from odin.utils.decorators import autoinit
+
 from .base import NNOps, NNConfig
 
 
@@ -19,13 +20,16 @@ class Flatten(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(input_shape=input_shape)
-        return K.flatten(x, self.outdim)
+        other_shape = tuple([input_shape[i]
+                             for i in range(K.ndim(x) - self.outdim + 1,
+                                            K.ndim(x))])
+        return K.reshape(x, (-1,) + other_shape)
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return lambda x: K.reshape(x, shape)
+        return Reshape(shape)
 
 
 class Reshape(NNOps):
@@ -39,13 +43,13 @@ class Reshape(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(input_shape=input_shape)
         return K.reshape(x, shape_=self.shape)
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return lambda x: K.reshape(x, shape)
+        return Reshape(shape)
 
 
 class Dimshuffle(NNOps):
@@ -59,10 +63,10 @@ class Dimshuffle(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(input_shape=input_shape)
         return K.dimshuffle(x, pattern=self.pattern)
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return lambda x: K.reshape(x, shape)
+        return Reshape(shape)

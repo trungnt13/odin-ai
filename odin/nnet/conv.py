@@ -4,10 +4,10 @@ from abc import abstractmethod
 
 import numpy as np
 
-from blocks import backend as K
-from blocks.roles import PARAMETER, WEIGHT, BIAS
-from blocks.utils.decorators import autoinit
-from blocks.utils import as_tuple
+from odin import backend as K
+from odin.roles import PARAMETER, WEIGHT, BIAS
+from odin.utils.decorators import autoinit
+from odin.utils import as_tuple
 from .base import NNOps, NNConfig
 
 
@@ -153,7 +153,7 @@ class BaseConv(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(input_shape=input_shape)
         # calculate projection
         conved = self.convolve(x)
@@ -203,10 +203,10 @@ class TransposeConv(NNOps):
         # **convolution**. We therefore have to invert num_channels and
         # num_filters for W.
         output_shape = self.conv.input_shape
-        if K.shape(x)[1:] != self.conv.output_shape[1:]:
+        if K.get_shape(x)[1:] != self.conv.output_shape[1:]:
             raise Exception('This Ops transpose convolved Variable from shape={}'
                             ' back to original shape={}, but given x has shape={}'
-                            '.'.format(self.conv.output_shape[1:], output_shape[1:], K.shape(x)[1:]))
+                            '.'.format(self.conv.output_shape[1:], output_shape[1:], K.get_shape(x)[1:]))
         # config the bias
         self.config(output_shape=output_shape)
         # ====== prepare the deconvolution ====== #
@@ -327,7 +327,7 @@ class Conv2D(BaseConv):
             strides=self.stride,
             border_mode=self.pad,
             image_shape=self.input_shape,
-            filter_shape=K.shape(self.W))
+            filter_shape=K.get_shape(self.W))
         return conved
 
 
@@ -346,8 +346,9 @@ class DilatedConv2D(BaseConv):
         An integer or a 2-element tuple specifying the size of the filters.
 
     dilation : int or iterable of int
-        An integer or a 2-element tuple specifying the dilation factor of the
-        filters, i.e., the number of zeros inserted between filter elements.
+         An integer or a 2-element tuple specifying the dilation factor of the
+         filters. A factor of :math:`x` corresponds to :math:`x - 1` zeros
+         inserted between adjacent filter elements.
 
     untie_biases : bool (default: False)
         If ``False``, the layer will have a bias parameter for each channel,
@@ -541,5 +542,8 @@ class Conv3D(BaseConv):
                           strides=self.stride,
                           border_mode=self.pad,
                           image_shape=self.input_shape,
-                          filter_shape=K.shape(self.W))
+                          filter_shape=K.get_shape(self.W))
         return conved
+
+    def _transpose(self):
+        raise NotImplementedError

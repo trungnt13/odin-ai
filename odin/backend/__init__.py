@@ -8,3 +8,5 @@ if config['backend'] == 'theano':
     from .theano import *
 elif config['backend'] == 'tensorflow':
     from .tensorflow import *
+
+from . import init

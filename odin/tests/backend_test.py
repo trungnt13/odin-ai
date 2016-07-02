@@ -24,7 +24,7 @@ class BackendTest(unittest.TestCase):
         var = K.variable(np.random.rand(8, 12))
         inp = K.placeholder((None, 1, 20))
         self.assertEquals(K.get_shape(var), (8, 12))
-        self.assertEquals(K.get_shape(inp), (-1, 1, 20))
+        self.assertEquals(K.get_shape(inp), (None, 1, 20))
 
     def test_ops(self):
         x = K.variable(np.random.rand(8, 12))

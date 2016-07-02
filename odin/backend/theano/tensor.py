@@ -665,10 +665,11 @@ class Function(object):
             updates = updates.items()
         # ====== add and reset global update ====== #
         self.function = theano.function(
-            inputs, outputs,
+            inputs=inputs, outputs=outputs,
             updates=updates,
             on_unused_input='raise', # TODO: remove this when stop testing
-            allow_input_downcast=True, **kwargs)
+            allow_input_downcast=True,
+            **kwargs)
 
     def __call__(self, *inputs):
         return self.function(*inputs)
@@ -1387,7 +1388,7 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
                                    filters=kernel.dimshuffle(0, 2, 1, 3, 4),
                                    border_mode=border_mode_3d,
                                    signals_shape=None,
-                                   filter_shape=None)
+                                   filters_shape=None)
         conv_out = conv_out.dimshuffle(0, 2, 1, 3, 4)
 
         # support strides by manually slicing the output

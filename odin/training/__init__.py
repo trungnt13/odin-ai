@@ -4,10 +4,10 @@ from six.moves import range, zip
 
 import numpy as np
 
-from blocks import RNG_GENERATOR
-from blocks import fuel
-from blocks.fuel.dataset import Dataset
-from blocks.utils import struct
+from odin.config import RNG_GENERATOR
+from odin import fuel
+from odin.fuel.dataset import Dataset
+from odin.utils import struct
 
 from .callbacks import *
 

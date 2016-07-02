@@ -2,23 +2,22 @@ from __future__ import division, absolute_import
 
 import inspect
 from itertools import chain
-from abc import ABCMeta, abstractmethod, abstractproperty
+from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 from six.moves import zip, range
 
 import numpy as np
 
-from blocks import backend as K
-from blocks.graph import add_annotation, Annotation
-from blocks.roles import (add_role, has_roles, PARAMETER, VariableRole,
-                          WEIGHT, BIAS, OUTPUT,
-                          VARIATIONAL, VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA,
-                          BATCH_NORM_SHIFT_PARAMETER,
-                          BATCH_NORM_POPULATION_MEAN,
-                          BATCH_NORM_SCALE_PARAMETER,
-                          BATCH_NORM_POPULATION_STDEV)
-from blocks.utils.decorators import autoinit, functionable, cache
-from blocks.utils import np_utils
+from odin import backend as K
+from odin.annotations import add_annotation, Annotation
+from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
+                        WEIGHT, BIAS,
+                        VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA,
+                        BATCH_NORM_SHIFT_PARAMETER,
+                        BATCH_NORM_POPULATION_MEAN,
+                        BATCH_NORM_SCALE_PARAMETER,
+                        BATCH_NORM_POPULATION_STDEV)
+from odin.utils.decorators import autoinit, functionable, cache
 
 
 class NNConfig(object):
@@ -56,8 +55,8 @@ class NNConfig(object):
 
         #####################################
         # 1. Shared variable, just check the shape.
-        if K.is_shared_variable(spec):
-            spec_shape = K.eval(K.shape(spec))
+        if K.is_trainable_variable(spec):
+            spec_shape = K.eval(K.get_shape(spec))
             if shape is None:
                 shape = spec_shape
             elif tuple(shape) != tuple(spec_shape):
@@ -87,7 +86,7 @@ class NNConfig(object):
         # 4. initializing function.
         elif hasattr(spec, '__call__'):
             arr = spec(shape)
-            if K.is_shared_variable(arr):
+            if K.is_trainable_variable(arr):
                 spec = arr
             elif K.is_variable(arr) and K.ndim(arr) == len(shape):
                 spec = arr
@@ -220,6 +219,7 @@ class NNOps(Annotation):
     def _transpose(self):
         raise NotImplementedError
 
+    # ==================== interaction method ==================== #
     def apply(self, *args, **kwargs):
         out = self._apply(*args, **kwargs)
         # ====== add roles ====== #
@@ -227,7 +227,6 @@ class NNOps(Annotation):
         if not isinstance(tmp, (tuple, list)):
             tmp = [out]
         for o in tmp:
-            add_role(o, OUTPUT)
             add_annotation(o, self)
         # return outputs
         return out
@@ -288,7 +287,7 @@ class Dense(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(num_inputs=input_shape[-1])
         # calculate projection
         activation = K.dot(x, self.W)
@@ -331,7 +330,7 @@ class VariationalDense(NNOps):
 
     def sampling(self, x):
         mean, logsigma = self.get_mean_logsigma(x)
-        epsilon = self._rng.normal(shape=K.shape(mean), mean=0.0, std=1.0,
+        epsilon = self._rng.normal(shape=K.get_shape(mean), mean=0.0, std=1.0,
                                    dtype=mean.dtype)
         z = mean + K.exp(logsigma) * epsilon
         return z
@@ -352,7 +351,7 @@ class VariationalDense(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(num_inputs=input_shape[-1])
         # calculate statistics
         mean, logsigma = self.get_mean_logsigma(x)
@@ -526,7 +525,7 @@ class BatchNorm(NNOps):
     def _apply(self, x):
         import theano
 
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         is_training = K.is_training(x)
         ndim = K.ndim(x)
         self.config(input_shape=input_shape)
@@ -653,7 +652,7 @@ class ParametricRectifier(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         self.config(input_shape=input_shape)
         axes = iter(range(K.ndim(self.alpha)))
         pattern = ['x' if input_axis in self.shared_axes

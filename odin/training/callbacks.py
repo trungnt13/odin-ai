@@ -10,8 +10,8 @@ from six import add_metaclass
 
 import numpy as np
 
-from blocks.utils import Progbar
-from blocks.utils.decorators import functionable
+from odin.utils import Progbar
+from odin.utils.decorators import functionable
 
 __all__ = [
     'Callback',

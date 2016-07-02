@@ -2,8 +2,8 @@ from __future__ import division, absolute_import
 
 import numpy as np
 
-from blocks import backend as K
-from blocks import autoconfig
+from odin import backend as K
+from odin import autoconfig
 
 
 # ===========================================================================

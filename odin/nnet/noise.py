@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import
 
 from .base import NNOps, NNConfig
+
 from odin import backend as K
 from odin.utils.decorators import autoinit
 
@@ -66,7 +67,7 @@ class Dropout(NNOps):
         raise NotImplementedError
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         level = self.level
         noise_dims = self.noise_dims
         rescale = self.rescale
@@ -76,7 +77,7 @@ class Dropout(NNOps):
             return x
         # ====== Dropout ====== #
         retain_prob = 1. - level
-        shape = K.shape(x, none=False)
+        shape = K.get_shape(x)
         if noise_dims is None:
             x = x * rng.binomial(shape=shape, p=retain_prob, dtype=x.dtype)
         else:
@@ -117,15 +118,19 @@ class Noise(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    def __init__(self, sigma=0.075, noise_dims=None, noise_type='gaussian', seed=None):
+    def __init__(self, sigma=0.075, noise_dims=None,
+                 noise_type='gaussian', seed=None):
         super(Noise, self).__init__()
         self.rng = K.rng(seed=seed)
+        self.sigma = sigma
+        self.noise_dims = noise_dims
+        self.noise_type = noise_type
 
     def _initialize(self, *args, **kwargs):
         raise NotImplementedError
 
     def _apply(self, x):
-        input_shape = K.shape(x)
+        input_shape = K.get_shape(x)
         noise_dims = self.noise_dims
         noise_type = self.noise_type.lower()
         sigma = self.sigma
@@ -134,7 +139,7 @@ class Noise(NNOps):
         if not K.is_training(x):
             return x
         # ====== applying noise ====== #
-        shape = K.shape(x, none=False)
+        shape = K.get_shape(x)
         noise_shape = (shape if noise_dims is None
                        else _process_noise_dim(shape, noise_dims))
         if 'normal' in noise_type or 'gaussian' in noise_type:
