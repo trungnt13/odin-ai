@@ -59,42 +59,20 @@ class Dropout(NNOps):
     """
 
     @autoinit
-    def __init__(self, level=0.5, noise_dims=None, rescale=True, seed=None, **kwargs):
+    def __init__(self, level=0.5, noise_dims=None, rescale=True,
+                 seed=None, **kwargs):
         super(Dropout, self).__init__(**kwargs)
-        self.rng = K.rng(seed=seed)
+        self.seed = seed
 
     def _initialize(self, *args, **kwargs):
-        raise NotImplementedError
+        return NNConfig()
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        level = self.level
-        noise_dims = self.noise_dims
-        rescale = self.rescale
-        rng = self.rng
-        # ====== not a training variable NO dropout ====== #
-        if not K.is_training(x):
-            return x
-        # ====== Dropout ====== #
-        retain_prob = 1. - level
-        shape = K.get_shape(x)
-        if noise_dims is None:
-            x = x * rng.binomial(shape=shape, p=retain_prob, dtype=x.dtype)
-        else:
-            noise_shape = _process_noise_dim(shape, noise_dims)
-            # auto select broadcast shape
-            broadcast = [i for i, j in enumerate(noise_shape) if j == 1]
-            if len(broadcast) > 0:
-                x = x * K.addbroadcast(
-                    rng.binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype),
-                    *broadcast)
-            else:
-                x = x * rng.binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype)
-        if rescale:
-            x /= retain_prob
-        if isinstance(input_shape, (tuple, list)):
-            K.add_shape(x, input_shape)
-        return x
+        self.config()
+        if not hasattr(self, 'rng'):
+            self.rng = K.rng(self.seed)
+        return K.apply_dropout(x, level=self.level,
+            noise_dims=self.noise_dims, rescale=self.rescale, seed=self.rng)
 
     def _transpose(self):
         return self
@@ -118,43 +96,21 @@ class Noise(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
+    @autoinit
     def __init__(self, sigma=0.075, noise_dims=None,
-                 noise_type='gaussian', seed=None):
-        super(Noise, self).__init__()
-        self.rng = K.rng(seed=seed)
-        self.sigma = sigma
-        self.noise_dims = noise_dims
-        self.noise_type = noise_type
+                 noise_type='gaussian', seed=None, **kwargs):
+        super(Noise, self).__init__(**kwargs)
+        self.seed = seed
 
     def _initialize(self, *args, **kwargs):
-        raise NotImplementedError
+        return NNConfig()
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        noise_dims = self.noise_dims
-        noise_type = self.noise_type.lower()
-        sigma = self.sigma
-        rng = self.rng
-        # ====== not a training variable NO dropout ====== #
-        if not K.is_training(x):
-            return x
-        # ====== applying noise ====== #
-        shape = K.get_shape(x)
-        noise_shape = (shape if noise_dims is None
-                       else _process_noise_dim(shape, noise_dims))
-        if 'normal' in noise_type or 'gaussian' in noise_type:
-            noise = rng.normal(shape=noise_shape, mean=0.0, std=sigma, dtype=x.dtype)
-        elif 'uniform' in noise_type:
-            noise = rng.uniform(shape=noise_shape, low=-sigma, high=sigma, dtype=x.dtype)
-            # no idea why uniform does not give any broadcastable dimensions
-            if noise_dims is not None:
-                broadcastable = [i for i, j in enumerate(noise_shape) if j == 1]
-                if len(broadcastable) > 0:
-                    noise = K.addbroadcast(noise, *broadcastable)
-        x = x + noise
-        if isinstance(input_shape, (tuple, list)):
-            K.add_shape(x, input_shape)
-        return x
+        self.config()
+        if not hasattr(self, 'rng'):
+            self.rng = K.rng(self.seed)
+        return K.apply_noise(x, sigma=self.sigma, noise_dims=self.noise_dims,
+                             noise_type=self.noise_type, seed=self.rng)
 
     def _transpose(self):
         return self

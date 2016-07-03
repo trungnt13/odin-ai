@@ -3,6 +3,7 @@ from __future__ import print_function, absolute_import, division
 import logging
 import warnings
 import numbers
+import cPickle
 from collections import OrderedDict
 from itertools import chain
 from toolz import unique

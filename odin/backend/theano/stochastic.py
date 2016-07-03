@@ -6,6 +6,7 @@ import numpy as np
 
 from odin.config import RNG_GENERATOR, autoconfig
 from . import tensor as K
+from .helpers import is_training
 
 FLOATX = autoconfig.floatX
 EPSILON = autoconfig.epsilon
@@ -107,32 +108,35 @@ def apply_dropout(x, level=0.5, noise_dims=None, rescale=True, seed=None):
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
-    rng: `tensor.rng`
+    seed: random seed or `tensor.rng`
         random generator from tensor class
 
     Note
     ----
     This function only apply noise on Variable with TRAINING role
     """
-    input_shape = K.shape(x)
+    input_shape = K.get_shape(x)
+    if not isinstance(seed, _RandomWrapper):
+        seed = rng(seed=seed)
     # ====== not a training variable NO dropout ====== #
-    if not K.is_training(x):
+    if not is_training(x):
         return x
     # ====== Dropout ====== #
     retain_prob = 1. - level
-    shape = K.shape(x, none=False)
+    shape = x.shape
     if noise_dims is None:
-        x = x * K.random_binomial(shape=shape, p=retain_prob, dtype=x.dtype, seed=seed)
+        x = x * seed.binomial(shape=shape, p=retain_prob, dtype=x.dtype)
     else:
         noise_shape = _process_noise_dim(shape, noise_dims)
         # auto select broadcast shape
         broadcast = [i for i, j in enumerate(noise_shape) if j == 1]
         if len(broadcast) > 0:
-            x = x * K.addbroadcast(
-                K.random_binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype, seed=seed),
-                *broadcast)
+            x = x * K.addbroadcast(seed.binomial(shape=noise_shape,
+                                                 p=retain_prob,
+                                                 dtype=x.dtype),
+                                   *broadcast)
         else:
-            x = x * K.random_binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype, seed=seed)
+            x = x * seed.binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype)
     if rescale:
         x /= retain_prob
     if isinstance(input_shape, (tuple, list)):
@@ -152,24 +156,28 @@ def apply_noise(x, sigma=0.075, noise_dims=None, noise_type='gaussian', seed=Non
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
+    seed: random seed or `tensor.rng`
+        random generator from tensor class
 
     Note
     ----
     This function only apply noise on Variable with TRAINING role
     """
-    input_shape = K.shape(x)
+    input_shape = K.get_shape(x)
     noise_type = noise_type.lower()
+    if not isinstance(seed, _RandomWrapper):
+        seed = rng(seed=seed)
     # ====== not a training variable NO dropout ====== #
-    if not K.is_training(x):
+    if not is_training(x):
         return x
     # ====== applying noise ====== #
-    shape = K.shape(x, none=False)
+    shape = x.shape
     noise_shape = (shape if noise_dims is None
                    else _process_noise_dim(shape, noise_dims))
     if 'normal' in noise_type or 'gaussian' in noise_type:
-        noise = K.random_normal(shape=noise_shape, mean=0.0, std=sigma, dtype=x.dtype, seed=seed)
+        noise = seed.normal(shape=noise_shape, mean=0.0, std=sigma, dtype=x.dtype)
     elif 'uniform' in noise_type:
-        noise = K.random_uniform(shape=noise_shape, low=-sigma, high=sigma, dtype=x.dtype, seed=seed)
+        noise = seed.uniform(shape=noise_shape, low=-sigma, high=sigma, dtype=x.dtype)
         # no idea why uniform does not give any broadcastable dimensions
         if noise_dims is not None:
             broadcastable = [i for i, j in enumerate(noise_shape) if j == 1]

@@ -1,6 +1,9 @@
-from __future__ import division, absolute_import
+from __future__ import division, absolute_import, print_function
 
 import inspect
+import numbers
+import types
+import cPickle
 from itertools import chain
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
@@ -18,6 +21,10 @@ from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_STDEV)
 from odin.utils.decorators import autoinit, functionable, cache
+# ===========================================================================
+# Helper
+# ===========================================================================
+_primitive_types = (tuple, list, dict, str, numbers.Number, types.NoneType)
 
 
 class NNConfig(object):
@@ -144,9 +151,19 @@ class NNConfig(object):
     def __str__(self):
         s = 'Arguments:\n'
         for i, j in self._arguments.iteritems():
-            s += str(i) + ':' + str(j) + '\n'
-        s += 'Parameters: ' + ', '.join([str(i) for i in self._paramters])
+            s += ' - ' + str(i) + ':' + str(j) + '\n'
+        s += ' - Parameters: ' + ', '.join([str(i) for i in self._paramters])
         return s
+
+    # ==================== pickling method ==================== #
+    def __getstate__(self):
+        return self._arguments, [K.pickling_variable(i) for i in self.parameters]
+
+    def __setstate__(self, states):
+        self._arguments = states[0]
+        for i, j in self._arguments.iteritems():
+            setattr(self, i, j)
+        self._paramters = [K.pickling_variable(i) for i in states[1]]
 
 
 @add_metaclass(ABCMeta)
@@ -160,6 +177,7 @@ class NNOps(Annotation):
         self._name = str(name)
         self._configuration = None
         self._transpose_ops = None
+        self._arguments = {}
         NNOps.ID += 1
 
     # ==================== properties ==================== #
@@ -176,7 +194,19 @@ class NNOps(Annotation):
 
     @property
     def parameters(self):
-        return [i for i in self._configuration.parameters if has_roles(i, PARAMETER)]
+        if self._configuration is None:
+            raise Exception("This operators haven't initialized.")
+        return [i for i in self._configuration.parameters
+                if has_roles(i, PARAMETER)]
+
+    def __setattr__(self, name, value):
+        if hasattr(self, '_arguments') and name != '_arguments':
+            if name in self._arguments:
+                self._arguments[name] = value
+            # otherwise, only save primitive types
+            elif isinstance(value, _primitive_types):
+                self._arguments[name] = value
+        super(NNOps, self).__setattr__(name, value)
 
     def config(self, *args, **kwargs):
         """
@@ -192,11 +222,13 @@ class NNOps(Annotation):
         # initialized but mismatch configuration
         if self._configuration is not None:
             if len(kwargs) != 0 and self._configuration != kwargs:
-                raise ValueError('Initialized configuration: {} is mismatch with new configuration, '
-                                 'no support for kwargs={}'.format(self._configuration._arguments, kwargs))
-        # not initialized but no information
-        elif len(kwargs) == 0:
-            raise ValueError('Configuration have not initialized.')
+                raise ValueError('Initialized configuration: {} is mismatch '
+                                 'with new configuration, no support for'
+                                 ' kwargs={}'.format(
+                                     self._configuration._arguments, kwargs))
+        # # not initialized but no information
+        # elif len(kwargs) == 0:
+        #     raise ValueError('Configuration have not initialized.')
 
         # still None, initialize configuration
         if self._configuration is None:
@@ -236,6 +268,25 @@ class NNOps(Annotation):
 
     def __str__(self):
         return self.name
+
+    # ==================== pickling method ==================== #
+    def __getstate__(self):
+        return (self._id, self._name, self._configuration, self._arguments)
+
+    def __setstate__(self, states):
+        id, name, config, attrs = states
+        self._id = id
+        self._name = name
+        self._transpose_ops = None # reset the transpose ops
+        for i, j in attrs.iteritems():
+            setattr(self, i, j)
+        self._arguments = attrs
+        self._configuration = config
+        # restore the annotations
+        if config is not None:
+            config.inflate(self)
+            for i in config.parameters:
+                add_annotation(i, self)
 
 
 # ===========================================================================
@@ -694,11 +745,23 @@ class Switcher(NNOps):
 
 class Sequence(NNOps):
 
-    """ Sequence of Operators """
+    """ Sequence of Operators
+    Parameters
+    ----------
+    strict_transpose : bool
+        if True, only operators with transposed implemented are added
+        to tranpose operator
 
-    def __init__(self, ops, **kwargs):
+    Example
+    -------
+    """
+
+    @autoinit
+    def __init__(self, ops, strict_transpose=False, **kwargs):
         super(Sequence, self).__init__(**kwargs)
         self.ops = []
+        if not isinstance(ops, (tuple, list)):
+            ops = [ops]
         for i in ops:
             if inspect.isfunction(i) or inspect.ismethod(i):
                 self.ops.append(functionable(i))
@@ -712,7 +775,7 @@ class Sequence(NNOps):
         return [i for i in all_parameters if has_roles(i, PARAMETER)]
 
     def _initialize(self, *args, **kwargs):
-        pass
+        return NNConfig()
 
     def _apply(self, x):
         for op in self.ops:
@@ -723,15 +786,12 @@ class Sequence(NNOps):
         transpose_ops = []
         for i in self.ops:
             if hasattr(i, 'T'):
-                transpose_implemented = False
-                try:
-                    i.T
-                    transpose_implemented = True
-                except NotImplementedError:
-                    pass
-                if transpose_implemented and i.T is not None:
-                    transpose_ops.append(i.T)
-        seq = Sequence(reversed(transpose_ops))
+                transpose_ops.append(i.T)
+            elif not self.strict_transpose:
+                transpose_ops.append(i)
+        # reversed the order of ops for transpose
+        transpose_ops = list(reversed(transpose_ops))
+        seq = Sequence(transpose_ops)
         return seq
 
     def __getitem__(self, key):

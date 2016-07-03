@@ -11,6 +11,7 @@ from __future__ import division, absolute_import
 from collections import OrderedDict
 import math
 import numbers
+import cPickle
 
 import numpy as np
 
@@ -75,15 +76,13 @@ if on_gpu():
 # ===========================================================================
 # VARIABLE MANIPULATION
 # ===========================================================================
-def variable(value, dtype=FLOATX, name=None, broadcastable=None, target=None):
+def variable(value, dtype=FLOATX, name=None, target=None):
     """Instantiate a tensor variable.
     """
     value = np.asarray(value, dtype=dtype)
     target = _check_target(target)
 
     kwargs = {}
-    if broadcastable is not None:
-        kwargs['broadcastable'] = broadcastable
     if target is not None:
         kwargs['target'] = target
 

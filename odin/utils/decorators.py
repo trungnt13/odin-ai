@@ -7,6 +7,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import sys
 from collections import OrderedDict, defaultdict
+from collections import MutableMapping
 from functools import wraps, partial
 import inspect
 from six.moves import zip, zip_longest
@@ -313,7 +314,7 @@ def autoattr(*args, **kwargs):
 # ===========================================================================
 def autoinit(func):
     """ For checking what arguments have been assigned to the object:
-    `_arguments`
+    `_arguments` (dictionary)
     """
     if not inspect.isfunction(func):
         raise ValueError("Only accept function as input argument "
@@ -322,32 +323,39 @@ def autoinit(func):
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        assigned_arguments = {}
+        assigned_arguments = []
         # handle default values
         if defaults is not None:
             for attr, val in zip(reversed(attrs), reversed(defaults)):
                 setattr(self, attr, val)
-                assigned_arguments[attr] = val
+                assigned_arguments.append(attr)
         # handle positional arguments (excluded self)
         positional_attrs = attrs[1:]
         for attr, val in zip(positional_attrs, args):
             setattr(self, attr, val)
-            assigned_arguments[attr] = val
+            assigned_arguments.append(attr)
         # handle varargs
         if varargs:
             remaining_args = args[len(positional_attrs):]
             setattr(self, varargs, remaining_args)
-            assigned_arguments[varargs] = remaining_args
+            assigned_arguments.append(varargs)
         # handle varkw
         if kwargs:
             for attr, val in kwargs.iteritems():
                 try:
                     setattr(self, attr, val)
-                    assigned_arguments[attr] = val
+                    assigned_arguments.append(attr)
                 except: # ignore already predifined attr
                     pass
-        setattr(self, '_arguments', assigned_arguments)
-        return func(self, *args, **kwargs)
+        # call the init
+        _ = func(self, *args, **kwargs)
+        # just the right moments
+        assigned_arguments = {i: getattr(self, i) for i in assigned_arguments}
+        if hasattr(self, '_arguments'):
+            self._arguments.update(assigned_arguments)
+        else:
+            setattr(self, '_arguments', assigned_arguments)
+        return _
     return wrapper
 
 
