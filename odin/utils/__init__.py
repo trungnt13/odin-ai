@@ -22,6 +22,8 @@ except:
 import numpy
 import six
 
+from .profile import *
+
 
 def pad_center(data, size, axis=-1, **kwargs):
     '''Wrapper for np.pad to automatically center an array prior to padding.

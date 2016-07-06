@@ -157,7 +157,9 @@ class Data(object):
         old_start = self._start
         old_end = self._end
         # less than million data points, not a big deal
-        for X in iter(self.set_batch(start=0., end=1., seed=None)):
+        it = self.set_batch(start=0., end=1., seed=None).__iter()
+        it.next()
+        for X in it:
             if s is None:
                 s = [o(X, axis) for o in ops]
             else:
@@ -166,6 +168,9 @@ class Data(object):
         return s
 
     def _iterate_update(self, y, ops):
+        """Support ops:
+        add; mul; div; sub; floordiv; pow
+        """
         shape = self._data.shape
         # custom batch_size
         idx = list(range(0, shape[0], 1024))

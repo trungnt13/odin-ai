@@ -6,25 +6,19 @@ from abc import ABCMeta, abstractmethod
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from multiprocessing import cpu_count, Process, Queue
+from multiprocessing import cpu_count, Process, Queue, Manager
 
 import numpy as np
 
 from odin.utils import segment_list, ordered_set, struct
 from odin.utils import segment_axis
 
-from .data import Data
+from .data import Data, MutableData
 
 # ===========================================================================
 # Multiprocessing Feeders
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
-
-
-def work_multi(d, j, f, r): # data, jobs, function, results
-    for n, s1, e1 in j:
-        x = d[s1:e1]
-        r.put((f(x), n))
 
 
 def _batch(b, rf, size):
@@ -40,7 +34,7 @@ def _batch(b, rf, size):
             yield X[i * size:(i + 1) * size]
 
 
-class Feeder(object):
+class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
         |           |               |
@@ -50,6 +44,9 @@ class Feeder(object):
     This feeder return a non-deterministic order of data, hence,
     cannot be reproducible
 
+    map_function: (name, x, transcription)
+    reduce_function: (list of objects returned from map_function)
+
     Parameters
     ----------
     transcription: path, dict, list
@@ -58,24 +55,30 @@ class Feeder(object):
         if list is given, the list must contain the same information
         if dictionary is given, the dict must repesent the same mapping
         above
+    cache: int
+        the amount of data each process keep before return to main
+        process.
 
     Note
     ----
     set(ncpu=1) if you want a reproducible results
     """
 
-    def __init__(self, data, indices, transcription=None, ncpu=None, cache=10):
+    def __init__(self, data, indices, transcription=None,
+                 ncpu=1, cache=10):
         super(Feeder, self).__init__()
         if not os.path.isfile(indices):
             raise ValueError('indices must path to indices.csv file')
-        self.indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
-        self.data = data
+        self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+        if not isinstance(data, Data):
+            raise ValueError('data must be instance of odin.fuel.Data')
+        self._data = data
         # set functions
         self.recipe = None
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
-        self.ncpu = min(ncpu, cpu_count() - 1)
+        self.ncpu = max(min(ncpu, cpu_count() - 1), 2)
         # ====== default ====== #
         self._cache = cache
         self._batch_size = 256
@@ -83,114 +86,85 @@ class Feeder(object):
         self._start = 0.
         self._end = 1.
         # ====== transcription ====== #
+        manager = Manager()
+        share_dict = manager.dict()
         if transcription is not None:
             if isinstance(transcription, str) and os.path.isfile(transcription):
-                _ = {}
                 with open(transcription, 'r') as f:
                     for i in f:
                         i = i[:-1].split(' ')
-                        _[i[0]] = [j for j in i[1:] if len(j) > 0]
-                transcription = _
+                        share_dict[i[0]] = [j for j in i[1:] if len(j) > 0]
             elif isinstance(transcription, (list, tuple)):
-                transcription = {i: j for i, j in transcription}
-        self.transcription = transcription
-
-    def set_batch(self, batch_size=None, seed=None, start=None, end=None):
-        if isinstance(batch_size, int) and batch_size > 0:
-            self._batch_size = batch_size
-        self._seed = seed
-        if start is not None and start > 0. - 1e-12:
-            self._start = start
-        if end is not None and end > 0. - 1e-12:
-            self._end = end
-        return self
+                share_dict = {i: j for i, j in transcription}
+            elif isinstance(transcription, dict):
+                share_dict = transcription
+            else:
+                raise Exception('Cannot understand given transcipriont information.')
+        self._manager = manager
+        self._transcription = share_dict
 
     def set_recipe(self, *recipes):
         self.recipe = FeederList(*recipes)
         return self
 
-    def _prepare_iter_multi(self):
+    # ==================== Strings ==================== #
+    def _prepare_iter(self, batch_size, cache, ntasks, jobs):
         results = Queue()
-        batch_size = self._batch_size
-        cache = self._cache
-        jobs = self.jobs
-        ntasks = self.ntasks
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
-        transcription = self.transcription
 
+        # data, transcription, jobs, map_function, results
+        def work_multi(d, t, j, f, r):
+            for name, start, end in j:
+                x = d[start:end]
+                if t is not None:
+                    trans = t[name]
+                r.put(f(name, x, trans))
         processes = [Process(target=work_multi,
-                             args=(self.data, j, map_func, results))
+                             args=(self._data, self._transcription,
+                                   j, map_func, results))
                      for i, j in enumerate(jobs)]
+        yield None # stop here wait for main iterator start
         # start the workers
         [p.start() for p in processes]
         # return the results
         batch = []
         for i in range(ntasks):
-            x, name = results.get()
-            if transcription is not None:
-                name = (transcription[name]
-                        if isinstance(transcription, dict)
-                        else transcription(name))
-            batch.append((x, name))
+            batch.append(results.get())
+            print('Done:', i)
             if len(batch) == cache:
-                for i in _batch(batch, reduce_func, batch_size):
-                    yield i
+                # for i in _batch(batch, reduce_func, batch_size):
+                #     yield i
                 batch = []
         # end the worker
         [p.join() for p in processes]
         results.close()
         # return last batch
         if len(batch) > 0:
-            for i in _batch(batch, reduce_func, batch_size):
-                yield i
-
-    def _prepare_iter_single(self):
-        batch_size = self._batch_size
-        cache = self._cache
-        jobs = self.jobs
-        map_func = self.recipe.map
-        reduce_func = self.recipe.reduce
-        transcription = self.transcription
-
-        batch = []
-        for name, s, e in chain(*jobs):
-            x = map_func(self.data[s:e])
-            if transcription is not None:
-                name = (transcription[name]
-                        if isinstance(transcription, dict)
-                        else transcription(name))
-            batch.append((x, name))
-            if len(batch) == cache:
-                for i in _batch(batch, reduce_func, batch_size):
-                    yield i
-                batch = []
-        # return last batch
-        if len(batch) > 0:
-            for i in _batch(batch, reduce_func, batch_size):
-                yield i
+            pass
+            # for i in _batch(batch, reduce_func, batch_size):
+            # yield i
 
     def __iter__(self):
         # ====== check ====== #
         if self.recipe is None:
             raise ValueError('You must set_recipe first')
         # ====== process ====== #
-        n = self.indices.shape[0]
+        n = self._indices.shape[0]
         start = _apply_approx(n, self._start)
         end = _apply_approx(n, self._end)
-        indices = self.indices[start:end]
+        indices = self._indices[start:end]
         if self._seed is not None:
             np.random.seed(self._seed)
             indices = indices[np.random.permutation(indices.shape[0])]
             self._seed = None
         indices = [(i, int(s), int(e)) for i, s, e in indices]
-        self.ntasks = len(indices)
-        self.jobs = segment_list(indices, n_seg=self.ncpu)
 
-        if self.ncpu >= 2:
-            it = self._prepare_iter_multi()
-        else:
-            it = self._prepare_iter_single()
+        it = self._prepare_iter(self._batch_size,
+                                self._cache,
+                                len(indices),
+                                segment_list(indices, n_seg=self.ncpu))
+        it.next() # just for initlaize the iterator
         return it
 
 
@@ -210,7 +184,7 @@ class FeederRecipe(object):
     """
 
     @abstractmethod
-    def map(self, x):
+    def map(self, *args):
         pass
 
     @abstractmethod
@@ -223,11 +197,14 @@ class FeederList(FeederRecipe):
     def __init__(self, *recipes):
         super(FeederList, self).__init__()
         self.recipes = recipes
+        if len(recipes) == 0:
+            raise Exception('FeederList must contains >= 1 recipe(s).')
 
-    def map(self, x):
+    def map(self, *args):
         for f in self.recipes:
-            x = f.map(x)
-        return x
+            args = (f.map(*args) if isinstance(args, (tuple, list)) else
+                    f.map(args))
+        return args
 
     def reduce(self, x):
         for f in self.recipes:
@@ -244,12 +221,12 @@ class Normalization(FeederRecipe):
         self.std = std[:] if isinstance(std, Data) else std
         self.local_normalize = local_normalize
 
-    def map(self, x):
+    def map(self, name, x, transcription):
         if self.local_normalize:
             x = (x - x.mean(0)) / x.std(0)
         if self.mean is not None and self.std is not None:
             x = (x - self.mean) / self.std
-        return x
+        return name, x, transcription
 
     def reduce(self, x):
         return x

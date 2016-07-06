@@ -118,10 +118,9 @@ class MainLoop(object):
 
     """ MainLoop """
 
-    def __init__(self, batch_size=256, dataset=None, shuffle=True, name=None):
+    def __init__(self, batch_size=256, dataset=None, shuffle=True):
         super(MainLoop, self).__init__()
         self._batch_size = batch_size
-        self._name = name
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
@@ -145,9 +144,8 @@ class MainLoop(object):
     # ==================== pickling ==================== #
     def __setstate__(self, value):
         self._batch_size = value[0]
-        self._name = value[1]
-        self._rng = value[2]
-        if isinstance(value[3], str):
+        self._rng = value[1]
+        if isinstance(value[2], str):
             self._dataset = Dataset(value[3])
         else:
             self._dataset = None
@@ -162,7 +160,7 @@ class MainLoop(object):
 
     def __getstate__(self):
         dataset = self._dataset.path if self._dataset is not None else None
-        return self._batch_size, self._name, self._rng, dataset, self._callback
+        return self._batch_size, self._rng, dataset, self._callback
 
     # ==================== command ==================== #
     def stop(self):
@@ -179,10 +177,6 @@ class MainLoop(object):
     @property
     def shuffle(self):
         return isinstance(self._rng, np.random.RandomState)
-
-    @property
-    def name(self):
-        return self._name
 
     @property
     def callback(self):
