@@ -6,7 +6,7 @@ from abc import ABCMeta, abstractmethod
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from multiprocessing import cpu_count, Process, Queue, Manager
+from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
@@ -49,7 +49,7 @@ class Feeder(MutableData):
 
     Parameters
     ----------
-    transcription: path, dict, list
+    transcription: dict
         if path to a file is specified, the file must specified
         <name> -> [frame1, frame2, ...]
         if list is given, the list must contain the same information
@@ -86,22 +86,17 @@ class Feeder(MutableData):
         self._start = 0.
         self._end = 1.
         # ====== transcription ====== #
-        manager = Manager()
-        share_dict = manager.dict()
+        # manager = Manager()
+        share_dict = None
         if transcription is not None:
-            if isinstance(transcription, str) and os.path.isfile(transcription):
-                with open(transcription, 'r') as f:
-                    for i in f:
-                        i = i[:-1].split(' ')
-                        share_dict[i[0]] = [j for j in i[1:] if len(j) > 0]
-            elif isinstance(transcription, (list, tuple)):
+            if isinstance(transcription, (list, tuple)):
                 share_dict = {i: j for i, j in transcription}
             elif isinstance(transcription, dict):
                 share_dict = transcription
             else:
                 raise Exception('Cannot understand given transcipriont information.')
-        self._manager = manager
-        self._transcription = share_dict
+        global _transcription
+        _transcription = share_dict
 
     def set_recipe(self, *recipes):
         self.recipe = FeederList(*recipes)
@@ -113,16 +108,18 @@ class Feeder(MutableData):
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
 
-        # data, transcription, jobs, map_function, results
-        def work_multi(d, t, j, f, r):
+        # data, jobs, map_function, results
+        def work_multi(d, j, f, r):
+            # transcription is shared global variable
+            transcription = _transcription
             for name, start, end in j:
                 x = d[start:end]
-                if t is not None:
-                    trans = t[name]
+                trans = None
+                if transcription is not None:
+                    trans = transcription[name]
                 r.put(f(name, x, trans))
         processes = [Process(target=work_multi,
-                             args=(self._data, self._transcription,
-                                   j, map_func, results))
+                             args=(self._data, j, map_func, results))
                      for i, j in enumerate(jobs)]
         yield None # stop here wait for main iterator start
         # start the workers

@@ -8,7 +8,7 @@ import os
 import cPickle
 
 
-class MmapDict(object):
+class MmapDict(dict):
     """ MmapDict
     Handle enormous dictionary (up to thousand terabytes of data) in
     memory mapped dictionary, extremely fast to load, and randomly access.
@@ -23,6 +23,9 @@ class MmapDict(object):
 
     def __init__(self, path):
         super(MmapDict, self).__init__()
+        self.__init(path)
+
+    def __init(self, path):
         if os.path.exists(path) and os.path.getsize(path) > 0:
             file = open(str(path), mode='r+')
             if file.read(len(MmapDict.HEADER)) != MmapDict.HEADER:
@@ -90,6 +93,12 @@ class MmapDict(object):
         if self._mmap is not None and self._file is not None:
             self.close()
 
+    def __str__(self):
+        return str(self.__class__) + ':' + self._path + ':' + str(len(self._dict))
+
+    def __repr__(self):
+        return str(self)
+
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
         if key in self._dict:
@@ -116,6 +125,15 @@ class MmapDict(object):
     def __len__(self):
         return len(self._dict)
 
+    def __delitem__(self, key):
+        del self._dict[key]
+
+    def __cmp__(self, dict):
+        if isinstance(dict, MmapDict):
+            return cmp(self._dict, dict._dict)
+        else:
+            return cmp(self._dict, dict)
+
     def keys(self):
         return self._dict.keys()
 
@@ -141,8 +159,24 @@ class MmapDict(object):
                 value = self._mmap.read(size)
             yield key, value
 
-    def __iter__(self):
-        return self.iteritems()
+    def clear(self):
+        self._dict.clear()
+
+    def copy(self):
+        raise NotImplementedError
+
+    def has_key(self, key):
+        return key in self._dict
+
+    def update(*args, **kwargs):
+        raise NotImplementedError
+
+    # ==================== pickling ==================== #
+    def __setstate__(self, states):
+        self.__init(states)
+
+    def __getstate__(self):
+        return self._path
 
 
 class MmapList(object):
