@@ -160,10 +160,10 @@ def auto_config(config=None):
         # CNMEM
         if cnmem > 0. and cnmem <= 1.:
             flags += ',lib.cnmem=%.2f,allow_gc=True' % cnmem
-        os.environ['THEANO_FLAGS'] = flags
         if len(optimizer) > 0:
             flags += ',optimizer={}'.format(optimizer)
         flags += ',optimizer_including=unsafe'
+        os.environ['THEANO_FLAGS'] = flags
         import theano
     elif backend == 'tensorflow':
         import tensorflow

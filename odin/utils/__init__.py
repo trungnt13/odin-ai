@@ -26,18 +26,18 @@ from .profile import *
 
 
 def pad_center(data, size, axis=-1, **kwargs):
-    '''Wrapper for np.pad to automatically center an array prior to padding.
+    '''Wrapper for numpy.pad to automatically center an array prior to padding.
     This is analogous to `str.center()`
 
     Examples
     --------
     >>> # Generate a vector
-    >>> data = np.ones(5)
+    >>> data = numpy.ones(5)
     >>> librosa.util.pad_center(data, 10, mode='constant')
     array([ 0.,  0.,  1.,  1.,  1.,  1.,  1.,  0.,  0.,  0.])
 
     >>> # Pad a matrix along its first dimension
-    >>> data = np.ones((3, 5))
+    >>> data = numpy.ones((3, 5))
     >>> librosa.util.pad_center(data, 7, axis=0)
     array([[ 0.,  0.,  0.,  0.,  0.],
            [ 0.,  0.,  0.,  0.,  0.],
@@ -54,7 +54,7 @@ def pad_center(data, size, axis=-1, **kwargs):
 
     Parameters
     ----------
-    data : np.ndarray
+    data : numpy.ndarray
         Vector to be padded and centered
 
     size : int >= len(data) [scalar]
@@ -64,11 +64,11 @@ def pad_center(data, size, axis=-1, **kwargs):
         Axis along which to pad and center the data
 
     kwargs : additional keyword arguments
-      arguments passed to `np.pad()`
+      arguments passed to `numpy.pad()`
 
     Returns
     -------
-    data_padded : np.ndarray
+    data_padded : numpy.ndarray
         `data` centered and padded to length `size` along the
         specified axis
 
@@ -96,7 +96,7 @@ def pad_center(data, size, axis=-1, **kwargs):
                           'at least input size ({:d})').format(size,
                                                                n))
 
-    return np.pad(data, lengths, **kwargs)
+    return numpy.pad(data, lengths, **kwargs)
 
 
 def segment_list(l, size=None, n_seg=None):
@@ -165,7 +165,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
 
     """
     if axis is None:
-        a = np.ravel(a) # may copy
+        a = numpy.ravel(a) # may copy
         axis = 0
 
     l = a.shape[axis]
@@ -194,7 +194,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
         elif end in ['pad', 'wrap']: # copying will be necessary
             s = list(a.shape)
             s[-1] = roundup
-            b = np.empty(s, dtype=a.dtype)
+            b = numpy.empty(s, dtype=a.dtype)
             b[..., :l] = a
             if end == 'pad':
                 b[..., l:] = endvalue
@@ -215,14 +215,14 @@ def segment_axis(a, frame_length=2048, hop_length=512,
     newstrides = a.strides[:axis] + ((frame_length - overlap) * s, s) + a.strides[axis + 1:]
 
     try:
-        return np.ndarray.__new__(np.ndarray, strides=newstrides,
+        return numpy.ndarray.__new__(numpy.ndarray, strides=newstrides,
                                   shape=newshape, buffer=a, dtype=a.dtype)
     except TypeError:
         a = a.copy()
         # Shape doesn't change but strides does
         newstrides = a.strides[:axis] + ((frame_length - overlap) * s, s) \
         + a.strides[axis + 1:]
-        return np.ndarray.__new__(np.ndarray, strides=newstrides,
+        return numpy.ndarray.__new__(numpy.ndarray, strides=newstrides,
                                   shape=newshape, buffer=a, dtype=a.dtype)
 
 

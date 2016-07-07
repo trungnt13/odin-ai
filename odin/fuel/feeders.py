@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import inspect
 from itertools import chain
 from abc import ABCMeta, abstractmethod
 from collections import Counter
@@ -65,7 +66,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, cache=10):
+                 ncpu=1, cache=30):
         super(Feeder, self).__init__()
         if not os.path.isfile(indices):
             raise ValueError('indices must path to indices.csv file')
@@ -85,6 +86,9 @@ class Feeder(MutableData):
         self._seed = None
         self._start = 0.
         self._end = 1.
+        # ====== manage all iteration ====== #
+        self._n_iter = 0
+        self._stop_all = False
         # ====== transcription ====== #
         # manager = Manager()
         share_dict = None
@@ -99,14 +103,24 @@ class Feeder(MutableData):
         _transcription = share_dict
 
     def set_recipe(self, *recipes):
+        if len(inspect.getargspec(recipes[0].map).args) != 4:
+            raise Exception('The first recipe of the feeders must '
+                            'map(name, x, transcription).')
         self.recipe = FeederList(*recipes)
         return self
 
+    def stop_all(self):
+        """ Call this method to stop all processes in case you
+        spamming to many iteration
+        """
+        self._stop_all = self._n_iter
+
     # ==================== Strings ==================== #
-    def _prepare_iter(self, batch_size, cache, ntasks, jobs):
+    def _prepare_iter(self, batch_size, cache, ntasks, jobs, seed):
         results = Queue()
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
+        self.recipe.init(ntasks, batch_size, seed)
 
         # data, jobs, map_function, results
         def work_multi(d, j, f, r):
@@ -118,29 +132,40 @@ class Feeder(MutableData):
                 if transcription is not None:
                     trans = transcription[name]
                 r.put(f(name, x, trans))
+        yield None # stop here wait for main iterator start
         processes = [Process(target=work_multi,
                              args=(self._data, j, map_func, results))
                      for i, j in enumerate(jobs)]
-        yield None # stop here wait for main iterator start
         # start the workers
         [p.start() for p in processes]
         # return the results
         batch = []
+        exit_on_stop = False
         for i in range(ntasks):
+            # stop all iterations signal
+            if self._stop_all:
+                self._stop_all -= 1
+                exit_on_stop = True
+                break
+            # storing batch and return when cache is full
             batch.append(results.get())
-            print('Done:', i)
+            # print(batch[-1][0], batch[-1][1].shape, batch[-1][-1].shape)
             if len(batch) == cache:
-                # for i in _batch(batch, reduce_func, batch_size):
-                #     yield i
+                for b in reduce_func(batch):
+                    yield b
                 batch = []
         # end the worker
-        [p.join() for p in processes]
+        if not exit_on_stop:
+            [p.join() for p in processes]
+        else:
+            [p.terminate() for p in processes if p.is_alive()]
         results.close()
         # return last batch
         if len(batch) > 0:
-            pass
-            # for i in _batch(batch, reduce_func, batch_size):
-            # yield i
+            for b in reduce_func(batch):
+                yield b
+        # Finish 1 iteration
+        self._n_iter -= 1
 
     def __iter__(self):
         # ====== check ====== #
@@ -151,17 +176,23 @@ class Feeder(MutableData):
         start = _apply_approx(n, self._start)
         end = _apply_approx(n, self._end)
         indices = self._indices[start:end]
+        # ====== shuffle the indices ====== #
+        seed = None
         if self._seed is not None:
             np.random.seed(self._seed)
             indices = indices[np.random.permutation(indices.shape[0])]
+            seed = np.random.randint(10e8) # seed for the iteration
+            # reset the seed
             self._seed = None
         indices = [(i, int(s), int(e)) for i, s, e in indices]
 
         it = self._prepare_iter(self._batch_size,
                                 self._cache,
                                 len(indices),
-                                segment_list(indices, n_seg=self.ncpu))
+                                segment_list(indices, n_seg=self.ncpu),
+                                seed)
         it.next() # just for initlaize the iterator
+        self._n_iter += 1
         return it
 
 
@@ -180,6 +211,9 @@ class FeederRecipe(object):
     will be replicated to all processes
     """
 
+    def init(self, ntasks, batch_size, seed):
+        pass
+
     @abstractmethod
     def map(self, *args):
         pass
@@ -196,6 +230,10 @@ class FeederList(FeederRecipe):
         self.recipes = recipes
         if len(recipes) == 0:
             raise Exception('FeederList must contains >= 1 recipe(s).')
+
+    def init(self, ntasks, batch_size, seed):
+        for i in self.recipes:
+            i.init(ntasks, batch_size, seed)
 
     def map(self, *args):
         for f in self.recipes:
@@ -242,107 +280,140 @@ class Stacking(FeederRecipe):
         else amount of frames will be shifted
     """
 
-    def __init__(self, left_context=10, right_context=10, shift=None):
+    def __init__(self, left_context=10, right_context=10, shift=None,
+                 stack_transcription=True):
         super(Stacking, self).__init__()
         self.left_context = left_context
         self.right_context = right_context
         self.n = int(left_context) + 1 + int(right_context)
         self.shift = self.n if shift is None else int(shift)
+        self.stack_transcription = stack_transcription
 
-    def map(self, x):
+    def map(self, name, x, transcription):
         idx = list(range(0, x.shape[0], self.shift))
         x = np.vstack([x[i:i + self.n].reshape(1, -1)
                        for i in idx if (i + self.n) < x.shape[0]])
-        return x
+        # ====== stacking the transcription ====== #
+        if transcription is not None and self.stack_transcription:
+            if isinstance(transcription, str):
+                transcription = [i for i in transcription.split(' ')
+                                 if len(i) > 0]
+            if isinstance(transcription, (tuple, list, np.ndarray)):
+                idx = list(range(0, len(transcription), self.shift))
+                # only take the middle label
+                transcription = np.asarray(
+                    [transcription[i + self.left_context + 1]
+                     for i in idx if (i + self.n) < len(transcription)])
+        return name, x, transcription
 
     def reduce(self, x):
         # label, and data
-        if isinstance(x[0][1], (list, tuple)):
-            _ = []
-            for i, j in x: # data, name
-                l = len(j)
-                idx = list(range(0, l, self.shift))
-                j = [j[t + self.left_context + 1]
-                     for t in idx if (t + self.n) < l]
-                _.append((i, j))
-            x = _
         return x
 
 
 class Sequencing(FeederRecipe):
-    """ Sequencing
+    """Generate a new array that chops the given array along the given axis
+    into overlapping frames.
+
+    This method has been implemented by Anne Archibald,
+    as part of the talk box toolkit
+    example::
+
+        segment_axis(arange(10), 4, 2)
+        array([[0, 1, 2, 3],
+           ( [2, 3, 4, 5],
+             [4, 5, 6, 7],
+             [6, 7, 8, 9]])
+
     Parameters
     ----------
-    vote: None, max, set, int
-        if None, a sequence of label for each data point is kept.
-        if max, the label with maximum occurences will be choosed
-        if int, return a number of the last labels
-        if set, return lable as ordered set
+    a: the array to segment
+    length: the length of each frame
+    overlap: the number of array elements by which the frames should overlap
+    axis: the axis to operate on; if None, act on the flattened array
+    end: what to do with the last frame, if the array is not evenly
+            divisible into pieces. Options are:
+            - 'cut'   Simply discard the extra values
+            - 'wrap'  Copy values from the beginning of the array
+            - 'pad'   Pad with a constant value
+    endvalue: the value to use for end='pad'
+
+    Return
+    ------
+    a ndarray
+
+    The array is not copied unless necessary (either because it is unevenly
+    strided and being flattened or because end is set to 'pad' or 'wrap').
+
     """
+    @staticmethod
+    def most_common(x):
+        return Counter(x).most_common()[0][0]
 
     def __init__(self, frame_length=256, hop_length=128,
-                 end='cut', endvalue=0, vote=None):
+                 end='cut', endvalue=0.,
+                 transcription_transform=lambda x: x):
         super(Sequencing, self).__init__()
         self.frame_length = frame_length
         self.hop_length = hop_length
         self.end = end
         self.endvalue = endvalue
-        self.vote = vote
+        self.transcription_transform = transcription_transform
 
-    def map(self, x):
-        return segment_axis(x, self.frame_length, self.hop_length,
-                            0, self.end, self.endvalue)
+    def map(self, name, x, transcription):
+        x = segment_axis(x, self.frame_length, self.hop_length,
+                         axis=0, end=self.end, endvalue=self.endvalue)
+        # ====== transforming the transcription ====== #
+        if self.transcription_transform is not None and transcription is not None:
+            if isinstance(transcription, str):
+                transcription = [i for i in transcription.split(' ')
+                                 if len(i) > 0]
+            transcription = segment_axis(np.asarray(transcription),
+                                         self.frame_length, self.hop_length,
+                                         axis=0, end=self.end,
+                                         endvalue=self.endvalue)
+            transcription = np.asarray([self.transcription_transform(i)
+                                        for i in transcription])
+
+        return name, x, transcription
 
     def reduce(self, x):
-        # label, and data
-        if isinstance(x[0][1], (list, tuple)):
-            _ = []
-            for x, y in x:
-                y = segment_axis(np.asarray(y),
-                                 self.frame_length, self.hop_length,
-                                 0, self.end, self.endvalue)
-                if self.vote == 'max':
-                    y = np.asarray([Counter(i).most_common()[0][0] for i in y])
-                elif self.vote == 'set':
-                    raise NotImplementedError()
-                    tmp = []
-                    for i in y:
-                        i = ordered_set(i)
-                        if len(i) < self.frame_length:
-                            i = [0]
-                    tmp.append(i)
-                    y = tmp
-                elif isinstance(self.vote, int):
-                    y = np.asarray([i[-self.vote:] for i in y])
-                _.append((x, y))
-            x = _
         return x
 
 
 class CreateBatch(object):
     """ Batching """
 
-    def __init__(self, seed=None):
+    def __init__(self):
         super(CreateBatch, self).__init__()
-        if seed is not None:
-            rng = np.random.RandomState(seed)
+        self.rng = None
+        self.batch_size = 256
+
+    def init(self, ntasks, batch_size, seed):
+        if seed is None:
+            self.rng = None
         else:
-            rng = None
-        self.rng = rng
+            self.rng = np.random.RandomState(seed=seed)
+        self.batch_size = batch_size
 
-    def map(self, x):
-        return x
+    def map(self, *arg):
+        return arg
 
-    def reduce(self, x):
-        label = []
-        data = []
-        for i, j in x:
-            data.append(i)
-            label.append(j)
-        label = np.concatenate(label, axis=0)
-        data = np.vstack(data)
+    def reduce(self, batch):
+        X = []
+        Y = []
+        for name, x, y in batch:
+            X.append(x)
+            Y.append(y)
+        X = np.vstack(X)
+        Y = (np.concatenate(Y, axis=0) if isinstance(Y[0], np.ndarray)
+             else np.asarray(Y))
         if self.rng is not None:
-            idx = self.rng.permutation(len(label))
-            data = data[idx]
-            label = label[idx]
-        return data, label
+            idx = self.rng.permutation(X.shape[0])
+            X = X[idx]
+            if X.shape[0] == Y.shape[0]:
+                Y = Y[idx]
+        # ====== create batch ====== #
+        for i in range((X.shape[0] - 1) // self.batch_size + 1):
+            yield (X[i * self.batch_size:(i + 1) * self.batch_size],
+                   Y[i * self.batch_size:(i + 1) * self.batch_size])
