@@ -760,6 +760,8 @@ class Sequence(NNOps):
     def __init__(self, ops, strict_transpose=False, **kwargs):
         super(Sequence, self).__init__(**kwargs)
         self.ops = []
+        if hasattr(strict_transpose, '__call__'):
+            raise Exception('You made a funny mistake, ops must be list.')
         if not isinstance(ops, (tuple, list)):
             ops = [ops]
         for i in ops:

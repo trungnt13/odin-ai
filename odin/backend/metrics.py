@@ -1,49 +1,25 @@
+# ===========================================================================
+# This module contains non-differentiable cost for monitor
+# ===========================================================================
 from __future__ import print_function, division, absolute_import
-
-import cPickle
-from abc import ABCMeta, abstractmethod
-from six import add_metaclass
 
 import numpy as np
 
-from odin.config import auto_config, RNG_GENERATOR
-from odin.roles import add_role
-from odin.annotations import add_annotation
+from odin import backend as K
 
-config = auto_config()
-FLOATX = config.floatX
-
-if config['backend'] == 'theano':
-    from .theano import *
-elif config['backend'] == 'tensorflow':
-    from .tensorflow import *
-
-from . import init
-
-
-def pickling_variable(v, target=None):
-    """ This function only apply for trainable parameters
-    """
-    if isinstance(v, str):
-        value, dtype, name, roles = cPickle.loads(v)
-        v = variable(value, dtype=dtype, name=name, target=target)
-        for i in roles:
-            add_role(v, i)
-        return v
-    elif is_trainable_variable(v):
-        obj = [get_value(v, borrow=False), v.dtype, v.name,
-               getattr(v.tag, 'roles', [])]
-        # cannot pickle annotations, because annotation is
-        # function object with parameters per se
-        # getattr(v.tag, 'annotations', [])
-        return cPickle.dumps(obj, protocol=cPickle.HIGHEST_PROTOCOL)
-    else:
-        raise Exception('Variable must be in string form or trainable variable'
-                        ' (i.e. SharedVariable in theano)')
+__all__ = [
+    'LevenshteinDistance',
+    'LER',
+    'Cavg_fast',
+    'Cavg',
+    'categorical_accuracy',
+    'mean_categorical_accuracy',
+    'binary_accuracy'
+]
 
 
 # ===========================================================================
-# Metrics
+# Main metrics
 # ===========================================================================
 def LevenshteinDistance(s1, s2):
     ''' Implementation of the wikipedia algorithm, optimized for memory
@@ -96,56 +72,66 @@ def LER(y_true, y_pred, return_mean=True):
     return results
 
 
+# ===========================================================================
+# Not differentiable
+# ===========================================================================
 def binary_accuracy(y_pred, y_true, threshold=0.5):
     """ Non-differentiable """
-    y_pred = ge(y_pred, threshold)
-    return eq(cast(y_pred, 'int32'),
-              cast(y_true, 'int32'))
+    y_pred = K.ge(y_pred, threshold)
+    return K.eq(K.cast(y_pred, 'int32'),
+                K.cast(y_true, 'int32'))
 
 
 def categorical_accuracy(y_pred, y_true, top_k=1):
     """ Non-differentiable """
-    if ndim(y_true) == ndim(y_pred):
-        y_true = argmax(y_true, axis=-1)
-    elif ndim(y_true) != ndim(y_pred) - 1:
+    if K.ndim(y_true) == K.ndim(y_pred):
+        y_true = K.argmax(y_true, axis=-1)
+    elif K.ndim(y_true) != K.ndim(y_pred) - 1:
         raise TypeError('rank mismatch between y_true and y_pred')
 
     if top_k == 1:
         # standard categorical accuracy
-        top = argmax(y_pred, axis=-1)
-        return eq(top, y_true)
+        top = K.argmax(y_pred, axis=-1)
+        return K.eq(top, y_true)
     else:
         # top-k accuracy
-        top = argtop_k(y_pred, top_k)
-        y_true = expand_dims(y_true, dim=-1)
-        return any(eq(top, y_true), axis=-1)
+        top = K.argtop_k(y_pred, top_k)
+        y_true = K.expand_dims(y_true, dim=-1)
+        return K.any(K.eq(top, y_true), axis=-1)
 
 
-def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
+def mean_categorical_accuracy(y_pred, y_true, top_k=1):
+    return K.mean(categorical_accuracy(y_pred, y_true, top_k))
+
+
+def Cavg_fast(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
     ''' Fast calculation of Cavg (for only 1 clusters) '''
     thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
     n = y_llr.shape[1]
 
     if isinstance(y_true, (list, tuple)):
         y_true = np.asarray(y_true)
-    if ndim(y_true) == 1:
-        y_true = one_hot(y_true, n)
+    if K.ndim(y_true) == 1:
+        y_true = K.one_hot(y_true, n)
 
-    y_false = switch(y_true, 0, 1) # invert of y_true, False Negative mask
-    y_positive = switch(ge(y_llr, thresh), 1, 0)
-    y_negative = switch(lt(y_llr, thresh), 1, 0) # inver of y_positive
-    distribution = clip(sum(y_true, axis=0), 10e-8, 10e8) # no zero values
+    y_false = K.switch(y_true, 0, 1) # invert of y_true, False Negative mask
+    y_positive = K.switch(K.ge(y_llr, thresh), 1, 0)
+    y_negative = K.switch(K.lt(y_llr, thresh), 1, 0) # inver of y_positive
+    distribution = K.clip(K.sum(y_true, axis=0), 10e-8, 10e8) # no zero values
     # ====== Pmiss ====== #
-    miss = sum(y_true * y_negative, axis=0)
+    miss = K.sum(y_true * y_negative, axis=0)
     Pmiss = 100 * (Cmiss * Ptar * miss) / distribution
     # ====== Pfa ====== # This calculation give different results
-    fa = sum(y_false * y_positive, axis=0)
+    fa = K.sum(y_false * y_positive, axis=0)
     Pfa = 100 * (Cfa * (1 - Ptar) * fa) / distribution
-    Cavg = mean(Pmiss) + mean(Pfa) / (n - 1)
+    Cavg = K.mean(Pmiss) + K.mean(Pfa) / (n - 1)
     return Cavg
 
 
-def Cavg_cpu(log_llh, y, cluster_idx=None,
+# ===========================================================================
+# Cavg
+# ===========================================================================
+def Cavg(log_llh, y, cluster_idx=None,
          Ptar=0.5, Cfa=1, Cmiss=1):
     """Compute cluster-wise and total LRE'15 percentage costs.
 

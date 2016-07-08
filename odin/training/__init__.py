@@ -39,14 +39,11 @@ class Task(object):
         self._epoch = epoch
         self._p = np.clip(p, 0., 1.)
 
-        self._batch_size = batch_size
+        self.set_batchsize(batch_size)
         self.set_seed(seed)
 
         self._preprocess = preprocess if hasattr(preprocess, '__call__') else lambda x: x
 
-        self._iter_per_epoch = int(np.ceil(
-            min([len(i) for i in data]) / self._batch_size
-        ))
         self._name = name
 
     @property
@@ -56,6 +53,13 @@ class Task(object):
     @property
     def epoch(self):
         return self._epoch
+
+    def set_batchsize(self, batch_size):
+        self._batch_size = batch_size
+        self._iter_per_epoch = int(np.ceil(
+            min([len(i) for i in self._data]) / self._batch_size
+        ))
+        return self
 
     def set_seed(self, seed):
         if seed is not None:
@@ -91,10 +95,18 @@ class Task(object):
         while _ < self._epoch:
             _ += 1
             seed = self._rng.randint(10e8)
-            data = zip(*[iter(i.set_batch(batch_size=self._batch_size, seed=seed))
-                         for i in self._data])
+            # if only 1 Data, don't need zip or we will mess up
+            if len(self._data) == 1:
+                data = iter(self._data[0].set_batch(
+                    batch_size=self._batch_size, seed=seed))
+            else:
+                data = zip(*[iter(i.set_batch(batch_size=self._batch_size, seed=seed))
+                             for i in self._data])
             yield 'start_epoch'
+            # ======  start the iteration ====== #
+            niter_per_epoch = 0 # number of iteration for 1 epoch
             for i, x in enumerate(data):
+                niter_per_epoch += 1
                 x = self._preprocess(x)
                 if not isinstance(x, (tuple, list)):
                     x = [x]
@@ -104,7 +116,11 @@ class Task(object):
                 else:
                     results = None
                 yield (results, n_iter, _)
-            # end_epoch or task
+            # ====== check if we got the right number for epoch iter ====== #
+            if niter_per_epoch != self._iter_per_epoch:
+                # just for sure should not smaller than the real number
+                self._iter_per_epoch = niter_per_epoch
+            # ======  end_epoch or task ====== #
             if _ >= self._epoch:
                 yield 'end_task'
             else:
@@ -118,18 +134,14 @@ class MainLoop(object):
 
     """ MainLoop """
 
-    def __init__(self, batch_size=256, dataset=None, shuffle=True):
+    def __init__(self, batch_size=256, dataset=None, seed=None):
         super(MainLoop, self).__init__()
-        self._batch_size = batch_size
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
 
-        if shuffle:
-            self._rng = np.random.RandomState(RNG_GENERATOR.randint(10e8))
-        else:
-            self._rng = struct()
-            self._rng.randint = lambda *args, **kwargs: None
+        self.set_batchsize(batch_size)
+        self.set_seed(seed)
 
         if isinstance(dataset, str):
             dataset = Dataset(dataset)
@@ -143,7 +155,7 @@ class MainLoop(object):
 
     # ==================== pickling ==================== #
     def __setstate__(self, value):
-        self._batch_size = value[0]
+        self.set_batchsize(value[0])
         self._rng = value[1]
         if isinstance(value[2], str):
             self._dataset = Dataset(value[3])
@@ -174,9 +186,31 @@ class MainLoop(object):
     def batch_size(self):
         return self._batch_size
 
-    @property
-    def shuffle(self):
-        return isinstance(self._rng, np.random.RandomState)
+    def set_batchsize(self, batch_size):
+        self._batch_size = batch_size
+
+        if self._task is not None:
+            self._task.set_batchsize(batch_size)
+        for i in self._subtask.itervalues():
+            i.set_batchsize(batch_size)
+        for i in self._crosstask.itervalues():
+            i.set_batchsize(batch_size)
+        return self
+
+    def set_seed(self, seed):
+        if seed is not None:
+            self._rng = np.random.RandomState(seed)
+        else:
+            self._rng = struct()
+            self._rng.randint = lambda *args, **kwargs: None
+
+        if self._task is not None:
+            self._task.set_seed(seed)
+        for i in self._subtask.itervalues():
+            i.set_seed(seed)
+        for i in self._crosstask.itervalues():
+            i.set_seed(seed)
+        return self
 
     @property
     def callback(self):
@@ -185,10 +219,8 @@ class MainLoop(object):
     def __str__(self):
         return 'Task'
 
-    def add_callback(self, *callback):
-        for i in callback:
-            if isinstance(i, Callback):
-                self._callback.add_callback(i)
+    def set_callback(self, *callback):
+        self._callback = CallbackList(*callback)
         return self
 
     # ==================== main ==================== #
@@ -281,7 +313,7 @@ class MainLoop(object):
             # ====== Main task ====== #
             callback.mode = 'task' # dirty hack
             callback.reset(); callback.task = self._task
-            if isinstance(i, str): # start_epoch, end_epoch or end_task
+            if isinstance(i, str): # signal: start_epoch, end_epoch or end_task
                 if i == 'start_task':
                     callback.task_start()
                 elif i == 'start_epoch':
@@ -294,7 +326,7 @@ class MainLoop(object):
                         callback.results = task_results
                         callback.task_end()
                         break # end everything
-            else:
+            else: # results
                 results, niter, nepoch = i
                 epoch_results.append(results)
                 task_results.append(results)

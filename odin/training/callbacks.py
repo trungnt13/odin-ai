@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import division, absolute_import, print_function
 
+import sys
 import time
 import timeit
 from datetime import datetime
@@ -49,7 +50,11 @@ class Callback(object):
     """Callback
     Properties
     ----------
-    task
+    task: current task
+    results: return results
+    iter: current number of iteration
+    epoch: current number of epoch
+    mode: 'task', 'subtask', 'crosstask'
 
     Note
     ----
@@ -442,12 +447,17 @@ class EarlyStopPatience(EarlyStop):
 class ProgressMonitor(Callback):
 
     '''
+    Parameters
+    ----------
+    title : str
+        pattern to serialize return from function to string
+
     Example
     -------
     >>> t = training.Task(dataset=ds, batch_size=512)
     >>> t.set_callback(training.ProgressMonitor(title='Result: %.2f'))
     >>> t.run()
-        # Result: 52751.29 98/98 [=======================================] - 0s
+    # Result: 52751.29 98/98 [=======================================] - 0s
     '''
 
     def __init__(self, title=''):
@@ -479,11 +489,11 @@ class ProgressMonitor(Callback):
         self._prog.title = '%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
         iter_per_epoch = self.task.iter_per_epoch
         n = round(((self.iter % iter_per_epoch) / iter_per_epoch) * 100)
-        self._prog.update(int(n))
+        self._prog.update(min(int(n), 99))
 
-    def task_end(self):
-        if self._mode == 'task': # main task ended
-            self._prog.update(100)
+    def epoch_end(self):
+        # always 100% at the end of epoch
+        self._prog.update(100)
 
 
 class History(Callback):

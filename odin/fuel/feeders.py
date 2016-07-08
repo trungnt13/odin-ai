@@ -26,6 +26,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import inspect
+import math
 from itertools import chain
 from abc import ABCMeta, abstractmethod
 from collections import Counter
@@ -35,8 +36,8 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin.utils import segment_list, ordered_set, struct
-from odin.utils import segment_axis
+from odin.utils import segment_list, ordered_set, struct, segment_axis
+from odin.utils.np_utils import one_hot
 
 from .data import Data, MutableData
 
@@ -143,6 +144,17 @@ class Feeder(MutableData):
         spamming to many iteration
         """
         self._stop_all = self._n_iter
+
+    @property
+    def shape(self):
+        """ This is just an estimation, some data points might be lost
+        during preprocessing each indices by recipes.
+        """
+        s = super(Feeder, self).shape
+        if self.recipe is not None:
+            return self.recipe.shape_transform(s)
+        else:
+            return s
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, cache, ntasks, jobs, seed):
@@ -252,13 +264,14 @@ class FeederRecipe(object):
     def init(self, ntasks, batch_size, seed):
         pass
 
-    @abstractmethod
     def map(self, *args):
-        pass
+        return args
 
-    @abstractmethod
     def reduce(self, x):
-        pass
+        return x
+
+    def shape_transform(self, shape):
+        return shape
 
 
 class FeederList(FeederRecipe):
@@ -284,6 +297,12 @@ class FeederList(FeederRecipe):
             x = f.reduce(x)
         return x
 
+    def shape_transform(self, shape):
+        """ Return the new shape that transformed by this Recipe """
+        for i in self.recipes:
+            shape = i.shape_transform(shape)
+        return shape
+
 
 class Normalization(FeederRecipe):
     """ Normalization """
@@ -300,9 +319,6 @@ class Normalization(FeederRecipe):
         if self.mean is not None and self.std is not None:
             x = (x - self.mean) / self.std
         return name, x, transcription
-
-    def reduce(self, x):
-        return x
 
 
 class Stacking(FeederRecipe):
@@ -344,9 +360,12 @@ class Stacking(FeederRecipe):
                      for i in idx if (i + self.n) < len(transcription)])
         return name, x, transcription
 
-    def reduce(self, x):
-        # label, and data
-        return x
+    def shape_transform(self, shape):
+        if len(shape) > 2:
+            raise Exception('Stacking only support 2D array.')
+        n_features = shape[-1] * self.n if len(shape) == 2 else self.n
+        n = (shape[0] // self.n)
+        return (n, n_features)
 
 
 class Sequencing(FeederRecipe):
@@ -390,7 +409,7 @@ class Sequencing(FeederRecipe):
 
     def __init__(self, frame_length=256, hop_length=128,
                  end='cut', endvalue=0.,
-                 transcription_transform=lambda x: x):
+                 transcription_transform=lambda x: Counter(x).most_common()[0][0]):
         super(Sequencing, self).__init__()
         self.frame_length = frame_length
         self.hop_length = hop_length
@@ -415,11 +434,33 @@ class Sequencing(FeederRecipe):
 
         return name, x, transcription
 
-    def reduce(self, x):
-        return x
+    def shape_transform(self, shape):
+        n_features = shape[-1] if len(shape) >= 2 else 1
+        n = (shape[0] - self.frame_length) / self.hop_length
+        if self.end == 'cut':
+            n = int(math.floor(n))
+        else:
+            n = int(math.ceil(n))
+        mid_shape = shape[1:-1]
+        return (n, self.frame_length,) + mid_shape + (n_features,)
 
 
-class CreateBatch(object):
+class OneHotTrans(FeederRecipe):
+
+    def __init__(self, n_classes):
+        super(OneHotTrans, self).__init__()
+        self._n_classes = int(n_classes)
+
+    def map(self, name, x, transcription):
+        if isinstance(transcription, str):
+            transcription = [i for i in transcription.split(' ')
+                             if len(i) > 0]
+        transcription = [int(i) for i in transcription]
+        transcription = one_hot(transcription, n_classes=self._n_classes)
+        return name, x, transcription
+
+
+class CreateBatch(FeederRecipe):
     """ Batching """
 
     def __init__(self):
@@ -433,9 +474,6 @@ class CreateBatch(object):
         else:
             self.rng = np.random.RandomState(seed=seed)
         self.batch_size = batch_size
-
-    def map(self, *arg):
-        return arg
 
     def reduce(self, batch):
         X = []

@@ -11,10 +11,6 @@ import math
 import numpy as np
 import scipy as sp
 
-from odin import RNG_GENERATOR
-from odin import autoconfig
-FLOAT_X = autoconfig.floatX
-
 
 # ===========================================================================
 # Main
