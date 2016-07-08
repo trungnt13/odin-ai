@@ -5,7 +5,14 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from odin import backend as K
+from odin.config import autoconfig
+
+if autoconfig['backend'] == 'theano':
+    from .theano import (ge, eq, lt, cast, ndim, argmax, any,
+                         argtop_k, expand_dims, mean, one_hot,
+                         clip, switch, sum)
+elif autoconfig['backend'] == 'tensorflow':
+    from .tensorflow import (ge, eq, cast)
 
 __all__ = [
     'LevenshteinDistance',
@@ -77,31 +84,31 @@ def LER(y_true, y_pred, return_mean=True):
 # ===========================================================================
 def binary_accuracy(y_pred, y_true, threshold=0.5):
     """ Non-differentiable """
-    y_pred = K.ge(y_pred, threshold)
-    return K.eq(K.cast(y_pred, 'int32'),
-                K.cast(y_true, 'int32'))
+    y_pred = ge(y_pred, threshold)
+    return eq(cast(y_pred, 'int32'),
+              cast(y_true, 'int32'))
 
 
 def categorical_accuracy(y_pred, y_true, top_k=1):
     """ Non-differentiable """
-    if K.ndim(y_true) == K.ndim(y_pred):
-        y_true = K.argmax(y_true, axis=-1)
-    elif K.ndim(y_true) != K.ndim(y_pred) - 1:
+    if ndim(y_true) == ndim(y_pred):
+        y_true = argmax(y_true, axis=-1)
+    elif ndim(y_true) != ndim(y_pred) - 1:
         raise TypeError('rank mismatch between y_true and y_pred')
 
     if top_k == 1:
         # standard categorical accuracy
-        top = K.argmax(y_pred, axis=-1)
-        return K.eq(top, y_true)
+        top = argmax(y_pred, axis=-1)
+        return eq(top, y_true)
     else:
         # top-k accuracy
-        top = K.argtop_k(y_pred, top_k)
-        y_true = K.expand_dims(y_true, dim=-1)
-        return K.any(K.eq(top, y_true), axis=-1)
+        top = argtop_k(y_pred, top_k)
+        y_true = expand_dims(y_true, dim=-1)
+        return any(eq(top, y_true), axis=-1)
 
 
 def mean_categorical_accuracy(y_pred, y_true, top_k=1):
-    return K.mean(categorical_accuracy(y_pred, y_true, top_k))
+    return mean(categorical_accuracy(y_pred, y_true, top_k))
 
 
 def Cavg_fast(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
@@ -111,20 +118,20 @@ def Cavg_fast(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
 
     if isinstance(y_true, (list, tuple)):
         y_true = np.asarray(y_true)
-    if K.ndim(y_true) == 1:
-        y_true = K.one_hot(y_true, n)
+    if ndim(y_true) == 1:
+        y_true = one_hot(y_true, n)
 
-    y_false = K.switch(y_true, 0, 1) # invert of y_true, False Negative mask
-    y_positive = K.switch(K.ge(y_llr, thresh), 1, 0)
-    y_negative = K.switch(K.lt(y_llr, thresh), 1, 0) # inver of y_positive
-    distribution = K.clip(K.sum(y_true, axis=0), 10e-8, 10e8) # no zero values
+    y_false = switch(y_true, 0, 1) # invert of y_true, False Negative mask
+    y_positive = switch(ge(y_llr, thresh), 1, 0)
+    y_negative = switch(lt(y_llr, thresh), 1, 0) # inver of y_positive
+    distribution = clip(sum(y_true, axis=0), 10e-8, 10e8) # no zero values
     # ====== Pmiss ====== #
-    miss = K.sum(y_true * y_negative, axis=0)
+    miss = sum(y_true * y_negative, axis=0)
     Pmiss = 100 * (Cmiss * Ptar * miss) / distribution
     # ====== Pfa ====== # This calculation give different results
-    fa = K.sum(y_false * y_positive, axis=0)
+    fa = sum(y_false * y_positive, axis=0)
     Pfa = 100 * (Cfa * (1 - Ptar) * fa) / distribution
-    Cavg = K.mean(Pmiss) + K.mean(Pfa) / (n - 1)
+    Cavg = mean(Pmiss) + mean(Pfa) / (n - 1)
     return Cavg
 
 

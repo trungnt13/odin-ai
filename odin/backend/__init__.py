@@ -19,6 +19,8 @@ elif config['backend'] == 'tensorflow':
     from .tensorflow import *
 
 from . import init
+from . import metrics
+from . import optimizers
 
 
 def pickling_variable(v, target=None):

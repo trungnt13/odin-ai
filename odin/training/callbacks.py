@@ -486,7 +486,7 @@ class ProgressMonitor(Callback):
             title = self._title % self.results
         else:
             title = self._title
-        self._prog.title = '%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
+        self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
         iter_per_epoch = self.task.iter_per_epoch
         n = round(((self.iter % iter_per_epoch) / iter_per_epoch) * 100)
         self._prog.update(min(int(n), 99))
