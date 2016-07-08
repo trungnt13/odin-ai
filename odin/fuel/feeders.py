@@ -1,3 +1,27 @@
+"""
+MIT License
+===========
+
+Copyright (c) 2012 TrungNT (email: [name]@imito.ai)
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+"""
 from __future__ import print_function, division, absolute_import
 
 import os
@@ -38,10 +62,13 @@ def _batch(b, rf, size):
 class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
-        |           |               |
+        |          |     |          |
          ------- Map Function ------
-         \          |     |        /
-           --- Reduce Function ---
+        |          |     |          |
+         ----- Reduce Function -----
+         \            |            /
+           ---- Return batches ---
+
     This feeder return a non-deterministic order of data, hence,
     cannot be reproducible
 
@@ -63,10 +90,12 @@ class Feeder(MutableData):
     Note
     ----
     set(ncpu=1) if you want a reproducible results
+    * Memory transferring in Queue is always the bottleneck of multiprocessing
+
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, cache=30):
+                 ncpu=1, cache=12):
         super(Feeder, self).__init__()
         if not os.path.isfile(indices):
             raise ValueError('indices must path to indices.csv file')
@@ -123,47 +152,56 @@ class Feeder(MutableData):
         self.recipe.init(ntasks, batch_size, seed)
 
         # data, jobs, map_function, results
-        def work_multi(d, j, f, r):
+        def work_multi(d, j, map, reduce, res, cache_size):
             # transcription is shared global variable
             transcription = _transcription
+            batch = []
             for name, start, end in j:
                 x = d[start:end]
                 trans = None
                 if transcription is not None:
                     trans = transcription[name]
-                r.put(f(name, x, trans))
+                # map tasks
+                batch.append(map(name, x, trans))
+                # reduce tasks
+                if len(batch) == cache:
+                    for b in reduce(batch):
+                        res.put(b)
+                    batch = []
+            # return final batch
+            if len(batch) > 0:
+                for b in reduce(batch):
+                    res.put(b)
+            # ending signal
+            res.put(None)
         yield None # stop here wait for main iterator start
         processes = [Process(target=work_multi,
-                             args=(self._data, j, map_func, results))
+                             args=(self._data, j, map_func, reduce_func,
+                                   results, cache))
                      for i, j in enumerate(jobs)]
         # start the workers
         [p.start() for p in processes]
         # return the results
-        batch = []
         exit_on_stop = False
-        for i in range(ntasks):
+        working_processes = len(processes)
+        while working_processes > 0:
             # stop all iterations signal
             if self._stop_all:
                 self._stop_all -= 1
                 exit_on_stop = True
                 break
             # storing batch and return when cache is full
-            batch.append(results.get())
-            # print(batch[-1][0], batch[-1][1].shape, batch[-1][-1].shape)
-            if len(batch) == cache:
-                for b in reduce_func(batch):
-                    yield b
-                batch = []
+            batch = results.get()
+            if batch is None:
+                working_processes -= 1
+            else:
+                yield batch
         # end the worker
         if not exit_on_stop:
             [p.join() for p in processes]
         else:
             [p.terminate() for p in processes if p.is_alive()]
         results.close()
-        # return last batch
-        if len(batch) > 0:
-            for b in reduce_func(batch):
-                yield b
         # Finish 1 iteration
         self._n_iter -= 1
 
