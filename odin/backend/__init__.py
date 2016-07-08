@@ -145,7 +145,7 @@ def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
     return Cavg
 
 
-def Cavg_cpu(log_llh, y, cluster_idx=None,
+def Cavg_cpu(log_llh, y_true, cluster_idx=None,
          Ptar=0.5, Cfa=1, Cmiss=1):
     """Compute cluster-wise and total LRE'15 percentage costs.
 
@@ -182,7 +182,7 @@ def Cavg_cpu(log_llh, y, cluster_idx=None,
     if cluster_idx is None:
         cluster_idx = [list(range(0, log_llh.shape[-1]))]
     # ensure everything is numpy ndarray
-    y = np.asarray(y)
+    y_true = np.asarray(y_true)
     log_llh = np.asarray(log_llh)
 
     thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
@@ -193,13 +193,13 @@ def Cavg_cpu(log_llh, y, cluster_idx=None,
         fa = 0
         fr = 0
         for lang_i in cluster:
-            N = np.sum(y == lang_i) + .0 # number of samples for lang_i
+            N = np.sum(y_true == lang_i) + .0 # number of samples for lang_i
             for lang_j in cluster:
                 if lang_i == lang_j:
-                    err = np.sum(log_llh[y == lang_i, lang_i] < thresh) / N
+                    err = np.sum(log_llh[y_true == lang_i, lang_i] < thresh) / N
                     fr += err
                 else:
-                    err = np.sum(log_llh[y == lang_i, lang_j] >= thresh) / N
+                    err = np.sum(log_llh[y_true == lang_i, lang_j] >= thresh) / N
                     fa += err
 
         # Calculate procentage

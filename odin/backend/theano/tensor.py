@@ -105,6 +105,14 @@ def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
     return placeholder
 
 
+def constant(value, dtype=None, shape=None, name='Const'):
+    x = T.constant(value, dtype=dtype,
+                   ndim=None if shape is None else len(shape),
+                   name=name)
+    add_shape(x, eval(x.shape))
+    return x
+
+
 def eval(x):
     """Run a graph.
     """

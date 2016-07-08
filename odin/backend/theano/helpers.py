@@ -59,6 +59,8 @@ def _auto_infer_shape(ops, *var, **kwargs):
 
 def add_shape(var, shape):
     # do nothing if not Number of tuple, list
+    if isinstance(shape, np.ndarray):
+        shape = shape.tolist()
     if not isinstance(shape, numbers.Number) and \
     not isinstance(shape, (tuple, list)):
         return
