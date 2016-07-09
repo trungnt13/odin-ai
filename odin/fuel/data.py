@@ -5,6 +5,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import re
+import marshal
 from math import ceil
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
@@ -13,7 +14,7 @@ from six.moves import range, zip, zip_longest
 import numpy as np
 
 from odin.utils.decorators import autoattr, cache
-from odin.utils import queue, struct
+from odin.utils import queue, struct, as_tuple
 
 __all__ = [
     'data',
@@ -666,11 +667,9 @@ class MmapData(Data):
     """
 
     # name.float32.(8,12)
-    PATTERN = re.compile('([a-zA-Z0-9_-]*)' + '\.?'
-                         '([<a-zA-Z]*\d{1,2})?' + '\.?'
-                         '(\(\d+(,\d*)*\))?')
+    HEADER = 'mmapdata'
+    MAXIMUM_HEADER_SIZE = 486
     COUNT = 0
-
     SUPPORT_EXT = ['.mmap', '.memmap', '.mem']
 
     def __init__(self, path, dtype=None, shape=None):
@@ -681,52 +680,40 @@ class MmapData(Data):
 
         # validate path
         path = os.path.abspath(path)
-        name = os.path.basename(path)
-        path = os.path.dirname(path)
-        if name[0] == '.':
-            name = name[1:]
-
-        match = MmapData.PATTERN.match(name)
-        name = match.group(1)
-        dtype = dtype if match.group(2) is None else np.dtype(match.group(2))
-        shape = shape if match.group(3) is None else eval(match.group(3))
-        if shape is not None:
-            shape = tuple([1 if i is None else i for i in shape])
-        # ====== try to find relevant file if possible ====== #
-        mmap_path = None
-        mode = 'r+' # FIXED mode = r+
-        files = os.listdir(path)
-        for f in files:
-            match = self.PATTERN.match(f)
-            if match is not None:
-                _name, _dtype, _shape = match.group(1), match.group(2), match.group(3)
-                if _name is not None and _dtype is not None and _shape is not None:
-                    _dtype = np.dtype(_dtype)
-                    _shape = eval(_shape)
-                    if name == _name:
-                        if dtype is not None and _dtype != dtype:
-                            continue
-                        if shape is not None and shape[1:] != _shape[1:]:
-                            continue
-                        shape = _shape
-                        dtype = _dtype
-                        mmap_path = os.path.join(path,
-                                                 MmapData.info_to_name(name, shape, dtype))
-                        break
-        # ====== couldn't find anything, create new file ====== #
-        if mmap_path is None:
-            dtype = 'float32' if dtype is None else dtype
-            if shape is None:
-                raise ValueError('dtype and shape must be specified in write '
-                                 'mode, but shape={} and dtype={}'
-                                 ''.format(shape, dtype))
-            if shape[0] <= 0:
-                shape = (1,) + shape[1:]
-            mmap_path = os.path.join(path, MmapData.info_to_name(name, shape, dtype))
-            mode = 'w+'
+        mode = 'r+'
+        if os.path.exists(path):
+            f = open(path, 'r')
+            if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
+                raise Exception('Invalid header for MmapData.')
+            # 8 bytes for size of info
+            try:
+                size = int(f.read(8))
+                dtype, shape = marshal.loads(f.read(size))
+            except Exception, e:
+                raise Exception('Error reading memmap data file: %s' % str(e))
+            f.close()
+        else:
+            if dtype is None or shape is None:
+                raise Exception('dtype and shape must not be None.')
+            f = open(path, 'w')
+            f.write(MmapData.HEADER)
+            dtype = str(np.dtype(dtype))
+            if isinstance(shape, np.ndarray):
+                shape = shape.tolist()
+            if not isinstance(shape, (tuple, list)):
+                shape = (shape,)
+            _ = marshal.dumps([dtype, shape])
+            size = len(_)
+            if size > MmapData.MAXIMUM_HEADER_SIZE:
+                raise Exception('The size of header excess maximum allowed size '
+                                '(%d bytes).' % MmapData.MAXIMUM_HEADER_SIZE)
+            f.write('%8d' % size)
+            f.write(_)
+            f.close()
         # store variables
-        self._data = np.memmap(mmap_path, dtype=dtype, shape=shape, mode=mode)
-        self._name = name.split('.')[0]
+        offset = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
+        self._data = np.memmap(path, dtype=dtype, shape=shape, mode=mode,
+                               offset=offset)
         self._path = path
 
     def __del__(self):
@@ -735,32 +722,10 @@ class MmapData(Data):
             self._data._mmap.close()
             del self._data
 
-    @staticmethod
-    def name_to_info(name):
-        shape = eval(name.split('.')[1])
-        dtype = name.split('.')[2]
-        return shape, dtype
-
-    @staticmethod
-    def info_to_name(name, shape, dtype):
-        shape = [str(i) for i in shape]
-        dtype = str(np.dtype(dtype))
-        #(1000) will be understand as int (error)
-        # should be (1000,)
-        if len(shape) == 1:
-            shape.append('')
-        return '.'.join([name,
-                        str(dtype),
-                        '(' + ','.join([str(i) for i in shape]) + ')'])
-
     # ==================== properties ==================== #
     @property
     def path(self):
         return self._data.filename
-
-    @property
-    def name(self):
-        return self._name
 
     # ==================== High-level operator ==================== #
     @cache('_status')
@@ -891,18 +856,24 @@ class MmapData(Data):
                              '{} != {}'.format(shape[1:], mmap.shape[1:]))
         if shape[0] < mmap.shape[0]:
             raise ValueError('Only support extend memmap, and do not shrink the memory')
-        elif shape[0] == self._data.shape[0]:
+        elif shape[0] == self._data.shape[0]: # nothing to resize
             return self
         mmap.flush()
         # resize by create new memmap and also rename old file
         shape = (shape[0],) + tuple(mmap.shape[1:])
-        new_name = os.path.join(os.path.dirname(self.path),
-                                MmapData.info_to_name(self.name, shape, mmap.dtype))
-        os.rename(mmap.filename, new_name)
-        self._data = np.memmap(new_name,
-                               dtype=mmap.dtype,
-                               mode='r+',
-                               shape=shape)
+        dtype = str(mmap.dtype)
+        # rewrite the header
+        f = open(self._path, 'r+')
+        f.seek(len(MmapData.HEADER))
+        _ = marshal.dumps([dtype, shape])
+        size = len(_)
+        f.write('%8d' % size)
+        f.write(_)
+        f.flush(); f.close()
+        # extend the memmap
+        offset = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
+        self._data = np.memmap(self._path, dtype=dtype, mode='r+', shape=shape,
+                               offset=offset)
         return self
 
     def flush(self):
@@ -1488,15 +1459,6 @@ class DataMerge(MutableData):
             raise ValueError('Merge operator must be callable and accept at '
                              'least one argument.')
         self._merge_func = merge_func
-
-    # ==================== properties ==================== #
-    @property
-    def path(self):
-        return [d.path for d in self._data]
-
-    @property
-    def name(self):
-        return [d.name for d in self._data]
 
     # ==================== properties ==================== #
     @property
