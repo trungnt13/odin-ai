@@ -22,42 +22,35 @@ __all__ = [
 # dataset
 # ===========================================================================
 def _parse_data_descriptor(path, name):
+    """ Return mapping: path/name -> (dtype, shape, Data) """
     path = os.path.join(path, name)
     if not os.path.isfile(path):
         return None
 
-    mmap_match = MmapData.PATTERN.match(name)
-    # memmap files
-    if mmap_match is not None and \
-       len([i for i in mmap_match.groups() if i is not None]) == 4:
-        name, dtype, shape = mmap_match.group(1), mmap_match.group(2), mmap_match.group(3)
-        dtype = np.dtype(dtype)
-        shape = eval(shape)
+    try:
+        dtype, shape = MmapData.read_header(path)
         # shape[1:], because first dimension can be resize afterward
-        return [((name, dtype, shape[1:]), (shape[0], None))]
-    # hdf5 files
-    elif any(i in name for i in Hdf5Data.SUPPORT_EXT):
+        return [(os.path.basename(path), (dtype, shape, path))]
+    except: # cannot read the header of MmapData, maybe Hdf5
         try:
             f = open_hdf5(path)
             ds = get_all_hdf_dataset(f)
-            data = [Hdf5Data(i, f) for i in ds]
-            return [((i.name, i.dtype, i.shape[1:]), i) for i in data]
-        except Exception, e:
-            import traceback; traceback.print_exc()
-            raise ValueError('Error loading hdf5 data, error:{}, file:{} '
-                             ''.format(e, path))
+            data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
+            return [(str(i.name), (str(i.dtype), i.shape, i)) for i in data]
+        except:
+            pass
     return None
 
 
 @singleton
 class Dataset(object):
 
-    '''
+    """
     Note
     ----
     for developer: _data_map contains, key=(name, dtype shape); value=Data
 
-    '''
+    """
 
     def __init__(self, path):
         path = os.path.abspath(path)
@@ -71,29 +64,26 @@ class Dataset(object):
     def _set_path(self, path):
         # all files are opened with default_mode=r+
         self._data_map = OrderedDict()
+        self._path = os.path.abspath(path)
+        self._default_hdf5 = os.path.basename(self._path) + '_default.h5'
 
         if not os.path.exists(path):
             os.mkdir(path)
+            return # not thing to do more
         elif not os.path.isdir(path):
-            raise ValueError('Dataset path must be folder.')
+            raise ValueError('Dataset path must be a folder.')
 
+        # ====== load all Data ====== #
         files = os.listdir(path)
         for f in files:
             data = _parse_data_descriptor(path, f)
-            if data is None:
-                continue
+            if data is None: continue
             for key, d in data:
                 if key in self._data_map:
                     raise ValueError('Found duplicated data with follow info: '
                                      '{}'.format(key))
                 else:
                     self._data_map[key] = d
-
-        self._path = path
-        self._name = os.path.basename(path)
-        if len(self._name) == 1:
-            self._name = os.path.basename(os.path.abspath(path))
-        self._default_hdf5 = self.name + '_default.h5'
 
     # ==================== archive loading ==================== #
     def _load_archive(self, path, extract_path):
@@ -107,6 +97,7 @@ class Dataset(object):
                                  '={} is a file'.format(extract_path))
             extract_path = os.path.join(extract_path,
                                         os.path.basename(path).replace('.zip', ''))
+            # found the extracted dir, use it
             if os.path.isdir(extract_path) and \
                set(os.listdir(extract_path)) == set(allfile):
                 self._set_path(extract_path)
@@ -120,6 +111,7 @@ class Dataset(object):
                 zfile.extract(f, path=extract_path)
                 progbar.title = ('Unarchiving: %-' + str(maxlen) + 's') % f
                 progbar.update(i + 1)
+            # ====== finally set path ====== #
             self._set_path(extract_path)
         except IOError, e:
             raise IOError('Error loading archived dataset, path:{}, error:{}'
@@ -133,103 +125,72 @@ class Dataset(object):
 
     @property
     def archive_path(self):
-        return os.path.join(self._path, '..', self._name + '.zip')
-
-    @property
-    def name(self):
-        return self._name
+        """Return default archive path, which is:
+            ../[dataset_name].zip
+        """
+        name = os.path.basename(self._path)
+        return os.path.join(self._path, '..', name + '.zip')
 
     @property
     def size(self):
-        ''' return size in MegaByte'''
+        """ return size in MegaByte"""
         size_bytes = 0
-        for (name, dtype, shape), value in self._data_map.iteritems():
+        for name, (dtype, shape, data) in self._data_map.iteritems():
             size = np.dtype(dtype).itemsize
-            if hasattr(value, 'shape'):
-                shape = value.shape
-            else: # memmap descriptor
-                shape = (value[0],) + shape
+            shape = data.shape if hasattr(data, 'shape') else shape
             n = np.prod(shape)
             size_bytes += size * n
         return size_bytes / 1024. / 1024.
 
     def keys(self):
-        '''
+        """
         Return
         ------
-        (name, dtype, shape): tuple
-        '''
-        return [(name, dtype, value.shape) if hasattr(value, 'shape')
-                else (name, dtype, (value[0],) + shape)
-                for (name, dtype, shape), value in self._data_map.iteritems()]
+        name of all Data
+        """
+        return self._data_map.keys()
 
-    @property
-    def info(self):
-        '''
+    def values(self):
+        """
         Return
         ------
-        (name, dtype, shape): tuple
-        '''
-        return [(name, dtype, value.shape, type(value))
-                if hasattr(value, 'shape')
-                else (name, dtype, (value[0],) + shape, type(MmapData))
-                for (name, dtype, shape), value in self._data_map.iteritems()]
+        (dtype, shape, data) of Data
+        """
+        return self._data_map.values()
 
     # ==================== manipulate data ==================== #
-    def get_data(self, name, dtype=None, shape=None, datatype='mmap', value=None):
+    def get_data(self, name, dtype=None, shape=None, datatype='memmap'):
         """
         Parameters
         ----------
-        value : np.ndarray
-            if this is the first time Data is initialized, we assign Data to
-            the value
-            otherwise, we append value to data.
+        datatype : memmap, hdf5
+            Only support memmap numpy array of hdf5 via h5py
         """
-        datatype = '.' + datatype.lower() if '.' not in datatype else datatype.lower()
-        if datatype not in MmapData.SUPPORT_EXT and \
-           datatype not in Hdf5Data.SUPPORT_EXT:
-            raise ValueError("No support for data type: {}, following formats "
-                             " are supported: {} and {}"
-                             "".format(
-                            datatype, Hdf5Data.SUPPORT_EXT, MmapData.SUPPORT_EXT))
-        dtype = value.dtype if value is not None and dtype is None else dtype
-        shape = value.shape if value is not None and shape is None else shape
+        datatype = datatype.lower()
+        if datatype not in ['memmap', 'hdf5']:
+            raise ValueError("Only support 'memmap' or 'hdf5' datatype.")
+
         return_data = None
-        return_key = None
         # ====== find defined data ====== #
-        for k in self._data_map.keys():
-            _name, _dtype, _shape = k
-            if name == _name:
-                if dtype is not None and np.dtype(_dtype) != np.dtype(dtype):
-                    continue
-                if shape is not None and shape[1:] != _shape:
-                    continue
-                return_data = self._data_map[k]
-                return_key = k
-                # return type is just a descriptor, create MmapData for it
-                if not isinstance(return_data, Data):
-                    return_data = MmapData(os.path.join(self.path, _name),
-                        dtype=_dtype, shape=(return_data[0],) + _shape)
-                    self._data_map[return_key] = return_data
-                # append value
-                if value is not None and value.shape[1:] == _shape:
-                    return_data.append(value)
-                    return_data.flush()
-                break
+        if name in self._data_map:
+            _dtype, _shape, _data = self._data_map[name]
+
+            # return type is just a descriptor, create MmapData for it
+            if not isinstance(_data, Data):
+                return_data = MmapData(_data)
+                self._data_map[name] = (return_data.dtype, return_data.shape, return_data)
+            else: # for hdf5 Data, return directly
+                return_data = _data
         # ====== auto create new data, if cannot find any match ====== #
         if return_data is None and dtype is not None and shape is not None:
-            if datatype in MmapData.SUPPORT_EXT:
-                return_data = MmapData(os.path.join(self.path, name), dtype=dtype, shape=shape)
+            if datatype == 'memmap':
+                return_data = MmapData(os.path.join(self.path, name),
+                                       dtype=dtype, shape=shape)
             else:
                 f = open_hdf5(os.path.join(self.path, self._default_hdf5))
-                return_data = Hdf5Data(name, f, dtype=dtype, shape=shape)
-            # first time create the dataset, assign init value
-            if value is not None and value.shape == return_data.shape:
-                return_data.prepend(value)
-                return_data.flush()
+                return_data = Hdf5Data(name, hdf=f, dtype=dtype, shape=shape)
             # store new key
-            return_key = (return_data.name, return_data.dtype, return_data.shape[1:])
-            self._data_map[return_key] = return_data
+            self._data_map[name] = (return_data.dtype, return_data.shape, return_data)
         # data still None
         if return_data is None:
             raise ValueError('Cannot find or create data with name={}, dtype={} '
@@ -237,17 +198,12 @@ class Dataset(object):
                              ''.format(name, dtype, shape, datatype))
         # ====== check if excess limit, close 1 files ====== #
         if MmapData.COUNT > MAX_OPEN_MMAP:
-            for i, j in self._data_map.iteritems():
-                if isinstance(j, MmapData) and i != return_key:
+            for i, (_dtype, _shape, _data) in self._data_map.iteritems():
+                if isinstance(_data, MmapData) and i != name:
+                    self.close(name=i)
+                    self._data_map[i] = (_dtype, _shape, _data.path)
                     break
-            n = j.shape[0]
-            del self._data_map[i]
-            self._data_map[i] = (n, None)
         return return_data
-
-    def create_iter(self, names,
-        batch_size=256, shuffle=True, seed=None, start=0., end=1., mode=0):
-        pass
 
     def archive(self):
         from zipfile import ZipFile, ZIP_DEFLATED
@@ -255,14 +211,8 @@ class Dataset(object):
         zfile = ZipFile(path, mode='w', compression=ZIP_DEFLATED)
 
         files = []
-        for key, value in self._data_map.iteritems():
-            if hasattr(value, 'path'):
-                files.append(value.path)
-            else: # unloaded data
-                name, dtype, shape = key
-                n = value[0]
-                name = MmapData.info_to_name(name, (n,) + shape, dtype)
-                files.append(os.path.join(self.path, name))
+        for name, (dtype, shape, data) in self._data_map.iteritems():
+            files.append(data.path if hasattr(data, 'path') else path)
         files = set(files)
         progbar = Progbar(len(files), title='Archiving:')
 
@@ -274,89 +224,62 @@ class Dataset(object):
         zfile.close()
         return path
 
-    def flush(self, name=None, dtype=None, shape=None):
-        if name is None: # flush all files
-            for v in self._data_map.values():
-                if isinstance(v, Data):
-                    v.flush()
-        else: # flush a particular file
-            for (n, d, s), j in self._data_map.items():
-                if not isinstance(j, Data): continue
-                if name == n:
-                    if dtype is not None and np.dtype(dtype) != np.dtype(d):
-                        continue
-                    if shape is not None and shape[1:] != s:
-                        continue
-                    self._data_map[(n, d, s)].flush()
+    def flush(self):
+        for v in self._data_map.values():
+            if isinstance(v, Data):
+                v.flush()
 
-    def close(self, name=None, dtype=None, shape=None):
+    def close(self, name=None):
         if name is None: # close all files
-            for k in self._data_map.keys():
-                del self._data_map[k]
-            try:
-                self.dispose()
-            except:
-                pass
-        else: # close a particular file
-            for (n, d, s), j in self._data_map.items():
-                if name == n:
-                    if dtype is not None and np.dtype(dtype) != np.dtype(d):
-                        continue
-                    if shape is not None and shape[1:] != s:
-                        continue
-                    del self._data_map[(n, d, s)]
+            for name, (dtype, shape, data) in self._data_map.items():
+                if isinstance(data, Data):
+                    data.close()
+                del data
+                del self._data_map[name]
+        elif name in self._data_map: # close a particular file
+            (dtype, shape, data) = self._data_map[name]
+            if isinstance(data, Data):
+                data.close()
+            del data
+            del self._data_map[name]
 
     # ==================== Some info ==================== #
     def __getitem__(self, key):
         if isinstance(key, str):
             return self.get_data(name=key)
-        params = {}
-        if isinstance(key, (tuple, list)):
-            for i in key:
-                if isinstance(i, str):
-                    try:
-                        params['dtype'] = np.dtype(i)
-                    except:
-                        params['name'] = i
-                elif isinstance(i, (tuple, list)):
-                    params['shape'] = i
-        elif isinstance(key, dict):
-            params = key
-        return self.get_data(**params)
+        raise ValueError('Only accept key type is string.')
 
     def __str__(self):
-        s = ['====== Dataset:%s Total:%d ======' %
+        s = ['==========  Dataset:%s Total:%d  ==========' %
              (self.path, len(self._data_map))]
         # ====== Find longest string ====== #
         longest_name = 0
         longest_shape = 0
-        longest_file = len(str('not loaded'))
-        for (name, dtype, _), data in self._data_map.iteritems():
-            shape = data.shape if hasattr(data, 'shape') else (data[0],) + _
+        longest_file = 0
+        print_info = []
+        for name, (dtype, shape, data) in self._data_map.iteritems():
+            shape = data.shape if hasattr(data, 'shape') else shape
             longest_name = max(len(name), longest_name)
             longest_shape = max(len(str(shape)), longest_shape)
-            if isinstance(data, Data):
-                longest_file = max(len(str(data.path)), longest_file)
+            if hasattr(data, 'path'):
+                data = data.path
+            longest_file = max(len(str(data)), longest_file)
+            print_info.append([name, dtype, shape, data])
         # ====== return print string ====== #
         format_str = ('Name:%-' + str(longest_name) + 's  '
                       'dtype:%-7s  '
                       'shape:%-' + str(longest_shape) + 's  '
                       'file:%-' + str(longest_file) + 's')
-        for (name, dtype, _), data in self._data_map.iteritems():
-            shape = data.shape if hasattr(data, 'shape') else (data[0],) + _
-            path = data.path if isinstance(data, Data) else 'not loaded'
+        for name, dtype, shape, path in print_info:
             s.append(format_str % (name, dtype, shape, path))
         return '\n'.join(s)
 
     # ==================== Pickle ==================== #
     def __getstate__(self):
-        config = OrderedDict()
-        # convert to byte
-        config['path'] = self.path
-        return config
+        return self.path
 
-    def __setstate__(self, config):
-        self._set_path(config['path'])
+    def __setstate__(self, path):
+        self._set_path(path)
 
 
 # ===========================================================================
@@ -376,9 +299,9 @@ def _load_data_from_path(datapath):
 
 
 def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST'):
-    '''
+    """
     path : str
         local path or url to hdf5 datafile
-    '''
+    """
     datapath = get_file('MNIST', path)
     return _load_data_from_path(datapath)

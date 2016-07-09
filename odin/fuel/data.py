@@ -85,7 +85,7 @@ def _estimate_shape(shape, func):
             pass
 
     zip_func = zip if len(new_shape) <= len(old_shape) else zip_longest
-    new_shape_ratio = [i / j if j is not None else i
+    new_shape_ratio = [i / j if j is not None and j > 0 else i
                        for i, j in zip_func(new_shape, old_shape)]
     return tuple([int(round(i * j)) if i is not None else j
                   for i, j in zip_func(shape, new_shape_ratio)])
@@ -340,9 +340,11 @@ class Data(object):
     def resize(self, shape):
         raise NotImplementedError
 
-    @abstractmethod
     def flush(self):
-        raise NotImplementedError
+        pass
+
+    def close(self):
+        pass
 
     # ==================== high-level operators ==================== #
     @abstractmethod
@@ -411,9 +413,6 @@ class MutableData(Data):
     # ==================== abstract ==================== #
     def resize(self, shape):
         raise NotImplementedError
-
-    def flush(self):
-        pass
 
     # ==================== high-level operators ==================== #
     def sum(self, axis=0):
@@ -528,9 +527,6 @@ class ArrayData(Data):
     # ==================== abstract ==================== #
     def resize(self, shape):
         return self._data.resize(shape)
-
-    def flush(self):
-        pass
 
     # ==================== high-level operators ==================== #
     def sum(self, axis=0):
@@ -670,7 +666,23 @@ class MmapData(Data):
     HEADER = 'mmapdata'
     MAXIMUM_HEADER_SIZE = 486
     COUNT = 0
-    SUPPORT_EXT = ['.mmap', '.memmap', '.mem']
+
+    @staticmethod
+    def read_header(path):
+        """ return: dtype, shape
+        Necessary information to create numpy.memmap
+        """
+        f = open(path, 'r')
+        if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
+            raise Exception('Invalid header for MmapData.')
+        # 8 bytes for size of info
+        try:
+            size = int(f.read(8))
+            dtype, shape = marshal.loads(f.read(size))
+        except Exception, e:
+            raise Exception('Error reading memmap data file: %s' % str(e))
+        f.close()
+        return dtype, shape
 
     def __init__(self, path, dtype=None, shape=None):
         super(MmapData, self).__init__()
@@ -682,16 +694,7 @@ class MmapData(Data):
         path = os.path.abspath(path)
         mode = 'r+'
         if os.path.exists(path):
-            f = open(path, 'r')
-            if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
-                raise Exception('Invalid header for MmapData.')
-            # 8 bytes for size of info
-            try:
-                size = int(f.read(8))
-                dtype, shape = marshal.loads(f.read(size))
-            except Exception, e:
-                raise Exception('Error reading memmap data file: %s' % str(e))
-            f.close()
+            dtype, shape = MmapData.read_header(path)
         else:
             if dtype is None or shape is None:
                 raise Exception('dtype and shape must not be None.')
@@ -716,7 +719,7 @@ class MmapData(Data):
                                offset=offset)
         self._path = path
 
-    def __del__(self):
+    def close(self):
         MmapData.COUNT -= 1
         if hasattr(self, '_data') and self._data is not None:
             self._data._mmap.close()
@@ -726,6 +729,14 @@ class MmapData(Data):
     @property
     def path(self):
         return self._data.filename
+
+    @property
+    def name(self):
+        return os.path.basename(self.path)
+
+    def __str__(self):
+        return '<MMAP dataset "%s": shape %s, type "<%s">' % \
+        (self.name, self.shape, self.dtype)
 
     # ==================== High-level operator ==================== #
     @cache('_status')
@@ -877,14 +888,7 @@ class MmapData(Data):
         return self
 
     def flush(self):
-        old_path = self._data.filename
-        new_path = os.path.join(os.path.dirname(self.path),
-                    MmapData.info_to_name(self.name, self._data.shape, self.dtype))
         self._data.flush()
-        if old_path != new_path:
-            del self._data
-            os.rename(old_path, new_path)
-            self._data = np.memmap(new_path, mode='r+')
 
 
 # ===========================================================================
@@ -968,15 +972,13 @@ def close_all_hdf5():
 
 class Hdf5Data(Data):
 
-    SUPPORT_EXT = ['.h5', '.hdf', '.hdf5']
-
-    def __init__(self, dataset, hdf=None, dtype='float32', shape=None):
+    def __init__(self, dataset, hdf=None, dtype=None, shape=None):
         super(Hdf5Data, self).__init__()
 
         # default chunks size is 32 (reduce complexity of the works)
         self._chunk_size = 32
         if isinstance(hdf, str):
-            hdf = open_hdf5(hdf, mode='a')
+            hdf = open_hdf5(hdf)
         if hdf is None and not isinstance(dataset, h5py.Dataset):
             raise ValueError('Cannot initialize dataset without hdf file')
 
@@ -1169,6 +1171,11 @@ class Hdf5Data(Data):
         except:
             pass
 
+    def close(self):
+        try:
+            self._hdf.close()
+        except:
+            pass
 
 # ===========================================================================
 # data iterator
