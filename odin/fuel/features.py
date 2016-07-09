@@ -463,6 +463,7 @@ class SpeechFeature(FeatureRecipe):
         return mfcc features
     robust : bool
         run in robust mode, auto ignore error files
+    datatype : memmap, hdf5
 
     Example
     -------
@@ -472,7 +473,7 @@ class SpeechFeature(FeatureRecipe):
     def __init__(self, segments, output, audio_ext=None, fs=8000,
                  win=0.025, shift=0.01, n_filters=40, n_ceps=13,
                  downsample='sinc_best', delta_order=2, energy=True, vad=True,
-                 datatype='mmap', dtype='float32',
+                 datatype='memmap', dtype='float32',
                  get_spec=False, get_mspec=True, get_mfcc=False,
                  robust=True):
         super(SpeechFeature, self).__init__('SpeechFeatures')
@@ -595,20 +596,26 @@ class SpeechFeature(FeatureRecipe):
             for name, spec, mspec, mfcc, vad in r:
                 if spec is not None:
                     X, sum1, sum2 = spec
-                    dataset.get_data('spec', dtype=X.dtype, shape=X.shape,
-                                     datatype=datatype, value=X)
+                    _ = dataset.get_data('spec', dtype=X.dtype,
+                                         shape=(0,) + X.shape[1:],
+                                         datatype=datatype)
+                    _.append(X)
                     spec_sum1 += sum1; spec_sum2 += sum2
                     n = X.shape[0]; del X
                 if mspec is not None:
                     X, sum1, sum2 = mspec
-                    dataset.get_data('mspec', dtype=X.dtype, shape=X.shape,
-                                     datatype=datatype, value=X)
+                    _ = dataset.get_data('mspec', dtype=X.dtype,
+                                         shape=(0,) + X.shape[1:],
+                                         datatype=datatype)
+                    _.append(X)
                     mspec_sum1 += sum1; mspec_sum2 += sum2
                     n = X.shape[0]; del X
                 if mfcc is not None:
                     X, sum1, sum2 = mfcc
-                    dataset.get_data('mfcc', dtype=X.dtype, shape=X.shape,
-                                     datatype=datatype, value=X)
+                    _ = dataset.get_data('mfcc', dtype=X.dtype,
+                                         shape=(0,) + X.shape[1:],
+                                         datatype=datatype)
+                    _.append(X)
                     mfcc_sum1 += sum1; mfcc_sum2 += sum2
                     n = X.shape[0]; del X
                 # index
@@ -616,10 +623,13 @@ class SpeechFeature(FeatureRecipe):
                 # VAD
                 if vad is not None:
                     assert vad.shape[0] == n,\
-                        'VAD mismatch features shape: %d != %d' % (vad.shape[0], X.shape[0])
-                    dataset.get_data('vad', dtype=vad.dtype, shape=vad.shape,
-                                 datatype=datatype, value=vad)
+                        'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
+                    _ = dataset.get_data('vad', dtype=vad.dtype,
+                                         shape=(0,) + vad.shape[1:],
+                                         datatype=datatype)
+                    _.append(vad)
                     del vad
+        dataset.flush()
         return ((spec_sum1, spec_sum2),
                 (mspec_sum1, mspec_sum2),
                 (mfcc_sum1, mfcc_sum2), index)
@@ -658,10 +668,11 @@ class SpeechFeature(FeatureRecipe):
             std = np.sqrt(sum2 / n - mean**2)
             assert not np.any(np.isnan(mean)), 'Mean contains NaN'
             assert not np.any(np.isnan(std)), 'Std contains NaN'
-            dataset.get_data(name + '_mean', dtype=mean.dtype,
-                             shape=mean.shape, value=mean)
-            dataset.get_data(name + '_std', dtype=std.dtype,
-                             shape=std.shape, value=std)
+            _ = dataset.get_data(name + '_mean', dtype=mean.dtype, shape=mean.shape)
+            _[:] = mean
+
+            _ = dataset.get_data(name + '_std', dtype=std.dtype, shape=std.shape)
+            _[:] = std
         # ====== save mean and std ====== #
         if get_spec:
             save_mean_std(spec_sum1, spec_sum2, n, 'spec', dataset)

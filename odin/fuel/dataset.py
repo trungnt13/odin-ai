@@ -212,10 +212,10 @@ class Dataset(object):
 
         files = []
         for name, (dtype, shape, data) in self._data_map.iteritems():
-            files.append(data.path if hasattr(data, 'path') else path)
+            files.append(data.path if hasattr(data, 'path') else data)
         files = set(files)
-        progbar = Progbar(len(files), title='Archiving:')
 
+        progbar = Progbar(len(files), title='Archiving:')
         maxlen = max([len(os.path.basename(i)) for i in files])
         for i, f in enumerate(files):
             zfile.write(f, os.path.basename(f))
@@ -288,7 +288,7 @@ class Dataset(object):
 def _load_data_from_path(datapath):
     from zipfile import ZipFile, ZIP_DEFLATED
     if not os.path.isdir(datapath):
-        datapath_tmp = datapath + '.tmp'
+        datapath_tmp = datapath.replace('.zip', '') + '.tmp'
         os.rename(datapath, datapath_tmp)
         zf = ZipFile(datapath_tmp, mode='r', compression=ZIP_DEFLATED)
         zf.extractall(path=datapath)
@@ -298,7 +298,7 @@ def _load_data_from_path(datapath):
     return ds
 
 
-def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST'):
+def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST.zip'):
     """
     path : str
         local path or url to hdf5 datafile
