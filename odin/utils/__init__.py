@@ -314,10 +314,9 @@ def as_tuple(x, N, t=None):
 class struct(object):
 
     '''Flexible object can be assigned any attribtues'''
-    pass
 
     def __getitem__(self, x):
-        return x
+        return getattr(self, str(x))
 
 
 class queue(object):

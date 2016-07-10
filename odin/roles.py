@@ -1,6 +1,14 @@
 from __future__ import print_function, division, print_function
 
 import re
+from collections import OrderedDict
+
+from odin.utils import struct
+
+
+def _check_tag(var):
+    if not hasattr(var, 'tag'):
+        var.tag = struct()
 
 
 def add_role(var, role):
@@ -36,12 +44,32 @@ def add_role(var, role):
     WEIGHT
 
     """
+    _check_tag(var)
+
     roles = getattr(var.tag, 'roles', [])
     roles = [old_role for old_role in roles
              if not isinstance(role, old_role.__class__)]
     if not any(isinstance(old_role, role.__class__) for old_role in roles):
         roles += [role]
     var.tag.roles = roles
+
+
+def add_updates(var, key, value):
+    _check_tag(var)
+    updates = getattr(var.tag, 'updates', OrderedDict())
+    updates[key] = value
+    var.tag.updates = updates
+
+
+def add_auxiliary_variable(var, auxiliary, roles=None):
+    _check_tag(var)
+    auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
+    add_role(auxiliary, AUXILIARY)
+    if roles is not None:
+        for role in roles:
+            add_role(auxiliary, role)
+    auxiliary_variables.append(auxiliary)
+    var.tag.auxiliary_variables = list(set(auxiliary_variables))
 
 
 def has_roles(var, roles, match_all=False, exact=False):

@@ -227,7 +227,7 @@ def constant(value, dtype=None, shape=None, name='Const'):
     x = T.constant(value, dtype=dtype,
                    ndim=None if shape is None else len(shape),
                    name=name)
-    add_shape(x, eval(x.shape))
+    add_shape(x, x.shape.eval())
     return x
 
 
@@ -324,8 +324,10 @@ class ComputationGraph(object):
             for var in main_vars:
                 variables.append(var)
                 # updates
-                updates = dict_union(updates,
-                                     getattr(var.tag, 'updates', OrderedDict()))
+                _ = getattr(var.tag, 'updates', OrderedDict())
+                _ = OrderedDict([(i, j) for i, j in _.iteritems()
+                                 if is_variable(i)])
+                updates = dict_union(updates, _)
                 # auxiliary_variables
                 for _ in getattr(var.tag, 'auxiliary_variables', []):
                     if _ not in seen and \
