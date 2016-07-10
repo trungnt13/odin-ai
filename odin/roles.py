@@ -74,6 +74,10 @@ def has_roles(var, roles, match_all=False, exact=False):
     return all(matches) if match_all else any(matches)
 
 
+def get_roles(var):
+    return getattr(var.tag, 'roles', [])
+
+
 class VariableRole(object):
     """Base class for all variable roles."""
 

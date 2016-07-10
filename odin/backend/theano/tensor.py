@@ -17,7 +17,6 @@ import numpy as np
 
 import theano
 from theano import tensor as T
-from theano import Variable
 from theano.tensor.signal import pool
 from theano.tensor.nnet import conv3d2d
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
@@ -28,7 +27,8 @@ except ImportError:
 
 from odin.config import autoconfig, device, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple
-from odin.roles import add_role, TRAINING, PARAMETER, ACTIVATION_PARAMETER
+from odin.roles import (add_role, TRAINING, PARAMETER,
+                        ACTIVATION_PARAMETER, DEPLOYING)
 
 from .helpers import (add_shape, get_shape, _auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
@@ -71,46 +71,6 @@ if on_gpu():
     T.grad(2 * _, _).eval()
     _.set_value(None)
     del _
-
-
-# ===========================================================================
-# VARIABLE MANIPULATION
-# ===========================================================================
-def variable(value, dtype=FLOATX, name=None, target=None):
-    """Instantiate a tensor variable.
-    """
-    value = np.asarray(value, dtype=dtype)
-    target = _check_target(target)
-
-    kwargs = {}
-    if target is not None:
-        kwargs['target'] = target
-
-    variable = theano.shared(value=value, name=name, strict=False, **kwargs)
-    add_shape(variable, tuple(variable.shape.eval()))
-    return variable
-
-
-def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
-    """Instantiate an input data placeholder variable.
-    """
-    shape = as_shape_tuple(shape)
-    broadcast = tuple([True if i == 1 else False for i in shape])
-    # ====== Modify add name prefix ====== #
-    placeholder = T.TensorType(dtype, broadcast)(name)
-    if for_training:
-        add_role(placeholder, TRAINING)
-    # store the predefined shape of placeholder
-    add_shape(placeholder, shape)
-    return placeholder
-
-
-def constant(value, dtype=None, shape=None, name='Const'):
-    x = T.constant(value, dtype=dtype,
-                   ndim=None if shape is None else len(shape),
-                   name=name)
-    add_shape(x, eval(x.shape))
-    return x
 
 
 def eval(x):

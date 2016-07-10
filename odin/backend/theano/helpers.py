@@ -4,6 +4,7 @@ import logging
 import warnings
 import numbers
 import cPickle
+from contextlib import contextmanager
 from collections import OrderedDict
 from itertools import chain
 from toolz import unique
@@ -20,14 +21,13 @@ from theano.gof.graph import Constant
 from theano.tensor.shared_randomstreams import RandomStateSharedVariable
 from theano.tensor.sharedvar import SharedVariable
 
-from odin.roles import (add_role, has_roles,
-                        AUXILIARY, PARAMETER, COLLECTED, COLLECTOR,
-                        TRAINING)
-
+from odin.roles import (add_role, has_roles, TRAINING, DEPLOYING,
+                        AUXILIARY, PARAMETER, COLLECTED, COLLECTOR)
+from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
 from odin.config import autoconfig, device
-# from .annotations import add_annotation, Annotation  # noqa
 
+FLOATX = autoconfig.floatX
 NPROCESSORS = device['n']
 logger = logging.getLogger(__name__)
 
@@ -162,8 +162,79 @@ def is_training(v):
 
 
 # ===========================================================================
+# VARIABLE MANIPULATION
+# ===========================================================================
+_CURRENT_VARIABLE_SCOPE = ""
+_CREATED_VARIABLE = {}
+# var id start from 0 and increasing to make sure no duplicate variable
+_VAR_ID = 0
+
+
+@contextmanager
+def variable_scope(scope):
+    global _CURRENT_VARIABLE_SCOPE
+    old_scope = _CURRENT_VARIABLE_SCOPE
+    _CURRENT_VARIABLE_SCOPE = str(scope)
+    yield None
+    _CURRENT_VARIABLE_SCOPE = old_scope
+
+
+def variable(value, dtype=FLOATX, name=None, target=None):
+    """Instantiate a tensor variable.
+    """
+    if name is None:
+        global _VAR_ID
+        name = 'VAR_%d' % _VAR_ID
+        _VAR_ID += 1
+    if len(_CURRENT_VARIABLE_SCOPE) > 0: # not global scope
+        name = _CURRENT_VARIABLE_SCOPE + "/" + name
+
+    # ====== validate inputs ====== #
+    value = np.asarray(value, dtype=dtype)
+    target = _check_target(target)
+
+    kwargs = {}
+    if target is not None:
+        kwargs['target'] = target
+
+    variable = theano.shared(value=value, name=name, strict=False, **kwargs)
+    add_shape(variable, tuple(variable.shape.eval()))
+    # ====== save all created variable ====== #
+    if name in _CREATED_VARIABLE:
+        raise Exception('Variable with the same name "%s" has been created '
+                        'before.' % name)
+    _CREATED_VARIABLE[name] = variable # save original shared variables
+    return variable
+
+
+def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
+    """Instantiate an input data placeholder variable.
+    """
+    shape = as_shape_tuple(shape)
+    broadcast = tuple([True if i == 1 else False for i in shape])
+    # ====== Modify add name prefix ====== #
+    placeholder = T.TensorType(dtype, broadcast)(name)
+    if for_training:
+        add_role(placeholder, TRAINING)
+    else:
+        add_role(placeholder, DEPLOYING)
+    # store the predefined shape of placeholder
+    add_shape(placeholder, shape)
+    return placeholder
+
+
+def constant(value, dtype=None, shape=None, name='Const'):
+    x = T.constant(value, dtype=dtype,
+                   ndim=None if shape is None else len(shape),
+                   name=name)
+    add_shape(x, eval(x.shape))
+    return x
+
+
+# ===========================================================================
 # ComputationGraph
 # ===========================================================================
+@singleton
 class ComputationGraph(object):
     r"""Encapsulates a managed Theano computation graph.
 
@@ -185,7 +256,7 @@ class ComputationGraph(object):
     inputs : list of :class:`~tensor.TensorVariable`
         The inputs of the computation graph. This does not include shared
         variables and constants.
-    shared_variables : list of :class:`~tensor.TensorSharedVariable`
+    trainable_variables : list of :class:`~tensor.TensorSharedVariable`
         All the shared variables in the graph.
     parameters : list of :class:`~tensor.TensorSharedVariable`
         All the shared variables which have the :const:`.PARAMETER` role.
@@ -212,39 +283,6 @@ class ComputationGraph(object):
             outputs = [outputs]
         self.outputs = list(outputs)
         self._get_variables()
-        self._has_inputs = {}
-
-    def __iter__(self):
-        return iter(self.variables)
-
-    @property
-    def inputs(self):
-        """Inputs to the graph, excluding constants and shared variables."""
-        return [var for var in self.variables if is_placeholder(var)]
-
-    @property
-    def intermediary_variables(self):
-        return [var for var in self.variables if
-                var not in self.inputs and
-                var not in self.outputs]
-
-    @property
-    def shared_variables(self):
-        return [var for var in self.variables if is_trainable_variable(var)]
-
-    @property
-    def parameters(self):
-        return [var for var in self.shared_variables
-                if has_roles(var, [PARAMETER])]
-
-    @property
-    def auxiliary_variables(self):
-        return [var for var in self.variables if has_roles(var, [AUXILIARY])]
-
-    @property
-    def scan_variables(self):
-        """Variables of Scan ops."""
-        return list(chain(*[g.variables for g in self._scan_graphs]))
 
     def _get_variables(self):
         """Collect variables, updates and auxiliary variables.
@@ -285,176 +323,63 @@ class ComputationGraph(object):
             variables = []
             for var in main_vars:
                 variables.append(var)
-                for annotation in getattr(var.tag, 'annotations', []):
-                    if annotation not in seen:
-                        seen.add(annotation)
-                        new_avs = [
-                            av for av in annotation.auxiliary_variables
-                            if not (av in seen_avs or seen_avs.add(av))]
-                        variables.extend(new_avs)
-                        updates = dict_union(updates, annotation.updates)
+                # updates
+                updates = dict_union(updates,
+                                     getattr(var.tag, 'updates', OrderedDict()))
+                # auxiliary_variables
+                for _ in getattr(var.tag, 'auxiliary_variables', []):
+                    if _ not in seen and \
+                    not (_ in seen_avs or seen_avs.add(_)):
+                        variables.append(_)
 
-        # If shared_variables is assigned default_update (cloned), we cannot eval()
+        # If trainable_variables is assigned default_update (cloned), we cannot eval()
         # it to get the real numpy array value, hence, try to trace back
         # original shared variable
         def shared_variable_filter(var):
             if is_trainable_variable(var) and hasattr(var, 'default_update'):
-                for annotation in var.tag.annotations:
-                    if hasattr(annotation, var.name) and \
-                       is_trainable_variable(getattr(annotation, var.name)):
-                        return getattr(annotation, var.name)
+                for v in _CREATED_VARIABLE:
+                    if v.name == var.name and v.ndim == var.ndim:
+                        return v
             return var
         self.variables = map(shared_variable_filter, variables)
         self.updates = updates
 
-    def dict_of_inputs(self):
+    # ==================== Get variables ==================== #
+    @property
+    def placeholders(self):
+        """Inputs to the graph, excluding constants and shared variables."""
+        return [var for var in self.variables if is_placeholder(var)]
+
+    @property
+    def intermediary_variables(self):
+        return [var for var in self.variables if
+                var not in self.placeholders and
+                var not in self.outputs]
+
+    @property
+    def trainable_variables(self):
+        return [var for var in self.variables if is_trainable_variable(var)]
+
+    @property
+    def parameters(self):
+        return [var for var in self.trainable_variables
+                if has_roles(var, [PARAMETER])]
+
+    @property
+    def auxiliary_variables(self):
+        return [var for var in self.variables if has_roles(var, [AUXILIARY])]
+
+    @property
+    def dict_of_placeholders(self):
         """Return a mapping from an input name to the input."""
-        return {var.name: var for var in self.inputs}
+        return {var.name: var for var in self.placeholders}
 
-    def replace(self, replacements):
-        """Replace certain variables in the computation graph.
+    # ==================== others ==================== #
+    def __iter__(self):
+        for v in self.variables:
+            yield v
 
-        Parameters
-        ----------
-        replacements : dict
-            The mapping from variables to be replaced to the corresponding
-            substitutes.
-
-        Examples
-        --------
-        >>> import theano
-        >>> from theano import tensor, function
-        >>> x = tensor.scalar('x')
-        >>> y = x + 2
-        >>> z = y + 3
-        >>> a = z + 5
-
-        Let's suppose we have dependent replacements like
-
-        >>> replacements = {y: x * 2, z: y * 3}
-        >>> cg = ComputationGraph([a])
-        >>> theano.pprint(a)  # doctest: +NORMALIZE_WHITESPACE
-        '(((x + TensorConstant{2}) + TensorConstant{3}) +
-        TensorConstant{5})'
-        >>> cg_new = cg.replace(replacements)
-        >>> theano.pprint(
-        ...     cg_new.outputs[0])  # doctest: +NORMALIZE_WHITESPACE
-        '(((x * TensorConstant{2}) * TensorConstant{3}) +
-        TensorConstant{5})'
-
-        First two sums turned into multiplications
-
-        >>> float(function(cg_new.inputs, cg_new.outputs)(3.)[0])
-        23.0
-
-        """
-        # Due to theano specifics we have to make one replacement in time
-        replacements = OrderedDict(replacements)
-
-        outputs_cur = self.outputs
-
-        # `replacements` with previous replacements applied. We have to track
-        # variables in the new graph corresponding to original replacements.
-        replacement_keys_cur = []
-        replacement_vals_cur = []
-        # Sort `replacements` in topological order
-        # variables in self.variables are in topological order
-        remaining_replacements = replacements.copy()
-        for variable in self.variables:
-            if variable in replacements:
-                if has_roles(variable, [AUXILIARY]):
-                    warnings.warn(
-                        "replace method was asked to replace a variable ({}) "
-                        "that is an auxiliary variable.".format(variable))
-                replacement_keys_cur.append(variable)
-                # self.variables should not contain duplicates,
-                # otherwise pop() may fail.
-                replacement_vals_cur.append(
-                    remaining_replacements.pop(variable))
-
-        # if remaining_replacements is not empty
-        if remaining_replacements:
-            warnings.warn(
-                "replace method was asked to replace a variable(s) ({}) "
-                "that is not a part of the computational "
-                "graph.".format(str(remaining_replacements.keys())))
-
-        # Replace step-by-step in topological order
-        while replacement_keys_cur:
-            replace_what = replacement_keys_cur[0]
-            replace_by = replacement_vals_cur[0]
-            # We also want to make changes in future replacements
-            outputs_new = theano.clone(
-                outputs_cur + replacement_keys_cur[1:] +
-                replacement_vals_cur[1:],
-                replace={replace_what: replace_by})
-            # Reconstruct outputs, keys, and values
-            outputs_cur = outputs_new[:len(outputs_cur)]
-            replacement_keys_cur = outputs_new[len(outputs_cur):
-                                               len(outputs_cur) +
-                                               len(replacement_keys_cur) - 1]
-            replacement_vals_cur = outputs_new[len(outputs_cur) +
-                                               len(replacement_keys_cur):]
-
-        return ComputationGraph(outputs_cur)
-
-    def get_theano_function(self, additional_updates=None, **kwargs):
-        r"""Create Theano function from the graph contained.
-
-        Parameters
-        ----------
-        \*\*kwargs : dict
-            Keyword arguments to theano.function.
-            Useful for specifying compilation modes or profiling.
-
-        """
-        updates = self.updates
-        if additional_updates:
-            updates = dict_union(updates, OrderedDict(additional_updates))
-        return theano.function(self.inputs, self.outputs, updates=updates,
-                               **kwargs)
-
-    # def get_snapshot(self, data):
-    #     """Evaluate all role-carrying Theano variables on given data.
-
-    #     Parameters
-    #     ----------
-    #     data : dict of (data source, data) pairs
-    #         Data for input variables. The sources should match with the
-    #         names of the input variables.
-
-    #     Returns
-    #     -------
-    #     Dictionary of (variable, variable value on given data) pairs.
-
-    #     """
-    #     role_variables = [var for var in self.variables
-    #                       if hasattr(var.tag, "roles") and
-    #                       not is_trainable_variable(var)]
-    #     value_holders = [shared_like(var) for var in role_variables]
-    #     function = self.get_theano_function(equizip(value_holders,
-    #                                                 role_variables))
-    #     function(*(data[input_.name] for input_ in self.inputs))
-    #     return OrderedDict([(var, value_holder.get_value(borrow=True))
-    #                         for var, value_holder in equizip(role_variables,
-    #                                                          value_holders)])
-
-    def has_inputs(self, variable):
-        """Check if a variable depends on input variables.
-
-        Returns
-        -------
-        bool
-            ``True`` if the given variable depends on input variables,
-            ``False`` otherwise.
-
-        """
-        if variable not in self._has_inputs:
-            self._has_inputs[variable] = False
-            if is_placeholder(variable):
-                self._has_inputs[variable] = True
-            elif getattr(variable, 'owner', None):
-                for dependancy in variable.owner.inputs:
-                    if self.has_inputs(dependancy):
-                        self._has_inputs[variable] = True
-        return self._has_inputs[variable]
+    def __del__(self):
+        self.dispose()
+        del self.outputs
+        del self.variables

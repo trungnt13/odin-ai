@@ -140,16 +140,15 @@ class BaseConv(NNOps):
         self.output_shape = output_shape # assign output_shape
         config = NNConfig(input_shape=input_shape)
         # weights
-        config.create_params(self.W_init,
-                             shape=self.get_W_shape(input_shape),
-                             name='W', roles=WEIGHT, annotations=self)
+        config.create_params(self.W_init, shape=self.get_W_shape(input_shape),
+                             name='W', nnops=self, roles=WEIGHT)
         if self.b_init is not None:
             if self.untie_biases:
                 biases_shape = (self.num_filters,) + output_shape[2:]
             else:
                 biases_shape = (self.num_filters,)
-            config.create_params(self.b_init, shape=biases_shape,
-                                 name='b', roles=BIAS, annotations=self)
+            config.create_params(self.b_init, shape=biases_shape, name='b',
+                                 nnops=self, roles=BIAS)
         return config
 
     def _apply(self, x):
@@ -194,8 +193,8 @@ class TransposeConv(NNOps):
                 biases_shape = output_shape[1:]
             else:
                 biases_shape = (output_shape[1],)
-            config.create_params(b_init, shape=biases_shape,
-                                 name='b', roles=BIAS, annotations=self)
+            config.create_params(b_init, shape=biases_shape, name='b',
+                                 nnops=self, roles=BIAS)
         return config
 
     def _apply(self, x):

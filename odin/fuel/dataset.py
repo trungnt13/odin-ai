@@ -236,6 +236,7 @@ class Dataset(object):
                     data.close()
                 del data
                 del self._data_map[name]
+            self.dispose() # Singleton class to dispose an instance
         elif name in self._data_map: # close a particular file
             (dtype, shape, data) = self._data_map[name]
             if isinstance(data, Data):

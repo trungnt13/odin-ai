@@ -12,7 +12,6 @@ from six.moves import zip, range
 import numpy as np
 
 from odin import backend as K
-from odin.annotations import add_annotation, Annotation
 from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA,
@@ -47,11 +46,11 @@ class NNConfig(object):
         raise AttributeError('Cannot find attribute={} in arguments and parameters'
                              '.'.format(name))
 
-    def create_params(self, spec, shape, name, roles=[], annotations=[]):
+    def create_params(self, spec, shape, name, nnops, roles=[]):
         if not isinstance(roles, (tuple, list)):
             roles = [roles]
-        if not isinstance(annotations, (tuple, list)):
-            annotations = [annotations]
+        if not isinstance(nnops, NNOps):
+            raise Exception('nnops must be instance of odin.nnet.base.NNOps')
 
         shape = tuple(shape)  # convert to tuple if needed
         if any(d <= 0 for d in shape):
@@ -88,7 +87,8 @@ class NNConfig(object):
             if shape is not None and spec.shape != shape:
                 raise RuntimeError("parameter array has shape %s, should be "
                                    "%s" % (spec.shape, shape))
-            spec = K.variable(spec, name=name)
+            with K.variable_scope(nnops.name):
+                spec = K.variable(spec, name=name)
         #####################################
         # 4. initializing function.
         elif hasattr(spec, '__call__'):
@@ -98,7 +98,8 @@ class NNConfig(object):
             elif K.is_variable(arr) and K.ndim(arr) == len(shape):
                 spec = arr
             elif isinstance(arr, np.ndarray):
-                spec = K.variable(arr, name=name)
+                with K.variable_scope(nnops.name):
+                    spec = K.variable(arr, name=name)
         #####################################
         # 5. Exception.
         else:
@@ -109,10 +110,8 @@ class NNConfig(object):
         for i in roles:
             if isinstance(i, VariableRole):
                 add_role(spec, i)
-        for i in annotations:
-            if isinstance(i, Annotation):
-                add_annotation(spec, i)
-        spec.name = name
+        if not K.is_trainable_variable(spec):
+            spec.name = name
         # return actual variable or expression
         for i, j in enumerate(self._paramters): # override other parameters with same name
             if j.name == name:
@@ -126,7 +125,8 @@ class NNConfig(object):
         for i, j in self._arguments.iteritems():
             setattr(obj, i, j)
         for i in self._paramters:
-            setattr(obj, i.name, i)
+            name = i.name.split('/')[-1].split(':')[0]
+            setattr(obj, name, i)
 
     def reset(self, obj):
         """  """
@@ -167,14 +167,14 @@ class NNConfig(object):
 
 
 @add_metaclass(ABCMeta)
-class NNOps(Annotation):
+class NNOps(object):
 
     ID = 0
 
     def __init__(self, name=None):
         super(NNOps, self).__init__()
         self._id = NNOps.ID
-        self._name = str(name)
+        self._name = name
         self._configuration = None
         self._transpose_ops = None
         self._arguments = {}
@@ -183,7 +183,9 @@ class NNOps(Annotation):
     # ==================== properties ==================== #
     @property
     def name(self):
-        return '[' + str(self._id) + ']' + self.__class__.__name__ + '/' + self._name
+        if self._name is None:
+            return "%s_%d" % (self.__class__.__name__, self._id)
+        return str(self._name)
 
     @property
     def T(self):
@@ -254,12 +256,6 @@ class NNOps(Annotation):
     # ==================== interaction method ==================== #
     def apply(self, *args, **kwargs):
         out = self._apply(*args, **kwargs)
-        # ====== add roles ====== #
-        tmp = out
-        if not isinstance(tmp, (tuple, list)):
-            tmp = [out]
-        for o in tmp:
-            add_annotation(o, self)
         # return outputs
         return out
 
@@ -282,11 +278,8 @@ class NNOps(Annotation):
             setattr(self, i, j)
         self._arguments = attrs
         self._configuration = config
-        # restore the annotations
         if config is not None:
             config.inflate(self)
-            for i in config.parameters:
-                add_annotation(i, self)
 
 
 # ===========================================================================
@@ -321,10 +314,11 @@ class Dense(NNOps):
         transpose._original_dense = self
         #create the config
         config = NNConfig(num_inputs=num_inputs)
-        config.create_params(self.W.T, shape=(num_inputs, num_units), name='W')
+        config.create_params(self.W.T, shape=(num_inputs, num_units), name='W',
+                             nnops=self)
         if self.b_init is not None:
             config.create_params(self.b_init, shape=(num_units,), name='b',
-                                 roles=BIAS, annotations=transpose)
+                                 nnops=self, roles=BIAS)
         # modify the config
         transpose.config(config)
         return transpose
@@ -332,9 +326,10 @@ class Dense(NNOps):
     def _initialize(self, num_inputs):
         config = NNConfig(num_inputs=num_inputs)
         shape = (num_inputs, self.num_units)
-        config.create_params(self.W_init, shape, 'W', WEIGHT, self)
+        config.create_params(self.W_init, shape, 'W', nnops=self, roles=WEIGHT)
         if self.b_init is not None:
-            config.create_params(self.b_init, (self.num_units,), 'b', BIAS, self)
+            config.create_params(self.b_init, (self.num_units,), 'b',
+                                 nnops=self, roles=BIAS)
         return config
 
     def _apply(self, x):
@@ -374,9 +369,7 @@ class VariationalDense(NNOps):
         mean.name = 'variational_mean'
         logsigma.name = 'variational_logsigma'
         add_role(mean, VARIATIONAL_MEAN)
-        add_annotation(mean, self)
         add_role(logsigma, VARIATIONAL_LOGSIGMA)
-        add_annotation(logsigma, self)
         return mean, logsigma
 
     def sampling(self, x):
@@ -394,11 +387,15 @@ class VariationalDense(NNOps):
         config = NNConfig(num_inputs=num_inputs)
         shape = (num_inputs, self.num_units)
 
-        config.create_params(self.W_init, shape, 'W_mean', WEIGHT, self)
-        config.create_params(self.W_init, shape, 'W_logsigma', WEIGHT, self)
+        config.create_params(self.W_init, shape, 'W_mean',
+                             nnops=self, roles=WEIGHT)
+        config.create_params(self.W_init, shape, 'W_logsigma',
+                             nnops=self, roles=WEIGHT)
         if self.b_init is not None:
-            config.create_params(self.b_init, (self.num_units,), 'b_mean', BIAS, self)
-            config.create_params(self.b_init, (self.num_units,), 'b_logsigma', BIAS, self)
+            config.create_params(self.b_init, (self.num_units,), 'b_mean',
+                                 nnops=self, roles=BIAS)
+            config.create_params(self.b_init, (self.num_units,), 'b_logsigma',
+                                 nnops=self, roles=BIAS)
         return config
 
     def _apply(self, x):
@@ -559,18 +556,14 @@ class BatchNorm(NNOps):
         # init parameters
         if self.beta_init is not None:
             config.create_params(self.beta_init, shape=shape, name='beta',
-                                 roles=BATCH_NORM_SHIFT_PARAMETER,
-                                 annotations=self)
+                                 nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
         if self.gamma_init is not None:
             config.create_params(self.gamma_init, shape=shape, name='gamma',
-                                 roles=BATCH_NORM_SCALE_PARAMETER,
-                                 annotations=self)
+                                 nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
         config.create_params(self.mean_init, shape=shape, name='mean',
-                             roles=BATCH_NORM_POPULATION_MEAN,
-                             annotations=self)
+                             nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
         config.create_params(self.inv_std_init, shape=shape, name='inv_std',
-                             roles=BATCH_NORM_POPULATION_STDEV,
-                             annotations=self)
+                             nnops=self, roles=BATCH_NORM_POPULATION_STDEV)
         return config
 
     def _apply(self, x):
@@ -699,7 +692,7 @@ class ParametricRectifier(NNOps):
             raise ValueError("ParametricRectifierLayer needs input sizes for "
                              "all axes that alpha's are not shared over.")
         self.alpha = config.create_params(self.alpha_init, shape, name="alpha",
-                                          roles=PARAMETER, annotations=self)
+                                         nnops=self, roles=PARAMETER)
         return config
 
     def _apply(self, x):
