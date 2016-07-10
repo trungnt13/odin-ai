@@ -233,6 +233,26 @@ class NNetTest(unittest.TestCase):
         self.assertEqual(f1(x).sum(), f3(x).sum())
         self.assertEqual(f2(x).sum(), f4(x).sum())
 
+    def test_load_save3(self):
+        X = K.placeholder(shape=(None, 28, 28))
+        ops = N.Sequence([
+            N.Dimshuffle((0, 'x', 1, 2)),
+            N.Conv2D(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+            K.pool2d,
+            N.FlattenRight(outdim=2),
+            N.Dense(64, activation=K.relu),
+            N.Dense(10, activation=K.softmax)
+        ])
+        y = ops(X)
+        f1 = K.function(X, y)
+
+        ops_ = cPickle.loads(cPickle.dumps(ops, protocol=cPickle.HIGHEST_PROTOCOL))
+        y_ = ops_(X)
+        f2 = K.function(X, y_)
+
+        x = np.random.rand(32, 28, 28)
+        self.assertEqual(np.sum(f1(x) - f2(x)) == 0.)
+
     def test_rnn(self):
         pass
 
