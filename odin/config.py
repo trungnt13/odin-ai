@@ -180,7 +180,7 @@ def auto_config(config=None):
                    'backend': backend, 'seed': seed})
 
     global RNG_GENERATOR
-    RNG_GENERATOR = numpy.random.RandomState()
+    RNG_GENERATOR = numpy.random.RandomState(seed=seed)
     global device
     device = dev
     global autoconfig

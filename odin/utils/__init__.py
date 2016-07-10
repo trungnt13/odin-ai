@@ -25,6 +25,19 @@ import six
 from .profile import *
 
 
+def one_hot(y, n_classes=None):
+    '''Convert class vector (integers from 0 to nb_classes)
+    to binary class matrix, for use with categorical_crossentropy
+    '''
+    y = numpy.asarray(y, dtype='int32')
+    if not n_classes:
+        n_classes = numpy.max(y) + 1
+    Y = numpy.zeros((len(y), n_classes))
+    for i in range(len(y)):
+        Y[i, y[i]] = 1.
+    return Y
+
+
 def pad_center(data, size, axis=-1, **kwargs):
     '''Wrapper for numpy.pad to automatically center an array prior to padding.
     This is analogous to `str.center()`

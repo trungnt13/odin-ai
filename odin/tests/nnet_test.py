@@ -150,8 +150,8 @@ class NNetTest(unittest.TestCase):
             self.assertEquals(K.eval(yT).shape, (25, 8, 12))
             self.assertEquals(K.eval(yT).shape, K.get_shape(yT))
 
-        test_func(N.Flatten(outdim=2))
-        test_func(N.Flatten(outdim=1))
+        test_func(N.FlattenLeft(outdim=2))
+        test_func(N.FlattenLeft(outdim=1))
         test_func(N.Reshape((25, 4, 2, 6, 2)))
         test_func(N.Dimshuffle((2, 0, 1)))
 
@@ -160,7 +160,7 @@ class NNetTest(unittest.TestCase):
 
         f = N.Sequence([
             N.Conv2D(8, (3, 3), stride=1, pad='same'),
-            N.Flatten(outdim=2),
+            N.FlattenLeft(outdim=2),
             N.Noise(sigma=0.3, noise_dims=None, noise_type='gaussian', seed=12),
             N.Dense(128, activation=K.relu),
             N.Dropout(level=0.3, noise_dims=None, seed=8),

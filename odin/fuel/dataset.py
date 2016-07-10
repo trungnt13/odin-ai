@@ -249,6 +249,13 @@ class Dataset(object):
             return self.get_data(name=key)
         raise ValueError('Only accept key type is string.')
 
+    def __iter__(self):
+        for name, (dtype, shape, data) in self._data_map.iteritems():
+            if isinstance(data, Data):
+                yield data
+            else:
+                yield self.get_data(name)
+
     def __str__(self):
         s = ['==========  Dataset:%s Total:%d  ==========' %
              (self.path, len(self._data_map))]

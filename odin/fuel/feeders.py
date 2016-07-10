@@ -36,8 +36,7 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin.utils import segment_list, ordered_set, struct, segment_axis
-from odin.utils.np_utils import one_hot
+from odin.utils import segment_list, ordered_set, struct, segment_axis, one_hot
 
 from .data import Data, MutableData
 

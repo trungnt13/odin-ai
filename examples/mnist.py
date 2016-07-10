@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+old, new#!/usr/bin/env python
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
@@ -13,10 +13,9 @@ from odin.roles import add_role, DEPLOYING
 import cPickle
 
 ds = fuel.load_mnist()
-print(ds)
-exit()
 
-X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X', for_training=True)
+X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X',
+                  for_training=True)
 y = K.placeholder(shape=ds['y_train'].shape, name='y', dtype='int32')
 
 

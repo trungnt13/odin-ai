@@ -623,6 +623,13 @@ class ArrayData(Data):
 MAX_OPEN_MMAP = 120
 
 
+def _aligned_memmap_offset(dtype):
+    header_size = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
+    type_size = np.dtype(dtype).itemsize
+    n = np.ceil(header_size / type_size)
+    return int(n * type_size)
+
+
 class MmapData(Data):
 
     """Create a memory-map to an array stored in a *binary* file on disk.
@@ -714,9 +721,8 @@ class MmapData(Data):
             f.write(_)
             f.close()
         # store variables
-        offset = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
         self._data = np.memmap(path, dtype=dtype, shape=shape, mode=mode,
-                               offset=offset)
+                               offset=_aligned_memmap_offset(dtype))
         self._path = path
 
     def close(self):
@@ -882,9 +888,8 @@ class MmapData(Data):
         f.write(_)
         f.flush(); f.close()
         # extend the memmap
-        offset = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
         self._data = np.memmap(self._path, dtype=dtype, mode='r+', shape=shape,
-                               offset=offset)
+                               offset=_aligned_memmap_offset(dtype))
         return self
 
     def flush(self):
@@ -1180,6 +1185,8 @@ class Hdf5Data(Data):
 # ===========================================================================
 # data iterator
 # ===========================================================================
+
+
 def _approximate_continuos_by_discrete(distribution):
     '''original distribution: [ 0.47619048  0.38095238  0.14285714]
        best approximated: [ 5.  4.  2.]

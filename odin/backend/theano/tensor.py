@@ -1462,7 +1462,7 @@ def pool2d(x, pool_size=(2, 2), ignore_border=True,
                                          stride=strides[1],
                                          pad=pad[1],
                                          ignore_border=ignore_border)
-    add_shape(pool_out, tuple(output_shape), override=True)
+    add_shape(pool_out, tuple(output_shape))
     return pool_out
 
 
@@ -1541,7 +1541,7 @@ def pool3d(x, pool_size=(2, 2, 2), ignore_border=True,
                                          stride=strides[2],
                                          pad=pad[2],
                                          ignore_border=ignore_border)
-    add_shape(pool_out, tuple(output_shape), override=True)
+    add_shape(pool_out, tuple(output_shape))
     return pool_out
 
 
@@ -1601,7 +1601,7 @@ def poolWTA(x, pool_size=(2, 2), axis=1):
     arange = T.arange(pool_size).dimshuffle(*arange_shuffle_pattern)
     mask = reshape(T.eq(max_indices, arange), input_shape)
     output = x * mask
-    add_shape(output, input_shape, override=True)
+    add_shape(output, input_shape)
     return output
 
 
@@ -1623,5 +1623,5 @@ def poolGlobal(x, pool_function=mean):
     """
     input_shape = get_shape(x)
     x = pool_function(T.flatten(x, 3), axis=2)
-    add_shape(x, input_shape[:2], override=True)
+    add_shape(x, input_shape[:2])
     return x

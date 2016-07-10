@@ -4,6 +4,7 @@ from __future__ import division, absolute_import, print_function
 import sys
 import time
 import timeit
+import cPickle
 from datetime import datetime
 from collections import defaultdict
 from abc import ABCMeta, abstractmethod
@@ -11,6 +12,7 @@ from six import add_metaclass
 
 import numpy as np
 
+from odin.nnet import NNOps
 from odin.utils import Progbar
 from odin.utils.decorators import functionable
 
@@ -18,11 +20,11 @@ __all__ = [
     'Callback',
     'CallbackList',
     'History',
-    'CheckpointGraph',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
     'ProgressMonitor',
-    'Debug'
+    'Checkpoint',
+    'Debug',
 ]
 
 
@@ -48,13 +50,23 @@ TASK_TYPES = ['task', 'subtask', 'crosstask', 'othertask']
 class Callback(object):
 
     """Callback
+
     Properties
     ----------
     task: current task
     results: return results
     iter: current number of iteration
     epoch: current number of epoch
-    mode: 'task', 'subtask', 'crosstask'
+    mode: 'task', 'subtask', 'crosstask', 'save'
+    mainloop: the running loop
+
+    Callbacks
+    --------
+    task_start(self)
+    task_end(self)
+    epoch_start(self)
+    epoch_end(self)
+    batch_end(self)
 
     Note
     ----
@@ -162,6 +174,12 @@ class CallbackList(Callback):
 
     def __init__(self, *args):
         super(CallbackList, self).__init__()
+        # ====== check duplicate callback types ====== #
+        seen_callback_type = [i.__class__ for i in args]
+        if len(set(seen_callback_type)) != len(seen_callback_type):
+            raise Exception('You cannot have 2 or more callbacks of the '
+                            'same type in CallbackList.')
+        # ====== add callback to list ====== #
         self._callbacks = []
         for i in args:
             self.add_callback(i)
@@ -171,6 +189,10 @@ class CallbackList(Callback):
             self._callbacks.append(callback)
 
     def __getitem__(self, key):
+        if isinstance(key, str):
+            for i in self._callbacks:
+                if key in i.__class__.__name__:
+                    return i
         return self._callbacks[key]
 
     def __setstate__(self, value):
@@ -249,30 +271,35 @@ class CallbackList(Callback):
 
 
 # ===========================================================================
-# TRaining utilities
+# Checkpoint utilities
 # ===========================================================================
-@add_metaclass(ABCMeta)
 class Checkpoint(Callback):
     """ Checkpoint
     Note
     ----
     Checkpoint is created once whenever MainLoop.save() is called.
+    This class (by defaults) pickles everything
     """
 
     def __init__(self, path):
         super(Checkpoint, self).__init__()
         self.path = path
+        self._save_obj = None
 
     def task_start(self):
         if self.mode == 'othertask' and self.task.name == 'save':
-            self.save()
+            self._save()
 
-    def task_end(self):
-        pass
+    def set_obj(self, obj):
+        self._save_obj = obj
+        return self
 
-    @abstractmethod
-    def save(self):
-        pass
+    def _save(self):
+        if self._save_obj is None:
+            raise Exception('You must set_obj for Checkpoint first.')
+        cPickle.dump(self._save_obj,
+                     open(self.path, 'w'),
+                     protocol=cPickle.HIGHEST_PROTOCOL)
 
     # ==================== Pickling ==================== #
     def __getstate__(self):
@@ -281,20 +308,12 @@ class Checkpoint(Callback):
     def __setstate__(self, value):
         super(Checkpoint, self).__setstate__(value[0])
         self.path = value[1]
+        self._save_obj = None
 
 
-class CheckpointGraph(Checkpoint):
-    """ CheckpointGraph """
-
-    def __init__(self, graph, path):
-        super(CheckpointGraph, self).__init__(path)
-        self.graph = graph
-
-    def save(self):
-        # TODO
-        pass
-
-
+# ===========================================================================
+# EarlyStop utilities
+# ===========================================================================
 @add_metaclass(ABCMeta)
 class EarlyStop(Callback):
     """ Early Stopping algorithm based on Generalization Loss criterion,
@@ -482,16 +501,21 @@ class ProgressMonitor(Callback):
         if self._mode == 'crosstask':
             return
 
-        if self._format_results:
-            title = self._title % self.results
-        else:
-            title = self._title
+        title = (self._title % self.results
+                 if self._format_results else self._title)
+        # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
+        # progress
         iter_per_epoch = self.task.iter_per_epoch
         n = round(((self.iter % iter_per_epoch) / iter_per_epoch) * 100)
         self._prog.update(min(int(n), 99))
 
     def epoch_end(self):
+        # get the last results
+        title = (self._title % self.results[-1]
+                 if self._format_results else self._title)
+        # title
+        self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
         # always 100% at the end of epoch
         self._prog.update(100)
 
@@ -546,6 +570,16 @@ class History(Callback):
                               self.results, self.iter, self.epoch))
 
     def get(self, task, event):
+        """
+        Parameters
+        ----------
+        task : str
+            name of task
+        event : str
+            task_start, task_end, batch_end, epoch_start, epoch_end
+            if 'task' or epoch event is queried, a list of results is
+            returned
+        """
         return [i[3] for i in self._history if i[1] == event and i[2] == task]
 
     def benchmark(self, task, event):

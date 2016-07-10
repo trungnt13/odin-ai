@@ -9,11 +9,14 @@ from odin.utils.decorators import autoinit
 from .base import NNOps, NNConfig
 
 
-class Flatten(NNOps):
+class FlattenLeft(NNOps):
+    """ Flatten the array from the left.
+    i.e. turn shape=(128,28,28) with outdim=2 into shape=(3584, 28)
+    """
 
     @autoinit
     def __init__(self, outdim=2, **kwargs):
-        super(Flatten, self).__init__(**kwargs)
+        super(FlattenLeft, self).__init__(**kwargs)
 
     def _initialize(self, input_shape):
         config = NNConfig(input_shape=input_shape)
@@ -26,6 +29,32 @@ class Flatten(NNOps):
                              for i in range(K.ndim(x) - self.outdim + 1,
                                             K.ndim(x))])
         return K.reshape(x, (-1,) + other_shape)
+
+    def _transpose(self):
+        shape = tuple([-1 if i is None else i for i in self.input_shape])
+        return Reshape(shape)
+
+
+class FlattenRight(NNOps):
+    """ Flatten the array from the right.
+    i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
+    """
+
+    @autoinit
+    def __init__(self, outdim=2, **kwargs):
+        super(FlattenRight, self).__init__(**kwargs)
+
+    def _initialize(self, input_shape):
+        config = NNConfig(input_shape=input_shape)
+        return config
+
+    def _apply(self, x):
+        input_shape = K.get_shape(x)
+        self.config(input_shape=input_shape)
+        other_shape = tuple([input_shape[i]
+                             for i in range(self.outdim - 1)])
+        n = np.prod(input_shape[(self.outdim - 1):])
+        return K.reshape(x, other_shape + (n,))
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])

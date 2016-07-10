@@ -223,6 +223,9 @@ class MainLoop(object):
         self._callback = CallbackList(*callback)
         return self
 
+    def __getitem__(self, key):
+        return self._callback[key]
+
     # ==================== main ==================== #
     def _validate_data(self, data):
         if not isinstance(data, (list, tuple)):
@@ -303,12 +306,13 @@ class MainLoop(object):
                 self._stop_now = False
                 break
             # ====== check if save_now ====== #
+            # little hacky, so mainloop can signal Callback to save
             if self._save_now:
                 self._save_now = False
                 callback.mode = 'othertask'
                 callback.task = _SAVE_TASK
                 callback.task_start()
-                callback.task_end()
+                callback.task_end() # just end right after start
                 callback.reset()
             # ====== Main task ====== #
             callback.mode = 'task' # dirty hack

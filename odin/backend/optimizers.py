@@ -1,6 +1,5 @@
 # ===========================================================================
-# This module is created based on the code from 2 libraries: Lasagne and keras
-# Original work Copyright (c) 2014-2015 keras contributors
+# This module is created based on the code from libraries: Lasagne
 # Original work Copyright (c) 2014-2015 Lasagne contributors
 # Modified work Copyright 2016-2017 TrungNT
 # ===========================================================================
@@ -149,7 +148,7 @@ def apply_momentum(updates, params=None, momentum=0.9):
     for param in params:
         shape = get_shape(param)
         velocity = variable(np.zeros(shape))
-        velocity = addbroadcast(velocity, *broadcastable(param))
+        # velocity = addbroadcast(velocity, *broadcastable(param))
         x = momentum * velocity + updates[param]
         updates[velocity] = x - param
         updates[param] = x
@@ -242,7 +241,7 @@ def apply_nesterov_momentum(updates, params=None, momentum=0.9):
     for param in params:
         shape = get_shape(param)
         velocity = variable(np.zeros(shape))
-        velocity = addbroadcast(velocity, *broadcastable(param))
+        # velocity = addbroadcast(velocity, *broadcastable(param))
         x = momentum * velocity + updates[param] - param
         updates[velocity] = x
         updates[param] = momentum * x + updates[param]
@@ -345,7 +344,7 @@ def adagrad(loss_or_grads, params, learning_rate=1.0, epsilon=1e-6):
         shape = get_shape(param)
 
         accu = variable(np.zeros(shape))
-        accu = addbroadcast(accu, *broadcastable(param))
+        # accu = addbroadcast(accu, *broadcastable(param))
 
         accu_new = accu + pow(grad, 2)
         updates[accu] = accu_new
@@ -406,7 +405,7 @@ def rmsprop(loss_or_grads, params, learning_rate=0.001, rho=0.9, epsilon=1e-6):
         shape = get_shape(param)
 
         accu = variable(np.zeros(shape))
-        accu = addbroadcast(accu, *broadcastable(param))
+        # accu = addbroadcast(accu, *broadcastable(param))
 
         accu_new = rho * accu + (one - rho) * pow(grad, 2)
         updates[accu] = accu_new
@@ -477,10 +476,10 @@ def adadelta(loss_or_grads, params, learning_rate=1.0, rho=0.95, epsilon=1e-6):
         shape = get_shape(param)
         # accu: accumulate gradient magnitudes
         accu = variable(np.zeros(shape))
-        accu = addbroadcast(accu, *broadcastable(param))
+        # accu = addbroadcast(accu, *broadcastable(param))
         # delta_accu: accumulate update magnitudes (recursively!)
         delta_accu = variable(np.zeros(shape))
-        delta_accu = addbroadcast(delta_accu, *broadcastable(param))
+        # delta_accu = addbroadcast(delta_accu, *broadcastable(param))
         # update accu (as in rmsprop)
         accu_new = rho * accu + (one - rho) * pow(grad, 2)
         updates[accu] = accu_new
@@ -546,10 +545,10 @@ def adam(loss_or_grads, params, learning_rate=0.001, beta1=0.9,
         shape = get_shape(param)
 
         m_prev = variable(np.zeros(shape))
-        m_prev = addbroadcast(m_prev, *broadcastable(param))
+        # m_prev = addbroadcast(m_prev, *broadcastable(param))
 
         v_prev = variable(np.zeros(shape))
-        v_prev = addbroadcast(v_prev, *broadcastable(param))
+        # v_prev = addbroadcast(v_prev, *broadcastable(param))
 
         m_t = beta1 * m_prev + (one - beta1) * g_t
         v_t = beta2 * v_prev + (one - beta2) * pow(g_t, 2)
@@ -608,10 +607,10 @@ def adamax(loss_or_grads, params, learning_rate=0.002, beta1=0.9,
         shape = get_shape(param)
 
         m_prev = variable(np.zeros(shape))
-        m_prev = addbroadcast(m_prev, *broadcastable(param))
+        # m_prev = addbroadcast(m_prev, *broadcastable(param))
 
         u_prev = variable(np.zeros(shape))
-        u_prev = addbroadcast(u_prev, *broadcastable(param))
+        # u_prev = addbroadcast(u_prev, *broadcastable(param))
 
         m_t = beta1 * m_prev + (one - beta1) * g_t
         u_t = maximum(beta2 * u_prev, abs(g_t))
