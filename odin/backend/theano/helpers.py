@@ -201,8 +201,9 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #
     if name in _CREATED_VARIABLE:
-        raise Exception('Variable with the same name "%s" has been created '
-                        'before.' % name)
+        if not np.array_equal(value, _CREATED_VARIABLE[name].eval()):
+            raise Exception('Variable with the same name "%s" has been created '
+                            'before.' % name)
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 
@@ -339,7 +340,7 @@ class ComputationGraph(object):
         # original shared variable
         def shared_variable_filter(var):
             if is_trainable_variable(var) and hasattr(var, 'default_update'):
-                for v in _CREATED_VARIABLE:
+                for v in _CREATED_VARIABLE.values():
                     if v.name == var.name and v.ndim == var.ndim:
                         return v
             return var

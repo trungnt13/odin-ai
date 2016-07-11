@@ -176,7 +176,7 @@ class TransposeConv(NNOps):
     def __init__(self, conv):
         if not isinstance(conv, BaseConv):
             raise ValueError('TransposeConv Ops only accepts BaseConv as arguments.')
-        super(TransposeConv, self).__init__(name=conv._name + '_transpose')
+        super(TransposeConv, self).__init__(name=conv.name + '_transpose')
         self.conv = conv
         conv.config() # check if Ops is initialized
 

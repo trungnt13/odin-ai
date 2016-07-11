@@ -310,15 +310,15 @@ class Dense(NNOps):
         transpose = Dense(num_units=num_units,
                           W_init=self.W_init, b_init=self.b_init,
                           activation=self.activation,
-                          name=self._name + '_transpose')
+                          name=self.name + '_transpose')
         transpose._original_dense = self
         #create the config
         config = NNConfig(num_inputs=num_inputs)
         config.create_params(self.W.T, shape=(num_inputs, num_units), name='W',
-                             nnops=self)
+                             nnops=transpose)
         if self.b_init is not None:
             config.create_params(self.b_init, shape=(num_units,), name='b',
-                                 nnops=self, roles=BIAS)
+                                 nnops=transpose, roles=BIAS)
         # modify the config
         transpose.config(config)
         return transpose
@@ -732,7 +732,7 @@ class Switcher(NNOps):
     def _transpose(self):
         if hasattr(self.training, 'T') and hasattr(self.deploying, 'T'):
             return Switcher(self.training.T, self.deploying.T,
-                            name=self._name + '_transpose')
+                            name=self.name + '_transpose')
         raise Exception('One of training or deploying ops do not support transpose.')
 
 

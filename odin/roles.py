@@ -55,6 +55,10 @@ def add_role(var, role):
 
 
 def add_updates(var, key, value):
+    r""" Annotate updates to a given var, hence, this updates will
+    be used when create function
+
+    """
     _check_tag(var)
     updates = getattr(var.tag, 'updates', OrderedDict())
     updates[key] = value
@@ -62,6 +66,9 @@ def add_updates(var, key, value):
 
 
 def add_auxiliary_variable(var, auxiliary, roles=None):
+    r""" Annotate auxiliary variable to a given var
+
+    """
     _check_tag(var)
     auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
     add_role(auxiliary, AUXILIARY)

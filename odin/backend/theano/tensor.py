@@ -26,13 +26,13 @@ except ImportError:
     from theano.sandbox.softsign import softsign as T_softsign
 
 from odin.config import autoconfig, device, RNG_GENERATOR
-from odin.utils import as_tuple, as_shape_tuple
+from odin.utils import as_tuple, as_shape_tuple, dict_union
 from odin.roles import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING)
 
 from .helpers import (add_shape, get_shape, _auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
-                      is_training)
+                      is_training, ComputationGraph)
 
 FLOATX = autoconfig.floatX
 EPSILON = autoconfig.epsilon
@@ -624,12 +624,25 @@ def set_subtensor(x, y):
 # GRAPH MANIPULATION
 # ===========================================================================
 class Function(object):
+    """ Two way to call this Function
+    f(x1, x2, x3)
+    or f('x1'=x1, 'x2'=x2, 'x3'=x3)
+    """
 
     def __init__(self, inputs, outputs, updates=[], **kwargs):
-        if not isinstance(inputs, (tuple, list)):
+        # ====== validate input ====== #
+        if isinstance(inputs, dict):
+            self.inputs_name = inputs.keys()
+            inputs = inputs.values()
+        elif not isinstance(inputs, (tuple, list)):
             inputs = [inputs]
-        if isinstance(updates, OrderedDict):
-            updates = updates.items()
+        if not hasattr(self, 'inputs_name'):
+            self.inputs_name = [i.name for i in inputs]
+        # ====== validate updates ====== #
+        if not isinstance(updates, OrderedDict):
+            updates = OrderedDict(updates)
+        updates = dict_union(updates, ComputationGraph(outputs).updates)
+        updates = updates.items()
         # ====== add and reset global update ====== #
         self.function = theano.function(
             inputs=inputs, outputs=outputs,
@@ -638,7 +651,9 @@ class Function(object):
             allow_input_downcast=True,
             **kwargs)
 
-    def __call__(self, *inputs):
+    def __call__(self, *inputs, **kwargs):
+        if len(kwargs) == len(self.inputs_name):
+            inputs = [kwargs[i] for i in self.inputs_name]
         return self.function(*inputs)
 
 

@@ -9,7 +9,9 @@ from six.moves import zip, range
 
 import numpy as np
 
+from odin.roles import add_updates, add_auxiliary_variable
 from odin import backend as K
+from odin import nnet as N
 
 
 class BackendTest(unittest.TestCase):
@@ -169,6 +171,27 @@ class BackendTest(unittest.TestCase):
         test_func(x, K.linear)
         test_func(x, K.sigmoid)
         test_func(x, K.hard_sigmoid)
+
+    def test_computation_graph(self):
+        X = K.placeholder(shape=(None, 32), name='input')
+        z = K.variable(np.random.rand(10, 10), name='z')
+        f = N.Sequence([
+            N.Dense(16, activation=K.relu),
+            N.Dense(8, activation=K.softmax)
+        ])
+        y = f(X)
+        add_auxiliary_variable(y, K.constant(10, name='aux_const'))
+        add_updates(y, z, z * 2)
+
+        tmp = K.ComputationGraph(y)
+        self.assertEqual(len(tmp.placeholders), 1)
+        self.assertEqual(len(tmp.trainable_variables), 4)
+        self.assertEqual(len(tmp.parameters), 4)
+        self.assertEqual(len(tmp.dict_of_placeholders), 1)
+        self.assertEqual(len(tmp.auxiliary_variables), 1)
+        tmp.intermediary_variables # no idea how to test this
+        self.assertEqual(len(tmp.updates), 1)
+        self.assertEqual(K.ComputationGraph(y), tmp)
 
 
 if __name__ == '__main__':
