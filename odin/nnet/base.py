@@ -271,6 +271,9 @@ class NNOps(object):
 
     def __setstate__(self, states):
         id, name, config, attrs = states
+        # increase the ID or will be overlap name
+        if NNOps.ID < id:
+            NNOps.ID = id + 1
         self._id = id
         self._name = name
         self._transpose_ops = None # reset the transpose ops
