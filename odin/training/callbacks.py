@@ -20,6 +20,7 @@ __all__ = [
     'Callback',
     'CallbackList',
     'History',
+    'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
     'ProgressMonitor',
@@ -88,10 +89,10 @@ class Callback(object):
     def __setstate__(self, value):
         self._task = None
         self._results = None
-        self._iter = value[0]
-        self._epoch = value[1]
         self._mode = None # 'itask', 'subtask', 'crosstask'
         self._mainloop = None
+        self._iter = value[0]
+        self._epoch = value[1]
 
     def __getstate__(self):
         return self._iter, self._epoch
@@ -133,19 +134,19 @@ class Callback(object):
 
     @property
     def iter(self):
-        return self._iter[self.task]
+        return self._iter[self.task.name]
 
     @iter.setter
     def iter(self, value):
-        self._iter[self.task] = value
+        self._iter[self.task.name] = value
 
     @property
     def epoch(self):
-        return self._epoch[self.task]
+        return self._epoch[self.task.name]
 
     @epoch.setter
     def epoch(self, value):
-        self._epoch[self.task] = value
+        self._epoch[self.task.name] = value
 
     def reset(self):
         self._task = None
@@ -297,9 +298,10 @@ class Checkpoint(Callback):
     def _save(self):
         if self._save_obj is None:
             raise Exception('You must set_obj for Checkpoint first.')
-        cPickle.dump(self._save_obj,
-                     open(self.path, 'w'),
+        f = open(self.path, 'w')
+        cPickle.dump(self._save_obj, f,
                      protocol=cPickle.HIGHEST_PROTOCOL)
+        f.close()
 
     # ==================== Pickling ==================== #
     def __getstate__(self):
@@ -319,6 +321,8 @@ class EarlyStop(Callback):
     """ Early Stopping algorithm based on Generalization Loss criterion,
     this is strict measure on validation
 
+    ``LOWER is better``
+
     Parameters
     ----------
     threshold : float
@@ -327,7 +331,8 @@ class EarlyStop(Callback):
     task : string
         task name for checking this criterion
     get_value : function
-        function to process the results of given task.
+        function to process the results of validation task to return
+        comparable number.
 
     Note
     ----
@@ -336,7 +341,8 @@ class EarlyStop(Callback):
     is better
     """
 
-    def __init__(self, threshold, task, get_value=lambda x: np.mean(x)):
+    def __init__(self, threshold, task,
+                 get_value=lambda x: np.mean(x)):
         super(EarlyStop, self).__init__()
         self.threshold = threshold
         self.task_name = task
@@ -375,6 +381,9 @@ class EarlyStop(Callback):
     def earlystop(self, history):
         """ Any algorithm return: shouldSave, shouldStop """
         pass
+
+    def reset_history(self):
+        self._history = []
 
     # ==================== Pickling ==================== #
     def __getstate__(self):
@@ -444,12 +453,18 @@ class EarlyStopPatience(EarlyStop):
         after which training will be stopped.
     """
 
+    def reset_history(self):
+        self._history = []
+        if hasattr(self, 'wait'):
+            self.wait = 0
+
     def earlystop(self, history):
         if not hasattr(self, 'wait'):
             self.wait = 0
 
         shouldSave, shouldStop = 0, 0
-        if history[-1] <= np.min(history): # showed improvement
+        # showed improvement, should not equal to old best
+        if len(history) <= 1 or history[-1] < np.min(history[:-1]):
             self.wait = 0
             shouldSave = 1
         else:
@@ -488,7 +503,8 @@ class ProgressMonitor(Callback):
         self._title = title
 
     def __getstate__(self):
-        return super(ProgressMonitor, self).__getstate__(), self._title, self._format_results
+        return (super(ProgressMonitor, self).__getstate__(),
+                self._title, self._format_results)
 
     def __setstate__(self, value):
         super(ProgressMonitor, self).__setstate__(value[0])
@@ -511,8 +527,8 @@ class ProgressMonitor(Callback):
         self._prog.update(min(int(n), 99))
 
     def epoch_end(self):
-        # get the last results
-        title = (self._title % self.results[-1]
+        # risky move: get the mean of all results
+        title = (self._title % np.mean(self.results)
                  if self._format_results else self._title)
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title

@@ -1187,6 +1187,10 @@ def categorical_crossentropy(output, target):
     return x
 
 
+def squared_error(output, target):
+    return T.square(output - target)
+
+
 def binary_crossentropy(output, target):
     input_shape = get_shape(output)
     x = T.nnet.binary_crossentropy(output, target)

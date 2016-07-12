@@ -6,6 +6,8 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import sys
+import __builtin__
+
 from collections import OrderedDict, defaultdict
 from collections import MutableMapping
 from functools import wraps, partial
@@ -15,6 +17,7 @@ import types
 import cPickle
 
 from odin.utils import is_path
+
 
 __all__ = [
     'cache',
@@ -62,7 +65,7 @@ def cache(func, *attrs):
         attrs = (func,) + attrs
         func = None
 
-    if any(not isinstance(i, str) for i in attrs):
+    if __builtin__.any(not isinstance(i, str) for i in attrs):
         raise ValueError('Tracking attribute must be string represented name of'
                          ' attribute, but given attributes have types: {}'
                          ''.format(tuple(map(type, attrs))))

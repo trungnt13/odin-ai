@@ -532,6 +532,7 @@ def adam(loss_or_grads, params, learning_rate=0.001, beta1=0.9,
            Adam: A Method for Stochastic Optimization.
            arXiv preprint arXiv:1412.6980.
     """
+    # TODO: check again this adam
     all_grads = get_or_compute_grads(loss_or_grads, params)
     t_prev = variable(0.)
     updates = OrderedDict()
@@ -539,7 +540,7 @@ def adam(loss_or_grads, params, learning_rate=0.001, beta1=0.9,
 
     t = t_prev + 1
     a_t = learning_rate * \
-        sqrt(one - pow(cast(beta2, FLOATX), t)) / (one - pow(cast(beta1, FLOATX), t))
+        sqrt(one - _pow(cast(beta2, FLOATX), t)) / (one - _pow(cast(beta1, FLOATX), t))
 
     for param, g_t in zip(params, all_grads):
         shape = get_shape(param)

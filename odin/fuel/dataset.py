@@ -315,10 +315,11 @@ def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST.zip'):
     return _load_data_from_path(datapath)
 
 
-def load_mspec_test(path='https://s3.amazonaws.com/ai-datasets/mspec_test.zip'):
+def load_mspec_test():
     """
     path : str
         local path or url to hdf5 datafile
     """
+    path = 'https://s3.amazonaws.com/ai-datasets/mspec_test.zip'
     datapath = get_file('mspec_test', path)
     return _load_data_from_path(datapath)
