@@ -45,10 +45,15 @@ def add_role(var, role):
 
     """
     _check_tag(var)
-
     roles = getattr(var.tag, 'roles', [])
-    roles = [old_role for old_role in roles
-             if not isinstance(role, old_role.__class__)]
+    # exclusively process for TRAINING and DEPLOYING mode
+    if role.__class__ in (TrainingRole, DeployingRole):
+        exclude_role = TrainingRole if role.__class__ is DeployingRole else DeployingRole
+        roles = [r for r in roles if not isinstance(r, exclude_role)]
+    else: # normali processing
+        roles = [old_role for old_role in roles
+                 if not isinstance(role, old_role.__class__)]
+    # add a role if it isn't in the list
     if not any(isinstance(old_role, role.__class__) for old_role in roles):
         roles += [role]
     var.tag.roles = roles
@@ -133,7 +138,7 @@ class TrainingRole(VariableRole):
 TRAINING = TrainingRole()
 
 
-class DeployingRole(TrainingRole):
+class DeployingRole(VariableRole):
     pass
 #: Override Training role
 DEPLOYING = DeployingRole()
