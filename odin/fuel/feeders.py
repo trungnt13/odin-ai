@@ -108,7 +108,7 @@ class Feeder(MutableData):
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
-        self.ncpu = max(min(ncpu, cpu_count() - 1), 2)
+        self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
         # ====== default ====== #
         self._cache = cache
         self._batch_size = 256
@@ -175,7 +175,7 @@ class Feeder(MutableData):
                 # map tasks
                 batch.append(map(name, x, trans))
                 # reduce tasks
-                if len(batch) == cache:
+                if len(batch) == cache_size:
                     for b in reduce(batch):
                         res.put(b)
                     batch = []

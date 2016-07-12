@@ -141,11 +141,11 @@ class MmapDict(dict):
         return self._dict.iterkeys()
 
     def values(self):
-        return self.itervalues()
+        return list(self.itervalues())
 
     def itervalues(self):
         for k in self._dict.iterkeys():
-            return self[k]
+            yield self[k]
 
     def items(self):
         return self.iteritems()
