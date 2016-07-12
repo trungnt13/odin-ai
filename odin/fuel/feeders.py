@@ -27,6 +27,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import inspect
 import math
+from numbers import Number
 from itertools import chain
 from abc import ABCMeta, abstractmethod
 from collections import Counter
@@ -318,6 +319,59 @@ class Normalization(FeederRecipe):
         if self.mean is not None and self.std is not None:
             x = (x - self.mean) / self.std
         return name, x, transcription
+
+
+class Slice(FeederRecipe):
+    """docstring for Slice"""
+
+    def __init__(self, indices, axis=-1):
+        super(Slice, self).__init__()
+        # ====== validate axis ====== #
+        if not isinstance(axis, int):
+            raise ValueError('axis for Slice must be an integer.')
+        if axis == 0:
+            raise ValueError('Cannot slice the 0 (first) axis. ')
+        self.axis = axis
+        # ====== validate indices ====== #
+        if not isinstance(indices, int) and \
+        not isinstance(indices, slice) and \
+        not isinstance(indices, (tuple, list)):
+            raise ValueError('indices must be int, slice, or list of int '
+                             'or slice instance.')
+        self.indices = indices
+
+    def map(self, name, x, transcription):
+        ndim = x.ndim
+        axis = self.axis % ndim
+        if isinstance(self.indices, (slice, int)):
+            indices = tuple([slice(None) if i != axis else self.indices
+                             for i in range(ndim)])
+            x = x[indices]
+        else:
+            indices = []
+            for idx in self.indices:
+                indices.append(tuple([slice(None) if i != axis else idx
+                                      for i in range(ndim)]))
+            x = np.hstack([x[i] for i in indices])
+        return name, x, transcription
+
+    def shape_transform(self, shape):
+        axis = self.axis % len(shape)
+        if isinstance(self.indices, int):
+            n = 1
+        elif isinstance(self.indices, slice):
+            _ = self.indices.indices(shape[axis])
+            n = _[1] - _[0]
+        else:
+            _ = []
+            for idx in self.indices:
+                if isinstance(idx, int):
+                    _.append(1)
+                elif isinstance(idx, slice):
+                    idx = idx.indices(shape[axis])
+                    _.append(idx[1] - idx[0])
+            n = sum(_)
+        return [j if i != axis else n for i, j in enumerate(shape)]
 
 
 class Stacking(FeederRecipe):
