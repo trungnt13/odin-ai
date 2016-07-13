@@ -16,6 +16,8 @@ from six.moves import zip, zip_longest
 import types
 import cPickle
 
+import numpy as np
+
 from odin.utils import is_path
 
 
@@ -376,101 +378,141 @@ class abstractstatic(staticmethod):
 # ===========================================================================
 # Python utilities
 # ===========================================================================
-primitives = (bool, int, float, str,
-             tuple, list, dict, type, types.ModuleType, types.FunctionType,
-             type(None))
+_primitives = (bool, int, float, str,
+               tuple, list, dict, type, types.ModuleType, types.FunctionType,
+               types.NoneType, types.TypeType)
 
 
-def func_to_str(func):
-    if not inspect.isfunction(func):
-        raise ValueError('Only convert function to string, but type of object'
-                         ' is: {}'.format(type(func)))
-    import marshal
-    from array import array
-    # conver to byte
-    return cPickle.dumps(array("B", marshal.dumps(func.func_code)))
-
-
-def str_to_func(s, sandbox, name):
-    import marshal
-    func = marshal.loads(cPickle.loads(s).tostring())
-    func = types.FunctionType(func, sandbox, name)
-    return func
-
-
-def serialize_sandbox(environment):
+def _serialize_function_sandbox(function):
     '''environment, dictionary (e.g. globals(), locals())
     Returns
     -------
     dictionary : cPickle dumps-able dictionary to store as text
     '''
     import re
+    import marshal
+    from array import array
+
     sys_module = re.compile('__\w+__')
-    ignore_key = ['__name__', '__file__']
+
+    environment = function.func_globals
+    func_module = function.__module__
+
     sandbox = OrderedDict()
 
+    def func_to_str(func):
+        # conver to byte
+        return cPickle.dumps(array("B", marshal.dumps(func.func_code)))
+
     # ====== serialize primitive type ====== #
-    for k, v in environment.iteritems():
-        if k in ignore_key: continue
+    seen_function = False
+    for name, val in environment.iteritems():
+        # function might nested, so cannot find it in globals()
+        if val == function:
+            seen_function = True
+        # ignore system modules
+        if sys_module.match(name) is not None:
+            continue
         # primitive type
-        if type(v) in primitives and sys_module.match(k) is None:
-            t = type(v)
-            if isinstance(v, types.ModuleType): # special case: import module
-                v = v.__name__
-                t = 'module'
-            elif v is None: # for some reason, pickle cannot serialize None type
-                v = None
-                t = 'None'
-            elif inspect.isfunction(v): # special case: function
-                v = func_to_str(v)
-                t = 'function'
-            sandbox[k] = {'content': v, 'type': t}
+        if type(val) in _primitives:
+            # print(k, v.__module__ if hasattr(v, '__module__') else v.__name__, func_module)
+            typ = type(val)
+            if isinstance(val, types.ModuleType): # special case: import module
+                val = val.__name__
+                typ = 'module'
+            elif val is None: # for some reason, pickle cannot serialize None type
+                val = None
+                typ = 'None'
+            elif inspect.isfunction(val): # special case: function
+                # imported function
+                _ = '_main' if function == val else ''
+                if val.__module__ != func_module:
+                    typ = 'imported_function'
+                    val = (val.__name__, val.__module__)
+                # defined function in the same script file
+                else:
+                    typ = 'defined_function'
+                    val = (val.func_name, func_to_str(val))
+                typ += _
         # check if object is pickle-able
         else:
             try:
-                v = cPickle.dumps(v)
-                cPickle.loads(v) # chekc if it is loadable
-                sandbox[k] = {'content': v, 'type': 'object'}
+                val_new = cPickle.loads(cPickle.dumps(val))
+                if val_new.__dict__ != val.__dict__:
+                    raise Exception
+                typ = 'object'
             except: # not pickle-albe, just ignore it
-                pass
+                typ = None
+        # Finnally add to sandbox
+        if typ is not None:
+            sandbox[name] = (typ, val)
+    # ====== not seen the main function ====== #
+    if not seen_function: # mark the main function with "_main"
+        sandbox['random_name_12082518'] = ('defined_function_main',
+                                           (function.func_name,
+                                            func_to_str(function)))
+    # else: # looking for static method in each class
+    #     for i in sandbox.values():
+    #         if hasattr(i, self._function_name):
+    #             f = getattr(i, self._function_name)
+    #             if inspect.isfunction(f) and inspect.getsource(f) == self._source:
+    #                 self._function = f
     return sandbox
 
 
-def deserialize_sandbox(sandbox):
+def _deserialize_function_sandbox(sandbox):
     '''
     environment : dictionary
         create by `serialize_sandbox`
     '''
-    if not isinstance(sandbox, dict):
-        raise ValueError(
-            '[environment] must be dictionary created by serialize_sandbox')
+    import marshal
     import importlib
+
+    def str_to_func(s, sandbox, name):
+        func = marshal.loads(cPickle.loads(s).tostring())
+        func = types.FunctionType(func, sandbox, name)
+        return func
+
     environment = {}
+    defined_function = []
+    main_func = None
     # first pass we deserialize all type except function type
-    for k, v in sandbox.iteritems():
-        if v['type'] in primitives:
-            v = v['content']
-        elif v['type'] == 'None':
-            v = None
-        elif v['type'] == 'module':
-            v = importlib.import_module(v['content'])
-        elif v['type'] == 'function':
-            v = str_to_func(v['content'], globals(), name=k)
-        elif v['type'] == 'object':
-            v = cPickle.loads(v['content'])
+    for name, (typ, val) in sandbox.iteritems():
+        if typ == 'None':
+            val = None
+        elif typ == 'module':
+            val = importlib.import_module(val)
+        elif typ in _primitives or typ == 'object':
+            pass
+        elif 'imported_function' in typ:
+            val = getattr(importlib.import_module(val[1]), val[0])
+            if '_main' in typ: main_func = val
+        elif 'defined_function' in typ:
+            val = str_to_func(val[1], globals(), name=val[0])
+            if '_main' in typ: main_func = val
+            defined_function.append(name)
         else:
-            raise ValueError('Unsupport deserializing type: {}'.format(v['type']))
-        environment[k] = v
+            raise ValueError('Unsupport deserializing type: {}, '
+                             'value: {}'.format(typ, val))
+        environment[name] = val
+    # ====== create all defined function ====== #
     # second pass, function all funciton and set it globales to new environment
-    for k, v in environment.items():
-        if inspect.isfunction(v):
-            v.func_globals.update(environment)
-    return environment
+    for name in defined_function:
+        func = environment[name]
+        func.func_globals.update(environment)
+    return main_func, environment
 
 
 class functionable(object):
 
     """ Class handles save and load a function with its arguments
+
+    Parameters
+    ----------
+    arg: list
+        arguments list for given function
+    kwargs: dict
+        keyword arguments for given function
 
     Note
     ----
@@ -495,20 +537,12 @@ class functionable(object):
                             if i not in final_args]))
 
         self._function = func
+        # random id that identify this function
         self._function_name = func.func_name
         self._function_order = spec.args
         self._function_kwargs = final_args
-        # class method, won't be found from func_globals
-        _ = dict(func.func_globals)
-        # handle the case, using functionable as decorator of methods
-        if self._function_name not in _ and inspect.isfunction(func):
-            _[self._function_name] = func
-        self._sandbox = serialize_sandbox(_)
-        # save source code
-        try:
-            self._source = inspect.getsource(self._function)
-        except:
-            self._source = None
+        self._source = inspect.getsource(self._function)
+        self._sandbox = _serialize_function_sandbox(func)
 
     @property
     def function(self):
@@ -574,34 +608,22 @@ class functionable(object):
 
     # ==================== Pickling methods ==================== #
     def __getstate__(self):
-        config = OrderedDict()
         # conver to byte
-        config['kwargs'] = self._function_kwargs
-        config['order'] = self._function_order
-        config['name'] = self._function_name
-        config['sandbox'] = self._sandbox
-        config['source'] = self._source
-        return config
+        return (self._function_kwargs,
+                self._function_order,
+                self._function_name,
+                self._sandbox,
+                self._source)
 
-    def __setstate__(self, config):
-        import inspect
+    def __setstate__(self, states):
+        (self._function_kwargs,
+        self._function_order,
+        self._function_name,
+        self._sandbox,
+        self._source) = states
 
-        self._function_kwargs = config['kwargs']
-        self._function_order = config['order']
-        self._function_name = config['name']
-        self._sandbox = config['sandbox']
-        self._source = config['source']
         # ====== deserialize the function ====== #
-        sandbox = deserialize_sandbox(self._sandbox)
-        self._function = None
-        if self._function_name in sandbox:
-            self._function = sandbox[self._function_name]
-        else: # looking for static method in each class
-            for i in sandbox.values():
-                if hasattr(i, self._function_name):
-                    f = getattr(i, self._function_name)
-                    if inspect.isfunction(f) and inspect.getsource(f) == self._source:
-                        self._function = f
+        self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
         if self._function is None:
             raise AttributeError('Cannot find function with name={} in sandbox'
                                  ''.format(self._function_name))

@@ -16,10 +16,12 @@ from sklearn.base import (BaseEstimator, ClassifierMixin,
 
 from odin import backend as K
 from odin.roles import add_role, has_roles, TRAINING, DEPLOYING
-from odin.nnet import NNOps, Sequence
-from odin.utils.decorators import functionable
+from odin.nnet import Sequence
+from odin.fuel import Data, speech_features_extraction
 from odin.training import (MainLoop, ProgressMonitor, History,
                            EarlyStopPatience, Checkpoint, EarlyStop)
+from odin.utils.decorators import autoinit, functionable
+from odin.preprocessing import speech
 
 
 class SequentialModel(BaseEstimator, TransformerMixin):
@@ -386,3 +388,137 @@ class SequentialRegressor(SequentialModel, RegressorMixin):
 
     def predict(self, *args):
         return self.transform(*args)
+
+
+# ===========================================================================
+# Transformer
+# ===========================================================================
+class SpeechTransform(BaseEstimator, TransformerMixin):
+    """ SpeechTransform
+    Note
+    ----
+    if your want to set the default fs (sample frequency), set
+    SpeechTransform.DEFAULT_FS
+
+    """
+
+    DEFAULT_FS = None
+
+    @autoinit
+    def __init__(self, feature_type, fs=8000, win=0.025, shift=0.01,
+                 n_filters=40, n_ceps=13, delta_order=2,
+                 energy=True, vad=True, downsample='sinc_best'):
+        super(SpeechTransform, self).__init__()
+        if feature_type not in ['mspec', 'spec', 'mfcc']:
+            raise ValueError('Feature type must be "mspec", "spec", or "mfcc".')
+
+    def fit(*args):
+        pass
+
+    def transform(self, X, start=0., end=-1, channel=0):
+        """
+        fs : int
+            original sample frequency of data (in case reading pcm file
+            we don't know the original sample frequency)
+        """
+        get_mspec = False
+        get_spec = False
+        get_mfcc = False
+        if self.feature_type == 'mspec':
+            get_mspec = True
+        elif self.feature_type == 'spec':
+            get_spec = True
+        else:
+            get_mfcc = True
+        # ====== Read audio ====== #
+        if isinstance(X, str) and os.path.exists(X):
+            X, orig_fs = speech.read(X)
+        elif isinstance(X, np.ndarray):
+            orig_fs = None
+        elif isinstance(X, Data):
+            X = X[:]
+            orig_fs = None
+        else:
+            raise ValueError('Cannot process data type %s' % type(X))
+        # if specifed DEFAULT_FS
+        if orig_fs is None:
+            orig_fs = (SpeechTransform.DEFAULT_FS
+                       if SpeechTransform.DEFAULT_FS is not None else self.fs)
+        # ====== check if downsample necessary ====== #
+        if self.fs < orig_fs: # downsample
+            from scikits.samplerate import resample
+            X = resample(X, self.fs / orig_fs, 'sinc_best')
+        elif self.fs > orig_fs:
+            raise ValueError('Cannot perform upsample from frequency: '
+                             '{}Hz to {}Hz'.format(orig_fs, self.fs))
+        fs = orig_fs if self.fs is None else self.fs
+        # ====== preprocessing ====== #
+        N = len(X)
+        start = int(float(start) * fs)
+        end = int(N if end < 0 else end * fs)
+        X = X[start:end, channel] if X.ndim > 1 else X[start:end]
+        data = speech_features_extraction(X.ravel(), fs=fs,
+            n_filters=self.n_filters, n_ceps=self.n_ceps,
+            win=self.win, shift=self.shift, delta_order=self.delta_order,
+            energy=self.energy, vad=self.vad, dtype='float32',
+            get_spec=get_spec, get_mspec=get_mspec, get_mfcc=get_mfcc)
+        # ====== return results ====== #
+        if data is None:
+            return None
+        if get_spec:
+            X, sum1, sum2 = data[0]
+        elif get_mspec:
+            X, sum1, sum2 = data[1]
+        elif get_mfcc:
+            X, sum1, sum2 = data[2]
+        if self.vad:
+            return X, data[-1]
+        return X
+
+    def __setstate__(self, states):
+        (SpeechTransform.DEFAULT_FS,
+         self.feature_type,
+         self.fs,
+         self.win,
+         self.shift,
+         self.n_filters,
+         self.n_ceps,
+         self.delta_order,
+         self.energy,
+         self.vad,
+         self.downsample) = states
+
+    def __getstate__(self):
+        return (
+            SpeechTransform.DEFAULT_FS,
+            self.feature_type,
+            self.fs,
+            self.win,
+            self.shift,
+            self.n_filters,
+            self.n_ceps,
+            self.delta_order,
+            self.energy,
+            self.vad,
+            self.downsample
+        )
+
+
+class Transform(BaseEstimator, TransformerMixin):
+    """ Transform """
+
+    def __init__(self, func, *args, **kwarg):
+        super(Transform, self).__init__()
+        self._func = functionable(func, *args, **kwarg)
+
+    def fit(*args):
+        pass
+
+    def transform(self, X):
+        return self._func(X)
+
+    def __getstate__(self):
+        return self._func
+
+    def __setstate__(self, states):
+        self._func = states

@@ -7,10 +7,11 @@ from __future__ import print_function, division, absolute_import
 import sys
 import os
 import warnings
+from numbers import Number
 from multiprocessing import Pool, cpu_count
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from abc import ABCMeta
+from abc import ABCMeta, abstractmethod
 
 from collections import defaultdict
 import numpy as np
@@ -28,7 +29,8 @@ from .dataset import Dataset
 __all__ = [
     'MapReduce',
     'FeatureRecipe',
-    'SpeechFeature'
+    'SpeechFeature',
+    'speech_features_extraction'
 ]
 
 
@@ -262,91 +264,18 @@ class FeatureRecipe(object):
         self.jobs = []
         self.seq_jobs = []
 
-    # ==================== helper function ==================== #
-    def update(self, key, value):
-        '''Update all argument with given name to given value'''
-        for i in [self._map_func, self._reduce_func, self._finalize_func]:
-            if isinstance(i, functionable):
-                i[key] = value
-
-    def wrap_map(self, *args, **kwargs):
-        self._map_func = functionable(self._map, *args, **kwargs)
-        return self
-
-    def wrap_reduce(self, *args, **kwargs):
-        self._reduce_func = functionable(self._reduce, *args, **kwargs)
-        return self
-
-    def wrap_finalize(self, *args, **kwargs):
-        self._finalize_func = functionable(self._finalize, *args, **kwargs)
-        return self
-
-    def initialize(self, mr):
-        ''' This function will be called before the recipe is executed '''
+    # ==================== non-touchable properties ==================== #
+    @abstractmethod
+    def map_func(self, job):
         pass
 
-    # ==================== non-touchable properties ==================== #
-    @property
-    def map_func(self):
-        if not isinstance(self._map_func, functionable):
-            raise ValueError('map_func must be instance of functionable')
-        return self._map_func
+    @abstractmethod
+    def reduce_func(self, list_of_job):
+        pass
 
-    @property
-    def reduce_func(self):
-        if not isinstance(self._reduce_func, functionable):
-            raise ValueError('reduce_func must be instance of functionable')
-        return self._reduce_func
-
-    @property
-    def finalize_func(self):
-        if not isinstance(self._finalize_func, functionable) and \
-           self._finalize_func is not None:
-            raise ValueError('finalize_func only can be None or functionable')
-        return self._finalize_func
-
-    # ==================== main function ==================== #
-    @abstractstatic
-    def _map(*args, **kwargs):
-        raise NotImplementedError
-
-    @abstractstatic
-    def _reduce(*args, **kwargs):
-        raise NotImplementedError
-
-    @staticmethod
-    def _finalize(*args, **kwargs):
-        raise NotImplementedError
-
-    # ==================== load from yaml ==================== #
-    @classmethod
-    def load(cls, path):
-        if isinstance(path, str):
-            if os.path.isfile(path):
-                data = open(path, 'r').read()
-            else:
-                data = path
-            import yaml
-            from StringIO import StringIO
-            data = yaml.load(StringIO(data))
-            if isinstance(data, dict):
-                if cls.__name__ in data:
-                    data = data[cls.__name__]
-                return cls(**data)
-        raise Exception('Cannot load yaml recipe from path:%s' % path)
-
-    def dump(self, path=None):
-        """ Return yaml string represent this class """
-        if not hasattr(self, '_arguments'):
-            raise Exception('This method only support @autoinit class, which '
-                            'store all its parameters in _arguments.')
-        import yaml
-        data = {self.__class__.__name__: self._arguments}
-        styles = {'default_flow_style': False, 'encoding': 'utf-8'}
-        if path is not None:
-            yaml.dump(data, open(path, 'w'), **styles)
-            return path
-        return yaml.dump(data, **styles)
+    @abstractmethod
+    def finalize_func(self, results):
+        pass
 
 
 # ===========================================================================
@@ -369,8 +298,11 @@ def _append_energy_and_deltas(s, energy, delta_order):
 def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
                                delta_order, energy, vad, dtype,
                                get_spec, get_mspec, get_mfcc):
+    """ return spec(X, sum, sum2),
+               mspec(X, sum, sum2),
+               mfcc(X, sum, sum2),
+               vad_idx """
     import sidekit
-    """ return: spec, mspec, and mfcc """
     if s.ndim >= 2:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
     # speech features, shape: [Time, Dimension]
@@ -425,7 +357,7 @@ class SpeechFeature(FeatureRecipe):
     ----------
     segments : path, list
         if path, directory of all audio file, or segment csv file in
-        following format (channel can be omitted)
+        following format (channel can be omitted), start and end is in second
             name                |     path             |start|end |channel
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
@@ -547,17 +479,16 @@ class SpeechFeature(FeatureRecipe):
         try:
             audio_path, segments = f
             # load audio data
-            s, _ = speech.read(audio_path)
+            s, orig_fs = speech.read(audio_path)
+            orig_fs = fs if orig_fs is None else orig_fs
             # check frequency for downsampling (if necessary)
-            if _ is not None:
-                if fs is not None and fs != _:
-                    if fs < _: # downsample
-                        s = resample(s, fs / _, 'sinc_best')
-                    else:
-                        raise ValueError('Cannot perform upsample from frequency: '
-                                         '{}Hz to {}Hz'.format(_, fs))
-                else:
-                    fs = _
+            if fs is None:
+                fs = orig_fs
+            elif fs < orig_fs: # downsample
+                s = resample(s, fs / orig_fs, 'sinc_best')
+            elif fs > orig_fs:
+                raise ValueError('Cannot perform upsample from frequency: '
+                                 '{}Hz to {}Hz'.format(orig_fs, fs))
             N = len(s)
             features = []
             for name, start, end, channel in segments:
