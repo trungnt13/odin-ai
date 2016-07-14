@@ -74,6 +74,7 @@ def auto_config(config=None):
     device = 'cpu'
     cnmem = 0.
     seed = 1208251813
+    multigpu = False
 
     if config is None: # load config from flags
         ODIN_FLAGS = os.getenv("ODIN", "")
@@ -90,7 +91,9 @@ def auto_config(config=None):
             elif 'tensorflow' in i or 'tf' in i:
                 backend = 'tensorflow'
             # ====== Devices ====== #
-            elif 'cpu' == i and len(device) == 0:
+            elif 'multigpu' in i:
+                multigpu = True
+            elif 'cpu' in i:
                 device = 'cpu'
             elif 'gpu' in i:
                 device = 'gpu'
@@ -116,6 +119,7 @@ def auto_config(config=None):
         floatX = config['floatX']
         backend = config['backend']
         optimizer = config['optimizer']
+        multigpu = config['multigpu']
         device = config['device']
         cnmem = config['cnmem']
         seed = config['seed']
@@ -130,6 +134,7 @@ def auto_config(config=None):
 
     # ====== Log the configuration ====== #
     sys.stderr.write('[Auto-Config] Device : %s\n' % device)
+    sys.stderr.write('[Auto-Config] Multi-GPU : %s\n' % multigpu)
     sys.stderr.write('[Auto-Config] Backend: %s\n' % backend)
     sys.stderr.write('[Auto-Config] Optimizer: %s\n' % optimizer)
     sys.stderr.write('[Auto-Config] FloatX : %s\n' % floatX)
@@ -139,6 +144,8 @@ def auto_config(config=None):
 
     if device == 'gpu':
         dev = _query_gpu_info()
+        if not multigpu:
+            dev = {'n': dev['n'], 'dev0': dev['dev0']}
     else:
         dev = {'n': cpu_count()}
 
@@ -176,8 +183,8 @@ def auto_config(config=None):
         __setattr__ = dict.__setitem__
     config = AttributeDict()
     config.update({'device': device, 'floatX': floatX, 'epsilon': epsilon,
-                   'optimizer': optimizer, 'cnmem': cnmem,
-                   'backend': backend, 'seed': seed})
+                   'multigpu': multigpu, 'optimizer': optimizer,
+                   'cnmem': cnmem, 'backend': backend, 'seed': seed})
 
     global RNG_GENERATOR
     RNG_GENERATOR = numpy.random.RandomState(seed=seed)
