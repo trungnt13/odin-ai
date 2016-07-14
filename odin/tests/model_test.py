@@ -14,6 +14,7 @@ from odin import backend as K
 from odin import fuel
 from odin import nnet as N
 from odin import model
+from odin.utils import get_file, TemporaryDirectory, urlretrieve
 
 
 class ModelTest(unittest.TestCase):
@@ -23,6 +24,26 @@ class ModelTest(unittest.TestCase):
 
     def tearDown(self):
         pass
+
+    def test_complex_transform(self):
+        with TemporaryDirectory() as temp:
+            from sklearn.pipeline import Pipeline
+            path = os.path.join(temp, 'audio.sph')
+            urlretrieve(filename=path,
+                        url='https://s3.amazonaws.com/ai-datasets/sw02001.sph')
+            f = Pipeline([
+                ('step1', model.SpeechTransform('mspec', fs=8000, vad=True)),
+                ('step2', model.Transform(lambda x: (x[0][:, :40],
+                                                     x[1].astype(str)))),
+                ('step3', model.Transform(lambda x: (np.sum(x[0]),
+                                                    ''.join(x[1].tolist()))))
+            ])
+            x = f.transform(path)
+            f = cPickle.loads(cPickle.dumps(f))
+            y = f.transform(path)
+            self.assertEqual(x[0], y[0])
+            self.assertEqual(y[0], -3444229.0)
+            self.assertEqual(x[1], y[1])
 
     def test_mnist(self):
         ds = fuel.load_mnist()

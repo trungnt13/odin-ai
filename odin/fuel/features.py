@@ -6,9 +6,11 @@ from __future__ import print_function, division, absolute_import
 
 import sys
 import os
+import types
 import warnings
+import cPickle
 from numbers import Number
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, Process, Queue
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
 from abc import ABCMeta, abstractmethod
@@ -74,33 +76,29 @@ class MapReduce(object):
 
     """
 
-    def __init__(self, processes=8, cache=5, verbose=1):
+    def __init__(self, ncpu=8, cache=5, verbose=1):
         super(MapReduce, self).__init__()
         # variables
-        self._cache = int(min(cache, 1))
         self._tasks = queue()
-        self._processes = int(min(processes, cpu_count() - 1))
-        self._pool = Pool(processes)
-        self._results = defaultdict(list)
+        self._stop_now = False
+        self._task_results = {}
 
-    # ==================== Get & set ==================== #
-    @property
-    def cache(self):
-        return self._cache
+        self.cache = int(max(cache, 1))
+        self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
 
-    @property
-    def processes(self):
-        return self._processes
+    def stop(self):
+        self._stop_now = True
+        return self
 
     # ==================== Task manager ==================== #
     def add_recipe(self, recipe):
-        if isinstance(recipe, str): # path to pickled file or pickled string
-            import cPickle
+        # path to pickled file or pickled string
+        if isinstance(recipe, str):
             if os.path.exists(recipe):
                 recipe = cPickle.load(open(recipe, 'r'))
             else:
                 recipe = cPickle.loads(recipe)
-
+        # recipe must be list
         if not isinstance(recipe, (tuple, list)):
             recipe = (recipe,)
         if not all(isinstance(i, FeatureRecipe) for i in recipe):
@@ -109,7 +107,7 @@ class MapReduce(object):
         for i in recipe:
             self._tasks.append(i) # in this case, tasks contain recipe
 
-    def add(self, jobs, map_func, reduce_func=None, finalize_func=None,
+    def add_task(self, jobs, map_func, reduce_func=None, finalize_func=None,
             init_func=None, name=None):
         ''' Wrapped preprocessing procedure in multiprocessing.
                 ....root
@@ -152,28 +150,18 @@ class MapReduce(object):
         return self
 
     # ==================== internal helper methods ==================== #
-    def _flexible_init(self, init_func):
-        import inspect
-        # flexible init_func, accept 1 arg or None
-        if inspect.ismethod(init_func) or \
-            len(inspect.getargspec(init_func).args) == 1:
-            init_func(self)
-        else:
-            init_func()
-
     def _run_mpi(self, task):
         #####################################
         # 0. parse task information.
         if isinstance(task, (tuple, list)):
-            jobs_list, map_func, reduce_func, finalize_func, init_func, name = task
+            (jobs_list, map_func, reduce_func,
+             finalize_func, init_func, name) = task
             if init_func is not None:
-                self._flexible_init(init_func)
-            seq_jobs = []
+                init_func()
         elif isinstance(task, FeatureRecipe):
-            self._flexible_init(task.initialize) # init first
-            jobs_list, map_func, reduce_func, finalize_func, name = \
+            task.initialize() # init first
+            (jobs_list, map_func, reduce_func, finalize_func, name) = \
             task.jobs, task.map_func, task.reduce_func, task.finalize_func, task.name
-            seq_jobs = task.seq_jobs
         else:
             raise ValueError('No support for type(task)={}.'.format(type(task)))
 
@@ -181,68 +169,75 @@ class MapReduce(object):
         # 1. Scatter jobs for all process.
         try:
             # str => the name of previous jobs
-            if isinstance(jobs_list, str):
-                jobs_list = len(self._results[jobs_list])
-                if len(jobs_list) == 1: # only 1 result in result list
-                    jobs_list = jobs_list[0]
-            # if still no jobs
-            if not isinstance(jobs_list, (tuple, list)) or \
-            len(jobs_list) + len(seq_jobs) == 0:
-                raise ValueError('no job for running task!')
-            # create progbar
-            progbar = Progbar(target=len(jobs_list) + len(seq_jobs),
-                              title='Task:' + str(name))
-            progbar.add(0) # update progress-bar
+            if len(jobs_list) == 0:
+                raise Exception('Found no jobs to execute.')
+            n_jobs = len(jobs_list)
+            jobs_list = segment_list(jobs_list, n_seg=self.ncpu)
+
+            # ====== create process ====== #
+            def work_multi(jobs, res):
+                for j in jobs:
+                    j = map_func(j)
+                    # Generator: return a list of results
+                    if isinstance(j, types.GeneratorType):
+                        [res.put(_) for _ in j if _ is not None]
+                    elif j is not None:
+                        res.put(j)
+            results = Queue()
+            processes = [Process(target=work_multi, args=(j, results))
+                         for j in jobs_list]
+            [p.start() for p in processes]
             # ====== start segment and process jobs ====== #
-            jobs = segment_list(jobs_list, size=self._cache * self.processes)
-            jobs.append(seq_jobs) # append seq jobs
             final_results = []
-            for count, j in enumerate(jobs):
-                if len(j) == 0: continue
-                elif len(j) > self.processes and count < len(jobs) - 1:
-                    results = self._pool.map(map_func, j, chunksize=self._cache)
-                else: # execute sequently
-                    results = [map_func(i) for i in j]
-                # reduce all the results
-                results = [i for i in results if i is not None]
-                results = (reduce_func(results)
-                           if reduce_func is not None else None)
-                progbar.add(len(j)) # update progress-bar
-                if results is not None:
-                    final_results.append(results)
-            # finalize all reduced results
-            if finalize_func is not None:
-                final_results = finalize_func(final_results)
-            # store results
-            if isinstance(final_results, dict):
-                self._results.update(final_results)
+            batch = []
+            exit_on_stop = False
+            # create progbar
+            progbar = Progbar(target=n_jobs, title='Task:' + str(name))
+            progbar.add(0) # update progress-bar
+            # running the jobs
+            for _ in range(n_jobs):
+                # check if immediately stop
+                if self._stop_now:
+                    exit_on_stop = True
+                    break
+                # processing
+                progbar.add(1)
+                batch.append(results.get())
+                # reduce the results
+                if len(batch) == self.cache or _ == (n_jobs - 1):
+                    final_results.append(reduce_func(batch))
+                    batch = []
+            # ====== end all processes ====== #
+            # end the worker
+            if not exit_on_stop:
+                [p.join() for p in processes]
             else:
-                self._results[name].append(final_results)
+                [p.terminate() for p in processes if p.is_alive()]
+            results.close()
+            # ====== finalize the results ====== #
+            if finalize_func is not None:
+                print('Finalizing task: %s ...' % name)
+                final_results = finalize_func(final_results)
+                self._task_results[name] = final_results
         except Exception, e:
             sys.stderr.write("\nError! Ignored given task: name={}, error='{}'\n"
                              ''.format(name, e))
             import traceback; traceback.print_exc()
 
     def __getitem__(self, key):
-        x = self._results.__getitem__(key)
-        if isinstance(x, (tuple, list)) and len(x) == 1:
-            return x[0]
-        return x
+        return self._task_results[key]
 
-    def get(self, key):
-        return self.__getitem__(key)
+    def __len__(self):
+        return len(self._tasks)
 
     def run(self):
         while not self._tasks.empty():
             self._run_mpi(self._tasks.get())
-
-    def __del__(self):
-        try:
-            self._pool.close()
-            self._pool.join()
-            del self._pool
-        except:
-            pass # already closed
+            # check if stop now
+            if self._stop_now:
+                self._stop_now = False
+                break
+        return self
 
 
 # ===========================================================================
@@ -258,11 +253,14 @@ class FeatureRecipe(object):
 
     def __init__(self, name=None):
         self.name = name
-        self._map_func = None
-        self._reduce_func = None
-        self._finalize_func = None
         self.jobs = []
-        self.seq_jobs = []
+
+    @abstractmethod
+    def initialize(self):
+        """ This method is important, it enable a sequential
+        execution of many recipes
+        """
+        pass
 
     # ==================== non-touchable properties ==================== #
     @abstractmethod
@@ -410,15 +408,13 @@ class SpeechFeature(FeatureRecipe):
                  robust=True):
         super(SpeechFeature, self).__init__('SpeechFeatures')
 
-    def initialize(self, mr):
+    def initialize(self):
         if not self.get_spec and not self.get_mspec and not self.get_mfcc:
-            raise Exception('You must specify which features you want: spectrogram'
-                            'filter-banks, or MFCC.')
+            raise Exception('You must specify which features you want: '
+                            'spectrogram, filter-banks, or MFCC.')
         # ====== super function should be called at the beginning ====== #
         segments = self.segments
-        output = self.output
         audio_ext = as_tuple('' if self.audio_ext is None else self.audio_ext, 1, str)
-        datatype = self.datatype
 
         # ====== load jobs ====== #
         if isinstance(segments, str):
@@ -444,38 +440,36 @@ class SpeechFeature(FeatureRecipe):
         file_list = [f for f in file_list if any(ext in f[1] for ext in audio_ext)]
         # if no channel is provided, append the channel
         file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
-        # convert into audio_path -> segment
+        # convert into: audio_path -> segment(name, start, end, channel)
         self.jobs = defaultdict(list)
         for segment, file, start, end, channel in file_list:
             self.jobs[file].append((segment, float(start), float(end), int(channel)))
         self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
         # ====== check output ====== #
-        dataset = Dataset(output)
-        # create map_func
-        self.wrap_map(n_filters=self.n_filters, n_ceps=self.n_ceps,
-                      fs=self.fs, downsample=self.downsample,
-                      win=self.win, shift=self.shift,
-                      delta_order=self.delta_order, energy=self.energy,
-                      vad=self.vad, dtype=self.dtype,
-                      get_spec=self.get_spec, get_mspec=self.get_mspec,
-                      get_mfcc=self.get_mfcc, robust=self.robust)
-        # create reduce
-        self.wrap_reduce(dataset=dataset, datatype=datatype)
-        # create finalize
-        self.wrap_finalize(dataset=dataset, get_spec=self.get_spec,
-                           get_mspec=self.get_mspec, get_mfcc=self.get_mfcc)
+        self.dataset = Dataset(self.output)
+        # self.wrap_map(n_filters=self.n_filters, n_ceps=self.n_ceps,
+        #               fs=self.fs, downsample=self.downsample,
+        #               win=self.win, shift=self.shift,
+        #               delta_order=self.delta_order, energy=self.energy,
+        #               vad=self.vad, dtype=self.dtype,
+        #               get_spec=self.get_spec, get_mspec=self.get_mspec,
+        #               get_mfcc=self.get_mfcc, robust=self.robust)
+        # # create reduce
+        # self.wrap_reduce(dataset=dataset, datatype=datatype)
+        # # create finalize
+        # self.wrap_finalize(dataset=dataset, get_spec=self.get_spec,
+        #                    get_mspec=self.get_mspec, get_mfcc=self.get_mfcc)
 
-    @staticmethod
-    def _map(f, n_filters=40, n_ceps=13, fs=8000, downsample='sinc_best',
-             win=0.025, shift=0.01, delta_order=2, energy=True, vad=True,
-             dtype='float32', get_spec=False, get_mspec=True, get_mfcc=False,
-             robust=True):
+    def map_func(self, f):
         '''
         Return
         ------
-        (name, features, vad, sum1, sum2)
-
+        [(name, spec(x, sum1, sum2), # if available, otherwise None
+                mspec(x, sum1, sum2), # if available, otherwise None
+                mfcc(x, sum1, sum2), # if available, otherwise None
+                vad), ...]
         '''
+        fs = self.fs
         try:
             audio_path, segments = f
             # load audio data
@@ -496,78 +490,83 @@ class SpeechFeature(FeatureRecipe):
                 end = int(N if end < 0 else end * fs)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
                 tmp = speech_features_extraction(data.ravel(), fs=fs,
-                    n_filters=n_filters, n_ceps=n_ceps,
-                    win=win, shift=shift, delta_order=delta_order,
-                    energy=energy, vad=vad, dtype=dtype,
-                    get_spec=get_spec, get_mspec=get_mspec, get_mfcc=get_mfcc)
+                    n_filters=self.n_filters, n_ceps=self.n_ceps,
+                    win=self.win, shift=self.shift, delta_order=self.delta_order,
+                    energy=self.energy, vad=self.vad, dtype=self.dtype,
+                    get_spec=self.get_spec, get_mspec=self.get_mspec,
+                    get_mfcc=self.get_mfcc)
                 if tmp is not None:
                     features.append((name,) + tmp)
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)
-            return features
+            # return an iterator of features
+            for f in features:
+                yield f
         except Exception, e:
             msg = 'Ignore file: %s, error: %s' % (f[0], str(e))
             warnings.warn(msg)
-            if robust:
-                return None
+            if self.robust:
+                yield None
             else:
                 import traceback; traceback.print_exc()
                 raise e
 
-    @staticmethod
-    def _reduce(results, dataset, datatype):
+    def reduce_func(self, results):
         # contains (name, spec, mspec, mfcc, vad)
+        dataset = self.dataset
+        datatype = self.datatype
+
         index = []
         spec_sum1, spec_sum2 = 0., 0.
         mspec_sum1, mspec_sum2 = 0., 0.
         mfcc_sum1, mfcc_sum2 = 0., 0.
+
         n = 0
-        for r in results:
-            for name, spec, mspec, mfcc, vad in r:
-                if spec is not None:
-                    X, sum1, sum2 = spec
-                    _ = dataset.get_data('spec', dtype=X.dtype,
-                                         shape=(0,) + X.shape[1:],
-                                         datatype=datatype)
-                    _.append(X)
-                    spec_sum1 += sum1; spec_sum2 += sum2
-                    n = X.shape[0]; del X
-                if mspec is not None:
-                    X, sum1, sum2 = mspec
-                    _ = dataset.get_data('mspec', dtype=X.dtype,
-                                         shape=(0,) + X.shape[1:],
-                                         datatype=datatype)
-                    _.append(X)
-                    mspec_sum1 += sum1; mspec_sum2 += sum2
-                    n = X.shape[0]; del X
-                if mfcc is not None:
-                    X, sum1, sum2 = mfcc
-                    _ = dataset.get_data('mfcc', dtype=X.dtype,
-                                         shape=(0,) + X.shape[1:],
-                                         datatype=datatype)
-                    _.append(X)
-                    mfcc_sum1 += sum1; mfcc_sum2 += sum2
-                    n = X.shape[0]; del X
-                # index
-                index.append([name, n])
-                # VAD
-                if vad is not None:
-                    assert vad.shape[0] == n,\
-                        'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
-                    _ = dataset.get_data('vad', dtype=vad.dtype,
-                                         shape=(0,) + vad.shape[1:],
-                                         datatype=datatype)
-                    _.append(vad)
-                    del vad
+        for name, spec, mspec, mfcc, vad in results:
+            if spec is not None:
+                X, sum1, sum2 = spec
+                _ = dataset.get_data('spec', dtype=X.dtype,
+                                     shape=(0,) + X.shape[1:],
+                                     datatype=datatype)
+                _.append(X)
+                spec_sum1 += sum1; spec_sum2 += sum2
+                n = X.shape[0]; del X
+            if mspec is not None:
+                X, sum1, sum2 = mspec
+                _ = dataset.get_data('mspec', dtype=X.dtype,
+                                     shape=(0,) + X.shape[1:],
+                                     datatype=datatype)
+                _.append(X)
+                mspec_sum1 += sum1; mspec_sum2 += sum2
+                n = X.shape[0]; del X
+            if mfcc is not None:
+                X, sum1, sum2 = mfcc
+                _ = dataset.get_data('mfcc', dtype=X.dtype,
+                                     shape=(0,) + X.shape[1:],
+                                     datatype=datatype)
+                _.append(X)
+                mfcc_sum1 += sum1; mfcc_sum2 += sum2
+                n = X.shape[0]; del X
+            # index
+            index.append([name, n])
+            # VAD
+            if vad is not None:
+                assert vad.shape[0] == n,\
+                    'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
+                _ = dataset.get_data('vad', dtype=vad.dtype,
+                                     shape=(0,) + vad.shape[1:],
+                                     datatype=datatype)
+                _.append(vad)
+                del vad
         dataset.flush()
         return ((spec_sum1, spec_sum2),
                 (mspec_sum1, mspec_sum2),
                 (mfcc_sum1, mfcc_sum2), index)
 
-    @staticmethod
-    def _finalize(results, dataset, get_spec, get_mspec, get_mfcc):
+    def finalize_func(self, results):
         # contains (sum1, sum2, n)
+        dataset = self.dataset
         path = dataset.path
         spec_sum1, spec_sum2 = 0., 0.
         mspec_sum1, mspec_sum2 = 0., 0.
@@ -605,12 +604,20 @@ class SpeechFeature(FeatureRecipe):
             _ = dataset.get_data(name + '_std', dtype=std.dtype, shape=std.shape)
             _[:] = std
         # ====== save mean and std ====== #
-        if get_spec:
+        if self.get_spec:
             save_mean_std(spec_sum1, spec_sum2, n, 'spec', dataset)
-        if get_mspec:
+        if self.get_mspec:
             save_mean_std(mspec_sum1, mspec_sum2, n, 'mspec', dataset)
-        if get_mfcc:
+        if self.get_mfcc:
             save_mean_std(mfcc_sum1, mfcc_sum2, n, 'mfcc', dataset)
         dataset.flush()
         dataset.close()
-        return {'dataset': path}
+        return path
+
+    def __setstate__(self, states):
+        self.name = states[0]
+        for name, value in states[1].iteritems():
+            setattr(self, name, value)
+
+    def __getstate__(self):
+        return self.name, self._arguments
