@@ -238,6 +238,17 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         return self
 
     # ==================== sklearn methods ==================== #
+    def _auto_create_inputs(self, X):
+        if len(self._inputs) > 0:
+            return
+        if not isinstance(X, (tuple, list)):
+            X = (X,)
+        X = [K.placeholder(shape=(None,) + i.shape[1:],
+                           dtype=i.dtype,
+                           name='input%d' % _)
+             for _, i in enumerate(X)]
+        self.set_inputs(*X)
+
     def _create_function(self):
         self._check_initialized()
         # ====== prediction function ====== #
@@ -276,6 +287,9 @@ class SequentialModel(BaseEstimator, TransformerMixin):
 
     def fit(self, X, X_valid=None):
         """ This is very standard procedure """
+        # we assume always only 1 outputs, hence,
+        # the last variable must be output
+        self._auto_create_inputs(X[:-1] if isinstance(X, (tuple, list)) else X)
         self._create_function()
 
         mainloop = MainLoop(batch_size=self._batch_size, seed=self._seed)
@@ -290,11 +304,16 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         mainloop.run()
 
     def predict(self, *args):
+        self._auto_create_inputs(args)
+        self._check_initialized()
+
         proba = self.predict_proba(*args)
         return np.argmax(proba, -1)
 
     def predict_proba(self, *args):
+        self._auto_create_inputs(args)
         self._create_function()
+
         x = self._functions['pred'](*args)
         _min = np.min(x, axis=-1)[:, None]
         _max = np.max(x, axis=-1)[:, None]
@@ -302,7 +321,9 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         return x / x.sum(-1)[:, None]
 
     def transform(self, *args):
+        self._auto_create_inputs(args)
         self._create_function()
+
         return self._functions['pred'](*args)
 
     # ==================== pickling methods ==================== #

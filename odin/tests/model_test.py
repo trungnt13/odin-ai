@@ -14,7 +14,7 @@ from odin import backend as K
 from odin import fuel
 from odin import nnet as N
 from odin import model
-from odin.utils import get_file, TemporaryDirectory, urlretrieve
+from odin.utils import TemporaryDirectory, urlretrieve
 
 
 class ModelTest(unittest.TestCase):
@@ -24,6 +24,29 @@ class ModelTest(unittest.TestCase):
 
     def tearDown(self):
         pass
+
+    def test_transform_then_prediction(self):
+        with TemporaryDirectory() as temp:
+            from sklearn.pipeline import Pipeline
+            path = os.path.join(temp, 'audio.sph')
+            urlretrieve(filename=path,
+                        url='https://s3.amazonaws.com/ai-datasets/sw02001.sph')
+            f = Pipeline([
+                ('mspec', model.SpeechTransform('mspec', fs=8000, vad=False)),
+                ('slice', model.Transform(lambda x: x[:, :40])),
+                ('pred', model.SequentialModel(N.Dropout(0.3),
+                                               N.Dense(20, activation=K.relu),
+                                               N.Dense(10, activation=K.softmax))
+                )
+            ])
+            x1 = f.predict(path)
+            x2 = f.predict_proba(path)
+
+            f = cPickle.loads(cPickle.dumps(f))
+            y1 = f.predict(path)
+            y2 = f.predict_proba(path)
+            self.assertEqual(np.array_equal(x1, y1), True)
+            self.assertEqual(np.array_equal(x2, y2), True)
 
     def test_complex_transform(self):
         with TemporaryDirectory() as temp:

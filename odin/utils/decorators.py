@@ -541,8 +541,11 @@ class functionable(object):
         self._function_name = func.func_name
         self._function_order = spec.args
         self._function_kwargs = final_args
-        self._source = inspect.getsource(self._function)
         self._sandbox = _serialize_function_sandbox(func)
+        try: # sometime cannot get the source
+            self._source = inspect.getsource(self._function)
+        except:
+            self._source = None
 
     @property
     def function(self):
