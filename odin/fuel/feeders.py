@@ -78,6 +78,9 @@ class Feeder(MutableData):
 
     Parameters
     ----------
+    indices: path(csv file), list, ndarray, dict
+        indices represent following information: [name, start_id, end_id]
+        if indices is dictionary, it must in the form: {name: (start, end)}
     transcription: dict
         if path to a file is specified, the file must specified
         <name> -> [frame1, frame2, ...]
@@ -98,9 +101,26 @@ class Feeder(MutableData):
     def __init__(self, data, indices, transcription=None,
                  ncpu=1, cache=12):
         super(Feeder, self).__init__()
-        if not os.path.isfile(indices):
-            raise ValueError('indices must path to indices.csv file')
-        self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+        # ====== load indices ====== #
+        if isinstance(indices, str) and os.path.isfile(indices):
+            self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+        elif isinstance(indices, (tuple, list)):
+            self._indices = np.asarray(indices)
+        elif isinstance(indices, np.ndarray):
+            self._indices = indices
+        elif isinstance(indices, dict):
+            self._indices = np.asarray([(i, j[0], j[1])
+                                        for i, j in indices.iteritems()])
+        else:
+            raise ValueError('Unsupport indices type: "%s".' % type(indices))
+        _ = []; total_samples = 0
+        for i, s, e in self._indices:
+            s = int(s); e = int(e)
+            total_samples += abs(e - s)
+            _.append((i, s, e))
+        self._indices = np.asarray(_)
+        self._initial_shape = total_samples # first shape, based on indices
+        # ====== Load data ====== #
         if not isinstance(data, Data):
             raise ValueError('data must be instance of odin.fuel.Data')
         self._data = data
@@ -151,6 +171,7 @@ class Feeder(MutableData):
         during preprocessing each indices by recipes.
         """
         s = super(Feeder, self).shape
+        s = (self._initial_shape,) + s[1:]
         if self.recipe is not None:
             return self.recipe.shape_transform(s)
         else:
@@ -234,7 +255,6 @@ class Feeder(MutableData):
             seed = np.random.randint(10e8) # seed for the iteration
             # reset the seed
             self._seed = None
-        indices = [(i, int(s), int(e)) for i, s, e in indices]
 
         it = self._prepare_iter(self._batch_size,
                                 self._cache,

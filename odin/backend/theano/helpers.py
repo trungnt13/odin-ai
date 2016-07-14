@@ -7,7 +7,6 @@ import cPickle
 from contextlib import contextmanager
 from collections import OrderedDict
 from itertools import chain
-from toolz import unique
 
 import numpy as np
 
@@ -35,6 +34,37 @@ logger = logging.getLogger(__name__)
 # ===========================================================================
 # Shape helpers
 # ===========================================================================
+def _unique(seq, key=None):
+    """ Copyright (c) 2013 Matthew Rocklin
+
+    Return only unique elements of a sequence
+
+    >>> tuple(unique((1, 2, 3)))
+    (1, 2, 3)
+    >>> tuple(unique((1, 2, 1, 3)))
+    (1, 2, 3)
+
+    Uniqueness can be defined by key keyword
+
+    >>> tuple(unique(['cat', 'mouse', 'dog', 'hen'], key=len))
+    ('cat', 'mouse')
+
+    """
+    seen = set()
+    seen_add = seen.add
+    if key is None:
+        for item in seq:
+            if item not in seen:
+                seen_add(item)
+                yield item
+    else:  # calculate key
+        for item in seq:
+            val = key(item)
+            if val not in seen:
+                seen_add(val)
+                yield item
+
+
 def _check_target(target):
     if autoconfig['device'] == 'cpu':
         target = None
@@ -303,9 +333,9 @@ class ComputationGraph(object):
             # duplicates
             inputs = graph.inputs(self.outputs)
             sorted_apply_nodes = graph.io_toposort(inputs, usual_outputs)
-            self.scans = list(unique([node.op for node in sorted_apply_nodes
-                                     if isinstance(node.op, Scan)],
-                                     key=lambda op: id(op)))
+            self.scans = list(_unique([node.op for node in sorted_apply_nodes
+                                      if isinstance(node.op, Scan)],
+                                      key=lambda op: id(op)))
             self._scan_graphs = [ComputationGraph(scan.outputs)
                                  for scan in self.scans]
 
