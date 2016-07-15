@@ -697,11 +697,17 @@ class MmapData(Data):
             raise ValueError('Only allowed to open maximum of {} memmap file'.format(MAX_OPEN_MMAP))
         MmapData.COUNT += 1
 
+        if shape is not None:
+            if not isinstance(shape, (tuple, list, np.ndarray)):
+                shape = (shape,)
+            shape = tuple([0 if i is None or i < 0 else i for i in shape])
         # validate path
         path = os.path.abspath(path)
         mode = 'r+'
+        # read exist file
         if os.path.exists(path):
             dtype, shape = MmapData.read_header(path)
+        # create new file
         else:
             if dtype is None or shape is None:
                 raise Exception('dtype and shape must not be None.')
@@ -721,6 +727,7 @@ class MmapData(Data):
             f.write(_)
             f.close()
         # store variables
+        # print(_aligned_memmap_offset(dtype), shape, dtype)
         self._data = np.memmap(path, dtype=dtype, shape=shape, mode=mode,
                                offset=_aligned_memmap_offset(dtype))
         self._path = path

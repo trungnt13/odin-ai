@@ -85,7 +85,7 @@ class Feeder(MutableData):
         if list is given, the list must contain the same information
         if dictionary is given, the dict must repesent the same mapping
         above
-    cache: int
+    buffer_size: int
         the amount of data each process keep before return to main
         process.
     shuffle_level: int (0-3)
@@ -100,7 +100,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, cache=12, shuffle_level=1):
+                 ncpu=1, buffer_size=12, shuffle_level=1):
         super(Feeder, self).__init__()
         self.shuffle_level = min(max(int(shuffle_level), 0), 2)
         # ====== load indices ====== #
@@ -128,7 +128,7 @@ class Feeder(MutableData):
             ncpu = cpu_count() - 1
         self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
         # ====== default ====== #
-        self._cache = cache
+        self._buffer_size = buffer_size
         self._batch_size = 256
         self._seed = None
         self._start = 0.
@@ -150,10 +150,11 @@ class Feeder(MutableData):
         _transcription = share_dict
 
     def set_recipe(self, *recipes):
-        if len(inspect.getargspec(recipes[0].map).args) != 4:
-            raise Exception('The first recipe of the feeders must '
-                            'map(name, x, transcription).')
-        self.recipe = FeederList(*recipes)
+        if len(recipes) > 0:
+            if len(inspect.getargspec(recipes[0].map).args) != 4:
+                raise Exception('The first recipe of the feeders must '
+                                'map(name, x, transcription).')
+            self.recipe = FeederList(*recipes)
         return self
 
     def stop_all(self):
@@ -164,7 +165,7 @@ class Feeder(MutableData):
 
     @property
     def shape(self):
-        """ This is just an estimation, some data points might be lost
+        """ This is just an "UPPER" estimation, some data points might be lost
         during preprocessing each indices by recipes.
         """
         s = super(Feeder, self).shape
@@ -175,7 +176,7 @@ class Feeder(MutableData):
             return s
 
     # ==================== Strings ==================== #
-    def _prepare_iter(self, batch_size, cache, ntasks, jobs, seed):
+    def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed):
         results = Queue()
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
@@ -183,11 +184,12 @@ class Feeder(MutableData):
                          seed if self.shuffle_level >= 1 else None)
 
         # data, jobs, map_function, results
-        def work_multi(d, j, map, reduce, res, cache_size):
+        def work_multi(d, j, map, reduce, res, buffer_size):
             # transcription is shared global variable
             transcription = _transcription
             batch = []
-            for name, start, end in j:
+            n = len(j)
+            for count, (name, start, end) in enumerate(j):
                 x = d[int(start):int(end)]
                 trans = None
                 if transcription is not None:
@@ -199,20 +201,16 @@ class Feeder(MutableData):
                 if _ is not None:
                     batch.append(_)
                 # reduce tasks
-                if len(batch) == cache_size:
+                if len(batch) == buffer_size or count == n - 1:
                     for b in reduce(batch):
                         res.put(b)
                     batch = []
-            # return final batch
-            if len(batch) > 0:
-                for b in reduce(batch):
-                    res.put(b)
             # ending signal
             res.put(None)
         yield None # stop here wait for main iterator start
         processes = [Process(target=work_multi,
                              args=(self._data, j, map_func, reduce_func,
-                                   results, cache))
+                                   results, buffer_size))
                      for i, j in enumerate(jobs)]
         # start the workers
         [p.start() for p in processes]
@@ -261,7 +259,7 @@ class Feeder(MutableData):
             self._seed = None
 
         it = self._prepare_iter(self._batch_size,
-                                self._cache,
+                                self._buffer_size,
                                 len(indices),
                                 segment_list(indices, n_seg=self.ncpu),
                                 seed)
@@ -476,7 +474,7 @@ class Stacking(FeederRecipe):
         if len(shape) > 2:
             raise Exception('Stacking only support 2D array.')
         n_features = shape[-1] * self.n if len(shape) == 2 else self.n
-        n = (shape[0] // self.n)
+        n = (shape[0] // self.shift)
         return (n, n_features)
 
 
