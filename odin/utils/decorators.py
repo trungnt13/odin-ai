@@ -407,14 +407,13 @@ def _serialize_function_sandbox(function):
     # ====== serialize primitive type ====== #
     seen_function = False
     for name, val in environment.iteritems():
-        # function might nested, so cannot find it in globals()
-        if val == function:
-            seen_function = True
         # ignore system modules
         if sys_module.match(name) is not None:
             continue
         # primitive type
         if type(val) in _primitives:
+            # function might nested, so cannot find it in globals()
+            if val == function: seen_function = True
             # print(k, v.__module__ if hasattr(v, '__module__') else v.__name__, func_module)
             typ = type(val)
             if isinstance(val, types.ModuleType): # special case: import module

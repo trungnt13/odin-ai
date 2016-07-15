@@ -27,9 +27,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import inspect
 import math
-from numbers import Number
-from itertools import chain
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
@@ -37,7 +35,7 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin.utils import segment_list, ordered_set, struct, segment_axis, one_hot
+from odin.utils import segment_list, segment_axis, one_hot
 
 from .data import Data, MutableData
 
@@ -113,13 +111,8 @@ class Feeder(MutableData):
                                         for i, j in indices.iteritems()])
         else:
             raise ValueError('Unsupport indices type: "%s".' % type(indices))
-        _ = []; total_samples = 0
-        for i, s, e in self._indices:
-            s = int(s); e = int(e)
-            total_samples += abs(e - s)
-            _.append((i, s, e))
-        self._indices = np.asarray(_)
-        self._initial_shape = total_samples # first shape, based on indices
+        # first shape, based on indices
+        self._initial_shape = sum(int(e) - int(s) for _, s, e in self._indices)
         # ====== Load data ====== #
         if not isinstance(data, Data):
             raise ValueError('data must be instance of odin.fuel.Data')
@@ -190,12 +183,16 @@ class Feeder(MutableData):
             transcription = _transcription
             batch = []
             for name, start, end in j:
-                x = d[start:end]
+                x = d[int(start):int(end)]
                 trans = None
                 if transcription is not None:
+                    if name not in transcription:
+                        continue # ignore the sample
                     trans = transcription[name]
                 # map tasks
-                batch.append(map(name, x, trans))
+                _ = map(name, x, trans)
+                if _ is not None:
+                    batch.append(_)
                 # reduce tasks
                 if len(batch) == cache_size:
                     for b in reduce(batch):
@@ -310,6 +307,10 @@ class FeederList(FeederRecipe):
         for f in self.recipes:
             args = (f.map(*args) if isinstance(args, (tuple, list)) else
                     f.map(args))
+            # break the chain if one of the recipes get error,
+            # and return None
+            if args is None:
+                return None
         return args
 
     def reduce(self, x):
@@ -394,6 +395,39 @@ class Slice(FeederRecipe):
         return [j if i != axis else n for i, j in enumerate(shape)]
 
 
+class LabelParse(FeederRecipe):
+
+    def __init__(self, dtype, delimiter=' '):
+        super(LabelParse, self).__init__()
+        self.dtype = dtype
+        self.delimiter = delimiter
+
+    def map(self, name, x, transcription):
+        dtype = self.dtype
+        if isinstance(transcription, str):
+            transcription = [dtype(i)
+                             for i in transcription.split(self.delimiter)
+                             if len(i) > 0]
+        else:
+            transcription = [dtype(i) for i in transcription]
+        return name, x, transcription
+
+
+class LabelOneHot(FeederRecipe):
+
+    def __init__(self, n_classes):
+        super(LabelOneHot, self).__init__()
+        self._n_classes = int(n_classes)
+
+    def map(self, name, x, transcription):
+        if isinstance(transcription, str):
+            transcription = [i for i in transcription.split(' ')
+                             if len(i) > 0]
+        transcription = [int(i) for i in transcription]
+        transcription = one_hot(transcription, n_classes=self._n_classes)
+        return name, x, transcription
+
+
 class Stacking(FeederRecipe):
     """
     Parameters
@@ -417,20 +451,20 @@ class Stacking(FeederRecipe):
         self.stack_transcription = stack_transcription
 
     def map(self, name, x, transcription):
+        if x.shape[0] < self.n: # not enough data points for stacking
+            return None
+
         idx = list(range(0, x.shape[0], self.shift))
-        x = np.vstack([x[i:i + self.n].reshape(1, -1)
-                       for i in idx if (i + self.n) < x.shape[0]])
+        _ = [x[i:i + self.n].reshape(1, -1) for i in idx
+             if (i + self.n) <= x.shape[0]]
+        x = np.vstack(_) if len(_) > 1 else _[0]
         # ====== stacking the transcription ====== #
         if transcription is not None and self.stack_transcription:
-            if isinstance(transcription, str):
-                transcription = [i for i in transcription.split(' ')
-                                 if len(i) > 0]
-            if isinstance(transcription, (tuple, list, np.ndarray)):
-                idx = list(range(0, len(transcription), self.shift))
-                # only take the middle label
-                transcription = np.asarray(
-                    [transcription[i + self.left_context + 1]
-                     for i in idx if (i + self.n) < len(transcription)])
+            idx = list(range(0, len(transcription), self.shift))
+            # only take the middle label
+            transcription = np.asarray(
+                [transcription[i + self.left_context + 1]
+                 for i in idx if (i + self.n) <= len(transcription)])
         return name, x, transcription
 
     def shape_transform(self, shape):
@@ -491,13 +525,13 @@ class Sequencing(FeederRecipe):
         self.transcription_transform = transcription_transform
 
     def map(self, name, x, transcription):
+        if x.shape[0] < self.frame_length: # not enough data points for sequencing
+            return None
+
         x = segment_axis(x, self.frame_length, self.hop_length,
                          axis=0, end=self.end, endvalue=self.endvalue)
         # ====== transforming the transcription ====== #
         if self.transcription_transform is not None and transcription is not None:
-            if isinstance(transcription, str):
-                transcription = [i for i in transcription.split(' ')
-                                 if len(i) > 0]
             transcription = segment_axis(np.asarray(transcription),
                                          self.frame_length, self.hop_length,
                                          axis=0, end=self.end,
@@ -516,21 +550,6 @@ class Sequencing(FeederRecipe):
             n = int(math.ceil(n))
         mid_shape = shape[1:-1]
         return (n, self.frame_length,) + mid_shape + (n_features,)
-
-
-class OneHotTrans(FeederRecipe):
-
-    def __init__(self, n_classes):
-        super(OneHotTrans, self).__init__()
-        self._n_classes = int(n_classes)
-
-    def map(self, name, x, transcription):
-        if isinstance(transcription, str):
-            transcription = [i for i in transcription.split(' ')
-                             if len(i) > 0]
-        transcription = [int(i) for i in transcription]
-        transcription = one_hot(transcription, n_classes=self._n_classes)
-        return name, x, transcription
 
 
 class CreateBatch(FeederRecipe):
