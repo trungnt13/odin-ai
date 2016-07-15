@@ -88,6 +88,9 @@ class Feeder(MutableData):
     cache: int
         the amount of data each process keep before return to main
         process.
+    shuffle_level: int (0-3)
+        0 - only shuffle the indices list
+        1 - shuffle the indices list and enable shuffling in all recipes
 
     Note
     ----
@@ -97,8 +100,9 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, cache=12):
+                 ncpu=1, cache=12, shuffle_level=1):
         super(Feeder, self).__init__()
+        self.shuffle_level = min(max(int(shuffle_level), 0), 2)
         # ====== load indices ====== #
         if isinstance(indices, str) and os.path.isfile(indices):
             self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
@@ -175,7 +179,8 @@ class Feeder(MutableData):
         results = Queue()
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
-        self.recipe.init(ntasks, batch_size, seed)
+        self.recipe.init(ntasks, batch_size,
+                         seed if self.shuffle_level >= 1 else None)
 
         # data, jobs, map_function, results
         def work_multi(d, j, map, reduce, res, cache_size):
@@ -249,7 +254,9 @@ class Feeder(MutableData):
         if self._seed is not None:
             np.random.seed(self._seed)
             indices = indices[np.random.permutation(indices.shape[0])]
-            seed = np.random.randint(10e8) # seed for the iteration
+
+            # seed for the iteration
+            seed = np.random.randint(10e8)
             # reset the seed
             self._seed = None
 
@@ -441,14 +448,12 @@ class Stacking(FeederRecipe):
         else amount of frames will be shifted
     """
 
-    def __init__(self, left_context=10, right_context=10, shift=None,
-                 stack_transcription=True):
+    def __init__(self, left_context=10, right_context=10, shift=None):
         super(Stacking, self).__init__()
         self.left_context = left_context
         self.right_context = right_context
         self.n = int(left_context) + 1 + int(right_context)
         self.shift = self.n if shift is None else int(shift)
-        self.stack_transcription = stack_transcription
 
     def map(self, name, x, transcription):
         if x.shape[0] < self.n: # not enough data points for stacking
@@ -459,7 +464,7 @@ class Stacking(FeederRecipe):
              if (i + self.n) <= x.shape[0]]
         x = np.vstack(_) if len(_) > 1 else _[0]
         # ====== stacking the transcription ====== #
-        if transcription is not None and self.stack_transcription:
+        if isinstance(transcription, (tuple, list, np.ndarray)):
             idx = list(range(0, len(transcription), self.shift))
             # only take the middle label
             transcription = np.asarray(
@@ -531,7 +536,8 @@ class Sequencing(FeederRecipe):
         x = segment_axis(x, self.frame_length, self.hop_length,
                          axis=0, end=self.end, endvalue=self.endvalue)
         # ====== transforming the transcription ====== #
-        if self.transcription_transform is not None and transcription is not None:
+        if self.transcription_transform is not None and \
+        isinstance(transcription, (tuple, list, np.ndarray)):
             transcription = segment_axis(np.asarray(transcription),
                                          self.frame_length, self.hop_length,
                                          axis=0, end=self.end,
@@ -576,6 +582,7 @@ class CreateBatch(FeederRecipe):
         X = np.vstack(X)
         Y = (np.concatenate(Y, axis=0) if isinstance(Y[0], np.ndarray)
              else np.asarray(Y))
+        # ====== shuffle for the whole batch ====== #
         if self.rng is not None:
             idx = self.rng.permutation(X.shape[0])
             X = X[idx]
