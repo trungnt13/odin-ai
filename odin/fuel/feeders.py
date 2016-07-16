@@ -27,6 +27,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import inspect
 import math
+import types
 from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
@@ -35,9 +36,10 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin.utils import segment_list, segment_axis, one_hot
+from odin.utils import segment_list, segment_axis, one_hot, Progbar
 
 from .data import Data, MutableData
+from .dataset import Dataset
 
 # ===========================================================================
 # Multiprocessing Feeders
@@ -100,9 +102,8 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, buffer_size=12, shuffle_level=1):
+                 ncpu=1, buffer_size=12):
         super(Feeder, self).__init__()
-        self.shuffle_level = min(max(int(shuffle_level), 0), 2)
         # ====== load indices ====== #
         if isinstance(indices, str) and os.path.isfile(indices):
             self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
@@ -146,8 +147,7 @@ class Feeder(MutableData):
                 share_dict = transcription
             else:
                 raise Exception('Cannot understand given transcipriont information.')
-        global _transcription
-        _transcription = share_dict
+        self._transcription = share_dict
 
     def set_recipe(self, *recipes):
         if len(recipes) > 0:
@@ -181,12 +181,13 @@ class Feeder(MutableData):
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
         self.recipe.init(ntasks, batch_size,
-                         seed if self.shuffle_level >= 1 else None)
+                         seed if self._shuffle_level > 0 else None)
+        rng = None if seed is None else np.random.RandomState(seed)
 
         # data, jobs, map_function, results
         def work_multi(d, j, map, reduce, res, buffer_size):
             # transcription is shared global variable
-            transcription = _transcription
+            transcription = self._transcription
             batch = []
             n = len(j)
             for count, (name, start, end) in enumerate(j):
@@ -228,6 +229,10 @@ class Feeder(MutableData):
             if batch is None:
                 working_processes -= 1
             else:
+                # perform batch level permutation
+                if rng is not None and self._shuffle_level > 1:
+                    batch = [_[rng.permutation(_.shape[0])]
+                             for _ in batch]
                 yield batch
         # end the worker
         if not exit_on_stop:
@@ -266,6 +271,46 @@ class Feeder(MutableData):
         it.next() # just for initlaize the iterator
         self._n_iter += 1
         return it
+
+    def save_cache(self, path, name, dtype='float32',
+                   datatype='memmap', print_progress=True):
+        """ Save all preprocessed data to a Dataset """
+        if not isinstance(path, str) or os.path.isfile(path):
+            raise ValueError('path must be string path to a folder.')
+        if not isinstance(name, (tuple, list, np.ndarray)):
+            name = (name,)
+        if not isinstance(dtype, (tuple, list, np.ndarray)):
+            dtype = (dtype,)
+
+        if len(dtype) < len(name):
+            dtype = (dtype[0],) * len(name)
+        elif len(dtype) > len(name):
+            dtype = dtype[:len(name)]
+
+        ds = Dataset(path)
+        for i in name:
+            if i in ds:
+                raise ValueError('Data with name:"%s" already existed in '
+                                 'the dataset' % i)
+        # ====== start caching ====== #
+        if print_progress:
+            prog = Progbar(target=self.shape[0], title='Caching:')
+        for X in self:
+            if not isinstance(X, (tuple, list)):
+                X = (X,)
+            # saving preprocessed data
+            for x, nam, typ in zip(X, name, dtype):
+                if nam not in ds:
+                    ds.get_data(nam, dtype=typ, shape=(None,) + x.shape[1:],
+                                datatype=datatype)
+                ds.get_data(nam).append(x)
+            # print progress
+            if print_progress:
+                prog.add(X[0].shape[0])
+        ds.flush()
+        ds.close()
+        # end
+        return self
 
 
 # ===========================================================================
@@ -408,13 +453,14 @@ class LabelParse(FeederRecipe):
         self.delimiter = delimiter
 
     def map(self, name, x, transcription):
-        dtype = self.dtype
-        if isinstance(transcription, str):
-            transcription = [dtype(i)
-                             for i in transcription.split(self.delimiter)
-                             if len(i) > 0]
-        else:
-            transcription = [dtype(i) for i in transcription]
+        if transcription is not None:
+            dtype = self.dtype
+            if isinstance(transcription, str):
+                transcription = [dtype(i)
+                                 for i in transcription.split(self.delimiter)
+                                 if len(i) > 0]
+            else:
+                transcription = [dtype(i) for i in transcription]
         return name, x, transcription
 
 
@@ -425,11 +471,12 @@ class LabelOneHot(FeederRecipe):
         self._n_classes = int(n_classes)
 
     def map(self, name, x, transcription):
-        if isinstance(transcription, str):
-            transcription = [i for i in transcription.split(' ')
-                             if len(i) > 0]
-        transcription = [int(i) for i in transcription]
-        transcription = one_hot(transcription, n_classes=self._n_classes)
+        if transcription is not None:
+            if isinstance(transcription, str):
+                transcription = [i for i in transcription.split(' ')
+                                 if len(i) > 0]
+            transcription = [int(i) for i in transcription]
+            transcription = one_hot(transcription, n_classes=self._n_classes)
         return name, x, transcription
 
 
@@ -576,17 +623,20 @@ class CreateBatch(FeederRecipe):
         Y = []
         for name, x, y in batch:
             X.append(x)
-            Y.append(y)
+            if y is not None:
+                Y.append(y)
         X = np.vstack(X)
-        Y = (np.concatenate(Y, axis=0) if isinstance(Y[0], np.ndarray)
-             else np.asarray(Y))
+        Y = (np.concatenate(Y, axis=0) if len(Y) > 0 else None)
         # ====== shuffle for the whole batch ====== #
         if self.rng is not None:
             idx = self.rng.permutation(X.shape[0])
             X = X[idx]
-            if X.shape[0] == Y.shape[0]:
+            if Y is not None and X.shape[0] == Y.shape[0]:
                 Y = Y[idx]
         # ====== create batch ====== #
         for i in range((X.shape[0] - 1) // self.batch_size + 1):
-            yield (X[i * self.batch_size:(i + 1) * self.batch_size],
-                   Y[i * self.batch_size:(i + 1) * self.batch_size])
+            if Y is None:
+                yield X[i * self.batch_size:(i + 1) * self.batch_size]
+            else:
+                yield (X[i * self.batch_size:(i + 1) * self.batch_size],
+                       Y[i * self.batch_size:(i + 1) * self.batch_size])

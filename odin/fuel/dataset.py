@@ -48,8 +48,7 @@ class Dataset(object):
     """
     Note
     ----
-    for developer: _data_map contains, key=(name, dtype shape); value=Data
-
+    for developer: _data_map contains: name -> (dtype, shape, Data or pathtoData)
     """
 
     def __init__(self, path):
@@ -245,6 +244,9 @@ class Dataset(object):
             del self._data_map[name]
 
     # ==================== Some info ==================== #
+    def __contains__(self, key):
+        return key in self._data_map
+
     def __getitem__(self, key):
         if isinstance(key, str):
             return self.get_data(name=key)

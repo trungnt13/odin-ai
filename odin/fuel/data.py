@@ -133,6 +133,7 @@ class Data(object):
         self._data = None
 
         self._transformer = lambda x: x
+        self._shuffle_level = 0
 
     # ====== transformer ====== #
     def transform(self, transformer):
@@ -231,7 +232,26 @@ class Data(object):
     def data(self):
         return self._data
 
-    def set_batch(self, batch_size=None, seed=None, start=None, end=None):
+    def set_batch(self, batch_size=None, seed=None, start=None, end=None,
+                  shuffle_level=None):
+        """
+        Parameters
+        ----------
+        batch_size: int
+            size of each batch return when iterate this Data
+        seed: None, int
+            if None, no shuffling is performed while iterating,
+            otherwise
+        start: int, float
+            if int, start indicates the index of starting data points to
+            iterate. If float, start is the percentage of data to start.
+        end: int, float
+            ending point of the interation
+        shuffle_level: int
+            0: only shuffle the order of each batch
+            1: shuffle the order of batches and inside each batch as well.
+            2: includes level 0 and 1, and custom shuffling (strongest form)
+        """
         if isinstance(batch_size, int) and batch_size > 0:
             self._batch_size = batch_size
         self._seed = seed
@@ -239,6 +259,8 @@ class Data(object):
             self._start = start
         if end is not None and end > 0. - 1e-12:
             self._end = end
+        if shuffle_level is not None:
+            self._shuffle_level = min(max(int(shuffle_level), 0), 2)
         return self
 
     # ==================== Slicing methods ==================== #
@@ -267,14 +289,14 @@ class Data(object):
             idx.append(end)
         idx = list(zip(idx, idx[1:]))
 
-        rand = np.random.RandomState(seed=seed) if seed is not None else None
+        rand = None if seed is None else np.random.RandomState(seed=seed)
         if rand is not None:
             rand.shuffle(idx)
 
         yield None # this dummy return to make everything initialized
         for start, end in idx:
             x = self._transformer(self._data[start:end])
-            if rand is not None:
+            if rand is not None and self._shuffle_level > 0:
                 x = x[rand.permutation(x.shape[0])]
             yield x
 
@@ -1395,7 +1417,9 @@ class DataIterator(MutableData):
                 # got final batch
                 batch = np.vstack(batch)
                 # no idea why random permutation is much faster than shuffle
-                batch = batch[rng.permutation(batch.shape[0])]
+                if self._shuffle_level > 0:
+                    batch = batch[rng.permutation(batch.shape[0])]
+                # return the iterations
                 for i, j in idx[:int(ceil(batch.shape[0] / batch_size))]:
                     yield self._transformer(batch[i:j])
         #####################################
@@ -1419,7 +1443,8 @@ class DataIterator(MutableData):
                     x = it[current_data].next()[:n[current_data]]
                     n[current_data] -= x.shape[0]
                 # shuffle x
-                x = x[rng.permutation(x.shape[0])]
+                if self._shuffle_level > 0:
+                    x = x[rng.permutation(x.shape[0])]
                 for i, j in idx[:int(ceil(x.shape[0] / self._batch_size))]:
                     yield self._transformer(x[i:j])
 
@@ -1509,7 +1534,7 @@ class DataMerge(MutableData):
     # ==================== iteration ==================== #
     def __iter(self):
         batch_size = self._batch_size
-        seed = self._seed = self._seed = None
+        seed = self._seed; self._seed = None
         # ====== prepare root first ====== #
         shape = self._data[0].shape
         # custom batch_size
@@ -1523,9 +1548,10 @@ class DataMerge(MutableData):
         if idx[-1] < end:
             idx.append(end)
         idx = list(zip(idx, idx[1:]))
+        rng = None
         if seed is not None:
-            np.random.seed(seed)
-            np.random.shuffle(idx)
+            rng = np.random.RandomState(seed)
+            rng.shuffle(idx)
         idx = [slice(i[0], i[1]) for i in idx]
         none_idx = [slice(None, None)] * len(idx)
         # ====== check other data ====== #
@@ -1539,4 +1565,6 @@ class DataMerge(MutableData):
         yield None # dummy return for initialize everything
         for b in zip(*batches):
             data = self._merge_func([i[j] for i, j in zip(self._data, b)])
+            if self._shuffle_level > 0 and rng is not None:
+                data = data[rng.permutation(data.shape[0])]
             yield self._transformer(data)
