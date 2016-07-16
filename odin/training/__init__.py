@@ -24,7 +24,7 @@ _SAVE_TASK.name = "save"
 # ===========================================================================
 class Task(object):
 
-    def __init__(self, func, data, epoch, p, batch_size, seed,
+    def __init__(self, func, data, epoch, p, batch_size, seed, shuffle_level,
                  preprocess=None, name=None):
         super(Task, self).__init__()
         if not hasattr(func, '__call__'):
@@ -39,8 +39,7 @@ class Task(object):
         self._epoch = epoch
         self._p = np.clip(p, 0., 1.)
 
-        self.set_batchsize(batch_size)
-        self.set_seed(seed)
+        self.set_batch(batch_size, seed, shuffle_level)
 
         self._preprocess = preprocess if hasattr(preprocess, '__call__') else lambda x: x
 
@@ -54,20 +53,21 @@ class Task(object):
     def epoch(self):
         return self._epoch
 
-    def set_batchsize(self, batch_size):
-        self._batch_size = batch_size
-        self._iter_per_epoch = int(np.ceil(
-            min([len(i) for i in self._data]) / self._batch_size
-        ))
-        return self
-
-    def set_seed(self, seed):
-        if seed is not None:
-            self._rng = np.random.RandomState(seed)
-        else:
-            self._rng = struct()
-            self._rng.randint = lambda x: None
-            self._rng.rand = RNG_GENERATOR.rand
+    def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
+        if batch_size is not None:
+            self._batch_size = batch_size
+            self._iter_per_epoch = int(np.ceil(
+                min([len(i) for i in self._data]) / self._batch_size
+            ))
+        if seed is None or seed >= 0:
+            if seed is not None:
+                self._rng = np.random.RandomState(seed)
+            else:
+                self._rng = struct()
+                self._rng.randint = lambda x: None
+                self._rng.rand = RNG_GENERATOR.rand
+        if shuffle_level is not None:
+            self._shuffle_level = min(max(int(shuffle_level), 0), 2)
         return self
 
     @property
@@ -98,9 +98,12 @@ class Task(object):
             # if only 1 Data, don't need zip or we will mess up
             if len(self._data) == 1:
                 data = iter(self._data[0].set_batch(
-                    batch_size=self._batch_size, seed=seed))
+                    batch_size=self._batch_size, seed=seed,
+                    shuffle_level=self._shuffle_level))
             else:
-                data = zip(*[iter(i.set_batch(batch_size=self._batch_size, seed=seed))
+                data = zip(*[iter(i.set_batch(batch_size=self._batch_size,
+                                              seed=seed,
+                                              shuffle_level=self._shuffle_level))
                              for i in self._data])
             yield 'start_epoch'
             # ======  start the iteration ====== #
@@ -134,14 +137,15 @@ class MainLoop(object):
 
     """ MainLoop """
 
-    def __init__(self, batch_size=256, dataset=None, seed=None):
+    def __init__(self, batch_size=256, dataset=None, seed=-1,
+                 shuffle_level=0):
         super(MainLoop, self).__init__()
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
 
-        self.set_batchsize(batch_size)
-        self.set_seed(seed)
+        self.set_batch(batch_size=batch_size, seed=seed,
+                       shuffle_level=shuffle_level)
 
         if isinstance(dataset, str):
             dataset = Dataset(dataset)
@@ -155,13 +159,15 @@ class MainLoop(object):
 
     # ==================== pickling ==================== #
     def __setstate__(self, value):
-        self.set_batchsize(value[0])
+        self.set_batch(batch_size=value[0], shuffle_level=value[2])
         self._rng = value[1]
-        if isinstance(value[2], str):
+
+        if isinstance(value[3], str):
             self._dataset = Dataset(value[3])
         else:
             self._dataset = None
-        self._callback = value[4]
+
+        self._callback = value[-1]
 
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
@@ -172,7 +178,8 @@ class MainLoop(object):
 
     def __getstate__(self):
         dataset = self._dataset.path if self._dataset is not None else None
-        return self._batch_size, self._rng, dataset, self._callback
+        return (self._batch_size, self._rng, self._shuffle_level,
+                dataset, self._callback)
 
     # ==================== command ==================== #
     def stop(self):
@@ -186,30 +193,29 @@ class MainLoop(object):
     def batch_size(self):
         return self._batch_size
 
-    def set_batchsize(self, batch_size):
-        self._batch_size = batch_size
-
+    def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
+        if batch_size is not None:
+            self._batch_size = batch_size
+        if seed >= 0 or seed is None:
+            if seed is not None:
+                self._rng = np.random.RandomState(seed)
+            else:
+                self._rng = struct()
+                self._rng.randint = lambda *args, **kwargs: None
+        if shuffle_level is not None:
+            shuffle_level = min(max(int(shuffle_level), 0), 2)
+            self._shuffle_level = shuffle_level
+        # ====== set_batch for Tasks ====== #
         if self._task is not None:
-            self._task.set_batchsize(batch_size)
+            self._task.set_batch(batch_size=batch_size, seed=seed,
+                                 shuffle_level=shuffle_level)
         for i in self._subtask.itervalues():
-            i.set_batchsize(batch_size)
+            i.set_batch(batch_size=batch_size, seed=seed,
+                        shuffle_level=shuffle_level)
         for i in self._crosstask.itervalues():
-            i.set_batchsize(batch_size)
-        return self
+            i.set_batch(batch_size=batch_size, seed=seed,
+                        shuffle_level=shuffle_level)
 
-    def set_seed(self, seed):
-        if seed is not None:
-            self._rng = np.random.RandomState(seed)
-        else:
-            self._rng = struct()
-            self._rng.randint = lambda *args, **kwargs: None
-
-        if self._task is not None:
-            self._task.set_seed(seed)
-        for i in self._subtask.itervalues():
-            i.set_seed(seed)
-        for i in self._crosstask.itervalues():
-            i.set_seed(seed)
         return self
 
     @property
@@ -241,6 +247,7 @@ class MainLoop(object):
         self._task = Task(func, self._validate_data(data), epoch, 1.,
                           batch_size=self._batch_size,
                           seed=self._rng.randint(10e8),
+                          shuffle_level=self._shuffle_level,
                           preprocess=preprocess,
                           name=name)
         return self
@@ -263,6 +270,7 @@ class MainLoop(object):
         self._subtask[Task(func, self._validate_data(data), epoch, p,
                            batch_size=self._batch_size,
                            seed=self._rng.randint(10e8),
+                           shuffle_level=self._shuffle_level,
                            preprocess=preprocess,
                            name=name)] = (freq, when)
         return self
@@ -282,6 +290,7 @@ class MainLoop(object):
         self._crosstask[Task(func, self._validate_data(data), epoch, p,
                              batch_size=self._batch_size,
                              seed=self._rng.randint(10e8),
+                             shuffle_level=self._shuffle_level,
                              preprocess=preprocess,
                              name=name)] = when
         return self

@@ -532,6 +532,7 @@ class ProgressMonitor(Callback):
                  if self._format_results else self._title)
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
+        self._prog.target = 100
         # always 100% at the end of epoch
         self._prog.update(100)
 

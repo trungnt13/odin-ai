@@ -7,6 +7,7 @@ import numbers
 import subprocess
 import tempfile
 import contextlib
+import platform
 from multiprocessing import cpu_count
 from collections import OrderedDict, deque
 
@@ -466,10 +467,12 @@ class Progbar(object):
             info += ((prev_total_width - self.total_width) * " ")
 
         sys.stdout.write(info)
-        sys.stdout.flush()
-
         if current >= self.target:
-            sys.stdout.write("\n")
+            if "Linux" in platform.platform():
+                sys.stdout.write("\n\n")
+            else:
+                sys.stdout.write("\n")
+        sys.stdout.flush()
 
     def add(self, n, values=[]):
         self.update(self.seen_so_far + n, values)

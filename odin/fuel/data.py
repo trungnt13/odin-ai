@@ -232,7 +232,7 @@ class Data(object):
     def data(self):
         return self._data
 
-    def set_batch(self, batch_size=None, seed=None, start=None, end=None,
+    def set_batch(self, batch_size=None, seed=-1, start=None, end=None,
                   shuffle_level=None):
         """
         Parameters
@@ -254,7 +254,8 @@ class Data(object):
         """
         if isinstance(batch_size, int) and batch_size > 0:
             self._batch_size = batch_size
-        self._seed = seed
+        if seed is None or seed >= 0:
+            self._seed = seed
         if start is not None and start > 0. - 1e-12:
             self._start = start
         if end is not None and end > 0. - 1e-12:
@@ -1396,7 +1397,9 @@ class DataIterator(MutableData):
         # 1. optimized parallel code.
         if not sequential:
             # first iterators
-            it = [iter(dat.set_batch(bs, rng.randint(10e8), start, end))
+            it = [iter(dat.set_batch(bs, seed=rng.randint(10e8),
+                                     start=start, end=end,
+                                     shuffle_level=self._shuffle_level))
                   for bs, dat in zip(distribution, data)]
             # iterator
             while sum(n) > 0:
@@ -1409,8 +1412,9 @@ class DataIterator(MutableData):
                         n[i] -= x.shape[0]
                         batch.append(x)
                     except StopIteration: # one iterator stopped
-                        it[i] = iter(data[i].set_batch(
-                            distribution[i], rng.randint(10e8), start, end))
+                        it[i] = iter(data[i].set_batch(distribution[i],
+                            seed=rng.randint(10e8), start=start, end=end,
+                            shuffle_level=self._shuffle_level))
                         x = it[i].next()[:n[i]]
                         n[i] -= x.shape[0]
                         batch.append(x)
@@ -1427,7 +1431,9 @@ class DataIterator(MutableData):
         else:
             # first iterators
             batch_size = distribution.sum()
-            it = [iter(dat.set_batch(batch_size, rng.randint(10e8), start, end))
+            it = [iter(dat.set_batch(batch_size, seed=rng.randint(10e8),
+                                     start=start, end=end,
+                                     shuffle_level=self._shuffle_level))
                   for dat in data]
             current_data = 0
             # iterator
@@ -1438,8 +1444,9 @@ class DataIterator(MutableData):
                     x = it[current_data].next()[:n[current_data]]
                     n[current_data] -= x.shape[0]
                 except StopIteration: # one iterator stopped
-                    it[current_data] = iter(data[current_data].set_batch(
-                        batch_size, rng.randint(10e8), start, end))
+                    it[current_data] = iter(data[current_data].set_batch(batch_size, seed=rng.randint(10e8),
+                                        start=start, end=end,
+                                        shuffle_level=self._shuffle_level))
                     x = it[current_data].next()[:n[current_data]]
                     n[current_data] -= x.shape[0]
                 # shuffle x
