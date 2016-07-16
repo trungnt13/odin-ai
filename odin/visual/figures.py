@@ -12,10 +12,10 @@ import copy
 import numpy as np
 from six.moves import zip, range
 import warnings
-try:
-    import seaborn # import seaborn for pretty plot
-except:
-    pass
+# try:
+#     import seaborn # import seaborn for pretty plot
+# except:
+#     pass
 
 
 # ===========================================================================

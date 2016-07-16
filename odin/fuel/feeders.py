@@ -192,6 +192,10 @@ class Feeder(MutableData):
             n = len(j)
             for count, (name, start, end) in enumerate(j):
                 x = d[int(start):int(end)]
+                # only support 32bit datatype, it is extremely faster
+                dtype = str(x.dtype)
+                x = x.astype(dtype.replace('64', '32')) if '64' in dtype else x
+                # check transcription
                 trans = None
                 if transcription is not None:
                     if name not in transcription:
@@ -380,8 +384,10 @@ class Normalization(FeederRecipe):
 
     def __init__(self, mean=None, std=None, local_normalize=False):
         super(Normalization, self).__init__()
-        self.mean = mean[:] if isinstance(mean, Data) else mean
-        self.std = std[:] if isinstance(std, Data) else std
+        mean = mean[:] if isinstance(mean, Data) else mean
+        std = std[:] if isinstance(std, Data) else std
+        self.mean = mean.astype('float32')
+        self.std = std.astype('float32')
         self.local_normalize = local_normalize
 
     def map(self, name, x, transcription):
@@ -449,18 +455,19 @@ class LabelParse(FeederRecipe):
 
     def __init__(self, dtype, delimiter=' '):
         super(LabelParse, self).__init__()
-        self.dtype = dtype
+        # NO 64bit data type
+        self.dtype = str(np.dtype(dtype)).replace('64', '32')
         self.delimiter = delimiter
 
     def map(self, name, x, transcription):
         if transcription is not None:
-            dtype = self.dtype
             if isinstance(transcription, str):
-                transcription = [dtype(i)
+                transcription = [i
                                  for i in transcription.split(self.delimiter)
                                  if len(i) > 0]
             else:
-                transcription = [dtype(i) for i in transcription]
+                transcription = [i for i in transcription]
+            transcription = np.asarray(transcription, dtype=self.dtype)
         return name, x, transcription
 
 
@@ -505,9 +512,9 @@ class Stacking(FeederRecipe):
             return None
 
         idx = list(range(0, x.shape[0], self.shift))
-        _ = [x[i:i + self.n].reshape(1, -1) for i in idx
+        _ = [x[i:i + self.n].ravel() for i in idx
              if (i + self.n) <= x.shape[0]]
-        x = np.vstack(_) if len(_) > 1 else _[0]
+        x = np.asarray(_) if len(_) > 1 else _[0]
         # ====== stacking the transcription ====== #
         if isinstance(transcription, (tuple, list, np.ndarray)):
             idx = list(range(0, len(transcription), self.shift))

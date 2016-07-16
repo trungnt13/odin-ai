@@ -593,7 +593,7 @@ class History(Callback):
         task : str
             name of task
         event : str
-            task_start, task_end, batch_end, epoch_start, epoch_end
+            "task_start", "task_end", "batch_end", "epoch_start", "epoch_end"
             if 'task' or epoch event is queried, a list of results is
             returned
         """
