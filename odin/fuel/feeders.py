@@ -177,7 +177,6 @@ class Feeder(MutableData):
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed):
-        results = Queue()
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
         self.recipe.init(ntasks, batch_size,
@@ -213,6 +212,8 @@ class Feeder(MutableData):
             # ending signal
             res.put(None)
         yield None # stop here wait for main iterator start
+        # Queue maxsize is max_length (maximum number of items can be in queue)
+        results = Queue(maxsize=0)
         processes = [Process(target=work_multi,
                              args=(self._data, j, map_func, reduce_func,
                                    results, buffer_size))
@@ -238,9 +239,16 @@ class Feeder(MutableData):
                     batch = [_[rng.permutation(_.shape[0])]
                              for _ in batch]
                 yield batch
-        # end the worker
+
+        # Normal exit
         if not exit_on_stop:
+            # check Queue, queue must be empty
+            if not results.empty():
+                raise Exception('Queue results not empty, something wrong '
+                                'with multiprocessing.')
+            # end the worker
             [p.join() for p in processes]
+        # Exit because of stop_all
         else:
             [p.terminate() for p in processes if p.is_alive()]
         results.close()

@@ -58,7 +58,7 @@ class Callback(object):
     results: return results
     iter: current number of iteration
     epoch: current number of epoch
-    mode: 'task', 'subtask', 'crosstask', 'save'
+    mode: 'task', 'subtask', 'crosstask', 'othertask'
     mainloop: the running loop
 
     Callbacks
@@ -80,6 +80,8 @@ class Callback(object):
         super(Callback, self).__init__()
         self._task = None
         self._results = None
+
+        self._nb_samples = defaultdict(int)
         self._iter = defaultdict(int)
         self._epoch = defaultdict(int)
 
@@ -91,11 +93,13 @@ class Callback(object):
         self._results = None
         self._mode = None # 'itask', 'subtask', 'crosstask'
         self._mainloop = None
+
         self._iter = value[0]
         self._epoch = value[1]
+        self._nb_samples = value[2]
 
     def __getstate__(self):
-        return self._iter, self._epoch
+        return self._iter, self._epoch, self._nb_samples
 
     # ==================== helpers ==================== #
     @property
@@ -139,6 +143,14 @@ class Callback(object):
     @iter.setter
     def iter(self, value):
         self._iter[self.task.name] = value
+
+    @property
+    def nb_samples(self):
+        return self._nb_samples[self.task.name]
+
+    @nb_samples.setter
+    def nb_samples(self, value):
+        self._nb_samples[self.task.name] = value
 
     @property
     def epoch(self):
@@ -233,13 +245,19 @@ class CallbackList(Callback):
 
     @Callback.iter.setter
     def iter(self, value):
-        self._iter[self.task] = value
+        self._iter[self.task.name] = value
         for i in self._callbacks:
             i.iter = value
 
+    @Callback.nb_samples.setter
+    def nb_samples(self, value):
+        self._nb_samples[self.task.name] = value
+        for i in self._callbacks:
+            i.nb_samples = value
+
     @Callback.epoch.setter
     def epoch(self, value):
-        self._epoch[self.task] = value
+        self._epoch[self.task.name] = value
         for i in self._callbacks:
             i.epoch = value
 
@@ -522,8 +540,10 @@ class ProgressMonitor(Callback):
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
         # progress
-        iter_per_epoch = self.task.iter_per_epoch
-        n = round(((self.iter % iter_per_epoch) / iter_per_epoch) * 100)
+        samples_per_epoch = self.task.samples_per_epoch
+        n = round(
+            ((self.nb_samples % samples_per_epoch) / samples_per_epoch) * 100
+        )
         self._prog.update(min(int(n), 99))
 
     def epoch_end(self):
@@ -531,7 +551,8 @@ class ProgressMonitor(Callback):
         title = (self._title % np.mean(self.results)
                  if self._format_results else self._title)
         # title
-        self._prog.title = 'Name:%-8s,Epoch:%2d,' % (self.task.name[:8], self.epoch) + title
+        self._prog.title = 'Name:%-8s,Epoch:%2d,' % (
+            self.task.name[:8], self.epoch) + title
         self._prog.target = 100
         # always 100% at the end of epoch
         self._prog.update(100)

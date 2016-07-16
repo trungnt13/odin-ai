@@ -56,9 +56,7 @@ class Task(object):
     def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
         if batch_size is not None:
             self._batch_size = batch_size
-            self._iter_per_epoch = int(np.ceil(
-                min([len(i) for i in self._data]) / self._batch_size
-            ))
+            self._nb_samples_per_epoch = min([len(i) for i in self._data])
         if seed is None or seed >= 0:
             if seed is not None:
                 self._rng = np.random.RandomState(seed)
@@ -71,9 +69,14 @@ class Task(object):
         return self
 
     @property
+    def samples_per_epoch(self):
+        ''' Estimated number of iteration for each epoch '''
+        return self._nb_samples_per_epoch
+
+    @property
     def iter_per_epoch(self):
         ''' Estimated number of iteration for each epoch '''
-        return self._iter_per_epoch
+        return int(np.ceil(self._nb_samples_per_epoch / self._batch_size))
 
     def __iter__(self):
         '''
@@ -82,7 +85,7 @@ class Task(object):
         'start_epoch' : beginning of epoch
         'end_epoch' : epoch ended
         'end_task' : task ended
-        (results, n_iter, n_epoch) : results of execute function on data
+        (results, n_iter, n_samples, n_epoch) : results of execute function on data
 
         Note
         ----
@@ -90,10 +93,11 @@ class Task(object):
         '''
         n_iter = 0
         p = self._p
-        _ = 0
+        nb_epoch = 0
+        nb_samples = 0
         yield 'start_task'
-        while _ < self._epoch:
-            _ += 1
+        while nb_epoch < self._epoch:
+            nb_epoch += 1
             seed = self._rng.randint(10e8)
             # if only 1 Data, don't need zip or we will mess up
             if len(self._data) == 1:
@@ -107,24 +111,28 @@ class Task(object):
                              for i in self._data])
             yield 'start_epoch'
             # ======  start the iteration ====== #
-            niter_per_epoch = 0 # number of iteration for 1 epoch
+            nb_samples_per_epoch = 0 # number of iteration for 1 epoch
             for i, x in enumerate(data):
-                niter_per_epoch += 1
                 x = self._preprocess(x)
                 if not isinstance(x, (tuple, list)):
                     x = [x]
+                # update some info
+                shape0 = x[0].shape[0]
+                nb_samples += shape0
+                nb_samples_per_epoch += x[0].shape[0]
                 n_iter += 1
+                # apply the function
                 if p >= 1. or (p < 1 and self._rng.rand() < p):
                     results = self._func(*x)
                 else:
                     results = None
-                yield (results, n_iter, _)
+                yield (results, n_iter, nb_samples, nb_epoch)
             # ====== check if we got the right number for epoch iter ====== #
-            if niter_per_epoch != self._iter_per_epoch:
+            if nb_samples_per_epoch != self._nb_samples_per_epoch:
                 # just for sure should not smaller than the real number
-                self._iter_per_epoch = niter_per_epoch
+                self._nb_samples_per_epoch = nb_samples_per_epoch
             # ======  end_epoch or task ====== #
-            if _ >= self._epoch:
+            if nb_epoch >= self._epoch:
                 yield 'end_task'
             else:
                 yield 'end_epoch'
@@ -257,13 +265,11 @@ class MainLoop(object):
         '''
         Parameters
         ----------
-        when: float or int
-            int => number of main task's iteration before this task is executed
-            float => percentage of epoch of main task before this task is executed
+        when: float
+            percentage of epoch of main task before this task is executed
             negative value => execute after final epoch of main task
-        freq: float or int
-            int => number of main task's iteration before this task is executed
-            float => percentage of epoch of main task before this task is executed
+        freq: float
+            percentage of epoch of main task before this task is executed
         preprocess: function
             input is list of data, output is transformed data for batch
         '''
@@ -280,9 +286,8 @@ class MainLoop(object):
         '''
         Parameters
         ----------
-        when: float or int
-            int => number of main task's iteration before this task is executed
-            float => percentage of epoch of main task before this task is executed
+        when: float
+            percentage of epoch of main task before this task is executed
             negative value => execute after final epoch of main task
         preprocess: function
             input is list of data, output is transformed data for batch
@@ -303,6 +308,7 @@ class MainLoop(object):
         callback.mainloop = self # set main loop
         epoch_results = []
         task_results = []
+        batch_size = self._batch_size
         # ====== prepare subtask ====== #
         # iterator, task_results, is_ended=False
         subtask_map = {i: [iter(i), [], False] for i in self._subtask}
@@ -326,7 +332,8 @@ class MainLoop(object):
             # ====== Main task ====== #
             callback.mode = 'task' # dirty hack
             callback.reset(); callback.task = self._task
-            if isinstance(i, str): # signal: start_epoch, end_epoch or end_task
+            # return signal: start_epoch, end_epoch or end_task
+            if isinstance(i, str):
                 if i == 'start_task':
                     callback.task_start()
                 elif i == 'start_epoch':
@@ -339,12 +346,14 @@ class MainLoop(object):
                         callback.results = task_results
                         callback.task_end()
                         break # end everything
-            else: # results
-                results, niter, nepoch = i
+            # return actual results
+            else:
+                results, niter, nsamples, nepoch = i
                 epoch_results.append(results)
                 task_results.append(results)
                 callback.results = results
                 callback.iter = niter
+                callback.nb_samples = nsamples
                 callback.epoch = nepoch
                 callback.batch_end()
                 # ====== run subtask ====== #
@@ -352,10 +361,14 @@ class MainLoop(object):
                 for subtask, (freq, when) in self._subtask.iteritems():
                     subtask_iter, subtask_results, is_end = subtask_map[subtask]
                     if is_end: continue # already ended
+                    # check if it is good time to start, if when is negative,
+                    # start from last epoch.
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
-                    if isinstance(when, float): when = int(when * self._task.iter_per_epoch)
-                    if isinstance(freq, float): freq = int(freq * self._task.iter_per_epoch)
-                    if niter > 0 and niter >= when and (niter - when) % freq == 0: # OK to run
+                    when = int(when * self._task.samples_per_epoch)
+                    freq = int(freq * self._task.samples_per_epoch)
+                    # OK to run
+                    if nsamples > 0 and nsamples >= when and \
+                    (nsamples - when) % freq <= batch_size:
                         callback.reset(); callback.task = subtask
                         x = subtask_iter.next()
                         if x == 'start_task':
@@ -371,7 +384,8 @@ class MainLoop(object):
                                     subtask_results.append(x[0])
                                     callback.results = x[0]
                                     callback.iter = x[1]
-                                    callback.epoch = x[2]
+                                    callback.nb_samples = x[2]
+                                    callback.epoch = x[3]
                                     callback.batch_end()
                             callback.results = subepoch_results
                             callback.epoch_end()
@@ -382,10 +396,16 @@ class MainLoop(object):
                 # ====== run crosstask ====== #
                 callback.mode = 'crosstask'
                 for crosstask, when in self._crosstask.iteritems():
+                    # check if it is good time to start, if when is negative,
+                    # start from last epoch.
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
-                    if isinstance(when, float): when = int(when * self._task.iter_per_epoch)
-                    crosstask_iter, crosstask_epoch, crosstask_results, is_end = crosstask_map[crosstask]
-                    if niter > 0 and niter >= when and not is_end: # OK to run
+                    when = int(when * self._task.samples_per_epoch)
+                    (crosstask_iter,
+                     crosstask_epoch,
+                     crosstask_results,
+                     is_end) = crosstask_map[crosstask]
+                    # OK to run
+                    if nsamples > 0 and nsamples >= when and not is_end:
                         callback.reset(); callback.task = crosstask
                         x = crosstask_iter.next()
                         if x == 'start_task':
@@ -399,7 +419,8 @@ class MainLoop(object):
                             crosstask_results.append(x[0])
                             callback.results = x[0]
                             callback.iter = x[1]
-                            callback.epoch = x[2]
+                            callback.nb_samples = x[2]
+                            callback.epoch = x[3]
                             callback.batch_end()
                         elif x == 'end_epoch' or x == 'end_task':
                             callback.results = crosstask_epoch
