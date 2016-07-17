@@ -367,7 +367,7 @@ class MainLoop(object):
                     when = int(when * self._task.samples_per_epoch)
                     freq = int(freq * self._task.samples_per_epoch)
                     # OK to run
-                    if nsamples > 0 and nsamples >= when and \
+                    if nsamples > batch_size and nsamples >= when and \
                     (nsamples - when) % freq <= batch_size:
                         callback.reset(); callback.task = subtask
                         x = subtask_iter.next()
@@ -396,16 +396,15 @@ class MainLoop(object):
                 # ====== run crosstask ====== #
                 callback.mode = 'crosstask'
                 for crosstask, when in self._crosstask.iteritems():
+                    (crosstask_iter, crosstask_epoch,
+                     crosstask_results, is_end) = crosstask_map[crosstask]
+                    if is_end: continue # already ended
                     # check if it is good time to start, if when is negative,
                     # start from last epoch.
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
                     when = int(when * self._task.samples_per_epoch)
-                    (crosstask_iter,
-                     crosstask_epoch,
-                     crosstask_results,
-                     is_end) = crosstask_map[crosstask]
                     # OK to run
-                    if nsamples > 0 and nsamples >= when and not is_end:
+                    if nsamples > batch_size and nsamples >= when and not is_end:
                         callback.reset(); callback.task = crosstask
                         x = crosstask_iter.next()
                         if x == 'start_task':
