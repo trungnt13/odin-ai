@@ -816,9 +816,10 @@ def play_audio(data, fs, volumn=1, speed=1):
     else:
         channels = data.shape[1]
     with TemporaryDirectory() as temppath:
-        with sf.SoundFile(os.path.join(temppath, 'tmp_play.wav'), 'w', fs, channels,
-                       subtype=None, endian=None, format=None, closefd=None) as f:
+        path = os.path.join(temppath, 'tmp_play.wav')
+        with sf.SoundFile(path, 'w', fs, channels, subtype=None,
+            endian=None, format=None, closefd=None) as f:
             f.write(data)
-        os.system('afplay -v %f -q 1 -r %f /tmp/tmp_play.wav &' % (volumn, speed))
+        os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
         raw_input('<enter> to stop audio.')
         os.system("kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")

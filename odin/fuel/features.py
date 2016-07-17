@@ -76,14 +76,14 @@ class MapReduce(object):
 
     """
 
-    def __init__(self, ncpu=8, cache=5, verbose=1):
+    def __init__(self, ncpu=8, buffer_size=5):
         super(MapReduce, self).__init__()
         # variables
         self._tasks = queue()
         self._stop_now = False
         self._task_results = {}
 
-        self.cache = int(max(cache, 1))
+        self.buffer_size = int(max(buffer_size, 1))
         self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
 
     def stop(self):
@@ -204,7 +204,7 @@ class MapReduce(object):
                 progbar.add(1)
                 batch.append(results.get())
                 # reduce the results
-                if len(batch) == self.cache or _ == (n_jobs - 1):
+                if len(batch) == self.buffer_size or _ == (n_jobs - 1):
                     final_results.append(reduce_func(batch))
                     batch = []
             # ====== end all processes ====== #
@@ -294,8 +294,8 @@ def _append_energy_and_deltas(s, energy, delta_order):
 
 
 def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
-                               delta_order, energy, vad, dtype,
-                               get_spec, get_mspec, get_mfcc):
+                               delta_order, energy, vad, dtype, pitch_threshold,
+                               get_spec, get_mspec, get_mfcc, get_pitch):
     """ return spec(X, sum, sum2),
                mspec(X, sum, sum2),
                mfcc(X, sum, sum2),
@@ -307,7 +307,22 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
     mfcc, logEnergy, spec, mspec = sidekit.frontend.mfcc(
         s, fs=fs, lowfreq=64, maxfreq=fs // 2, nlogfilt=n_filters,
         nwin=win, shift=shift, nceps=n_ceps,
-        get_spec=get_spec, get_mspec=get_mspec)
+        get_spec=True, get_mspec=get_mspec, prefac=0.97)
+    # geting pitch if required (using librosa)
+    pitch = None
+    if get_pitch:
+        import librosa
+        pitch_freq, pitch_mag = librosa.piptrack(S=spec.T, sr=fs,
+            n_fft=2 ** int(np.ceil(np.log2(int(round(win * fs))))),
+            hop_length=shift * fs,
+            fmin=150, fmax=fs / 2,
+            threshold=pitch_threshold)
+        # no append log energy for pitch features
+        pitch_freq = _append_energy_and_deltas(pitch_freq.T, None, delta_order)
+        pitch_mag = _append_energy_and_deltas(pitch_mag.T, None, delta_order)
+        pitch = np.hstack([pitch_freq, pitch_mag])
+    # reset spec to true value
+    spec = None if not get_spec else spec
     # any nan value in MFCC ignore the whole file
     if np.any(np.isnan(mfcc)):
         return None
@@ -321,29 +336,32 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
         # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
         # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
         vad_idx = sidekit.frontend.vad.vad_energy(logEnergy,
-            distribNb=distribNb, nbTrainIt=nbTrainIt).astype('int8')
+            distrib_nb=distribNb, nb_train_it=nbTrainIt)[0].astype('int8')
     # Energy
     logEnergy = logEnergy if energy else None
-
     # everything is (T, D)
     mfcc = (_append_energy_and_deltas(mfcc, logEnergy, delta_order)
             if mfcc is not None else None)
+    mspec = (_append_energy_and_deltas(mspec, logEnergy, delta_order)
+            if mspec is not None else None)
     # we don't calculate deltas for spectrogram features
     spec = (_append_energy_and_deltas(spec, logEnergy, 0)
             if spec is not None else None)
-    mspec = (_append_energy_and_deltas(mspec, logEnergy, delta_order)
-            if mspec is not None else None)
-    # normalization
+
+    # for future normalization
     mfcc = (mfcc.astype(dtype),
             np.sum(mfcc, axis=0, dtype='float64'),
             np.sum(mfcc**2, axis=0, dtype='float64')) if mfcc is not None else None
+    pitch = (pitch.astype(dtype),
+             np.sum(pitch, axis=0, dtype='float64'),
+             np.sum(pitch**2, axis=0, dtype='float64')) if pitch is not None else None
     spec = (spec.astype(dtype),
             np.sum(spec, axis=0, dtype='float64'),
             np.sum(spec**2, axis=0, dtype='float64')) if spec is not None else None
     mspec = (mspec.astype(dtype),
              np.sum(mspec, axis=0, dtype='float64'),
              np.sum(mspec**2, axis=0, dtype='float64')) if mspec is not None else None
-    return spec, mspec, mfcc, vad_idx
+    return spec, mspec, mfcc, pitch, vad_idx
 
 
 class SpeechFeature(FeatureRecipe):
@@ -391,8 +409,17 @@ class SpeechFeature(FeatureRecipe):
         return log-mel filterbank
     get_mfcc : bool
         return mfcc features
+    get_pitch : bool
+        return pitch frequencies, and pitch energy (which is
+        horizontal-stacked) into big features matrix (i.e. expected
+        double number of features of spectrogram).
+    pitch_threshold : float (0.0,1.0)
+        A bin in spectrum X is considered a pitch when it is greater than
+        `threshold*X.max()`. If delta is added, the order will be
+        [pitch_freq + pitch_freq_delta + pitch_mag + pitch_mag_delta]
     robust : bool
         run in robust mode, auto ignore error files
+
     datatype : memmap, hdf5
 
     Example
@@ -405,7 +432,7 @@ class SpeechFeature(FeatureRecipe):
                  downsample='sinc_best', delta_order=2, energy=True, vad=True,
                  datatype='memmap', dtype='float32',
                  get_spec=False, get_mspec=True, get_mfcc=False,
-                 robust=True):
+                 get_pitch=False, pitch_threshold=0.5, robust=True):
         super(SpeechFeature, self).__init__('SpeechFeatures')
 
     def initialize(self):
@@ -447,6 +474,8 @@ class SpeechFeature(FeatureRecipe):
         self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
         # ====== check output ====== #
         self.dataset = Dataset(self.output)
+        # constraint pitch threshold in 0-1
+        self.pitch_threshold = min(max(self.pitch_threshold, 0.), 1.)
         # self.wrap_map(n_filters=self.n_filters, n_ceps=self.n_ceps,
         #               fs=self.fs, downsample=self.downsample,
         #               win=self.win, shift=self.shift,
@@ -467,6 +496,7 @@ class SpeechFeature(FeatureRecipe):
         [(name, spec(x, sum1, sum2), # if available, otherwise None
                 mspec(x, sum1, sum2), # if available, otherwise None
                 mfcc(x, sum1, sum2), # if available, otherwise None
+                pitch(x, sum1, sum2), # if available, otherwise None
                 vad), ...]
         '''
         fs = self.fs
@@ -493,8 +523,9 @@ class SpeechFeature(FeatureRecipe):
                     n_filters=self.n_filters, n_ceps=self.n_ceps,
                     win=self.win, shift=self.shift, delta_order=self.delta_order,
                     energy=self.energy, vad=self.vad, dtype=self.dtype,
+                    pitch_threshold=self.pitch_threshold,
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
-                    get_mfcc=self.get_mfcc)
+                    get_mfcc=self.get_mfcc, get_pitch=self.get_pitch)
                 if tmp is not None:
                     features.append((name,) + tmp)
                 else:
@@ -521,9 +552,10 @@ class SpeechFeature(FeatureRecipe):
         spec_sum1, spec_sum2 = 0., 0.
         mspec_sum1, mspec_sum2 = 0., 0.
         mfcc_sum1, mfcc_sum2 = 0., 0.
+        pitch_sum1, pitch_sum2 = 0., 0.
 
         n = 0
-        for name, spec, mspec, mfcc, vad in results:
+        for name, spec, mspec, mfcc, pitch, vad in results:
             if spec is not None:
                 X, sum1, sum2 = spec
                 _ = dataset.get_data('spec', dtype=X.dtype,
@@ -548,6 +580,14 @@ class SpeechFeature(FeatureRecipe):
                 _.append(X)
                 mfcc_sum1 += sum1; mfcc_sum2 += sum2
                 n = X.shape[0]; del X
+            if pitch is not None:
+                X, sum1, sum2 = pitch
+                _ = dataset.get_data('pitch', dtype=X.dtype,
+                                     shape=(0,) + X.shape[1:],
+                                     datatype=datatype)
+                _.append(X)
+                pitch_sum1 += sum1; pitch_sum2 += sum2
+                n = X.shape[0]; del X
             # index
             index.append([name, n])
             # VAD
@@ -562,7 +602,8 @@ class SpeechFeature(FeatureRecipe):
         dataset.flush()
         return ((spec_sum1, spec_sum2),
                 (mspec_sum1, mspec_sum2),
-                (mfcc_sum1, mfcc_sum2), index)
+                (mfcc_sum1, mfcc_sum2),
+                (pitch_sum1, pitch_sum2), index)
 
     def finalize_func(self, results):
         # contains (sum1, sum2, n)
@@ -571,9 +612,10 @@ class SpeechFeature(FeatureRecipe):
         spec_sum1, spec_sum2 = 0., 0.
         mspec_sum1, mspec_sum2 = 0., 0.
         mfcc_sum1, mfcc_sum2 = 0., 0.
+        pitch_sum1, pitch_sum2 = 0., 0.
         n = 0
         indices = []
-        for spec, mspec, mfcc, index in results:
+        for spec, mspec, mfcc, pitch, index in results:
             # spec
             spec_sum1 += spec[0]
             spec_sum2 += spec[1]
@@ -583,6 +625,10 @@ class SpeechFeature(FeatureRecipe):
             # mfcc
             mfcc_sum1 += mfcc[0]
             mfcc_sum2 += mfcc[1]
+            # pitch
+            pitch_sum1 += pitch[0]
+            pitch_sum2 += pitch[1]
+            # indices
             for name, size in index:
                 # name, start, end
                 indices.append([name, int(n), int(n + size)])
@@ -610,6 +656,8 @@ class SpeechFeature(FeatureRecipe):
             save_mean_std(mspec_sum1, mspec_sum2, n, 'mspec', dataset)
         if self.get_mfcc:
             save_mean_std(mfcc_sum1, mfcc_sum2, n, 'mfcc', dataset)
+        if self.get_pitch:
+            save_mean_std(pitch_sum1, pitch_sum2, n, 'pitch', dataset)
         dataset.flush()
         dataset.close()
         return path

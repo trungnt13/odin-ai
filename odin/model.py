@@ -416,11 +416,14 @@ class SequentialRegressor(SequentialModel, RegressorMixin):
 # ===========================================================================
 class SpeechTransform(BaseEstimator, TransformerMixin):
     """ SpeechTransform
+    Parameters
+    ----------
+    feature_type: "mspec", "spec", "mfcc", "pitch"
+
     Note
     ----
     if your want to set the default fs (sample frequency), set
     SpeechTransform.DEFAULT_FS
-
     """
 
     DEFAULT_FS = None
@@ -428,10 +431,16 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
     @autoinit
     def __init__(self, feature_type, fs=8000, win=0.025, shift=0.01,
                  n_filters=40, n_ceps=13, delta_order=2,
-                 energy=True, vad=True, downsample='sinc_best'):
+                 energy=True, vad=True, downsample='sinc_best',
+                 pitch_threshold=0):
         super(SpeechTransform, self).__init__()
-        if feature_type not in ['mspec', 'spec', 'mfcc']:
-            raise ValueError('Feature type must be "mspec", "spec", or "mfcc".')
+        if not isinstance(feature_type, (tuple, list)):
+            feature_type = [feature_type, ]
+        if any(i not in ['mspec', 'spec', 'mfcc', 'pitch']
+               for i in feature_type):
+            raise ValueError('Feature type must be "mspec", "spec", '
+                             '"mfcc", or "pitch".')
+        self.feature_type = feature_type
 
     def fit(*args):
         pass
@@ -445,12 +454,15 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
         get_mspec = False
         get_spec = False
         get_mfcc = False
-        if self.feature_type == 'mspec':
+        get_pitch = False
+        if 'mspec' in self.feature_type:
             get_mspec = True
-        elif self.feature_type == 'spec':
+        if 'spec' in self.feature_type:
             get_spec = True
-        else:
+        if 'mfcc' in self.feature_type:
             get_mfcc = True
+        if 'pitch' in self.feature_type:
+            get_pitch = True
         # ====== Read audio ====== #
         if isinstance(X, str) and os.path.exists(X):
             X, orig_fs = speech.read(X)
@@ -482,19 +494,31 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
             n_filters=self.n_filters, n_ceps=self.n_ceps,
             win=self.win, shift=self.shift, delta_order=self.delta_order,
             energy=self.energy, vad=self.vad, dtype='float32',
+            pitch_threshold=self.pitch_threshold, get_pitch=get_pitch,
             get_spec=get_spec, get_mspec=get_mspec, get_mfcc=get_mfcc)
         # ====== return results ====== #
         if data is None:
             return None
+        results = {}
         if get_spec:
             X, sum1, sum2 = data[0]
-        elif get_mspec:
+            results['spec'] = X
+        if get_mspec:
             X, sum1, sum2 = data[1]
-        elif get_mfcc:
+            results['mspec'] = X
+        if get_mfcc:
             X, sum1, sum2 = data[2]
+            results['mfcc'] = X
+        if get_pitch:
+            X, sum1, sum2 = data[3]
+            results['pitch'] = X
+        results = [results[i] for i in self.feature_type]
+        if len(results) == 1: results = results[0]
         if self.vad:
-            return X, data[-1]
-        return X
+            return (results + [data[-1]]
+                    if isinstance(results, (tuple, list))
+                    else [results, data[-1]])
+        return results
 
     def __setstate__(self, states):
         (SpeechTransform.DEFAULT_FS,
@@ -507,6 +531,7 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
          self.delta_order,
          self.energy,
          self.vad,
+         self.pitch_threshold,
          self.downsample) = states
 
     def __getstate__(self):
@@ -521,6 +546,7 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
             self.delta_order,
             self.energy,
             self.vad,
+            self.pitch_threshold,
             self.downsample
         )
 
