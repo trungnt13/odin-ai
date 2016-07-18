@@ -350,6 +350,9 @@ class Feeder(MutableData):
         # end
         return self
 
+    def __del__(self):
+        self.stop_all()
+
 
 # ===========================================================================
 # Recipes

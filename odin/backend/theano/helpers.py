@@ -231,9 +231,11 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #
     if name in _CREATED_VARIABLE:
-        if not np.array_equal(value, _CREATED_VARIABLE[name].eval()):
+        if value.shape != _CREATED_VARIABLE[name].eval().shape:
             raise Exception('Variable with the same name "%s" has been created '
-                            'with different value before.' % name)
+                            'with different shape before.' % name)
+        else:
+            warnings.warn('Overrided other variable with the same name.')
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 

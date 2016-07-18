@@ -311,7 +311,7 @@ class NaNStop(Callback):
         if self.task.name == self._task_name:
             if np.any(np.isnan(self.results)):
                 print('\nNaN value detected in task:"%s" results, '
-                      'signals [STOP] training... \n' % self.task)
+                      'signals [STOP] training... \n' % self._task_name)
                 self.mainloop.stop()
 
     # ==================== Pickling ==================== #
