@@ -148,81 +148,123 @@ class Data(object):
     @cache('_status')
     def _iterating_operator(self, ops, axis, merge_func=sum, init_val=0.):
         '''Execute a list of ops on X given the axis or axes'''
+        # ====== validate arguments ====== #
         if axis is not None:
             axis = _validate_operate_axis(axis)
         if not isinstance(ops, (tuple, list)):
             ops = [ops]
-
-        # init values all zeros
-        s = None
-        old_seed = self._seed
-        old_start = self._start
-        old_end = self._end
-        # less than million data points, not a big deal
-        it = self.set_batch(start=0., end=1., seed=None).__iter()
-        it.next()
-        for X in it:
-            if s is None:
-                s = [o(X, axis) for o in ops]
-            else:
-                s = [merge_func((i, o(X, axis))) for i, o in zip(s, ops)]
-        self.set_batch(start=old_start, end=old_end, seed=old_seed)
-        return s
+        # ====== trick to process list of Data ====== #
+        old_data = self._data
+        data = old_data if isinstance(old_data, (tuple, list)) else (old_data,)
+        # ====== Processing ====== #
+        results = []
+        for dat in data:
+            self._data = dat
+            # init values all zeros
+            s = None
+            old_seed = self._seed
+            old_start = self._start
+            old_end = self._end
+            # less than million data points, not a big deal
+            it = self.set_batch(start=0., end=1., seed=None)._iter(); it.next()
+            for X in it:
+                if s is None:
+                    # list of results for each ops
+                    s = [o(X, axis) for o in ops]
+                else:
+                    # merge all results from last ops to new ops
+                    s = [merge_func((i, o(X, axis))) for i, o in zip(s, ops)]
+            self.set_batch(start=old_start, end=old_end, seed=old_seed)
+            results.append(s)
+        # ====== reset and return ====== #
+        self._data = old_data
+        return results if isinstance(old_data, (tuple, list)) else results[0]
 
     def _iterate_update(self, y, ops):
         """Support ops:
         add; mul; div; sub; floordiv; pow
         """
-        shape = self._data.shape
-        # custom batch_size
-        idx = list(range(0, shape[0], 1024))
-        if idx[-1] < shape[0]:
-            idx.append(shape[0])
-        idx = list(zip(idx, idx[1:]))
-        Y = lambda start, end: (y[start:end] if hasattr(y, 'shape') and
-                                y.shape[0] == shape[0]
-                                else y)
-        for i in idx:
-            start, end = i
-            if 'add' == ops:
-                self._data[start:end] += Y
-            elif 'mul' == ops:
-                self._data[start:end] *= Y
-            elif 'div' == ops:
-                self._data[start:end] /= Y
-            elif 'sub' == ops:
-                self._data[start:end] -= Y
-            elif 'floordiv' == ops:
-                self._data[start:end] //= Y
-            elif 'pow' == ops:
-                self._data[start:end] **= Y
+        # ====== trick to process list of Data ====== #
+        old_data = self._data
+        data = old_data if isinstance(old_data, (tuple, list)) else (old_data,)
+        # ====== processing ====== #
+        for dat in data:
+            self._data = dat
+
+            shape = self._data.shape
+            # custom batch_size
+            idx = list(range(0, shape[0], 1024))
+            if idx[-1] < shape[0]:
+                idx.append(shape[0])
+            idx = list(zip(idx, idx[1:]))
+            Y = lambda start, end: (y[start:end] if hasattr(y, 'shape') and
+                                    y.shape[0] == shape[0]
+                                    else y)
+            for i in idx:
+                start, end = i
+                if 'add' == ops:
+                    self._data[start:end] += Y
+                elif 'mul' == ops:
+                    self._data[start:end] *= Y
+                elif 'div' == ops:
+                    self._data[start:end] /= Y
+                elif 'sub' == ops:
+                    self._data[start:end] -= Y
+                elif 'floordiv' == ops:
+                    self._data[start:end] //= Y
+                elif 'pow' == ops:
+                    self._data[start:end] **= Y
+        # ====== reset ====== #
+        self._data = old_data
 
     # ==================== properties ==================== #
     @property
     def ndim(self):
+        if isinstance(self._data, (tuple, list)):
+            return [len(dat.shape) for dat in self._data]
         return len(self.shape)
 
     @property
     def shape(self):
         # auto infer new shape
+        if isinstance(self._data, (tuple, list)):
+            return [_estimate_shape(dat.shape, self._transformer)
+                   for dat in self._data]
         return _estimate_shape(self._data.shape, self._transformer)
+
+    def __len__(self):
+        """ len always return 1 number """
+        if isinstance(self._data, (tuple, list)):
+            res = [dat.shape[0] for dat in self._data]
+            return min(res) # return expected length of iterator
+        return self.shape[0]
 
     @property
     def T(self):
-        return self.array.T
+        array = self.array
+        if isinstance(array, (tuple, list)):
+            return [i.T for i in array]
+        return array.T
 
     @property
     def dtype(self):
-        if not hasattr(self._data, 'dtype'):
-            return self._data[0].dtype
+        if isinstance(self._data, (tuple, list)):
+            return [dat.dtype for dat in self._data]
         return self._data.dtype
 
     @property
     def array(self):
+        if isinstance(self._data, (tuple, list)):
+            return [self._transformer(dat[:]) for dat in self._data]
         return self._transformer(self._data[:])
 
     def tolist(self):
-        return self.array.tolist()
+        array = self.array
+        if isinstance(array, (tuple, list)):
+            array = [i.tolist() for i in array]
+        else:
+            array = array.tolist()
+        return array
 
     @property
     def batch_size(self):
@@ -266,14 +308,22 @@ class Data(object):
 
     # ==================== Slicing methods ==================== #
     def __getitem__(self, y):
+        if isinstance(self._data, (tuple, list)):
+            return [self._transformer(dat.__getitem__(y))
+                    for dat in self._data]
         return self._transformer(self._data.__getitem__(y))
 
     @autoattr(_status=lambda x: x + 1)
     def __setitem__(self, x, y):
+        if isinstance(self._data, (tuple, list)):
+            for dat in self._data:
+                dat.__setitem__(x, y)
+            return
         return self._data.__setitem__(x, y)
 
     # ==================== iteration ==================== #
-    def __iter(self):
+    def _iter(self):
+        # TODO: iter support _data is a list of Data
         batch_size = self._batch_size
         seed = self._seed; self._seed = None
         shape = self._data.shape
@@ -302,14 +352,11 @@ class Data(object):
             yield x
 
     def __iter__(self):
-        it = self.__iter()
+        it = self._iter()
         it.next()
         return it
 
     # ==================== Strings ==================== #
-    def __len__(self):
-        return self.shape[0]
-
     def __str__(self):
         return self._data.__str__()
 
@@ -319,6 +366,7 @@ class Data(object):
     # ==================== manipulation ==================== #
     @autoattr(_status=lambda x: x + 1)
     def append(self, *arrays):
+        # TODO: support list of data
         accepted_arrays = []
         new_size = 0
         shape = self._data.shape
@@ -341,6 +389,7 @@ class Data(object):
 
     @autoattr(_status=lambda x: x + 1)
     def prepend(self, *arrays):
+        # TODO: support list of data
         accepted_arrays = []
         new_size = 0
         shape = self._data.shape
@@ -440,53 +489,94 @@ class MutableData(Data):
     # ==================== high-level operators ==================== #
     def sum(self, axis=0):
         ops = lambda x, axis: np.sum(x, axis=axis)
-        return self._iterating_operator(ops, axis)[0]
+        results = self._iterating_operator(ops, axis)
+        if isinstance(self._data, (tuple, list)):
+            return [i[0] for i in results]
+        return results[0]
 
     def cumsum(self, axis=None):
+        if isinstance(self._data, (tuple, list)):
+            return [i.cumsum(axis) for i in self.array]
         return self.array.cumsum(axis)
 
     def sum2(self, axis=0):
         ops = lambda x, axis: np.sum(np.power(x, 2), axis=axis)
-        return self._iterating_operator(ops, axis)[0]
+        results = self._iterating_operator(ops, axis)
+        if isinstance(self._data, (tuple, list)):
+            return [i[0] for i in results]
+        return results[0]
 
     def pow(self, y):
+        if isinstance(self._data, (tuple, list)):
+            return [i.__pow__(y) for i in self.array]
         return self.array.__pow__(y)
 
     def min(self, axis=None):
         ops = lambda x, axis: np.min(x, axis=axis)
-        return self._iterating_operator(ops, axis,
+        results = self._iterating_operator(ops, axis,
             merge_func=lambda x: np.where(x[0] < x[1], x[0], x[1]),
-            init_val=float('inf'))[0]
+            init_val=float('inf'))
+
+        if isinstance(self._data, (tuple, list)):
+            return [i[0] for i in results]
+        return results[0]
 
     def argmin(self, axis=None):
+        if isinstance(self._data, (tuple, list)):
+            return [i.argmin(axis) for i in self.array]
         return self.array.argmin(axis)
 
     def max(self, axis=None):
         ops = lambda x, axis: np.max(x, axis=axis)
-        return self._iterating_operator(ops, axis,
+        results = self._iterating_operator(ops, axis,
             merge_func=lambda x: np.where(x[0] > x[1], x[0], x[1]),
             init_val=float('-inf'))[0]
 
+        if isinstance(self._data, (tuple, list)):
+            return [i[0] for i in results]
+        return results[0]
+
     def argmax(self, axis=None):
+        if isinstance(self._data, (tuple, list)):
+            return [i.argmax(axis) for i in self.array]
         return self.array.argmax(axis)
 
     def mean(self, axis=0):
         sum1 = self.sum(axis)
 
         axis = _validate_operate_axis(axis)
-        n = np.prod([self.shape[i] for i in axis])
-        return sum1 / n
+
+        if isinstance(sum1, (tuple, list)):
+            results = []
+            for s, shape in zip(sum1, self.shape):
+                n = np.prod([shape[i] for i in axis])
+                results.append(s / n)
+            return results
+        else:
+            n = np.prod([self.shape[i] for i in axis])
+            return sum1 / n
 
     def var(self, axis=0):
         sum1 = self.sum(axis)
         sum2 = self.sum2(axis)
 
         axis = _validate_operate_axis(axis)
-        n = np.prod([self.shape[i] for i in axis])
-        return (sum2 - np.power(sum1, 2) / n) / n
+
+        if isinstance(sum1, (tuple, list)):
+            results = []
+            for s1, s2, shape in zip(sum1, sum2, self.shape):
+                n = np.prod([shape[i] for i in axis])
+                results.append((s2 - np.power(s1, 2) / n) / n)
+            return results
+        else:
+            n = np.prod([self.shape[i] for i in axis])
+            return (sum2 - np.power(sum1, 2) / n) / n
 
     def std(self, axis=0):
-        return np.sqrt(self.var(axis))
+        variances = self.var(axis)
+        if isinstance(variances, (tuple, list)):
+            return [np.sqrt(v) for v in variances]
+        return np.sqrt(variances)
 
     def normalize(self, axis, mean=None, std=None):
         raise NotImplementedError
@@ -1212,11 +1302,10 @@ class Hdf5Data(Data):
         except:
             pass
 
+
 # ===========================================================================
 # data iterator
 # ===========================================================================
-
-
 def _approximate_continuos_by_discrete(distribution):
     '''original distribution: [ 0.47619048  0.38095238  0.14285714]
        best approximated: [ 5.  4.  2.]
@@ -1356,7 +1445,7 @@ class DataIterator(MutableData):
         return self
 
     # ==================== main logic of batch iterator ==================== #
-    def __iter(self):
+    def _iter(self):
         seed = self._seed; self._seed = None
         if seed is not None:
             rng = np.random.RandomState(seed)
@@ -1539,7 +1628,7 @@ class DataMerge(MutableData):
         return self._transformer(x)
 
     # ==================== iteration ==================== #
-    def __iter(self):
+    def _iter(self):
         batch_size = self._batch_size
         seed = self._seed; self._seed = None
         # ====== prepare root first ====== #

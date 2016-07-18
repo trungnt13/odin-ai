@@ -37,8 +37,9 @@ from multiprocessing import cpu_count, Process, Queue
 import numpy as np
 
 from odin.utils import segment_list, segment_axis, one_hot, Progbar
+from odin.utils.decorators import cache
 
-from .data import Data, MutableData
+from .data import Data, MutableData, _validate_operate_axis
 from .dataset import Dataset
 
 # ===========================================================================
@@ -119,10 +120,15 @@ class Feeder(MutableData):
         # first shape, based on indices
         self._initial_shape = sum(int(e) - int(s) for _, s, e in self._indices)
         # ====== Load data ====== #
-        if not isinstance(data, Data):
+        if not isinstance(data, (tuple, list)):
+            data = (data,)
+        if any(not isinstance(d, Data) for d in data):
             raise ValueError('data must be instance of odin.fuel.Data')
-        self._data = data
-        # set functions
+        length = len(data[0])
+        if any(len(d) != length for d in data):
+            raise ValueError('All Data must have the same length (i.e. shape[0]).')
+        self._data = data if len(data) > 1 else data[0]
+        # set recipes
         self.recipe = None
         # never use all available CPU
         if ncpu is None:
@@ -163,17 +169,23 @@ class Feeder(MutableData):
         """
         self._stop_all = self._n_iter
 
+    # ==================== override from Data ==================== #
     @property
     def shape(self):
         """ This is just an "UPPER" estimation, some data points might be lost
         during preprocessing each indices by recipes.
         """
-        s = super(Feeder, self).shape
-        s = (self._initial_shape,) + s[1:]
-        if self.recipe is not None:
-            return self.recipe.shape_transform(s)
+        # this class has list of _data so .shape return list of shape
+        shape = super(Feeder, self).shape
+        if isinstance(shape[0], (tuple, list)):
+            shape = [(self._initial_shape,) + s[1:] for s in shape]
         else:
-            return s
+            shape = (self._initial_shape,) + shape[1:]
+        # ====== process each shape ====== #
+        if self.recipe is not None:
+            return self.recipe.shape_transform(shape)
+        else:
+            return shape
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed):
@@ -184,24 +196,30 @@ class Feeder(MutableData):
         rng = None if seed is None else np.random.RandomState(seed)
 
         # data, jobs, map_function, results
-        def work_multi(d, j, map, reduce, res, buffer_size):
+        def work_multi(j, map, reduce, res, buffer_size):
+            # 1 Data share between all processes
+            dat = self._data
             # transcription is shared global variable
             transcription = self._transcription
             batch = []
             n = len(j)
             for count, (name, start, end) in enumerate(j):
-                x = d[int(start):int(end)]
+                # data can be list of Data, or just 1 Data
+                if isinstance(dat, (tuple, list)):
+                    x = [d[int(start):int(end)] for d in dat]
+                else:
+                    x = dat[int(start):int(end)]
                 # only support 32bit datatype, it is extremely faster
-                dtype = str(x.dtype)
-                x = x.astype(dtype.replace('64', '32')) if '64' in dtype else x
                 # check transcription
                 trans = None
                 if transcription is not None:
                     if name not in transcription:
                         continue # ignore the sample
                     trans = transcription[name]
-                # map tasks
-                _ = map(name, x, trans)
+                # map tasks, if only 1 Data, just apply map on it, else apply
+                # map on list of Data
+                _ = (map(name, x, trans) if len(x) > 1
+                    else map(name, x[0], trans))
                 if _ is not None:
                     batch.append(_)
                 # reduce tasks
@@ -215,7 +233,7 @@ class Feeder(MutableData):
         # Queue maxsize is max_length (maximum number of items can be in queue)
         results = Queue(maxsize=0)
         processes = [Process(target=work_multi,
-                             args=(self._data, j, map_func, reduce_func,
+                             args=(j, map_func, reduce_func,
                                    results, buffer_size))
                      for i, j in enumerate(jobs)]
         # start the workers
@@ -407,9 +425,20 @@ class Normalization(FeederRecipe):
 
 
 class Slice(FeederRecipe):
-    """docstring for Slice"""
+    """ Slice
+    Parameters
+    ----------
+    indices: int, slice, list of int(or slice)
+        for example: [slice(0, 12), slice(20, 38)] will becomes
+        x = np.hstack([x[0:12], x[20:38]])
+    axis: int
+        the axis will be applied given indices
+    target_data: int
+        in case Feeders is given multiple Data, target_data is
+        the idx of Data that will be applied given indices
+    """
 
-    def __init__(self, indices, axis=-1):
+    def __init__(self, indices, axis=-1, target_data=0):
         super(Slice, self).__init__()
         # ====== validate axis ====== #
         if not isinstance(axis, int):
@@ -424,39 +453,73 @@ class Slice(FeederRecipe):
             raise ValueError('indices must be int, slice, or list of int '
                              'or slice instance.')
         self.indices = indices
+        # ====== validate target_data ====== #
+        if not isinstance(target_data, (tuple, list)):
+            target_data = (target_data,)
+        self._target_data = [int(i) for i in target_data]
+
+    def map(self, name, X, transcription):
+        results = []
+        for _, x in enumerate(X if isinstance(X, (tuple, list)) else (X,)):
+            # apply the indices if _ in target_data
+            if _ in self._target_data:
+                ndim = x.ndim
+                axis = self.axis % ndim
+                if isinstance(self.indices, (slice, int)):
+                    indices = tuple([slice(None) if i != axis else self.indices
+                                     for i in range(ndim)])
+                    x = x[indices]
+                else:
+                    indices = []
+                    for idx in self.indices:
+                        indices.append(tuple([slice(None) if i != axis else idx
+                                              for i in range(ndim)]))
+                    x = np.hstack([x[i] for i in indices])
+            results.append(x)
+        return (name,
+                results if isinstance(X, (tuple, list)) else results[0],
+                transcription)
+
+    def shape_transform(self, shapes):
+        results = []
+        for _, shape in enumerate(shapes
+                                  if isinstance(shapes[0], (tuple, list))
+                                  else (shapes,)):
+            # apply the indices if _ in target_data
+            if _ in self._target_data:
+                axis = self.axis % len(shape)
+                if isinstance(self.indices, int):
+                    n = 1
+                elif isinstance(self.indices, slice):
+                    _ = self.indices.indices(shape[axis])
+                    n = _[1] - _[0]
+                else:
+                    _ = []
+                    for idx in self.indices:
+                        if isinstance(idx, int):
+                            _.append(1)
+                        elif isinstance(idx, slice):
+                            idx = idx.indices(shape[axis])
+                            _.append(idx[1] - idx[0])
+                    n = sum(_)
+                shape = [j if i != axis else n for i, j in enumerate(shape)]
+            results.append(shape)
+        return results if isinstance(shapes[0], (tuple, list)) else results[0]
+
+
+class Merge(FeederRecipe):
+    """Merge
+    merge a list of np.ndarray into 1 np.array
+    """
+
+    def __init__(self, merge_func=np.hstack):
+        super(Merge, self).__init__()
+        self.merge_func = merge_func
 
     def map(self, name, x, transcription):
-        ndim = x.ndim
-        axis = self.axis % ndim
-        if isinstance(self.indices, (slice, int)):
-            indices = tuple([slice(None) if i != axis else self.indices
-                             for i in range(ndim)])
-            x = x[indices]
-        else:
-            indices = []
-            for idx in self.indices:
-                indices.append(tuple([slice(None) if i != axis else idx
-                                      for i in range(ndim)]))
-            x = np.hstack([x[i] for i in indices])
+        if not isinstance(x, np.ndarray):
+            x = self.merge_func(x)
         return name, x, transcription
-
-    def shape_transform(self, shape):
-        axis = self.axis % len(shape)
-        if isinstance(self.indices, int):
-            n = 1
-        elif isinstance(self.indices, slice):
-            _ = self.indices.indices(shape[axis])
-            n = _[1] - _[0]
-        else:
-            _ = []
-            for idx in self.indices:
-                if isinstance(idx, int):
-                    _.append(1)
-                elif isinstance(idx, slice):
-                    idx = idx.indices(shape[axis])
-                    _.append(idx[1] - idx[0])
-            n = sum(_)
-        return [j if i != axis else n for i, j in enumerate(shape)]
 
 
 class LabelParse(FeederRecipe):
@@ -634,24 +697,46 @@ class CreateBatch(FeederRecipe):
         self.batch_size = batch_size
 
     def reduce(self, batch):
-        X = []
+        _ = batch[0][1] # get the first x
+        X = [] if isinstance(_, np.ndarray) else [[] for i in range(len(_))]
         Y = []
         for name, x, y in batch:
-            X.append(x)
+            # trianing data can be list of Data or just 1 Data
+            if isinstance(x, (tuple, list)):
+                for i, j in zip(X, x):
+                    i.append(j)
+            else:
+                X.append(x)
+            # labels can be None (no labels given)
             if y is not None:
                 Y.append(y)
-        X = np.vstack(X)
+        # ====== stack everything into big array ====== #
+        if isinstance(X[0], np.ndarray):
+            X = np.vstack(X)
+            shape0 = X.shape[0]
+        else:
+            X = [np.vstack(x) for x in X]
+            shape0 = X[0].shape[0]
         Y = (np.concatenate(Y, axis=0) if len(Y) > 0 else None)
         # ====== shuffle for the whole batch ====== #
         if self.rng is not None:
             idx = self.rng.permutation(X.shape[0])
-            X = X[idx]
+            X = (X[idx] if isinstance(X, np.ndarray)
+                 else [x[idx] for x in X])
             if Y is not None and X.shape[0] == Y.shape[0]:
                 Y = Y[idx]
         # ====== create batch ====== #
-        for i in range((X.shape[0] - 1) // self.batch_size + 1):
-            if Y is None:
-                yield X[i * self.batch_size:(i + 1) * self.batch_size]
+        for i in range((shape0 - 1) // self.batch_size + 1):
+            # if only one Data is given
+            if isinstance(X, np.ndarray):
+                x = X[i * self.batch_size:(i + 1) * self.batch_size]
+                ret = (x if Y is None
+                       else (x, Y[i * self.batch_size:(i + 1) * self.batch_size]))
+            # if list of Data is given
             else:
-                yield (X[i * self.batch_size:(i + 1) * self.batch_size],
-                       Y[i * self.batch_size:(i + 1) * self.batch_size])
+                x = [x[i * self.batch_size:(i + 1) * self.batch_size]
+                     for x in X]
+                ret = (x if Y is None
+                       else x + [Y[i * self.batch_size:(i + 1) * self.batch_size]])
+            # return the results
+            yield ret
