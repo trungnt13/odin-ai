@@ -1193,6 +1193,8 @@ def squared_error(output, target):
 
 def binary_crossentropy(output, target):
     input_shape = get_shape(output)
+    if output.ndim > 1: output = output.ravel()
+    if target.ndim > 1: target = target.ravel()
     x = T.nnet.binary_crossentropy(output, target)
     add_shape(x, input_shape[0])
     return x

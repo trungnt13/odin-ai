@@ -412,8 +412,8 @@ class Normalization(FeederRecipe):
         super(Normalization, self).__init__()
         mean = mean[:] if isinstance(mean, Data) else mean
         std = std[:] if isinstance(std, Data) else std
-        self.mean = mean.astype('float32')
-        self.std = std.astype('float32')
+        self.mean = mean.astype('float32') if mean is not None else None
+        self.std = std.astype('float32') if std is not None else None
         self.local_normalize = local_normalize
 
     def map(self, name, x, transcription):
