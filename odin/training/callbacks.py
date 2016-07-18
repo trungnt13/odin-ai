@@ -20,6 +20,7 @@ __all__ = [
     'Callback',
     'CallbackList',
     'History',
+    'NaNStop',
     'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
@@ -290,6 +291,39 @@ class CallbackList(Callback):
 
 
 # ===========================================================================
+# NaN value detection
+# ===========================================================================
+class NaNStop(Callback):
+    """ NaNStop
+    Simply stop training process when any batch return NaN results
+
+    Note
+    ----
+    Checkpoint is created once whenever MainLoop.save() is called.
+    This class (by defaults) pickles everything
+    """
+
+    def __init__(self, task):
+        super(NaNStop, self).__init__()
+        self._task_name = str(task)
+
+    def batch_end(self):
+        if self.task.name == self._task_name:
+            if np.any(np.isnan(self.results)):
+                print('\nNaN value detected in task:"%s" results, '
+                      'signals [STOP] training... \n' % self.task)
+                self.mainloop.stop()
+
+    # ==================== Pickling ==================== #
+    def __getstate__(self):
+        return super(NaNStop, self).__getstate__(), self._task_name
+
+    def __setstate__(self, value):
+        super(NaNStop, self).__setstate__(value[0])
+        self._task_name = value[1]
+
+
+# ===========================================================================
 # Checkpoint utilities
 # ===========================================================================
 class Checkpoint(Callback):
@@ -388,8 +422,10 @@ class EarlyStop(Callback):
             # ====== check early stop ====== #
             shouldSave, shouldStop = self.earlystop(self._history)
             if shouldSave > 0:
+                print('Earlystop signals [SAVE] checkpoint ... \n')
                 self.mainloop.save()
             if shouldStop > 0:
+                print('Earlystop signals [STOP] training ... \n')
                 self.mainloop.stop()
 
     def batch_end(self):

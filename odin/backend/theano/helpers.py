@@ -233,7 +233,7 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     if name in _CREATED_VARIABLE:
         if not np.array_equal(value, _CREATED_VARIABLE[name].eval()):
             raise Exception('Variable with the same name "%s" has been created '
-                            'before.' % name)
+                            'with different value before.' % name)
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 

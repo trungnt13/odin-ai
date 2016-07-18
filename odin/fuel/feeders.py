@@ -36,6 +36,7 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
+from odin import SIG_ITERATOR_TERMINATE
 from odin.utils import segment_list, segment_axis, one_hot, Progbar
 from odin.utils.decorators import cache
 
@@ -46,19 +47,6 @@ from .dataset import Dataset
 # Multiprocessing Feeders
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
-
-
-def _batch(b, rf, size):
-    b = rf(b)
-    if len(b) == 2:
-        X, Y = b
-        for i in range((X.shape[0] - 1) // size + 1):
-            yield (X[i * size:(i + 1) * size],
-                   Y[i * size:(i + 1) * size])
-    else:
-        X = b
-        for i in range((X.shape[0] - 1) // size + 1):
-            yield X[i * size:(i + 1) * size]
 
 
 class Feeder(MutableData):
@@ -141,8 +129,9 @@ class Feeder(MutableData):
         self._start = 0.
         self._end = 1.
         # ====== manage all iteration ====== #
-        self._n_iter = 0
-        self._stop_all = False
+        self._all_iter = {}
+        # store iter identity, so every iter has unique identity
+        self._nb_created_iter = 0
         # ====== transcription ====== #
         # manager = Manager()
         share_dict = None
@@ -167,7 +156,17 @@ class Feeder(MutableData):
         """ Call this method to stop all processes in case you
         spamming to many iteration
         """
-        self._stop_all = self._n_iter
+        for i in self._all_iter.itervalues():
+            try:
+                i.send(SIG_ITERATOR_TERMINATE)
+            except:
+                pass
+        self._all_iter = {}
+
+    def get_running_iter(self, include_identity=False):
+        if include_identity:
+            return self._all_iter.items()
+        return self._all_iter.values()
 
     # ==================== override from Data ==================== #
     @property
@@ -188,7 +187,8 @@ class Feeder(MutableData):
             return shape
 
     # ==================== Strings ==================== #
-    def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed):
+    def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,
+                      iter_identity):
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
         self.recipe.init(ntasks, batch_size,
@@ -239,13 +239,12 @@ class Feeder(MutableData):
         # start the workers
         [p.start() for p in processes]
         # return the results
-        exit_on_stop = False
+        forced_terminated = False
         working_processes = len(processes)
         while working_processes > 0:
+            # print(forced_terminated, iter_identity)
             # stop all iterations signal
-            if self._stop_all:
-                self._stop_all -= 1
-                exit_on_stop = True
+            if forced_terminated:
                 break
             # storing batch and return when cache is full
             batch = results.get()
@@ -256,10 +255,12 @@ class Feeder(MutableData):
                 if rng is not None and self._shuffle_level > 1:
                     batch = [_[rng.permutation(_.shape[0])]
                              for _ in batch]
-                yield batch
+                # return batch and check for returned signal
+                if (yield batch) == SIG_ITERATOR_TERMINATE:
+                    forced_terminated = True
 
         # Normal exit
-        if not exit_on_stop:
+        if not forced_terminated:
             # check Queue, queue must be empty
             if not results.empty():
                 raise Exception('Queue results not empty, something wrong '
@@ -270,8 +271,10 @@ class Feeder(MutableData):
         else:
             [p.terminate() for p in processes if p.is_alive()]
         results.close()
-        # Finish 1 iteration
-        self._n_iter -= 1
+        # Finish 1 iteration, callback to remove this iter
+        del self._all_iter[iter_identity]
+        if forced_terminated:
+            yield
 
     def __iter__(self):
         # ====== check ====== #
@@ -292,14 +295,16 @@ class Feeder(MutableData):
             seed = np.random.randint(10e8)
             # reset the seed
             self._seed = None
-
+        # ====== create iter and its identity ====== #
+        self._nb_created_iter += 1
+        it_identity = 'iter%d' % self._nb_created_iter
         it = self._prepare_iter(self._batch_size,
                                 self._buffer_size,
                                 len(indices),
                                 segment_list(indices, n_seg=self.ncpu),
-                                seed)
+                                seed, it_identity)
         it.next() # just for initlaize the iterator
-        self._n_iter += 1
+        self._all_iter[it_identity] = it
         return it
 
     def save_cache(self, path, name, dtype='float32',
