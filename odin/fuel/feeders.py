@@ -156,9 +156,12 @@ class Feeder(MutableData):
         """ Call this method to stop all processes in case you
         spamming to many iteration
         """
-        for i in self._all_iter.itervalues():
+        for i in self._all_iter.values():
             try:
+                i.next()
                 i.send(SIG_ITERATOR_TERMINATE)
+                for j in i:
+                    pass
             except:
                 pass
         self._all_iter = {}
