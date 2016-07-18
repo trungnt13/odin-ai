@@ -36,7 +36,7 @@ from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin import SIG_ITERATOR_TERMINATE
+from odin import SIG_TERMINATE_ITERATOR
 from odin.utils import segment_list, segment_axis, one_hot, Progbar
 from odin.utils.decorators import cache
 
@@ -159,7 +159,7 @@ class Feeder(MutableData):
         for i in self._all_iter.values():
             try:
                 i.next()
-                i.send(SIG_ITERATOR_TERMINATE)
+                i.send(SIG_TERMINATE_ITERATOR)
                 for j in i:
                     pass
             except:
@@ -245,10 +245,6 @@ class Feeder(MutableData):
         forced_terminated = False
         working_processes = len(processes)
         while working_processes > 0:
-            # print(forced_terminated, iter_identity)
-            # stop all iterations signal
-            if forced_terminated:
-                break
             # storing batch and return when cache is full
             batch = results.get()
             if batch is None:
@@ -259,9 +255,9 @@ class Feeder(MutableData):
                     batch = [_[rng.permutation(_.shape[0])]
                              for _ in batch]
                 # return batch and check for returned signal
-                if (yield batch) == SIG_ITERATOR_TERMINATE:
+                if (yield batch) == SIG_TERMINATE_ITERATOR:
                     forced_terminated = True
-
+                    break
         # Normal exit
         if not forced_terminated:
             # check Queue, queue must be empty

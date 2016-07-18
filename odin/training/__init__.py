@@ -4,10 +4,12 @@ from six.moves import range, zip
 
 import numpy as np
 
+from odin import SIG_TERMINATE_ITERATOR
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
 from odin.utils import struct
+from odin.utils.decorators import terminatable_iterator
 
 from .callbacks import *
 
@@ -40,10 +42,10 @@ class Task(object):
         self._p = np.clip(p, 0., 1.)
 
         self.set_batch(batch_size, seed, shuffle_level)
-
         self._preprocess = preprocess if hasattr(preprocess, '__call__') else lambda x: x
-
         self._name = name
+
+        self._created_iter = []
 
     @property
     def name(self):
@@ -52,6 +54,16 @@ class Task(object):
     @property
     def epoch(self):
         return self._epoch
+
+    @property
+    def samples_per_epoch(self):
+        ''' Estimated number of iteration for each epoch '''
+        return self._nb_samples_per_epoch
+
+    @property
+    def iter_per_epoch(self):
+        ''' Estimated number of iteration for each epoch '''
+        return int(np.ceil(self._nb_samples_per_epoch / self._batch_size))
 
     def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
         if batch_size is not None:
@@ -68,17 +80,16 @@ class Task(object):
             self._shuffle_level = min(max(int(shuffle_level), 0), 2)
         return self
 
-    @property
-    def samples_per_epoch(self):
-        ''' Estimated number of iteration for each epoch '''
-        return self._nb_samples_per_epoch
+    def stop_all(self):
+        """ Stop all iterations running for this Task"""
+        for i in self._created_iter:
+            try:
+                i.send(SIG_TERMINATE_ITERATOR)
+            except:
+                pass
+        self._created_iter = []
 
-    @property
-    def iter_per_epoch(self):
-        ''' Estimated number of iteration for each epoch '''
-        return int(np.ceil(self._nb_samples_per_epoch / self._batch_size))
-
-    def __iter__(self):
+    def __iter(self):
         '''
         Return
         ------
@@ -95,6 +106,8 @@ class Task(object):
         p = self._p
         nb_epoch = 0
         nb_samples = 0
+        forced_to_terminate = False
+        yield None # just for initalize the iterator
         yield 'start_task'
         while nb_epoch < self._epoch:
             nb_epoch += 1
@@ -104,15 +117,20 @@ class Task(object):
                 data = iter(self._data[0].set_batch(
                     batch_size=self._batch_size, seed=seed,
                     shuffle_level=self._shuffle_level))
+                data_it = (data,)
             else:
-                data = zip(*[iter(i.set_batch(batch_size=self._batch_size,
-                                              seed=seed,
-                                              shuffle_level=self._shuffle_level))
-                             for i in self._data])
+                data_it = [iter(i.set_batch(batch_size=self._batch_size,
+                                            seed=seed,
+                                            shuffle_level=self._shuffle_level))
+                           for i in self._data]
+                data = zip(*data_it)
             yield 'start_epoch'
             # ======  start the iteration ====== #
             nb_samples_per_epoch = 0 # number of iteration for 1 epoch
             for i, x in enumerate(data):
+                # alread terminated, try to exhausted the iterator
+                # if forced_to_terminate: continue
+                # preprocessed the data
                 x = self._preprocess(x)
                 if not isinstance(x, (tuple, list)):
                     x = [x]
@@ -126,7 +144,16 @@ class Task(object):
                     results = self._func(*x)
                 else:
                     results = None
-                yield (results, n_iter, nb_samples, nb_epoch)
+                # return results and check TERMINATE signal
+                if (yield (results, n_iter, nb_samples, nb_epoch)) == SIG_TERMINATE_ITERATOR:
+                    forced_to_terminate = True
+                    # send signal to the data iterators also
+                    for i in data_it:
+                        i.send(SIG_TERMINATE_ITERATOR)
+                    break # break the loop
+            # ====== check if terminate ====== #
+            if forced_to_terminate:
+                break
             # ====== check if we got the right number for epoch iter ====== #
             if nb_samples_per_epoch != self._nb_samples_per_epoch:
                 # just for sure should not smaller than the real number
@@ -137,8 +164,14 @@ class Task(object):
             else:
                 yield 'end_epoch'
         # keep ending so no Exception
-        while True:
+        while not forced_to_terminate:
             yield 'end_task'
+
+    def __iter__(self):
+        it = self.__iter()
+        it.next()
+        self._created_iter.append(it)
+        return it
 
 
 class MainLoop(object):
@@ -430,4 +463,9 @@ class MainLoop(object):
                                 callback.task_end()
                                 crosstask_map[crosstask][-1] = True
                 # ====== end ====== #
-        # ====== end loop ====== #
+        # ====== end main task ====== #
+        self._task.stop_all()
+        for t in self._subtask.keys():
+            t.stop_all()
+        for t in self._crosstask.keys():
+            t.stop_all()

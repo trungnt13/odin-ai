@@ -18,6 +18,7 @@ import cPickle
 
 import numpy as np
 
+from odin import SIG_TERMINATE_ITERATOR
 from odin.utils import is_path
 
 
@@ -28,7 +29,8 @@ __all__ = [
     'autoinit',
     'abstractstatic',
     'functionable',
-    'singleton'
+    'singleton',
+    'terminatable_iterator'
 ]
 
 # ===========================================================================
@@ -693,3 +695,63 @@ class Singleton(type):
 
 # Override the module's __call__ attribute
 # sys.modules[__name__] = cache
+
+
+# ===========================================================================
+# Helper for iterator
+# ===========================================================================
+def terminatable_iterator(func=None, finish_callback=None):
+    """ Make an iterator terminatable by using
+    iterator.send(SIG_TERMINATE_ITERATOR)
+
+    Parameters
+    ----------
+    finish_callback : callable
+        a function take 1 argument, which indicates iterator was forced to
+        be terminated or not.
+
+    Example
+    -------
+    >>> from odin import SIG_TERMINATE_ITERATOR
+    >>> @terminatable_iterator(finish_callback=lambda x: print('end'))
+    >>> def itgen():
+    ...     for i in range(10):
+    ...         yield i
+    >>> it = itgen()
+    >>> for i in it:
+    ...     print(i)
+    ...     if i == 5:
+    ...         it.send(SIG_TERMINATE_ITERATOR)
+    >>> # 0 1 2 3 4 5 'end'
+
+    Note
+    ----
+    Do NOT modify `func` argument yourself.
+    """
+    if finish_callback is not None and \
+    (not hasattr(finish_callback, '__call__') or
+     len(inspect.getargspec(finish_callback).args) == 0):
+        raise ValueError('finish_callback must be callable and accept at least '
+                         '1 argument, which indicate iterator was forced to '
+                         'be terminated or not.')
+
+    def wrap_func(func):
+        @wraps(func)
+        def it_func(*args, **kwargs):
+            it = func(*args, **kwargs)
+            forced_to_terminate = False
+            for i in it:
+                if (yield i) == SIG_TERMINATE_ITERATOR:
+                    forced_to_terminate = True
+                    break
+            # ====== ending the iterator ====== #
+            if finish_callback is not None:
+                finish_callback(forced_to_terminate)
+            if forced_to_terminate:
+                yield
+
+        return it_func
+
+    if func is None:
+        return wrap_func
+    return wrap_func(func)
