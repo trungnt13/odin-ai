@@ -12,9 +12,7 @@ from six import add_metaclass
 
 import numpy as np
 
-from odin.nnet import NNOps
 from odin.utils import Progbar
-from odin.utils.decorators import functionable
 
 __all__ = [
     'Callback',
@@ -400,7 +398,7 @@ class EarlyStop(Callback):
         self.task_name = task
         if get_value is not None and not hasattr(get_value, '__call__'):
             raise ValueError('get_value must callable')
-        self.get_value = None if get_value is None else functionable(get_value)
+        self.get_value = get_value
         self._history = []
 
     # ==================== main callback methods ==================== #

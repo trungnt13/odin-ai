@@ -25,6 +25,10 @@ def constant(shape, val=0.):
     return np.cast[FLOATX](np.zeros(shape) + val)
 
 
+def constant1(shape):
+    return constant(shape, val=1.)
+
+
 def symmetric_uniform(shape, range=0.01, std=None, mean=0.0):
     if std is not None:
         a = mean - np.sqrt(3) * std

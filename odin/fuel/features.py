@@ -22,9 +22,9 @@ try: # this library may not available
 except:
     pass
 
-from odin.preprocessing import speech
+from odin.preprocessing import speech, video
 from odin.utils import queue, Progbar, segment_list, as_tuple, get_all_files
-from odin.utils.decorators import functionable, abstractstatic, autoinit
+from odin.utils.decorators import autoinit
 from .dataset import Dataset
 
 
@@ -32,7 +32,9 @@ __all__ = [
     'MapReduce',
     'FeatureRecipe',
     'SpeechFeature',
-    'speech_features_extraction'
+    'speech_features_extraction',
+    'VideoFeature'
+
 ]
 
 
@@ -476,18 +478,6 @@ class SpeechFeature(FeatureRecipe):
         self.dataset = Dataset(self.output)
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(self.pitch_threshold, 0.), 1.)
-        # self.wrap_map(n_filters=self.n_filters, n_ceps=self.n_ceps,
-        #               fs=self.fs, downsample=self.downsample,
-        #               win=self.win, shift=self.shift,
-        #               delta_order=self.delta_order, energy=self.energy,
-        #               vad=self.vad, dtype=self.dtype,
-        #               get_spec=self.get_spec, get_mspec=self.get_mspec,
-        #               get_mfcc=self.get_mfcc, robust=self.robust)
-        # # create reduce
-        # self.wrap_reduce(dataset=dataset, datatype=datatype)
-        # # create finalize
-        # self.wrap_finalize(dataset=dataset, get_spec=self.get_spec,
-        #                    get_mspec=self.get_mspec, get_mfcc=self.get_mfcc)
 
     def map_func(self, f):
         '''
@@ -660,6 +650,187 @@ class SpeechFeature(FeatureRecipe):
             save_mean_std(pitch_sum1, pitch_sum2, n, 'pitch', dataset)
         dataset.flush()
         dataset.close()
+        return path
+
+    def __setstate__(self, states):
+        self.name = states[0]
+        for name, value in states[1].iteritems():
+            setattr(self, name, value)
+
+    def __getstate__(self):
+        return self.name, self._arguments
+
+
+# ===========================================================================
+# Video features
+# ===========================================================================
+def video_features_extraction(x):
+    return (x,
+            np.sum(x, axis=0, dtype='float64'),
+            np.sum(x**2, axis=0, dtype='float64'))
+
+
+class VideoFeature(FeatureRecipe):
+
+    ''' Extract speech features from all audio files in given directory or
+    file list, then saves them to a `keras.ext.dataset.Dataset`
+
+    Parameters
+    ----------
+    segments : path, list
+        if path, directory of all audio file, or segment csv file in
+        following format (channel can be omitted), start and end is in second
+            name                |     path             |start|end |
+        ------------------------|----------------------|-----|----|
+        sw02001-A_000098-001156 | /path/to/sw02001.mp4 | 0.0 | -1 |
+        sw02001-B_001980-002131 | /path/to/sw02001.mp4 | 0.0 | -1 |
+    robust : bool
+        run in robust mode, auto ignore error files
+
+    datatype : memmap, hdf5
+
+    Example
+    -------
+    '''
+
+    @autoinit
+    def __init__(self, segments, output, video_ext=None, datatype='memmap',
+                 robust=True):
+        super(VideoFeature, self).__init__('VideoFeature')
+
+    def initialize(self):
+        segments = self.segments
+        video_ext = as_tuple('' if self.video_ext is None
+                             else self.video_ext, 1, str)
+
+        # ====== load jobs ====== #
+        if isinstance(segments, str):
+            if not os.path.exists(segments):
+                raise ValueError('Path to segments must exists, however, '
+                                 'exist(segments)={}'.format(os.path.exists(segments)))
+            if os.path.isdir(segments):
+                file_list = get_all_files(segments)
+                file_list = [(os.path.basename(i), i, 0.0, -1.0)
+                             for i in file_list] # segment, path, start, end
+            else: # csv file
+                file_list = np.genfromtxt(segments, dtype=str, delimiter=' ')
+        elif isinstance(segments, (tuple, list)):
+            if isinstance(segments[0], str): # just a list of path to file
+                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
+                             for i in segments]
+            elif isinstance(segments[0], (tuple, list)):
+                if len(segments[0]) != 4:
+                    raise Exception('segments must contain information in following for:'
+                                    '[name] [path] [start] [end]')
+                file_list = segments
+        # filter using support audio extension
+        file_list = [f for f in file_list if any(ext in f[1] for ext in video_ext)]
+        # convert into: audio_path -> segment(name, start, end, channel)
+        self.jobs = defaultdict(list)
+        for segment, file, start, end in file_list:
+            self.jobs[file].append((segment, float(start), float(end)))
+        self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
+        # ====== check output ====== #
+        self.dataset = Dataset(self.output)
+
+    def map_func(self, f):
+        '''
+        Return
+        ------
+        [(name, spec(x, sum1, sum2), # if available, otherwise None
+                mspec(x, sum1, sum2), # if available, otherwise None
+                mfcc(x, sum1, sum2), # if available, otherwise None
+                pitch(x, sum1, sum2), # if available, otherwise None
+                vad), ...]
+        '''
+        try:
+            video_path, segments = f
+            # read the whole video
+            frames, fps = video.read(video_path)
+
+            features = []
+            for name, start, end in segments:
+                start = int(float(start) * fps)
+                end = int(frames.shape[0] if end < 0 else end * fps)
+                data = frames[start:end]
+                tmp = video_features_extraction(data)
+                if tmp is not None:
+                    features.append((name,) + tmp)
+                else:
+                    msg = 'Ignore segments: %s, error: NaN values' % name
+                    warnings.warn(msg)
+            # return an iterator of features
+            for f in features:
+                yield f
+        except Exception, e:
+            msg = 'Ignore file: %s, error: %s' % (video_path, str(e))
+            import traceback; traceback.print_exc()
+            warnings.warn(msg)
+            if self.robust:
+                yield None
+            else:
+                raise e
+
+    def reduce_func(self, results):
+        # contains (name, spec, mspec, mfcc, vad)
+        dataset = self.dataset
+        datatype = self.datatype
+
+        index = []
+        sum1, sum2 = 0., 0.
+
+        n = 0
+        for name, X, s1, s2 in results:
+            _ = dataset.get_data('frames', dtype=X.dtype,
+                                 shape=(0,) + X.shape[1:],
+                                 datatype=datatype)
+            _.append(X)
+            sum1 += s1
+            sum2 += s2
+            n = X.shape[0]
+            # index
+            index.append([name, n])
+        dataset.flush()
+        return (sum1, sum2, index)
+
+    def finalize_func(self, results):
+        # contains (sum1, sum2, n)
+        import cv2
+        dataset = self.dataset
+        path = dataset.path
+        sum1, sum2 = 0., 0.
+        n = 0
+        indices = []
+        for s1, s2, index in results:
+            # spec
+            sum1 += s1
+            sum2 += s2
+            # indices
+            for name, size in index:
+                # name, start, end
+                indices.append([name, int(n), int(n + size)])
+                n += size
+        # ====== saving indices ====== #
+        with open(os.path.join(path, 'indices.csv'), 'w') as f:
+            for name, start, end in indices:
+                f.write('%s %d %d\n' % (name, start, end))
+
+        # ====== helper ====== #
+        mean = sum1 / n
+        std = np.sqrt(sum2 / n - mean**2)
+        assert not np.any(np.isnan(mean)), 'Mean contains NaN'
+        assert not np.any(np.isnan(std)), 'Std contains NaN'
+
+        _ = dataset.get_data(name + '_mean', dtype=mean.dtype, shape=mean.shape)
+        _[:] = mean
+
+        _ = dataset.get_data(name + '_std', dtype=std.dtype, shape=std.shape)
+        _[:] = std
+
+        # ====== clean up and release cv2 ====== #
+        dataset.flush()
+        dataset.close()
+        cv2.destroyAllWindows()
         return path
 
     def __setstate__(self, states):

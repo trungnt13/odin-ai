@@ -385,8 +385,13 @@ _primitives = (bool, int, float, str,
                types.NoneType, types.TypeType)
 
 
-def _serialize_function_sandbox(function):
+def _serialize_function_sandbox(function, source):
     '''environment, dictionary (e.g. globals(), locals())
+    Parameters
+    ----------
+    source : str
+        source code of the function
+
     Returns
     -------
     dictionary : cPickle dumps-able dictionary to store as text
@@ -409,6 +414,7 @@ def _serialize_function_sandbox(function):
     # ====== serialize primitive type ====== #
     seen_function = False
     for name, val in environment.iteritems():
+        typ = None
         # ignore system modules
         if sys_module.match(name) is not None:
             continue
@@ -435,15 +441,17 @@ def _serialize_function_sandbox(function):
                     typ = 'defined_function'
                     val = (val.func_name, func_to_str(val))
                 typ += _
-        # check if object is pickle-able
-        else:
+        # check if object is pickle-able, (object name must be
+        # specified in the function source code), this is just heuristic
+        # check.
+        elif source is not None and name in source:
             try:
                 val_new = cPickle.loads(cPickle.dumps(val))
                 if val_new.__dict__ != val.__dict__:
                     raise Exception
                 typ = 'object'
             except: # not pickle-albe, just ignore it
-                typ = None
+                pass
         # Finnally add to sandbox
         if typ is not None:
             sandbox[name] = (typ, val)
@@ -542,11 +550,11 @@ class functionable(object):
         self._function_name = func.func_name
         self._function_order = spec.args
         self._function_kwargs = final_args
-        self._sandbox = _serialize_function_sandbox(func)
         try: # sometime cannot get the source
             self._source = inspect.getsource(self._function)
         except:
             self._source = None
+        self._sandbox = _serialize_function_sandbox(func, self._source)
 
     @property
     def function(self):

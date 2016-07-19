@@ -529,9 +529,9 @@ class BatchNorm(NNOps):
     @autoinit
     def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
                  beta_init=K.init.constant,
-                 gamma_init=lambda x: K.init.constant(x, 1.),
+                 gamma_init=K.init.constant1,
                  mean_init=K.init.constant,
-                 inv_std_init=lambda x: K.init.constant(x, 1.),
+                 inv_std_init=K.init.constant1,
                  activation=K.linear, **kwargs):
         super(BatchNorm, self).__init__(**kwargs)
         self.activation = K.linear if activation is None else activation

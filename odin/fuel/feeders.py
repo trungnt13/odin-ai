@@ -185,9 +185,9 @@ class Feeder(MutableData):
             shape = (self._initial_shape,) + shape[1:]
         # ====== process each shape ====== #
         if self.recipe is not None:
-            return self.recipe.shape_transform(shape)
+            return tuple(self.recipe.shape_transform(shape))
         else:
-            return shape
+            return tuple(shape)
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,

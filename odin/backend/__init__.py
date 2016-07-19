@@ -96,8 +96,8 @@ def LER(y_true, y_pred, return_mean=True):
 
 def binary_accuracy(y_pred, y_true, threshold=0.5):
     """ Non-differentiable """
-    if y_pred.ndim > 1: y_pred = reshape(y_pred, (-1,))
-    if y_true.ndim > 1: y_true = reshape(y_true, (-1,))
+    if ndim(y_pred) > 1: y_pred = reshape(y_pred, (-1,))
+    if ndim(y_true) > 1: y_true = reshape(y_true, (-1,))
     y_pred = ge(y_pred, threshold)
     return eq(cast(y_pred, 'int32'),
               cast(y_true, 'int32'))
