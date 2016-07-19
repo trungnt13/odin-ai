@@ -417,18 +417,60 @@ class Normalization(FeederRecipe):
 
     def __init__(self, mean=None, std=None, local_normalize=False):
         super(Normalization, self).__init__()
-        mean = mean[:] if isinstance(mean, Data) else mean
-        std = std[:] if isinstance(std, Data) else std
-        self.mean = mean.astype('float32') if mean is not None else None
-        self.std = std.astype('float32') if std is not None else None
+        if mean is not None:
+            if isinstance(mean, (tuple, list)):
+                mean = [mean[:].astype('float32') for i in mean]
+            else:
+                mean = mean[:].astype('float32')
+        if std is not None:
+            if isinstance(std, (tuple, list)):
+                std = [std[:].astype('float32') for i in std]
+            else:
+                std = std[:].astype('float32')
+        self.mean = mean
+        self.std = std
         self.local_normalize = local_normalize
 
-    def map(self, name, x, transcription):
+    def map(self, name, X, transcription):
+        if not isinstance(X, (tuple, list)):
+            X = [X]
+        X = [x.astype('float32') for x in X]
+
         if self.local_normalize:
-            x = (x - x.mean(0)) / x.std(0)
+            X = [(x - x.mean(0)) / x.std(0) for x in X]
         if self.mean is not None and self.std is not None:
-            x = (x - self.mean) / self.std
-        return name, x, transcription
+            X = [(x - mean) / std
+                 for x, mean, std in zip(X, self.mean, self.std)]
+        return name, X if len(X) > 1 else X[0], transcription
+
+
+class FeatureScaling(FeederRecipe):
+    """ FeatureScaling """
+
+    def __init__(self):
+        super(FeatureScaling, self).__init__()
+
+    def map(self, name, X, transcription):
+        if isinstance(X, (tuple, list)):
+            _ = []
+            for x in X:
+                x = x.astype('float32')
+                min_ = x.min(); max_ = x.max()
+                x = (x - min_) / (max_ - min_)
+                _.append(x)
+            X = _
+        else:
+            X = X.astype('float32')
+            min_ = X.min(); max_ = X.max()
+            X = (X - min_) / (max_ - min_)
+        return name, X, transcription
+
+
+class Whitening(FeederRecipe):
+    """ Whitening """
+
+    def __init__(self):
+        super(Whitening, self).__init__()
 
 
 class Slice(FeederRecipe):
@@ -489,17 +531,20 @@ class Slice(FeederRecipe):
 
     def shape_transform(self, shapes):
         results = []
-        for _, shape in enumerate(shapes
+        for target, shape in enumerate(shapes
                                   if isinstance(shapes[0], (tuple, list))
                                   else (shapes,)):
             # apply the indices if _ in target_data
-            if _ in self._target_data:
-                axis = self.axis % len(shape)
+            if target in self._target_data:
+                axis = self.axis % len(shape) # axis in case if negative
+                # int indices, just 1
                 if isinstance(self.indices, int):
                     n = 1
+                # slice indices
                 elif isinstance(self.indices, slice):
                     _ = self.indices.indices(shape[axis])
                     n = _[1] - _[0]
+                # list of slice and int
                 else:
                     _ = []
                     for idx in self.indices:
@@ -509,7 +554,8 @@ class Slice(FeederRecipe):
                             idx = idx.indices(shape[axis])
                             _.append(idx[1] - idx[0])
                     n = sum(_)
-                shape = [j if i != axis else n for i, j in enumerate(shape)]
+                shape = tuple([j if i != axis else n
+                               for i, j in enumerate(shape)])
             results.append(shape)
         return results if isinstance(shapes[0], (tuple, list)) else results[0]
 
@@ -528,23 +574,47 @@ class Merge(FeederRecipe):
             x = self.merge_func(x)
         return name, x, transcription
 
+    def shape_transform(self, shapes):
+        if self.merge_func == np.hstack:
+            return shapes[0][:-1] + (sum(s[-1] for s in shapes),)
+        elif self.merge_func == np.vstack:
+            return (sum(s[0] for s in shapes),) + shapes[0][1:]
+        else:
+            raise Exception("We haven't support shape infer for merge_func={}"
+                            ".".format(self.merge_func))
+
 
 class LabelParse(FeederRecipe):
 
-    def __init__(self, dtype, delimiter=' '):
+    """
+    Parameters
+    ----------
+    dict : dictionary or function
+        pass
+    """
+
+    def __init__(self, dtype, delimiter=' ', label_dict=None):
         super(LabelParse, self).__init__()
         # NO 64bit data type
         self.dtype = str(np.dtype(dtype)).replace('64', '32')
         self.delimiter = delimiter
 
+        if label_dict is None:
+            label_dict = lambda x: x
+        elif isinstance(label_dict, dict):
+            label_dict = lambda x: label_dict[x]
+        elif not hasattr(label_dict, '__call__'):
+            raise ValueError('label_dict must be a dictionary, function or None.')
+        self.label_dict = label_dict
+
     def map(self, name, x, transcription):
         if transcription is not None:
             if isinstance(transcription, str):
-                transcription = [i
+                transcription = [self.label_dict(i)
                                  for i in transcription.split(self.delimiter)
                                  if len(i) > 0]
             else:
-                transcription = [i for i in transcription]
+                transcription = [self.label_dict(i) for i in transcription]
             transcription = np.asarray(transcription, dtype=self.dtype)
         return name, x, transcription
 
@@ -585,14 +655,20 @@ class Stacking(FeederRecipe):
         self.n = int(left_context) + 1 + int(right_context)
         self.shift = self.n if shift is None else int(shift)
 
-    def map(self, name, x, transcription):
-        if x.shape[0] < self.n: # not enough data points for stacking
+    def map(self, name, X, transcription):
+        if not isinstance(X, (tuple, list)):
+            X = [X]
+        if X[0].shape[0] < self.n: # not enough data points for stacking
             return None
 
-        idx = list(range(0, x.shape[0], self.shift))
-        _ = [x[i:i + self.n].ravel() for i in idx
-             if (i + self.n) <= x.shape[0]]
-        x = np.asarray(_) if len(_) > 1 else _[0]
+        tmp = []
+        for x in X:
+            idx = list(range(0, x.shape[0], self.shift))
+            _ = [x[i:i + self.n].ravel() for i in idx
+                 if (i + self.n) <= x.shape[0]]
+            x = np.asarray(_) if len(_) > 1 else _[0]
+            tmp.append(x)
+        X = tmp
         # ====== stacking the transcription ====== #
         if isinstance(transcription, (tuple, list, np.ndarray)):
             idx = list(range(0, len(transcription), self.shift))
@@ -600,14 +676,23 @@ class Stacking(FeederRecipe):
             transcription = np.asarray(
                 [transcription[i + self.left_context + 1]
                  for i in idx if (i + self.n) <= len(transcription)])
-        return name, x, transcription
+        return name, X if len(X) > 1 else X[0], transcription
 
-    def shape_transform(self, shape):
-        if len(shape) > 2:
-            raise Exception('Stacking only support 2D array.')
-        n_features = shape[-1] * self.n if len(shape) == 2 else self.n
-        n = (shape[0] // self.shift)
-        return (n, n_features)
+    def shape_transform(self, shapes):
+        return_multiple = False
+        if isinstance(shapes[0], (tuple, list)):
+            return_multiple = True
+        else:
+            shapes = [shapes]
+        # ====== do the shape infer ====== #
+        _ = []
+        for shape in shapes:
+            if len(shape) > 2:
+                raise Exception('Stacking only support 2D array.')
+            n_features = shape[-1] * self.n if len(shape) == 2 else self.n
+            n = (shape[0] // self.shift)
+            _.append((n, n_features))
+        return _ if return_multiple else _[0]
 
 
 class Sequencing(FeederRecipe):
@@ -659,12 +744,16 @@ class Sequencing(FeederRecipe):
         self.endvalue = endvalue
         self.transcription_transform = transcription_transform
 
-    def map(self, name, x, transcription):
-        if x.shape[0] < self.frame_length: # not enough data points for sequencing
+    def map(self, name, X, transcription):
+        if not isinstance(X, (tuple, list)):
+            X = [X]
+        # not enough data points for sequencing
+        if X[0].shape[0] < self.frame_length:
             return None
 
-        x = segment_axis(x, self.frame_length, self.hop_length,
-                         axis=0, end=self.end, endvalue=self.endvalue)
+        X = [segment_axis(x, self.frame_length, self.hop_length,
+                          axis=0, end=self.end, endvalue=self.endvalue)
+             for x in X]
         # ====== transforming the transcription ====== #
         if self.transcription_transform is not None and \
         isinstance(transcription, (tuple, list, np.ndarray)):
@@ -675,17 +764,26 @@ class Sequencing(FeederRecipe):
             transcription = np.asarray([self.transcription_transform(i)
                                         for i in transcription])
 
-        return name, x, transcription
+        return name, X if len(X) > 1 else X[0], transcription
 
-    def shape_transform(self, shape):
-        n_features = shape[-1] if len(shape) >= 2 else 1
-        n = (shape[0] - self.frame_length) / self.hop_length
-        if self.end == 'cut':
-            n = int(math.floor(n))
+    def shape_transform(self, shapes):
+        return_multiple = False
+        if isinstance(shapes[0], (tuple, list)):
+            return_multiple = True
         else:
-            n = int(math.ceil(n))
-        mid_shape = shape[1:-1]
-        return (n, self.frame_length,) + mid_shape + (n_features,)
+            shapes = [shapes]
+        # ====== do the shape infer ====== #
+        _ = []
+        for shape in shapes:
+            n_features = shape[-1] if len(shape) >= 2 else 1
+            n = (shape[0] - self.frame_length) / self.hop_length
+            if self.end == 'cut':
+                n = int(math.floor(n))
+            else:
+                n = int(math.ceil(n))
+            mid_shape = shape[1:-1]
+            _.append((n, self.frame_length,) + mid_shape + (n_features,))
+        return _ if return_multiple else _[0]
 
 
 class CreateBatch(FeederRecipe):
