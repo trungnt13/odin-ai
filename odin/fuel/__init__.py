@@ -6,6 +6,7 @@ from .feeders import *
 import mmap
 import os
 import cPickle
+import marshal
 
 
 class MmapDict(dict):
@@ -33,16 +34,22 @@ class MmapDict(dict):
                                 'for MmapDict.')
             # 48 bytes for the file size
             self._max_position = int(file.read(MmapDict.SIZE_BYTES))
+            # length of pickled indices dictionary
+            dict_size = int(file.read(MmapDict.SIZE_BYTES))
             # read dictionary
             file.seek(self._max_position)
-            self._dict = cPickle.loads(file.read())
+            self._dict = cPickle.loads(file.read(dict_size))
         else:
             self._dict = {}
-            self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES
+            # max position is header, include start and length of indices dict
+            self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2
             file = open(str(path), mode='w+')
             file.write(MmapDict.HEADER) # just write the header
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-            file.write(cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL))
+            _ = cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL)
+            # write the length of Pickled indices dictionary
+            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
+            file.write(_)
             file.flush()
         self._path = path
         self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
@@ -55,35 +62,38 @@ class MmapDict(dict):
 
     # ==================== I/O methods ==================== #
     def flush(self):
+        # ====== flush the data ====== #
         self._mmap.flush()
-        if len(self._write_value) > 0: # write more data, and update dict
-            self._mmap.close()
-            self._file.close()
-            # save new data
-            file = open(self._path, mode='r+')
-            # get old position
-            file.seek(len(MmapDict.HEADER))
-            old_position = int(file.read(MmapDict.SIZE_BYTES))
-            # write new max size
-            file.seek(len(MmapDict.HEADER))
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-            # write new values
-            file.seek(old_position)
-            file.write(self._write_value)
-            # write the indices dictionary
-            file.write(cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL))
-            file.flush()
-            # store new information
-            self._file = file
-            self._mmap = mmap.mmap(self._file.fileno(),
-                                   length=0,
-                                   offset=0,
-                                   flags=mmap.MAP_SHARED)
-            # reset some values
-            self._max_position = old_position + len(self._write_value)
-            self._write_value = ''
-            del self._new_dict
-            self._new_dict = {}
+        self._mmap.close()
+        self._file.close()
+        # ====== write new data ====== #
+        # save new data
+        file = open(self._path, mode='r+')
+        # get old position
+        file.seek(len(MmapDict.HEADER))
+        old_position = int(file.read(MmapDict.SIZE_BYTES))
+        # write new max size
+        file.seek(len(MmapDict.HEADER))
+        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
+        # length of Pickled indices dictionary
+        _ = cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL)
+        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
+        # write new values
+        file.seek(old_position)
+        file.write(self._write_value)
+        # write the indices dictionary
+        file.write(_)
+        file.flush()
+        # store new information
+        self._file = file
+        self._mmap = mmap.mmap(self._file.fileno(),
+                               length=0, offset=0,
+                               flags=mmap.MAP_SHARED)
+        # reset some values
+        self._max_position = old_position + len(self._write_value)
+        self._write_value = ''
+        del self._new_dict
+        self._new_dict = {}
 
     def close(self):
         self.flush()
@@ -104,7 +114,8 @@ class MmapDict(dict):
     def __setitem__(self, key, value):
         if key in self._dict:
             raise Exception('This dictionary do not support update.')
-        value = str(value) # currently only support string value
+        # we using marshal so this only support primitive value
+        value = marshal.dumps(value)
         self._dict[key] = (self._max_position, len(value))
         self._max_position += len(value)
         self._write_value += value
@@ -115,10 +126,10 @@ class MmapDict(dict):
 
     def __getitem__(self, key):
         if key in self._new_dict:
-            return self._new_dict[key]
+            return marshal.loads(self._new_dict[key])
         start, size = self._dict[key]
         self._mmap.seek(start)
-        return self._mmap.read(size)
+        return marshal.loads(self._mmap.read(size))
 
     def __contains__(self, key):
         return key in self._dict
@@ -149,7 +160,7 @@ class MmapDict(dict):
             yield self[k]
 
     def items(self):
-        return self.iteritems()
+        return list(self.iteritems())
 
     def iteritems(self):
         for key, (start, size) in self._dict.iteritems():
@@ -158,7 +169,7 @@ class MmapDict(dict):
             else:
                 self._mmap.seek(start)
                 value = self._mmap.read(size)
-            yield key, value
+            yield key, marshal.loads(value)
 
     def clear(self):
         self._dict.clear()
