@@ -729,6 +729,10 @@ def dict_union(*dicts, **kwargs):
 # ===========================================================================
 @contextlib.contextmanager
 def TemporaryDirectory(add_to_path=False):
+    """
+    add_to_path: bool
+        temporary add the directory to system $PATH
+    """
     temp_dir = tempfile.mkdtemp()
     if add_to_path:
         os.environ['PATH'] = temp_dir + ':' + os.environ['PATH']
@@ -739,6 +743,10 @@ def TemporaryDirectory(add_to_path=False):
     if add_to_path:
         os.environ['PATH'] = os.environ['PATH'].replace(temp_dir + ':', '')
     shutil.rmtree(temp_dir)
+
+
+def get_tempdir():
+    return tempfile.mkdtemp()
 
 
 def exec_commands(cmds):

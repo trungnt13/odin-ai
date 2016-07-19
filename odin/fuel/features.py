@@ -23,7 +23,8 @@ except:
     pass
 
 from odin.preprocessing import speech, video
-from odin.utils import queue, Progbar, segment_list, as_tuple, get_all_files
+from odin.utils import (queue, Progbar, segment_list, as_tuple,
+                        get_all_files, get_tempdir)
 from odin.utils.decorators import autoinit
 from .dataset import Dataset
 
@@ -176,7 +177,7 @@ class MapReduce(object):
             n_jobs = len(jobs_list)
             jobs_list = segment_list(jobs_list, n_seg=self.ncpu)
 
-            # ====== create process ====== #
+            # ====== work ====== #
             def work_multi(jobs, res):
                 for j in jobs:
                     j = map_func(j)
@@ -185,6 +186,7 @@ class MapReduce(object):
                         [res.put(_) for _ in j if _ is not None]
                     elif j is not None:
                         res.put(j)
+            # ====== create processes ====== #
             results = Queue()
             processes = [Process(target=work_multi, args=(j, results))
                          for j in jobs_list]
@@ -664,10 +666,47 @@ class SpeechFeature(FeatureRecipe):
 # ===========================================================================
 # Video features
 # ===========================================================================
-def video_features_extraction(x):
-    return (x,
-            np.sum(x, axis=0, dtype='float64'),
-            np.sum(x**2, axis=0, dtype='float64'))
+def video_features_extraction(X, boundingbox, desire_size):
+    finalX = [X]
+    dtype = X.dtype
+    if boundingbox is not None:
+        finalX = [list() for i in range(len(boundingbox[0]) // 4)]
+        # travel through each frames
+        for x, bound in zip(X, boundingbox):
+            # get each bounding box
+            for i, box in enumerate(np.reshape(bound, (-1, 4))):
+                x_, y_, w_, h_ = box
+                # zero area, ignore it
+                if w_ == 0 or h_ == 0:
+                    if desire_size is None: continue
+                    tmp = np.zeros(desire_size, dtype=dtype)
+                # ====== get the bounding ====== #
+                else:
+                    if desire_size is not None:
+                        # crop in the center
+                        x_ = x_ + w_ // 2 - desire_size[-2] // 2
+                        w_ = desire_size[-2] # width
+                        y_ = y_ + h_ // 2 - desire_size[-1] // 2
+                        h_ = desire_size[-1] # height
+                    tmp = x[:, x_:x_ + w_, y_:y_ + h_]
+                    # if actual size smaller than desire_size
+                    # perform padding with 0.
+                    if tmp.shape[-2] != w_ or tmp.shape[-1] != h_:
+                        _ = np.zeros(desire_size, dtype=dtype)
+                        startX = int(w_ // 2 - tmp.shape[-2] / 2)
+                        startY = int(h_ // 2 - tmp.shape[-1] / 2)
+                        _[:, startX: startX + tmp.shape[-2],
+                          startY: startY + tmp.shape[-1]] = tmp
+                        tmp = _
+                # add to final results
+                finalX[i].append(tmp)
+        # create 1 big array hold all images
+        finalX = [np.asarray(x) for x in finalX]
+        finalX = (finalX[0] if len(finalX) == 1
+                  else np.concatenate(finalX, axis=1))
+    return (finalX,
+            np.sum(finalX, axis=0, dtype='float64'),
+            np.sum(finalX**2, axis=0, dtype='float64'))
 
 
 class VideoFeature(FeatureRecipe):
@@ -684,6 +723,14 @@ class VideoFeature(FeatureRecipe):
         ------------------------|----------------------|-----|----|
         sw02001-A_000098-001156 | /path/to/sw02001.mp4 | 0.0 | -1 |
         sw02001-B_001980-002131 | /path/to/sw02001.mp4 | 0.0 | -1 |
+    size : tuple(width, height)
+        desire size of the return features images
+    boundingbox : None, dict
+        mapping from filename to sequence of bounding box
+        (region of interest), name -> [x(from left),y(from top),width,height]
+        For example: if is multiple of 4, then extract multiple regions
+        sw02001-A_000098-001156 ->  [[30, 40, 15, 20, .... ], ...]
+        sw02001-B_001980-002131 ->  [[30, 40, 15, 20, .... ], ...]
     robust : bool
         run in robust mode, auto ignore error files
 
@@ -694,15 +741,18 @@ class VideoFeature(FeatureRecipe):
     '''
 
     @autoinit
-    def __init__(self, segments, output, video_ext=None, datatype='memmap',
-                 robust=True):
+    def __init__(self, segments, output, size=None,
+                 boundingbox=None, video_ext=None,
+                 datatype='memmap', robust=True):
         super(VideoFeature, self).__init__('VideoFeature')
 
     def initialize(self):
+        # reversed to height width for easy processing
+        if self.size is not None:
+            self.size = as_tuple(self.size, N=2, t=int)
         segments = self.segments
         video_ext = as_tuple('' if self.video_ext is None
                              else self.video_ext, 1, str)
-
         # ====== load jobs ====== #
         if isinstance(segments, str):
             if not os.path.exists(segments):
@@ -727,11 +777,24 @@ class VideoFeature(FeatureRecipe):
         file_list = [f for f in file_list if any(ext in f[1] for ext in video_ext)]
         # convert into: audio_path -> segment(name, start, end, channel)
         self.jobs = defaultdict(list)
+        names = []
         for segment, file, start, end in file_list:
             self.jobs[file].append((segment, float(start), float(end)))
+            names.append(segment)
         self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
+        # ====== load bounding box ====== #
+        if self.boundingbox is not None:
+            if not isinstance(self.boundingbox, dict):
+                raise ValueError('Bounding box must be a dictionary')
+            if set(names) != set(self.boundingbox.keys()):
+                raise Exception('Segments names and boundingbox keys mismatch.')
         # ====== check output ====== #
         self.dataset = Dataset(self.output)
+        self._temp_path = get_tempdir()
+        print('Temporary dir created at:', self._temp_path)
+        # remove old cache files
+        for p in os.listdir(self._temp_path):
+            os.remove(os.path.join(self._temp_path, p))
 
     def map_func(self, f):
         '''
@@ -743,33 +806,35 @@ class VideoFeature(FeatureRecipe):
                 pitch(x, sum1, sum2), # if available, otherwise None
                 vad), ...]
         '''
-        try:
-            video_path, segments = f
-            # read the whole video
-            frames, fps = video.read(video_path)
-
-            features = []
-            for name, start, end in segments:
-                start = int(float(start) * fps)
-                end = int(frames.shape[0] if end < 0 else end * fps)
-                data = frames[start:end]
-                tmp = video_features_extraction(data)
-                if tmp is not None:
-                    features.append((name,) + tmp)
-                else:
-                    msg = 'Ignore segments: %s, error: NaN values' % name
-                    warnings.warn(msg)
-            # return an iterator of features
-            for f in features:
-                yield f
-        except Exception, e:
-            msg = 'Ignore file: %s, error: %s' % (video_path, str(e))
-            import traceback; traceback.print_exc()
-            warnings.warn(msg)
-            if self.robust:
-                yield None
+        video_path, segments = f
+        # read the whole video
+        frames, fps = video.read(video_path)
+        size = self.size
+        if size is not None:
+            size = (frames.shape[1],) + size
+        # generating features
+        features = []
+        for name, start, end in segments:
+            start = int(float(start) * fps)
+            end = int(frames.shape[0] if end < 0 else end * fps)
+            data = frames[start:end]
+            # ====== check bounding box ====== #
+            box = (None if self.boundingbox is None
+                   else self.boundingbox[name])
+            tmp = video_features_extraction(data, box, size)
+            if tmp is not None:
+                features.append((name,) + tmp)
             else:
-                raise e
+                msg = 'Ignore segments: %s, error: NaN values' % name
+                warnings.warn(msg)
+        # return an iterator of features
+        del frames
+        for name, x, sum1, sum2 in features:
+            path = os.path.join(self._temp_path, name)
+            # save big array, because the video can be very
+            # big so we don't transfer it to Queue
+            f = open(path, 'w'); np.save(f, x); f.close()
+            yield name, path, sum1, sum2
 
     def reduce_func(self, results):
         # contains (name, spec, mspec, mfcc, vad)
@@ -780,7 +845,9 @@ class VideoFeature(FeatureRecipe):
         sum1, sum2 = 0., 0.
 
         n = 0
-        for name, X, s1, s2 in results:
+        for name, path, s1, s2 in results:
+            # load big array
+            f = open(path, 'r'); X = np.load(f); f.close()
             _ = dataset.get_data('frames', dtype=X.dtype,
                                  shape=(0,) + X.shape[1:],
                                  datatype=datatype)
@@ -790,12 +857,12 @@ class VideoFeature(FeatureRecipe):
             n = X.shape[0]
             # index
             index.append([name, n])
+            os.remove(path)
         dataset.flush()
         return (sum1, sum2, index)
 
     def finalize_func(self, results):
         # contains (sum1, sum2, n)
-        import cv2
         dataset = self.dataset
         path = dataset.path
         sum1, sum2 = 0., 0.
@@ -830,7 +897,10 @@ class VideoFeature(FeatureRecipe):
         # ====== clean up and release cv2 ====== #
         dataset.flush()
         dataset.close()
-        cv2.destroyAllWindows()
+        # remove all temp file
+        if os.path.exists(self._temp_path):
+            os.remove(self._temp_path)
+            self._temp_path = get_tempdir()
         return path
 
     def __setstate__(self, states):

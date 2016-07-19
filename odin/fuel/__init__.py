@@ -70,6 +70,7 @@ class MmapDict(dict):
             # write new values
             file.seek(old_position)
             file.write(self._write_value)
+            # write the indices dictionary
             file.write(cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL))
             file.flush()
             # store new information
