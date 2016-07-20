@@ -320,6 +320,45 @@ class struct(object):
         return getattr(self, str(x))
 
 
+class bidict(dict):
+    """ Bi-directional dictionary (i.e. a <-> b)
+    Note
+    ----
+    When you iterate over this dictionary, it will be a doubled size
+    dictionary
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(bidict, self).__init__(*args, **kwargs)
+        # this is duplication
+        self._inv = dict()
+        for i, j in self.items():
+            self._inv[j] = i
+
+    @property
+    def inv(self):
+        return self._inv
+
+    def __setitem__(self, key, value):
+        super(bidict, self).__setitem__(key, value)
+        self._inv[value] = key
+        return None
+
+    def __getitem__(self, key):
+        if key not in self:
+            return self._inv[key]
+        return super(bidict, self).__getitem__(key)
+
+    def update(self, *args, **kwargs):
+        for k, v in dict(*args, **kwargs).iteritems():
+            self[k] = v
+            self._inv[v] = k
+
+    def __delitem__(self, key):
+        del self._inv[super(bidict, self).__getitem__(key)]
+        return dict.__delitem__(self, key)
+
+
 class queue(object):
 
     """ FIFO, fast, NO thread-safe queue

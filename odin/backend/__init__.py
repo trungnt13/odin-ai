@@ -208,3 +208,20 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
     total_cost = np.mean(cluster_cost)
 
     return cluster_cost, total_cost
+
+
+# ===========================================================================
+# helper function
+# ===========================================================================
+def L2(*variables):
+    l2 = constant(0., name='L2const')
+    for v in variables:
+        l2 = l2 + sum(square(v))
+    return l2
+
+
+def L1(*variables):
+    l1 = constant(0., name='L1const')
+    for v in variables:
+        l1 = l1 + sum(abs(v))
+    return l1

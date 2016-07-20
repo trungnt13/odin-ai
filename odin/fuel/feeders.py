@@ -575,6 +575,10 @@ class Merge(FeederRecipe):
         return name, x, transcription
 
     def shape_transform(self, shapes):
+        # just 1 shape, nothing to merge
+        if not isinstance(shapes[0], (tuple, list)):
+            return shapes
+        # merge
         if self.merge_func == np.hstack:
             return shapes[0][:-1] + (sum(s[-1] for s in shapes),)
         elif self.merge_func == np.vstack:
@@ -600,12 +604,12 @@ class LabelParse(FeederRecipe):
         self.delimiter = delimiter
 
         if label_dict is None:
-            label_dict = lambda x: x
+            label_func = lambda x: x
         elif isinstance(label_dict, dict):
-            label_dict = lambda x: label_dict[x]
-        elif not hasattr(label_dict, '__call__'):
+            label_func = lambda x: label_dict[x]
+        elif not hasattr(label_func, '__call__'):
             raise ValueError('label_dict must be a dictionary, function or None.')
-        self.label_dict = label_dict
+        self.label_dict = label_func
 
     def map(self, name, x, transcription):
         if transcription is not None:
@@ -786,13 +790,34 @@ class Sequencing(FeederRecipe):
         return _ if return_multiple else _[0]
 
 
-class CreateBatch(FeederRecipe):
-    """ Batching """
+class Sampling(FeederRecipe):
 
-    def __init__(self):
+    def __init__(self, distribution):
+        raise NotImplementedError
+
+    def reduce(self, batch):
+        pass
+
+
+class CreateBatch(FeederRecipe):
+    """ Batching
+    Parameters
+    ----------
+    batch_filter: callable
+        must be a function has 1 or 2 parameters (X) or (X, y), you
+        can return None to ignore given batch
+    """
+
+    def __init__(self, batch_filter=None):
         super(CreateBatch, self).__init__()
         self.rng = None
         self.batch_size = 256
+        if batch_filter is None:
+            batch_filter = lambda *args: args
+        elif not hasattr(batch_filter, '__call__'):
+            raise ValueError('batch_filter must be a function has 1 or 2 '
+                             'parameters (X) or (X, y).')
+        self.batch_filter = batch_filter
 
     def init(self, ntasks, batch_size, seed):
         if seed is None:
@@ -831,17 +856,21 @@ class CreateBatch(FeederRecipe):
             if Y is not None and X.shape[0] == Y.shape[0]:
                 Y = Y[idx]
         # ====== create batch ====== #
+        batch_filter = self.batch_filter
         for i in range((shape0 - 1) // self.batch_size + 1):
             # if only one Data is given
             if isinstance(X, np.ndarray):
                 x = X[i * self.batch_size:(i + 1) * self.batch_size]
-                ret = (x if Y is None
-                       else (x, Y[i * self.batch_size:(i + 1) * self.batch_size]))
+                ret = (batch_filter(x) if Y is None
+                       else batch_filter(*(x,
+                                          Y[i * self.batch_size:(i + 1) * self.batch_size])))
             # if list of Data is given
             else:
                 x = [x[i * self.batch_size:(i + 1) * self.batch_size]
                      for x in X]
                 ret = (x if Y is None
                        else x + [Y[i * self.batch_size:(i + 1) * self.batch_size]])
+                ret = batch_filter(*ret)
             # return the results
-            yield ret
+            if ret is not None:
+                yield ret

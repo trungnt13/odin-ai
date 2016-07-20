@@ -101,9 +101,10 @@ def add_shape(var, shape):
                          '.'.format(var.ndim, len(shape)))
     # ====== NO override ====== #
     if hasattr(var.tag, 'shape'):
-        raise Exception('Shape has already been added to given variable.')
+        warnings.warn('Shape has already been given to variable "%s".' % var.name)
     # ====== override or assign ====== #
-    var.tag.shape = shape
+    else:
+        var.tag.shape = shape
 
 
 def get_shape(x):
