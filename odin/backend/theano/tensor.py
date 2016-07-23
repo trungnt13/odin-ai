@@ -462,7 +462,9 @@ def reverse(x, axis=-1):
 
 def concatenate(tensors, axis=-1):
     x = T.concatenate(tensors, axis=axis)
-    add_shape(x, _auto_infer_shape(T.concatenate, *tensors, axis=axis))
+    add_shape(x,
+        _auto_infer_shape(T.concatenate, *tensors,
+                          axis=axis, group_inputs=True))
     return x
 
 
@@ -901,6 +903,7 @@ def le(a, b):
 def one_hot(x, nb_class):
     """ x: 1D-integer vector """
     ret = T.zeros((x.shape[0], nb_class), dtype=FLOATX)
+    x = T.cast(x, 'int32')
     ret = T.set_subtensor(ret[T.arange(x.shape[0]), x], 1)
     return ret
 

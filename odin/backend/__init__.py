@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import cPickle
+from numbers import Number
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 
@@ -11,6 +12,7 @@ from odin.roles import add_role
 
 config = auto_config()
 FLOATX = config.floatX
+EPSILON = config.epsilon
 
 if config['backend'] == 'theano':
     from .theano import *
@@ -18,7 +20,6 @@ elif config['backend'] == 'tensorflow':
     from .tensorflow import *
 
 from . import init
-from . import metrics
 from . import optimizers
 
 
@@ -38,6 +39,42 @@ def pickling_variable(v, target=None):
     else:
         raise Exception('Variable must be in string form or trainable variable'
                         ' (i.e. SharedVariable in theano)')
+
+
+# ===========================================================================
+# Advanced cost function
+# ===========================================================================
+def bayes_crossentropy(y_pred, y_true, nb_classes=None):
+    shape = get_shape(y_pred)
+    if ndim(y_pred) == 1:
+        y_pred = expand_dims(y_pred, -1)
+        # add shape for y_pred0 so we can auto_infer the shape after concat
+        y_pred0 = 1. - y_pred; add_shape(y_pred0, shape)
+        y_pred = concatenate([y_pred0, y_pred], axis=-1)
+    elif isinstance(shape[-1], Number) and shape[-1] == 1:
+        # add shape for y_pred0 so we can auto_infer the shape after concat
+        y_pred0 = 1. - y_pred; add_shape(y_pred0, shape)
+        y_pred = concatenate([y_pred0, y_pred], axis=-1)
+    if ndim(y_true) == 1:
+        if nb_classes is None:
+            raise Exception('y_pred and y_true must be one_hot encoded, '
+                            'otherwise you have to provide nb_classes.')
+        y_true = one_hot(y_true, nb_classes)
+    # avoid numerical instability with _EPSILON clipping
+    y_pred = clip(y_pred, EPSILON, 1.0 - EPSILON)
+    if nb_classes is None:
+        nb_classes = get_shape(y_true)[1]
+    # ====== check distribution ====== #
+    distribution = sum(y_true, axis=0)
+    # ====== init confusion info loss ====== #
+    # weighted by y_true
+    loss = y_true * log(y_pred)
+    # probability distribution of each class
+    prob_distribution = dimshuffle(distribution / sum(distribution),
+                                   ('x', 0))
+    # we need to clip the prior probability distribution also
+    prob_distribution = clip(prob_distribution, EPSILON, 1.0 - EPSILON)
+    return - 1 / nb_classes * sum(loss / prob_distribution, axis=1)
 
 
 # ===========================================================================

@@ -4,6 +4,7 @@ import logging
 import warnings
 import numbers
 import cPickle
+from numbers import Number
 from contextlib import contextmanager
 from collections import OrderedDict
 from itertools import chain
@@ -79,11 +80,20 @@ def _check_target(target):
 
 
 def _auto_infer_shape(ops, *var, **kwargs):
+    """ You can set 'group_inputs' in kwargs so the inputs to ops
+    will be ops(var) instead of ops(*var)
+    """
     inputs = []
     for i in var:
-        input_shape = (0 if s is None or s < 0 else s for s in get_shape(i))
+        input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
+                       else s
+                       for s in get_shape(i))
         inputs.append(T.alloc(0, *input_shape))
-    output_shape = ops(*inputs, **kwargs).shape.eval()
+    if 'group_inputs' in kwargs:
+        del kwargs['group_inputs']
+        output_shape = ops(inputs, **kwargs).shape.eval()
+    else:
+        output_shape = ops(*inputs, **kwargs).shape.eval()
     return tuple(s if s else None for s in output_shape)
 
 

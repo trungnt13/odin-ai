@@ -94,8 +94,13 @@ class Feeder(MutableData):
                  ncpu=1, buffer_size=12):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
-        if isinstance(indices, str) and os.path.isfile(indices):
-            self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+        if isinstance(indices, str):
+            if os.path.isfile(indices):
+                self._indices = np.genfromtxt(indices,
+                                              dtype=str, delimiter=' ')
+            elif os.path.isdir(indices):
+                self._indices = np.genfromtxt(os.path.join(indices, 'indices.csv'),
+                                              dtype=str, delimiter=' ')
         elif isinstance(indices, (tuple, list)):
             self._indices = np.asarray(indices)
         elif isinstance(indices, np.ndarray):
@@ -715,16 +720,23 @@ class Sequencing(FeederRecipe):
 
     Parameters
     ----------
-    a: the array to segment
-    length: the length of each frame
-    overlap: the number of array elements by which the frames should overlap
-    axis: the axis to operate on; if None, act on the flattened array
-    end: what to do with the last frame, if the array is not evenly
+    frame_length: int
+        the length of each frame
+    hop_length: int
+        the number of array elements by which the frames should overlap
+    axis: int
+        the axis to operate on; if None, act on the flattened array
+    end: str
+        what to do with the last frame, if the array is not evenly
             divisible into pieces. Options are:
             - 'cut'   Simply discard the extra values
             - 'wrap'  Copy values from the beginning of the array
             - 'pad'   Pad with a constant value
-    endvalue: the value to use for end='pad'
+    endvalue: Number
+        the value to use for end='pad'
+    transcription_transform: callable
+        a function transform a sequence of transcription value into
+        desire value for 1 sample.
 
     Return
     ------
