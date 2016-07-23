@@ -97,12 +97,13 @@ class MmapDict(dict):
 
     def close(self):
         self.flush()
-        self._mmap.close(); self._mmap = None
-        self._file.close(); self._file = None
+        self._mmap.close()
+        self._file.close()
 
     def __del__(self):
         if self._mmap is not None and self._file is not None:
-            self.close()
+            self._mmap.close()
+            self._file.close()
 
     def __str__(self):
         return str(self.__class__) + ':' + self._path + ':' + str(len(self._dict))

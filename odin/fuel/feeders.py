@@ -750,6 +750,10 @@ class Sequencing(FeederRecipe):
     def most_common(x):
         return Counter(x).most_common()[0][0]
 
+    @staticmethod
+    def last_seen(x):
+        return x[-1]
+
     def __init__(self, frame_length=256, hop_length=128,
                  end='cut', endvalue=0.,
                  transcription_transform=lambda x: Counter(x).most_common()[0][0]):
@@ -816,8 +820,8 @@ class CreateBatch(FeederRecipe):
     Parameters
     ----------
     batch_filter: callable
-        must be a function has 1 or 2 parameters (X) or (X, y), you
-        can return None to ignore given batch
+        must be a function has take a list of np.ndarray as first arguments
+        ([X]) or ([X, y]), you can return None to ignore given batch
     """
 
     def __init__(self, batch_filter=None):
@@ -873,16 +877,16 @@ class CreateBatch(FeederRecipe):
             # if only one Data is given
             if isinstance(X, np.ndarray):
                 x = X[i * self.batch_size:(i + 1) * self.batch_size]
-                ret = (batch_filter(x) if Y is None
-                       else batch_filter(*(x,
-                                          Y[i * self.batch_size:(i + 1) * self.batch_size])))
+                ret = (batch_filter([x]) if Y is None
+                       else batch_filter([x, Y[i * self.batch_size:(i + 1) * self.batch_size]])
+                       )
             # if list of Data is given
             else:
                 x = [x[i * self.batch_size:(i + 1) * self.batch_size]
                      for x in X]
                 ret = (x if Y is None
                        else x + [Y[i * self.batch_size:(i + 1) * self.batch_size]])
-                ret = batch_filter(*ret)
+                ret = batch_filter(ret)
             # return the results
             if ret is not None:
                 yield ret

@@ -27,7 +27,7 @@ _SAVE_TASK.name = "save"
 class Task(object):
 
     def __init__(self, func, data, epoch, p, batch_size, seed, shuffle_level,
-                 preprocess=None, name=None):
+                 name=None):
         super(Task, self).__init__()
         if not hasattr(func, '__call__'):
             raise ValueError('func must be instance of theano.Function or '
@@ -42,7 +42,6 @@ class Task(object):
         self._p = np.clip(p, 0., 1.)
 
         self.set_batch(batch_size, seed, shuffle_level)
-        self._preprocess = preprocess if hasattr(preprocess, '__call__') else lambda x: x
         self._name = name
 
         self._created_iter = []
@@ -131,7 +130,6 @@ class Task(object):
                 # alread terminated, try to exhausted the iterator
                 # if forced_to_terminate: continue
                 # preprocessed the data
-                x = self._preprocess(x)
                 if not isinstance(x, (tuple, list)):
                     x = [x]
                 # update some info
@@ -282,19 +280,18 @@ class MainLoop(object):
                 for i in data]
         return data
 
-    def set_task(self, func, data, epoch=1, p=1., preprocess=None, name=None):
+    def set_task(self, func, data, epoch=1, p=1., name=None):
         '''
         '''
         self._task = Task(func, self._validate_data(data), epoch, 1.,
                           batch_size=self._batch_size,
                           seed=self._rng.randint(10e8),
                           shuffle_level=self._shuffle_level,
-                          preprocess=preprocess,
                           name=name)
         return self
 
     def add_subtask(self, func, data, epoch=float('inf'), p=1., freq=0.5,
-                    when=0, preprocess=None, name=None):
+                    when=0, name=None):
         '''
         Parameters
         ----------
@@ -303,33 +300,27 @@ class MainLoop(object):
             negative value => execute after final epoch of main task
         freq: float
             percentage of epoch of main task before this task is executed
-        preprocess: function
-            input is list of data, output is transformed data for batch
         '''
         self._subtask[Task(func, self._validate_data(data), epoch, p,
                            batch_size=self._batch_size,
                            seed=self._rng.randint(10e8),
                            shuffle_level=self._shuffle_level,
-                           preprocess=preprocess,
                            name=name)] = (freq, when)
         return self
 
     def add_crosstask(self, func, data, epoch=float('inf'), p=0.5,
-                      when=0, preprocess=None, name=None):
+                      when=0, name=None):
         '''
         Parameters
         ----------
         when: float
             percentage of epoch of main task before this task is executed
             negative value => execute after final epoch of main task
-        preprocess: function
-            input is list of data, output is transformed data for batch
         '''
         self._crosstask[Task(func, self._validate_data(data), epoch, p,
                              batch_size=self._batch_size,
                              seed=self._rng.randint(10e8),
                              shuffle_level=self._shuffle_level,
-                             preprocess=preprocess,
                              name=name)] = when
         return self
 
