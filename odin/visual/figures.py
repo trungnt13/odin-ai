@@ -356,7 +356,8 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_spectrogram(x, vad=None, ax=None, colorbar=False):
+def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
+                     linewidth=0.5):
     '''
     Parameters
     ----------
@@ -423,7 +424,8 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False):
     # ====== draw vad vertical line ====== #
     if vad is not None:
         for i, j in enumerate(vad):
-            if j: ax.axvline(x=i, ymin=0, ymax=1, color='r', linewidth=0.1, alpha=0.3)
+            if j: ax.axvline(x=i, ymin=0, ymax=1, color='r', linewidth=linewidth,
+                             alpha=0.3)
     # plt.grid(True)
 
     if colorbar == 'all':

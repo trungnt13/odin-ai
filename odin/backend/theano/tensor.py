@@ -1421,6 +1421,8 @@ def pool2d(x, pool_size=(2, 2), ignore_border=True,
     ----
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
+    if strides is None:
+        strides = pool_size
     pool_size = as_tuple(pool_size, 2, int)
     strides = as_tuple(strides, 2, int)
     pad = as_tuple(pad, 2, int)
@@ -1483,6 +1485,8 @@ def pool3d(x, pool_size=(2, 2, 2), ignore_border=True,
     ----
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
+    if strides is None:
+        strides = pool_size
     pool_size = as_tuple(pool_size, 3, int)
     strides = as_tuple(strides, 3, int)
     pad = as_tuple(pad, 3, int)

@@ -37,7 +37,7 @@ from multiprocessing import cpu_count, Process, Queue
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
-from odin.utils import segment_list, segment_axis, one_hot, Progbar
+from odin.utils import segment_list, segment_axis, one_hot, Progbar, UnitTimer
 from odin.utils.decorators import cache
 
 from .data import Data, MutableData, _validate_operate_axis
@@ -462,19 +462,19 @@ class FeatureScaling(FeederRecipe):
         super(FeatureScaling, self).__init__()
 
     def map(self, name, X, transcription):
-        if isinstance(X, (tuple, list)):
-            _ = []
-            for x in X:
-                x = x.astype('float32')
-                min_ = x.min(); max_ = x.max()
-                x = (x - min_) / (max_ - min_)
-                _.append(x)
-            X = _
-        else:
-            X = X.astype('float32')
-            min_ = X.min(); max_ = X.max()
-            X = (X - min_) / (max_ - min_)
-        return name, X, transcription
+        return_list = True
+        if not isinstance(X, (tuple, list)):
+            X = (X,)
+            return_list = False
+        # ====== scaling features to [0, 1] ====== #
+        _ = []
+        for x in X:
+            x = x.astype('float32')
+            min_ = x.min(); max_ = x.max()
+            x = (x - min_) / (max_ - min_)
+            _.append(x)
+        X = _
+        return name, X if return_list else X[0], transcription
 
 
 class Whitening(FeederRecipe):
@@ -618,12 +618,15 @@ class LabelParse(FeederRecipe):
             label_func = lambda x: x
         elif isinstance(label_dict, dict):
             label_func = lambda x: label_dict[x]
-        elif not hasattr(label_func, '__call__'):
+        elif hasattr(label_dict, '__call__'):
+            label_func = label_dict
+        else:
             raise ValueError('label_dict must be a dictionary, function or None.')
         self.label_dict = label_func
 
     def map(self, name, x, transcription):
         if transcription is not None:
+            # ====== parse string using delimiter ====== #
             if isinstance(transcription, str):
                 transcription = [self.label_dict(i)
                                  for i in transcription.split(self.delimiter)
@@ -807,7 +810,7 @@ class Sequencing(FeederRecipe):
                 n = int(math.floor(n))
             else:
                 n = int(math.ceil(n))
-            mid_shape = shape[1:-1]
+            mid_shape = tuple(shape[1:-1])
             _.append((n, self.frame_length,) + mid_shape + (n_features,))
         return _ if return_multiple else _[0]
 
