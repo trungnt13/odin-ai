@@ -145,7 +145,7 @@ def auto_config(config=None):
     if device == 'gpu':
         dev = _query_gpu_info()
         if not multigpu:
-            dev = {'n': dev['n'], 'dev0': dev['dev0']}
+            dev = {'n': 1, 'dev0': dev['dev0']}
     else:
         dev = {'n': cpu_count()}
 
@@ -154,9 +154,12 @@ def auto_config(config=None):
         if device == 'cpu':
             contexts = "device=%s" % device
         else:
-            contexts = "contexts="
-            contexts += ';'.join(["dev%d->cuda%d" % (j, j)
-                                  for j in range(dev['n'])])
+            if dev['n'] == 1: # single gpu
+                contexts = 'device=gpu'
+            else: # multi gpu
+                contexts = "contexts="
+                contexts += ';'.join(["dev%d->cuda%d" % (j, j)
+                                      for j in range(dev['n'])])
             # TODO: bizarre degradation in performance if not specify device=gpu
             # device = 'device=gpu'
         flags = contexts + ",mode=FAST_RUN,floatX=%s" % floatX

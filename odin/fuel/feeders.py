@@ -150,6 +150,8 @@ class Feeder(MutableData):
         self._transcription = share_dict
 
     def set_recipe(self, *recipes):
+        # filter out None value
+        recipes = [i for i in recipes if i is not None]
         if len(recipes) > 0:
             if len(inspect.getargspec(recipes[0].map).args) != 4:
                 raise Exception('The first recipe of the feeders must '
@@ -193,6 +195,10 @@ class Feeder(MutableData):
             return tuple(self.recipe.shape_transform(shape))
         else:
             return tuple(shape)
+
+    def __str__(self):
+        return '<Feeders dataset "%s": shape %s, type "<%s">' % \
+        (self._data.name, self.shape, self.dtype)
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,
@@ -829,7 +835,7 @@ class CreateBatch(FeederRecipe):
         self.rng = None
         self.batch_size = 256
         if batch_filter is None:
-            batch_filter = lambda *args: args
+            batch_filter = lambda args: args
         elif not hasattr(batch_filter, '__call__'):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')

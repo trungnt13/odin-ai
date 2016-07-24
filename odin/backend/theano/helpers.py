@@ -1,5 +1,7 @@
 """Annotated computation graph management."""
 from __future__ import print_function, absolute_import, division
+
+import os
 import logging
 import warnings
 import numbers
@@ -64,19 +66,6 @@ def _unique(seq, key=None):
             if val not in seen:
                 seen_add(val)
                 yield item
-
-
-def _check_target(target):
-    if autoconfig['device'] == 'cpu':
-        target = None
-    else:
-        if target is None:
-            target = 'dev0'
-        elif isinstance(target, numbers.Number):
-            target = 'dev%d' % (int(target) % NPROCESSORS)
-        else:
-            target = str(target)
-    return target
 
 
 def _auto_infer_shape(ops, *var, **kwargs):
@@ -218,6 +207,19 @@ def variable_scope(scope):
     _CURRENT_VARIABLE_SCOPE = str(scope)
     yield None
     _CURRENT_VARIABLE_SCOPE = old_scope
+
+
+def _check_target(target):
+    if autoconfig['device'] == 'cpu' or 'device=gpu' in os.environ['THEANO_FLAGS']:
+        target = None
+    else:
+        if target is None:
+            target = 'dev0'
+        elif isinstance(target, numbers.Number):
+            target = 'dev%d' % (int(target) % NPROCESSORS)
+        else:
+            target = str(target)
+    return target
 
 
 def variable(value, dtype=FLOATX, name=None, target=None):

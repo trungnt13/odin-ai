@@ -321,9 +321,7 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
             hop_length=shift * fs,
             fmin=150, fmax=fs / 2,
             threshold=pitch_threshold)
-        # no append log energy for pitch features
-        pitch_freq = _append_energy_and_deltas(pitch_freq.T, None, delta_order)
-        pitch_mag = _append_energy_and_deltas(pitch_mag.T, None, delta_order)
+        # no append log energy or delta for pitch features
         pitch = np.hstack([pitch_freq, pitch_mag])
     # reset spec to true value
     spec = None if not get_spec else spec

@@ -8,10 +8,11 @@
 # ===========================================================================
 from __future__ import division, absolute_import
 
-from collections import OrderedDict
+import os
 import math
 import numbers
 import cPickle
+from collections import OrderedDict
 
 import numpy as np
 
@@ -47,6 +48,9 @@ _max = max
 # ===========================================================================
 # INTERNAL UTILS
 # ===========================================================================
+_theano_context_specifed = not ('device=gpu' in os.environ['THEANO_FLAGS'])
+
+
 def on_gpu():
     """Return whether the session is set to
     run on GPU or not (i.e. on CPU).
@@ -60,14 +64,13 @@ def on_gpu():
     theano.sandbox.cuda.cuda_enabled
 
 if on_gpu():
-    """Import cuDNN only if running on GPU:
-    not having Cuda installed should not
-    prevent from running the present code.
-    """
     # dummy initialization to remove the overhead of running libgpuarray backend
-    T.zeros(0, dtype='int').eval()
-    _ = theano.shared(value=np.asarray(1., dtype='float32'),
-                     name='temporary_var')
+    if _theano_context_specifed:
+        _ = theano.shared(value=np.asarray(1., dtype='float32'),
+                         name='temporary_var', target='dev0')
+    else:
+        _ = theano.shared(value=np.asarray(1., dtype='float32'),
+                         name='temporary_var')
     T.grad(2 * _, _).eval()
     _.set_value(None)
     del _
@@ -1344,7 +1347,7 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
         TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
         TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
     """
-    if on_gpu(): # Using DNN on GPU
+    if False and on_gpu(): # Using DNN on GPU
         from theano.sandbox.cuda import dnn
         if border_mode == 'same':
             border_mode = 'half'
