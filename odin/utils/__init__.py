@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import contextlib
 import platform
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Value, Lock
 from collections import OrderedDict, deque
 
 import shutil
@@ -870,3 +870,103 @@ def play_audio(data, fs, volumn=1, speed=1):
         os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
         raw_input('<enter> to stop audio.')
         os.system("kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
+
+
+# ===========================================================================
+# System query
+# ===========================================================================
+__process_pid_map = {}
+
+
+class SharedCounter(object):
+    """ A multiprocessing syncrhonized counter """
+
+    def __init__(self):
+        self.val = Value('i', 0)
+        self.lock = Lock()
+
+    def add(self, value=1):
+        with self.lock:
+            self.val.value += value
+
+    @property
+    def value(self):
+        with self.lock:
+            return self.val.value
+
+
+def get_process_status(pid=None, memory_usage=False, memory_shared=False,
+                       memory_virtual=False, memory_maps=False,
+                       cpu_percent=False, threads=False,
+                       status=False, name=False, io_counters=False):
+    import psutil
+    if pid is None:
+        pid = os.getpid()
+    if pid in __process_pid_map:
+        process = __process_pid_map[pid]
+    else:
+        process = psutil.Process(pid)
+        __process_pid_map[pid] = process
+
+    if status:
+        return process.status()
+    if name:
+        return process.name()
+    if io_counters:
+        return process.io_counters()
+    if memory_usage:
+        return process.memory_info().rss / float(2 ** 20)
+    if memory_shared:
+        return process.memory_info().shared / float(2 ** 20)
+    if memory_virtual:
+        return process.memory_info().vms / float(2 ** 20)
+    if memory_maps:
+        return {i[0]: i[1] / float(2 ** 20)
+                for i in process.memory_maps()}
+    if cpu_percent:
+        # first time call always return 0
+        process.cpu_percent(None)
+        return process.cpu_percent(None)
+    if threads:
+        return {i.id: (i.user_time, i.system_time) for i in process.threads()}
+
+
+def get_system_status(memory_total=False, memory_total_actual=False,
+                      memory_total_usage=False, memory_total_free=False,
+                      all_pids=False, swap_memory=False, pid=False):
+    """
+    Parameters
+    ----------
+    threads: bool
+        return dict {id: (user_time, system_time)}
+    memory_maps: bool
+        return dict {path: rss}
+
+    Note
+    ----
+    All memory is returned in `MiB`
+    To calculate memory_percent:
+        get_system_status(memory_usage=True) / get_system_status(memory_total=True) * 100
+    """
+    import psutil
+    # ====== general system query ====== #
+    if memory_total:
+        return psutil.virtual_memory().total / float(2 ** 20)
+    if memory_total_actual:
+        return psutil.virtual_memory().available / float(2 ** 20)
+    if memory_total_usage:
+        return psutil.virtual_memory().used / float(2 ** 20)
+    if memory_total_free:
+        return psutil.virtual_memory().free / float(2 ** 20)
+    if swap_memory:
+        tmp = psutil.swap_memory()
+        tmp.total /= float(2 ** 20)
+        tmp.used /= float(2 ** 20)
+        tmp.free /= float(2 ** 20)
+        tmp.sin /= float(2**20)
+        tmp.sout /= float(2**20)
+        return tmp
+    if all_pids:
+        return psutil.pids()
+    if pid:
+        return os.getpid()

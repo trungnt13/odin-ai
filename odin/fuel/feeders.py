@@ -25,19 +25,22 @@ DEALINGS IN THE SOFTWARE.
 from __future__ import print_function, division, absolute_import
 
 import os
-import inspect
 import math
+import time
 import types
+import inspect
 from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from multiprocessing import cpu_count, Process, Queue
+from multiprocessing import cpu_count, Process, Queue, Value
 
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
-from odin.utils import segment_list, segment_axis, one_hot, Progbar, UnitTimer
+from odin.utils import (segment_list, segment_axis, one_hot,
+                        Progbar, UnitTimer, get_system_status,
+                        get_process_status, SharedCounter)
 from odin.utils.decorators import cache
 
 from .data import Data, MutableData, _validate_operate_axis
@@ -82,6 +85,9 @@ class Feeder(MutableData):
     shuffle_level: int (0-3)
         0 - only shuffle the indices list
         1 - shuffle the indices list and enable shuffling in all recipes
+    maximum_queue_size: int (default: 48)
+        maximum number of batch will be cached in Queue before main process
+        get it and feed to the GPU
 
     Note
     ----
@@ -91,7 +97,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, buffer_size=12):
+                 ncpu=1, buffer_size=12, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         if isinstance(indices, str):
@@ -127,6 +133,7 @@ class Feeder(MutableData):
         if ncpu is None:
             ncpu = cpu_count() - 1
         self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
+        self.maximum_queue_size = maximum_queue_size
         # ====== default ====== #
         self._buffer_size = buffer_size
         self._batch_size = 256
@@ -153,9 +160,6 @@ class Feeder(MutableData):
         # filter out None value
         recipes = [i for i in recipes if i is not None]
         if len(recipes) > 0:
-            if len(inspect.getargspec(recipes[0].map).args) != 4:
-                raise Exception('The first recipe of the feeders must '
-                                'map(name, x, transcription).')
             self.recipe = FeederList(*recipes)
         return self
 
@@ -203,14 +207,26 @@ class Feeder(MutableData):
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,
                       iter_identity):
+        """
+        No LOCK
+        -------
+        2-2: 0.68 0.66 0.66
+        4-4: 0.59 0.59 0.62
+
+        LOCK
+        ----
+        2-2: 0.69 0.66 0.66
+        4-4: 0.6 0.6 0.58
+        """
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
+        maximum_queue_size = self.maximum_queue_size * self.ncpu
         self.recipe.init(ntasks, batch_size,
                          seed if self._shuffle_level > 0 else None)
         rng = None if seed is None else np.random.RandomState(seed)
 
         # data, jobs, map_function, results
-        def work_multi(j, map, reduce, res, buffer_size):
+        def work_multi(j, map, reduce, res, buffer_size, shared_couter):
             # 1 Data share between all processes
             dat = self._data
             # transcription is shared global variable
@@ -238,17 +254,26 @@ class Feeder(MutableData):
                     batch.append(_)
                 # reduce tasks
                 if len(batch) == buffer_size or count == n - 1:
-                    for b in reduce(batch):
-                        res.put(b)
-                    batch = []
+                    # check if we need to wait for the consumer here
+                    while shared_couter.value > maximum_queue_size:
+                        time.sleep(0.5)
+                    # reduce and return the batch
+                    for nb_returned, b in enumerate(reduce(batch)):
+                        res.put(b); del b
+                    # new batch
+                    del batch; batch = []
+                    # increase shared counter
+                    shared_couter.add(nb_returned)
             # ending signal
             res.put(None)
+        #######################################################
         yield None # stop here wait for main iterator start
         # Queue maxsize is max_length (maximum number of items can be in queue)
         results = Queue(maxsize=0)
+        counter = SharedCounter()
         processes = [Process(target=work_multi,
                              args=(j, map_func, reduce_func,
-                                   results, buffer_size))
+                                   results, buffer_size, counter))
                      for i, j in enumerate(jobs)]
         # start the workers
         [p.start() for p in processes]
@@ -269,7 +294,10 @@ class Feeder(MutableData):
                 if (yield batch) == SIG_TERMINATE_ITERATOR:
                     forced_terminated = True
                     break
-        # Normal exit
+                del batch
+                # decrease Queue size counter
+                counter.add(-1)
+        # ====== ending the iterator ====== #
         if not forced_terminated:
             # check Queue, queue must be empty
             if not results.empty():
@@ -300,7 +328,6 @@ class Feeder(MutableData):
         if self._seed is not None:
             np.random.seed(self._seed)
             indices = indices[np.random.permutation(indices.shape[0])]
-
             # seed for the iteration
             seed = np.random.randint(10e8)
             # reset the seed
@@ -898,4 +925,4 @@ class CreateBatch(FeederRecipe):
                 ret = batch_filter(ret)
             # return the results
             if ret is not None:
-                yield ret
+                yield ret if len(ret) > 1 else ret[0]

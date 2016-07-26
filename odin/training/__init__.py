@@ -176,8 +176,7 @@ class MainLoop(object):
 
     """ MainLoop """
 
-    def __init__(self, batch_size=256, dataset=None, seed=-1,
-                 shuffle_level=0):
+    def __init__(self, batch_size=256, seed=-1, shuffle_level=0):
         super(MainLoop, self).__init__()
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
@@ -190,7 +189,6 @@ class MainLoop(object):
             dataset = Dataset(dataset)
         elif dataset is not None and not isinstance(dataset, Dataset):
             raise Exception('input dataset can be path (string) or Dataset instance.')
-        self._dataset = dataset
         self._callback = CallbackList()
 
         self._stop_now = False
@@ -200,11 +198,6 @@ class MainLoop(object):
     def __setstate__(self, value):
         self.set_batch(batch_size=value[0], shuffle_level=value[2])
         self._rng = value[1]
-
-        if isinstance(value[3], str):
-            self._dataset = Dataset(value[3])
-        else:
-            self._dataset = None
 
         self._callback = value[-1]
 
@@ -216,9 +209,8 @@ class MainLoop(object):
         self._save_now = False
 
     def __getstate__(self):
-        dataset = self._dataset.path if self._dataset is not None else None
         return (self._batch_size, self._rng, self._shuffle_level,
-                dataset, self._callback)
+                self._callback)
 
     # ==================== command ==================== #
     def stop(self):
@@ -275,10 +267,7 @@ class MainLoop(object):
     def _validate_data(self, data):
         if not isinstance(data, (list, tuple)):
             data = [data]
-        data = [self._dataset[i] if isinstance(i, (str, tuple, list, dict))
-                else fuel.data(i)
-                for i in data]
-        return data
+        return [fuel.data(i) for i in data]
 
     def set_task(self, func, data, epoch=1, p=1., name=None):
         '''

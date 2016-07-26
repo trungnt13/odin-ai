@@ -61,6 +61,10 @@ class MmapDict(dict):
         self._new_dict = {}# store all the (key, value) recently added
 
     # ==================== I/O methods ==================== #
+    @property
+    def path(self):
+        return self._path
+
     def flush(self):
         # ====== flush the data ====== #
         self._mmap.flush()
@@ -91,6 +95,7 @@ class MmapDict(dict):
                                flags=mmap.MAP_SHARED)
         # reset some values
         self._max_position = old_position + len(self._write_value)
+        del self._write_value
         self._write_value = ''
         del self._new_dict
         self._new_dict = {}
@@ -122,7 +127,7 @@ class MmapDict(dict):
         self._write_value += value
         # store newly added value for fast query
         self._new_dict[key] = value
-        if len(self._write_value) > 100000: # 100 MB
+        if len(self._write_value) > 48000:
             self.flush()
 
     def __getitem__(self, key):
