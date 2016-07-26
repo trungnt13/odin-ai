@@ -33,7 +33,7 @@ from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from multiprocessing import cpu_count, Process, Queue, Value
+from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
@@ -43,7 +43,7 @@ from odin.utils import (segment_list, segment_axis, one_hot,
                         get_process_status, SharedCounter)
 from odin.utils.decorators import cache
 
-from .data import Data, MutableData, _validate_operate_axis
+from .data import Data, MutableData
 from .dataset import Dataset
 
 # ===========================================================================
@@ -256,7 +256,7 @@ class Feeder(MutableData):
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
-                        time.sleep(0.5)
+                        time.sleep(0.4)
                     # reduce and return the batch
                     for nb_returned, b in enumerate(reduce(batch)):
                         res.put(b); del b
