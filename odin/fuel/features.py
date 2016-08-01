@@ -322,7 +322,7 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
             fmin=150, fmax=fs / 2,
             threshold=pitch_threshold)
         # no append log energy or delta for pitch features
-        pitch = np.hstack([pitch_freq, pitch_mag])
+        pitch = np.hstack([pitch_freq.T, pitch_mag.T])
     # reset spec to true value
     spec = None if not get_spec else spec
     # any nan value in MFCC ignore the whole file

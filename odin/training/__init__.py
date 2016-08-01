@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import
 
 from six.moves import range, zip
+import cPickle
 
 import numpy as np
 
@@ -92,22 +93,23 @@ class Task(object):
         '''
         Return
         ------
-        'start_epoch' : beginning of epoch
-        'end_epoch' : epoch ended
-        'end_task' : task ended
-        (results, n_iter, n_samples, n_epoch) : results of execute function on data
+        'task_start':
+        'epoch_start' : beginning of epoch
+        'epoch_end' : epoch ended
+        'task_end' : task ended
+        (results, nb_iter, nb_samples, nb_epoch) : results of execute function on data
 
         Note
         ----
         'end_task' also end of final epoch
         '''
-        n_iter = 0
+        nb_iter = 0
         p = self._p
         nb_epoch = 0
         nb_samples = 0
         forced_to_terminate = False
         yield None # just for initalize the iterator
-        yield 'start_task'
+        yield 'task_start'
         while nb_epoch < self._epoch:
             nb_epoch += 1
             seed = self._rng.randint(10e8)
@@ -123,7 +125,7 @@ class Task(object):
                                             shuffle_level=self._shuffle_level))
                            for i in self._data]
                 data = zip(*data_it)
-            yield 'start_epoch'
+            yield 'epoch_start'
             # ======  start the iteration ====== #
             nb_samples_per_epoch = 0 # number of iteration for 1 epoch
             for i, x in enumerate(data):
@@ -136,14 +138,14 @@ class Task(object):
                 shape0 = x[0].shape[0]
                 nb_samples += shape0
                 nb_samples_per_epoch += x[0].shape[0]
-                n_iter += 1
+                nb_iter += 1
                 # apply the function
                 if p >= 1. or (p < 1 and self._rng.rand() < p):
                     results = self._func(*x)
                 else:
                     results = None
                 # return results and check TERMINATE signal
-                if (yield (results, n_iter, nb_samples, nb_epoch)) == SIG_TERMINATE_ITERATOR:
+                if (yield (results, nb_iter, nb_samples, nb_epoch)) == SIG_TERMINATE_ITERATOR:
                     forced_to_terminate = True
                     # send signal to the data iterators also
                     for i in data_it:
@@ -158,12 +160,10 @@ class Task(object):
                 self._nb_samples_per_epoch = nb_samples_per_epoch
             # ======  end_epoch or task ====== #
             if nb_epoch >= self._epoch:
-                yield 'end_task'
+                yield 'epoch_end'
+                yield 'task_end'
             else:
-                yield 'end_epoch'
-        # keep ending so no Exception
-        while not forced_to_terminate:
-            yield 'end_task'
+                yield 'epoch_end'
 
     def __iter__(self):
         it = self.__iter()
@@ -171,7 +171,13 @@ class Task(object):
         self._created_iter.append(it)
         return it
 
+    def __del__(self):
+        self.stop_all()
 
+
+# ===========================================================================
+# MainLoop
+# ===========================================================================
 class MainLoop(object):
 
     """ MainLoop """
@@ -185,14 +191,10 @@ class MainLoop(object):
         self.set_batch(batch_size=batch_size, seed=seed,
                        shuffle_level=shuffle_level)
 
-        if isinstance(dataset, str):
-            dataset = Dataset(dataset)
-        elif dataset is not None and not isinstance(dataset, Dataset):
-            raise Exception('input dataset can be path (string) or Dataset instance.')
         self._callback = CallbackList()
 
-        self._stop_now = False
-        self._save_now = False
+        self._save_path = None
+        self._save_obj = None
 
     # ==================== pickling ==================== #
     def __setstate__(self, value):
@@ -205,19 +207,13 @@ class MainLoop(object):
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
 
-        self._stop_now = False
-        self._save_now = False
-
     def __getstate__(self):
         return (self._batch_size, self._rng, self._shuffle_level,
                 self._callback)
 
-    # ==================== command ==================== #
-    def stop(self):
-        self._stop_now = True
-
-    def save(self):
-        self._save_now = True
+    def set_save(self, path, obj):
+        self._save_path = path
+        self._save_obj = obj
 
     # ==================== properties ==================== #
     @property
@@ -256,11 +252,17 @@ class MainLoop(object):
     def __str__(self):
         return 'Task'
 
-    def set_callback(self, *callback):
-        self._callback = CallbackList(*callback)
+    def set_callback(self, callback):
+        if isinstance(callback, CallbackList):
+            self._callback = callback
+        else:
+            if not isinstance(callback, (tuple, list)):
+                callback = [callback]
+            self._callback = CallbackList(*callback)
         return self
 
     def __getitem__(self, key):
+        """ Return callback from callback list"""
         return self._callback[key]
 
     # ==================== main ==================== #
@@ -314,65 +316,40 @@ class MainLoop(object):
         return self
 
     # ==================== logic ==================== #
+    def _save(self):
+        if self._save_path is not None and self._save_obj is not None:
+            cPickle.dump(self._save_obj, open(self._save_path, 'w'),
+                         protocol=cPickle.HIGHEST_PROTOCOL)
+
     def run(self):
         if self._task is None:
             raise ValueError('You must call set_task and set the main task first.')
         callback = self._callback
-        callback.mainloop = self # set main loop
-        epoch_results = []
-        task_results = []
         batch_size = self._batch_size
         # ====== prepare subtask ====== #
-        # iterator, task_results, is_ended=False
-        subtask_map = {i: [iter(i), [], False] for i in self._subtask}
-        # iterator, epoch_results, task_results, is_ended=False
-        crosstask_map = {i: [iter(i), [], [], False] for i in self._crosstask}
+        # iterator, is_ended=False
+        subtask_map = {i: [iter(i), False] for i in self._subtask}
+        # iterator, is_ended=False
+        crosstask_map = {i: [iter(i), False] for i in self._crosstask}
         # ====== main logics ====== #
+        msg = [] # store returned callback messages
         for i in self._task: # each iteration is an batch
-            # ====== check if stop_now ====== #
-            if self._stop_now:
-                self._stop_now = False
-                break
-            # ====== check if save_now ====== #
-            # little hacky, so mainloop can signal Callback to save
-            if self._save_now:
-                self._save_now = False
-                callback.mode = 'othertask'
-                callback.task = _SAVE_TASK
-                callback.task_start()
-                callback.task_end() # just end right after start
-                callback.reset()
-            # ====== Main task ====== #
-            callback.mode = 'task' # dirty hack
-            callback.reset(); callback.task = self._task
             # return signal: start_epoch, end_epoch or end_task
             if isinstance(i, str):
-                if i == 'start_task':
-                    callback.task_start()
-                elif i == 'start_epoch':
-                    callback.epoch_start()
-                elif i == 'end_epoch' or i == 'end_task':
-                    callback.results = epoch_results
-                    callback.epoch_end()
-                    epoch_results = []
-                    if i == 'end_task':
-                        callback.results = task_results
-                        callback.task_end()
-                        break # end everything
+                msg = callback.record(self._task.name, event_type=i,
+                                      nb_iter=0, nb_epoch=0, nb_samples=0,
+                                      results=None,
+                                      samples_size=self._task.samples_per_epoch)
             # return actual results
             else:
-                results, niter, nsamples, nepoch = i
-                epoch_results.append(results)
-                task_results.append(results)
-                callback.results = results
-                callback.iter = niter
-                callback.nb_samples = nsamples
-                callback.epoch = nepoch
-                callback.batch_end()
+                results, nb_iter, nb_samples, nb_epoch = i
+                msg = callback.record(self._task.name, event_type='batch_end',
+                                      nb_iter=nb_iter, nb_epoch=nb_epoch,
+                                      nb_samples=nb_samples, results=results,
+                                      samples_size=self._task.samples_per_epoch)
                 # ====== run subtask ====== #
-                callback.mode = 'subtask'
                 for subtask, (freq, when) in self._subtask.iteritems():
-                    subtask_iter, subtask_results, is_end = subtask_map[subtask]
+                    subtask_iter, is_end = subtask_map[subtask]
                     if is_end: continue # already ended
                     # check if it is good time to start, if when is negative,
                     # start from last epoch.
@@ -380,32 +357,20 @@ class MainLoop(object):
                     when = int(when * self._task.samples_per_epoch)
                     freq = int(freq * self._task.samples_per_epoch)
                     # OK to run
-                    if nsamples > batch_size and nsamples >= when and \
-                    (nsamples - when) % freq <= batch_size:
-                        callback.reset(); callback.task = subtask
-                        x = subtask_iter.next()
-                        if x == 'start_task':
-                            callback.task_start()
-                            x = subtask_iter.next()
-                        if x == 'start_epoch':
-                            callback.epoch_start()
-                            subepoch_results = []
-                            while x != 'end_epoch' and x != 'end_task':
-                                x = subtask_iter.next()
-                                if isinstance(x, tuple):
-                                    subepoch_results.append(x[0])
-                                    subtask_results.append(x[0])
-                                    callback.results = x[0]
-                                    callback.iter = x[1]
-                                    callback.nb_samples = x[2]
-                                    callback.epoch = x[3]
-                                    callback.batch_end()
-                            callback.results = subepoch_results
-                            callback.epoch_end()
-                        if x == 'end_task':
-                            callback.results = subtask_results
-                            callback.task_end()
-                            subtask_map[subtask][-1] = True
+                    if nb_samples > batch_size and nb_samples >= when and \
+                    (nb_samples - when) % freq < batch_size:
+                        for x in subtask_iter:
+                            if isinstance(x, str): # signal
+                                msg = callback.record(subtask.name, x,
+                                                      0, 0, 0, None)
+                                if x == 'task_end': # task finnished
+                                    subtask_map[subtask][-1] = True
+                                if x == 'epoch_end': break
+                            else: # results
+                                msg = callback.record(subtask.name, 'batch_end',
+                                                nb_iter=x[1], nb_samples=x[2],
+                                                nb_epoch=x[3], results=x[0],
+                                                samples_size=subtask.samples_per_epoch)
                 # ====== run crosstask ====== #
                 callback.mode = 'crosstask'
                 for crosstask, when in self._crosstask.iteritems():
@@ -417,32 +382,20 @@ class MainLoop(object):
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
                     when = int(when * self._task.samples_per_epoch)
                     # OK to run
-                    if nsamples > batch_size and nsamples >= when and not is_end:
-                        callback.reset(); callback.task = crosstask
+                    if nb_samples > batch_size and nb_samples >= when and not is_end:
                         x = crosstask_iter.next()
-                        if x == 'start_task':
-                            callback.task_start()
-                            x = crosstask_iter.next()
-                        if x == 'start_epoch':
-                            callback.epoch_start()
-                            x = crosstask_iter.next()
-                        if isinstance(x, tuple):
-                            crosstask_epoch.append(x[0])
-                            crosstask_results.append(x[0])
-                            callback.results = x[0]
-                            callback.iter = x[1]
-                            callback.nb_samples = x[2]
-                            callback.epoch = x[3]
-                            callback.batch_end()
-                        elif x == 'end_epoch' or x == 'end_task':
-                            callback.results = crosstask_epoch
-                            crosstask_map[crosstask][1] = [] # reset epoch results
-                            callback.epoch_end()
-                            if x == 'end_task':
-                                callback.results = crosstask_results
-                                callback.task_end()
+                        if isinstance(x, str): # signals
+                            msg = callback.record(crosstask.name, x,
+                                                  0, 0, 0, None)
+                            if x == 'task_end': # finnished crosstask
                                 crosstask_map[crosstask][-1] = True
-                # ====== end ====== #
+                        else: #results
+                            msg = callback.record(crosstask.name, 'batch_end',
+                                            nb_iter=x[1], nb_samples=x[2],
+                                            nb_epoch=x[3], results=x[0])
+            # ====== process callback msg ====== #
+            if 'stop_now' in msg: break
+            if 'save_now' in msg: self._save()
         # ====== end main task ====== #
         self._task.stop_all()
         for t in self._subtask.keys():

@@ -285,10 +285,10 @@ def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
         splot += print_return_str("|" + "Summary".center(center) + "|")
         splot += print_return_str("-" * (2 + center))
         summary = "|" + ("observations: %d" % n).center(center) + "|\n"
-        summary += "|" + ("min value: %f" % min_val).center(center) + "|\n"
-        summary += "|" + ("mean : %f" % mean).center(center) + "|\n"
-        summary += "|" + ("sd : %f" % sd).center(center) + "|\n"
-        summary += "|" + ("max value: %f" % max_val).center(center) + "|\n"
+        summary += "|" + ("min value: %f" % np.min(f)).center(center) + "|\n"
+        summary += "|" + ("mean : %f" % np.mean(f)).center(center) + "|\n"
+        summary += "|" + ("sd : %f" % np.std(f)).center(center) + "|\n"
+        summary += "|" + ("max value: %f" % np.max(f)).center(center) + "|\n"
         summary += "-" * (2 + center)
         splot += print_return_str(summary)
     return splot
@@ -465,10 +465,10 @@ def print_bar(f, height=20.0, bincount=None, binwidth=None, pch="o",
         splot += print_return_str("|" + "Summary".center(center) + "|")
         splot += print_return_str("-" * (2 + center))
         summary = "|" + ("observations: %d" % n).center(center) + "|\n"
-        summary += "|" + ("min value: %f" % min_val).center(center) + "|\n"
-        summary += "|" + ("mean : %f" % mean).center(center) + "|\n"
-        summary += "|" + ("sd : %f" % sd).center(center) + "|\n"
-        summary += "|" + ("max value: %f" % max_val).center(center) + "|\n"
+        summary += "|" + ("min value: %f" % np.min(f)).center(center) + "|\n"
+        summary += "|" + ("mean : %f" % np.mean(f)).center(center) + "|\n"
+        summary += "|" + ("sd : %f" % np.std(f)).center(center) + "|\n"
+        summary += "|" + ("max value: %f" % np.max(f)).center(center) + "|\n"
         summary += "-" * (2 + center)
         splot += print_return_str(summary)
 

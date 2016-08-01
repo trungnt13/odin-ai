@@ -444,14 +444,14 @@ def _serialize_function_sandbox(function, source):
         # check if object is pickle-able, (object name must be
         # specified in the function source code), this is just heuristic
         # check.
-        elif source is not None and name in source:
-            try:
-                val_new = cPickle.loads(cPickle.dumps(val))
-                if val_new.__dict__ != val.__dict__:
-                    raise Exception
-                typ = 'object'
-            except: # not pickle-albe, just ignore it
-                pass
+        # elif source is not None and name in source:
+        #     try:
+        #         val_new = cPickle.loads(cPickle.dumps(val))
+        #         if val_new.__dict__ != val.__dict__:
+        #             raise Exception
+        #         typ = 'object'
+        #     except: # not pickle-albe, just ignore it
+        #         pass
         # Finnally add to sandbox
         if typ is not None:
             sandbox[name] = (typ, val)
@@ -525,10 +525,8 @@ class functionable(object):
 
     Note
     ----
-    *All defaults arguments must be specified within the source code of function
-    (i.e. mean(x) must be converted to mean(x, axis=None, keepdims=False))
-    This class does not support nested functions
-    All the complex objects must be created in the function
+    Please use this function with care, only primitive variables
+    are stored in pickling the function
     """
 
     def __init__(self, func, *args, **kwargs):

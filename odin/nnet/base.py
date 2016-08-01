@@ -761,9 +761,7 @@ class Sequence(NNOps):
         if not isinstance(ops, (tuple, list)):
             ops = [ops]
         for i in ops:
-            if inspect.isfunction(i) or inspect.ismethod(i):
-                self.ops.append(functionable(i))
-            elif hasattr(i, '__call__'):
+            if hasattr(i, '__call__'):
                 self.ops.append(i)
 
     @property
