@@ -3,6 +3,7 @@
 # The following signal might returned by Callbacks:
 # * stop_now: stop the training task
 # * save_now: save the parameters during training
+# * rollback_now: rollback the model to the best checkpoint
 # ===========================================================================
 from __future__ import division, absolute_import, print_function
 
@@ -10,6 +11,7 @@ import sys
 import time
 import timeit
 import cPickle
+import warnings
 from numbers import Number
 from datetime import datetime
 from collections import defaultdict
@@ -151,14 +153,15 @@ class Callback(object):
         self.__results = results
         self.__kwargs = kwargs
 
-        self.__nb_epoch[(event_name, event_type)] = nb_epoch
-        self.__nb_iter[(event_name, event_type)] = nb_iter
-        self.__nb_samples[(event_name, event_type)] = nb_samples
+        self.__nb_epoch[event_name] = max(nb_epoch, self.__nb_epoch[event_name])
+        self.__nb_iter[event_name] = max(nb_iter, self.__nb_iter[event_name])
+        self.__nb_samples[event_name] = max(nb_samples, self.__nb_samples[event_name])
         # ====== call appropriate function ====== #
         messages = []
         if hasattr(self, str(event_type)):
             handler = getattr(self, str(event_type))
             msg = handler()
+            # handle both list of messages and only 1 message
             if isinstance(msg, (tuple, list)):
                 messages += msg
             elif msg is not None:
@@ -187,15 +190,15 @@ class Callback(object):
 
     @property
     def nb_iter(self):
-        return self.__nb_iter[(self.__event_name, self.__event_type)]
+        return self.__nb_iter[self.__event_name]
 
     @property
     def nb_samples(self):
-        return self.__nb_samples[(self.__event_name, self.__event_type)]
+        return self.__nb_samples[self.__event_name]
 
     @property
     def nb_epoch(self):
-        return self.__nb_epoch[(self.__event_name, self.__event_type)]
+        return self.__nb_epoch[self.__event_name]
 
     def __getitem__(self, key):
         return self.__kwargs[key]
@@ -312,13 +315,14 @@ class History(Callback):
                 if typ == 'epoch_start': epoch = []
                 elif typ == 'epoch_end': values.append(np.mean(epoch))
                 elif typ == 'batch_end': epoch.append(res)
-        if len(values) <= 1:
+        if len(values) <= 2:
             s = event_name + ':' + str(values)
         else:
             from odin.visual.bashplot import print_bar
             s = print_bar(values, height=20,
                           bincount=max(20, len(values)),
                           showSummary=True)
+        print("\nEpoch summarization for event: %s" % event_name)
         print(s)
         return s
 
@@ -327,13 +331,14 @@ class History(Callback):
         for t, name, typ, sa, it, ep, res in self.__history:
             if name == event_name and typ == 'batch_end':
                 values.append(res)
-        if len(values) <= 1:
+        if len(values) <= 2:
             s = event_name + ':' + str(values)
         else:
             from odin.visual.bashplot import print_bar
             s = print_bar(values, height=20,
-                          bincount=max(20, len(values)),
+                          bincount=min(20, len(values)),
                           showSummary=True)
+        print("\nBatch summarization for event: %s" % event_name)
         print(s)
         return s
 
@@ -348,6 +353,11 @@ class NaNStop(Callback):
     This method search for "mainloop" in kwargs provided in `record`
     to call .stop() function
 
+    Parameters
+    ----------
+    patience: int
+        if patience > 0, send rollback signal until patience reduced to 0
+
     Note
     ----
     Checkpoint is created once whenever MainLoop.save() is called.
@@ -355,20 +365,27 @@ class NaNStop(Callback):
 
     """
 
-    def __init__(self, name):
+    def __init__(self, name, patience=1):
         super(NaNStop, self).__init__()
         self.name = str(name)
+        self.patience = patience
+        self._current_patience = patience
 
     @property
     def _saveable_variables(self):
-        return {'name': self.name}
+        return {'name': self.name,
+                'patience': self.patience,
+                '_current_patience': self.patience}
 
     def batch_end(self):
         if self.event_name == self.name:
             if np.any(np.isnan(self.results)):
+                if self._current_patience > 0:
+                    self._current_patience -= 1
+                    return 'rollback_now'
                 print('\nNaN value(s) was detected in task:"%s" results, '
                       'signals "stop_now" ...' % self.name)
-                return 'stop_now'
+                return ['rollback_now', 'stop_now']
 
 
 # ===========================================================================
@@ -383,11 +400,13 @@ class EarlyStop(Callback):
 
     Parameters
     ----------
+    name : string
+        task name for checking this criterion
     threshold : float
         for example, threshold = 5, if we loss 5% of performance on validation
         set, then stop
-    task : string
-        task name for checking this criterion
+    patience: int
+        how many cross the threshold that still can be rollbacked
     get_value : function
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
@@ -399,11 +418,14 @@ class EarlyStop(Callback):
     is better
     """
 
-    def __init__(self, threshold, name,
+    def __init__(self, name, threshold, patience=1,
                  get_value=lambda x: np.mean(x)):
         super(EarlyStop, self).__init__()
-        self.threshold = threshold
         self.name = name
+        self.threshold = threshold
+        self.patience = patience
+        self._current_patience = patience
+
         if get_value is not None and not hasattr(get_value, '__call__'):
             raise ValueError('get_value must callable')
         self.get_value = get_value
@@ -417,7 +439,9 @@ class EarlyStop(Callback):
                 'name': self.name,
                 'get_value': self.get_value,
                 '_history': self._history,
-                '_working_history': []}
+                '_working_history': [],
+                'patience': self.patience,
+                '_current_patience': self._current_patience}
 
     # ==================== main callback methods ==================== #
     def batch_end(self):
@@ -437,11 +461,13 @@ class EarlyStop(Callback):
         shouldSave, shouldStop = self.earlystop(self._history)
         messages = []
         if shouldSave > 0:
-            print('Earlystop signals [SAVE] checkpoint ...')
             messages.append('save_now')
         if shouldStop > 0:
-            print('Earlystop signals [STOP] training ...')
-            messages.append('stop_now')
+            messages.append('rollback_now')
+            if self._current_patience > 0:
+                self._current_patience -= 1
+            else:
+                messages.append('stop_now')
         return messages
 
     @abstractmethod
@@ -454,7 +480,7 @@ class EarlyStopGeneralizationLoss(EarlyStop):
 
     def earlystop(self, history):
         gl_exit_threshold = self.threshold
-        epsilon = 1e-5
+        epsilon = 1e-8
 
         if len(history) == 0: # no save, no stop
             return 0, 0

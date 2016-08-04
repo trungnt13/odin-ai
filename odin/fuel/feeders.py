@@ -45,11 +45,40 @@ from odin.utils.decorators import cache
 
 from .data import Data, MutableData
 from .dataset import Dataset
+from .utils import MmapDict
 
 # ===========================================================================
 # Multiprocessing Feeders
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
+
+
+def split_feeder(data, indices_path, transcription,
+                 partitions=[0.6, 0.2, 0.2], seed=1208251813,
+                 ncpu=1, buffer_size=12, maximum_queue_size=66):
+    partitions = np.cumsum(partitions).tolist()
+    if partitions[-1] > 1:
+        raise Exception("The sum of all partitions must be smaller than 1.0")
+    # ====== load indices ====== #
+    if isinstance(indices_path, str):
+        if os.path.isdir(indices_path):
+            p = [p for p in os.listdir(indices_path)
+                 if 'indices' in p][0]
+            indices_path = os.path.join(indices_path, p)
+        indices = np.genfromtxt(indices_path, dtype=str, delimiter=' ')
+    else:
+        indices = np.array(indices_path)
+    # ====== shuffle the indices ====== #
+    np.random.seed(seed)
+    idx = np.random.permutation(indices.shape[0])
+    indices = indices[idx]
+    # ====== partitions ====== #
+    partitions = (np.array([0] + partitions) * indices.shape[0]).astype(int)
+    partitions = [indices[i:j] for i, j in zip(partitions, partitions[1:])]
+    return [Feeder(data, p, transcription,
+                   ncpu=ncpu, buffer_size=buffer_size,
+                   maximum_queue_size=maximum_queue_size)
+            for p in partitions]
 
 
 class Feeder(MutableData):
@@ -152,12 +181,20 @@ class Feeder(MutableData):
                 share_dict = {i: j for i, j in transcription}
             elif isinstance(transcription, dict):
                 share_dict = transcription
+            elif isinstance(transcription, str):
+                if os.path.isdir(transcription):
+                    p = [p for p in os.listdir(transcription)
+                         if 'transcription' in p][0]
+                    transcription = os.path.join(transcription, p)
+                share_dict = MmapDict(transcription)
             else:
                 raise Exception('Cannot understand given transcipriont information.')
         self._transcription = share_dict
 
-    def set_recipe(self, *recipes):
+    def set_recipes(self, recipes):
         # filter out None value
+        if not isinstance(recipes, (tuple, list)):
+            recipes = [recipes]
         recipes = [i for i in recipes if i is not None]
         if len(recipes) > 0:
             self.recipe = FeederList(*recipes)
@@ -288,8 +325,9 @@ class Feeder(MutableData):
             else:
                 # perform batch level permutation
                 if rng is not None and self._shuffle_level > 1:
-                    batch = [_[rng.permutation(_.shape[0])]
-                             for _ in batch]
+                    idx = rng.permutation(batch.shape[0])
+                    # different shape NO shuffle
+                    batch = [_[idx] for _ in batch]
                 # return batch and check for returned signal
                 if (yield batch) == SIG_TERMINATE_ITERATOR:
                     forced_terminated = True
@@ -317,7 +355,7 @@ class Feeder(MutableData):
     def __iter__(self):
         # ====== check ====== #
         if self.recipe is None:
-            raise ValueError('You must set_recipe first')
+            raise ValueError('You must set_recipes first')
         # ====== process ====== #
         n = self._indices.shape[0]
         start = _apply_approx(n, self._start)

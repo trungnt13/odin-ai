@@ -81,7 +81,7 @@ data = fuel.Feeder(ds['mspec'], '/Users/trungnt13/tmp/fbank/indices.csv',
                    transcription=fuel.MmapDict(transcription_path),
                    ncpu=1, cache=5)# change ncpu here
 data.set_batch(batch_size=128, seed=12)
-data.set_recipe(fuel.Normalization(local_normalize=True,
+data.set_recipes(fuel.Normalization(local_normalize=True,
                                 mean=ds['mspec_mean'],
                                 std=ds['mspec_std']),
                 fuel.Stacking(left_context=10,

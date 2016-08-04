@@ -20,10 +20,12 @@ from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_STDEV)
 from odin.utils.decorators import autoinit, functionable, cache
+
 # ===========================================================================
 # Helper
 # ===========================================================================
-_primitive_types = (tuple, list, dict, str, numbers.Number, types.NoneType)
+_primitive_types = (tuple, list, dict, str,
+                    numbers.Number, types.NoneType)
 
 
 class NNConfig(object):
@@ -173,20 +175,16 @@ class NNOps(object):
 
     def __init__(self, name=None):
         super(NNOps, self).__init__()
-        self._id = NNOps.ID
-        self._name = name
+        self.name = name
+        if name is None:
+            self.name = "%s_%d" % (self.__class__.__name__, NNOps.ID)
+        NNOps.ID += 1
+
         self._configuration = None
         self._transpose_ops = None
         self._arguments = {}
-        NNOps.ID += 1
 
     # ==================== properties ==================== #
-    @property
-    def name(self):
-        if self._name is None:
-            return "%s_%d" % (self.__class__.__name__, self._id)
-        return str(self._name)
-
     @property
     def T(self):
         """ Return new ops which is transpose of this ops """
@@ -267,15 +265,13 @@ class NNOps(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return (self._id, self._name, self._configuration, self._arguments)
+        return (self.name, self._configuration, self._arguments)
 
     def __setstate__(self, states):
-        id, name, config, attrs = states
+        name, config, attrs = states
         # increase the ID or will be overlap name
-        if NNOps.ID < id:
-            NNOps.ID = id + 1
-        self._id = id
-        self._name = name
+        NNOps.ID += 1
+        self.name = name
         self._transpose_ops = None # reset the transpose ops
         for i, j in attrs.iteritems():
             setattr(self, i, j)

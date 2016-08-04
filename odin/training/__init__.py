@@ -1,7 +1,8 @@
-from __future__ import division, absolute_import
+from __future__ import division, absolute_import, print_function
 
-from six.moves import range, zip
+import os
 import cPickle
+from six.moves import range, zip
 
 import numpy as np
 
@@ -9,7 +10,7 @@ from odin import SIG_TERMINATE_ITERATOR
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
-from odin.utils import struct
+from odin.utils import struct, signal_handling
 from odin.utils.decorators import terminatable_iterator
 
 from .callbacks import *
@@ -46,6 +47,7 @@ class Task(object):
         self._name = name
 
         self._created_iter = []
+        self._stop_all = False
 
     @property
     def name(self):
@@ -82,11 +84,11 @@ class Task(object):
 
     def stop_all(self):
         """ Stop all iterations running for this Task"""
+        self._stop_all = True
         for i in self._created_iter:
-            try:
-                i.send(SIG_TERMINATE_ITERATOR)
-            except:
+            for j in i: # just run to end of the iterators
                 pass
+        self._stop_all = False
         self._created_iter = []
 
     def __iter(self):
@@ -145,7 +147,8 @@ class Task(object):
                 else:
                     results = None
                 # return results and check TERMINATE signal
-                if (yield (results, nb_iter, nb_samples, nb_epoch)) == SIG_TERMINATE_ITERATOR:
+                yield (results, nb_iter, nb_samples, nb_epoch)
+                if self._stop_all:
                     forced_to_terminate = True
                     # send signal to the data iterators also
                     for i in data_it:
@@ -164,6 +167,7 @@ class Task(object):
                 yield 'task_end'
             else:
                 yield 'epoch_end'
+        # ====== end of iteration ====== #
 
     def __iter__(self):
         it = self.__iter()
@@ -195,6 +199,11 @@ class MainLoop(object):
 
         self._save_path = None
         self._save_obj = None
+
+    # ==================== Signal handling ==================== #
+    def _signal_handlers(self, sig, frames):
+        # do something here
+        pass
 
     # ==================== pickling ==================== #
     def __setstate__(self, value):
@@ -321,7 +330,14 @@ class MainLoop(object):
             cPickle.dump(self._save_obj, open(self._save_path, 'w'),
                          protocol=cPickle.HIGHEST_PROTOCOL)
 
-    def run(self):
+    def _rollback(self):
+        if self._save_path is not None and os.path.exists(self._save_path):
+            f = open(self._save_path, 'r')
+            # the loading process will automatically reload shared variable
+            cPickle.load(f)
+            f.close()
+
+    def __run(self):
         if self._task is None:
             raise ValueError('You must call set_task and set the main task first.')
         callback = self._callback
@@ -394,11 +410,19 @@ class MainLoop(object):
                                             nb_iter=x[1], nb_samples=x[2],
                                             nb_epoch=x[3], results=x[0])
             # ====== process callback msg ====== #
-            if 'stop_now' in msg: break
+            # (this is important order)
             if 'save_now' in msg: self._save()
+            if 'rollback_now' in msg: self._rollback()
+            if 'stop_now' in msg: break
         # ====== end main task ====== #
         self._task.stop_all()
         for t in self._subtask.keys():
             t.stop_all()
         for t in self._crosstask.keys():
             t.stop_all()
+
+    def run(self):
+        # with signal_handling(sigint=self._signal_handlers,
+        #                      sigtstp=self._signal_handlers,
+        #                      sigquit=self._signal_handlers):
+        self.__run()

@@ -2,13 +2,14 @@ from __future__ import print_function
 import os
 import sys
 import time
+import signal
 import timeit
 import numbers
 import subprocess
 import tempfile
 import contextlib
 import platform
-from multiprocessing import cpu_count, Value, Lock
+from multiprocessing import cpu_count, Value, Lock, current_process
 from collections import OrderedDict, deque
 
 import shutil
@@ -248,6 +249,25 @@ def change_recursion_limit(limit):
         sys.setrecursionlimit(limit)
     yield
     sys.setrecursionlimit(old_limit)
+
+
+@contextlib.contextmanager
+def signal_handling(sigint=None, sigtstp=None, sigquit=None):
+    # We cannot handle SIGTERM, because it prevent subproces from
+    # .terminate()
+    orig_int = signal.getsignal(signal.SIGINT)
+    orig_tstp = signal.getsignal(signal.SIGTSTP)
+    orig_quit = signal.getsignal(signal.SIGQUIT)
+
+    if sigint is not None: signal.signal(signal.SIGINT, sigint)
+    if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
+    if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
+
+    yield
+    # reset
+    signal.signal(signal.SIGINT, orig_int)
+    signal.signal(signal.SIGTSTP, orig_tstp)
+    signal.signal(signal.SIGQUIT, orig_quit)
 
 
 def as_shape_tuple(shape):

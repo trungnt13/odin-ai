@@ -231,7 +231,13 @@ def variable(value, dtype=FLOATX, name=None, target=None):
         _VAR_ID += 1
     if len(_CURRENT_VARIABLE_SCOPE) > 0: # not global scope
         name = _CURRENT_VARIABLE_SCOPE + "/" + name
-
+    # ====== check valid name ====== #
+    if name in _CREATED_VARIABLE:
+        warnings.warn("Load value of new variable to old variable, "
+                      "var's name:" + name)
+        var = _CREATED_VARIABLE[name]
+        var.set_value(value.astype(var.dtype), borrow=False)
+        return var
     # ====== validate inputs ====== #
     value = np.asarray(value, dtype=dtype)
     target = _check_target(target)
@@ -243,12 +249,6 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     variable = theano.shared(value=value, name=name, strict=False, **kwargs)
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #
-    if name in _CREATED_VARIABLE:
-        if value.shape != _CREATED_VARIABLE[name].eval().shape:
-            raise Exception('Variable with the same name "%s" has been created '
-                            'with different shape before.' % name)
-        else:
-            warnings.warn('Overrided other variable with the same name.')
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 
