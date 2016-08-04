@@ -460,6 +460,7 @@ class EarlyStop(Callback):
         # ====== check early stop ====== #
         shouldSave, shouldStop = self.earlystop(self._history)
         messages = []
+        print('\n Should:', shouldStop, shouldSave)
         if shouldSave > 0:
             messages.append('save_now')
         if shouldStop > 0:
@@ -480,6 +481,7 @@ class EarlyStopGeneralizationLoss(EarlyStop):
 
     def earlystop(self, history):
         gl_exit_threshold = self.threshold
+        longest_remain_performance = int(gl_exit_threshold + 1)
         epsilon = 1e-8
 
         if len(history) == 0: # no save, no stop
@@ -496,13 +498,13 @@ class EarlyStopGeneralizationLoss(EarlyStop):
             shouldSave = -1
 
         # check stay the same performance for so long
-        if len(history) > gl_exit_threshold:
+        if len(history) > longest_remain_performance:
             remain_detected = 0
-            j = history[-int(gl_exit_threshold)]
-            for i in history[-int(gl_exit_threshold):]:
-                if abs(i - j) < epsilon:
+            j = history[-longest_remain_performance]
+            for i in history[-longest_remain_performance:]:
+                if abs(i - j) < 1e-5:
                     remain_detected += 1
-            if remain_detected >= gl_exit_threshold:
+            if remain_detected >= longest_remain_performance:
                 shouldStop = 1
         return shouldSave, shouldStop
 
