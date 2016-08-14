@@ -421,10 +421,10 @@ class EarlyStop(Callback):
     def __init__(self, name, threshold, patience=1,
                  get_value=lambda x: np.mean(x)):
         super(EarlyStop, self).__init__()
-        self.name = name
-        self.threshold = threshold
-        self.patience = patience
-        self._current_patience = patience
+        self.name = str(name)
+        self.threshold = float(threshold)
+        self.patience = int(patience)
+        self._current_patience = self.patience
 
         if get_value is not None and not hasattr(get_value, '__call__'):
             raise ValueError('get_value must callable')
@@ -460,7 +460,6 @@ class EarlyStop(Callback):
         # ====== check early stop ====== #
         shouldSave, shouldStop = self.earlystop(self._history)
         messages = []
-        print('\n Should:', shouldStop, shouldSave)
         if shouldSave > 0:
             messages.append('save_now')
         if shouldStop > 0:

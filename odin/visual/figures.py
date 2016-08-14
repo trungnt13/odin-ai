@@ -545,6 +545,8 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False):
     axis.set_yticklabels(labels, fontsize=fontsize)
     axis.set_ylabel('True label')
     axis.set_xlabel('Predicted label')
+    # Turns off grid on the left Axis.
+    axis.grid(False)
 
     if colorbar == 'all':
         fig = axis.get_figure()

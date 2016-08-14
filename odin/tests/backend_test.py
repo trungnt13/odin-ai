@@ -193,6 +193,17 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(len(tmp.updates), 1)
         self.assertEqual(K.ComputationGraph(y), tmp)
 
+    def confusion_matrix(self):
+        from sklearn.metrics import confusion_matrix
+        y1 = np.random.randint(0, 8, size=100)
+        y2 = np.random.randint(0, 8, size=100)
+        y_pred = K.variable(y1)
+        y_true = K.variable(y2)
+        confusion = K.confusion_matrix(y_pred, y_true)
+
+        r1 = K.eval(confusion)
+        r2 = confusion_matrix(y1, y2)
+        self.assertEqual(np.sum(r1 - r2), 0.)
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

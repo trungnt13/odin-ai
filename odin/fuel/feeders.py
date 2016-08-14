@@ -325,7 +325,7 @@ class Feeder(MutableData):
             else:
                 # perform batch level permutation
                 if rng is not None and self._shuffle_level > 1:
-                    idx = rng.permutation(batch.shape[0])
+                    idx = rng.permutation(batch[0].shape[0])
                     # different shape NO shuffle
                     batch = [_[idx] for _ in batch]
                 # return batch and check for returned signal
