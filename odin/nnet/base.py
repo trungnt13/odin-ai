@@ -24,8 +24,8 @@ from odin.utils.decorators import autoinit, functionable, cache
 # ===========================================================================
 # Helper
 # ===========================================================================
-_primitive_types = (tuple, list, dict, str,
-                    numbers.Number, types.NoneType)
+_primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
+                    types.FunctionType, numbers.Number, types.NoneType)
 
 
 class NNConfig(object):
@@ -197,6 +197,10 @@ class NNOps(object):
     _transpose(self): NNOps
         return another NNOps which is transposed version of this ops
 
+    Note
+    ----
+    All NNOps are pickle-able!
+
     """
 
     ID = 0
@@ -232,6 +236,7 @@ class NNOps(object):
         return self._configuration
 
     def __setattr__(self, name, value):
+        # this record all assigned attribute to pickle them later
         if hasattr(self, '_arguments') and name != '_arguments':
             if name in self._arguments:
                 self._arguments[name] = value
@@ -257,15 +262,26 @@ class NNOps(object):
 
     # ==================== interaction method ==================== #
     def apply(self, *args, **kwargs):
-        # initilaize first
+        # ====== initialize first ====== #
         if self._configuration is None:
-            config = self._initialize(*args, **kwargs)
+            # only select necessary arguments
+            argspec = inspect.getargspec(self._initialize)
+            keywords = {}
+            # positional arguments
+            for i, j in zip(argspec.args[1:], args):
+                keywords[i] = j
+            # kwargs must be specified in args, or the _initialize
+            # must accept **kwargs
+            for i, j in kwargs.iteritems():
+                if argspec.keywords is not None or i in argspec.args:
+                    keywords[i] = j
+            config = self._initialize(**keywords)
             if not isinstance(config, NNConfig):
                 raise Exception('Returned value from _initialize function must '
                                 'be instance of NNConfig.')
             config.inflate(self)
             self._configuration = config
-        # calculate and return outputs
+        # ====== calculate and return outputs ====== #
         out = self._apply(*args, **kwargs)
         return out
 
@@ -277,6 +293,8 @@ class NNOps(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
+        print(self._arguments)
+        exit()
         return (self.name, self._configuration, self._arguments)
 
     def __setstate__(self, states):

@@ -188,7 +188,7 @@ def rnn_decorator(*args, **kwargs):
                 return step_function(*args, **kwargs)
             # otherwise, continue, container is the object store all
             # necessary variables
-            if K.is_variable(args[0]) or len(args) == 0:
+            if is_variable(args[0]) or len(args) == 0:
                 container = None
             else:
                 container = args[0]
@@ -213,13 +213,13 @@ def rnn_decorator(*args, **kwargs):
             states_given = [find_arg(i, 'states', container, step_args)
                             for i in states]
             # check all is variables
-            if _any(not K.is_variable(i) and i is not None
+            if _any(not is_variable(i) and i is not None
                    for i in sequences_given + states_given):
                 raise ValueError('All variables provided to sequences, '
                                  'contexts, or states must be Variables.')
             # ====== configuraiton for iterations ====== #
             # Assumes time dimension is the second dimension
-            shape = K.get_shape(sequences_given[0], not_none=True)
+            shape = get_shape(sequences_given[0], not_none=True)
             if n_steps is None:
                 n_steps = shape[1]
             if batch_size is None:
@@ -227,14 +227,16 @@ def rnn_decorator(*args, **kwargs):
             # ====== Ensure all initial states are with the right shape.
             _ = []
             for key, init_val in zip(states, states_given):
-                shape = None if init_val is None else K.get_shape(init_val)
-                if init_val is None or not (K.ndim(init_val) == 1 or shape[0] == 1):
+                shape = None if init_val is None else get_shape(init_val)
+                # state_init is not 1 dimension and first dimension > 1
+                if init_val is None or not (ndim(init_val) == 1 or shape[0] == 1):
                     _.append(init_val)
+                # only one vector given for 1 batch matrix, should be repeated
                 else:
                     if repeat_states:
-                        init_val = (K.expand_dims(init_val, 0)
-                                    if K.ndim(init_val) == 1 else init_val)
-                        _.append(K.repeat(init_val, batch_size, axes=0))
+                        init_val = (expand_dims(init_val, 0)
+                                    if ndim(init_val) == 1 else init_val)
+                        init_val = repeat(init_val, batch_size, axes=0)
                     else:
                         warnings.warn('The "states" should be initialized for all '
                                       'samples in 1 batch (i.e. the first dimension, '
@@ -246,14 +248,18 @@ def rnn_decorator(*args, **kwargs):
                             T.unbroadcast(state, *range(state.ndim))
                             for state in _]
             # ====== shuffle sequences variable to get time dimension first
-            sequences_given = [K.dimshuffle(i, (1, 0) + tuple(range(2, K.ndim(i))))
+            sequences_given = [dimshuffle(i, (1, 0) + tuple(range(2, ndim(i))))
+                               if i is not None else i
                                for i in sequences_given]
 
             # ====== create steps functions ====== #
-            arg_order = sequences + [i for i, j in zip(states, states_given)
-                                     if j is not None]
+            arg_order = ([i for i, j in zip(sequences, sequences_given)
+                          if j is not None] +
+                         [i for i, j in zip(states, states_given)
+                          if j is not None])
 
             def scan_function(*args):
+                # step args contains all kwargs for step function
                 step_args.update(zip(arg_order, args))
                 kwargs = {i: j for i, j in step_args.iteritems()
                           if i in arg_names}
@@ -279,9 +285,9 @@ def rnn_decorator(*args, **kwargs):
             print('BatchSize:', batch_size)
             print('Repeat:', repeat_states)
             print('Name:', name)
-            results, updates = K.Scan(
+            results, updates = Scan(
                 scan_function,
-                sequences=sequences_given,
+                sequences=[i for i in sequences_given if i is not None],
                 outputs_info=states_given,
                 n_steps=n_steps,
                 go_backwards=go_backwards,
@@ -527,7 +533,7 @@ def L1(*variables):
 
 
 def L2_normalize(variable, axis):
-    norm = K.sqrt(K.sum(K.square(variable), axis=axis, keepdims=True))
+    norm = sqrt(sum(square(variable), axis=axis, keepdims=True))
     return x / norm
 
 
@@ -537,10 +543,10 @@ def jacobian_regularize(hidden, params):
     element-wise product on the right axis
     """
     hidden = hidden * (1 - hidden)
-    L = K.expand_dims(hidden, 1) * K.expand_dims(params, 0)
+    L = expand_dims(hidden, 1) * expand_dims(params, 0)
     # Compute the jacobian and average over the number of samples/minibatch
-    L = K.sum(K.pow(L, 2)) / hidden.shape[0]
-    return K.mean(L)
+    L = sum(pow(L, 2)) / hidden.shape[0]
+    return mean(L)
 
 
 def correntropy_regularize(x, sigma=1.):
@@ -551,7 +557,7 @@ def correntropy_regularize(x, sigma=1.):
     https://github.com/EderSantana/seya/blob/master/seya/regularizers.py
     Copyright (c) EderSantana
     """
-    return -K.sum(K.mean(K.exp(x**2 / sigma), axis=0)) / K.sqrt(2 * np.pi * sigma)
+    return -sum(mean(exp(x**2 / sigma), axis=0)) / sqrt(2 * np.pi * sigma)
 
 
 def kl_gaussian(mu, logsigma,
@@ -580,6 +586,6 @@ def kl_gaussian(mu, logsigma,
     Copyright (c) Philip Bachman
     """
     gauss_klds = 0.5 * (2 * (prior_logsigma - logsigma) +
-            (K.exp(2 * logsigma) / K.exp(2 * prior_logsigma)) +
-            (K.pow((mu - prior_mu), 2.0) / K.exp(2 * prior_logsigma)) - 1.0)
+            (exp(2 * logsigma) / exp(2 * prior_logsigma)) +
+            (pow((mu - prior_mu), 2.0) / exp(2 * prior_logsigma)) - 1.0)
     return gauss_klds
