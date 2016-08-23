@@ -209,8 +209,8 @@ class NNetTest(unittest.TestCase):
         self.assertEqual(W1, W)
         self.assertEqual(b1, b)
         self.assertEqual(num_units1, num_units)
-        self.assertEqual(W_init1, W_init)
-        self.assertEqual(b_init, b_init1)
+        self.assertEqual(W_init1.__name__, W_init.__name__)
+        self.assertEqual(b_init.__name__, b_init1.__name__)
         self.assertEqual(activation1, activation)
 
     def test_load_save2(self):

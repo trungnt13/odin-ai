@@ -64,11 +64,10 @@ class Dropout(NNOps):
         super(Dropout, self).__init__(**kwargs)
         self.seed = seed
 
-    def _initialize(self, *args, **kwargs):
+    def _initialize(self, x):
         return NNConfig()
 
     def _apply(self, x):
-        self.config()
         if not hasattr(self, 'rng'):
             self.rng = K.rng(self.seed)
         return K.apply_dropout(x, level=self.level,
@@ -102,11 +101,10 @@ class Noise(NNOps):
         super(Noise, self).__init__(**kwargs)
         self.seed = seed
 
-    def _initialize(self, *args, **kwargs):
+    def _initialize(self, x):
         return NNConfig()
 
     def _apply(self, x):
-        self.config()
         if not hasattr(self, 'rng'):
             self.rng = K.rng(self.seed)
         return K.apply_noise(x, sigma=self.sigma, noise_dims=self.noise_dims,

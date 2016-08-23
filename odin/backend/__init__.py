@@ -1,6 +1,10 @@
 from __future__ import print_function, division, absolute_import
 
 import cPickle
+import types
+import inspect
+import warnings
+from functools import wraps
 from numbers import Number
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
@@ -8,11 +12,14 @@ from six import add_metaclass
 import numpy as np
 
 from odin.config import auto_config, RNG_GENERATOR
-from odin.roles import add_role
+from odin.roles import add_role, add_updates
 
 config = auto_config()
 FLOATX = config.floatX
 EPSILON = config.epsilon
+
+# store default operators
+_any = any
 
 if config['backend'] == 'theano':
     from .theano import *
@@ -39,6 +46,261 @@ def pickling_variable(v, target=None):
     else:
         raise Exception('Variable must be in string form or trainable variable'
                         ' (i.e. SharedVariable in theano)')
+
+
+# ===========================================================================
+# Graph creator helper
+# ===========================================================================
+def function(inputs, outputs, updates=[]):
+    return Function(inputs, outputs, updates=updates)
+
+
+def rnn_decorator(*args, **kwargs):
+    """Wraps any method (or function) to allow its iterative application.
+
+    The decorator allows you to implement step_function and assign sequences
+    arguments to the function in very flexible way.
+
+    The idea behind this function is characterizing recursive function by
+    3 primitive information:
+     * `sequences`: the sequences to iterative over
+     (i.e nb_samples, nb_time, nb_features)
+     * `states`: describe output information (i.e. the initial value of
+     output after each timestep)
+
+    In the decorator, you are allowed to provide the `name` (in string) of
+    above variables, the process of looking for these name are following:
+     * If your `callable` is a method (i.e bound to an object), then the
+     variables will be searched in the attributes of the object.
+     * If your `callable` is a function (i.e the first argument is not an
+     object but variable), then you have to specified all the information
+     when you call the function.
+
+    Parameters
+    ----------
+    sequences : list of strs
+        Specifies which of the arguments are elements of input sequences.
+        (batch_size, nb_time_step, trailing_dims)
+    states : list of strs
+        Specifies which of the arguments are the states.
+
+    Sub-Parameters
+    --------------
+    iterate : bool
+        If ``True`` iteration through whole sequence is made.
+        By default ``True`` (i.e. False <=> stateful recurrent network)
+    go_backwards : bool
+        If ``True``, the sequences are processed in backward
+        direction. ``False`` by default.
+    n_steps: int
+        number of timestep, required if not known in advance (i.e. the
+        second dimension of sequences)
+    batch_size: int
+        batch size of input batch (i.e. the first dimension of sequences)
+    repeat_states: bool
+        repeat the states first dimension to match the batch_size
+    name: str
+        name for the scan operator
+
+    Returns
+    -------
+    recurrent_apply : :class:`~blocks.bricks.base.Application`
+        The new application method that applies the RNN to sequences.
+
+    Note
+    --------
+    sub-parameters is the addition parameters that the step funciton will
+    accept
+    The arguments inputed directly to the function will override the funciton
+    in container object (i.e. the firs argument of class methdo)
+
+    """
+    #####################################
+    # 0. Helper functions.
+    def to_list(x):
+        return [] if x is None else ([x] if not isinstance(x, (tuple, list))
+                                     else list(x))
+
+    def find_arg(name, type, container, kwargs):
+        # if given name not found, return None
+        if not isinstance(name, str):
+            raise ValueError('Given sequences, states, contexts must be '
+                             'string represent the name of variable in the '
+                             'input arguments of step function or attributes '
+                             'of container class, name="%s"' % str(name))
+        # given name as string
+        if name in kwargs:
+            return kwargs[name]
+        return getattr(container, name, None)
+
+    def find_attr(name, type, container, kwargs, default):
+        # find attribute with given name in kwargs and container,
+        # given the type must match given type.
+        name = str(name)
+        val = default
+        if name in kwargs:
+            val = kwargs[name]
+        elif hasattr(container, name):
+            val = getattr(container, name)
+        try:
+            return type(val)
+        except:
+            return default
+    #####################################
+    # 1. Getting all arguments.
+    # Decorator can be used with or without arguments
+    if len(args) > 1:
+        raise Exception('You can use this "recurrent" function in 2 ways: \n'
+                        ' - input the step_function directly to *arg, and '
+                        'specify other parameters in **kwargs.\n'
+                        ' - use this as a decorator, and only need to specify '
+                        'the parameters in **kwargs.\n')
+    sequences = to_list(kwargs.pop('sequences', []))
+    states = to_list(kwargs.pop('states', []))
+    if _any(not isinstance(i, str) for i in sequences + states):
+        raise Exception('"sequences", "contexts", and "states" must be '
+                        'string, which specify the name of variable in '
+                        'the container or in arguments of step_function.')
+
+    #####################################
+    # 2. Create wrapper.
+    def recurrent_wrapper(step_function):
+        arg_spec = inspect.getargspec(step_function)
+        arg_names = arg_spec.args
+        # all defaults arguments
+        if arg_spec.defaults is not None:
+            step_args = dict(zip(
+                reversed(arg_spec.args),
+                reversed(arg_spec.defaults)
+            ))
+        else:
+            step_args = dict()
+        nb_required_args = len(arg_names) - len(step_args)
+
+        @wraps(step_function)
+        def recurrent_apply(*args, **kwargs):
+            """ Iterates a transition function. """
+            # Extract arguments related to iteration and immediately relay the
+            # call to the wrapped function if `iterate=False`
+            iterate = kwargs.pop('iterate', True)
+            # ====== not iterate mode, just return step_function ====== #
+            if not iterate:
+                return step_function(*args, **kwargs)
+            # otherwise, continue, container is the object store all
+            # necessary variables
+            if K.is_variable(args[0]) or len(args) == 0:
+                container = None
+            else:
+                container = args[0]
+            # ====== additional parameters ====== #
+            go_backwards = find_attr('go_backwards', types.BooleanType,
+                container, kwargs, False)
+            n_steps = find_attr('n_steps', types.IntType,
+                container, kwargs, None)
+            batch_size = find_attr('batch_size', types.IntType,
+                container, kwargs, None)
+            repeat_states = find_attr('repeat_states', types.BooleanType,
+                container, kwargs, False)
+            name = find_attr('name', types.StringType,
+                container, kwargs, None)
+            # ====== Update the positional arguments ====== #
+            step_args.update(kwargs)
+            for key, value in zip(arg_spec.args, args): # key -> positional_args
+                step_args[key] = value
+            # ====== looking for all variables ====== #
+            sequences_given = [find_arg(i, 'sequences', container, step_args)
+                               for i in sequences]
+            states_given = [find_arg(i, 'states', container, step_args)
+                            for i in states]
+            # check all is variables
+            if _any(not K.is_variable(i) and i is not None
+                   for i in sequences_given + states_given):
+                raise ValueError('All variables provided to sequences, '
+                                 'contexts, or states must be Variables.')
+            # ====== configuraiton for iterations ====== #
+            # Assumes time dimension is the second dimension
+            shape = K.get_shape(sequences_given[0], not_none=True)
+            if n_steps is None:
+                n_steps = shape[1]
+            if batch_size is None:
+                batch_size = shape[0]
+            # ====== Ensure all initial states are with the right shape.
+            _ = []
+            for key, init_val in zip(states, states_given):
+                shape = None if init_val is None else K.get_shape(init_val)
+                if init_val is None or not (K.ndim(init_val) == 1 or shape[0] == 1):
+                    _.append(init_val)
+                else:
+                    if repeat_states:
+                        init_val = (K.expand_dims(init_val, 0)
+                                    if K.ndim(init_val) == 1 else init_val)
+                        _.append(K.repeat(init_val, batch_size, axes=0))
+                    else:
+                        warnings.warn('The "states" should be initialized for all '
+                                      'samples in 1 batch (i.e. the first dimension, '
+                                      'should be equal to the batch_size, you can '
+                                      'repeat the first dimension of "%s"' % key)
+                    _.append(init_val)
+            # Theano issue 1772
+            states_given = [None if state is None else
+                            T.unbroadcast(state, *range(state.ndim))
+                            for state in _]
+            # ====== shuffle sequences variable to get time dimension first
+            sequences_given = [K.dimshuffle(i, (1, 0) + tuple(range(2, K.ndim(i))))
+                               for i in sequences_given]
+
+            # ====== create steps functions ====== #
+            arg_order = sequences + [i for i, j in zip(states, states_given)
+                                     if j is not None]
+
+            def scan_function(*args):
+                step_args.update(zip(arg_order, args))
+                kwargs = {i: j for i, j in step_args.iteritems()
+                          if i in arg_names}
+                # check get all necessary parametesr for step fucntion
+                if len(kwargs) < nb_required_args:
+                    raise Exception('Step function require %d arguments, but '
+                                    'only %d arguments given by Scan operator'
+                                    '.' % (len(arg_names), len(kwargs)))
+                outputs = step_function(**kwargs)
+                # check valid number of return
+                if not isinstance(outputs, (tuple, list)):
+                    outputs = (outputs,)
+                if len(outputs) != len(states):
+                    raise Exception('Given %d initial states but the step '
+                                    'function only return %d outputs'
+                                    '.' % (len(states), len(outputs)))
+                return outputs
+            # ====== run the scan function ====== #
+            print('Sequences:', sequences_given)
+            print('States:', states_given)
+            print('Gobackward:', go_backwards)
+            print('NSteps:', n_steps)
+            print('BatchSize:', batch_size)
+            print('Repeat:', repeat_states)
+            print('Name:', name)
+            results, updates = K.Scan(
+                scan_function,
+                sequences=sequences_given,
+                outputs_info=states_given,
+                n_steps=n_steps,
+                go_backwards=go_backwards,
+                name=name)
+            results = to_list(results)
+            # ====== adding updates for all results if available ====== #
+            if updates:
+                for key, value in updates.iteritems():
+                    for r in results:
+                        add_updates(r, key, value)
+            return results
+        return recurrent_apply
+    # NO arguments are passed, just decorator
+    if args:
+        step_function, = args
+        return recurrent_wrapper(step_function)
+    # other arguments are passes
+    else:
+        return recurrent_wrapper
 
 
 # ===========================================================================
@@ -262,3 +524,62 @@ def L1(*variables):
     for v in variables:
         l1 = l1 + sum(abs(v))
     return l1
+
+
+def L2_normalize(variable, axis):
+    norm = K.sqrt(K.sum(K.square(variable), axis=axis, keepdims=True))
+    return x / norm
+
+
+def jacobian_regularize(hidden, params):
+    """ Computes the jacobian of the hidden layer with respect to
+    the input, reshapes are necessary for broadcasting the
+    element-wise product on the right axis
+    """
+    hidden = hidden * (1 - hidden)
+    L = K.expand_dims(hidden, 1) * K.expand_dims(params, 0)
+    # Compute the jacobian and average over the number of samples/minibatch
+    L = K.sum(K.pow(L, 2)) / hidden.shape[0]
+    return K.mean(L)
+
+
+def correntropy_regularize(x, sigma=1.):
+    """
+    Note
+    ----
+    origin implementation from seya:
+    https://github.com/EderSantana/seya/blob/master/seya/regularizers.py
+    Copyright (c) EderSantana
+    """
+    return -K.sum(K.mean(K.exp(x**2 / sigma), axis=0)) / K.sqrt(2 * np.pi * sigma)
+
+
+def kl_gaussian(mu, logsigma,
+                prior_mu=0., prior_logsigma=0.):
+    """ KL-divergence between two gaussians.
+    Useful for Variational AutoEncoders. Use this as an activation regularizer
+
+    For taking kl_gaussian as variational regularization, you can take mean of
+    the return matrix
+
+    Parameters:
+    -----------
+    mean, logsigma: parameters of the input distributions
+    prior_mean, prior_logsigma: paramaters of the desired distribution (note the
+        log on logsigma)
+
+
+    Return
+    ------
+    matrix: (n_samples, n_features)
+
+    Note
+    ----
+    origin implementation from:
+    https://github.com/Philip-Bachman/ICML-2015/blob/master/LogPDFs.py
+    Copyright (c) Philip Bachman
+    """
+    gauss_klds = 0.5 * (2 * (prior_logsigma - logsigma) +
+            (K.exp(2 * logsigma) / K.exp(2 * prior_logsigma)) +
+            (K.pow((mu - prior_mu), 2.0) / K.exp(2 * prior_logsigma)) - 1.0)
+    return gauss_klds

@@ -119,7 +119,8 @@ class BaseConv(NNOps):
         # flip the input and hidden
         return TransposeConv(self)
 
-    def _initialize(self, input_shape):
+    def _initialize(self, x):
+        input_shape = K.get_shape(x)
         # ====== validate init arguments ====== #
         if self.n is None:
             self.n = len(input_shape) - 2
@@ -152,8 +153,6 @@ class BaseConv(NNOps):
         return config
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        self.config(input_shape=input_shape)
         # calculate projection
         conved = self.convolve(x)
         if self.b is None:
@@ -178,13 +177,16 @@ class TransposeConv(NNOps):
             raise ValueError('TransposeConv Ops only accepts BaseConv as arguments.')
         super(TransposeConv, self).__init__(name=conv.name + '_transpose')
         self.conv = conv
-        conv.config() # check if Ops is initialized
+        if conv.configuration is None:
+            raise Exception('Convolution ops:"%" have not initialized.' % str(conv))
 
     # ==================== abstract method ==================== #
-    def _initialize(self, output_shape):
+    def _initialize(self, x):
         """ This function return NNConfig for given configuration from arg
         and kwargs
         """
+        output_shape = self.conv.input_shape
+
         config = NNConfig(output_shape=output_shape)
         b_init = self.conv.b_init
         untie_biases = self.conv.untie_biases
@@ -205,9 +207,8 @@ class TransposeConv(NNOps):
         if K.get_shape(x)[1:] != self.conv.output_shape[1:]:
             raise Exception('This Ops transpose convolved Variable from shape={}'
                             ' back to original shape={}, but given x has shape={}'
-                            '.'.format(self.conv.output_shape[1:], output_shape[1:], K.get_shape(x)[1:]))
-        # config the bias
-        self.config(output_shape=output_shape)
+                            '.'.format(self.conv.output_shape[1:], output_shape[1:],
+                                K.get_shape(x)[1:]))
         # ====== prepare the deconvolution ====== #
         W_shape = self.conv.get_W_shape(output_shape)
         stride = self.conv.stride

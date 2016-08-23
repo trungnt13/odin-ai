@@ -18,13 +18,12 @@ class FlattenLeft(NNOps):
     def __init__(self, outdim=2, **kwargs):
         super(FlattenLeft, self).__init__(**kwargs)
 
-    def _initialize(self, input_shape):
-        config = NNConfig(input_shape=input_shape)
+    def _initialize(self, x):
+        config = NNConfig(input_shape=K.get_shape(x))
         return config
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
-        self.config(input_shape=input_shape)
         other_shape = tuple([input_shape[i]
                              for i in range(K.ndim(x) - self.outdim + 1,
                                             K.ndim(x))])
@@ -44,13 +43,12 @@ class FlattenRight(NNOps):
     def __init__(self, outdim=2, **kwargs):
         super(FlattenRight, self).__init__(**kwargs)
 
-    def _initialize(self, input_shape):
-        config = NNConfig(input_shape=input_shape)
+    def _initialize(self, x):
+        config = NNConfig(input_shape=K.get_shape(x))
         return config
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
-        self.config(input_shape=input_shape)
         other_shape = tuple([input_shape[i]
                              for i in range(self.outdim - 1)])
         n = np.prod(input_shape[(self.outdim - 1):])
@@ -67,13 +65,11 @@ class Reshape(NNOps):
     def __init__(self, shape, **kwargs):
         super(Reshape, self).__init__(**kwargs)
 
-    def _initialize(self, input_shape):
-        config = NNConfig(input_shape=input_shape)
+    def _initialize(self, x):
+        config = NNConfig(input_shape=K.get_shape(x))
         return config
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        self.config(input_shape=input_shape)
         return K.reshape(x, shape_=self.shape)
 
     def _transpose(self):
@@ -87,13 +83,11 @@ class Dimshuffle(NNOps):
     def __init__(self, pattern, **kwargs):
         super(Dimshuffle, self).__init__(**kwargs)
 
-    def _initialize(self, input_shape):
-        config = NNConfig(input_shape=input_shape)
+    def _initialize(self, x):
+        config = NNConfig(input_shape=K.get_shape(x))
         return config
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        self.config(input_shape=input_shape)
         return K.dimshuffle(x, pattern=self.pattern)
 
     def _transpose(self):

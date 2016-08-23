@@ -529,7 +529,7 @@ def repeat(x, n, axes=None):
         if not isinstance(axes, (tuple, list)):
             axes = (axes,)
         axes = tuple([i % x.ndim for i in axes])
-        n = as_tuple(n, len(axes), int)
+        n = as_tuple(n, len(axes))
         for i, j in zip(n, axes):
             x = T.extra_ops.repeat(x, repeats=i, axis=j)
     else:
@@ -628,6 +628,27 @@ def set_subtensor(x, y):
 # ===========================================================================
 # GRAPH MANIPULATION
 # ===========================================================================
+def Scan(fn,
+         sequences=None,
+         outputs_info=None,
+         n_steps=None,
+         truncate_gradient=-1,
+         go_backwards=False,
+         name=None):
+    return theano.scan(fn,
+                       sequences=sequences,
+                       outputs_info=outputs_info,
+                       non_sequences=None,
+                       n_steps=n_steps,
+                       truncate_gradient=truncate_gradient,
+                       go_backwards=go_backwards,
+                       mode=None,
+                       name=name,
+                       profile=False,
+                       allow_gc=None,
+                       strict=False)
+
+
 class Function(object):
     """ Two way to call this Function
     f(x1, x2, x3)
@@ -660,10 +681,6 @@ class Function(object):
         if len(kwargs) == len(self.inputs_name):
             inputs = [kwargs[i] for i in self.inputs_name]
         return self.function(*inputs)
-
-
-def function(inputs, outputs, updates=[]):
-    return Function(inputs, outputs, updates=updates)
 
 
 def grad_clip(x, clip):
@@ -763,105 +780,6 @@ def jacobian(loss, variables):
 
 def hessian(loss, variables):
     return theano.gradient.hessian(loss, variables, disconnected_inputs='warn')
-
-
-# ===========================================================================
-# CONTROL FLOW
-# ===========================================================================
-def scan(step_fn, sequences=None, outputs_info=None, non_sequences=None,
-    n_steps=None, truncate_gradient=-1, go_backwards=False):
-    return theano.scan(step_fn,
-        sequences=sequences,
-        outputs_info=outputs_info,
-        non_sequences=non_sequences,
-        n_steps=n_steps, truncate_gradient=truncate_gradient,
-        go_backwards=go_backwards,
-        strict=False)
-
-
-def loop(step_fn, n_steps,
-    sequences=None, outputs_info=None, non_sequences=None,
-    go_backwards=False):
-    """
-    Helper function to unroll for loops. Can be used to unroll theano.scan.
-    The parameter names are identical to theano.scan, please refer to here
-    for more information.
-
-    Note that this function does not support the truncate_gradient
-    setting from theano.scan.
-
-    Parameters
-    ----------
-    step_fn : function
-        Function that defines calculations at each step.
-
-    sequences : TensorVariable or list of TensorVariables
-        List of TensorVariable with sequence data. The function iterates
-        over the first dimension of each TensorVariable.
-
-    outputs_info : list of TensorVariables
-        List of tensors specifying the initial values for each recurrent
-        value. Specify output_info to None for non-arguments to
-        the step_function
-
-    non_sequences: list of TensorVariables
-        List of theano.shared variables that are used in the step function.
-
-    n_steps: int
-        Number of steps to unroll.
-
-    go_backwards: bool
-        If true the recursion starts at sequences[-1] and iterates
-        backwards.
-
-    Returns
-    -------
-    List of TensorVariables. Each element in the list gives the recurrent
-    values at each time step.
-
-    """
-    if not isinstance(sequences, (list, tuple)):
-        sequences = [] if sequences is None else [sequences]
-
-    # When backwards reverse the recursion direction
-    counter = range(n_steps)
-    if go_backwards:
-        counter = counter[::-1]
-
-    output = []
-    # ====== check if outputs_info is None ====== #
-    if outputs_info is not None:
-        prev_vals = outputs_info
-    else:
-        prev_vals = []
-    output_idx = [i for i in range(len(prev_vals)) if prev_vals[i] is not None]
-    # ====== check if non_sequences is None ====== #
-    if non_sequences is None:
-        non_sequences = []
-    # ====== Main loop ====== #
-    for i in counter:
-        step_input = [s[i] for s in sequences] + \
-                     [prev_vals[idx] for idx in output_idx] + \
-            non_sequences
-        out_ = step_fn(*step_input)
-        # The returned values from step can be either a TensorVariable,
-        # a list, or a tuple.  Below, we force it to always be a list.
-        if isinstance(out_, T.TensorVariable):
-            out_ = [out_]
-        if isinstance(out_, tuple):
-            out_ = list(out_)
-        output.append(out_)
-        prev_vals = output[-1]
-
-    # iterate over each scan output and convert it to same format as scan:
-    # [[output11, output12,...output1n],
-    # [output21, output22,...output2n],...]
-    output_scan = []
-    for i in range(len(output[0])):
-        l = map(lambda x: x[i], output)
-        output_scan.append(T.stack(*l))
-
-    return output_scan
 
 
 # ===========================================================================

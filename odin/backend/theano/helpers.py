@@ -90,8 +90,11 @@ def add_shape(var, shape):
     # do nothing if not Number of tuple, list
     if isinstance(shape, np.ndarray):
         shape = shape.tolist()
-    if not isinstance(shape, numbers.Number) and \
-    not isinstance(shape, (tuple, list)):
+    if not isinstance(shape, (tuple, list)):
+        shape = (shape,)
+    # not Number or None, not a valid shape
+    if any(not isinstance(s, numbers.Number) and s is not None
+           for s in shape):
         return
 
     shape = as_shape_tuple(shape)
@@ -106,7 +109,7 @@ def add_shape(var, shape):
         var.tag.shape = shape
 
 
-def get_shape(x):
+def get_shape(x, not_none=False):
     """Return the shape of a tensor, this function search for predefined shape
     of `x` first, otherwise, return the theano shape
 
@@ -115,15 +118,18 @@ def get_shape(x):
 
     Parameters
     ----------
-    none : bool
-        allow None value in the shape tuple, otherwise, all None (and -1)
-        dimensions are converted to intermediate shape variable
+    not_none : bool
+        if `not_none`=True, does not allow None in returned shape tuple.
+        Default value is False
     """
     if not hasattr(x, 'shape'):
         raise Exception("Variable doesn't has shape attribute.")
     shape = x.shape
     if hasattr(x.tag, 'shape'):
         shape = x.tag.shape
+        if not_none:
+            shape = tuple([x.shape[i] if s is None else s
+                           for i, s in enumerate(shape)])
     return shape
 
 
@@ -170,6 +176,9 @@ def is_trainable_variable(variable):
 
 
 def is_variable(variable):
+    """ a variable is any tensor variable in (e.g. placeholder,
+    trainable_variable, intermediate tensor, ...)
+    """
     return isinstance(variable, Variable)
 
 

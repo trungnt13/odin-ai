@@ -4,160 +4,217 @@ import numpy as np
 
 from .base import NNOps, NNConfig
 
+from odin import backend as K
+from odin.utils.decorators import autoinit
+from odin.roles import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
+                        BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_STDEV)
 
-class BatchNormalization(NNOps):
-    '''Normalize the activations of the previous layer at each batch,
-    i.e. applies a transformation that maintains the mean activation
-    close to 0 and the activation standard deviation close to 1.
 
-    # Arguments
-        epsilon: small float > 0. Fuzz parameter.
-        mode: integer, 0, 1 or 2.
-            - 0: feature-wise normalization.
-                Each feature map in the input will
-                be normalized separately. The axis on which
-                to normalize is specified by the `axis` argument.
-                Note that if the input is a 4D image tensor
-                using Theano conventions (samples, channels, rows, cols)
-                then you should set `axis` to `1` to normalize along
-                the channels axis.
-                During training we use per-batch statistics to normalize
-                the data, and during testing we use running averages
-                computed during the training phase.
-            - 1: sample-wise normalization. This mode assumes a 2D input.
-            - 2: feature-wise normalization, like mode 0, but
-                using per-batch statistics to normalize the data during both
-                testing and training.
-        axis: integer, axis along which to normalize in mode 0. For instance,
-            if your input tensor has shape (samples, channels, rows, cols),
-            set axis to 1 to normalize per feature map (channels axis).
-        momentum: momentum in the computation of the
-            exponential average of the mean and standard deviation
-            of the data, for feature-wise normalization.
-        weights: Initialization weights.
-            List of 2 Numpy arrays, with shapes:
-            `[(input_shape,), (input_shape,)]`
-            Note that the order of this list is [gamma, beta, mean, std]
-        beta_init: name of initialization function for shift parameter
-            (see [initializations](../initializations.md)), or alternatively,
-            Theano/TensorFlow function to use for weights initialization.
-            This parameter is only relevant if you don't pass a `weights` argument.
-        gamma_init: name of initialization function for scale parameter (see
-            [initializations](../initializations.md)), or alternatively,
-            Theano/TensorFlow function to use for weights initialization.
-            This parameter is only relevant if you don't pass a `weights` argument.
+class BatchNorm(NNOps):
+    """ This class is adpated from Lasagne:
+    Original work Copyright (c) 2014-2015 lasagne contributors
+    All rights reserved.
+    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
 
-    # Input shape
-        Arbitrary. Use the keyword argument `input_shape`
-        (tuple of integers, does not include the samples axis)
-        when using this layer as the first layer in a model.
+    Batch Normalization
 
-    # Output shape
-        Same shape as input.
+    This layer implements batch normalization of its inputs, following [1]_:
 
-    # References
-        - [Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift](http://jmlr.org/proceedings/papers/v37/ioffe15.html)
-    '''
+    .. math::
+        y = \\frac{x - \\mu}{\\sqrt{\\sigma^2 + \\epsilon}} \\gamma + \\beta
 
-    def __init__(self, epsilon=1e-6, mode=0, axis=-1, momentum=0.99,
-                 weights=None, beta_init='zero', gamma_init='one', **kwargs):
-        self.supports_masking = True
-        self.beta_init = initializations.get(beta_init)
-        self.gamma_init = initializations.get(gamma_init)
-        self.epsilon = epsilon
-        self.mode = mode
-        self.axis = axis
-        self.momentum = momentum
-        self.initial_weights = weights
-        if self.mode == 0:
-            self.uses_learning_phase = True
-        super(BatchNormalization, self).__init__(**kwargs)
+    That is, the input is normalized to zero mean and unit variance, and then
+    linearly transformed. The crucial part is that the mean and variance are
+    computed across the batch dimension, i.e., over examples, not per example.
 
-    def build(self, input_shape):
-        self.input_spec = [InputSpec(shape=input_shape)]
-        shape = (input_shape[self.axis],)
+    During training, :math:`\\mu` and :math:`\\sigma^2` are defined to be the
+    mean and variance of the current input mini-batch :math:`x`, and during
+    testing, they are replaced with average statistics over the training
+    data. Consequently, this layer has four stored parameters: :math:`\\beta`,
+    :math:`\\gamma`, and the averages :math:`\\mu` and :math:`\\sigma^2`
+    (nota bene: instead of :math:`\\sigma^2`, the layer actually stores
+    :math:`1 / \\sqrt{\\sigma^2 + \\epsilon}`, for compatibility to cuDNN).
+    By default, this layer learns the average statistics as exponential moving
+    averages computed during training, so it can be plugged into an existing
+    network without any changes of the training procedure (see Notes).
 
-        self.gamma = self.gamma_init(shape, name='{}_gamma'.format(self.name))
-        self.beta = self.beta_init(shape, name='{}_beta'.format(self.name))
-        self.trainable_weights = [self.gamma, self.beta]
+    Parameters
+    ----------
+    incoming : a :class:`Layer` instance or a tuple
+        The layer feeding into this layer, or the expected input shape
+    axes : 'auto', int or tuple of int
+        The axis or axes to normalize over. If ``'auto'`` (the default),
+        normalize over all axes except for the second: this will normalize over
+        the minibatch dimension for dense layers, and additionally over all
+        spatial dimensions for convolutional layers.
+    epsilon : scalar
+        Small constant :math:`\\epsilon` added to the variance before taking
+        the square root and dividing by it, to avoid numerical problems
+    alpha : scalar
+        Coefficient for the exponential moving average of batch-wise means and
+        standard deviations computed during training; the closer to one, the
+        more it will depend on the last batches seen
+    beta : Theano shared variable, expression, numpy array, callable or None
+        Initial value, expression or initializer for :math:`\\beta`. Must match
+        the incoming shape, skipping all axes in `axes`. Set to ``None`` to fix
+        it to 0.0 instead of learning it.
+        See :func:`lasagne.utils.create_param` for more information.
+    gamma : Theano shared variable, expression, numpy array, callable or None
+        Initial value, expression or initializer for :math:`\\gamma`. Must
+        match the incoming shape, skipping all axes in `axes`. Set to ``None``
+        to fix it to 1.0 instead of learning it.
+        See :func:`lasagne.utils.create_param` for more information.
+    mean : Theano shared variable, expression, numpy array, or callable
+        Initial value, expression or initializer for :math:`\\mu`. Must match
+        the incoming shape, skipping all axes in `axes`.
+        See :func:`lasagne.utils.create_param` for more information.
+    inv_std : Theano shared variable, expression, numpy array, or callable
+        Initial value, expression or initializer for :math:`1 / \\sqrt{
+        \\sigma^2 + \\epsilon}`. Must match the incoming shape, skipping all
+        axes in `axes`.
+        See :func:`lasagne.utils.create_param` for more information.
+    **kwargs
+        Any additional keyword arguments are passed to the :class:`Layer`
+        superclass.
 
-        self.running_mean = K.zeros(shape,
-                                    name='{}_running_mean'.format(self.name))
-        self.running_std = K.ones(shape,
-                                  name='{}_running_std'.format(self.name))
-        self.non_trainable_weights = [self.running_mean, self.running_std]
+    Notes
+    -----
+    This layer should be inserted between a linear transformation (such as a
+    :class:`DenseLayer`, or :class:`Conv2DLayer`) and its activation. The
+    convenience function :func:`batch_norm` modifies an existing layer to
+    insert batch normalization in front of its activation.
 
-        if self.initial_weights is not None:
-            self.set_weights(self.initial_weights)
-            del self.initial_weights
-        self.built = True
-        self.called_with = None
+    The behavior can be controlled by passing keyword arguments to
+    :func:`lasagne.layers.get_output()` when building the output expression
+    of any network containing this layer.
 
-    def call(self, x, mask=None):
-        if self.mode == 0 or self.mode == 2:
-            assert self.built, 'Layer must be built before being called'
-            input_shape = self.input_spec[0].shape
+    During training, [1]_ normalize each input mini-batch by its statistics
+    and update an exponential moving average of the statistics to be used for
+    validation. This can be achieved by passing ``deterministic=False``.
+    For validation, [1]_ normalize each input mini-batch by the stored
+    statistics. This can be achieved by passing ``deterministic=True``.
 
-            reduction_axes = list(range(len(input_shape)))
-            del reduction_axes[self.axis]
-            broadcast_shape = [1] * len(input_shape)
-            broadcast_shape[self.axis] = input_shape[self.axis]
+    For more fine-grained control, ``batch_norm_update_averages`` can be passed
+    to update the exponential moving averages (``True``) or not (``False``),
+    and ``batch_norm_use_averages`` can be passed to use the exponential moving
+    averages for normalization (``True``) or normalize each mini-batch by its
+    own statistics (``False``). These settings override ``deterministic``.
 
-            if self.mode == 2:
-                x_normed, mean, std = K.normalize_batch_in_training(
-                    x, self.gamma, self.beta, reduction_axes,
-                    epsilon=self.epsilon)
-            else:
-                # mode 0
-                if self.called_with not in {None, x}:
-                    raise Exception('You are attempting to share a '
-                                    'same `BatchNormalization` layer across '
-                                    'different data flows. '
-                                    'This is not possible. '
-                                    'You should use `mode=2` in '
-                                    '`BatchNormalization`, which has '
-                                    'a similar behavior but is shareable '
-                                    '(see docs for a description of '
-                                    'the behavior).')
-                self.called_with = x
-                x_normed, mean, std = K.normalize_batch_in_training(
-                    x, self.gamma, self.beta, reduction_axes,
-                    epsilon=self.epsilon)
+    Note that for testing a model after training, [1]_ replace the stored
+    exponential moving average statistics by fixing all network weights and
+    re-computing average statistics over the training data in a layerwise
+    fashion. This is not part of the layer implementation.
 
-                self.updates = [K.moving_average_update(self.running_mean, mean, self.momentum),
-                                K.moving_average_update(self.running_std, std, self.momentum)]
+    In case you set `axes` to not include the batch dimension (the first axis,
+    usually), normalization is done per example, not across examples. This does
+    not require any averages, so you can pass ``batch_norm_update_averages``
+    and ``batch_norm_use_averages`` as ``False`` in this case.
 
-                if sorted(reduction_axes) == range(K.ndim(x))[:-1]:
-                    x_normed_running = K.batch_normalization(
-                        x, self.running_mean, self.running_std,
-                        self.beta, self.gamma,
-                        epsilon=self.epsilon)
-                else:
-                    # need broadcasting
-                    broadcast_running_mean = K.reshape(self.running_mean, broadcast_shape)
-                    broadcast_running_std = K.reshape(self.running_std, broadcast_shape)
-                    broadcast_beta = K.reshape(self.beta, broadcast_shape)
-                    broadcast_gamma = K.reshape(self.gamma, broadcast_shape)
-                    x_normed_running = K.batch_normalization(
-                        x, broadcast_running_mean, broadcast_running_std,
-                        broadcast_beta, broadcast_gamma,
-                        epsilon=self.epsilon)
+    Example
+    --------
+    For convolution output with the shape
+    (nb_samples, nb_channel, width, height) you can normalize axes=(0, 1, 2, 3)
+    or any subset of above axes, but you must include the first dimension (0,)
+    because we don't know the batch size in advance.
 
-                # pick the normalized form of x corresponding to the training phase
-                x_normed = K.in_train_phase(x_normed, x_normed_running)
 
-        elif self.mode == 1:
-            # sample-wise normalization
-            m = K.mean(x, axis=-1, keepdims=True)
-            std = K.sqrt(K.var(x, axis=-1, keepdims=True) + self.epsilon)
-            x_normed = (x - m) / (std + self.epsilon)
-            x_normed = self.gamma * x_normed + self.beta
-        return x_normed
+    References
+    ----------
+    .. [1] Ioffe, Sergey and Szegedy, Christian (2015):
+           Batch Normalization: Accelerating Deep Network Training by Reducing
+           Internal Covariate Shift. http://arxiv.org/abs/1502.03167.
+    """
 
-    def get_config(self):
-        config = {"epsilon": self.epsilon,
-                  "mode": self.mode,
-                  "axis": self.axis,
-                  "momentum": self.momentum}
-        base_config = super(BatchNormalization, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
+    @autoinit
+    def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
+                 beta_init=K.init.constant,
+                 gamma_init=K.init.constant[1],
+                 mean_init=K.init.constant,
+                 inv_std_init=K.init.constant[1],
+                 activation=K.linear, **kwargs):
+        super(BatchNorm, self).__init__(**kwargs)
+        self.activation = K.linear if activation is None else activation
+
+    # ==================== abstract method ==================== #
+    # def _transpose(self):
+        # return None
+
+    def _initialize(self, x):
+        """ This function return NNConfig for given configuration from arg
+        and kwargs
+        """
+        input_shape = K.get_shape(x)
+        config = NNConfig(input_shape=input_shape)
+        if self.axes == 'auto':
+            # default: normalize over all but the second axis
+            self.axes = (0,) + tuple(range(2, len(input_shape)))
+        elif isinstance(self.axes, int):
+            self.axes = (self.axes,)
+        # create parameters, ignoring all dimensions in axes
+        shape = [size for axis, size in enumerate(input_shape)
+                 if axis not in self.axes]
+        if any(size is None for size in shape):
+            raise ValueError("BatchNorm needs specified input sizes for "
+                             "all axes not normalized over.")
+        # init parameters
+        if self.beta_init is not None:
+            config.create_params(self.beta_init, shape=shape, name='beta',
+                                 nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
+        if self.gamma_init is not None:
+            config.create_params(self.gamma_init, shape=shape, name='gamma',
+                                 nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
+        config.create_params(self.mean_init, shape=shape, name='mean',
+                             nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
+        config.create_params(self.inv_std_init, shape=shape, name='inv_std',
+                             nnops=self, roles=BATCH_NORM_POPULATION_STDEV)
+        return config
+
+    def _apply(self, x):
+        import theano
+
+        input_shape = K.get_shape(x)
+        is_training = K.is_training(x)
+        ndim = K.ndim(x)
+        # ====== training mode ====== #
+        input_mean = K.mean(x, self.axes)
+        input_inv_std = K.inv(K.sqrt(K.var(x, self.axes) + self.epsilon))
+
+        # Decide whether to use the stored averages or mini-batch statistics
+        if not is_training:
+            mean = self.mean
+            inv_std = self.inv_std
+        else: # update the stored averages
+            mean = input_mean
+            inv_std = input_inv_std
+            # Trick: To update the stored statistics, we create memory-aliased
+            # clones of the stored statistics:
+            running_mean = theano.clone(self.mean, share_inputs=False)
+            running_inv_std = theano.clone(self.inv_std, share_inputs=False)
+            # set a default update for them:
+            running_mean.default_update = ((1 - self.alpha) * running_mean +
+                                           self.alpha * input_mean)
+            running_inv_std.default_update = ((1 - self.alpha) *
+                                              running_inv_std +
+                                              self.alpha * input_inv_std)
+            # and make sure they end up in the graph without participating in
+            # the computation (this way their default_update will be collected
+            # and applied, but the computation will be optimized away):
+            mean += 0 * running_mean
+            inv_std += 0 * running_inv_std
+        # prepare dimshuffle pattern inserting broadcastable axes as needed
+        param_axes = iter(range(ndim - len(self.axes)))
+        pattern = ['x' if input_axis in self.axes
+                   else next(param_axes)
+                   for input_axis in range(ndim)]
+
+        # apply dimshuffle pattern to all parameters
+        beta = 0 if self.beta is None else K.dimshuffle(self.beta, pattern)
+        gamma = 1 if self.gamma is None else K.dimshuffle(self.gamma, pattern)
+        mean = K.dimshuffle(mean, pattern)
+        inv_std = K.dimshuffle(inv_std, pattern)
+
+        # normalize
+        normalized = (x - mean) * (gamma * inv_std) + beta
+        # set shape for output
+        K.add_shape(normalized, input_shape)
+        return self.activation(normalized)
