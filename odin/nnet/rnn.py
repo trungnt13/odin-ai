@@ -13,8 +13,8 @@ class SimpleRecurrent(NNOps):
 
     def __init__(self, num_units, activation=K.relu,
                  W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant,
-                 state_init=K.init.constant, **kwargs):
+                 b_init=K.init.constant(0),
+                 state_init=K.init.constant(0), **kwargs):
         super(SimpleRecurrent, self).__init__(**kwargs)
         self.num_units = int(num_units)
         self.activation = activation
@@ -25,7 +25,8 @@ class SimpleRecurrent(NNOps):
 
     @K.rnn_decorator(sequences=['X', 'mask'], states=['init'])
     def _apply(self, X, init, mask=None):
-        next_states = X + K.dot(init, self.W) + self.b
+        next_states = X + K.dot(init, self.W) + (self.b if hasattr(self, 'b')
+                                                 else 0.)
         next_states = self.activation(next_states)
         if mask is not None:
             next_states = K.switch(mask, next_states, init)
@@ -70,7 +71,7 @@ class SimpleRecurrent(NNOps):
                              nnops=self,
                              roles=WEIGHT)
         if self.b_init is not None:
-            config.create_params(K.init.constant,
+            config.create_params(self.b_init,
                                  shape=(self.num_units,),
                                  name='b',
                                  nnops=self,

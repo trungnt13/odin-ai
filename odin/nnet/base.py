@@ -25,7 +25,8 @@ from odin.utils.decorators import autoinit, functionable, cache
 # Helper
 # ===========================================================================
 _primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
-                    types.FunctionType, numbers.Number, types.NoneType)
+                    types.FunctionType, numbers.Number, types.NoneType,
+                    K.init.constant)
 
 
 class NNConfig(object):
@@ -293,8 +294,6 @@ class NNOps(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        print(self._arguments)
-        exit()
         return (self.name, self._configuration, self._arguments)
 
     def __setstate__(self, states):
@@ -319,7 +318,7 @@ class Dense(NNOps):
     @autoinit
     def __init__(self, num_units,
                  W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant,
+                 b_init=K.init.constant(0),
                  activation=K.linear,
                  **kwargs):
         super(Dense, self).__init__(**kwargs)
@@ -382,7 +381,7 @@ class VariationalDense(NNOps):
     @autoinit
     def __init__(self, num_units,
                  W_init=K.init.symmetric_uniform,
-                 b_init=K.init.constant,
+                 b_init=K.init.constant(0),
                  activation=K.linear,
                  seed=None, **kwargs):
         super(VariationalDense, self).__init__(**kwargs)
@@ -496,7 +495,7 @@ class ParametricRectifier(NNOps):
     """
 
     @autoinit
-    def __init__(self, alpha_init=lambda x: K.init.constant(x, 0.25),
+    def __init__(self, alpha_init=K.init.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)
 

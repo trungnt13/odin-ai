@@ -82,7 +82,7 @@ class BaseConv(NNOps):
     @autoinit
     def __init__(self, num_filters, filter_size, stride=1, pad=0,
                  W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant,
+                 b_init=K.init.constant(0),
                  untie_biases=False,
                  activation=K.linear, n=None, **kwargs):
         super(BaseConv, self).__init__(**kwargs)
@@ -409,7 +409,7 @@ class DilatedConv2D(BaseConv):
 
     def __init__(self, num_filters, filter_size, dilation=(1, 1),
                  W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant,
+                 b_init=K.init.constant(0),
                  untie_biases=False,
                  activation=K.linear, **kwargs):
         super(DilatedConv2D, self).__init__(num_filters, filter_size, pad=0,

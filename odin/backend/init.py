@@ -7,36 +7,6 @@ FLOATX = autoconfig.floatX
 
 
 # ===========================================================================
-# Helper
-# ===========================================================================
-class _constant(object):
-    """
-    Parameters
-    ----------
-    shape: tuple
-        shape of tensor for initialization
-    val: Number
-        initializing value
-
-    Example
-    -------
-    >>> constant(shape=(3,)) # [0, 0, 0]
-    >>> constant[8](shape=(3,)) # [8, 8, 8]
-    >>> constant[12](shape=(3,)) # [12, 12, 12]
-    """
-
-    def __init__(self):
-        super(_constant, self).__init__()
-        self.__name__ = 'constant'
-
-    def __call__(self, shape, val=0.):
-        return np.cast[FLOATX](np.zeros(shape) + val)
-
-    def __getitem__(self, key):
-        return lambda shape: self(shape, val=key)
-
-
-# ===========================================================================
 # Special random algorithm for weights initialization
 # ===========================================================================
 def normal(shape, mean=0., std=1.):
@@ -51,7 +21,15 @@ def uniform(shape, range=0.05):
         RNG_GENERATOR.uniform(low=range[0], high=range[1], size=shape))
 
 
-constant = _constant()
+class constant(object):
+
+    def __init__(self, val):
+        super(constant, self).__init__()
+        self.__name__ = 'constant'
+        self.val = val
+
+    def __call__(self, shape):
+        return np.cast[FLOATX](np.zeros(shape) + self.val)
 
 
 def symmetric_uniform(shape, range=0.01, std=None, mean=0.0):
