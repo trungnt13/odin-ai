@@ -403,6 +403,11 @@ class ComputationGraph(object):
 
     # ==================== Get variables ==================== #
     @property
+    def inputs(self):
+        """ Same as placeholder """
+        return self.placeholders
+
+    @property
     def placeholders(self):
         """Inputs to the graph, excluding constants and shared variables."""
         return [var for var in self.variables if is_placeholder(var)]

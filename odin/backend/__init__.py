@@ -169,13 +169,13 @@ def rnn_decorator(*args, **kwargs):
         arg_names = arg_spec.args
         # all defaults arguments
         if arg_spec.defaults is not None:
-            step_args = dict(zip(
+            defaults_args = dict(zip(
                 reversed(arg_spec.args),
                 reversed(arg_spec.defaults)
             ))
         else:
-            step_args = dict()
-        nb_required_args = len(arg_names) - len(step_args)
+            defaults_args = dict()
+        nb_required_args = len(arg_names) - len(defaults_args)
 
         @wraps(step_function)
         def recurrent_apply(*args, **kwargs):
@@ -204,6 +204,7 @@ def rnn_decorator(*args, **kwargs):
             name = find_attr('name', types.StringType,
                 container, kwargs, None)
             # ====== Update the positional arguments ====== #
+            step_args = dict(defaults_args)
             step_args.update(kwargs)
             for key, value in zip(arg_spec.args, args): # key -> positional_args
                 step_args[key] = value
@@ -228,11 +229,8 @@ def rnn_decorator(*args, **kwargs):
             _ = []
             for key, init_val in zip(states, states_given):
                 shape = None if init_val is None else get_shape(init_val)
-                # state_init is not 1 dimension and first dimension > 1
-                if init_val is None or not (ndim(init_val) == 1 or shape[0] == 1):
-                    _.append(init_val)
                 # only one vector given for 1 batch matrix, should be repeated
-                else:
+                if init_val is not None and (ndim(init_val) == 1 or shape[0] == 1):
                     if repeat_states:
                         init_val = (expand_dims(init_val, 0)
                                     if ndim(init_val) == 1 else init_val)
@@ -242,7 +240,7 @@ def rnn_decorator(*args, **kwargs):
                                       'samples in 1 batch (i.e. the first dimension, '
                                       'should be equal to the batch_size, you can '
                                       'repeat the first dimension of "%s"' % key)
-                    _.append(init_val)
+                _.append(init_val)
             # Theano issue 1772
             states_given = [None if state is None else
                             T.unbroadcast(state, *range(state.ndim))
@@ -261,6 +259,7 @@ def rnn_decorator(*args, **kwargs):
             def scan_function(*args):
                 # step args contains all kwargs for step function
                 step_args.update(zip(arg_order, args))
+                # kwargs = dict(step_args)
                 kwargs = {i: j for i, j in step_args.iteritems()
                           if i in arg_names}
                 # check get all necessary parametesr for step fucntion
@@ -268,6 +267,7 @@ def rnn_decorator(*args, **kwargs):
                     raise Exception('Step function require %d arguments, but '
                                     'only %d arguments given by Scan operator'
                                     '.' % (len(arg_names), len(kwargs)))
+                # Call step_function
                 outputs = step_function(**kwargs)
                 # check valid number of return
                 if not isinstance(outputs, (tuple, list)):

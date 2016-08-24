@@ -164,15 +164,17 @@ def auto_config(config=None):
             # device = 'device=gpu'
         flags = contexts + ",mode=FAST_RUN,floatX=%s" % floatX
         # ====== others ====== #
-        flags += ',exception_verbosity=high'
         # Speedup CuDNNv4
-        flags += ',dnn.conv.algo_fwd=time_once,dnn.conv.algo_bwd_filter=time_once,dnn.conv.algo_bwd_data=time_once'
+        flags += (',dnn.conv.algo_fwd=time_once' +
+                  ',dnn.conv.algo_bwd_filter=time_once' +
+                  ',dnn.conv.algo_bwd_data=time_once')
         # CNMEM
         if cnmem > 0. and cnmem <= 1.:
             flags += ',lib.cnmem=%.2f,allow_gc=True' % cnmem
         if len(optimizer) > 0:
             flags += ',optimizer={}'.format(optimizer)
         flags += ',optimizer_including=unsafe'
+        flags += ',exception_verbosity=high'
         os.environ['THEANO_FLAGS'] = flags
         import theano
     elif backend == 'tensorflow':
