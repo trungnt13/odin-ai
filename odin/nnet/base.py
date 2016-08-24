@@ -276,6 +276,7 @@ class NNOps(object):
             for i, j in kwargs.iteritems():
                 if argspec.keywords is not None or i in argspec.args:
                     keywords[i] = j
+            # call the initilazation process
             config = self._initialize(**keywords)
             if not isinstance(config, NNConfig):
                 raise Exception('Returned value from _initialize function must '
