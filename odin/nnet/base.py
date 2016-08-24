@@ -19,7 +19,7 @@ from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         BATCH_NORM_POPULATION_MEAN,
                         BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_STDEV)
-from odin.utils.decorators import autoinit, functionable, cache
+from odin.utils.decorators import autoinit, cache
 
 # ===========================================================================
 # Helper

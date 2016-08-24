@@ -30,7 +30,7 @@ class SimpleRecurrent(NNOps):
         next_states = self.activation(next_states)
         if mask is not None:
             next_states = K.switch(mask, next_states, init)
-        return init
+        return next_states
 
     def _initialize(self, X, init=None, mask=None):
         input_shape = K.get_shape(X)
