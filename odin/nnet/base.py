@@ -4,6 +4,7 @@ import inspect
 import numbers
 import types
 import cPickle
+import warnings
 from itertools import chain
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
@@ -264,18 +265,24 @@ class NNOps(object):
     # ==================== interaction method ==================== #
     def apply(self, *args, **kwargs):
         # ====== initialize first ====== #
-        if self._configuration is None:
-            # only select necessary arguments
-            argspec = inspect.getargspec(self._initialize)
-            keywords = {}
-            # positional arguments
-            for i, j in zip(argspec.args[1:], args):
+        # only select necessary arguments
+        argspec = inspect.getargspec(self._initialize)
+        keywords = {}
+        # positional arguments
+        for i, j in zip(argspec.args[1:], args):
+            keywords[i] = j
+        # kwargs must be specified in args, or the _initialize
+        # must accept **kwargs
+        for i, j in kwargs.iteritems():
+            if argspec.keywords is not None or i in argspec.args:
                 keywords[i] = j
-            # kwargs must be specified in args, or the _initialize
-            # must accept **kwargs
-            for i, j in kwargs.iteritems():
-                if argspec.keywords is not None or i in argspec.args:
-                    keywords[i] = j
+        # check footprint for  warning
+        footprint = [K.get_shape(i) for i in keywords.values()
+                     if K.is_variable(i)]
+        footprint = [i for i in footprint
+                     if isinstance(i, (tuple, list))]
+
+        if self._configuration is None:
             # call the initilazation process
             config = self._initialize(**keywords)
             if not isinstance(config, NNConfig):
@@ -283,6 +290,12 @@ class NNOps(object):
                                 'be instance of NNConfig.')
             config.inflate(self)
             self._configuration = config
+        if not hasattr(self, '_footprint'):
+            self._footprint = footprint
+        elif any(i != j for i, j in zip(self._footprint, footprint)):
+            warnings.warn('The initialized footprint is "{}" which '
+                          'is different from the given footprint: "{}"'
+                          '.'.format(self._footprint, footprint))
         # ====== calculate and return outputs ====== #
         out = self._apply(*args, **kwargs)
         return out

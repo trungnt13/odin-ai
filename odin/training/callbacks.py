@@ -21,6 +21,7 @@ from six import add_metaclass
 import numpy as np
 
 from odin.utils import Progbar
+from odin.utils.decorators import functionable
 
 __all__ = [
     'Callback',
@@ -118,7 +119,7 @@ class Callback(object):
 
     def __getstate__(self):
         return (self.__nb_iter, self.__nb_epoch, self.__nb_samples,
-                self.__saveable_variables)
+                self._saveable_variables)
 
     # ==================== utilities methods ==================== #
     def record(self, event_name, event_type,
@@ -254,6 +255,7 @@ class CallbackList(Callback):
                 messages += msg
         return messages
 
+    @property
     def _saveable_variables(self):
         return {'__callbacks': self.__callbacks}
 
@@ -428,7 +430,7 @@ class EarlyStop(Callback):
 
         if get_value is not None and not hasattr(get_value, '__call__'):
             raise ValueError('get_value must callable')
-        self.get_value = get_value
+        self.get_value = functionable(get_value)
 
         self._working_history = []
         self._history = []
@@ -532,10 +534,11 @@ class EarlyStopPatience(EarlyStop):
         after which training will be stopped.
     """
 
-    def earlystop(self, history):
-        if not hasattr(self, 'wait'):
+    def task_start(self):
+        if self.name == self.event_name:
             self.wait = 0
 
+    def earlystop(self, history):
         shouldSave, shouldStop = 0, 0
         # showed improvement, should not equal to old best
         if len(history) <= 1 or history[-1] < np.min(history[:-1]):

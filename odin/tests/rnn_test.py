@@ -22,7 +22,7 @@ class RNNTest(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def simple_rnn_test(self):
+    def test_simple_rnn(self):
         np.random.seed(12082518)
 
         x = np.random.rand(128, 8, 32)

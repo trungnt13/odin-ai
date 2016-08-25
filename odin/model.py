@@ -19,7 +19,8 @@ from odin.roles import add_role, has_roles, TRAINING, DEPLOYING
 from odin.nnet import Sequence
 from odin.fuel import Data, speech_features_extraction
 from odin.training import (MainLoop, ProgressMonitor, History,
-                           EarlyStopPatience, Checkpoint, EarlyStop)
+                           EarlyStopGeneralizationLoss)
+from odin.utils import Progbar
 from odin.utils.decorators import autoinit, functionable
 from odin.preprocessing import speech
 
@@ -40,10 +41,11 @@ class SequentialModel(BaseEstimator, TransformerMixin):
     def __init__(self, *ops):
         super(SequentialModel, self).__init__()
         self._seq_ops = Sequence(ops, strict_transpose=False)
-        # list: (name, dtype, shape)
+        # info: (name, dtype, shape)
         self._input_info = []
         self._inputs = []
 
+        # info: (name, dtype, shape)
         self._output_info = []
         self._outputs = []
 
@@ -70,12 +72,16 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         self._seed = None
 
         self._extensions = [
-            ProgressMonitor(title='Results: %.2f'),
+            ProgressMonitor(name=SequentialModel._train_name,
+                            format='Results: %.2f'),
+            ProgressMonitor(name=SequentialModel._valid_name,
+                            format='Results: %.2f'),
             History(),
             # 2 epochs until no more improvement
-            EarlyStopPatience(2, task=SequentialModel._valid_name,
-                              get_value=lambda x: 1 - np.mean(x)),
-            Checkpoint(self._path).set_obj(self)
+            EarlyStopGeneralizationLoss(
+                name=SequentialModel._valid_name,
+                threshold=5, patience=2,
+                get_value=lambda x: 1 - np.mean(x)),
         ]
 
     def _check_initialized(self):
@@ -124,6 +130,13 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         return self._functions[name]
 
     def get_params(self, deep=False):
+        """
+        Parameters
+        ----------
+        deep: boolean
+            if True, return the numpy array (i.e. the real values of
+            each parameters)
+        """
         parameters = {}
         for ops in self._seq_ops.ops:
             name = ops.name
@@ -143,18 +156,10 @@ class SequentialModel(BaseEstimator, TransformerMixin):
                     if not isinstance(param_new, np.ndarray):
                         param_new = K.get_value(param_new)
                     K.set_value(param_old, param_new)
-        # parameters changed, which mean re-train everything,
-        # reset the earlystop's history (dirty hack)
-        for i in self._extensions:
-            if isinstance(i, EarlyStop):
-                i.reset_history()
         return self
 
     def set_path(self, path):
         self._path = str(path)
-        for i in self._extensions:
-            if isinstance(i, Checkpoint):
-                i.path = self._path
         return self
 
     def set_training_info(self, loss=None, metric=None, optimizer=None,
@@ -178,8 +183,6 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         if extensions is not None:
             if not isinstance(extensions, (tuple, list)):
                 extensions = [extensions]
-            extensions = [i.set_obj(self) if isinstance(i, Checkpoint) else i
-                          for i in extensions]
             self._extensions = extensions
         self._train_args.update(kwargs)
         return self
@@ -285,25 +288,37 @@ class SequentialModel(BaseEstimator, TransformerMixin):
             f_score = K.function(self._inputs + self._outputs, cost_pred)
             self._functions['score'] = f_score
 
-    def fit(self, X, X_valid=None):
+    def fit(self, X, y=None, X_valid=None, y_valid=None):
         """ This is very standard procedure """
         # we assume always only 1 outputs, hence,
         # the last variable must be output
-        self._auto_create_inputs(X[:-1] if isinstance(X, (tuple, list)) else X)
+        self._auto_create_inputs(X)
         self._create_function()
 
         mainloop = MainLoop(batch_size=self._batch_size, seed=self._seed)
-        mainloop.set_task(self._functions['train'], data=X,
+        mainloop.set_save(self._path, self)
+        mainloop.set_callback(self._extensions)
+        # training task
+        data = [X, y] if y is not None else [X]
+        mainloop.set_task(self._functions['train'], data=data,
                           epoch=self._n_epoch,
                           name=SequentialModel._train_name)
+        # validation task
         if X_valid is not None:
-            mainloop.add_subtask(self._functions['score'], data=X_valid,
-                                freq=self._valid_freq,
-                                name=SequentialModel._valid_name)
-        mainloop.set_callback(*self._extensions)
+            data = [X_valid, y_valid] if y_valid is not None else [X_valid]
+            mainloop.add_subtask(self._functions['score'], data=data,
+                                 freq=self._valid_freq,
+                                 name=SequentialModel._valid_name)
+        # run the training process
         mainloop.run()
 
     def predict(self, *args):
+        """
+        Return
+        ------
+        Raw prediction which is the output directly from the network
+
+        """
         self._auto_create_inputs(args)
         self._check_initialized()
 
@@ -314,17 +329,41 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         self._auto_create_inputs(args)
         self._create_function()
 
-        x = self._functions['pred'](*args)
-        _min = np.min(x, axis=-1)[:, None]
-        _max = np.max(x, axis=-1)[:, None]
-        x = (x - _min) / (_max - _min)
-        return x / x.sum(-1)[:, None]
+        n = 0
+        nb_samples = args[0].shape[0]
+        batch_size = self._batch_size
+        prediction = []
+        prog = Progbar(target=nb_samples, title='Predicting')
+        while n < nb_samples:
+            end = min(n + batch_size, nb_samples)
+            x = [i[n:end] for i in args]
+            x = self._functions['pred'](*x)
+            _min = np.min(x, axis=-1)[:, None]
+            _max = np.max(x, axis=-1)[:, None]
+            x = (x - _min) / (_max - _min)
+            x = x / x.sum(-1)[:, None]
+            prediction.append(x)
+            n = end
+            prog.update(n)
+
+        return np.concatenate(prediction, axis=0)
 
     def transform(self, *args):
         self._auto_create_inputs(args)
         self._create_function()
 
-        return self._functions['pred'](*args)
+        n = 0
+        nb_samples = args[0].shape[0]
+        batch_size = self._batch_size
+        prediction = []
+        while n < nb_samples:
+            end = min(n + batch_size, nb_samples)
+            x = [i[n:end] for i in args]
+            x = self._functions['pred'](*x)
+            prediction.append(x)
+            n = end
+
+        return np.concatenate(prediction, axis=0)
 
     # ==================== pickling methods ==================== #
     def __repr__(self):
@@ -371,15 +410,11 @@ class SequentialModel(BaseEstimator, TransformerMixin):
                           for name, dtype, shape in self._input_info])
         self.set_outputs(*[K.placeholder(shape=shape, dtype=dtype, name=name)
                            for name, dtype, shape in self._output_info])
-        # ====== set obj for Checkpoint ====== #
-        for i in self._extensions:
-            if isinstance(i, Checkpoint):
-                i.set_obj(self)
 
     def __getstate__(self):
         self._check_initialized()
         return (
-            self._seq_ops,
+            self._seq_ops, # main NNOps
             self._input_info, # list: (name, dtype, shape)
             self._output_info,
             self._path,
@@ -397,7 +432,8 @@ class SequentialModel(BaseEstimator, TransformerMixin):
 
 class SequentialClassifier(SequentialModel, ClassifierMixin):
 
-    pass
+    def __init__(self, *ops):
+        super(SequentialClassifier, self).__init__(*ops)
 
 
 class SequentialRegressor(SequentialModel, RegressorMixin):
@@ -406,6 +442,19 @@ class SequentialRegressor(SequentialModel, RegressorMixin):
         super(SequentialRegressor, self).__init__(*ops)
         self._loss = K.squared_error
         self._metric = K.squared_error
+
+        self._extensions = [
+            ProgressMonitor(name=SequentialModel._train_name,
+                            format='Results: %.2f'),
+            ProgressMonitor(name=SequentialModel._valid_name,
+                            format='Results: %.2f'),
+            History(),
+            # 2 epochs until no more improvement
+            EarlyStopGeneralizationLoss(
+                name=SequentialModel._valid_name,
+                threshold=5, patience=2,
+                get_value=lambda x: np.mean(x)),
+        ]
 
     def predict(self, *args):
         return self.transform(*args)
