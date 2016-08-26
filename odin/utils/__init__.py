@@ -32,12 +32,14 @@ from .profile import *
 class ArgController(object):
     """ Simple interface to argparse """
 
-    def __init__(self, version='1.00'):
+    def __init__(self, version='1.00', print_parsed=True):
         super(ArgController, self).__init__()
         self.parser = None
+        self._require_input = False
         self.arg_dict = {}
         self.name = []
         self.version = str(version)
+        self.print_parsed = print_parsed
 
     def _is_positional(self, name):
         if name[0] != '-' and name[:2] != '--':
@@ -79,6 +81,7 @@ class ArgController(object):
             else:
                 self.parser.add_argument(name, help=help, type=str, action="store",
                     required=True, metavar='')
+            self._require_input = True
         else:
             help += ' (default: %s)' % str(default)
             self.parser.add_argument(name, help=help, type=str, action="store",
@@ -96,7 +99,7 @@ class ArgController(object):
                             'for the function.')
         exit_now = False
         try:
-            if len(sys.argv) == 1:
+            if len(sys.argv) == 1 and self._require_input:
                 self.parser.print_help()
                 exit_now = True
             else:
@@ -108,11 +111,26 @@ class ArgController(object):
                 self.parser.print_help()
             exit_now = True
         if exit_now: exit()
-        # reset all arguments
-        args = {i: self._parse_input(i, j)
-                for i, j in args._get_kwargs()}
+        # parse the arguments
+        try:
+            args = {i: self._parse_input(i, j)
+                    for i, j in args._get_kwargs()}
+        except Exception, e:
+            print('Error parsing given arguments: "%s"' % str(e))
+            self.parser.print_help()
+            exit()
+        # reset everything
         self.parser = None
         self.arg_dict = {}
+        self._require_input = False
+        # print the parsed arguments if necessary
+        if self.print_parsed:
+            max_len = max(len(i) for i in args.keys())
+            max_len = '%-' + str(max_len) + 's'
+            print('\n******** Parsed arguments ********')
+            for i, j in args.iteritems():
+                print(max_len % i, ': ', j)
+            print('**********************************\n')
         return args
 
 
