@@ -35,15 +35,21 @@ class ArgController(object):
     def __init__(self, version='1.00'):
         super(ArgController, self).__init__()
         self.parser = None
+        self.arg_dict = {}
         self.name = []
-        self.version = version
+        self.version = str(version)
 
     def _is_positional(self, name):
         if name[0] != '-' and name[:2] != '--':
             return True
         return False
 
-    def _parse_input(self, val):
+    def _parse_input(self, key, val):
+        # ====== search if manual preprocessing available ====== #
+        for i, preprocess in self.arg_dict.iteritems():
+            if key in i and preprocess is not None:
+                return preprocess(val)
+        # ====== auto preprocess ====== #
         try:
             val = float(val)
             if int(val) == val:
@@ -57,7 +63,7 @@ class ArgController(object):
                 val = False
         return val
 
-    def add(self, name, help, default=None):
+    def add(self, name, help, default=None, preprocess=None):
         """ NOTE: if the default value is not given, the argument is
         required
         """
@@ -76,26 +82,36 @@ class ArgController(object):
         else:
             self.parser.add_argument(name, help=help, type=str, action="store",
                 default=str(default), metavar='')
+
+        # store preprocess dictionary
+        if not callable(preprocess):
+            preprocess = None
+        self.arg_dict[name] = preprocess
         return self
 
     def parse(self):
         if self.parser is None:
             raise Exception('Call add to assign at least 1 argument for '
                             'for the function.')
+        exit_now = False
         try:
             if len(sys.argv) == 1:
                 self.parser.print_help()
-                exit()
-            args = self.parser.parse_args()
+                exit_now = True
+            else:
+                args = self.parser.parse_args()
         except:
             # if specfy version or help, don't need to print anything else
             if all(i not in ['-h', '--help', '-v', '--version']
                    for i in sys.argv):
                 self.parser.print_help()
-            exit()
-        self.parser = None
-        args = {i: self._parse_input(j)
+            exit_now = True
+        if exit_now: exit()
+        # reset all arguments
+        args = {i: self._parse_input(i, j)
                 for i, j in args._get_kwargs()}
+        self.parser = None
+        self.arg_dict = {}
         return args
 
 
