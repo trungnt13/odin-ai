@@ -80,6 +80,7 @@ class ArgController(object):
                 self.parser.add_argument(name, help=help, type=str, action="store",
                     required=True, metavar='')
         else:
+            help += ' (default: %s)' % str(default)
             self.parser.add_argument(name, help=help, type=str, action="store",
                 default=str(default), metavar='')
 
