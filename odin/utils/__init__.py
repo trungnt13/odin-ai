@@ -2,6 +2,7 @@ from __future__ import print_function
 import os
 import sys
 import time
+import math
 import signal
 import timeit
 import numbers
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 import contextlib
 import platform
+import argparse
 from multiprocessing import cpu_count, Value, Lock, current_process
 from collections import OrderedDict, deque
 
@@ -25,6 +27,76 @@ import numpy
 import six
 
 from .profile import *
+
+
+class ArgController(object):
+    """ Simple interface to argparse """
+
+    def __init__(self, version='1.00'):
+        super(ArgController, self).__init__()
+        self.parser = None
+        self.name = []
+        self.version = version
+
+    def _is_positional(self, name):
+        if name[0] != '-' and name[:2] != '--':
+            return True
+        return False
+
+    def _parse_input(self, val):
+        try:
+            val = float(val)
+            if int(val) == val:
+                val = int(val)
+        except:
+            val = str(val)
+            val_lower = val.lower()
+            if val_lower == 'true' or val_lower == 'yes':
+                val = True
+            elif val_lower == 'false' or val_lower == 'no':
+                val = False
+        return val
+
+    def add(self, name, help, default=None):
+        """ NOTE: if the default value is not given, the argument is
+        required
+        """
+        if self.parser is None:
+            self.parser = argparse.ArgumentParser(
+                description='Automatic argument parser (yes,true > True; no,false > False)',
+                version=self.version, add_help=True)
+
+        if default is None:
+            if self._is_positional(name):
+                self.parser.add_argument(name, help=help, type=str, action="store",
+                    metavar='')
+            else:
+                self.parser.add_argument(name, help=help, type=str, action="store",
+                    required=True, metavar='')
+        else:
+            self.parser.add_argument(name, help=help, type=str, action="store",
+                default=str(default), metavar='')
+        return self
+
+    def parse(self):
+        if self.parser is None:
+            raise Exception('Call add to assign at least 1 argument for '
+                            'for the function.')
+        try:
+            if len(sys.argv) == 1:
+                self.parser.print_help()
+                exit()
+            args = self.parser.parse_args()
+        except:
+            # if specfy version or help, don't need to print anything else
+            if all(i not in ['-h', '--help', '-v', '--version']
+                   for i in sys.argv):
+                self.parser.print_help()
+            exit()
+        self.parser = None
+        args = {i: self._parse_input(j)
+                for i, j in args._get_kwargs()}
+        return args
 
 
 def one_hot(y, n_classes=None):

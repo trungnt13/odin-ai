@@ -35,7 +35,6 @@ __all__ = [
     'SpeechFeature',
     'speech_features_extraction',
     'VideoFeature'
-
 ]
 
 
