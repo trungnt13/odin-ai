@@ -52,7 +52,8 @@ def pickling_variable(v, target=None):
 # Graph creator helper
 # ===========================================================================
 def function(inputs, outputs, updates=[]):
-    return Function(inputs, outputs, updates=updates)
+    f = Function(inputs, outputs, updates=updates)
+    return f
 
 
 def rnn_decorator(*args, **kwargs):
@@ -104,8 +105,7 @@ def rnn_decorator(*args, **kwargs):
 
     Returns
     -------
-    recurrent_apply : :class:`~blocks.bricks.base.Application`
-        The new application method that applies the RNN to sequences.
+    recurrent_apply : The new method that applies the RNN to sequences.
 
     Note
     --------
@@ -114,6 +114,8 @@ def rnn_decorator(*args, **kwargs):
     The arguments inputed directly to the function will override the funciton
     in container object (i.e. the firs argument of class methdo)
 
+    Example
+    -------
     """
     #####################################
     # 0. Helper functions.
@@ -129,9 +131,13 @@ def rnn_decorator(*args, **kwargs):
                              'input arguments of step function or attributes '
                              'of container class, name="%s"' % str(name))
         # given name as string
+        value = None
         if name in kwargs:
-            return kwargs[name]
-        return getattr(container, name, None)
+            value = kwargs[name]
+        # if the variable is None, find it in the container
+        if value is None:
+            value = getattr(container, name, None)
+        return value
 
     def find_attr(name, type, container, kwargs, default):
         # find attribute with given name in kwargs and container,
@@ -278,13 +284,13 @@ def rnn_decorator(*args, **kwargs):
                                     '.' % (len(states), len(outputs)))
                 return outputs
             # ====== run the scan function ====== #
-            print('Sequences:', sequences_given)
-            print('States:', states_given)
-            print('Gobackward:', go_backwards)
-            print('NSteps:', n_steps)
-            print('BatchSize:', batch_size)
-            print('Repeat:', repeat_states)
-            print('Name:', name)
+            # print('Sequences:', sequences_given)
+            # print('States:', states_given)
+            # print('Gobackward:', go_backwards)
+            # print('NSteps:', n_steps)
+            # print('BatchSize:', batch_size)
+            # print('Repeat:', repeat_states)
+            # print('Name:', name)
             results, updates = Scan(
                 scan_function,
                 sequences=[i for i in sequences_given if i is not None],
@@ -292,7 +298,10 @@ def rnn_decorator(*args, **kwargs):
                 n_steps=n_steps,
                 go_backwards=go_backwards,
                 name=name)
-            results = to_list(results)
+            # all the result in form (nb_time, nb_samples, trailing_dims)
+            # we reshape them back to same as input
+            results = [dimshuffle(i, [1, 0] + range(2, ndim(i)))
+                       for i in to_list(results)]
             # ====== adding updates for all results if available ====== #
             if updates:
                 for key, value in updates.iteritems():

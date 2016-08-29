@@ -102,11 +102,13 @@ def add_shape(var, shape):
         raise ValueError('Variable has ndim={} but given shape has ndim={}'
                          '.'.format(var.ndim, len(shape)))
     # ====== NO override ====== #
-    if hasattr(var.tag, 'shape'):
-        warnings.warn('Shape has already been given to variable "%s".' % var.name)
+    if hasattr(var.tag, 'shape') and var.tag.shape != shape:
+        warnings.warn('Variable already had shape=%s, and the given shape is: %s'
+                      '.' % (var.tag.shape, shape))
     # ====== override or assign ====== #
     else:
         var.tag.shape = shape
+    return var
 
 
 def get_shape(x, not_none=False):
@@ -123,7 +125,7 @@ def get_shape(x, not_none=False):
         Default value is False
     """
     if not hasattr(x, 'shape'):
-        raise Exception("Variable doesn't has shape attribute.")
+        raise Exception("Variable of %s doesn't has shape attribute." % type(x))
     shape = x.shape
     if hasattr(x.tag, 'shape'):
         shape = x.tag.shape

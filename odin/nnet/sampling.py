@@ -11,6 +11,15 @@ from .base import NNOps, NNConfig
 
 
 class Pool2D(NNOps):
+    """
+    Parameters
+    ----------
+    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
+        Operation executed on each window. `max` and `sum` always exclude
+        the padding in the computation. `average` gives you the choice to
+        include or exclude it.
+
+    """
 
     @autoinit
     def __init__(self, pool_size=(2, 2), ignore_border=True,
@@ -31,6 +40,15 @@ class Pool2D(NNOps):
 
 
 class Pool3D(NNOps):
+    """
+    Parameters
+    ----------
+    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
+        Operation executed on each window. `max` and `sum` always exclude
+        the padding in the computation. `average` gives you the choice to
+        include or exclude it.
+
+    """
 
     @autoinit
     def __init__(self, pool_size=(2, 2, 2), ignore_border=True,

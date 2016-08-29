@@ -193,7 +193,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(len(tmp.updates), 1)
         self.assertEqual(K.ComputationGraph(y), tmp)
 
-    def confusion_matrix(self):
+    def test_confusion_matrix(self):
         from sklearn.metrics import confusion_matrix
         y1 = np.random.randint(0, 8, size=100)
         y2 = np.random.randint(0, 8, size=100)
@@ -204,6 +204,17 @@ class BackendTest(unittest.TestCase):
         r1 = K.eval(confusion)
         r2 = confusion_matrix(y1, y2)
         self.assertEqual(np.sum(r1 - r2), 0.)
+
+    def test_rnn_decorator(self):
+        @K.rnn_decorator(sequences='X', states='out')
+        def rnn(X, out):
+            return K.relu(X + out)
+
+        y = rnn(K.ones(shape=(25, 12, 18, 8)),
+                K.zeros(shape=(25, 18, 8))
+        )
+        f = K.function([], y)
+        self.assertEqual(f()[0].shape, (25, 12, 18, 8))
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

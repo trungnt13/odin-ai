@@ -30,6 +30,20 @@ _primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
                     K.init.constant)
 
 
+def _recurrsive_extract_shape(x):
+    shape_list = []
+    if not isinstance(x, (tuple, list)):
+        x = [x]
+    for i in x:
+        if K.is_variable(i):
+            shape = K.get_shape(i)
+            if isinstance(shape, (tuple, list)):
+                shape_list.append(shape)
+        elif isinstance(i, (tuple, list)):
+            shape_list += _recurrsive_extract_shape(i)
+    return shape_list
+
+
 class NNConfig(object):
 
     @autoinit
@@ -187,10 +201,10 @@ class NNOps(object):
 
     Abstract
     --------
-    _apply(self, *args, **kwargs): resulted variables
+    _apply(self, x, **kwargs): resulted variables
         apply take a list of variables and custom parameters to compute
         output variables
-    _initialize(self, *args, **kwargs): NNConfig
+    _initialize(self, x, **kwargs): NNConfig
         create and return NNConfig object, which is identity from
         other configuration
 
@@ -249,47 +263,45 @@ class NNOps(object):
 
     # ==================== abstract method ==================== #
     @abstractmethod
-    def _initialize(self, *args, **kwargs):
+    def _initialize(self, x, **kwargs):
         """ This function return NNConfig for given configuration from arg
         and kwargs
         """
         raise NotImplementedError
 
     @abstractmethod
-    def _apply(self, *args, **kwargs):
+    def _apply(self, x, **kwargs):
         raise NotImplementedError
 
     def _transpose(self):
         raise NotImplementedError
 
     # ==================== interaction method ==================== #
-    def apply(self, *args, **kwargs):
+    def apply(self, x, **kwargs):
+        return_list = True
+        if not isinstance(x, (tuple, list)):
+            x = [x]
+            return_list = False
         # ====== initialize first ====== #
         # only select necessary arguments
         argspec = inspect.getargspec(self._initialize)
         keywords = {}
-        # positional arguments
-        for i, j in zip(argspec.args[1:], args):
-            keywords[i] = j
         # kwargs must be specified in args, or the _initialize
         # must accept **kwargs
         for i, j in kwargs.iteritems():
             if argspec.keywords is not None or i in argspec.args:
                 keywords[i] = j
-        # check footprint for  warning
-        footprint = [K.get_shape(i) for i in keywords.values()
-                     if K.is_variable(i)]
-        footprint = [i for i in footprint
-                     if isinstance(i, (tuple, list))]
-
+        # initialize the operator (call the initilazation process)
         if self._configuration is None:
-            # call the initilazation process
-            config = self._initialize(**keywords)
+            config = self._initialize(x if len(x) > 1 else x[0],
+                                      **keywords)
             if not isinstance(config, NNConfig):
                 raise Exception('Returned value from _initialize function must '
                                 'be instance of NNConfig.')
             config.inflate(self)
             self._configuration = config
+        # check footprint for  warning
+        footprint = _recurrsive_extract_shape(x)
         if not hasattr(self, '_footprint'):
             self._footprint = footprint
         elif any(i != j for i, j in zip(self._footprint, footprint)):
@@ -297,14 +309,22 @@ class NNOps(object):
                           'is different from the given footprint: "{}"'
                           '.'.format(self._footprint, footprint))
         # ====== calculate and return outputs ====== #
-        out = self._apply(*args, **kwargs)
-        return out
+        out = [self._apply(i, **kwargs) for i in x]
+        if return_list:
+            return out
+        return out[0]
 
-    def __call__(self, *args, **kwargs):
-        return self.apply(*args, **kwargs)
+    def __call__(self, x, **kwargs):
+        return self.apply(x, **kwargs)
 
     def __str__(self):
-        return self.name
+        ops_format = '<ops: %s, name: %s, init: %s>'
+        return ops_format % (self.__class__.__name__, self.name,
+                             self._configuration is not None)
+
+    # ==================== Slicing ==================== #
+    def __getitem__(self, key):
+        return NNSliceOps(self, key)
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -322,6 +342,65 @@ class NNOps(object):
         self._configuration = config
         if config is not None:
             config.inflate(self)
+
+
+# ===========================================================================
+# Helper
+# ===========================================================================
+class NNSliceOps(NNOps):
+
+    def __init__(self, ops, slice):
+        if not isinstance(ops, NNOps):
+            raise ValueError('ops must be instance of NNOps, but given argument '
+                             'has %s' % str(type(ops)))
+        super(NNSliceOps, self).__init__()
+        self.ops = ops
+        if not isinstance(slice, (tuple, list)):
+            slice = [slice]
+        self.slice = slice
+
+    def _initialize(self, x):
+        return NNConfig()
+
+    def _apply(self, x, **kwargs):
+        y = self.ops.apply(x, **kwargs)
+        return_list = True
+        if not isinstance(y, (tuple, list)):
+            return_list = False
+            y = [y]
+        # apply slice and calculate the shape
+        output = []
+        for i in y:
+            shape = K.get_shape(i)
+            i = i[self.slice]
+            # good to calculate new output shape
+            if isinstance(shape, (tuple, list)):
+                new_shape = []
+                for dim, idx in zip(shape, self.slice):
+                    if isinstance(idx, numbers.Number):
+                        dim = -1
+                    elif dim is not None and isinstance(idx, slice):
+                        dim = idx.indices(dim)
+                        dim = dim[1] - dim[0]
+                    # -1 mean delete that dimension because of int index
+                    if dim > 0 or dim is None:
+                        new_shape.append(dim)
+                # slice is not specified for all dimension
+                if len(new_shape) < K.ndim(i):
+                    new_shape += shape[len(self.slice):]
+                # add the new shape
+                K.add_shape(i, new_shape)
+            output.append(i)
+        # return output
+        if return_list:
+            return output
+        return output[0]
+
+    def __str__(self):
+        ops_format = '<ops: %s, name: %s, init: %s, slice: %s>'
+        return ops_format % (self.ops.__class__.__name__, self.ops.name,
+                             self.ops._configuration is not None,
+                             str(self.slice))
 
 
 # ===========================================================================
