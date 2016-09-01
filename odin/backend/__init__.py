@@ -111,8 +111,8 @@ def rnn_decorator(*args, **kwargs):
     --------
     sub-parameters is the addition parameters that the step funciton will
     accept
-    The arguments inputed directly to the function will override the funciton
-    in container object (i.e. the firs argument of class methdo)
+    The arguments inputed directly to the function will override the arguments
+    in container object
 
     Example
     -------
@@ -139,19 +139,6 @@ def rnn_decorator(*args, **kwargs):
             value = getattr(container, name, None)
         return value
 
-    def find_attr(name, type, container, kwargs, default):
-        # find attribute with given name in kwargs and container,
-        # given the type must match given type.
-        name = str(name)
-        val = default
-        if name in kwargs:
-            val = kwargs[name]
-        elif hasattr(container, name):
-            val = getattr(container, name)
-        try:
-            return type(val)
-        except:
-            return default
     #####################################
     # 1. Getting all arguments.
     # Decorator can be used with or without arguments
@@ -199,20 +186,16 @@ def rnn_decorator(*args, **kwargs):
             else:
                 container = args[0]
             # ====== additional parameters ====== #
-            go_backwards = find_attr('go_backwards', types.BooleanType,
-                container, kwargs, False)
-            n_steps = find_attr('n_steps', types.IntType,
-                container, kwargs, None)
-            batch_size = find_attr('batch_size', types.IntType,
-                container, kwargs, None)
-            repeat_states = find_attr('repeat_states', types.BooleanType,
-                container, kwargs, False)
-            name = find_attr('name', types.StringType,
-                container, kwargs, None)
+            go_backwards = kwargs.pop('go_backwards', False)
+            n_steps = kwargs.pop('n_steps', None)
+            batch_size = kwargs.pop('batch_size', None)
+            repeat_states = kwargs.pop('repeat_states', False)
+            name = kwargs.pop('name', None)
             # ====== Update the positional arguments ====== #
             step_args = dict(defaults_args)
             step_args.update(kwargs)
-            for key, value in zip(arg_spec.args, args): # key -> positional_args
+            # key -> positional_args
+            for key, value in zip(arg_spec.args, args):
                 step_args[key] = value
             # ====== looking for all variables ====== #
             sequences_given = [find_arg(i, 'sequences', container, step_args)
@@ -223,7 +206,9 @@ def rnn_decorator(*args, **kwargs):
             if _any(not is_variable(i) and i is not None
                    for i in sequences_given + states_given):
                 raise ValueError('All variables provided to sequences, '
-                                 'contexts, or states must be Variables.')
+                                 'contexts, or states must be Variables.'
+                                 'sequences:%s states:%s' %
+                                 (str(sequences_given), str(states_given)))
             # ====== configuraiton for iterations ====== #
             # Assumes time dimension is the second dimension
             shape = get_shape(sequences_given[0], not_none=True)
@@ -284,13 +269,13 @@ def rnn_decorator(*args, **kwargs):
                                     '.' % (len(states), len(outputs)))
                 return outputs
             # ====== run the scan function ====== #
-            # print('Sequences:', sequences_given)
-            # print('States:', states_given)
-            # print('Gobackward:', go_backwards)
-            # print('NSteps:', n_steps)
-            # print('BatchSize:', batch_size)
-            # print('Repeat:', repeat_states)
-            # print('Name:', name)
+            print('Sequences:', sequences_given)
+            print('States:', states_given)
+            print('Gobackward:', go_backwards)
+            print('NSteps:', n_steps)
+            print('BatchSize:', batch_size)
+            print('Repeat:', repeat_states)
+            print('Name:', name)
             results, updates = Scan(
                 scan_function,
                 sequences=[i for i in sequences_given if i is not None],

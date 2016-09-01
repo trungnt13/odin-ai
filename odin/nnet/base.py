@@ -20,6 +20,7 @@ from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         BATCH_NORM_POPULATION_MEAN,
                         BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_STDEV)
+from odin.utils import as_tuple
 from odin.utils.decorators import autoinit, cache
 
 # ===========================================================================
@@ -28,6 +29,50 @@ from odin.utils.decorators import autoinit, cache
 _primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
                     types.FunctionType, numbers.Number, types.NoneType,
                     K.init.constant)
+
+
+def _initialize_param(spec, shape):
+    """ return a ndarray or trainable_variable """
+    #####################################
+    # 0. initializing function.
+    if hasattr(spec, '__call__'):
+        spec = spec(shape)
+    #####################################
+    # 1. Shared variable, just check the shape.
+    if K.is_trainable_variable(spec):
+        spec_shape = K.get_shape(spec)
+        if not isinstance(spec_shape, tuple):
+            spec_shape = K.eval(spec_shape)
+        if shape is None:
+            shape = spec_shape
+        elif tuple(shape) != tuple(spec_shape):
+            raise Exception('Given variable has different shape from requirement'
+                            ', %s != %s' % (str(spec_shape), str(shape)))
+    #####################################
+    # 2. expression, we can only check number of dimension.
+    elif K.is_variable(spec):
+        # We cannot check the shape here, Theano expressions (even shared
+        # variables) do not have a fixed compile-time shape. We can check the
+        # dimensionality though.
+        # Note that we cannot assign a name here. We could assign to the
+        # `name` attribute of the variable, but the user may have already
+        # named the variable and we don't want to override this.
+        if shape is not None and K.ndim(spec) != len(shape):
+            raise Exception("parameter variable has %d dimensions, should be "
+                            "%d" % (spec.ndim, len(shape)))
+    #####################################
+    # 3. numpy ndarray, create shared variable wraper for it.
+    elif isinstance(spec, np.ndarray):
+        if shape is not None and spec.shape != shape:
+            raise RuntimeError("parameter array has shape %s, should be "
+                               "%s" % (spec.shape, shape))
+    #####################################
+    # 5. Exception.
+    else:
+        raise RuntimeError("cannot initialize parameters: 'spec' is not "
+                           "a numpy array, a Theano expression, or a "
+                           "callable")
+    return spec, shape
 
 
 def _recurrsive_extract_shape(x):
@@ -64,7 +109,27 @@ class NNConfig(object):
         raise AttributeError('Cannot find attribute={} in arguments and parameters'
                              '.'.format(name))
 
-    def create_params(self, spec, shape, name, nnops, roles=[]):
+    def create_params(self, spec, shape, name, nnops, roles=[],
+                      nb_params=1):
+        """
+        Parameters
+        ----------
+        spec: variable, numpy.ndarray, function
+            specification for initializing the weights
+        shape: tuple, list
+            expected shape for given variable
+        name: str
+            name for the variable
+        nnops: NNOps
+            parent operator of this parameters
+        roles: odin.roles.VariableRole
+            categories of this variable
+        nb_params: int
+            number of parameters that horizontally stacked into
+            given `shape (e.g. nb_params=2, create 2 parameters with
+            given `shape and horizontally stack them into 1 parameters)
+            * do NOT support when `spec` is variable.
+        """
         if not isinstance(roles, (tuple, list)):
             roles = [roles]
         if not isinstance(nnops, NNOps):
@@ -77,61 +142,40 @@ class NNConfig(object):
                 "Tried to create param with shape=%r, name=%r") %
                 (shape, name))
 
-        #####################################
-        # 1. Shared variable, just check the shape.
-        if K.is_trainable_variable(spec):
-            spec_shape = K.eval(K.get_shape(spec))
-            if shape is None:
-                shape = spec_shape
-            elif tuple(shape) != tuple(spec_shape):
-                self.raise_arguments('Given variable has different shape '
-                                     'from requirement, %s != %s' %
-                                     (str(spec_shape), str(shape)))
-        #####################################
-        # 2. expression, we can only check number of dimension.
-        elif K.is_variable(spec):
-            # We cannot check the shape here, Theano expressions (even shared
-            # variables) do not have a fixed compile-time shape. We can check the
-            # dimensionality though.
-            # Note that we cannot assign a name here. We could assign to the
-            # `name` attribute of the variable, but the user may have already
-            # named the variable and we don't want to override this.
-            if shape is not None and K.ndim(spec) != len(shape):
-                self.raise_arguments("parameter variable has %d dimensions, "
-                                   "should be %d" % (spec.ndim, len(shape)))
-        #####################################
-        # 3. numpy ndarray, create shared variable wraper for it.
-        elif isinstance(spec, np.ndarray):
-            if shape is not None and spec.shape != shape:
-                raise RuntimeError("parameter array has shape %s, should be "
-                                   "%s" % (spec.shape, shape))
+        # ====== create parameters ====== #
+        spec = as_tuple(spec, nb_params)
+        spec = [_initialize_param(s, shape) for s in spec]
+        # check shape returned
+        shape = list(set([i[-1] for i in spec]))
+        if len(shape) > 1:
+            raise Exception('shape are inconsitent among all given "spec", the '
+                            'created shape is: %s' % str(shape))
+        shape = shape[0]
+        # check spec returned
+        spec = [i[0] for i in spec]
+        if isinstance(spec[0], np.ndarray):
             with K.variable_scope(nnops.name):
+                spec = np.concatenate(spec, axis=-1)
+                shape = spec.shape
                 spec = K.variable(spec, name=name)
-        #####################################
-        # 4. initializing function.
-        elif hasattr(spec, '__call__'):
-            arr = spec(shape)
-            if K.is_trainable_variable(arr):
-                spec = arr
-            elif K.is_variable(arr) and K.ndim(arr) == len(shape):
-                spec = arr
-            elif isinstance(arr, np.ndarray):
+        elif K.is_trainable_variable(spec[0]):
+            if nb_params > 1:
                 with K.variable_scope(nnops.name):
-                    spec = K.variable(arr, name=name)
-        #####################################
-        # 5. Exception.
-        else:
-            raise RuntimeError("cannot initialize parameters: 'spec' is not "
-                               "a numpy array, a Theano expression, or a "
-                               "callable")
-        # ====== create and return params ====== #
+                    spec = np.concatenate([K.get_value(i) for i in spec], axis=-1)
+                    shape = spec.shape
+                    spec = K.variable(spec, name=name)
+        elif K.is_variable(spec[0]) and nb_params > 1:
+            shape = (shape[0] * nb_params,) if len(shape) == 1 \
+                else shape[:-1] + (shape[-1] * nb_params,)
+            spec = K.concatenate(spec, axis=-1)
+            spec.name = nnops.name + '/' + name
+        # ====== assign annotations ====== #
         for i in roles:
             if isinstance(i, VariableRole):
                 add_role(spec, i)
-        if not K.is_trainable_variable(spec):
-            spec.name = name
         # return actual variable or expression
-        for i, j in enumerate(self._paramters): # override other parameters with same name
+        # override other parameters with same name
+        for i, j in enumerate(self._paramters):
             if j.name == name:
                 self._paramters[i] = spec
         if spec not in self._paramters:
@@ -540,24 +584,19 @@ class ParametricRectifier(NNOps):
     Original work Copyright (c) 2014-2015 lasagne contributors
     All rights reserved.
     LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-
     A layer that applies parametric rectify activation to its input
     following [1]_ (http://arxiv.org/abs/1502.01852)
-
     Equation for the parametric rectifier linear unit:
     :math:`\\varphi(x) = \\max(x,0) + \\alpha \\min(x,0)`
-
     Parameters
     ----------
     incoming : a :class:`Layer` instance or a tuple
         The layer feeding into this layer, or the expected input shape
-
     alpha : Theano shared variable, expression, numpy array or callable
         Initial value, expression or initializer for the alpha values. The
         shape must match the incoming shape, skipping those axes the alpha
         values are shared over (see the example below).
         See :func:`lasagne.utils.create_param` for more information.
-
     shared_axes : 'auto', 'all', int or tuple of int
         The axes along which the parameters of the rectifier units are
         going to be shared. If ``'auto'`` (the default), share over all axes
@@ -565,23 +604,19 @@ class ParametricRectifier(NNOps):
         minibatch dimension for dense layers, and additionally over all
         spatial dimensions for convolutional layers. If ``'all'``, share over
         all axes, which corresponds to a single scalar parameter.
-
     **kwargs
         Any additional keyword arguments are passed to the `Layer` superclass.
-
      References
     ----------
     .. [1] K He, X Zhang et al. (2015):
        Delving Deep into Rectifiers: Surpassing Human-Level Performance on
        ImageNet Classification,
        http://link.springer.com/chapter/10.1007/3-540-49430-8_2
-
     Notes
     -----
     The alpha parameter dimensionality is the input dimensionality minus the
     number of axes it is shared over, which matches the same convention as
     the :class:`BiasLayer`.
-
     >>> layer = ParametricRectifierLayer((20, 3, 28, 28), shared_axes=(0, 3))
     >>> layer.alpha.get_value().shape
     (3, 28)
@@ -620,124 +655,3 @@ class ParametricRectifier(NNOps):
                    for input_axis in range(K.ndim(x))]
         alpha = K.dimshuffle(self.alpha, pattern)
         return K.relu(x, alpha)
-
-
-class Switcher(NNOps):
-    """ Simple Ops, perform specific Ops while training and other one for
-    deploying
-    """
-
-    def __init__(self, training, deploying, **kwargs):
-        super(Switcher, self).__init__(**kwargs)
-        self.training = training
-        self.deploying = deploying
-
-    def _initialize(self, *args, **kwargs):
-        return NNConfig()
-
-    def _apply(self, *args, **kwargs):
-        is_training = False
-        for i in chain(args, kwargs.values()):
-            if K.is_variable(i) and K.is_training(i):
-                is_training = True
-        if is_training:
-            return self.training(*args, **kwargs)
-        else:
-            return self.deploying(*args, **kwargs)
-
-    def _transpose(self):
-        if hasattr(self.training, 'T') and hasattr(self.deploying, 'T'):
-            return Switcher(self.training.T, self.deploying.T,
-                            name=self.name + '_transpose')
-        raise Exception('One of training or deploying ops do not support transpose.')
-
-
-class Sequence(NNOps):
-
-    """ Sequence of Operators
-    Parameters
-    ----------
-    strict_transpose : bool
-        if True, only operators with transposed implemented are added
-        to tranpose operator
-
-    Example
-    -------
-    """
-
-    @autoinit
-    def __init__(self, ops, strict_transpose=False, **kwargs):
-        super(Sequence, self).__init__(**kwargs)
-        self.ops = []
-        if hasattr(strict_transpose, '__call__'):
-            raise Exception('You made a funny mistake, ops must be list.')
-        if not isinstance(ops, (tuple, list)):
-            ops = [ops]
-        for i in ops:
-            if hasattr(i, '__call__'):
-                self.ops.append(i)
-
-    @property
-    def parameters(self):
-        all_parameters = list(chain(
-            *[i.parameters for i in self.ops if hasattr(i, 'parameters')]))
-        return [i for i in all_parameters if has_roles(i, PARAMETER)]
-
-    def _initialize(self, *args, **kwargs):
-        return NNConfig()
-
-    def _apply(self, x):
-        for op in self.ops:
-            x = op(x)
-        return x
-
-    def _transpose(self):
-        transpose_ops = []
-        for i in self.ops:
-            if hasattr(i, 'T'):
-                transpose_ops.append(i.T)
-            elif not self.strict_transpose:
-                transpose_ops.append(i)
-        # reversed the order of ops for transpose
-        transpose_ops = list(reversed(transpose_ops))
-        seq = Sequence(transpose_ops)
-        return seq
-
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return self.ops.__getitem__(key)
-        elif isinstance(key, slice):
-            return Sequence(self.ops.__getitem__(key))
-        elif isinstance(key, str):
-            for i in self.ops:
-                if hasattr(i, '_name') and i._name == key:
-                    return i
-        raise ValueError('key can only be int, slice or str.')
-
-    def __setitem__(self, key, value):
-        return self.ops.__setitem__(key, value)
-
-    # ==================== Arithemic operator ==================== #
-    def __add__(self, other):
-        return Sequence(self.ops + other.ops)
-
-    def __sub__(self, other):
-        return Sequence([i for i in self.ops if i not in other.ops])
-
-    def __iadd__(self, other):
-        self.ops += other.ops
-
-    def __isub__(self, other):
-        self.ops = [i for i in self.ops if i not in other.ops]
-
-    def __and__(self, other):
-        return Sequence([i for i in self.ops if i in other.ops])
-
-    def __iand__(self, other):
-        self.ops = [i for i in self.ops if i in other.ops]
-
-    def __or__(self, other):
-        return self.__add__(other)
-
-    def __ior__(self, other):
-        return self.__iadd__(other)
