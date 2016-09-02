@@ -428,7 +428,7 @@ class EarlyStop(Callback):
         self.patience = int(patience)
         self._current_patience = self.patience
 
-        if get_value is not None and not hasattr(get_value, '__call__'):
+        if get_value is not None and not callable(get_value):
             raise ValueError('get_value must callable')
         self.get_value = functionable(get_value)
 

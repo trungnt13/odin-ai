@@ -17,6 +17,14 @@ from odin.config import autoconfig
 import lasagne
 
 
+def random(*shape):
+    return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+
+
+def zeros(*shape):
+    return np.zeros(shape).astype(autoconfig['floatX'])
+
+
 class CompareTest(unittest.TestCase):
 
     def setUp(self):
@@ -25,15 +33,67 @@ class CompareTest(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_gru(self):
+        # ====== pre-define parameters ====== #
+        W_in_to_updategate = random(28, 32)
+        W_hid_to_updategate = random(32, 32)
+        b_updategate = random(32)
+
+        W_in_to_resetgate = random(28, 32)
+        W_hid_to_resetgate = random(32, 32)
+        b_resetgate = random(32)
+
+        W_in_to_hidden_update = random(28, 32)
+        W_hid_to_hidden_update = random(32, 32)
+        b_hidden_update = random(32)
+
+        hid_init = random(1, 32)
+        x = random(12, 28, 28)
+        # ====== odin ====== #
+        X = K.placeholder(shape=(None, 28, 28), name='X')
+        f = N.Sequence([
+            N.Merge([N.Dense(32, W_init=W_in_to_updategate, b_init=b_updategate, activation=K.linear, name='update'),
+                     N.Dense(32, W_init=W_in_to_resetgate, b_init=b_resetgate, activation=K.linear, name='reset'),
+                     N.Dense(32, W_init=W_in_to_hidden_update, b_init=b_hidden_update, activation=K.linear, name='hidden')],
+                    merge_function=K.concatenate),
+            N.GRU(32, activation=K.tanh, gate_activation=K.sigmoid,
+                  W_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update],
+                  state_init=hid_init)
+        ])
+        y = f(X)
+        f = K.function(X, y)
+        out1 = f(x)[0]
+        # ====== lasagne ====== #
+        l = lasagne.layers.InputLayer(shape=(None, 28, 28))
+        l.input_var = X
+        l = lasagne.layers.GRULayer(l, num_units=32,
+            updategate=lasagne.layers.Gate(W_cell=None,
+                                           W_in=W_in_to_updategate,
+                                           W_hid=W_hid_to_updategate,
+                                           b=b_updategate,
+                            nonlinearity=lasagne.nonlinearities.sigmoid),
+            resetgate=lasagne.layers.Gate(W_cell=None,
+                                          W_in=W_in_to_resetgate,
+                                          W_hid=W_hid_to_resetgate,
+                                          b=b_resetgate,
+                            nonlinearity=lasagne.nonlinearities.sigmoid),
+            hidden_update=lasagne.layers.Gate(W_cell=None,
+                                              W_in=W_in_to_hidden_update,
+                                              W_hid=W_hid_to_hidden_update,
+                                              b=b_hidden_update,
+                            nonlinearity=lasagne.nonlinearities.tanh),
+            hid_init=hid_init,
+            precompute_input=True
+        )
+        y = lasagne.layers.get_output(l)
+        f = K.function(X, y)
+        out2 = f(x)
+        # ====== test ====== #
+        self.assertEqual(np.sum(np.abs(out1 - out2)), 0.)
+
     def test_odin_vs_lasagne(self):
         X1 = K.placeholder(shape=(None, 28, 28))
         X2 = K.placeholder(shape=(None, 784))
-
-        def random(*shape):
-            return np.random.rand(*shape).astype(autoconfig['floatX'])
-
-        def zeros(*shape):
-            return np.zeros(shape).astype(autoconfig['floatX'])
 
         def lasagne_net1():
             i = lasagne.layers.InputLayer(shape=(None, 784))

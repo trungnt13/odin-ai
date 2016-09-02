@@ -35,7 +35,7 @@ def _initialize_param(spec, shape):
     """ return a ndarray or trainable_variable """
     #####################################
     # 0. initializing function.
-    if hasattr(spec, '__call__'):
+    if callable(spec):
         spec = spec(shape)
     #####################################
     # 1. Shared variable, just check the shape.

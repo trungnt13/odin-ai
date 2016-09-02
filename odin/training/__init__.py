@@ -31,7 +31,7 @@ class Task(object):
     def __init__(self, func, data, epoch, p, batch_size, seed, shuffle_level,
                  name=None):
         super(Task, self).__init__()
-        if not hasattr(func, '__call__'):
+        if not callable(func):
             raise ValueError('func must be instance of theano.Function or '
                              'python function, method, or hasattr __call__.')
         if not isinstance(data, (tuple, list)):

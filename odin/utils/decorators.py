@@ -306,7 +306,7 @@ def autoattr(*args, **kwargs):
             if len(args) > 0:
                 for i, j in attrs.iteritems():
                     if hasattr(args[0], i):
-                        if hasattr(j, '__call__'):
+                        if callable(j):
                             setattr(args[0], str(i), j(getattr(args[0], i)))
                         else:
                             setattr(args[0], str(i), j)
@@ -735,7 +735,7 @@ def terminatable_iterator(func=None, finish_callback=None):
     Do NOT modify `func` argument yourself.
     """
     if finish_callback is not None and \
-    (not hasattr(finish_callback, '__call__') or
+    (not callable(finish_callback) or
      len(inspect.getargspec(finish_callback).args) == 0):
         raise ValueError('finish_callback must be callable and accept at least '
                          '1 argument, which indicate iterator was forced to '

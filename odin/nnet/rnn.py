@@ -52,6 +52,16 @@ def _slice_x(X, idx):
 
 
 # ===========================================================================
+# Generalized RNN
+# ===========================================================================
+class GeneralizedRNN(BaseRNN):
+    """ GeneralizedRNN """
+
+    def __init__(self, **kwargs):
+        super(GeneralizedRNN, self).__init__(**kwargs)
+
+
+# ===========================================================================
 # RNN
 # ===========================================================================
 class SimpleRecurrent(BaseRNN):
@@ -124,6 +134,22 @@ class SimpleRecurrent(BaseRNN):
 
 
 class GRU(BaseRNN):
+
+    """
+    Parameters
+    ----------
+    num_units: int
+        pass
+    activation: callable
+        activation for hidden state
+    gate_activation: callable
+        activation for each gate
+    W_init: variable, ndarray or callable
+        Initializer for hidden-to-hidden weight matrices, if a list is given,
+        the weights will be initialized in following order:
+        "[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update]"
+
+    """
 
     def __init__(self, num_units,
                  activation=K.tanh,
@@ -244,3 +270,13 @@ class GRU(BaseRNN):
                              roles=WEIGHT,
                              nb_params=3)
         return config
+
+
+# ===========================================================================
+# LSTM
+# ===========================================================================
+class LSTM(BaseRNN):
+    """ LSTM """
+
+    def __init__(self, arg):
+        super(LSTM, self).__init__()

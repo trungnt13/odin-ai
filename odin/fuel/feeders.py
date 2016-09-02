@@ -683,7 +683,7 @@ class LabelParse(FeederRecipe):
             label_func = lambda x: x
         elif isinstance(label_dict, dict):
             label_func = lambda x: label_dict[x]
-        elif hasattr(label_dict, '__call__'):
+        elif callable(label_dict):
             label_func = label_dict
         else:
             raise ValueError('label_dict must be a dictionary, function or None.')
@@ -904,7 +904,7 @@ class CreateBatch(FeederRecipe):
         self.batch_size = 256
         if batch_filter is None:
             batch_filter = lambda args: args
-        elif not hasattr(batch_filter, '__call__'):
+        elif not callable(batch_filter):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')
         self.batch_filter = batch_filter

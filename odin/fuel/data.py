@@ -137,7 +137,7 @@ class Data(object):
 
     # ====== transformer ====== #
     def transform(self, transformer):
-        if hasattr(transformer, '__call__'):
+        if callable(transformer):
             self._transformer = transformer
         return self
 
@@ -1597,7 +1597,7 @@ class DataMerge(MutableData):
         if len(self._data) == 0:
             raise ValueError('Cannot find any instance of Data from given argument.')
 
-        if not hasattr(merge_func, '__call__'):
+        if not callable(merge_func):
             raise ValueError('Merge operator must be callable and accept at '
                              'least one argument.')
         self._merge_func = merge_func

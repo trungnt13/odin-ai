@@ -139,10 +139,10 @@ class MapReduce(object):
         Any None return by features_func will be ignored
 
         '''
-        if not hasattr(map_func, '__call__') or \
-            (reduce_func is not None and not hasattr(reduce_func, '__call__')) or \
-            (finalize_func is not None and not hasattr(finalize_func, '__call__')) or \
-                (init_func is not None and not hasattr(init_func, '__call__')):
+        if not callable(map_func) or \
+            (reduce_func is not None and not callable(reduce_func)) or \
+            (finalize_func is not None and not callable(finalize_func)) or \
+                (init_func is not None and not callable(init_func)):
             raise ValueError('map, reduce, finalize and init function must be callable'
                              ' object, but map_func={}, reduce_func={}, '
                              'finalize_func={} and init_func={}'
