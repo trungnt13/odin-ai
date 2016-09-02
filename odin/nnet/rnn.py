@@ -180,7 +180,6 @@ class GRU(BaseRNN):
         tied_input = False
         if input_shape[-1] == self.num_units:
             tied_input = True
-        print(mask)
         # recurrent
         out = self._rnn(X, init, tied_input, mask,
                         **self.get_recurrent_info())

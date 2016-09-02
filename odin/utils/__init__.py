@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import math
+import types
 import signal
 import timeit
 import numbers
@@ -12,7 +13,7 @@ import contextlib
 import platform
 import argparse
 from multiprocessing import cpu_count, Value, Lock, current_process
-from collections import OrderedDict, deque
+from collections import OrderedDict, deque, Iterable
 
 import shutil
 from six.moves.urllib.request import urlopen
@@ -388,7 +389,7 @@ def as_shape_tuple(shape):
     return shape
 
 
-def as_tuple(x, N, t=None):
+def as_tuple(x, N=None, t=None):
     """
     Coerce a value to a tuple of given length (and possibly given type).
 
@@ -420,20 +421,28 @@ def as_tuple(x, N, t=None):
 
     LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
     """
-    try:
-        X = tuple(x) if not isinstance(x, str) else (x,)
-    except TypeError:
-        X = (x,) * N
-
-    if (t is not None) and not all(isinstance(v, t) for v in X):
+    if not isinstance(x, tuple):
+        if isinstance(x, (types.GeneratorType, types.ListType)):
+            x = tuple(x)
+        else:
+            x = (x,)
+    # ====== check length ====== #
+    if isinstance(N, numbers.Number):
+        N = int(N)
+        if len(x) == 1:
+            x = x * N
+        elif len(x) != N:
+            raise ValueError('x has length=%d, but required length N=%d' %
+                             (len(x), N))
+    # ====== check type ====== #
+    if (t is not None) and not all(isinstance(v, t) for v in x):
         raise TypeError("expected a single value or an iterable "
                         "of {0}, got {1} instead".format(t.__name__, x))
+    return x
 
-    if len(X) != N:
-        raise ValueError("expected a single value or an iterable "
-                         "with length {0}, got {1} instead".format(N, x))
 
-    return X
+def as_list(x, N=None, t=None):
+    return list(as_tuple(x, N, t))
 
 
 # ===========================================================================
