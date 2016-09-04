@@ -65,6 +65,25 @@ class GeneralizedRNN(BaseRNN):
 # RNN
 # ===========================================================================
 class SimpleRecurrent(BaseRNN):
+    """
+    Example
+    -------
+    >>> import numpy as np
+    >>> from odin import backend as K, nnet as N
+    >>> def random(*shape):
+    ...     return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+    >>> def random_bin(*shape):
+    ...     return np.random.randint(0, 2, size=shape).astype('int32')
+    >>> W = [random(28, 32), random(32, 32), random(32), random_bin(12, 28)]
+    >>> f = N.Sequence([
+    ...     N.Dense(num_units=32, W_init=W[0], b_init=W[2],
+    ...         activation=K.linear),
+    ...     N.SimpleRecurrent(num_units=32, activation=K.relu,
+    ...         W_init=W[1])
+    >>> ])
+    >>> return X1, f(X1, hid_init=zeros(1, 32))[0]
+
+    """
 
     def __init__(self, num_units, activation=K.relu,
                  W_init=K.init.glorot_uniform, **kwargs):

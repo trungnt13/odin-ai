@@ -10,8 +10,7 @@ from six.moves import zip, range
 
 import numpy as np
 
-from odin import backend as K
-from odin import nnet as N
+from odin import backend as K, nnet as N
 from odin.config import autoconfig
 
 import lasagne
