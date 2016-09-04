@@ -31,8 +31,7 @@ class RNNTest(unittest.TestCase):
         X1 = K.placeholder(shape=(None, 8, 32))
         X2 = K.placeholder(shape=(None, 8, 32))
         X3 = K.placeholder(shape=(None, 8, 33))
-        f = N.SimpleRecurrent(32, activation=K.relu,
-                              state_init=K.init.glorot_uniform)
+        f = N.SimpleRecurrent(32, activation=K.relu)
 
         y = f(X, mask=K.ones(shape=(128, 8)))
         graph = K.ComputationGraph(y)

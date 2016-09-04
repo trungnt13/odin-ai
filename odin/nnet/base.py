@@ -164,7 +164,9 @@ class NNConfig(object):
                     spec = np.concatenate([K.get_value(i) for i in spec], axis=-1)
                     shape = spec.shape
                     spec = K.variable(spec, name=name)
-        elif K.is_variable(spec[0]) and nb_params > 1:
+            else:
+                spec = spec[0]
+        elif K.is_variable(spec[0]):
             shape = (shape[0] * nb_params,) if len(shape) == 1 \
                 else shape[:-1] + (shape[-1] * nb_params,)
             spec = K.concatenate(spec, axis=-1)

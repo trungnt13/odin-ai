@@ -21,6 +21,10 @@ def random(*shape):
     return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
 
 
+def random_bin(*shape):
+    return np.random.randint(0, 2, size=shape).astype('int32')
+
+
 def zeros(*shape):
     return np.zeros(shape).astype(autoconfig['floatX'])
 
@@ -33,39 +37,128 @@ class CompareTest(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_lstm(self):
+        W_in_to_ingate = random(28, 32) / 12
+        W_hid_to_ingate = random(32, 32) / 12
+        b_ingate = random(32) / 12
+
+        W_in_to_forgetgate = random(28, 32) / 12
+        W_hid_to_forgetgate = random(32, 32) / 12
+        b_forgetgate = random(32) / 12
+
+        W_in_to_cell = random(28, 32) / 12
+        W_hid_to_cell = random(32, 32) / 12
+        b_cell = random(32) / 12
+
+        W_in_to_outgate = random(28, 32) / 12
+        W_hid_to_outgate = random(32, 32) / 12
+        b_outgate = random(32) / 12
+
+        W_cell_to_ingate = random(32) / 12
+        W_cell_to_forgetgate = random(32) / 12
+        W_cell_to_outgate = random(32) / 12
+
+        cell_init = random(1, 32) / 12
+        hid_init = random(1, 32) / 12
+        # ====== pre-define parameters ====== #
+        x = random(12, 28, 28)
+        x_mask = np.random.randint(0, 2, size=(12, 28))
+        # x_mask = np.ones(shape=(12, 28))
+        # ====== odin ====== #
+        X = K.placeholder(shape=(None, 28, 28), name='X')
+        mask = K.placeholder(shape=(None, 28), name='mask', dtype='int32')
+
+        f = N.Sequence([
+            N.Merge([N.Dense(32, W_init=W_in_to_ingate, b_init=b_ingate, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_forgetgate, b_init=b_forgetgate, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_cell, b_init=b_cell, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_outgate, b_init=b_outgate, activation=K.linear)
+                    ], merge_function=K.concatenate),
+            N.LSTM(32, activation=K.tanh, gate_activation=K.sigmoid,
+                  W_init=[W_hid_to_ingate, W_hid_to_forgetgate, W_hid_to_cell, W_hid_to_outgate],
+                  W_peepholes=[W_cell_to_ingate, W_cell_to_forgetgate, W_cell_to_outgate],
+                  name='lstm')
+        ])
+        y = f(X, hid_init=hid_init, cell_init=cell_init, mask=mask)
+        f = K.function([X, mask], y)
+        out1 = f(x, x_mask)[0]
+
+        # ====== lasagne ====== #
+        l = lasagne.layers.InputLayer(shape=(None, 28, 28))
+        l.input_var = X
+        l_mask = lasagne.layers.InputLayer(shape=(None, 28))
+        l_mask.input_var = mask
+        l = lasagne.layers.LSTMLayer(l, num_units=32,
+            ingate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_ingate,
+                         W_hid=W_hid_to_ingate,
+                         W_cell=W_cell_to_ingate,
+                         b=b_ingate),
+            forgetgate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_forgetgate,
+                         W_hid=W_hid_to_forgetgate,
+                         W_cell=W_cell_to_forgetgate,
+                         b=b_forgetgate),
+            cell=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.tanh,
+                         W_in=W_in_to_cell,
+                         W_hid=W_hid_to_cell,
+                         W_cell=None,
+                         b=b_cell),
+            outgate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_outgate,
+                         W_hid=W_hid_to_outgate,
+                         W_cell=W_cell_to_outgate,
+                         b=b_outgate),
+            nonlinearity=lasagne.nonlinearities.tanh,
+            cell_init=cell_init,
+            hid_init=hid_init,
+            mask_input=l_mask,
+            precompute_input=True,
+            backwards=False
+        )
+        y = lasagne.layers.get_output(l)
+        f = K.function([X, mask], y)
+        out2 = f(x, x_mask)
+        # ====== test ====== #
+        self.assertEqual(np.sum(np.abs(out1 - out2)), 0.)
+
     def test_gru(self):
         # ====== pre-define parameters ====== #
         W_in_to_updategate = random(28, 32)
         W_hid_to_updategate = random(32, 32)
         b_updategate = random(32)
-
+        #
         W_in_to_resetgate = random(28, 32)
         W_hid_to_resetgate = random(32, 32)
         b_resetgate = random(32)
-
+        #
         W_in_to_hidden_update = random(28, 32)
         W_hid_to_hidden_update = random(32, 32)
         b_hidden_update = random(32)
-
+        #
         hid_init = random(1, 32)
         x = random(12, 28, 28)
+        x_mask = np.random.randint(0, 2, size=(12, 28))
         # ====== odin ====== #
         X = K.placeholder(shape=(None, 28, 28), name='X')
+        mask = K.placeholder(shape=(None, 28), name='mask', dtype='int32')
+
         f = N.Sequence([
             N.Merge([N.Dense(32, W_init=W_in_to_updategate, b_init=b_updategate, activation=K.linear, name='update'),
                      N.Dense(32, W_init=W_in_to_resetgate, b_init=b_resetgate, activation=K.linear, name='reset'),
                      N.Dense(32, W_init=W_in_to_hidden_update, b_init=b_hidden_update, activation=K.linear, name='hidden')],
                     merge_function=K.concatenate),
             N.GRU(32, activation=K.tanh, gate_activation=K.sigmoid,
-                  W_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update],
-                  state_init=hid_init)
+                  W_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update])
         ])
-        y = f(X)
-        f = K.function(X, y)
-        out1 = f(x)[0]
+        y = f(X, hid_init=hid_init, mask=mask)
+        f = K.function([X, mask], y)
+        out1 = f(x, x_mask)[0]
         # ====== lasagne ====== #
         l = lasagne.layers.InputLayer(shape=(None, 28, 28))
         l.input_var = X
+        l_mask = lasagne.layers.InputLayer(shape=(None, 28))
+        l_mask.input_var = mask
         l = lasagne.layers.GRULayer(l, num_units=32,
             updategate=lasagne.layers.Gate(W_cell=None,
                                            W_in=W_in_to_updategate,
@@ -83,11 +176,12 @@ class CompareTest(unittest.TestCase):
                                               b=b_hidden_update,
                             nonlinearity=lasagne.nonlinearities.tanh),
             hid_init=hid_init,
+            mask_input=l_mask,
             precompute_input=True
         )
         y = lasagne.layers.get_output(l)
-        f = K.function(X, y)
-        out2 = f(x)
+        f = K.function([X, mask], y)
+        out2 = f(x, x_mask)
         # ====== test ====== #
         self.assertEqual(np.sum(np.abs(out1 - out2)), 0.)
 
@@ -96,6 +190,7 @@ class CompareTest(unittest.TestCase):
         X2 = K.placeholder(shape=(None, 784))
 
         def lasagne_net1():
+            "FNN"
             i = lasagne.layers.InputLayer(shape=(None, 784))
             i.input_var = X2
 
@@ -106,6 +201,7 @@ class CompareTest(unittest.TestCase):
             return X2, lasagne.layers.get_output(i)
 
         def odin_net1():
+            "FNN"
             f = N.Sequence([
                 N.Dense(32, W_init=random(784, 32), b_init=zeros(32),
                     activation=K.relu),
@@ -115,6 +211,7 @@ class CompareTest(unittest.TestCase):
             return X2, f(X2)
 
         def lasagne_net2():
+            "CNN"
             i = lasagne.layers.InputLayer(shape=(None, 28, 28))
             i.input_var = X1
 
@@ -132,6 +229,7 @@ class CompareTest(unittest.TestCase):
             return X1, lasagne.layers.get_output(i)
 
         def odin_net2():
+            "CNN"
             f = N.Sequence([
                 N.Dimshuffle((0, 'x', 1, 2)),
                 N.Conv2D(12, (3, 3), stride=(1, 1), pad='same',
@@ -148,10 +246,11 @@ class CompareTest(unittest.TestCase):
             return X1, f(X1)
 
         def lasagne_net3():
+            "RNN"
             i = lasagne.layers.InputLayer(shape=(None, 28, 28))
             i.input_var = X1
 
-            W = [random(28, 32), random(32, 32), random(32)]
+            W = [random(28, 32), random(32, 32), random(32), random_bin(12, 28)]
             i = lasagne.layers.RecurrentLayer(i, num_units=32,
                 W_in_to_hid=W[0],
                 W_hid_to_hid=W[1],
@@ -169,14 +268,15 @@ class CompareTest(unittest.TestCase):
             return X1, lasagne.layers.get_output(i)
 
         def odin_net3():
-            W = [random(28, 32), random(32, 32), random(32)]
+            "RNN"
+            W = [random(28, 32), random(32, 32), random(32), random_bin(12, 28)]
             f = N.Sequence([
                 N.Dense(num_units=32, W_init=W[0], b_init=W[2],
                     activation=K.linear),
                 N.SimpleRecurrent(num_units=32, activation=K.relu,
-                    W_init=W[1], state_init=zeros(1, 32))
+                    W_init=W[1])
             ])
-            return X1, f(X1)[0]
+            return X1, f(X1, hid_init=zeros(1, 32))[0]
 
         lasagne_list = [lasagne_net1, lasagne_net2, lasagne_net3]
         odin_list = [odin_net1, odin_net2, odin_net3]
