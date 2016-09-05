@@ -633,15 +633,20 @@ def Scan(fn,
          outputs_info=None,
          n_steps=None,
          truncate_gradient=-1,
-         go_backwards=False,
+         backwards=False,
          name=None):
+    """
+    Note
+    ----
+    backwards mode only invert sequences then iterate over them
+    """
     return theano.scan(fn,
                        sequences=sequences,
                        outputs_info=outputs_info,
                        non_sequences=None,
                        n_steps=n_steps,
                        truncate_gradient=truncate_gradient,
-                       go_backwards=go_backwards,
+                       go_backwards=backwards,
                        mode=None,
                        name=name,
                        profile=False,

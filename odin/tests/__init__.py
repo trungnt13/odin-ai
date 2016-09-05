@@ -1,7 +1,7 @@
 import unittest
 
 
-def run():
+def run(device='cpu'):
     tests = [
         'backend_test',
         'nnet_test',
@@ -9,6 +9,8 @@ def run():
         'rnn_test',
         'model_test'
     ]
+    import os
+    os.environ['ODIN'] = '%s,float64'
     for t in tests:
         print('\n************ Running: %s ************' % t)
         exec('from . import %s' % t)

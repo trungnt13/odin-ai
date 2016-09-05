@@ -22,7 +22,7 @@ class BaseRNN(NNOps):
         # ====== defaults recurrent control ====== #
         self.repeat_states = True
         self.iterate = True
-        self.go_backwards = False
+        self.backwards = False
         self.n_steps = None
         self.batch_size = None
 
@@ -30,17 +30,24 @@ class BaseRNN(NNOps):
     def _rnn(self, **kwargs):
         pass
 
-    def get_recurrent_info(self):
-        """ return information that control how this ops recurrently
+    def get_recurrent_info(self, kwargs):
+        """ Return information that control how this ops recurrently
         performed
+
+        Parameters
+        ----------
+        kwargs: keywords arguments
+            all arguments given that will override default configuration
+
         """
+        kwargs = kwargs if isinstance(kwargs, dict) else {}
         return {
-            'iterate': self.iterate,
-            'go_backwards': self.go_backwards,
-            'repeat_states': self.repeat_states,
-            'name': self.name,
-            'n_steps': self.n_steps,
-            'batch_size': self.batch_size,
+            'iterate': kwargs.pop('iterate', self.iterate),
+            'backwards': kwargs.pop('backwards', self.backwards),
+            'repeat_states': kwargs.pop('repeat_states', self.repeat_states),
+            'name': kwargs.pop('name', self.name),
+            'n_steps': kwargs.pop('n_steps', self.n_steps),
+            'batch_size': kwargs.pop('batch_size', self.batch_size),
         }
 
 
@@ -99,10 +106,10 @@ class SimpleRecurrent(BaseRNN):
             next_states = K.switch(mask, next_states, hid_init)
         return next_states
 
-    def _apply(self, X, hid_init=None, mask=None):
+    def _apply(self, X, hid_init=None, mask=None, **kwargs):
         input_shape = K.get_shape(X)
         out = self._rnn(X, hid_init=self.hid_init, mask=mask,
-                        **self.get_recurrent_info())
+                        **self.get_recurrent_info(kwargs))
         for i in out:
             K.add_shape(i, shape=input_shape)
         # only care about the first state
@@ -247,7 +254,7 @@ class GRU(BaseRNN):
             next_states = K.switch(mask, next_states, prev_states)
         return next_states
 
-    def _apply(self, X, hid_init=None, mask=None):
+    def _apply(self, X, hid_init=None, mask=None, **kwargs):
         # check input_shape
         input_shape = K.get_shape(X)
         if input_shape[-1] == self.num_units:
@@ -257,7 +264,7 @@ class GRU(BaseRNN):
             mask = K.expand_dims(mask, dim=-1)
         # recurrent
         out = self._rnn(X, hid_init=self.hid_init, mask=mask,
-                        **self.get_recurrent_info())
+                        **self.get_recurrent_info(kwargs))
         for i in out:
             K.add_shape(i, shape=input_shape)
         # only care about the first state
@@ -438,7 +445,7 @@ class LSTM(BaseRNN):
             next_memory = K.switch(mask, next_memory, prev_memory)
         return next_states, next_memory
 
-    def _apply(self, X, hid_init=None, cell_init=None, mask=None):
+    def _apply(self, X, hid_init=None, cell_init=None, mask=None, **kwargs):
         # check input_shape
         input_shape = K.get_shape(X)
         tied_input = False
@@ -450,7 +457,7 @@ class LSTM(BaseRNN):
         # recurrent
         out = self._rnn(X, hid_init=self.hid_init, cell_init=self.cell_init,
                         tied_input=tied_input, mask=mask,
-                        **self.get_recurrent_info())
+                        **self.get_recurrent_info(kwargs))
         if not self.return_cell_memory:
             out = out[:-1]
         for i in out:

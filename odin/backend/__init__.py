@@ -90,7 +90,7 @@ def rnn_decorator(*args, **kwargs):
     iterate : bool
         If ``True`` iteration through whole sequence is made.
         By default ``True`` (i.e. False <=> stateful recurrent network)
-    go_backwards : bool
+    backwards : bool
         If ``True``, the sequences are processed in backward
         direction. ``False`` by default.
     n_steps: int
@@ -186,7 +186,7 @@ def rnn_decorator(*args, **kwargs):
             else:
                 container = args[0]
             # ====== additional parameters ====== #
-            go_backwards = kwargs.pop('go_backwards', False)
+            backwards = kwargs.pop('backwards', False)
             n_steps = kwargs.pop('n_steps', None)
             batch_size = kwargs.pop('batch_size', None)
             repeat_states = kwargs.pop('repeat_states', False)
@@ -271,7 +271,7 @@ def rnn_decorator(*args, **kwargs):
             # ====== run the scan function ====== #
             print('Sequences:', sequences_given)
             print('States:', states_given)
-            print('Gobackward:', go_backwards)
+            print('Gobackward:', backwards)
             print('NSteps:', n_steps)
             print('BatchSize:', batch_size)
             print('Repeat:', repeat_states)
@@ -281,12 +281,16 @@ def rnn_decorator(*args, **kwargs):
                 sequences=[i for i in sequences_given if i is not None],
                 outputs_info=states_given,
                 n_steps=n_steps,
-                go_backwards=go_backwards,
+                backwards=backwards,
                 name=name)
             # all the result in form (nb_time, nb_samples, trailing_dims)
             # we reshape them back to same as input
             results = [dimshuffle(i, [1, 0] + range(2, ndim(i)))
                        for i in to_list(results)]
+            # Lasagne+blocks: if scan is backward reverse the output
+            # but keras don't do this step (need to validate the performance)
+            # if backwards:
+            # results = [r[:, ::-1] for r in results]
             # ====== adding updates for all results if available ====== #
             if updates:
                 for key, value in updates.iteritems():
