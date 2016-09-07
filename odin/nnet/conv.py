@@ -155,7 +155,7 @@ class BaseConv(NNOps):
     def _apply(self, x):
         # calculate projection
         conved = self.convolve(x)
-        if self.b is None:
+        if not hasattr(self, 'b'):
             activation = conved
         elif self.untie_biases:
             activation = conved + K.expand_dims(self.b, 0)
@@ -224,7 +224,7 @@ class TransposeConv(NNOps):
                             strides=stride,
                             border_mode=border_mode,
                             flip_filters=False) # because default of Conv2D is True
-        if self.b is not None:
+        if hasattr(self, 'b'):
             if self.conv.untie_biases:
                 conved = K.add(conved, K.expand_dims(self.b, 0))
             else:

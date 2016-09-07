@@ -174,14 +174,7 @@ class CostRole(VariableRole):
 COST = CostRole()
 
 
-class PersistentRole(VariableRole):
-    pass
-
-# Any persistent quantity that should be saved as part of the model
-PERSISTENT = PersistentRole()
-
-
-class ParameterRole(PersistentRole):
+class ParameterRole(VariableRole):
     pass
 
 #: A parameter of the model
@@ -272,7 +265,10 @@ class AlgorithmBufferRole(AlgorithmStateRole):
 ALGORITHM_BUFFER = AlgorithmBufferRole()
 
 
-class BatchNormPopulationStatisticsRole(PersistentRole):
+# ===========================================================================
+# Batch normalization roles
+# ===========================================================================
+class BatchNormPopulationStatisticsRole(ParameterRole):
     pass
 
 #: base role for batch normalization population statistics
@@ -286,42 +282,11 @@ class BatchNormPopulationMeanRole(BatchNormPopulationStatisticsRole):
 BATCH_NORM_POPULATION_MEAN = BatchNormPopulationMeanRole()
 
 
-class BatchNormPopulationStdevRole(BatchNormPopulationStatisticsRole):
+class BatchNormPopulationInvStdRole(BatchNormPopulationStatisticsRole):
     pass
 
 #: standard deviations of activations accumulated over the dataset
-BATCH_NORM_POPULATION_STDEV = BatchNormPopulationStdevRole()
-
-
-class BatchNormGraphVariableRole(VariableRole):
-    pass
-
-#: base for roles used for within-graph batch normalization replacement
-BATCH_NORM_GRAPH_VARIABLE = BatchNormGraphVariableRole()
-
-
-class BatchNormOffsetRole(BatchNormGraphVariableRole):
-    pass
-
-#: offset applied in a BatchNormalization application (or its
-#  batch-normalized replacement)
-BATCH_NORM_OFFSET = BatchNormOffsetRole()
-
-
-class BatchNormDivisorRole(BatchNormGraphVariableRole):
-    pass
-
-#: divisor applied in a BatchNormalization application (or its
-#  batch-normalized replacement)
-BATCH_NORM_DIVISOR = BatchNormDivisorRole()
-
-
-class BatchNormMinibatchEstimateRole(BatchNormGraphVariableRole):
-    pass
-
-#: role added to variables that are the result of a batch normalization
-#  replacement, rather than the original population statistics variables.
-BATCH_NORM_MINIBATCH_ESTIMATE = BatchNormMinibatchEstimateRole()
+BATCH_NORM_POPULATION_INVSTD = BatchNormPopulationInvStdRole()
 
 
 class BatchNormScaleParameterRole(ParameterRole):

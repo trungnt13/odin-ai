@@ -7,7 +7,8 @@ from .base import NNOps, NNConfig
 from odin import backend as K
 from odin.utils.decorators import autoinit
 from odin.roles import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
-                        BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_STDEV)
+                        BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_INVSTD,
+                        add_updates)
 
 
 class BatchNorm(NNOps):
@@ -136,9 +137,6 @@ class BatchNorm(NNOps):
         self.activation = K.linear if activation is None else activation
 
     # ==================== abstract method ==================== #
-    # def _transpose(self):
-        # return None
-
     def _initialize(self, x):
         """ This function return NNConfig for given configuration from arg
         and kwargs
@@ -166,55 +164,42 @@ class BatchNorm(NNOps):
         config.create_params(self.mean_init, shape=shape, name='mean',
                              nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
         config.create_params(self.inv_std_init, shape=shape, name='inv_std',
-                             nnops=self, roles=BATCH_NORM_POPULATION_STDEV)
+                             nnops=self, roles=BATCH_NORM_POPULATION_INVSTD)
         return config
 
     def _apply(self, x):
-        import theano
-
         input_shape = K.get_shape(x)
         is_training = K.is_training(x)
         ndim = K.ndim(x)
-        # ====== training mode ====== #
-        input_mean = K.mean(x, self.axes)
-        input_inv_std = K.inv(K.sqrt(K.var(x, self.axes) + self.epsilon))
-
-        # Decide whether to use the stored averages or mini-batch statistics
+        # if is training, normalize input by its own mean and std
         if not is_training:
             mean = self.mean
             inv_std = self.inv_std
-        else: # update the stored averages
-            mean = input_mean
-            inv_std = input_inv_std
-            # Trick: To update the stored statistics, we create memory-aliased
-            # clones of the stored statistics:
-            running_mean = theano.clone(self.mean, share_inputs=False)
-            running_inv_std = theano.clone(self.inv_std, share_inputs=False)
+        else:
+            mean = K.mean(x, self.axes)
+            inv_std = K.inv(K.sqrt(K.var(x, self.axes) + self.epsilon))
             # set a default update for them:
-            running_mean.default_update = ((1 - self.alpha) * running_mean +
-                                           self.alpha * input_mean)
-            running_inv_std.default_update = ((1 - self.alpha) *
-                                              running_inv_std +
-                                              self.alpha * input_inv_std)
-            # and make sure they end up in the graph without participating in
-            # the computation (this way their default_update will be collected
-            # and applied, but the computation will be optimized away):
-            mean += 0 * running_mean
-            inv_std += 0 * running_inv_std
+            running_mean = ((1 - self.alpha) * self.mean +
+                            self.alpha * mean)
+            running_inv_std = ((1 - self.alpha) * self.inv_std +
+                               self.alpha * inv_std)
         # prepare dimshuffle pattern inserting broadcastable axes as needed
         param_axes = iter(range(ndim - len(self.axes)))
         pattern = ['x' if input_axis in self.axes
                    else next(param_axes)
                    for input_axis in range(ndim)]
-
         # apply dimshuffle pattern to all parameters
-        beta = 0 if self.beta is None else K.dimshuffle(self.beta, pattern)
-        gamma = 1 if self.gamma is None else K.dimshuffle(self.gamma, pattern)
-        mean = K.dimshuffle(mean, pattern)
-        inv_std = K.dimshuffle(inv_std, pattern)
-
+        beta = 0 if not hasattr(self, 'beta') else K.dimshuffle(self.beta, pattern)
+        gamma = 1 if not hasattr(self, 'gamma') else K.dimshuffle(self.gamma, pattern)
         # normalize
-        normalized = (x - mean) * (gamma * inv_std) + beta
+        normalized = (x - K.dimshuffle(mean, pattern)) * \
+            (gamma * K.dimshuffle(inv_std, pattern)) + beta
         # set shape for output
         K.add_shape(normalized, input_shape)
-        return self.activation(normalized)
+        # activated output
+        output = self.activation(normalized)
+        # add updates for final output
+        if is_training:
+            add_updates(output, self.mean, running_mean)
+            add_updates(output, self.inv_std, running_inv_std)
+        return output

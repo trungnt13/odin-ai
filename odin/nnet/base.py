@@ -15,11 +15,7 @@ import numpy as np
 from odin import backend as K
 from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
-                        VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA,
-                        BATCH_NORM_SHIFT_PARAMETER,
-                        BATCH_NORM_POPULATION_MEAN,
-                        BATCH_NORM_SCALE_PARAMETER,
-                        BATCH_NORM_POPULATION_STDEV)
+                        VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
 from odin.utils import as_tuple
 from odin.utils.decorators import autoinit, cache
 
@@ -31,7 +27,7 @@ _primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
                     K.init.constant)
 
 
-def _initialize_param(spec, shape):
+def _initialize_param(name, spec, shape):
     """ return a ndarray or trainable_variable """
     #####################################
     # 0. initializing function.
@@ -58,14 +54,14 @@ def _initialize_param(spec, shape):
         # `name` attribute of the variable, but the user may have already
         # named the variable and we don't want to override this.
         if shape is not None and K.ndim(spec) != len(shape):
-            raise Exception("parameter variable has %d dimensions, should be "
-                            "%d" % (spec.ndim, len(shape)))
+            raise Exception("parameter with name=%s has %d dimensions, should be "
+                            "%d" % (name, spec.ndim, len(shape)))
     #####################################
     # 3. numpy ndarray, create shared variable wraper for it.
     elif isinstance(spec, np.ndarray):
         if shape is not None and spec.shape != shape:
-            raise RuntimeError("parameter array has shape %s, should be "
-                               "%s" % (spec.shape, shape))
+            raise RuntimeError("parameter with name=%s has shape %s, should be "
+                               "%s" % (name, spec.shape, shape))
     #####################################
     # 5. Exception.
     else:
@@ -144,7 +140,7 @@ class NNConfig(object):
 
         # ====== create parameters ====== #
         spec = as_tuple(spec, nb_params)
-        spec = [_initialize_param(s, shape) for s in spec]
+        spec = [_initialize_param(name, s, shape) for s in spec]
         # check shape returned
         shape = list(set([i[-1] for i in spec]))
         if len(shape) > 1:
@@ -172,8 +168,9 @@ class NNConfig(object):
             spec = K.concatenate(spec, axis=-1)
             spec.name = nnops.name + '/' + name
         # ====== assign annotations ====== #
+        # only add role for trainable variables
         for i in roles:
-            if isinstance(i, VariableRole):
+            if isinstance(i, VariableRole) and K.is_trainable_variable(spec):
                 add_role(spec, i)
         # return actual variable or expression
         # override other parameters with same name
