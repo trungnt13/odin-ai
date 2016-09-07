@@ -10,7 +10,7 @@ def run(device='cpu'):
         'model_test'
     ]
     import os
-    os.environ['ODIN'] = '%s,float64' % device
+    os.environ['ODIN'] = '%s,float32' % device
     for t in tests:
         print('\n************ Running: %s ************' % t)
         exec('from . import %s' % t)

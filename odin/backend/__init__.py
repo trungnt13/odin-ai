@@ -289,8 +289,8 @@ def rnn_decorator(*args, **kwargs):
                        for i in to_list(results)]
             # Lasagne+blocks: if scan is backward reverse the output
             # but keras don't do this step (need to validate the performance)
-            # if backwards:
-            # results = [r[:, ::-1] for r in results]
+            if backwards:
+                results = [r[:, ::-1] for r in results]
             # ====== adding updates for all results if available ====== #
             if updates:
                 for key, value in updates.iteritems():
