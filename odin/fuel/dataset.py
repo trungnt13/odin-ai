@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+from types import StringType
 from collections import OrderedDict
 from six.moves import zip, range
 
@@ -48,7 +49,8 @@ class Dataset(object):
     """
     Note
     ----
-    for developer: _data_map contains: name -> (dtype, shape, Data or pathtoData)
+    for developer:
+    _data_map contains: name -> (dtype, shape, Data or pathtoData)
     """
 
     def __init__(self, path):
@@ -251,6 +253,15 @@ class Dataset(object):
         if isinstance(key, str):
             return self.get_data(name=key)
         raise ValueError('Only accept key type is string.')
+
+    def __setitem__(self, key, value):
+        if not isinstance(key, StringType):
+            raise ValueError('"key" is the name for Data and must be String.')
+        if key in self._data_map:
+            pass
+        dtype, shape = value.dtype, value.shape
+        X = self.get_data(key, dtype=dtype, shape=shape, datatype='memmap')
+        X.prepend(value)
 
     def __iter__(self):
         for name, (dtype, shape, data) in self._data_map.iteritems():
