@@ -650,8 +650,10 @@ class ProgressMonitor(Callback):
         if self.name != self.event_name:
             return
         # risky move: get the mean of all results
-        title = (self._format % np.mean(self._history, axis=0)
-                 if self._format_results else self._format)
+        r = np.mean(self._history, axis=0)
+        if isinstance(r, list):
+            r = tuple(r)
+        title = self._format % r if self._format_results else self._format
         self._history = []
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (
