@@ -54,8 +54,8 @@ task.set_callback([
 ])
 # task = cPickle.loads(cPickle.dumps(task))
 task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
-task.add_subtask(f_test, (ds['X_valid'], ds['y_valid']), freq=0.6, name='valid')
-task.add_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.99, name='test')
+task.set_subtask(f_test, (ds['X_valid'], ds['y_valid']), freq=0.6, name='valid')
+task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.99, name='test')
 task.run()
 
 # ====== plot the training process ====== #

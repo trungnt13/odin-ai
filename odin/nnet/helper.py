@@ -1,5 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
+import types
 import inspect
 from itertools import chain
 
@@ -8,7 +9,7 @@ import numpy as np
 from odin import backend as K
 from odin.roles import has_roles, PARAMETER
 from odin.utils import as_tuple
-from odin.utils.decorators import autoinit
+from odin.utils.decorators import functionable
 
 
 from .base import NNOps, NNConfig
@@ -16,7 +17,13 @@ from .base import NNOps, NNConfig
 
 def _shrink_kwargs(op, kwargs):
     """ Return a subset of kwargs that given op can accept """
-    spec = inspect.getargspec(op._apply if hasattr(op, '_apply') else op)
+    if hasattr(op, '_apply'): #NNOps
+        op = op._apply
+    elif isinstance(op, functionable): # functionable
+        op = op.function
+    elif not isinstance(op, types.FunctionType): # callable object
+        op = op.__call__
+    spec = inspect.getargspec(op)
     keywords = {i: j for i, j in kwargs.iteritems()
                 if spec.keywords is not None or i in spec.args}
     return keywords
@@ -33,7 +40,9 @@ class HelperOps(NNOps):
 
     def __init__(self, ops, **kwargs):
         super(HelperOps, self).__init__(**kwargs)
-        self.ops = [i for i in as_tuple(ops) if callable(i)]
+        self.ops = [functionable(i)
+                    if isinstance(i, types.FunctionType) else i
+                    for i in as_tuple(ops) if callable(i)]
 
     @property
     def parameters(self):

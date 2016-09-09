@@ -97,7 +97,7 @@ class Callback(object):
         self.__event_name = None
         self.__event_type = None
         self.__results = None
-        self.__kwargs = None
+        self._kwargs = None
 
         self.__nb_samples = defaultdict(int)
         self.__nb_iter = defaultdict(int)
@@ -107,7 +107,7 @@ class Callback(object):
         self.__event_name = None
         self.__event_type = None
         self.__results = None
-        self.__kwargs = None
+        self._kwargs = None
 
         self.__nb_iter = value[0]
         self.__nb_epoch = value[1]
@@ -152,7 +152,7 @@ class Callback(object):
         self.__event_name = event_name
         self.__event_type = event_type
         self.__results = results
-        self.__kwargs = kwargs
+        self._kwargs = kwargs
 
         self.__nb_epoch[event_name] = max(nb_epoch, self.__nb_epoch[event_name])
         self.__nb_iter[event_name] = max(nb_iter, self.__nb_iter[event_name])
@@ -202,10 +202,10 @@ class Callback(object):
         return self.__nb_epoch[self.__event_name]
 
     def __getitem__(self, key):
-        return self.__kwargs[key]
+        return self._kwargs[key]
 
     def __contains__(self, key):
-        return key in self.__kwargs
+        return key in self._kwargs
 
 
 class CallbackList(Callback):
@@ -217,7 +217,7 @@ class CallbackList(Callback):
         # ====== check duplicate callback types ====== #
         args = list(set(args))
         # ====== add callback to list ====== #
-        self.__callbacks = args
+        self._callbacks = args
 
     def __setstate__(self, value):
         super(CallbackList, self).__setstate__(value)
@@ -225,18 +225,19 @@ class CallbackList(Callback):
     def __getitem__(self, key):
         # get the callback
         if isinstance(key, str):
-            for i in self.__callbacks:
+            for i in self._callbacks:
                 if key in i.__class__.__name__:
                     return i
+            raise Exception('Callback with type="%s" not found.' % key)
         # additional kwargs
-        if key in self.__kwargs:
-            return self.__kwargs[key]
+        if key in self._kwargs:
+            return self._kwargs[key]
         # otherwise, indexing by int or slice
-        return self.__callbacks[key]
+        return self._callbacks[key]
 
     def __str__(self):
         return 'CallbackList: ' + ', '.join(
-            [i.__class__.__name__ for i in self.__callbacks])
+            [i.__class__.__name__ for i in self._callbacks])
 
     # ==================== utilities methods ==================== #
     def record(self, event_name, event_type,
@@ -247,7 +248,7 @@ class CallbackList(Callback):
                                          nb_iter, nb_epoch, nb_samples,
                                          results, **kwargs)
         messages = []
-        for cb in self.__callbacks:
+        for cb in self._callbacks:
             msg = cb.record(event_name, event_type,
                           nb_iter, nb_epoch, nb_samples,
                           results, **kwargs)
@@ -257,7 +258,7 @@ class CallbackList(Callback):
 
     @property
     def _saveable_variables(self):
-        return {'__callbacks': self.__callbacks}
+        return {'__callbacks': self._callbacks}
 
 
 # ===========================================================================
@@ -650,7 +651,7 @@ class ProgressMonitor(Callback):
         if self.name != self.event_name:
             return
         # risky move: get the mean of all results
-        r = np.mean(self._history, axis=0)
+        r = np.mean(self._history, axis=0).tolist()
         if isinstance(r, list):
             r = tuple(r)
         title = self._format % r if self._format_results else self._format

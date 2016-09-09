@@ -1,5 +1,7 @@
 sftp-config*
 .DS_Store
+.sync
+Icon*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
