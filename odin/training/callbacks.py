@@ -479,6 +479,30 @@ class EarlyStop(Callback):
 
 
 class EarlyStopGeneralizationLoss(EarlyStop):
+    """ Early Stopping algorithm based on Generalization Loss criterion,
+    this is strict measure on validation
+
+    ``LOWER is better``
+
+    Parameters
+    ----------
+    name : string
+        task name for checking this criterion
+    threshold : float
+        for example, threshold = 5, if we loss 5% of performance on validation
+        set, then stop
+    patience: int
+        how many cross the threshold that still can be rollbacked
+    get_value : function
+        function to process the results of whole epoch (i.e list of results
+        returned from batch_end) to return comparable number.
+
+    Note
+    ----
+    The early stop checking will be performed at the end of an epoch.
+    By default, the return value from epoch mean the loss value, i.e lower
+    is better
+    """
 
     def earlystop(self, history):
         gl_exit_threshold = self.threshold
@@ -530,8 +554,16 @@ class EarlyStopPatience(EarlyStop):
 
     Parameters
     ----------
-    patience: number of epochs with no improvement
-        after which training will be stopped.
+    name : string
+        task name for checking this criterion
+    threshold : float
+        for example, threshold = 5, if we loss 5% of performance on validation
+        set, then stop
+    patience: int
+        how many cross the threshold that still can be rollbacked
+    get_value : function
+        function to process the results of whole epoch (i.e list of results
+        returned from batch_end) to return comparable number.
     """
 
     def task_start(self):
@@ -603,8 +635,9 @@ class ProgressMonitor(Callback):
         self._history.append(self.results)
         samples_size = self['samples_size']
         # ====== title ====== #
-        title = (self._format % self.results
-                 if self._format_results else self._format)
+        r = tuple(self.results) if isinstance(self.results, list) \
+            else self.results
+        title = (self._format % r if self._format_results else self._format)
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % \
         (self.name[:8], self.nb_epoch) + title
@@ -617,7 +650,7 @@ class ProgressMonitor(Callback):
         if self.name != self.event_name:
             return
         # risky move: get the mean of all results
-        title = (self._format % np.mean(self._history)
+        title = (self._format % np.mean(self._history, axis=0)
                  if self._format_results else self._format)
         self._history = []
         # title
