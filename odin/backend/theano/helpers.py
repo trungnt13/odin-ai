@@ -74,10 +74,13 @@ def _auto_infer_shape(ops, *var, **kwargs):
     """
     inputs = []
     for i in var:
-        input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
-                       else s
-                       for s in get_shape(i))
-        inputs.append(T.alloc(0, *input_shape))
+        if isinstance(i, numbers.Number):
+            inputs.append(i)
+        else:
+            input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
+                           else s
+                           for s in get_shape(i))
+            inputs.append(T.alloc(0, *input_shape))
     if 'group_inputs' in kwargs:
         del kwargs['group_inputs']
         output_shape = ops(inputs, **kwargs).shape.eval()
