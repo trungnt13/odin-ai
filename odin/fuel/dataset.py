@@ -15,7 +15,9 @@ from odin.utils.decorators import singleton
 
 __all__ = [
     'Dataset',
-    'load_mnist'
+    'load_mnist',
+    'load_cifar10',
+    'load_mspec_test'
 ]
 
 
@@ -325,6 +327,15 @@ def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST.zip'):
         local path or url to hdf5 datafile
     """
     datapath = get_file('MNIST', path)
+    return _load_data_from_path(datapath)
+
+
+def load_cifar10(path='https://s3.amazonaws.com/ai-datasets/cifar10.zip'):
+    """
+    path : str
+        local path or url to hdf5 datafile
+    """
+    datapath = get_file('cifar10', path)
     return _load_data_from_path(datapath)
 
 

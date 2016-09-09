@@ -14,6 +14,10 @@ class Pool2D(NNOps):
     """
     Parameters
     ----------
+    strides : tuple of 2 ints
+        Stride size, which is the number of shifts over rows/cols to get the
+        next pool region. If strides is None, it is considered equal to
+        pool_size (no overlap on pooling regions).
     mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
         Operation executed on each window. `max` and `sum` always exclude
         the padding in the computation. `average` gives you the choice to
@@ -23,7 +27,7 @@ class Pool2D(NNOps):
 
     @autoinit
     def __init__(self, pool_size=(2, 2), ignore_border=True,
-           strides=(1, 1), pad=(0, 0), mode='max', **kwargs):
+           strides=None, pad=(0, 0), mode='max', **kwargs):
         super(Pool2D, self).__init__(**kwargs)
 
     def _initialize(self, x):
@@ -43,6 +47,10 @@ class Pool3D(NNOps):
     """
     Parameters
     ----------
+    strides : tuple of 3 ints
+        Stride size, which is the number of shifts over rows/cols to get the
+        next pool region. If strides is None, it is considered equal to
+        pool_size (no overlap on pooling regions).
     mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
         Operation executed on each window. `max` and `sum` always exclude
         the padding in the computation. `average` gives you the choice to
@@ -52,7 +60,7 @@ class Pool3D(NNOps):
 
     @autoinit
     def __init__(self, pool_size=(2, 2, 2), ignore_border=True,
-           strides=(1, 1, 1), pad=(0, 0, 0), mode='max', **kwargs):
+           strides=None, pad=(0, 0, 0), mode='max', **kwargs):
         super(Pool3D, self).__init__(**kwargs)
 
     def _initialize(self, x):

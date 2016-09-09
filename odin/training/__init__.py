@@ -192,6 +192,10 @@ class MainLoop(object):
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
 
+        # create default RNG (no randomization)
+        self._rng = struct()
+        self._rng.randint = lambda *args, **kwargs: None
+        # set batch
         self.set_batch(batch_size=batch_size, seed=seed,
                        shuffle_level=shuffle_level)
 
@@ -230,6 +234,25 @@ class MainLoop(object):
         return self._batch_size
 
     def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
+        """
+        Parameters
+        ----------
+        batch_size: int
+            size of each batch return when iterate this Data
+        seed: None, int
+            if None, no shuffling is performed while iterating,
+            if < 0, do not change the current seed
+            if >= 0, enable randomization with given seed
+        start: int, float
+            if int, start indicates the index of starting data points to
+            iterate. If float, start is the percentage of data to start.
+        end: int, float
+            ending point of the interation
+        shuffle_level: int
+            0: only shuffle the order of each batch
+            1: shuffle the order of batches and inside each batch as well.
+            2: includes level 0 and 1, and custom shuffling (strongest form)
+        """
         if batch_size is not None:
             self._batch_size = batch_size
         if seed >= 0 or seed is None:
@@ -290,7 +313,7 @@ class MainLoop(object):
                           name=name)
         return self
 
-    def add_subtask(self, func, data, epoch=float('inf'), p=1., freq=0.5,
+    def set_subtask(self, func, data, epoch=float('inf'), p=1., freq=0.5,
                     when=0, name=None):
         '''
         Parameters
@@ -308,7 +331,7 @@ class MainLoop(object):
                            name=name)] = (freq, when)
         return self
 
-    def add_crosstask(self, func, data, epoch=float('inf'), p=0.5,
+    def set_crosstask(self, func, data, epoch=float('inf'), p=0.5,
                       when=0, name=None):
         '''
         Parameters

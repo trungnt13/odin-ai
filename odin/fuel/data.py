@@ -283,7 +283,8 @@ class Data(object):
             size of each batch return when iterate this Data
         seed: None, int
             if None, no shuffling is performed while iterating,
-            otherwise
+            if < 0, do not change the current seed
+            if >= 0, enable randomization with given seed
         start: int, float
             if int, start indicates the index of starting data points to
             iterate. If float, start is the percentage of data to start.

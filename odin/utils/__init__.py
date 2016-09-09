@@ -924,6 +924,25 @@ def get_tempdir():
     return tempfile.mkdtemp()
 
 
+def get_modelpath(name=None, override=False):
+    """ Default model path for saving ODIN networks """
+    datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
+    if not os.access(datadir_base, os.W_OK):
+        datadir_base = os.path.join('/tmp', '.odin')
+    datadir = os.path.join(datadir_base, 'models')
+    if not os.path.exists(datadir):
+        os.makedirs(datadir)
+    # ====== check given path with name ====== #
+    if isinstance(name, types.StringType):
+        datadir = os.path.join(datadir, name)
+        if os.path.exists(datadir):
+            if not override:
+                raise Exception('model with path="%s" already exists.' % datadir)
+            else:
+                os.remove(datadir)
+    return datadir
+
+
 def exec_commands(cmds):
     ''' Exec commands in parallel in multiple process
     (as much as we have CPU)
