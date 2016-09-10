@@ -306,7 +306,7 @@ class SequentialModel(BaseEstimator, TransformerMixin):
         # validation task
         if X_valid is not None:
             data = [X_valid, y_valid] if y_valid is not None else [X_valid]
-            mainloop.add_subtask(self._functions['score'], data=data,
+            mainloop.set_subtask(self._functions['score'], data=data,
                                  freq=self._valid_freq,
                                  name=SequentialModel._valid_name)
         # run the training process

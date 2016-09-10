@@ -410,10 +410,8 @@ class Feeder(MutableData):
                 X = (X,)
             # saving preprocessed data
             for x, nam, typ in zip(X, name, dtype):
-                if nam not in ds:
-                    ds.get_data(nam, dtype=typ, shape=(None,) + x.shape[1:],
-                                datatype=datatype)
-                ds.get_data(nam).append(x)
+                if nam in ds: ds[nam].append(x)
+                else: ds[(nam, datatype)] = x
             # print progress
             if print_progress:
                 prog.add(X[0].shape[0])

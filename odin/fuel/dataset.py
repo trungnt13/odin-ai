@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import cPickle
 from types import StringType
 from collections import OrderedDict
 from six.moves import zip, range
@@ -8,6 +9,7 @@ from six.moves import zip, range
 import numpy as np
 
 from .data import MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset, MAX_OPEN_MMAP, Data
+from .utils import MmapDict
 
 from odin.utils import get_file, Progbar
 from odin.utils.decorators import singleton
@@ -17,7 +19,9 @@ __all__ = [
     'Dataset',
     'load_mnist',
     'load_cifar10',
-    'load_mspec_test'
+    'load_cifar100',
+    'load_mspec_test',
+    'load_imdb'
 ]
 
 
@@ -30,6 +34,7 @@ def _parse_data_descriptor(path, name):
     if not os.path.isfile(path):
         return None
 
+    # ====== check if a file is Data ====== #
     try:
         dtype, shape = MmapData.read_header(path)
         # shape[1:], because first dimension can be resize afterward
@@ -42,6 +47,21 @@ def _parse_data_descriptor(path, name):
             return [(str(i.name), (str(i.dtype), i.shape, i)) for i in data]
         except:
             pass
+    # ====== check if a file is Dict ====== #
+    f = open(path, 'rb')
+    try:
+        data = cPickle.load(f)
+        if isinstance(data, dict):
+            return [(name, ('dict', len(data), data))]
+    except:
+        pass
+    f.close()
+    # ====== load memmap dict ====== #
+    try:
+        data = MmapDict(path)
+        return [(name, ('memdict', len(data), data))]
+    except:
+        pass
     return None
 
 
@@ -161,53 +181,6 @@ class Dataset(object):
         """
         return self._data_map.values()
 
-    # ==================== manipulate data ==================== #
-    def get_data(self, name, dtype=None, shape=None, datatype='memmap'):
-        """
-        Parameters
-        ----------
-        datatype : memmap, hdf5
-            Only support memmap numpy array of hdf5 via h5py
-        """
-        datatype = datatype.lower()
-        if datatype not in ['memmap', 'hdf5']:
-            raise ValueError("Only support 'memmap' or 'hdf5' datatype.")
-
-        return_data = None
-        # ====== find defined data ====== #
-        if name in self._data_map:
-            _dtype, _shape, _data = self._data_map[name]
-
-            # return type is just a descriptor, create MmapData for it
-            if not isinstance(_data, Data):
-                return_data = MmapData(_data)
-                self._data_map[name] = (return_data.dtype, return_data.shape, return_data)
-            else: # for hdf5 Data, return directly
-                return_data = _data
-        # ====== auto create new data, if cannot find any match ====== #
-        if return_data is None and dtype is not None and shape is not None:
-            if datatype == 'memmap':
-                return_data = MmapData(os.path.join(self.path, name),
-                                       dtype=dtype, shape=shape)
-            else:
-                f = open_hdf5(os.path.join(self.path, self._default_hdf5))
-                return_data = Hdf5Data(name, hdf=f, dtype=dtype, shape=shape)
-            # store new key
-            self._data_map[name] = (return_data.dtype, return_data.shape, return_data)
-        # data still None
-        if return_data is None:
-            raise ValueError('Cannot find or create data with name={}, dtype={} '
-                             'shape={}, and datatype={}'
-                             ''.format(name, dtype, shape, datatype))
-        # ====== check if excess limit, close 1 files ====== #
-        if MmapData.COUNT > MAX_OPEN_MMAP:
-            for i, (_dtype, _shape, _data) in self._data_map.iteritems():
-                if isinstance(_data, MmapData) and i != name:
-                    self.close(name=i)
-                    self._data_map[i] = (_dtype, _shape, _data.path)
-                    break
-        return return_data
-
     def archive(self):
         from zipfile import ZipFile, ZIP_DEFLATED
         path = self.archive_path
@@ -248,29 +221,84 @@ class Dataset(object):
             del self._data_map[name]
 
     # ==================== Some info ==================== #
+    def _validate_memmap_max_open(self, name):
+        # ====== check if MmapData excess limit, close 1 files ====== #
+        if MmapData.COUNT > MAX_OPEN_MMAP:
+            for i, (_dtype, _shape, _data) in self._data_map.iteritems():
+                path = _data.path
+                if isinstance(_data, MmapData) and i != name:
+                    self.close(name=i)
+                    self._data_map[i] = (_dtype, _shape, path)
+                    break
+
     def __contains__(self, key):
         return key in self._data_map
 
     def __getitem__(self, key):
-        if isinstance(key, str):
-            return self.get_data(name=key)
+        if isinstance(key, StringType):
+            if key not in self._data_map:
+                raise KeyError('%s not found in this dataset' % key)
+            dtype, shape, data = self._data_map[key]
+            # return type is just a descriptor, create MmapData for it
+            if isinstance(data, StringType):
+                data = MmapData(data)
+                self._data_map[key] = (data.dtype, data.shape, data)
+            self._validate_memmap_max_open(key)
+            return data
         raise ValueError('Only accept key type is string.')
 
     def __setitem__(self, key, value):
-        if not isinstance(key, StringType):
-            raise ValueError('"key" is the name for Data and must be String.')
+        """
+        Parameters
+        ----------
+        key : str or tuple
+            if tuple is specified, it contain the key and the datatype
+            which must be "memmap", "hdf5"
+        """
+        if not isinstance(key, StringType) and not isinstance(key, (tuple, list)):
+            raise ValueError('"key" is the name for Data and must be String or '
+                             'tuple specified the name and datatype (memmap, hdf5).')
+        # ====== check datatype ====== #
+        datatype = 'memmap'
+        if isinstance(key, (tuple, list)):
+            key, datatype = key
+            if datatype != 'memmap' and datatype != 'hdf5':
+                raise ValueError('datatype can only be "memmap" or "hdf5", but '
+                                 'the given data type is "%s"' % datatype)
+        # ====== do nothing ====== #
         if key in self._data_map:
-            pass
-        dtype, shape = value.dtype, value.shape
-        X = self.get_data(key, dtype=dtype, shape=shape, datatype='memmap')
-        X.prepend(value)
+            return
+        # ====== dict ====== #
+        path = os.path.join(self.path, key)
+        if isinstance(value, dict) or isinstance(value, MmapDict):
+            if os.path.exists(path):
+                raise Exception('File with path=%s already exist.' % path)
+            d = MmapDict(path)
+            for i, j in value.iteritems():
+                d[i] = j
+            d.flush()
+            # store new dict
+            self._data_map[key] = ('memdict', len(d), d)
+        # ====== ndarray ====== #
+        else:
+            dtype, shape = value.dtype, value.shape
+            if datatype == 'memmap':
+                data = MmapData(path, dtype=dtype, shape=shape)
+            else:
+                f = open_hdf5(os.path.join(self.path, self._default_hdf5))
+                data = Hdf5Data(key, hdf=f, dtype=dtype, shape=shape)
+            # store new key
+            self._data_map[key] = (data.dtype, data.shape, data)
+            data.prepend(value)
+            # check maximum opened memmap
+            self._validate_memmap_max_open(key)
 
     def __iter__(self):
         for name, (dtype, shape, data) in self._data_map.iteritems():
-            if isinstance(data, Data):
+            if isinstance(data, (Data, dict, MmapDict)):
                 yield data
             else:
-                yield self.get_data(name)
+                yield self[name]
 
     def __str__(self):
         s = ['==========  Dataset:%s Total:%d  ==========' %
@@ -284,7 +312,9 @@ class Dataset(object):
             shape = data.shape if hasattr(data, 'shape') else shape
             longest_name = max(len(name), longest_name)
             longest_shape = max(len(str(shape)), longest_shape)
-            if hasattr(data, 'path'):
+            if isinstance(data, dict):
+                data = '<dictionary>'
+            elif hasattr(data, 'path'):
                 data = data.path
             longest_file = max(len(str(data)), longest_file)
             print_info.append([name, dtype, shape, data])
@@ -339,6 +369,15 @@ def load_cifar10(path='https://s3.amazonaws.com/ai-datasets/cifar10.zip'):
     return _load_data_from_path(datapath)
 
 
+def load_cifar100(path='https://s3.amazonaws.com/ai-datasets/cifar100.zip'):
+    """
+    path : str
+        local path or url to hdf5 datafile
+    """
+    datapath = get_file('cifar100', path)
+    return _load_data_from_path(datapath)
+
+
 def load_mspec_test():
     """
     path : str
@@ -347,3 +386,24 @@ def load_mspec_test():
     path = 'https://s3.amazonaws.com/ai-datasets/mspec_test.zip'
     datapath = get_file('mspec_test', path)
     return _load_data_from_path(datapath)
+
+
+def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
+              nb_words=None, maxlen=None):
+    """ The preprocessed imdb dataset with following configuraiton:
+     - nb_words=88587
+     - length=2494
+     - NO skip for any top popular word
+     - Word_IDX=1 for beginning of sequences
+     - Word_IDX=2 for ignored word (OOV)
+     - Other word start from 3
+     - padding='pre' with value=0
+    """
+    nb_words = max(min(nb_words, 88587), 0)
+    maxlen = max(min(maxlen, 2494), 0)
+    datapath = get_file('imdb', path)
+    ds = _load_data_from_path(datapath)
+    X_train, y_train, X_test, y_test = ds['X_train'], ds['y_train'], ds['X_test'], ds['y_test']
+    if maxlen is not None:
+        pass
+    return ds

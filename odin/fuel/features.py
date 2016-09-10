@@ -547,34 +547,26 @@ class SpeechFeature(FeatureRecipe):
         for name, spec, mspec, mfcc, pitch, vad in results:
             if spec is not None:
                 X, sum1, sum2 = spec
-                _ = dataset.get_data('spec', dtype=X.dtype,
-                                     shape=(0,) + X.shape[1:],
-                                     datatype=datatype)
-                _.append(X)
+                if 'spec' in dataset: dataset['spec'].append(X)
+                else: dataset[('spec', datatype)] = X
                 spec_sum1 += sum1; spec_sum2 += sum2
                 n = X.shape[0]; del X
             if mspec is not None:
                 X, sum1, sum2 = mspec
-                _ = dataset.get_data('mspec', dtype=X.dtype,
-                                     shape=(0,) + X.shape[1:],
-                                     datatype=datatype)
-                _.append(X)
+                if 'mspec' in dataset: dataset['mspec'].append(X)
+                else: dataset[('mspec', datatype)] = X
                 mspec_sum1 += sum1; mspec_sum2 += sum2
                 n = X.shape[0]; del X
             if mfcc is not None:
                 X, sum1, sum2 = mfcc
-                _ = dataset.get_data('mfcc', dtype=X.dtype,
-                                     shape=(0,) + X.shape[1:],
-                                     datatype=datatype)
-                _.append(X)
+                if 'mfcc' in dataset: dataset['mfcc'].append(X)
+                else: dataset[('mfcc', datatype)] = X
                 mfcc_sum1 += sum1; mfcc_sum2 += sum2
                 n = X.shape[0]; del X
             if pitch is not None:
                 X, sum1, sum2 = pitch
-                _ = dataset.get_data('pitch', dtype=X.dtype,
-                                     shape=(0,) + X.shape[1:],
-                                     datatype=datatype)
-                _.append(X)
+                if 'pitch' in dataset: dataset['pitch'].append(X)
+                else: dataset[('pitch', datatype)] = X
                 pitch_sum1 += sum1; pitch_sum2 += sum2
                 n = X.shape[0]; del X
             # index
@@ -583,10 +575,8 @@ class SpeechFeature(FeatureRecipe):
             if vad is not None:
                 assert vad.shape[0] == n,\
                     'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
-                _ = dataset.get_data('vad', dtype=vad.dtype,
-                                     shape=(0,) + vad.shape[1:],
-                                     datatype=datatype)
-                _.append(vad)
+                if 'vad' in dataset: dataset['vad'].append(X)
+                else: dataset[('vad', datatype)] = vad
                 del vad
         dataset.flush()
         return ((spec_sum1, spec_sum2),
@@ -633,11 +623,8 @@ class SpeechFeature(FeatureRecipe):
             std = np.sqrt(sum2 / n - mean**2)
             assert not np.any(np.isnan(mean)), 'Mean contains NaN'
             assert not np.any(np.isnan(std)), 'Std contains NaN'
-            _ = dataset.get_data(name + '_mean', dtype=mean.dtype, shape=mean.shape)
-            _[:] = mean
-
-            _ = dataset.get_data(name + '_std', dtype=std.dtype, shape=std.shape)
-            _[:] = std
+            dataset[name + '_mean'] = mean
+            dataset[name + '_std'] = std
         # ====== save mean and std ====== #
         if self.get_spec:
             save_mean_std(spec_sum1, spec_sum2, n, 'spec', dataset)
@@ -845,13 +832,10 @@ class VideoFeature(FeatureRecipe):
         for name, path, s1, s2 in results:
             # load big array
             f = open(path, 'r'); X = np.load(f); f.close()
-            _ = dataset.get_data('frames', dtype=X.dtype,
-                                 shape=(0,) + X.shape[1:],
-                                 datatype=datatype)
-            _.append(X)
-            sum1 += s1
-            sum2 += s2
-            n = X.shape[0]
+            if 'frames' in dataset: dataset['frames'].append(X)
+            else: dataset[('frames', datatype)] = X
+            # update running statistics
+            sum1 += s1; sum2 += s2; n = X.shape[0]
             # index
             index.append([name, n])
             os.remove(path)
@@ -878,19 +862,13 @@ class VideoFeature(FeatureRecipe):
         with open(os.path.join(path, 'indices.csv'), 'w') as f:
             for name, start, end in indices:
                 f.write('%s %d %d\n' % (name, start, end))
-
         # ====== helper ====== #
         mean = sum1 / n
         std = np.sqrt(sum2 / n - mean**2)
         assert not np.any(np.isnan(mean)), 'Mean contains NaN'
         assert not np.any(np.isnan(std)), 'Std contains NaN'
-
-        _ = dataset.get_data(name + '_mean', dtype=mean.dtype, shape=mean.shape)
-        _[:] = mean
-
-        _ = dataset.get_data(name + '_std', dtype=std.dtype, shape=std.shape)
-        _[:] = std
-
+        dataset[name + '_mean'] = mean
+        dataset[name + '_std'] = std
         # ====== clean up and release cv2 ====== #
         dataset.flush()
         dataset.close()
