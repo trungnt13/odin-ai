@@ -269,13 +269,13 @@ def rnn_decorator(*args, **kwargs):
                                     '.' % (len(states), len(outputs)))
                 return outputs
             # ====== run the scan function ====== #
-            print('Sequences:', sequences_given)
-            print('States:', states_given)
-            print('Gobackward:', backwards)
-            print('NSteps:', n_steps)
-            print('BatchSize:', batch_size)
-            print('Repeat:', repeat_states)
-            print('Name:', name)
+            # print('Sequences:', sequences_given)
+            # print('States:', states_given)
+            # print('Gobackward:', backwards)
+            # print('NSteps:', n_steps)
+            # print('BatchSize:', batch_size)
+            # print('Repeat:', repeat_states)
+            # print('Name:', name)
             results, updates = Scan(
                 scan_function,
                 sequences=[i for i in sequences_given if i is not None],

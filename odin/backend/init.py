@@ -132,7 +132,8 @@ def orthogonal(shape, gain=1.0):
         gain = np.sqrt(2)
 
     if len(shape) < 2:
-        raise RuntimeError("Only shapes of length 2 or more are supported.")
+        raise RuntimeError("Only shapes of length 2 or more are supported, but "
+                           "given shape:%s" % str(shape))
 
     flat_shape = (shape[0], np.prod(shape[1:]))
     a = RNG_GENERATOR.normal(0.0, 1.0, flat_shape)

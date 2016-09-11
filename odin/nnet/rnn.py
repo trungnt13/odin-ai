@@ -387,8 +387,8 @@ class LSTM(BaseRNN):
     def __init__(self, num_units,
                  activation=K.tanh,
                  gate_activation=K.sigmoid,
-                 W_init=K.init.glorot_normal,
-                 W_peepholes=K.init.glorot_normal,
+                 W_init=K.init.orthogonal,
+                 W_peepholes=K.init.glorot_uniform,
                  return_cell_memory=False,
                  **kwargs):
         super(LSTM, self).__init__(**kwargs)
@@ -461,7 +461,7 @@ class LSTM(BaseRNN):
         if not self.return_cell_memory:
             out = out[:-1]
         for i in out:
-            K.add_shape(i, shape=input_shape)
+            K.add_shape(i, shape=input_shape[:-1] + (self.num_units,))
         # only care about the first state
         return out
 

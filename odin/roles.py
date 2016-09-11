@@ -177,12 +177,14 @@ COST = CostRole()
 class ParameterRole(VariableRole):
     pass
 
+
 #: A parameter of the model
 PARAMETER = ParameterRole()
 
 
 class ActivationParameterRole(ParameterRole):
     pass
+
 
 #: A parameter of the model
 ACTIVATION_PARAMETER = ActivationParameterRole()
@@ -191,12 +193,14 @@ ACTIVATION_PARAMETER = ActivationParameterRole()
 class AuxiliaryRole(VariableRole):
     pass
 
+
 #: Variables added to the graph as annotations
 AUXILIARY = AuxiliaryRole()
 
 
 class WeightRole(ParameterRole):
     pass
+
 
 #: The weight matrices of linear transformations
 WEIGHT = WeightRole()
@@ -205,12 +209,14 @@ WEIGHT = WeightRole()
 class BiasRole(ParameterRole):
     pass
 
+
 #: Biases of linear transformations
 BIAS = BiasRole()
 
 
 class InitialStateRole(ParameterRole):
     pass
+
 
 #: Initial state of a recurrent network
 INITIAL_STATE = InitialStateRole()
@@ -219,6 +225,7 @@ INITIAL_STATE = InitialStateRole()
 class FilterRole(WeightRole):
     pass
 
+
 #: The filters (kernels) of a convolution operation
 FILTER = FilterRole()
 
@@ -226,26 +233,14 @@ FILTER = FilterRole()
 class DropoutRole(VariableRole):
     pass
 
+
 #: Inputs with applied dropout
 DROPOUT = DropoutRole()
 
 
-class CollectedRole(VariableRole):
-    pass
-
-#: The replacement of a variable collected into a single shared variable
-COLLECTED = CollectedRole()
-
-
-class CollectorRole(ParameterRole):
-    pass
-
-#: A collection of parameters combined into a single shared variable
-COLLECTOR = CollectorRole()
-
-
 class AlgorithmStateRole(VariableRole):
     pass
+
 
 #: Shared variables used in algorithms updates
 ALGORITHM_STATE = AlgorithmStateRole()
@@ -254,6 +249,7 @@ ALGORITHM_STATE = AlgorithmStateRole()
 class AlgorithmHyperparameterRole(AlgorithmStateRole):
     pass
 
+
 #: hyperparameters accociated with algorithms
 ALGORITHM_HYPERPARAMETER = AlgorithmHyperparameterRole()
 
@@ -261,8 +257,20 @@ ALGORITHM_HYPERPARAMETER = AlgorithmHyperparameterRole()
 class AlgorithmBufferRole(AlgorithmStateRole):
     pass
 
+
 #: buffers accociated with algorithms
 ALGORITHM_BUFFER = AlgorithmBufferRole()
+
+
+# ===========================================================================
+# Embedding
+# ===========================================================================
+class EmbeddingWeights(WeightRole):
+    pass
+
+
+#: weights for embedding operator
+EMBEDDING = EmbeddingWeights()
 
 
 # ===========================================================================

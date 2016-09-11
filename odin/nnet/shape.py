@@ -79,9 +79,9 @@ class Reshape(NNOps):
 
 class Dimshuffle(NNOps):
 
-    @autoinit
     def __init__(self, pattern, **kwargs):
         super(Dimshuffle, self).__init__(**kwargs)
+        self.pattern = pattern
 
     def _initialize(self, x):
         config = NNConfig(input_shape=K.get_shape(x))
@@ -93,3 +93,25 @@ class Dimshuffle(NNOps):
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
         return Reshape(shape)
+
+
+class Squeeze(NNOps):
+
+    def __init__(self, axis, **kwargs):
+        super(Squeeze, self).__init__(**kwargs)
+        self.axis = axis
+
+    def _initialize(self, x):
+        config = NNConfig(input_shape=K.get_shape(x))
+        return config
+
+    def _apply(self, x):
+        return K.squeeze(x, axis=self.axis)
+
+    def _transpose(self):
+        ndim = len(self.input_shape)
+        axis = self.axis % ndim
+        pattern = ['x' if i == axis
+                   else (i - 1 if i > axis else i)
+                   for i in range(ndim)]
+        return Dimshuffle(pattern=pattern)

@@ -561,10 +561,11 @@ def squeeze(x, axis):
     """Remove a 1-dimension from the tensor at index "axis".
     """
     input_shape = get_shape(x)
+    axis = axis % x.ndim
     x = T.addbroadcast(x, axis)
     x = T.squeeze(x)
     if isinstance(input_shape, (tuple, list)):
-        add_shape(x, tuple([j for i, j in enumerate(input_shape) if i != axis]), override=True)
+        add_shape(x, tuple([j for i, j in enumerate(input_shape) if i != axis]))
     return x
 
 

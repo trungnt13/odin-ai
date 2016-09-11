@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import shutil
 import cPickle
 from types import StringType
 from collections import OrderedDict
@@ -399,11 +400,38 @@ def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
      - Other word start from 3
      - padding='pre' with value=0
     """
-    nb_words = max(min(nb_words, 88587), 0)
-    maxlen = max(min(maxlen, 2494), 0)
     datapath = get_file('imdb', path)
     ds = _load_data_from_path(datapath)
-    X_train, y_train, X_test, y_test = ds['X_train'], ds['y_train'], ds['X_test'], ds['y_test']
-    if maxlen is not None:
-        pass
+    X_train, y_train, X_test, y_test = \
+        ds['X_train'], ds['y_train'], ds['X_test'], ds['y_test']
+    # create new data with new configuration
+    if maxlen is not None or nb_words is not None:
+        nb_words = max(min(88587, nb_words), 3)
+        path = ds.path + '_tmp'
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        ds = Dataset(path)
+        # preprocess data
+        if maxlen is not None:
+            # for X_train
+            _X, _y = [], []
+            for i, j in zip(X_train[:], y_train[:]):
+                if i[-maxlen] == 0 or i[-maxlen] == 1:
+                    _X.append([k if k <= nb_words else 2 for k in i[-maxlen:]])
+                    _y.append(j)
+            X_train = np.array(_X, dtype=X_train.dtype)
+            y_train = np.array(_y, dtype=y_train.dtype)
+            # for X_test
+            _X, _y = [], []
+            for i, j in zip(X_test[:], y_test[:]):
+                if i[-maxlen] == 0 or i[-maxlen] == 1:
+                    _X.append([k if k <= nb_words else 2 for k in i[-maxlen:]])
+                    _y.append(j)
+            X_test = np.array(_X, dtype=X_test.dtype)
+            y_test = np.array(_y, dtype=y_test.dtype)
+        ds['X_train'] = X_train
+        ds['y_train'] = y_train
+        ds['X_test'] = X_test
+        ds['y_test'] = y_test
+        ds.flush()
     return ds

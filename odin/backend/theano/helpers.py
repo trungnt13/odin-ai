@@ -24,7 +24,7 @@ from theano.tensor.shared_randomstreams import RandomStateSharedVariable
 from theano.tensor.sharedvar import SharedVariable
 
 from odin.roles import (add_role, has_roles, TRAINING, DEPLOYING,
-                        AUXILIARY, PARAMETER, COLLECTED, COLLECTOR)
+                        AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
 from odin.config import autoconfig, device

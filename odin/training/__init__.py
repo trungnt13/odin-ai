@@ -184,7 +184,22 @@ class Task(object):
 # ===========================================================================
 class MainLoop(object):
 
-    """ MainLoop """
+    """ MainLoop
+
+    Parameters
+    ----------
+    batch_size: int
+        size of each batch return when iterate this Data
+    seed: None, int
+        if None, no shuffling is performed while iterating,
+        if < 0, do not change the current seed
+        if >= 0, enable randomization with given seed
+    shuffle_level: int
+        0: only shuffle the order of each batch
+        1: shuffle the order of batches and inside each batch as well.
+        2: includes level 0 and 1, and custom shuffling (strongest form)
+
+    """
 
     def __init__(self, batch_size=256, seed=-1, shuffle_level=0):
         super(MainLoop, self).__init__()
