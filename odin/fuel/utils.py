@@ -103,7 +103,8 @@ class MmapDict(dict):
         self._file.close()
 
     def __del__(self):
-        if self._mmap is not None and self._file is not None:
+        if hasattr(self, '_mmap') and self._mmap is not None and \
+        self._file is not None:
             self._mmap.close()
             self._file.close()
 

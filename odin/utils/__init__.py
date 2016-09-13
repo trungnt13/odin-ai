@@ -5,6 +5,7 @@ import time
 import math
 import types
 import signal
+import shutil
 import timeit
 import numbers
 import subprocess
@@ -15,7 +16,6 @@ import argparse
 from multiprocessing import cpu_count, Value, Lock, current_process
 from collections import OrderedDict, deque, Iterable
 
-import shutil
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
 import tarfile
@@ -69,6 +69,13 @@ class ArgController(object):
     def add(self, name, help, default=None, preprocess=None):
         """ NOTE: if the default value is not given, the argument is
         required
+
+        Parameters
+        ----------
+        preprocess: callable
+            take in the parsed argument and preprocess it into necessary
+            information
+
         """
         if self.parser is None:
             self.parser = argparse.ArgumentParser(
@@ -133,6 +140,10 @@ class ArgController(object):
                 print(max_len % i, ': ', j)
             print('**********************************\n')
         return args
+
+
+def raise_return(e):
+    raise e
 
 
 def one_hot(y, n_classes=None):
@@ -688,13 +699,7 @@ def get_file(fname, origin, untar=False):
     Original work Copyright (c) 2014-2015 keras contributors
     Modified work Copyright 2016-2017 TrungNT
     '''
-    datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
-    if not os.access(datadir_base, os.W_OK):
-        datadir_base = os.path.join('/tmp', '.odin')
-    datadir = os.path.join(datadir_base, 'datasets')
-    if not os.path.exists(datadir):
-        os.makedirs(datadir)
-
+    datadir = get_datasetpath()
     if untar:
         untar_fpath = os.path.join(datadir, fname)
         fpath = untar_fpath + '.tar.gz'
@@ -758,7 +763,8 @@ def get_all_files(path, filter_func=None):
                 if filter_func is not None and not filter_func(p):
                     continue
                 # remove dump files of Mac
-                if '.DS_STORE' in p or '._' == os.path.basename(p)[:2]:
+                if '.DS_Store' in p or '.DS_STORE' in p or \
+                    '._' == os.path.basename(p)[:2]:
                     continue
                 file_list.append(p)
     return file_list
@@ -924,6 +930,21 @@ def get_tempdir():
     return tempfile.mkdtemp()
 
 
+def get_datasetpath(name=None, override=False):
+    datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
+    if not os.access(datadir_base, os.W_OK):
+        datadir_base = os.path.join('/tmp', '.odin')
+    datadir = os.path.join(datadir_base, 'datasets')
+    if not os.path.exists(datadir):
+        os.makedirs(datadir)
+    # ====== check given path with name ====== #
+    if isinstance(name, types.StringType):
+        datadir = os.path.join(datadir, name)
+        if os.path.exists(datadir) and override:
+            shutil.rmtree(datadir)
+    return datadir
+
+
 def get_modelpath(name=None, override=False):
     """ Default model path for saving ODIN networks """
     datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
@@ -935,11 +956,8 @@ def get_modelpath(name=None, override=False):
     # ====== check given path with name ====== #
     if isinstance(name, types.StringType):
         datadir = os.path.join(datadir, name)
-        if os.path.exists(datadir):
-            if not override:
-                raise Exception('model with path="%s" already exists.' % datadir)
-            else:
-                os.remove(datadir)
+        if os.path.exists(datadir) and override:
+            os.remove(datadir)
     return datadir
 
 

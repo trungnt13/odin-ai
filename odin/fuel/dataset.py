@@ -417,7 +417,7 @@ def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
             _X, _y = [], []
             for i, j in zip(X_train[:], y_train[:]):
                 if i[-maxlen] == 0 or i[-maxlen] == 1:
-                    _X.append([k if k <= nb_words else 2 for k in i[-maxlen:]])
+                    _X.append([k if k < nb_words else 2 for k in i[-maxlen:]])
                     _y.append(j)
             X_train = np.array(_X, dtype=X_train.dtype)
             y_train = np.array(_y, dtype=y_train.dtype)
@@ -425,7 +425,7 @@ def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
             _X, _y = [], []
             for i, j in zip(X_test[:], y_test[:]):
                 if i[-maxlen] == 0 or i[-maxlen] == 1:
-                    _X.append([k if k <= nb_words else 2 for k in i[-maxlen:]])
+                    _X.append([k if k < nb_words else 2 for k in i[-maxlen:]])
                     _y.append(j)
             X_test = np.array(_X, dtype=X_test.dtype)
             y_test = np.array(_y, dtype=y_test.dtype)

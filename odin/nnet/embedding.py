@@ -24,7 +24,7 @@ class Embedding(NNOps):
     """
 
     def __init__(self, input_size, output_size,
-                 W_init=K.init.normal, **kwargs):
+                 W_init=K.init.uniform, **kwargs):
         super(Embedding, self).__init__(**kwargs)
         self.input_size = input_size
         self.output_size = output_size

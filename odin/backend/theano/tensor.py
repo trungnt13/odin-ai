@@ -63,6 +63,7 @@ def on_gpu():
     'cuda' in theano.config.contexts or \
     theano.sandbox.cuda.cuda_enabled
 
+
 if on_gpu():
     # dummy initialization to remove the overhead of running libgpuarray backend
     if _theano_context_specifed:
@@ -1112,6 +1113,9 @@ def tanh(x):
 
 def categorical_crossentropy(output, target):
     input_shape = get_shape(output)
+    # scale preds so that the class probas of each sample sum to 1
+    output /= output.sum(axis=-1, keepdims=True)
+    output = T.clip(output, EPSILON, 1.0 - EPSILON)
     x = T.nnet.categorical_crossentropy(output, target)
     add_shape(x, input_shape[0])
     return x
@@ -1125,6 +1129,8 @@ def binary_crossentropy(output, target):
     input_shape = get_shape(output)
     if output.ndim > 1: output = output.ravel()
     if target.ndim > 1: target = target.ravel()
+    # avoid numerical instability with _EPSILON clipping
+    output = T.clip(output, EPSILON, 1.0 - EPSILON)
     x = T.nnet.binary_crossentropy(output, target)
     add_shape(x, input_shape[0])
     return x

@@ -405,6 +405,12 @@ class NNSliceOps(NNOps):
     def _initialize(self, x):
         return NNConfig()
 
+    @property
+    def parameters(self):
+        if hasattr(self.ops, 'parameters'):
+            return self.ops.parameters
+        return []
+
     def _apply(self, x, **kwargs):
         y = self.ops.apply(x, **kwargs)
         return_list = True

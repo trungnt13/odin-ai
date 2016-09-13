@@ -354,7 +354,7 @@ def adagrad(loss_or_grads, params, learning_rate=1.0, epsilon=1e-6):
     return updates
 
 
-def rmsprop(loss_or_grads, params, learning_rate=0.001, rho=0.9, epsilon=1e-6):
+def rmsprop(loss_or_grads, params, lr=0.001, rho=0.9, epsilon=1e-6):
     """RMSProp updates
 
     Scale learning rates by dividing with the moving average of the root mean
@@ -409,7 +409,7 @@ def rmsprop(loss_or_grads, params, learning_rate=0.001, rho=0.9, epsilon=1e-6):
 
         accu_new = rho * accu + (one - rho) * pow(grad, 2)
         updates[accu] = accu_new
-        updates[param] = param - (learning_rate * grad /
+        updates[param] = param - (lr * grad /
                                   sqrt(accu_new + epsilon))
 
     return updates
