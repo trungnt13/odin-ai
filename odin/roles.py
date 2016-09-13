@@ -149,7 +149,6 @@ DEPLOYING = DeployingRole()
 # ===========================================================================
 class VariationalRole(VariableRole):
     pass
-
 #: Variational statistics
 VARIATIONAL = VariationalRole()
 
@@ -169,47 +168,36 @@ VARIATIONAL_LOGSIGMA = VariationalLogsigma()
 # ===========================================================================
 class CostRole(VariableRole):
     pass
-
 #: A scalar cost that can be used to train or regularize
 COST = CostRole()
 
 
 class ParameterRole(VariableRole):
     pass
-
-
 #: A parameter of the model
 PARAMETER = ParameterRole()
 
 
 class ActivationParameterRole(ParameterRole):
     pass
-
-
 #: A parameter of the model
 ACTIVATION_PARAMETER = ActivationParameterRole()
 
 
 class AuxiliaryRole(VariableRole):
     pass
-
-
 #: Variables added to the graph as annotations
 AUXILIARY = AuxiliaryRole()
 
 
 class WeightRole(ParameterRole):
     pass
-
-
 #: The weight matrices of linear transformations
 WEIGHT = WeightRole()
 
 
 class BiasRole(ParameterRole):
     pass
-
-
 #: Biases of linear transformations
 BIAS = BiasRole()
 
@@ -224,16 +212,12 @@ INITIAL_STATE = InitialStateRole()
 
 class FilterRole(WeightRole):
     pass
-
-
 #: The filters (kernels) of a convolution operation
 FILTER = FilterRole()
 
 
 class DropoutRole(VariableRole):
     pass
-
-
 #: Inputs with applied dropout
 DROPOUT = DropoutRole()
 
@@ -241,18 +225,14 @@ DROPOUT = DropoutRole()
 # ===========================================================================
 # Optimizer Algorithm roles
 # ===========================================================================
-class OptimizerStateRole(VariableRole):
+class OptimizerHyperParameterRole(VariableRole):
     pass
-
-
 #: Shared variables used in algorithms updates
-OPTIMIZER_STATE = OptimizerStateRole()
+OPTIMIZER_HYPER_PARAMETER = OptimizerHyperParameterRole()
 
 
-class LearningRateRole(VariableRole):
+class LearningRateRole(OptimizerHyperParameterRole):
     pass
-
-
 LEARNING_RATE = LearningRateRole()
 
 
@@ -261,8 +241,6 @@ LEARNING_RATE = LearningRateRole()
 # ===========================================================================
 class EmbeddingWeights(WeightRole):
     pass
-
-
 #: weights for embedding operator
 EMBEDDING = EmbeddingWeights()
 
@@ -272,28 +250,24 @@ EMBEDDING = EmbeddingWeights()
 # ===========================================================================
 class BatchNormPopulationStatisticsRole(ParameterRole):
     pass
-
 #: base role for batch normalization population statistics
 BATCH_NORM_POPULATION_STATISTICS = BatchNormPopulationStatisticsRole()
 
 
 class BatchNormPopulationMeanRole(BatchNormPopulationStatisticsRole):
     pass
-
 #: mean activations accumulated over the dataset
 BATCH_NORM_POPULATION_MEAN = BatchNormPopulationMeanRole()
 
 
 class BatchNormPopulationInvStdRole(BatchNormPopulationStatisticsRole):
     pass
-
 #: standard deviations of activations accumulated over the dataset
 BATCH_NORM_POPULATION_INVSTD = BatchNormPopulationInvStdRole()
 
 
 class BatchNormScaleParameterRole(ParameterRole):
     pass
-
 #: role given to the scale parameter, referred to as "scale" (or "gamma") in the
 # batch normalization manuscript, applied after normalizing.
 BATCH_NORM_SCALE_PARAMETER = BatchNormScaleParameterRole()
@@ -301,7 +275,6 @@ BATCH_NORM_SCALE_PARAMETER = BatchNormScaleParameterRole()
 
 class BatchNormShiftParameterRole(BiasRole):
     pass
-
 #: role given to the shift parameter, referred to as "beta" in the
 # batch normalization manuscript, applied after normalizing and scaling.
 # Inherits from BIAS, because there really is no functional difference

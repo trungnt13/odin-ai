@@ -14,8 +14,8 @@ import numpy as np
 
 from odin.config import autoconfig
 from odin.utils import as_tuple
-from odin.roles import add_roles, AUXILIARY, LEARNING_RATE
-
+from odin.roles import (add_role, AUXILIARY, LEARNING_RATE,
+                        OPTIMIZER_HYPER_PARAMETER, VariableRole)
 FLOATX = autoconfig.floatX
 
 # store python primitive operators
@@ -32,24 +32,38 @@ elif autoconfig['backend'] == 'tensorflow':
     from .tensorflow import (is_variable, is_placeholder, gradients)
 
 __all__ = [
-    "sgd",
     "apply_momentum",
-    "momentum",
     "apply_nesterov_momentum",
-    "nesterov_momentum",
-    "adagrad",
-    "rmsprop",
-    "adadelta",
-    "adam",
-    "adamax",
-    "norm_constraint",
-    "total_norm_constraint"
+    "total_norm_constraint",
+
+    "Optimizer",
+    "SGD",
+    "RMSProp",
+    "Adadelta",
+    "Adam",
+    "Adamax",
+    "Nadam",
+    "Adagrad"
 ]
 
 
 # ===========================================================================
 # Helper methods
 # ===========================================================================
+def _as_variable(x, name, roles=None):
+    # nothing to do
+    if x is None:
+        return None
+    # create variable
+    if not is_variable(x):
+        x = variable(x, name=name)
+    if roles is not None:
+        roles = as_tuple(roles, t=VariableRole)
+        for r in roles:
+            add_role(x, r)
+    return x
+
+
 def get_or_compute_grads(loss_or_grads, params):
     """Helper function returning a list of gradients
 
@@ -132,7 +146,7 @@ def total_norm_constraint(tensor_vars, max_norm, epsilon=1e-8,
     tensor_vars = as_tuple(tensor_vars)
     # ====== clip norm ====== #
     norm = sqrt(_sum([sum(square(tensor)) for tensor in tensor_vars]))
-    add_roles(norm, AUXILIARY)
+    add_role(norm, AUXILIARY)
     tensor_vars = [switch(norm >= max_norm, g * max_norm / norm, g)
                    for g in tensor_vars]
     # ====== return norm if necessary ====== #
@@ -140,107 +154,6 @@ def total_norm_constraint(tensor_vars, max_norm, epsilon=1e-8,
         return tensor_vars, norm
     else:
         return tensor_vars
-
-
-# ===========================================================================
-# Optimizer
-# ===========================================================================
-@add_metaclass(ABCMeta)
-class Optimizer(object):
-
-    """
-    Parameters
-    ----------
-    lr: float, variable
-        learning rate
-    clipnorm: float >= 0. Gradients will be clipped
-        when their L2 norm exceeds this value.
-    clipvalue: float >= 0. Gradients will be clipped
-        when their absolute value exceeds this value.
-
-    """
-
-    def __init__(self, lr, clipnorm=None, clipvalue=None):
-        if not is_variable(lr):
-            self.lr = variable(lr, name='learning_rate')
-        add_roles(self.lr, LEARNING_RATE)
-
-        if clipnorm is not None and \
-        (clipnorm if isinstance(clipnorm, numbers.Number) else get_value(clipnorm)) <= 0:
-            raise ValueError('clipnorm value must greater than 0.')
-        self.clipnorm = clipnorm
-        if clipvalue is not None and \
-        (clipvalue if isinstance(clipnorm, numbers.Number) else get_value(clipvalue)) <= 0:
-            raise ValueError('clipvalue value must greater than 0.')
-        self.clipvalue = clipvalue
-        # ====== internal states values ====== #
-        self._norm = 0.
-        self._last_updates = {}
-
-    @property
-    def norm(self):
-        return self._norm
-
-    @property
-    def last_updates(self):
-        return self._last_updates
-
-    @abstractmethod
-    def get_updates(self, loss_or_grads, params):
-        pass
-
-    def __call__(self, loss_or_grads, params):
-        updates = self.get_updates(loss_or_grads, params)
-        if not isinstance(updates, (dict, list, tuple)):
-            raise ValueError('returned "updates" must be dict, list, tuple which '
-                            'contain pair of (params<=>new_params).')
-        self._last_updates = updates
-        return updates
-
-    def get_gradients(self, loss_or_grads, params):
-        grads = get_or_compute_grads(loss_or_grads, params)
-        if self.clipnorm is not None and self.clipnorm > 0:
-            grads, self._norm = total_norm_constraint(grads, self.clipnorm,
-                                                      return_norm=True)
-        if self.clipvalue is not None and self.clipvalue > 0:
-            grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
-        return grads
-
-
-class SGD(Optimizer):
-
-    def get_updates(self, loss_or_grads, params):
-        pass
-
-
-def sgd(loss_or_grads, params, learning_rate=0.1):
-    """Stochastic Gradient Descent (SGD) updates
-
-    Generates update expressions of the form:
-
-    * ``param := param - learning_rate * gradient``
-
-    Parameters
-    ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
-        The learning rate controlling the size of update steps
-
-    Returns
-    -------
-    OrderedDict
-        A dictionary mapping each parameter to its update expression
-    """
-    grads = get_or_compute_grads(loss_or_grads, params)
-    updates = OrderedDict()
-
-    for param, grad in zip(params, grads):
-        updates[param] = param - learning_rate * grad
-
-    return updates
 
 
 def apply_momentum(updates, params=None, momentum=0.9):
@@ -289,45 +202,6 @@ def apply_momentum(updates, params=None, momentum=0.9):
         updates[param] = x
 
     return updates
-
-
-def momentum(loss_or_grads, params, learning_rate=0.1, momentum=0.9):
-    """Stochastic Gradient Descent (SGD) updates with momentum
-
-    Generates update expressions of the form:
-
-    * ``velocity := momentum * velocity - learning_rate * gradient``
-    * ``param := param + velocity``
-
-    Parameters
-    ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
-        The learning rate controlling the size of update steps
-    momentum : float or symbolic scalar, optional
-        The amount of momentum to apply. Higher momentum results in
-        smoothing over more update steps. Defaults to 0.9.
-
-    Returns
-    -------
-    OrderedDict
-        A dictionary mapping each parameter to its update expression
-
-    Notes
-    -----
-    Higher momentum also results in larger update steps. To counter that,
-    you can optionally scale your learning rate by `1 - momentum`.
-
-    See Also
-    --------
-    apply_momentum : Generic function applying momentum to updates
-    nesterov_momentum : Nesterov's variant of SGD with momentum
-    """
-    updates = sgd(loss_or_grads, params, learning_rate)
-    return apply_momentum(updates, momentum=momentum)
 
 
 def apply_nesterov_momentum(updates, params=None, momentum=0.9):
@@ -384,112 +258,135 @@ def apply_nesterov_momentum(updates, params=None, momentum=0.9):
     return updates
 
 
-def nesterov_momentum(loss_or_grads, params, learning_rate=0.1, momentum=0.9):
-    """Stochastic Gradient Descent (SGD) updates with Nesterov momentum
+# ===========================================================================
+# Optimizer
+# ===========================================================================
+@add_metaclass(ABCMeta)
+class Optimizer(object):
 
-    Generates update expressions of the form:
-
-    * ``velocity := momentum * velocity - learning_rate * gradient``
-    * ``param := param + momentum * velocity - learning_rate * gradient``
-
+    """
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
-        The learning rate controlling the size of update steps
-    momentum : float or symbolic scalar, optional
-        The amount of momentum to apply. Higher momentum results in
-        smoothing over more update steps. Defaults to 0.9.
+    lr: float, variable
+        learning rate
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
-    Returns
-    -------
-    OrderedDict
-        A dictionary mapping each parameter to its update expression
-
-    Notes
-    -----
-    Higher momentum also results in larger update steps. To counter that,
-    you can optionally scale your learning rate by `1 - momentum`.
-
-    The classic formulation of Nesterov momentum (or Nesterov accelerated
-    gradient) requires the gradient to be evaluated at the predicted next
-    position in parameter space. Here, we use the formulation described at
-    https://github.com/lisa-lab/pylearn2/pull/136#issuecomment-10381617,
-    which allows the gradient to be evaluated at the current parameters.
-
-    See Also
-    --------
-    apply_nesterov_momentum : Function applying momentum to updates
     """
-    updates = sgd(loss_or_grads, params, learning_rate)
-    return apply_nesterov_momentum(updates, momentum=momentum)
+
+    def __init__(self, lr, clipnorm=None, clipvalue=None):
+        self.lr = _as_variable(lr, name='learning_rate', roles=LEARNING_RATE)
+
+        if clipnorm is not None and \
+        (clipnorm if isinstance(clipnorm, numbers.Number) else get_value(clipnorm)) <= 0:
+            raise ValueError('clipnorm value must greater than 0.')
+        self.clipnorm = clipnorm
+        if clipvalue is not None and \
+        (clipvalue if isinstance(clipnorm, numbers.Number) else get_value(clipvalue)) <= 0:
+            raise ValueError('clipvalue value must greater than 0.')
+        self.clipvalue = clipvalue
+        # ====== internal states values ====== #
+        self._norm = 0.
+        self.updates = {}
+
+    @property
+    def norm(self):
+        return self._norm
+
+    @abstractmethod
+    def get_updates(self, loss_or_grads, params):
+        pass
+
+    def __call__(self, loss_or_grads, params):
+        updates = self.get_updates(loss_or_grads, params)
+        if not isinstance(updates, (dict, list, tuple)):
+            raise ValueError('returned "updates" must be dict, list, tuple which '
+                            'contain pair of (params<=>new_params).')
+        self.updates = updates
+        return updates
+
+    def get_gradients(self, loss_or_grads, params):
+        grads = get_or_compute_grads(loss_or_grads, params)
+        if self.clipnorm is not None and self.clipnorm > 0:
+            grads, self._norm = total_norm_constraint(grads, self.clipnorm,
+                                                      return_norm=True)
+        if self.clipvalue is not None and self.clipvalue > 0:
+            grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
+        return grads
 
 
-def adagrad(loss_or_grads, params, learning_rate=1.0, epsilon=1e-6):
-    """Adagrad updates
+class SGD(Optimizer):
 
-    Scale learning rates by dividing with the square root of accumulated
-    squared gradients. See [1]_ for further description.
-
+    """
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
-        The learning rate controlling the size of update steps
-    epsilon : float or symbolic scalar
-        Small value added for numerical stability
+    momentum: float >= 0. None
+        Parameter updates momentum. If momentum is None or 0,
+        no momentum is not applied
+    decay: float >= 0, or None
+        Learning rate decay over each update. If decay is None or 0,
+        no decay is applied
+    nesterov: boolean.
+        Whether to apply Nesterov momentum.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
-    Returns
-    -------
-    OrderedDict
-        A dictionary mapping each parameter to its update expression
-
-    Notes
-    -----
-    Using step size eta Adagrad calculates the learning rate for feature i at
-    time step t as:
-
-    .. math:: \\eta_{t,i} = \\frac{\\eta}
-       {\\sqrt{\\sum^t_{t^\\prime} g^2_{t^\\prime,i}+\\epsilon}} g_{t,i}
-
-    as such the learning rate is monotonically decreasing.
-
-    Epsilon is not included in the typical formula, see [2]_.
-
-    References
-    ----------
-    .. [1] Duchi, J., Hazan, E., & Singer, Y. (2011):
-           Adaptive subgradient methods for online learning and stochastic
-           optimization. JMLR, 12:2121-2159.
-
-    .. [2] Chris Dyer:
-           Notes on AdaGrad. http://www.ark.cs.cmu.edu/cdyer/adagrad.pdf
     """
 
-    grads = get_or_compute_grads(loss_or_grads, params)
-    updates = OrderedDict()
+    def __init__(self, lr=0.01, momentum=0.9, decay=None, nesterov=False,
+                 clipnorm=None, clipvalue=None):
+        super(SGD, self).__init__(lr, clipnorm, clipvalue)
+        self.iterations = _as_variable(0., name='iterations', roles=AUXILIARY)
+        self.nesterov = nesterov
+        # ====== momentum ====== #
+        if momentum == 0:
+            momentum = None
+        self.momentum = _as_variable(momentum, name='momentum',
+                                     roles=OPTIMIZER_HYPER_PARAMETER)
+        # ====== decay ====== #
+        if decay == 0:
+            decay = None
+        self.decay = _as_variable(decay, name='decay',
+                                  roles=OPTIMIZER_HYPER_PARAMETER)
 
-    for param, grad in zip(params, grads):
-        shape = get_shape(param)
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+        lr = self.lr
+        updates = []
+        if self.decay is not None:
+            lr = lr * (1. / (1. + self.decay * self.iterations))
+            updates.append((self.iterations, self.iterations + 1))
 
-        accu = variable(np.zeros(shape))
-        # accu = addbroadcast(accu, *broadcastable(param))
+        # momentum
+        if self.momentum is not None:
+            shapes = [get_shape(p) for p in params]
+            moments = [variable(np.zeros(shape)) for shape in shapes]
+        else: # just create dummy moments
+            moments = [None] * len(params)
+        # ====== main updates ====== #
+        for p, g, m in zip(params, grads, moments):
+            update_gradient = lr * g
+            # ====== applying momentum ====== #
+            if self.momentum is not None:
+                v = self.momentum * m - update_gradient  # velocity
+                updates.append((m, v))
+                if self.nesterov:
+                    new_p = p + self.momentum * v - update_gradient
+                else:
+                    new_p = p + v
+            # ====== NO momentum ====== #
+            else:
+                new_p = p - update_gradient
+            # final updates
+            updates.append((p, new_p))
+        return updates
 
-        accu_new = accu + pow(grad, 2)
-        updates[accu] = accu_new
-        updates[param] = param - (learning_rate * grad /
-                                  sqrt(accu_new + epsilon))
 
-    return updates
-
-
-def rmsprop(loss_or_grads, params, lr=0.001, rho=0.9, epsilon=1e-6):
+class RMSProp(Optimizer):
     """RMSProp updates
 
     Scale learning rates by dividing with the moving average of the root mean
@@ -497,16 +394,17 @@ def rmsprop(loss_or_grads, params, lr=0.001, rho=0.9, epsilon=1e-6):
 
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
+    lr : float or symbolic scalar
         The learning rate controlling the size of update steps
     rho : float or symbolic scalar
         Gradient moving average decay factor
     epsilon : float or symbolic scalar
-        Small value added for numerical stability
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
     Returns
     -------
@@ -532,25 +430,33 @@ def rmsprop(loss_or_grads, params, lr=0.001, rho=0.9, epsilon=1e-6):
            Neural Networks for Machine Learning, Lecture 6.5 - rmsprop.
            Coursera. http://www.youtube.com/watch?v=O3sxAc4hxZU (formula @5:20)
     """
-    grads = get_or_compute_grads(loss_or_grads, params)
-    updates = OrderedDict()
-    one = constant(1)
 
-    for param, grad in zip(params, grads):
-        shape = get_shape(param)
+    def __init__(self, lr=0.001, rho=0.9, epsilon=1e-7,
+                 clipnorm=None, clipvalue=None):
+        super(RMSProp, self).__init__(lr, clipnorm, clipvalue)
+        self.rho = _as_variable(rho, name='rho',
+                                roles=OPTIMIZER_HYPER_PARAMETER)
+        self.epsilon = epsilon
 
-        accu = variable(np.zeros(shape))
-        # accu = addbroadcast(accu, *broadcastable(param))
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
 
-        accu_new = rho * accu + (one - rho) * pow(grad, 2)
-        updates[accu] = accu_new
-        updates[param] = param - (lr * grad /
-                                  sqrt(accu_new + epsilon))
+        shapes = [get_shape(p) for p in params]
+        accumulators = [variable(np.zeros(shape)) for shape in shapes]
+        updates = []
 
-    return updates
+        for p, g, a in zip(params, grads, accumulators):
+            # update accumulator
+            new_a = self.rho * a + (1. - self.rho) * square(g)
+            updates.append((a, new_a))
+            # update parameters
+            new_p = p - self.lr * g / (sqrt(new_a) + self.epsilon)
+            # add to updates
+            updates.append((p, new_p))
+        return updates
 
 
-def adadelta(loss_or_grads, params, learning_rate=1.0, rho=0.95, epsilon=1e-6):
+class Adadelta(Optimizer):
     """ Adadelta updates
 
     Scale learning rates by the ratio of accumulated gradients to accumulated
@@ -558,16 +464,17 @@ def adadelta(loss_or_grads, params, learning_rate=1.0, rho=0.95, epsilon=1e-6):
 
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float or symbolic scalar
+    lr : float or symbolic scalar
         The learning rate controlling the size of update steps
     rho : float or symbolic scalar
         Squared gradient moving average decay factor
     epsilon : float or symbolic scalar
-        Small value added for numerical stability
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
     Returns
     -------
@@ -603,52 +510,57 @@ def adadelta(loss_or_grads, params, learning_rate=1.0, rho=0.95, epsilon=1e-6):
            ADADELTA: An Adaptive Learning Rate Method.
            arXiv Preprint arXiv:1212.5701.
     """
-    grads = get_or_compute_grads(loss_or_grads, params)
-    updates = OrderedDict()
-    one = constant(1)
 
-    for param, grad in zip(params, grads):
-        shape = get_shape(param)
-        # accu: accumulate gradient magnitudes
-        accu = variable(np.zeros(shape))
-        # accu = addbroadcast(accu, *broadcastable(param))
-        # delta_accu: accumulate update magnitudes (recursively!)
-        delta_accu = variable(np.zeros(shape))
-        # delta_accu = addbroadcast(delta_accu, *broadcastable(param))
-        # update accu (as in rmsprop)
-        accu_new = rho * accu + (one - rho) * pow(grad, 2)
-        updates[accu] = accu_new
-        # compute parameter update, using the 'old' delta_accu
-        update = (grad * sqrt(delta_accu + epsilon) /
-                  sqrt(accu_new + epsilon))
-        updates[param] = param - learning_rate * update
-        # update delta_accu (as accu, but accumulating updates)
-        delta_accu_new = rho * delta_accu + (one - rho) * pow(update, 2)
-        updates[delta_accu] = delta_accu_new
+    def __init__(self, lr=1.0, rho=0.95, epsilon=1e-7,
+                 clipnorm=None, clipvalue=None):
+        super(Adadelta, self).__init__(lr, clipnorm, clipvalue)
+        self.rho = _as_variable(rho, name='rho',
+                                roles=OPTIMIZER_HYPER_PARAMETER)
+        self.epsilon = epsilon
 
-    return updates
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+
+        shapes = [get_shape(p) for p in params]
+        accumulators = [variable(np.zeros(shape)) for shape in shapes]
+        delta_accumulators = [variable(np.zeros(shape)) for shape in shapes]
+        updates = []
+
+        for p, g, a, d_a in zip(params, grads, accumulators, delta_accumulators):
+            # update accumulator
+            new_a = self.rho * a + (1. - self.rho) * square(g)
+            updates.append((a, new_a))
+            # use the new accumulator and the *old* delta_accumulator
+            update = g * sqrt(d_a + self.epsilon) / sqrt(new_a + self.epsilon)
+            # update new parameters
+            new_p = p - self.lr * update
+            updates.append((p, new_p))
+            # update delta_accumulator
+            new_d_a = self.rho * d_a + (1 - self.rho) * square(update)
+            updates.append((d_a, new_d_a))
+        return updates
 
 
-def adam(loss_or_grads, params, learning_rate=0.001, beta1=0.9,
-         beta2=0.999, epsilon=1e-8):
+class Adam(Optimizer):
     """Adam updates
 
     Adam updates implemented as in [1]_.
 
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float
+    lr : float
         Learning rate
     beta1 : float
         Exponential decay rate for the first moment estimates.
     beta2 : float
         Exponential decay rate for the second moment estimates.
-    epsilon : float
-        Constant for numerical stability.
+    epsilon : float or symbolic scalar
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
     Returns
     -------
@@ -667,39 +579,42 @@ def adam(loss_or_grads, params, learning_rate=0.001, beta1=0.9,
            Adam: A Method for Stochastic Optimization.
            arXiv preprint arXiv:1412.6980.
     """
-    # TODO: check again this adam
-    all_grads = get_or_compute_grads(loss_or_grads, params)
-    t_prev = variable(0.)
-    updates = OrderedDict()
-    one = constant(1)
 
-    t = t_prev + 1
-    a_t = learning_rate * \
-        sqrt(one - _pow(cast(beta2, FLOATX), t)) / (one - _pow(cast(beta1, FLOATX), t))
+    def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+                 clipnorm=None, clipvalue=None):
+        super(Adam, self).__init__(lr, clipnorm, clipvalue)
+        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
+        self.beta_1 = _as_variable(beta_1, name='beta_1',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.beta_2 = _as_variable(beta_2, name='beta_2',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.epsilon = epsilon
 
-    for param, g_t in zip(params, all_grads):
-        shape = get_shape(param)
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+        t = self.iterations + 1
+        updates = [(self.iterations, t)]
 
-        m_prev = variable(np.zeros(shape))
-        # m_prev = addbroadcast(m_prev, *broadcastable(param))
+        lr_t = self.lr * sqrt(1. - pow(self.beta_2, t)) / (1. - pow(self.beta_1, t))
 
-        v_prev = variable(np.zeros(shape))
-        # v_prev = addbroadcast(v_prev, *broadcastable(param))
+        shapes = [get_shape(p) for p in params]
+        ms = [variable(np.zeros(shape)) for shape in shapes]
+        vs = [variable(np.zeros(shape)) for shape in shapes]
 
-        m_t = beta1 * m_prev + (one - beta1) * g_t
-        v_t = beta2 * v_prev + (one - beta2) * pow(g_t, 2)
-        step = a_t * m_t / (sqrt(v_t) + epsilon)
+        for p, g, m, v in zip(params, grads, ms, vs):
+            m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
+            v_t = (self.beta_2 * v) + (1. - self.beta_2) * square(g)
+            p_t = p - lr_t * m_t / (sqrt(v_t) + self.epsilon)
+            # updates new statistics
+            updates.append((m, m_t))
+            updates.append((v, v_t))
+            # updates new params
+            new_p = p_t
+            updates.append((p, new_p))
+        return updates
 
-        updates[m_prev] = m_t
-        updates[v_prev] = v_t
-        updates[param] = param - step
 
-    updates[t_prev] = t
-    return updates
-
-
-def adamax(loss_or_grads, params, learning_rate=0.002, beta1=0.9,
-           beta2=0.999, epsilon=1e-8):
+class Adamax(Optimizer):
     """Adamax updates
 
     Adamax updates implemented as in [1]_. This is a variant of of the Adam
@@ -707,18 +622,19 @@ def adamax(loss_or_grads, params, learning_rate=0.002, beta1=0.9,
 
     Parameters
     ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to generate update expressions for
-    learning_rate : float
+    lr : float
         Learning rate
     beta1 : float
         Exponential decay rate for the first moment estimates.
     beta2 : float
         Exponential decay rate for the weighted infinity norm estimates.
-    epsilon : float
-        Constant for numerical stability.
+    epsilon : float or symbolic scalar
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
 
     Returns
     -------
@@ -731,30 +647,190 @@ def adamax(loss_or_grads, params, learning_rate=0.002, beta1=0.9,
            Adam: A Method for Stochastic Optimization.
            arXiv preprint arXiv:1412.6980.
     """
-    all_grads = get_or_compute_grads(loss_or_grads, params)
-    t_prev = variable(0.)
-    updates = OrderedDict()
-    one = constant(1)
 
-    t = t_prev + 1
-    a_t = learning_rate / (one - pow(cast(beta1, FLOATX), t))
+    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+                 clipnorm=None, clipvalue=None):
+        super(Adamax, self).__init__(lr, clipnorm, clipvalue)
+        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
+        self.beta_1 = _as_variable(beta_1, name='beta_1',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.beta_2 = _as_variable(beta_2, name='beta_2',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.epsilon = epsilon
 
-    for param, g_t in zip(params, all_grads):
-        shape = get_shape(param)
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+        t = self.iterations + 1
+        updates = [(self.iterations, t)]
 
-        m_prev = variable(np.zeros(shape))
-        # m_prev = addbroadcast(m_prev, *broadcastable(param))
+        lr_t = self.lr / (1. - pow(self.beta_1, t))
 
-        u_prev = variable(np.zeros(shape))
-        # u_prev = addbroadcast(u_prev, *broadcastable(param))
+        shapes = [get_shape(p) for p in params]
+        # zero init of 1st moment
+        ms = [variable(np.zeros(shape)) for shape in shapes]
+        # zero init of exponentially weighted infinity norm
+        us = [variable(np.zeros(shape)) for shape in shapes]
+        for p, g, m, u in zip(params, grads, ms, us):
+            m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
+            u_t = maximum(self.beta_2 * u, abs(g))
+            p_t = p - lr_t * m_t / (u_t + self.epsilon)
+            updates.append((m, m_t))
+            updates.append((u, u_t))
+            # updates new parametesr
+            new_p = p_t
+            updates.append((p, new_p))
+        return updates
 
-        m_t = beta1 * m_prev + (one - beta1) * g_t
-        u_t = maximum(beta2 * u_prev, abs(g_t))
-        step = a_t * m_t / (u_t + epsilon)
 
-        updates[m_prev] = m_t
-        updates[u_prev] = u_t
-        updates[param] = param - step
+class Nadam(Optimizer):
+    """Nadam updates
 
-    updates[t_prev] = t
-    return updates
+    Nesterov Adam optimizer: Much like Adam is essentially RMSprop with momentum,
+    Nadam is Adam RMSprop with Nesterov momentum.
+
+    Parameters
+    ----------
+    lr : float
+        Learning rate
+    beta1 : float
+        Exponential decay rate for the first moment estimates.
+    beta2 : float
+        Exponential decay rate for the second moment estimates.
+    epsilon : float or symbolic scalar
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
+
+    Returns
+    -------
+    OrderedDict
+        A dictionary mapping each parameter to its update expression
+
+    Notes
+    -----
+    The paper [1]_ includes an additional hyperparameter lambda. This is only
+    needed to prove convergence of the algorithm and has no practical use
+    (personal communication with the authors), it is therefore omitted here.
+
+    References
+    ----------
+    .. [1] [Nadam report](http://cs229.stanford.edu/proj2015/054_report.pdf)
+    .. [2] [On the importance of initialization and momentum in deep learning](http://www.cs.toronto.edu/~fritz/absps/momentum.pdf)
+
+    """
+
+    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+                 schedule_decay=0.004, clipnorm=None, clipvalue=None):
+        super(Nadam, self).__init__(lr, clipnorm, clipvalue)
+        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
+        self.m_schedule = _as_variable(1., name='m_schedule', roles=AUXILIARY)
+        self.schedule_decay = schedule_decay
+
+        self.beta_1 = _as_variable(beta_1, name='beta_1',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.beta_2 = _as_variable(beta_2, name='beta_2',
+                                   roles=OPTIMIZER_HYPER_PARAMETER)
+        self.epsilon = epsilon
+
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+        t = self.iterations + 1
+        updates = [(self.iterations, t)]
+
+        # Due to the recommendations in [2], i.e. warming momentum schedule
+        momentum_cache_t = self.beta_1 * (1. - 0.5 * (pow(0.96, t * self.schedule_decay)))
+        momentum_cache_t_1 = self.beta_1 * (1. - 0.5 * (pow(0.96, (t + 1) * self.schedule_decay)))
+        m_schedule_new = self.m_schedule * momentum_cache_t
+        m_schedule_next = self.m_schedule * momentum_cache_t * momentum_cache_t_1
+        updates.append((self.m_schedule, m_schedule_new))
+
+        shapes = [get_shape(p) for p in params]
+        ms = [variable(np.zeros(shape)) for shape in shapes]
+        vs = [variable(np.zeros(shape)) for shape in shapes]
+
+        for p, g, m, v in zip(params, grads, ms, vs):
+            # the following equations given in [1]
+            g_prime = g / (1. - m_schedule_new)
+            m_t = self.beta_1 * m + (1. - self.beta_1) * g
+            m_t_prime = m_t / (1. - m_schedule_next)
+            v_t = self.beta_2 * v + (1. - self.beta_2) * square(g)
+            v_t_prime = v_t / (1. - pow(self.beta_2, t))
+            m_t_bar = (1. - momentum_cache_t) * g_prime + momentum_cache_t_1 * m_t_prime
+
+            updates.append((m, m_t))
+            updates.append((v, v_t))
+            # update the parameters
+            p_t = p - self.lr * m_t_bar / (sqrt(v_t_prime) + self.epsilon)
+            new_p = p_t
+            updates.append((p, new_p))
+        return updates
+
+
+class Adagrad(Optimizer):
+    """Adagrad updates
+
+    Scale learning rates by dividing with the square root of accumulated
+    squared gradients. See [1]_ for further description.
+
+    Parameters
+    ----------
+    lr : float or symbolic scalar
+        The learning rate controlling the size of update steps
+    epsilon : float or symbolic scalar
+        Small value added for numerical stability, `epsilon` might
+        have huge impact on final performance.
+    clipnorm: float >= 0. Gradients will be clipped
+        when their L2 norm exceeds this value.
+    clipvalue: float >= 0. Gradients will be clipped
+        when their absolute value exceeds this value.
+
+    Returns
+    -------
+    OrderedDict
+        A dictionary mapping each parameter to its update expression
+
+    Notes
+    -----
+    Using step size eta Adagrad calculates the learning rate for feature i at
+    time step t as:
+
+    .. math:: \\eta_{t,i} = \\frac{\\eta}
+       {\\sqrt{\\sum^t_{t^\\prime} g^2_{t^\\prime,i}+\\epsilon}} g_{t,i}
+
+    as such the learning rate is monotonically decreasing.
+
+    Epsilon is not included in the typical formula, see [2]_.
+
+    References
+    ----------
+    .. [1] Duchi, J., Hazan, E., & Singer, Y. (2011):
+           Adaptive subgradient methods for online learning and stochastic
+           optimization. JMLR, 12:2121-2159.
+
+    .. [2] Chris Dyer:
+           Notes on AdaGrad. http://www.ark.cs.cmu.edu/cdyer/adagrad.pdf
+    """
+
+    def __init__(self, lr=0.01, epsilon=1e-7,
+                 clipnorm=None, clipvalue=None):
+        super(Adagrad, self).__init__(lr, clipnorm, clipvalue)
+        self.epsilon = epsilon
+
+    def get_updates(self, loss_or_grads, params):
+        grads = self.get_gradients(loss_or_grads, params)
+        updates = []
+
+        shapes = [get_shape(p) for p in params]
+        accumulators = [variable(np.zeros(shape)) for shape in shapes]
+
+        for p, g, a in zip(params, grads, accumulators):
+            # update accumulator
+            new_a = a + square(g)
+            updates.append((a, new_a))
+            # new parameters
+            new_p = p - (self.lr * g / sqrt(new_a + self.epsilon))
+            updates.append((p, new_p))
+        return updates
