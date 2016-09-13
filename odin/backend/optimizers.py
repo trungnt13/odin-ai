@@ -24,10 +24,9 @@ _pow = pow
 _abs = abs
 
 if autoconfig['backend'] == 'theano':
-    from .theano import (is_variable, is_trainable_variable, is_placeholder,
-                         gradients, get_shape, switch, get_value,
-                         variable, constant, cast, square,
-                         sqrt, maximum, abs, clip)
+    from .theano import (is_variable, is_placeholder, gradients, get_shape,
+                         switch, get_value, variable, cast,
+                         square, sum, sqrt, maximum, abs, clip)
 elif autoconfig['backend'] == 'tensorflow':
     from .tensorflow import (is_variable, is_placeholder, gradients)
 
