@@ -12,10 +12,10 @@ from odin import fuel, training
 from odin.utils import one_hot, get_modelpath
 import cPickle
 
-import lasagne
 # ===========================================================================
 # Load data
 # ===========================================================================
+# ds = fuel.load_cifar10()
 ds = fuel.load_mnist()
 print(ds)
 
@@ -30,10 +30,11 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 # ===========================================================================
 ops = N.Sequence([
     # N.Dimshuffle((0, 'x', 1, 2)),
-    # N.Conv2D(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
-    # N.Pool2D(strides=None),
+    # N.Conv2D(16, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+    # N.Pool2D(pool_size=(2, 2), strides=None),
     N.FlattenRight(outdim=2),
-    N.Dense(64, activation=K.relu),
+    N.Dense(512, activation=K.relu),
+    N.Dense(128, activation=K.relu),
     N.Dense(10, activation=K.softmax)
 ])
 ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
@@ -44,9 +45,11 @@ cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
 cost_test = K.mean(K.categorical_accuracy(y_pred_score, y))
 
 parameters = ops.parameters
-updates = K.optimizers.SGD(momentum=None)(cost_train, parameters)
+optimizer = K.optimizers.SGD(lr=0.01)
+updates = optimizer(cost_train, parameters)
 print('Building training functions ...')
-f_train = K.function([X_train, y], cost_train, updates=updates)
+f_train = K.function([X_train, y], [cost_train, optimizer.norm],
+                     updates=updates)
 print('Building testing functions ...')
 f_test = K.function([X_score, y], cost_test)
 
@@ -57,10 +60,10 @@ print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
 task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
-task.set_subtask(f_test, (ds['X_valid'], ds['y_valid']), freq=0.6, name='valid')
+task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
 task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: %.2f'),
+    training.ProgressMonitor(name='train', format='Results: %.2f, %.4f'),
     training.ProgressMonitor(name='valid', format='Results: %.2f'),
     training.ProgressMonitor(name='test', format='Results: %.2f'),
     training.History(),
