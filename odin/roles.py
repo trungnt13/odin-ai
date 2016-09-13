@@ -238,28 +238,22 @@ class DropoutRole(VariableRole):
 DROPOUT = DropoutRole()
 
 
-class AlgorithmStateRole(VariableRole):
+# ===========================================================================
+# Optimizer Algorithm roles
+# ===========================================================================
+class OptimizerStateRole(VariableRole):
     pass
 
 
 #: Shared variables used in algorithms updates
-ALGORITHM_STATE = AlgorithmStateRole()
+OPTIMIZER_STATE = OptimizerStateRole()
 
 
-class AlgorithmHyperparameterRole(AlgorithmStateRole):
+class LearningRateRole(VariableRole):
     pass
 
 
-#: hyperparameters accociated with algorithms
-ALGORITHM_HYPERPARAMETER = AlgorithmHyperparameterRole()
-
-
-class AlgorithmBufferRole(AlgorithmStateRole):
-    pass
-
-
-#: buffers accociated with algorithms
-ALGORITHM_BUFFER = AlgorithmBufferRole()
+LEARNING_RATE = LearningRateRole()
 
 
 # ===========================================================================
