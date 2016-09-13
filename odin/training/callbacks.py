@@ -629,6 +629,11 @@ class ProgressMonitor(Callback):
                 '_history': [],
                 'name': self.name}
 
+    def epoch_start(self):
+        # reset tiem of ProgressBar
+        if self.name == self.event_name:
+            self._prog.start = time.time()
+
     def batch_end(self):
         # do nothing for not specified task
         if self.name != self.event_name or 'samples_size' not in self:
