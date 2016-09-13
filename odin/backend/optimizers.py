@@ -308,9 +308,14 @@ class Optimizer(object):
 
     def get_gradients(self, loss_or_grads, params):
         grads = get_or_compute_grads(loss_or_grads, params)
+        # ====== clipnorm ====== #
         if self.clipnorm is not None and self.clipnorm > 0:
             grads, self._norm = total_norm_constraint(grads, self.clipnorm,
                                                       return_norm=True)
+        else:
+            self._norm = sqrt(_sum([sum(square(g)) for g in grads]))
+            add_role(self._norm, AUXILIARY)
+        # ====== clipvalue ====== #
         if self.clipvalue is not None and self.clipvalue > 0:
             grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
         return grads
