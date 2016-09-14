@@ -63,7 +63,7 @@ def _parse_data_descriptor(path, name):
         return [(name, ('memdict', len(data), data))]
     except:
         pass
-    return None
+    return [(name, ('unknown', 'unknown', path))]
 
 
 @singleton
@@ -241,10 +241,11 @@ class Dataset(object):
                 raise KeyError('%s not found in this dataset' % key)
             dtype, shape, data = self._data_map[key]
             # return type is just a descriptor, create MmapData for it
-            if isinstance(data, StringType):
+            if isinstance(data, StringType) and \
+            dtype is not 'unknown' and shape is not 'unknown':
                 data = MmapData(data)
                 self._data_map[key] = (data.dtype, data.shape, data)
-            self._validate_memmap_max_open(key)
+                self._validate_memmap_max_open(key)
             return data
         raise ValueError('Only accept key type is string.')
 

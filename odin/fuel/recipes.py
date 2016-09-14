@@ -257,7 +257,7 @@ class Merge(FeederRecipe):
 # ===========================================================================
 # Label processing
 # ===========================================================================
-class NameToTranscription(FeederRecipe):
+class Name2Trans(FeederRecipe):
     """ This function convert the name (in indices) to transcription
     for given data
 
@@ -279,7 +279,7 @@ class NameToTranscription(FeederRecipe):
     """
 
     def __init__(self, converter_func):
-        super(NameToTranscription, self).__init__()
+        super(Name2Trans, self).__init__()
         if not callable(converter_func):
             raise ValueError('"converter_func" must be callable.')
         self.converter_func = converter_func

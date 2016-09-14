@@ -13,7 +13,7 @@ class MmapDict(dict):
 
     Note
     ----
-    Only support (key, value) types = (str, str)
+    Only support (key, value) types = (str, primitive_type)
 
     """
     HEADER = 'mmapdict'
@@ -127,6 +127,9 @@ class MmapDict(dict):
         self._new_dict[key] = value
         if len(self._write_value) > 48000:
             self.flush()
+
+    def __iter__(self):
+        return self.iteritems()
 
     def __getitem__(self, key):
         if key in self._new_dict:
