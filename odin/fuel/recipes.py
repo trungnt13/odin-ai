@@ -50,6 +50,9 @@ class FeederList(FeederRecipe):
         if len(recipes) == 0:
             raise Exception('FeederList must contains >= 1 recipe(s).')
 
+    def __len__(self):
+        return len(self.recipes)
+
     def init(self, ntasks, batch_size, seed):
         for i in self.recipes:
             i.init(ntasks, batch_size, seed)

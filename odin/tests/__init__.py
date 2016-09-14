@@ -3,6 +3,7 @@ import unittest
 
 def run(device='cpu'):
     tests = [
+        'fuel_test',
         'backend_test',
         'nnet_test',
         'compare_test',

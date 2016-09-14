@@ -80,7 +80,7 @@ class CompareTest(unittest.TestCase):
         ])
         y = f(X, hid_init=hid_init, cell_init=cell_init, mask=mask)
         f = K.function([X, mask], y)
-        out1 = f(x, x_mask)[0]
+        out1 = f(x, x_mask)
 
         # ====== lasagne ====== #
         l = lasagne.layers.InputLayer(shape=(None, 28, 28))
@@ -152,7 +152,7 @@ class CompareTest(unittest.TestCase):
         ])
         y = f(X, hid_init=hid_init, mask=mask)
         f = K.function([X, mask], y)
-        out1 = f(x, x_mask)[0]
+        out1 = f(x, x_mask)
         # ====== lasagne ====== #
         l = lasagne.layers.InputLayer(shape=(None, 28, 28))
         l.input_var = X
@@ -275,7 +275,7 @@ class CompareTest(unittest.TestCase):
                 N.SimpleRecurrent(num_units=32, activation=K.relu,
                     W_init=W[1])
             ])
-            return X1, f(X1, hid_init=zeros(1, 32))[0]
+            return X1, f(X1, hid_init=zeros(1, 32))
 
         lasagne_list = [lasagne_net1, lasagne_net2, lasagne_net3]
         odin_list = [odin_net1, odin_net2, odin_net3]
