@@ -389,8 +389,7 @@ def load_mspec_test():
     return _load_data_from_path(datapath)
 
 
-def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
-              nb_words=None, maxlen=None):
+def load_imdb(nb_words=None, maxlen=None):
     """ The preprocessed imdb dataset with following configuraiton:
      - nb_words=88587
      - length=2494
@@ -400,6 +399,7 @@ def load_imdb(path='https://s3.amazonaws.com/ai-datasets/imdb.zip',
      - Other word start from 3
      - padding='pre' with value=0
     """
+    path = 'https://s3.amazonaws.com/ai-datasets/imdb.zip'
     datapath = get_file('imdb', path)
     ds = _load_data_from_path(datapath)
     X_train, y_train, X_test, y_test = \

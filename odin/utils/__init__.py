@@ -1,6 +1,7 @@
 from __future__ import print_function
 import os
 import sys
+import uuid
 import time
 import math
 import types
@@ -140,10 +141,6 @@ class ArgController(object):
                 print(max_len % i, ': ', j)
             print('**********************************\n')
         return args
-
-
-def raise_return(e):
-    raise e
 
 
 def one_hot(y, n_classes=None):
@@ -1143,3 +1140,26 @@ def get_system_status(memory_total=False, memory_total_actual=False,
         return psutil.pids()
     if pid:
         return os.getpid()
+
+
+# ===========================================================================
+# Others
+# ===========================================================================
+def raise_return(e):
+    raise e
+
+
+_uuid_chars = (map(chr, range(65, 91)) + # ABCD
+               map(chr, range(97, 123)) + # abcd
+               map(chr, range(48, 57))) # 0123
+_uuid_random_state = numpy.random.RandomState(12)
+
+
+def short_uuid():
+    """ Generate random UUID 8 characters with very very low collision """
+    # m = time.time()
+    # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
+    # uniqid = str(uuid.uuid4())[:8]
+    uniquid = ''.join(_uuid_random_state.choice(_uuid_chars,
+                                          size=8, replace=True))
+    return uniquid

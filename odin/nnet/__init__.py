@@ -7,3 +7,5 @@ from .sampling import *
 from .normalization import *
 from .embedding import *
 from .helper import *
+
+import shortcuts

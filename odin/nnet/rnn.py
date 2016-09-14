@@ -113,7 +113,7 @@ class SimpleRecurrent(BaseRNN):
         for i in out:
             K.add_shape(i, shape=input_shape)
         # only care about the first state
-        return out
+        return out[0] if len(out) == 1 else out
 
     def _initialize(self, X, hid_init=None, mask=None):
         input_shape = K.get_shape(X)
@@ -268,7 +268,7 @@ class GRU(BaseRNN):
         for i in out:
             K.add_shape(i, shape=input_shape)
         # only care about the first state
-        return out
+        return out[0] if len(out) == 1 else out
 
     def _initialize(self, X, hid_init=None, mask=None):
         input_shape = K.get_shape(X)
@@ -463,7 +463,7 @@ class LSTM(BaseRNN):
         for i in out:
             K.add_shape(i, shape=input_shape[:-1] + (self.num_units,))
         # only care about the first state
-        return out
+        return out[0] if len(out) == 1 else out
 
     def _initialize(self, X, hid_init=None, cell_init=None, mask=None):
         input_shape = K.get_shape(X)

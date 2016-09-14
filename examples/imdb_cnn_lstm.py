@@ -68,8 +68,8 @@ f = N.Sequence([
     N.LSTM(num_units=lstm_output_size)[:, -1],
     N.Dense(1, activation=K.sigmoid)
 ])
-y_pred_train = f(X_train)[0]
-y_pred_score = f(X_score)[0]
+y_pred_train = f(X_train)
+y_pred_score = f(X_score)
 
 cost_train = K.mean(K.binary_crossentropy(y_pred_train, y))
 cost_score = K.mean(K.binary_accuracy(y_pred_score, y))

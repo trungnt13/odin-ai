@@ -16,7 +16,7 @@ from odin import backend as K
 from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
-from odin.utils import as_tuple
+from odin.utils import as_tuple, short_uuid
 from odin.utils.decorators import autoinit, cache
 
 # ===========================================================================
@@ -262,14 +262,11 @@ class NNOps(object):
 
     """
 
-    ID = 0
-
     def __init__(self, name=None):
         super(NNOps, self).__init__()
         self.name = name
         if name is None:
-            self.name = "%s_%d" % (self.__class__.__name__, NNOps.ID)
-        NNOps.ID += 1
+            self.name = "%s_%s" % (self.__class__.__name__, short_uuid())
 
         self._configuration = None
         self._transpose_ops = None
@@ -375,8 +372,6 @@ class NNOps(object):
 
     def __setstate__(self, states):
         name, config, attrs = states
-        # increase the ID or will be overlap name
-        NNOps.ID += 1
         self.name = name
         self._transpose_ops = None # reset the transpose ops
         for i, j in attrs.iteritems():

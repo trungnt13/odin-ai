@@ -56,14 +56,14 @@ net_odin = N.Sequence([
     N.Dimshuffle(pattern=(0, 2, 1, 3)),
     N.FlattenRight(outdim=3),
     # ====== LSTM ====== #
-    # N.Merge([
-    #     N.Dense(64, activation=K.linear, name='ingate'), # input-gate
-    #     N.Dense(64, activation=K.linear, name='forgetgate'), # forget-gate
-    #     N.Dense(64, activation=K.linear, name='cellupdate'), # cell-update
-    #     N.Dense(64, activation=K.linear, name='outgate') # output-gate
-    # ], merge_function=K.concatenate),
-    # N.LSTM(num_units=64)[:, -1],
-    N.FlattenRight(outdim=2),
+    N.Merge([
+        N.Dense(64, activation=K.linear, name='ingate'), # input-gate
+        N.Dense(64, activation=K.linear, name='forgetgate'), # forget-gate
+        N.Dense(64, activation=K.linear, name='cellupdate'), # cell-update
+        N.Dense(64, activation=K.linear, name='outgate') # output-gate
+    ], merge_function=K.concatenate),
+    N.LSTM(num_units=64)[:, -1],
+    # N.FlattenRight(outdim=2),
     N.Dense(1, activation=K.sigmoid)
 ])
 print('Building ODIN network ...')
@@ -85,9 +85,9 @@ net_lasagne = lasagne.layers.Pool2DLayer(net_lasagne, pool_size=(2, 2),
                                          stride=None, mode='max')
 net_lasagne = lasagne.layers.DimshuffleLayer(net_lasagne, pattern=(0, 2, 1, 3))
 net_lasagne = lasagne.layers.FlattenLayer(net_lasagne, outdim=3)
-# net_lasagne = lasagne.layers.LSTMLayer(net_lasagne, num_units=64,
-#                                        only_return_final=True)
-net_lasagne = lasagne.layers.FlattenLayer(net_lasagne, outdim=2)
+net_lasagne = lasagne.layers.LSTMLayer(net_lasagne, num_units=64,
+                                       only_return_final=True)
+# net_lasagne = lasagne.layers.FlattenLayer(net_lasagne, outdim=2)
 net_lasagne = lasagne.layers.DenseLayer(net_lasagne, num_units=1,
                                         nonlinearity=lasagne.nonlinearities.sigmoid)
 
@@ -106,8 +106,8 @@ model.add(keras.layers.Convolution2D(8, 3, 3, activation='relu',
 model.add(keras.layers.MaxPooling2D(pool_size=(2, 2), strides=None, border_mode='valid'))
 model.add(keras.layers.Permute(dims=(2, 1, 3)))
 model.add(keras.layers.Reshape(target_shape=(100, 512)))
-# model.add(keras.layers.LSTM(output_dim=64, return_sequences=False))
-model.add(keras.layers.Flatten())
+model.add(keras.layers.LSTM(output_dim=64, return_sequences=False))
+# model.add(keras.layers.Flatten())
 model.add(keras.layers.Dense(output_dim=1, activation='sigmoid'))
 
 print('Compile KERAS network ...')
