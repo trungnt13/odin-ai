@@ -342,8 +342,6 @@ class Feeder(MutableData):
         while working_processes > 0:
             # storing batch and return when cache is full
             batch = results.get()
-            if counter.value < 0:
-                raise Exception(str(type(batch)))
             if batch is None:
                 working_processes -= 1
             else:
