@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 import os
 import math
+import types
 import inspect
 from abc import ABCMeta
 from collections import Counter
@@ -12,6 +13,7 @@ import numpy as np
 from odin.utils import (segment_list, segment_axis, one_hot,
                         Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
+from odin.utils.decorators import functionable
 
 
 # ===========================================================================
@@ -79,6 +81,41 @@ class FeederList(FeederRecipe):
         return shape
 
 
+class Filter(FeederRecipe):
+
+    """
+    Parameters
+    ----------
+    filter_func: function, method
+        return True if the given data is accepted for further processing
+        otherwise False.
+
+    """
+
+    def __init__(self, filter_func):
+        super(Filter, self).__init__()
+        if not isinstance(filter_func, (types.FunctionType, types.MethodType)):
+            raise Exception('filter_func must be FunctionType or MethodType, '
+                            'but given type is: %s' % str(type(filter_func)))
+        self._nb_args = len(inspect.getargspec(filter_func).args)
+        self._filter_func = functionable(filter_func)
+
+    def map(self, name, X, transcription):
+        is_ok = False
+        if self._nb_args == 1:
+            is_ok = self._filter_func(name)
+        elif self._nb_args == 2:
+            is_ok = self._filter_func(name, X)
+        else:
+            is_ok = self._filter_func(name, X, transcription)
+        if is_ok:
+            return name, X, transcription
+        return None
+
+
+# ===========================================================================
+# Features preprocessing
+# ===========================================================================
 class Normalization(FeederRecipe):
     """ Normalization """
 
