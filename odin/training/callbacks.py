@@ -413,6 +413,7 @@ class EarlyStop(Callback):
     get_value : function
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
+        For example, lambda x: np.mean(x)
 
     Note
     ----
@@ -497,6 +498,7 @@ class EarlyStopGeneralizationLoss(EarlyStop):
     get_value : function
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
+        for example, lambda x: np.mean(x)
 
     Note
     ----
@@ -565,6 +567,8 @@ class EarlyStopPatience(EarlyStop):
     get_value : function
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
+        for example, lambda x: np.mean(x)
+
     """
 
     def task_start(self):
