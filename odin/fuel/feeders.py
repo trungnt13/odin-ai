@@ -310,7 +310,7 @@ class Feeder(MutableData):
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
-                        time.sleep(0.4)
+                        time.sleep(1.2 * (shared_couter.value / maximum_queue_size))
                     # CRITICAL: the nb_returned will be stored from last
                     # batch and added to the shared_couter which can cause
                     # a deadlock, so it must be reseted to 0 after each batch
@@ -322,7 +322,7 @@ class Feeder(MutableData):
                     del batch; batch = []
                     # increase shared counter
                     if nb_returned > 0:
-                        shared_couter.add(nb_returned)
+                        shared_couter.add(nb_returned + 1)
             # ending signal
             res.put(None)
         #######################################################
@@ -342,6 +342,8 @@ class Feeder(MutableData):
         while working_processes > 0:
             # storing batch and return when cache is full
             batch = results.get()
+            if counter.value < 0:
+                raise Exception(str(type(batch)))
             if batch is None:
                 working_processes -= 1
             else:

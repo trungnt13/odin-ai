@@ -520,6 +520,9 @@ class Sampling(FeederRecipe):
         pass
 
 
+# ===========================================================================
+# Returning results
+# ===========================================================================
 class CreateBatch(FeederRecipe):
     """ Batching
     Parameters
@@ -607,3 +610,25 @@ class CreateBatch(FeederRecipe):
             # return the results
             if ret is not None:
                 yield ret if len(ret) > 1 else ret[0]
+
+
+class CreateFile(FeederRecipe):
+    """ CreateFile
+    Instead of divide a file into batches, return the whole file
+
+    Parameters
+    ----------
+    return_name: bool
+        whether return the name specifed in the indices
+    """
+
+    def __init__(self, return_name=False):
+        super(CreateFile, self).__init__()
+        self.return_name = return_name
+
+    def reduce(self, batch):
+        for name, X, transcription in batch:
+            if transcription is None:
+                yield (name, X) if self.return_name else X
+            else:
+                yield (name, X, transcription) if self.return_name else (X, transcription)
