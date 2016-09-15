@@ -248,7 +248,7 @@ EMBEDDING = EmbeddingWeights()
 # ===========================================================================
 # Batch normalization roles
 # ===========================================================================
-class BatchNormPopulationStatisticsRole(ParameterRole):
+class BatchNormPopulationStatisticsRole(VariableRole):
     pass
 #: base role for batch normalization population statistics
 BATCH_NORM_POPULATION_STATISTICS = BatchNormPopulationStatisticsRole()

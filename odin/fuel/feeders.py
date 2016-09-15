@@ -122,12 +122,23 @@ class Feeder(MutableData):
 
     Example
     -------
-
+    >>> feeder = F.Feeder(ds['mfcc'], ds.path, ncpu=12, buffer_size=12,
+    >>>                   maximum_queue_size=48)
+    >>> feeder.set_batch(256, seed=12082518, shuffle_level=2)
+    >>> feeder.set_recipes([
+    >>>     F.recipes.Name2Trans(
+    >>>         lambda x, y: [cluster_idx.index(x.split('/')[0])] * y.shape[0]),
+    >>>     F.recipes.CreateBatch(lambda x: (x[0], x[1]) if len(set(x[1])) > 1 else None)
+    >>> ])
 
     Note
     ----
     set(ncpu=1) if you want a reproducible results
-    * Memory transferring in Queue is always the bottleneck of multiprocessing
+     - Memory transferring in Queue is always the bottleneck of multiprocessing
+    3 supporting mode for shuffling:
+     - shuffle_level=0: only shuffling the indices
+     - shuffle_level=1: shuffle the buffered batch (e.g. 12 files in the indices)
+     - shuffle_level=2: shuffle each returned batch
 
     """
 

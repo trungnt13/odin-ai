@@ -41,8 +41,6 @@ class BatchNorm(NNOps):
 
     Parameters
     ----------
-    incoming : a :class:`Layer` instance or a tuple
-        The layer feeding into this layer, or the expected input shape
     axes : 'auto', int or tuple of int
         The axis or axes to normalize over. If ``'auto'`` (the default),
         normalize over all axes except for the second: this will normalize over

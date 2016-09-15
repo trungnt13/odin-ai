@@ -72,21 +72,24 @@ def _auto_infer_shape(ops, *var, **kwargs):
     """ You can set 'group_inputs' in kwargs so the inputs to ops
     will be ops(var) instead of ops(*var)
     """
-    inputs = []
-    for i in var:
-        if isinstance(i, numbers.Number):
-            inputs.append(i)
+    try:
+        inputs = []
+        for i in var:
+            if isinstance(i, numbers.Number):
+                inputs.append(i)
+            else:
+                input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
+                               else s
+                               for s in get_shape(i))
+                inputs.append(T.alloc(0, *input_shape))
+        if 'group_inputs' in kwargs:
+            del kwargs['group_inputs']
+            output_shape = ops(inputs, **kwargs).shape.eval()
         else:
-            input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
-                           else s
-                           for s in get_shape(i))
-            inputs.append(T.alloc(0, *input_shape))
-    if 'group_inputs' in kwargs:
-        del kwargs['group_inputs']
-        output_shape = ops(inputs, **kwargs).shape.eval()
-    else:
-        output_shape = ops(*inputs, **kwargs).shape.eval()
-    return tuple(s if s else None for s in output_shape)
+            output_shape = ops(*inputs, **kwargs).shape.eval()
+        return tuple(s if s else None for s in output_shape)
+    except theano.gof.MissingInputError:
+        return 'None'
 
 
 def add_shape(var, shape):
@@ -200,7 +203,7 @@ def is_training(v):
         v = [v]
     inputs = graph.inputs(v)
     for i in inputs:
-        if is_placeholder(i) and has_roles(i, TRAINING, exact=True):
+        if has_roles(i, TRAINING, exact=True):
             return True
     return False
 
