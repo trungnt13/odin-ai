@@ -19,14 +19,10 @@ from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
 from odin.utils import as_tuple, short_uuid
 from odin.utils.decorators import autoinit, cache
 
+
 # ===========================================================================
 # Helper
 # ===========================================================================
-_primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
-                    types.FunctionType, numbers.Number, types.NoneType,
-                    K.init.constant)
-
-
 def _initialize_param(name, spec, shape):
     """ return a ndarray or trainable_variable """
     #####################################
@@ -227,6 +223,11 @@ class NNConfig(object):
         self._paramters = [K.pickling_variable(i) for i in states[1]]
 
 
+_primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
+                    types.FunctionType, numbers.Number, types.NoneType,
+                    K.init.constant, NNConfig)
+
+
 @add_metaclass(ABCMeta)
 class NNOps(object):
     """ Basics of all Neural Network operators
@@ -264,13 +265,14 @@ class NNOps(object):
 
     def __init__(self, name=None):
         super(NNOps, self).__init__()
+        self._arguments = {}
+
         self.name = name
         if name is None:
             self.name = "%s_%s" % (self.__class__.__name__, short_uuid())
 
         self._configuration = None
         self._transpose_ops = None
-        self._arguments = {}
 
     # ==================== properties ==================== #
     @property
@@ -368,18 +370,16 @@ class NNOps(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return (self.name, self._configuration, self._arguments)
+        return self._arguments
 
     def __setstate__(self, states):
-        name, config, attrs = states
-        self.name = name
+        attrs = states
         self._transpose_ops = None # reset the transpose ops
         for i, j in attrs.iteritems():
             setattr(self, i, j)
         self._arguments = attrs
-        self._configuration = config
-        if config is not None:
-            config.inflate(self)
+        if self._configuration is not None:
+            self._configuration.inflate(self)
 
 
 # ===========================================================================

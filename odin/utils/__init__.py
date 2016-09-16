@@ -1152,7 +1152,7 @@ def raise_return(e):
 _uuid_chars = (map(chr, range(65, 91)) + # ABCD
                map(chr, range(97, 123)) + # abcd
                map(chr, range(48, 57))) # 0123
-_uuid_random_state = numpy.random.RandomState(12)
+_uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
 
 
 def short_uuid():
