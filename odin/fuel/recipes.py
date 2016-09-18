@@ -665,7 +665,14 @@ class CreateFile(FeederRecipe):
 
     def reduce(self, batch):
         for name, X, transcription in batch:
-            if transcription is None:
-                yield (name, X) if self.return_name else X
-            else:
-                yield (name, X, transcription) if self.return_name else (X, transcription)
+            ret = [X] if not isinstance(X, list) else X
+            # ====== transcription ====== #
+            if transcription is not None:
+                if not isinstance(transcription, (list, tuple)):
+                    ret.append(transcription)
+                else:
+                    ret += transcription
+            # ====== return name ====== #
+            if self.return_name:
+                ret = [name] + ret
+            yield tuple(ret)

@@ -29,7 +29,7 @@ __all__ = [
 # ===========================================================================
 # dataset
 # ===========================================================================
-def _parse_data_descriptor(path, name):
+def _parse_data_descriptor(path, name, read_only):
     """ Return mapping: path/name -> (dtype, shape, Data) """
     path = os.path.join(path, name)
     if not os.path.isfile(path):
@@ -42,7 +42,7 @@ def _parse_data_descriptor(path, name):
         return [(os.path.basename(path), (dtype, shape, path))]
     except: # cannot read the header of MmapData, maybe Hdf5
         try:
-            f = open_hdf5(path)
+            f = open_hdf5(path, read_only=read_only)
             ds = get_all_hdf_dataset(f)
             data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
             return [(str(i.name), (str(i.dtype), i.shape, i)) for i in data]
@@ -76,8 +76,9 @@ class Dataset(object):
     _data_map contains: name -> (dtype, shape, Data or pathtoData)
     """
 
-    def __init__(self, path):
+    def __init__(self, path, read_only=False):
         path = os.path.abspath(path)
+        self.read_only = read_only
         if path is not None:
             if os.path.isfile(path) and '.zip' in os.path.basename(path):
                 self._load_archive(path,
@@ -100,7 +101,7 @@ class Dataset(object):
         # ====== load all Data ====== #
         files = os.listdir(path)
         for f in files:
-            data = _parse_data_descriptor(path, f)
+            data = _parse_data_descriptor(path, f, self.read_only)
             if data is None: continue
             for key, d in data:
                 if key in self._data_map:
@@ -243,7 +244,7 @@ class Dataset(object):
             # return type is just a descriptor, create MmapData for it
             if isinstance(data, StringType) and \
             dtype is not 'unknown' and shape is not 'unknown':
-                data = MmapData(data)
+                data = MmapData(data, read_only=self.read_only)
                 self._data_map[key] = (data.dtype, data.shape, data)
                 self._validate_memmap_max_open(key)
             return data

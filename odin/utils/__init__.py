@@ -31,6 +31,79 @@ import six
 from .profile import *
 
 
+# ===========================================================================
+# Others
+# ===========================================================================
+def raise_return(e):
+    raise e
+
+
+@contextlib.contextmanager
+def suppress_stdout(stderr=False):
+    """ Temporary ignore (not show) all output message
+    Make sure you know what are you doing
+    """
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        if stderr:
+            old_stderr = sys.stderr
+            sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            if stderr:
+                sys.stderr = old_stderr
+
+_uuid_chars = (map(chr, range(65, 91)) + # ABCD
+               map(chr, range(97, 123)) + # abcd
+               map(chr, range(48, 57))) # 0123
+_uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
+
+
+def short_uuid():
+    """ Generate random UUID 8 characters with very very low collision """
+    # m = time.time()
+    # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
+    # uniqid = str(uuid.uuid4())[:8]
+    uniquid = ''.join(_uuid_random_state.choice(_uuid_chars,
+                                          size=8, replace=True))
+    return uniquid
+
+
+@contextlib.contextmanager
+def change_recursion_limit(limit):
+    """Temporarily changes the recursion limit."""
+    old_limit = sys.getrecursionlimit()
+    if old_limit < limit:
+        sys.setrecursionlimit(limit)
+    yield
+    sys.setrecursionlimit(old_limit)
+
+
+@contextlib.contextmanager
+def signal_handling(sigint=None, sigtstp=None, sigquit=None):
+    # We cannot handle SIGTERM, because it prevent subproces from
+    # .terminate()
+    orig_int = signal.getsignal(signal.SIGINT)
+    orig_tstp = signal.getsignal(signal.SIGTSTP)
+    orig_quit = signal.getsignal(signal.SIGQUIT)
+
+    if sigint is not None: signal.signal(signal.SIGINT, sigint)
+    if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
+    if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
+
+    yield
+    # reset
+    signal.signal(signal.SIGINT, orig_int)
+    signal.signal(signal.SIGTSTP, orig_tstp)
+    signal.signal(signal.SIGQUIT, orig_quit)
+
+
+# ===========================================================================
+# ArgCOntrol
+# ===========================================================================
 class ArgController(object):
     """ Simple interface to argparse """
 
@@ -149,6 +222,9 @@ class ArgController(object):
         return args
 
 
+# ===========================================================================
+# Simple math
+# ===========================================================================
 def one_hot(y, n_classes=None):
     '''Convert class vector (integers from 0 to nb_classes)
     to binary class matrix, for use with categorical_crossentropy
@@ -361,35 +437,6 @@ def segment_axis(a, frame_length=2048, hop_length=512,
         + a.strides[axis + 1:]
         return numpy.ndarray.__new__(numpy.ndarray, strides=newstrides,
                                   shape=newshape, buffer=a, dtype=a.dtype)
-
-
-@contextlib.contextmanager
-def change_recursion_limit(limit):
-    """Temporarily changes the recursion limit."""
-    old_limit = sys.getrecursionlimit()
-    if old_limit < limit:
-        sys.setrecursionlimit(limit)
-    yield
-    sys.setrecursionlimit(old_limit)
-
-
-@contextlib.contextmanager
-def signal_handling(sigint=None, sigtstp=None, sigquit=None):
-    # We cannot handle SIGTERM, because it prevent subproces from
-    # .terminate()
-    orig_int = signal.getsignal(signal.SIGINT)
-    orig_tstp = signal.getsignal(signal.SIGTSTP)
-    orig_quit = signal.getsignal(signal.SIGQUIT)
-
-    if sigint is not None: signal.signal(signal.SIGINT, sigint)
-    if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
-    if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
-
-    yield
-    # reset
-    signal.signal(signal.SIGINT, orig_int)
-    signal.signal(signal.SIGTSTP, orig_tstp)
-    signal.signal(signal.SIGQUIT, orig_quit)
 
 
 def as_shape_tuple(shape):
@@ -773,8 +820,8 @@ def get_all_files(path, filter_func=None):
     return file_list
 
 
-def get_module_from_path(identifier, prefix='', suffix='', path='.', exclude='',
-                  prefer_compiled=False):
+def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
+                         prefer_compiled=False):
     ''' Algorithms:
      - Search all files in the `path` matched `prefix` and `suffix`
      - Exclude all files contain any str in `exclude`
@@ -807,6 +854,9 @@ def get_module_from_path(identifier, prefix='', suffix='', path='.', exclude='',
     File with multiple . character my procedure wrong results
     If the script run this this function match the searching process, a
     infinite loop may happen!
+    * This function try to import each modules and find desire function,
+    it may mess up something.
+
     '''
     import re
     import imp
@@ -1146,26 +1196,3 @@ def get_system_status(memory_total=False, memory_total_actual=False,
         return psutil.pids()
     if pid:
         return os.getpid()
-
-
-# ===========================================================================
-# Others
-# ===========================================================================
-def raise_return(e):
-    raise e
-
-
-_uuid_chars = (map(chr, range(65, 91)) + # ABCD
-               map(chr, range(97, 123)) + # abcd
-               map(chr, range(48, 57))) # 0123
-_uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
-
-
-def short_uuid():
-    """ Generate random UUID 8 characters with very very low collision """
-    # m = time.time()
-    # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
-    # uniqid = str(uuid.uuid4())[:8]
-    uniquid = ''.join(_uuid_random_state.choice(_uuid_chars,
-                                          size=8, replace=True))
-    return uniquid

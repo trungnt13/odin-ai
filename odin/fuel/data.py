@@ -805,19 +805,21 @@ class MmapData(Data):
         f.close()
         return dtype, shape
 
-    def __init__(self, path, dtype=None, shape=None):
+    def __init__(self, path, dtype=None, shape=None, read_only=False):
         super(MmapData, self).__init__()
+        self.read_only = read_only
+        # ====== increase memmap count ====== #
         if MmapData.COUNT > MAX_OPEN_MMAP:
             raise ValueError('Only allowed to open maximum of {} memmap file'.format(MAX_OPEN_MMAP))
         MmapData.COUNT += 1
-
+        # ====== check shape info ====== #
         if shape is not None:
             if not isinstance(shape, (tuple, list, np.ndarray)):
                 shape = (shape,)
             shape = tuple([0 if i is None or i < 0 else i for i in shape])
         # validate path
         path = os.path.abspath(path)
-        mode = 'r+'
+        mode = 'r' if read_only else 'r+'
         # read exist file
         if os.path.exists(path):
             dtype, shape = MmapData.read_header(path)
@@ -985,6 +987,9 @@ class MmapData(Data):
 
     # ==================== Save ==================== #
     def resize(self, shape):
+        if self.read_only:
+            raise Exception('Cannot resize MmapData at path: %s in read-only mode.'
+                            % self.path)
         mmap = self._data
 
         if not isinstance(shape, (tuple, list)):
@@ -1048,7 +1053,7 @@ def get_all_hdf_dataset(hdf, fileter_func=None, path='/'):
 _HDF5 = {}
 
 
-def open_hdf5(path):
+def open_hdf5(path, read_only=False):
     '''
     Parameters
     ----------
@@ -1075,13 +1080,14 @@ def open_hdf5(path):
 
     '''
     key = os.path.abspath(path)
+    mode = 'r' if read_only else 'a'
+
     if key in _HDF5:
         f = _HDF5[key]
         if 'Closed' in str(f):
-            f = h5py.File(path, mode='a')
+            f = h5py.File(path, mode=mode)
     else:
-        # h5py._errors.silence_errors()
-        f = h5py.File(path, mode='a')
+        f = h5py.File(path, mode=mode)
         _HDF5[key] = f
     return f
 
