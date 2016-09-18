@@ -440,7 +440,7 @@ def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., softmax_input=False):
 
     '''
     if softmax_input:
-        y_llr = y_llr / expand_dims(sum(y_llr, axis=-1))
+        y_llr = log(y_llr / (1 - y_llr))
 
     thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
     n = y_llr.shape[1]
@@ -506,7 +506,8 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
 
     """
     if softmax_input:
-        pass
+        log_llh = np.clip(log_llh, 10e-8, 1 - 10e-8)
+        log_llh = np.log(log_llh / (1 - log_llh))
 
     if cluster_idx is None:
         cluster_idx = [list(range(0, log_llh.shape[-1]))]

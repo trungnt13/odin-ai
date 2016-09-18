@@ -11,10 +11,15 @@ def freqcount(x):
     freq = defaultdict(int)
     for i in x:
         freq[i] += 1
-    return freq
+    return dict(freq)
 
 
 def split_train_test(X, seed, split=0.7):
+    """
+    Note
+    ----
+    This function provides the same partitions with same given seed.
+    """
     if seed is not None:
         np.random.seed(seed)
         X = X[np.random.permutation(X.shape[0])]
