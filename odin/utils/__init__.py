@@ -73,16 +73,21 @@ class ArgController(object):
 
         Parameters
         ----------
+        name: str
+            pass
+        help: str
+            pass
+        default: str
+            pass
         preprocess: callable
             take in the parsed argument and preprocess it into necessary
             information
-
         """
         if self.parser is None:
             self.parser = argparse.ArgumentParser(
                 description='Automatic argument parser (yes,true > True; no,false > False)',
                 version=self.version, add_help=True)
-
+        # ====== exist default inputs ====== #
         if default is None:
             if self._is_positional(name):
                 self.parser.add_argument(name, help=help, type=str, action="store",
@@ -91,6 +96,7 @@ class ArgController(object):
                 self.parser.add_argument(name, help=help, type=str, action="store",
                     required=True, metavar='')
             self._require_input = True
+        # ====== No defaults inputs ====== #
         else:
             help += ' (default: %s)' % str(default)
             self.parser.add_argument(name, help=help, type=str, action="store",
@@ -113,7 +119,7 @@ class ArgController(object):
                 exit_now = True
             else:
                 args = self.parser.parse_args()
-        except:
+        except Exception, e:
             # if specfy version or help, don't need to print anything else
             if all(i not in ['-h', '--help', '-v', '--version']
                    for i in sys.argv):

@@ -58,10 +58,12 @@ class Dropout(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    @autoinit
     def __init__(self, level=0.5, noise_dims=None, rescale=True,
                  seed=None, **kwargs):
         super(Dropout, self).__init__(**kwargs)
+        self.level = level
+        self.noise_dims = noise_dims
+        self.rescale = rescale
         self.seed = seed
 
     def _initialize(self, x):
@@ -95,10 +97,12 @@ class Noise(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    @autoinit
     def __init__(self, sigma=0.075, noise_dims=None,
                  noise_type='gaussian', seed=None, **kwargs):
         super(Noise, self).__init__(**kwargs)
+        self.sigma = sigma
+        self.noise_dims = noise_dims
+        self.noise_type = noise_type
         self.seed = seed
 
     def _initialize(self, x):

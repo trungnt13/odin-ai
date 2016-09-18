@@ -13,6 +13,7 @@ import numpy as np
 
 from odin.config import auto_config, RNG_GENERATOR
 from odin.roles import add_role, add_updates
+from odin.utils import as_tuple
 
 config = auto_config()
 FLOATX = config.floatX
@@ -424,8 +425,23 @@ def categorical_accuracy(y_pred, y_true, top_k=1):
         return any(eq(top, y_true), axis=-1)
 
 
-def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
-    ''' Fast calculation of Cavg (for only 1 clusters) '''
+def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., softmax_input=False):
+    ''' Fast calculation of Cavg (for only 1 clusters)
+
+    Parameters
+    ----------
+    y_llr: (nb_samples, nb_classes)
+        log likelihood ratio: llr = log (P(data|target) / P(data|non-target))
+    y_true: numpy array of shape (nb_samples,)
+        Class labels.
+    softmax_input: boolean
+        if True, `y_llr` is the output probability from softmax and perform
+        llr transform for `y_llr`
+
+    '''
+    if softmax_input:
+        y_llr = y_llr / expand_dims(sum(y_llr, axis=-1))
+
     thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
     n = y_llr.shape[1]
 
@@ -449,39 +465,49 @@ def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1.):
 
 
 def Cavg_cpu(log_llh, y_true, cluster_idx=None,
-         Ptar=0.5, Cfa=1, Cmiss=1):
+             Ptar=0.5, Cfa=1, Cmiss=1, softmax_input=False):
     """Compute cluster-wise and total LRE'15 percentage costs.
 
-   Args:
-       log_llh: numpy array of shape (n_samples, n_classes)
-           There are N log-likelihoods for each of T trials:
-           loglh(t,i) = log P(trail_t | class_i) - offset_t,
-           where:
-               log denotes natural logarithm
-               offset_t is an unspecified real constant that may vary by trial
-       y: numpy array of shape (n_samples,)
-           Class labels.
-       cluster_idx: list,
-           Each element is a list that represents a particular language
-           cluster and contains all class labels that belong to the cluster.
-       Ptar: float, optional
-           Probability of a target trial.
-       Cfa: float, optional
-           Cost for False Acceptance error.
-       Cmiss: float, optional
-           Cost for False Rejection error.
-       verbose: int, optional
-           0 - print nothing
-           1 - print only total cost
-           2 - print total cost and cluster average costs
-   Returns:
-       cluster_cost: numpy array of shape (n_clusters,)
-           It contains average percentage costs for each cluster as defined by
-           NIST LRE-15 language detection task. See
-           http://www.nist.gov/itl/iad/mig/upload/LRE15_EvalPlan_v22-3.pdf
-       total_cost: float
-           An average percentage cost over all clusters.
-   """
+    Parameters
+    ----------
+    log_llh: numpy array of shape (n_samples, n_classes)
+        There are N log-likelihoods for each of T trials:
+        loglh(t,i) = log P(trail_t | class_i) - offset_t,
+        where:
+            log denotes natural logarithm
+            offset_t is an unspecified real constant that may vary by trial
+    y: numpy array of shape (n_samples,)
+        Class labels.
+    cluster_idx: list,
+        Each element is a list that represents a particular language
+        cluster and contains all class labels that belong to the cluster.
+    Ptar: float, optional
+        Probability of a target trial.
+    Cfa: float, optional
+        Cost for False Acceptance error.
+    Cmiss: float, optional
+        Cost for False Rejection error.
+    verbose: int, optional
+        0 - print nothing
+        1 - print only total cost
+        2 - print total cost and cluster average costs
+    softmax_input: boolean
+        if True, `y_llr` is the output probability from softmax and perform
+        llr transform for `y_llr`
+
+    Returns
+    -------
+    cluster_cost: numpy array of shape (n_clusters,)
+        It contains average percentage costs for each cluster as defined by
+        NIST LRE-15 language detection task. See
+        http://www.nist.gov/itl/iad/mig/upload/LRE15_EvalPlan_v22-3.pdf
+    total_cost: float
+        An average percentage cost over all clusters.
+
+    """
+    if softmax_input:
+        pass
+
     if cluster_idx is None:
         cluster_idx = [list(range(0, log_llh.shape[-1]))]
     # ensure everything is numpy ndarray
@@ -516,16 +542,16 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
 # ===========================================================================
 # helper function
 # ===========================================================================
-def L2(*variables):
+def L2(variables):
     l2 = constant(0., name='L2const')
-    for v in variables:
+    for v in as_tuple(variables):
         l2 = l2 + sum(square(v))
     return l2
 
 
-def L1(*variables):
+def L1(variables):
     l1 = constant(0., name='L1const')
-    for v in variables:
+    for v in as_tuple(variables):
         l1 = l1 + sum(abs(v))
     return l1
 

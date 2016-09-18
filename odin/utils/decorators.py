@@ -36,7 +36,7 @@ __all__ = [
 # ===========================================================================
 # Cache
 # ===========================================================================
-_CACHE = defaultdict(lambda: ([], [])) #KEY_ARGS, RET_VALUE
+__CACHE = defaultdict(lambda: ([], [])) #KEY_ARGS, RET_VALUE
 
 
 def cache(func, *attrs):
@@ -102,11 +102,13 @@ def cache(func, *attrs):
                            if hasattr(args[0], k)}
             cache_key = (input_args, object_vars)
             # ====== check cache ====== #
-            key_list = _CACHE[id(func)][0]
-            value_list = _CACHE[id(func)][1]
+            key_list = __CACHE[id(func)][0]
+            value_list = __CACHE[id(func)][1]
+            # get old cached value
             if cache_key in key_list:
                 idx = key_list.index(cache_key)
                 return value_list[idx]
+            # call the function to get new value
             else:
                 value = func(*args, **kwargs)
                 key_list.append(cache_key)

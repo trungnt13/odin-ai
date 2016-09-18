@@ -223,9 +223,13 @@ class NNConfig(object):
         self._paramters = [K.pickling_variable(i) for i in states[1]]
 
 
+# ===========================================================================
+# Main Ops
+# ===========================================================================
 _primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
                     types.FunctionType, numbers.Number, types.NoneType,
                     K.init.constant, NNConfig)
+_cached_placeholder = {}
 
 
 @add_metaclass(ABCMeta)
@@ -293,13 +297,25 @@ class NNOps(object):
     def configuration(self):
         return self._configuration
 
+    @property
+    def inputs(self):
+        """ Create list of placeholder based on footprint(shape) from previous
+        inputs of this Operator
+        """
+        if self._configuration is None:
+            raise Exception("This operators haven't initialized.")
+        if id(self) in _cached_placeholder:
+            return _cached_placeholder[id(self)]
+        inputs = [K.placeholder(shape=j, name='%s_input%d' % (self.name, i))
+                  for i, j in enumerate(self._footprint)]
+        _cached_placeholder[id(self)] = inputs
+        return inputs
+
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
         if hasattr(self, '_arguments') and name != '_arguments':
-            if name in self._arguments:
-                self._arguments[name] = value
             # otherwise, only save primitive types
-            elif isinstance(value, _primitive_types):
+            if isinstance(value, _primitive_types):
                 self._arguments[name] = value
         super(NNOps, self).__setattr__(name, value)
 
