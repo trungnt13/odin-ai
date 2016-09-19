@@ -277,7 +277,6 @@ class Feeder(MutableData):
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
         maximum_queue_size = self.maximum_queue_size
-        sleeping_time = self.ncpu / 10.
         self.recipe.init(ntasks, batch_size,
                          seed if self._shuffle_level > 0 else None)
         rng = None if seed is None else np.random.RandomState(seed)
@@ -313,7 +312,7 @@ class Feeder(MutableData):
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
-                        time.sleep(sleeping_time * (shared_couter.value / maximum_queue_size))
+                        time.sleep(0.3 * (shared_couter.value / maximum_queue_size))
                     # CRITICAL: the nb_returned will be stored from last
                     # batch and added to the shared_couter which can cause
                     # a deadlock, so it must be reseted to 0 after each batch
