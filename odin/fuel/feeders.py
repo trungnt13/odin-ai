@@ -139,11 +139,13 @@ class Feeder(MutableData):
      - shuffle_level=0: only shuffling the indices
      - shuffle_level=1: shuffle the buffered batch (e.g. 12 files in the indices)
      - shuffle_level=2: shuffle each returned batch
+    * you must balance 2 number: buffer_size and maximum_queue_size, so the
+    amount of data cached by all processed does not excess the RAM
 
     """
 
     def __init__(self, data, indices, transcription=None,
-                 ncpu=1, buffer_size=12, maximum_queue_size=66):
+                 ncpu=1, buffer_size=12, maximum_queue_size=144):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         if isinstance(indices, str):
@@ -274,7 +276,8 @@ class Feeder(MutableData):
         """
         map_func = self.recipe.map
         reduce_func = self.recipe.reduce
-        maximum_queue_size = self.maximum_queue_size * self.ncpu
+        maximum_queue_size = self.maximum_queue_size
+        sleeping_time = self.ncpu / 10.
         self.recipe.init(ntasks, batch_size,
                          seed if self._shuffle_level > 0 else None)
         rng = None if seed is None else np.random.RandomState(seed)
@@ -310,18 +313,18 @@ class Feeder(MutableData):
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
-                        time.sleep(0.6 * (shared_couter.value / maximum_queue_size))
+                        time.sleep(sleeping_time * (shared_couter.value / maximum_queue_size))
                     # CRITICAL: the nb_returned will be stored from last
                     # batch and added to the shared_couter which can cause
                     # a deadlock, so it must be reseted to 0 after each batch
-                    nb_returned = 0
+                    nb_returned = -1
                     # reduce and return the batch
                     for nb_returned, b in enumerate(reduce(batch)):
                         res.put(b); del b
                     # new batch
                     del batch; batch = []
                     # increase shared counter
-                    if nb_returned > 0:
+                    if nb_returned >= 0:
                         shared_couter.add(nb_returned + 1)
             # ending signal
             res.put(None)
