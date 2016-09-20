@@ -20,6 +20,7 @@ from six import add_metaclass
 
 import numpy as np
 
+from odin import backend as K
 from odin.utils import Progbar
 from odin.utils.decorators import functionable
 
@@ -250,8 +251,8 @@ class CallbackList(Callback):
         messages = []
         for cb in self._callbacks:
             msg = cb.record(event_name, event_type,
-                          nb_iter, nb_epoch, nb_samples,
-                          results, **kwargs)
+                            nb_iter, nb_epoch, nb_samples,
+                            results, **kwargs)
             if msg is not None:
                 messages += msg
         return messages
@@ -414,6 +415,10 @@ class EarlyStop(Callback):
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
         For example, lambda x: np.mean(x)
+    stop_callback: function
+        will be called when stop signal triggered
+    save_callback: function
+        will be called when save signal triggered
 
     Note
     ----
@@ -423,7 +428,9 @@ class EarlyStop(Callback):
     """
 
     def __init__(self, name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x)):
+                 get_value=lambda x: np.mean(x),
+                 stop_callback=None,
+                 save_callback=None):
         super(EarlyStop, self).__init__()
         self.name = str(name)
         self.threshold = float(threshold)
@@ -433,9 +440,12 @@ class EarlyStop(Callback):
         if get_value is not None and not callable(get_value):
             raise ValueError('get_value must callable')
         self.get_value = functionable(get_value)
-
+        # ====== history ====== #
         self._working_history = []
         self._history = []
+        # ====== lr ====== #
+        self.stop_callback = stop_callback
+        self.save_callback = save_callback
 
     @property
     def _saveable_variables(self):
@@ -445,7 +455,9 @@ class EarlyStop(Callback):
                 '_history': self._history,
                 '_working_history': [],
                 'patience': self.patience,
-                '_current_patience': self._current_patience}
+                '_current_patience': self._current_patience,
+                'stop_callback': None,
+                'save_callback': None}
 
     # ==================== main callback methods ==================== #
     def batch_end(self):
@@ -466,8 +478,14 @@ class EarlyStop(Callback):
         messages = []
         if shouldSave > 0:
             messages.append('save_now')
+            # save callback
+            if callable(self.save_callback):
+                self.save_callback()
         if shouldStop > 0:
             messages.append('rollback_now')
+            # call stop callback
+            if callable(self.stop_callback):
+                self.stop_callback()
             if self._current_patience > 0:
                 self._current_patience -= 1
             else:
@@ -498,6 +516,8 @@ class EarlyStopGeneralizationLoss(EarlyStop):
     get_value : function
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
+    stop_callback: function
+        will be called when stop signal triggered
         for example, lambda x: np.mean(x)
 
     Note
@@ -568,6 +588,8 @@ class EarlyStopPatience(EarlyStop):
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
         for example, lambda x: np.mean(x)
+    stop_callback: function
+        will be called when stop signal triggered
 
     """
 

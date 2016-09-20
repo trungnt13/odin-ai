@@ -631,18 +631,17 @@ class CreateBatch(FeederRecipe):
         # ====== create batch ====== #
         batch_filter = self.batch_filter
         for i in range((shape0 - 1) // self.batch_size + 1):
+            start = i * self.batch_size
+            end = start + self.batch_size
             # if only one Data is given
             if isinstance(X, np.ndarray):
-                x = X[i * self.batch_size:(i + 1) * self.batch_size]
+                x = X[start:end]
                 ret = (batch_filter([x]) if Y is None
-                       else batch_filter([x, Y[i * self.batch_size:(i + 1) * self.batch_size]])
-                       )
+                       else batch_filter([x, Y[start:end]]))
             # if list of Data is given
             else:
-                x = [x[i * self.batch_size:(i + 1) * self.batch_size]
-                     for x in X]
-                ret = (x if Y is None
-                       else x + [Y[i * self.batch_size:(i + 1) * self.batch_size]])
+                x = [x[start:end] for x in X]
+                ret = (x if Y is None else x + [Y[start:end]])
                 ret = batch_filter(ret)
             # return the results
             if ret is not None:
