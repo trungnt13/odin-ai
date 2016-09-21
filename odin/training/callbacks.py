@@ -236,6 +236,15 @@ class CallbackList(Callback):
         # otherwise, indexing by int or slice
         return self._callbacks[key]
 
+    def __contains__(self, key):
+        if isinstance(key, str):
+            for i in self._callbacks:
+                if key in i.__class__.__name__:
+                    return True
+            return False
+        raise ValueError('CallbackList __contains__ only accept str input, but '
+                         'given type is: %s' % type(key))
+
     def __str__(self):
         return 'CallbackList: ' + ', '.join(
             [i.__class__.__name__ for i in self._callbacks])

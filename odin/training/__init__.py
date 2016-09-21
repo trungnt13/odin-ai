@@ -217,6 +217,7 @@ class MainLoop(object):
         self._callback = CallbackList()
 
         self._save_path = None
+        self._save_hist = None
         self._save_obj = None
 
     # ==================== Signal handling ==================== #
@@ -239,9 +240,27 @@ class MainLoop(object):
         return (self._batch_size, self._rng, self._shuffle_level,
                 self._callback)
 
-    def set_save(self, path, obj):
+    def set_save(self, path, obj, save_hist=True):
+        """
+        Parameters
+        ----------
+        path: str
+            path to save the obj when the callback return save signal
+        obj: object
+            any pickle-able object you want to save
+        save_hist: boolean
+            if True, the History callback will be save together at the
+            save path but different file extension: '.hist'
+        """
         self._save_path = path
         self._save_obj = obj
+        # ====== infer history_path ====== #
+        if save_hist:
+            base = os.path.basename(path).split('.')
+            base = '.'.join(base[:-1] if len(base) > 1 else base)
+            self._save_hist = os.path.join(path.replace(base, ''), base + '.hist')
+        else:
+            self._save_hist = None
 
     # ==================== properties ==================== #
     @property
@@ -367,6 +386,10 @@ class MainLoop(object):
         if self._save_path is not None and self._save_obj is not None:
             cPickle.dump(self._save_obj, open(self._save_path, 'w'),
                          protocol=cPickle.HIGHEST_PROTOCOL)
+            # ====== save history if possible ====== #
+            if self._save_hist is not None and 'History' in self._callback:
+                cPickle.dump(self._callback['History'], open(self._save_hist, 'w'),
+                             protocol=cPickle.HIGHEST_PROTOCOL)
 
     def _rollback(self):
         if self._save_path is not None and os.path.exists(self._save_path):
