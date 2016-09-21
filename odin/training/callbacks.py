@@ -19,6 +19,7 @@ from abc import ABCMeta, abstractproperty, abstractmethod
 from six import add_metaclass
 
 import numpy as np
+import scipy as sp
 
 from odin import backend as K
 from odin.utils import Progbar
@@ -281,18 +282,27 @@ class History(Callback):
 
     def __init__(self):
         super(History, self).__init__()
-        self.__history = []
+        self._history = []
+
+    @property
+    def history(self):
+        return self._history
 
     @property
     def _saveable_variables(self):
-        return {'__history': self.__history}
+        return {'_history': self._history}
 
     def record(self, event_name, event_type,
                nb_iter, nb_epoch, nb_samples,
                results, **kwargs):
-        self.__history.append([
-            timeit.default_timer(), event_name, event_type,
-            nb_samples, nb_iter, nb_epoch, results
+        self._history.append([
+            timeit.default_timer(), # time
+            event_name, # name (Train, Valid ...)
+            event_type, # batch_end, batch_start ...
+            nb_samples, # nb_samples
+            nb_iter, # nb_iterations
+            nb_epoch, # nb_epoch
+            results # results
         ])
         return None
 
@@ -300,8 +310,8 @@ class History(Callback):
     def query(self, event_name=None, event_type=None):
         event_name = '' if event_name is None else str(event_name)
         event_type = '' if event_type is None else str(event_type)
-
-        return [i[-1] for i in self.__history
+        # return the results
+        return [i[-1] for i in self._history
                 if event_name in i[1] and event_type in i[2]]
 
     def benchmark(self, event_name, event_type):
@@ -309,51 +319,75 @@ class History(Callback):
         Return
         ------
         time : in second
+            average time in second between the 2 appearances of given events
+
 
         '''
         event_name = '' if event_name is None else str(event_name)
         event_type = '' if event_type is None else str(event_type)
         # ====== prepare ====== #
-        history = [i[0] for i in self.__history
+        history = [i[0] for i in self._history
                    if event_name in i[1] and event_type in i[2]]
         # ====== benchmark ====== #
         if len(history) >= 2:
-            return np.mean([j - i for i, j in zip(history, history[1:])])
+            return sp.stats.describe([j - i for i, j in zip(history, history[1:])])
         return None
+
+    def print_info(self):
+        """ Print information about all events appeared in the History """
+        events = defaultdict(list)
+        for t, name, typ, sa, it, ep, res in self._history:
+            events[name].append(typ)
+        # ====== print ====== #
+        info = {}
+        print('\n * [INFO] all event name and type of History:')
+        for name, typ in events.iteritems():
+            freq = sp.stats.itemfreq(typ)
+            info[name] = freq
+            print(name, ':', ', '.join(['%s-%d' % (i, int(j)) for i, j in freq]))
+        return info
 
     def print_epoch(self, event_name):
         values = []
-        for t, name, typ, sa, it, ep, res in self.__history:
+        for t, name, typ, sa, it, ep, res in self._history:
             if name == event_name:
                 if typ == 'epoch_start': epoch = []
-                elif typ == 'epoch_end': values.append(np.mean(epoch))
+                elif typ == 'epoch_end': values.append(np.mean(epoch, 0))
                 elif typ == 'batch_end': epoch.append(res)
-        if len(values) <= 2:
-            s = event_name + ':' + str(values)
-        else:
-            from odin.visual.bashplot import print_bar
-            s = print_bar(values, height=20,
-                          bincount=max(20, len(values)),
-                          showSummary=True)
-        print("\nEpoch summarization for event: %s" % event_name)
-        print(s)
-        return s
+        values = np.asarray(values)
+        if values.ndim == 1:
+            values = values[:, None]
+        print("\n * [EPOCH] summarization for event: object%s" % event_name)
+        for i, v in enumerate(values.T):
+            print('Results #%d:' % i)
+            if len(v) <= 2:
+                s = event_name + ':' + str(v)
+            else:
+                from odin.visual.bashplot import print_bar
+                s = print_bar(v, height=20,
+                              bincount=max(20, len(v)),
+                              showSummary=True)
+            print(s)
 
     def print_batch(self, event_name):
         values = []
-        for t, name, typ, sa, it, ep, res in self.__history:
+        for t, name, typ, sa, it, ep, res in self._history:
             if name == event_name and typ == 'batch_end':
                 values.append(res)
-        if len(values) <= 2:
-            s = event_name + ':' + str(values)
-        else:
-            from odin.visual.bashplot import print_bar
-            s = print_bar(values, height=20,
-                          bincount=min(20, len(values)),
-                          showSummary=True)
-        print("\nBatch summarization for event: %s" % event_name)
-        print(s)
-        return s
+        values = np.asarray(values)
+        if values.ndim == 1:
+            values = values[:, None]
+        print("\n * [BATCH] summarization for event: %s" % event_name)
+        for i, v in enumerate(values.T):
+            print('Results #%d:' % i)
+            if len(v) <= 2:
+                s = event_name + ':' + str(v)
+            else:
+                from odin.visual.bashplot import print_bar
+                s = print_bar(v, height=20,
+                              bincount=min(20, len(v)),
+                              showSummary=True)
+            print(s)
 
 
 # ===========================================================================

@@ -256,9 +256,10 @@ class MainLoop(object):
         self._save_obj = obj
         # ====== infer history_path ====== #
         if save_hist:
-            base = os.path.basename(path).split('.')
+            base = os.path.basename(path)
+            p = path.replace(base, ''); base = base.split('.')
             base = '.'.join(base[:-1] if len(base) > 1 else base)
-            self._save_hist = os.path.join(path.replace(base, ''), base + '.hist')
+            self._save_hist = os.path.join(p, base + '.hist')
         else:
             self._save_hist = None
 
