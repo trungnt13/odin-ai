@@ -465,13 +465,16 @@ class EarlyStop(Callback):
 
     Note
     ----
-    The early stop checking will be performed at the end of an epoch.
-    By default, the return value from epoch mean the loss value, i.e lower
+    * The early stop checking will be performed at the end of an epoch.
+    * By default, the return value from epoch mean the loss value, i.e lower
     is better
+    * If multiple value returned, you have to modify the get_value function
     """
 
     def __init__(self, name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x),
+                 get_value=lambda x: np.mean([i[0] for i in x]
+                                             if isinstance(x[0], (tuple, list))
+                                             else x),
                  stop_callback=None,
                  save_callback=None):
         super(EarlyStop, self).__init__()
@@ -512,10 +515,11 @@ class EarlyStop(Callback):
         if self.event_name != self.name:
             return
         value = self._working_history
+        self._working_history = [] # reset working history
+        # ====== new value ====== #
         if self.get_value is not None:
             value = self.get_value(value)
         self._history.append(value)
-        self._working_history = [] # reset working history
         # ====== check early stop ====== #
         shouldSave, shouldStop = self.earlystop(self._history)
         messages = []
