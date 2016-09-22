@@ -7,6 +7,7 @@
 # ===========================================================================
 from __future__ import division, absolute_import, print_function
 
+import re
 import sys
 import time
 import timeit
@@ -22,7 +23,7 @@ import numpy as np
 import scipy as sp
 
 from odin import backend as K
-from odin.utils import Progbar
+from odin.utils import Progbar, as_tuple
 from odin.utils.decorators import functionable
 
 __all__ = [
@@ -566,6 +567,8 @@ class EarlyStopGeneralizationLoss(EarlyStop):
     stop_callback: function
         will be called when stop signal triggered
         for example, lambda x: np.mean(x)
+    save_callback: function
+        will be called when save signal triggered
 
     Note
     ----
@@ -637,6 +640,8 @@ class EarlyStopPatience(EarlyStop):
         for example, lambda x: np.mean(x)
     stop_callback: function
         will be called when stop signal triggered
+    save_callback: function
+        will be called when save signal triggered
 
     """
 
@@ -661,6 +666,9 @@ class EarlyStopPatience(EarlyStop):
 # ===========================================================================
 # Extension
 # ===========================================================================
+_PLACEHOLDER = [re.compile('\{\d*\}'), re.compile('\{:.{0,3}\D\}')]
+
+
 class ProgressMonitor(Callback):
 
     '''
@@ -668,38 +676,50 @@ class ProgressMonitor(Callback):
     ----------
     title : str
         pattern to serialize return from function to string
+    format: str
+        format for the results, using the new python style (e.g. {0}, {1}),
+        and not %s, %d ...
+    tracking: list
+        list of [(index, postprocessing_func)], tracking information at given
+        index of the return value during batch_end, then, postprocess and print
+        it in epoch_end.
 
     Example
     -------
     >>> t = training.Task(dataset=ds, batch_size=512)
-    >>> t.set_callback(training.ProgressMonitor(title='Result: %.2f'))
+    >>> t.set_callback(training.ProgressMonitor(title='Result: {:.2f}'))
     >>> t.run()
     # Result: 52751.29 98/98 [=======================================] - 0s
-
-    Events
-    ------
-    batch_end: ending of each batch during training
-    epoch_end: ending of epoch
 
     Note
     ----
     This callback require specify `samples_size` in **kwargs of record
     '''
 
-    def __init__(self, name, format=''):
+
         super(ProgressMonitor, self).__init__()
-        self._format_results = False
-        if len(list(format._formatter_parser())) > 0:
-            self._format_results = True
-        self._prog = Progbar(100, title='')
-        self._format = format
         self.name = name
         self._history = []
+        self._prog = Progbar(100, title='')
+        # ====== format ====== #
+        self._format_results = 0
+        for i in _PLACEHOLDER:
+            self._format_results += len(i.findall(format))
+        self._format = format
+        # ====== one-time tracking at epoch_end ====== #
+        if isinstance(tracking, dict):
+            tracking = tracking.iteritems()
+        self.tracking = [(int(i), j) for i, j in tracking if callable(j)]
+        self._tracking_history = defaultdict(list)
 
     @property
     def _saveable_variables(self):
         return {'_format': self._format,
+                '_format_results': self._format_results,
                 '_history': [],
+                'tracking': self.tracking,
+                '_tracking_history': defaultdict(list),
+                '_prog': Progbar(100, title=''),
                 'name': self.name}
 
     def epoch_start(self):
@@ -711,12 +731,18 @@ class ProgressMonitor(Callback):
         # do nothing for not specified task
         if self.name != self.event_name or 'samples_size' not in self:
             return
-        self._history.append(self.results)
         samples_size = self['samples_size']
         # ====== title ====== #
-        r = tuple(self.results) if isinstance(self.results, list) \
-            else self.results
-        title = (self._format % r if self._format_results else self._format)
+        r = [i.tolist() if isinstance(i, np.ndarray) and i.ndim == 0 else i
+             for i in self.results] if isinstance(self.results, (tuple, list)) \
+            else (self.results,)
+        # ====== tracking ====== #
+        for i, j in self.tracking:
+            self._tracking_history[i].append(r[i])
+        r = r[:self._format_results]
+        self._history.append(r)
+        title = (self._format.format(*r)
+                 if self._format_results else self._format)
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % \
         (self.name[:8], self.nb_epoch) + title
@@ -729,16 +755,25 @@ class ProgressMonitor(Callback):
         if self.name != self.event_name:
             return
         # risky move: get the mean of all results
-        r = np.mean(self._history, axis=0).tolist()
-        if isinstance(r, list):
-            r = tuple(r)
-        title = self._format % r if self._format_results else self._format
+        if self._format_results:
+            r = np.mean(self._history, axis=0).tolist()
+            title = self._format.format(*r)
+        else:
+            title = self._format
+        # reset
         self._history = []
         # title
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % (
             self.event_name, self.nb_epoch) + title
         # always 100% at the end of epoch
         self._prog.target = 100; self._prog.update(100)
+        # tracking
+        for i, f in self.tracking:
+            r = self._tracking_history[i]
+            r = f(r)
+            print('Tracking name-"%s" at location-%d:' % (self.name, i))
+            print(r)
+        self._tracking_history = defaultdict(list)
 
 
 class Debug(Callback):

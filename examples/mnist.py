@@ -9,7 +9,7 @@ os.environ['ODIN'] = 'float32,cpu,theano,seed=12'
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
-from odin.utils import one_hot, get_modelpath
+from odin.utils import get_modelpath, ArgController
 import cPickle
 
 # ===========================================================================
@@ -42,7 +42,8 @@ ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
 y_pred_train = ops(X_train)
 y_pred_score = ops(X_score)
 cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
-cost_test = K.mean(K.categorical_accuracy(y_pred_score, y))
+cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
+cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
 
 parameters = ops.parameters
 optimizer = K.optimizers.SGD(lr=0.01)
@@ -51,7 +52,7 @@ print('Building training functions ...')
 f_train = K.function([X_train, y], [cost_train, optimizer.norm],
                      updates=updates)
 print('Building testing functions ...')
-f_test = K.function([X_score, y], cost_test)
+f_test = K.function([X_score, y], [cost_test_1, cost_test_2])
 
 # ===========================================================================
 # Build trainer
@@ -63,16 +64,16 @@ task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
 task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: %.2f, %.4f'),
-    training.ProgressMonitor(name='valid', format='Results: %.2f'),
-    training.ProgressMonitor(name='test', format='Results: %.2f'),
+    training.ProgressMonitor(name='train', format='Results: %.4f-%.4f'),
+    training.ProgressMonitor(name='valid', format='Results: %.4f-%.4f'),
+    training.ProgressMonitor(name='test', format='Results: %.4f-%.4f'),
     training.History(),
-    # training.EarlyStopGeneralizationLoss(5, 'valid', lambda x: 1 - np.mean(x)),
-    # training.EarlyStopPatience(0, 'valid', lambda x: 1 - np.mean(x)),
+    training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
 ])
 task.run()
 
 # ====== plot the training process ====== #
-# task['History'].print_epoch('train')
-# task['History'].print_epoch('valid')
-# task['History'].print_epoch('test')
+task['History'].print_info()
+task['History'].print_batch('train')
+task['History'].print_epoch('valid')
+task['History'].print_epoch('test')
