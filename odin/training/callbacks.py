@@ -696,7 +696,7 @@ class ProgressMonitor(Callback):
     This callback require specify `samples_size` in **kwargs of record
     '''
 
-
+    def __init__(self, name, format='', tracking=[]):
         super(ProgressMonitor, self).__init__()
         self.name = name
         self._history = []
