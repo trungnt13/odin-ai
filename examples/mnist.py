@@ -9,13 +9,15 @@ os.environ['ODIN'] = 'float32,cpu,theano,seed=12'
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
-from odin.utils import get_modelpath, ArgController
+from odin.utils import get_modelpath, ArgController, stdio
 import cPickle
+
+stdio('/Users/trungnt13/tmp/tmp.log')
 
 arg = ArgController(version=0.12
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
 ).add('-epoch', 'number of epoch', 3
-).add('-lr', 'learning rate', 0.001
+).add('-lr', 'learning rate', 0.01
 ).parse()
 
 # ===========================================================================
@@ -63,9 +65,6 @@ f_train = K.function([X_train, y], [cost_train, optimizer.norm],
 print('Building testing functions ...')
 f_test = K.function([X_score, y], [cost_test_1, cost_test_2, cost_test_3])
 
-
-def f_test(*args):
-    return np.nan, np.nan, np.nan
 
 # ===========================================================================
 # Build trainer

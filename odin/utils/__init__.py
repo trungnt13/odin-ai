@@ -38,23 +38,60 @@ def raise_return(e):
     raise e
 
 
-@contextlib.contextmanager
-def suppress_stdout(stderr=False):
-    """ Temporary ignore (not show) all output message
-    Make sure you know what are you doing
-    """
-    with open(os.devnull, "w") as devnull:
-        old_stdout = sys.stdout
-        sys.stdout = devnull
-        if stderr:
-            old_stderr = sys.stderr
-            sys.stderr = devnull
+class _LogWrapper():
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, message):
+        # no backtrack for writing to file
+        self.stream.write(message.replace("\b", ''))
+        sys.__stdout__.write(message)
+
+    def flush(self):
+        self.stream.flush()
+        sys.__stdout__.flush()
+
+    def close(self):
         try:
-            yield
-        finally:
-            sys.stdout = old_stdout
-            if stderr:
-                sys.stderr = old_stderr
+            self.stream.close()
+        except:
+            pass
+
+
+def stdio(path=None, suppress=False, stderr=False):
+    """
+    Parameters
+    ----------
+    path: None, str
+        if str, specified path for saving all stdout (and stderr)
+    suppress: boolean
+        totally turn-off all stdout (and stdeer)
+    stderr:
+        apply output file with stderr also
+
+    """
+    # turn off stdio
+    if suppress:
+        f = open(os.devnull, "w")
+    # reset
+    elif path is None:
+        f = None
+    # redirect to a file
+    else:
+        f = _LogWrapper(open(path, "w"))
+    # ====== assign stdio ====== #
+    if f is None: # reset
+        if isinstance(sys.stdout, _LogWrapper):
+            sys.stdout.close()
+        if isinstance(sys.stderr, _LogWrapper):
+            sys.stderr.close()
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+    else:
+        sys.stdout = f
+        if stderr:
+            sys.stderr = f
 
 _uuid_chars = (map(chr, range(65, 91)) + # ABCD
                map(chr, range(97, 123)) + # abcd
@@ -959,7 +996,7 @@ def dict_union(*dicts, **kwargs):
 
 
 # ===========================================================================
-# Misc
+# PATH, path manager
 # ===========================================================================
 @contextlib.contextmanager
 def TemporaryDirectory(add_to_path=False):
@@ -983,37 +1020,40 @@ def get_tempdir():
     return tempfile.mkdtemp()
 
 
-def get_datasetpath(name=None, override=False):
+def _get_managed_path(folder, name, override):
     datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
     if not os.access(datadir_base, os.W_OK):
         datadir_base = os.path.join('/tmp', '.odin')
-    datadir = os.path.join(datadir_base, 'datasets')
+    datadir = os.path.join(datadir_base, folder)
     if not os.path.exists(datadir):
         os.makedirs(datadir)
     # ====== check given path with name ====== #
     if isinstance(name, types.StringType):
         datadir = os.path.join(datadir, name)
         if os.path.exists(datadir) and override:
-            shutil.rmtree(datadir)
+            if os.path.isfile(datadir): # remove file
+                os.remove(datadir)
+            else: # remove folder
+                shutil.rmtree(datadir)
     return datadir
+
+
+def get_datasetpath(name=None, override=False):
+    return _get_managed_path('datasets', name, override)
 
 
 def get_modelpath(name=None, override=False):
     """ Default model path for saving ODIN networks """
-    datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
-    if not os.access(datadir_base, os.W_OK):
-        datadir_base = os.path.join('/tmp', '.odin')
-    datadir = os.path.join(datadir_base, 'models')
-    if not os.path.exists(datadir):
-        os.makedirs(datadir)
-    # ====== check given path with name ====== #
-    if isinstance(name, types.StringType):
-        datadir = os.path.join(datadir, name)
-        if os.path.exists(datadir) and override:
-            os.remove(datadir)
-    return datadir
+    return _get_managed_path('models', name, override)
 
 
+def get_logpath(name=None, override=False):
+    return _get_managed_path('logs', name, override)
+
+
+# ===========================================================================
+# Misc
+# ===========================================================================
 def exec_commands(cmds):
     ''' Exec commands in parallel in multiple process
     (as much as we have CPU)
