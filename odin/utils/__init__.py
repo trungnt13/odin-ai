@@ -59,7 +59,7 @@ class _LogWrapper():
             pass
 
 
-def stdio(path=None, suppress=False, stderr=False):
+def stdio(path=None, suppress=False, stderr=True):
     """
     Parameters
     ----------
