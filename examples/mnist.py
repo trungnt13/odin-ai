@@ -12,11 +12,19 @@ from odin import fuel, training
 from odin.utils import get_modelpath, ArgController
 import cPickle
 
+arg = ArgController(version=0.12
+).add('-ds', 'dataset cifar10, or mnist', 'mnist'
+).add('-epoch', 'number of epoch', 3
+).add('-lr', 'learning rate', 0.001
+).parse()
+
 # ===========================================================================
 # Load data
 # ===========================================================================
-# ds = fuel.load_cifar10()
-ds = fuel.load_mnist()
+if 'mnist' in arg['ds'].lower():
+    ds = fuel.load_mnist()
+elif 'cifar10' in arg['ds'].lower():
+    ds = fuel.load_cifar10()
 print(ds)
 
 X_train = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X_train',
@@ -44,15 +52,20 @@ y_pred_score = ops(X_score)
 cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
 cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
 cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
+cost_test_3 = K.confusion_matrix(y_pred_score, y, labels=range(10))
 
 parameters = ops.parameters
-optimizer = K.optimizers.SGD(lr=0.01)
+optimizer = K.optimizers.SGD(lr=arg['lr'])
 updates = optimizer(cost_train, parameters)
 print('Building training functions ...')
 f_train = K.function([X_train, y], [cost_train, optimizer.norm],
                      updates=updates)
 print('Building testing functions ...')
-f_test = K.function([X_score, y], [cost_test_1, cost_test_2])
+f_test = K.function([X_score, y], [cost_test_1, cost_test_2, cost_test_3])
+
+
+def f_test(*args):
+    return np.nan, np.nan, np.nan
 
 # ===========================================================================
 # Build trainer
@@ -60,20 +73,22 @@ f_test = K.function([X_score, y], [cost_test_1, cost_test_2])
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
 task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
-task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
+task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=arg['epoch'], name='train')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
 task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: %.4f-%.4f'),
-    training.ProgressMonitor(name='valid', format='Results: %.4f-%.4f'),
-    training.ProgressMonitor(name='test', format='Results: %.4f-%.4f'),
+    training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
+    training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
+                             tracking={2: lambda x: sum(x)}),
+    training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
     training.History(),
     training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
+    training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
 ])
 task.run()
 
 # ====== plot the training process ====== #
 task['History'].print_info()
 task['History'].print_batch('train')
-task['History'].print_epoch('valid')
+task['History'].print_batch('valid')
 task['History'].print_epoch('test')

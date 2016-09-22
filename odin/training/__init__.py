@@ -6,7 +6,8 @@ from six.moves import range, zip
 
 import numpy as np
 
-from odin import SIG_TERMINATE_ITERATOR
+from odin import (SIG_TERMINATE_ITERATOR, SIG_TRAIN_ROLLBACK,
+                  SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
@@ -420,6 +421,7 @@ class MainLoop(object):
                                       samples_size=self._task.samples_per_epoch)
             # return actual results
             else:
+                # ====== main task ====== #
                 results, nb_iter, nb_samples, nb_epoch = i
                 msg = callback.record(self._task.name, event_type='batch_end',
                                       nb_iter=nb_iter, nb_epoch=nb_epoch,
@@ -449,6 +451,10 @@ class MainLoop(object):
                                                 nb_iter=x[1], nb_samples=x[2],
                                                 nb_epoch=x[3], results=x[0],
                                                 samples_size=subtask.samples_per_epoch)
+                            # process callback msg for subtasks
+                            if SIG_TRAIN_SAVE in msg: self._save()
+                            if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+                            if SIG_TRAIN_STOP in msg: break
                 # ====== run crosstask ====== #
                 callback.mode = 'crosstask'
                 for crosstask, when in self._crosstask.iteritems():
@@ -471,11 +477,11 @@ class MainLoop(object):
                             msg = callback.record(crosstask.name, 'batch_end',
                                             nb_iter=x[1], nb_samples=x[2],
                                             nb_epoch=x[3], results=x[0])
-            # ====== process callback msg ====== #
+            # ====== process callback msg for main task ====== #
             # (this is important order)
-            if 'save_now' in msg: self._save()
-            if 'rollback_now' in msg: self._rollback()
-            if 'stop_now' in msg: break
+            if SIG_TRAIN_SAVE in msg: self._save()
+            if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+            if SIG_TRAIN_STOP in msg: break
         # ====== end main task ====== #
         self._task.stop_all()
         for t in self._subtask.keys():

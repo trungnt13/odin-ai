@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ===========================================================================
 # The following signal might returned by Callbacks:
-# * stop_now: stop the training task
-# * save_now: save the parameters during training
-# * rollback_now: rollback the model to the best checkpoint
+# * SIG_TRAIN_STOP: stop the training task
+# * SIG_TRAIN_SAVE: save the parameters during training
+# * SIG_TRAIN_ROLLBACK: rollback the model to the best checkpoint
 # ===========================================================================
 from __future__ import division, absolute_import, print_function
 
@@ -22,6 +22,7 @@ from six import add_metaclass
 import numpy as np
 import scipy as sp
 
+from odin import SIG_TRAIN_ROLLBACK, SIG_TRAIN_STOP, SIG_TRAIN_SAVE
 from odin import backend as K
 from odin.utils import Progbar, as_tuple
 from odin.utils.decorators import functionable
@@ -30,7 +31,7 @@ __all__ = [
     'Callback',
     'CallbackList',
     'History',
-    'NaNStop',
+    'NaNDetector',
     'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
@@ -401,46 +402,59 @@ class History(Callback):
 # ===========================================================================
 # NaN value detection
 # ===========================================================================
-class NaNStop(Callback):
+class NaNDetector(Callback):
     """ NaNStop
-    Simply stop training process when any batch return NaN results
+    Simply stop training, or rollback the model when any batch of given
+    with event name return NaN results
 
     This method search for "mainloop" in kwargs provided in `record`
     to call .stop() function
 
     Parameters
     ----------
+    name: str, or list of str
+        list of all event name that will be checked for NaN
     patience: int
-        if patience > 0, send rollback signal until patience reduced to 0
+        if patience > 0, send rollback signal until patience reduced to 0,
+        else the training process will never stop because of NaN
+    rollback: boolean
+        if True, rollback the model at the best checkpoint whenever NaN
+        value detected
 
-    Note
-    ----
-    Checkpoint is created once whenever MainLoop.save() is called.
-    This class (by defaults) pickles everything
 
     """
 
-    def __init__(self, name, patience=1):
-        super(NaNStop, self).__init__()
-        self.name = str(name)
+    def __init__(self, name, patience=-1, rollback=True):
+        super(NaNDetector, self).__init__()
+        self.name = as_tuple(name, t=str)
         self.patience = patience
+        self.rollback = rollback
         self._current_patience = patience
 
     @property
     def _saveable_variables(self):
         return {'name': self.name,
                 'patience': self.patience,
+                'rollback': self.rollback,
                 '_current_patience': self.patience}
 
     def batch_end(self):
-        if self.event_name == self.name:
-            if np.any(np.isnan(self.results)):
-                if self._current_patience > 0:
-                    self._current_patience -= 1
-                    return 'rollback_now'
+        if any(self.event_name == n for n in self.name):
+            results = self.results if isinstance(self.results, (tuple, list)) \
+                else (self.results,)
+            # found any NaN values
+            if any(np.any(np.isnan(r)) for r in results):
+                signal = None
+                if self.rollback: # maybe rollback
+                    signal = SIG_TRAIN_ROLLBACK
+                if self.patience > 0: # but if out of patience, stop
+                    if self._current_patience > 0:
+                        self._current_patience -= 1
+                    else:
+                        signal = SIG_TRAIN_STOP
                 print('\nNaN value(s) was detected in task:"%s" results, '
-                      'signals "stop_now" ...' % self.name)
-                return ['rollback_now', 'stop_now']
+                      '"%s" ...' % (self.event_name, signal))
+                return signal
 
 
 # ===========================================================================
@@ -532,19 +546,20 @@ class EarlyStop(Callback):
         shouldSave, shouldStop = self.earlystop(self._history)
         messages = []
         if shouldSave > 0:
-            messages.append('save_now')
+            messages.append(SIG_TRAIN_SAVE)
             # save callback
             if callable(self.save_callback):
                 self.save_callback()
         if shouldStop > 0:
-            messages.append('rollback_now')
+            messages.append(SIG_TRAIN_ROLLBACK)
             # call stop callback
             if callable(self.stop_callback):
                 self.stop_callback()
+            # check patience
             if self._current_patience > 0:
                 self._current_patience -= 1
             else:
-                messages.append('stop_now')
+                messages.append(SIG_TRAIN_STOP)
         return messages
 
     @abstractmethod
@@ -781,6 +796,12 @@ class ProgressMonitor(Callback):
             print('Tracking name-"%s" at location-%d:' % (self.name, i))
             print(r)
         self._tracking_history = defaultdict(list)
+
+
+class CustomCallback(Callback):
+
+    def __init__(self, name):
+        pass
 
 
 class Debug(Callback):
