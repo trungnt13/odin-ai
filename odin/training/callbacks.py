@@ -354,11 +354,15 @@ class History(Callback):
             if name == event_name:
                 if typ == 'epoch_start': epoch = []
                 elif typ == 'epoch_end': values.append(np.mean(epoch, 0))
-                elif typ == 'batch_end': epoch.append(res)
+                elif typ == 'batch_end':
+                    if not isinstance(res, (tuple, list)):
+                        res = (res,)
+                    epoch.append([i for i in res if isinstance(i, Number) or
+                                  (isinstance(i, np.ndarray) and i.ndim == 0)])
         values = np.asarray(values)
         if values.ndim == 1:
             values = values[:, None]
-        print("\n * [EPOCH] summarization for event: object%s" % event_name)
+        print("\n * [EPOCH] summarization for event: %s" % event_name)
         for i, v in enumerate(values.T):
             print('Results #%d:' % i)
             if len(v) <= 2:
@@ -374,7 +378,10 @@ class History(Callback):
         values = []
         for t, name, typ, sa, it, ep, res in self._history:
             if name == event_name and typ == 'batch_end':
-                values.append(res)
+                if not isinstance(res, (tuple, list)):
+                    res = (res,)
+                values.append([i for i in res if isinstance(i, Number) or
+                              (isinstance(i, np.ndarray) and i.ndim == 0)])
         values = np.asarray(values)
         if values.ndim == 1:
             values = values[:, None]
