@@ -733,9 +733,9 @@ class ProgressMonitor(Callback):
             return
         samples_size = self['samples_size']
         # ====== title ====== #
+        r = self.results if isinstance(self.results, (tuple, list)) else (self.results,)
         r = [i.tolist() if isinstance(i, np.ndarray) and i.ndim == 0 else i
-             for i in self.results] if isinstance(self.results, (tuple, list)) \
-            else (self.results,)
+             for i in r]
         # ====== tracking ====== #
         for i, j in self.tracking:
             self._tracking_history[i].append(r[i])
