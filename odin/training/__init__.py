@@ -255,6 +255,9 @@ class MainLoop(object):
         """
         self._save_path = path
         self._save_obj = obj
+        # ====== save the first checkpoint ====== #
+        cPickle.dump(self._save_obj, open(self._save_path, 'w'),
+                     protocol=cPickle.HIGHEST_PROTOCOL)
         # ====== infer history_path ====== #
         if save_hist:
             base = os.path.basename(path)
