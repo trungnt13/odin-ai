@@ -328,39 +328,6 @@ class SpeechFeature(FeederRecipe):
         for r in results:
             yield r
 
-    def finalize_func(self, results):
-        # contains (sum1, sum2, n)
-        dataset = self.dataset
-        path = dataset.path
-        spec_sum1, spec_sum2 = 0., 0.
-        mspec_sum1, mspec_sum2 = 0., 0.
-        mfcc_sum1, mfcc_sum2 = 0., 0.
-        pitch_sum1, pitch_sum2 = 0., 0.
-        n = 0
-        indices = []
-        for spec, mspec, mfcc, pitch, index in results:
-            # spec
-            spec_sum1 += spec[0]
-            spec_sum2 += spec[1]
-            # mspec
-            mspec_sum1 += mspec[0]
-            mspec_sum2 += mspec[1]
-            # mfcc
-            mfcc_sum1 += mfcc[0]
-            mfcc_sum2 += mfcc[1]
-            # pitch
-            pitch_sum1 += pitch[0]
-            pitch_sum2 += pitch[1]
-            # indices
-            for name, size in index:
-                # name, start, end
-                indices.append([name, int(n), int(n + size)])
-                n += size
-        # ====== helper ====== #
-        dataset.flush()
-        dataset.close()
-        return path
-
 
 class SpeechFeaturesSaver(object):
     """ SpeechFeatureSaver
@@ -375,13 +342,12 @@ class SpeechFeaturesSaver(object):
         datatype to save given task
     """
 
-    def __init__(self, outpath, datatype, cache_size=288):
+    def __init__(self, outpath, datatype):
         super(SpeechFeaturesSaver, self).__init__()
         self.dataset = Dataset(outpath)
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
-        self.cache_size = cache_size
 
     def run(self, feeder):
         dataset = self.dataset
@@ -404,45 +370,38 @@ class SpeechFeaturesSaver(object):
 
         # ====== helper ====== #
         def flush_feature(name, cache):
-            cache = np.concatenate(cache, 0)
-            if name in dataset:
-                dataset[name].append(cache)
-            else:
-                dataset[(name, datatype)] = cache
+            if len(cache) > 0:
+                cache = np.concatenate(cache, 0)
+                if name in dataset:
+                    dataset[name].append(cache)
+                else:
+                    dataset[(name, datatype)] = cache
             return []
         # ====== processing ====== #
         prog = Progbar(target=feeder.shape[0])
-        for name, (spec, mspec, mfcc, pitch, vad) in feeder:
+        for count, (name, (spec, mspec, mfcc, pitch, vad)) in enumerate(feeder):
             # ====== spec ====== #
             if spec is not None:
                 X, sum1, sum2 = spec
                 spec_cache.append(X)
-                if len(spec_cache) >= self.cache_size:
-                    spec_cache = flush_feature('spec', spec_cache)
                 spec_sum1 += sum1; spec_sum2 += sum2
                 n = X.shape[0]; del X
             # ====== mspec ====== #
             if mspec is not None:
                 X, sum1, sum2 = mspec
                 mspec_cache.append(X)
-                if len(mspec_cache) >= self.cache_size:
-                    mspec_cache = flush_feature('mspec', mspec_cache)
                 mspec_sum1 += sum1; mspec_sum2 += sum2
                 n = X.shape[0]; del X
             # ====== mfcc ====== #
             if mfcc is not None:
                 X, sum1, sum2 = mfcc
                 mfcc_cache.append(X)
-                if len(mfcc_cache) >= self.cache_size:
-                    mfcc_cache = flush_feature('mfcc', mfcc_cache)
                 mfcc_sum1 += sum1; mfcc_sum2 += sum2
                 n = X.shape[0]; del X
             # ====== pitch ====== #
             if pitch is not None:
                 X, sum1, sum2 = pitch
                 pitch_cache.append(X)
-                if len(pitch_cache) >= self.cache_size:
-                    pitch_cache = flush_feature('pitch', pitch_cache)
                 pitch_sum1 += sum1; pitch_sum2 += sum2
                 n = X.shape[0]; del X
             # ====== vad ====== #
@@ -450,9 +409,14 @@ class SpeechFeaturesSaver(object):
                 assert vad.shape[0] == n,\
                     'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
                 vad_cache.append(vad)
-                if len(vad_cache) >= self.cache_size:
-                    vad_cache = flush_feature('vad', vad_cache)
                 del vad
+            # ====== flush cache ====== #
+            if count % 12 == 0:
+                spec_cache = flush_feature('spec', spec_cache)
+                mspec_cache = flush_feature('mspec', mspec_cache)
+                mfcc_cache = flush_feature('mfcc', mfcc_cache)
+                pitch_cache = flush_feature('pitch', pitch_cache)
+                vad_cache = flush_feature('vad', vad_cache)
             # index
             indices.append([name, start, start + n])
             start += n
@@ -460,11 +424,11 @@ class SpeechFeaturesSaver(object):
             prog.title = name
             prog.add(1)
         # ====== end, flush the mean and std ====== #
-        if len(spec_cache) > 0: flush_feature('spec', spec_cache)
-        if len(mspec_cache) > 0: flush_feature('mspec', mspec_cache)
-        if len(mfcc_cache) > 0: flush_feature('mfcc', mfcc_cache)
-        if len(pitch_cache) > 0: flush_feature('pitch', pitch_cache)
-        if len(vad_cache) > 0: flush_feature('vad', vad_cache)
+        flush_feature('spec', spec_cache)
+        flush_feature('mspec', mspec_cache)
+        flush_feature('mfcc', mfcc_cache)
+        flush_feature('pitch', pitch_cache)
+        flush_feature('vad', vad_cache)
         dataset.flush()
         # ====== saving indices ====== #
         with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
