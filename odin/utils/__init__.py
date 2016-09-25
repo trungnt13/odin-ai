@@ -360,20 +360,16 @@ def segment_list(l, size=None, n_seg=None):
     '''
     # by floor, make sure and process has it own job
     if size is None:
-        size = int(numpy.ceil(len(l) / float(n_seg)))
+        size = int(max(1, numpy.floor(len(l) / float(n_seg))))
     else:
         n_seg = int(numpy.ceil(len(l) / float(size)))
-    if size * n_seg - len(l) > size:
-        size = int(numpy.floor(len(l) / float(n_seg)))
     # start segmenting
     segments = []
-    for i in range(n_seg):
-        start = i * size
-        if i < n_seg - 1:
-            end = start + size
-        else:
-            end = max(start + size, len(l))
+    start = 0
+    while start < len(l):
+        end = start + size
         segments.append(l[start:end])
+        start = end
     return segments
 
 

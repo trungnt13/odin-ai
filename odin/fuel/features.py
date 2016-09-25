@@ -17,266 +17,31 @@ from abc import ABCMeta, abstractmethod
 
 from collections import defaultdict
 import numpy as np
-try: # this library may not available
-    from scikits.samplerate import resample
-except:
-    pass
 
 from odin.preprocessing import speech, video
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
                         get_all_files, get_tempdir)
 from odin.utils.decorators import autoinit
 from .dataset import Dataset
+from .recipes import FeederRecipe
 
+try:
+    import sidekit
+except:
+    warnings.warn('The speech processing framework "sidekit" is '
+                  'NOT available, hence, you cannot use SpeechFeatures.')
+try: # this library may not available
+    from scikits.samplerate import resample
+except:
+    warnings.warn('The sampling framework "scikits.samplerate" is '
+                  'NOT available, hence, downsampling features will be ignored.')
 
 __all__ = [
-    'MapReduce',
-    'FeatureRecipe',
     'SpeechFeature',
+    'SpeechFeaturesSaver',
     'speech_features_extraction',
     'VideoFeature'
 ]
-
-
-# ===========================================================================
-# MPI MapReduce
-# ===========================================================================
-class MapReduce(object):
-
-    """ This class manage all MapReduce task by callback function:
-
-    map_function : argmuents(static_data, job)
-        static_data: dictionary, which initialized right after you set the
-        init_funciotn
-        job: is a single job that automatically scheduled to each MPI process
-
-    reduce_function : arguments(static_data, results, finnished)
-        static_data: dictionary, which initialized right after you set the
-        init_funciotn
-        results: list, of returned result from each map_function (None returned
-        will be ignored)
-        finnished: bool, whether this function is called at the end of MapReduce
-        task
-
-    Example
-    -------
-    >>> def function(a):
-    ...     x, y = a
-    ...     return x + y
-
-    >>> def function1(x):
-    ...     return x - 1
-
-    >>> mr = MapReduce(2, 1)
-    >>> mr.cache = 12
-    >>> mr.push(zip(range(26), reversed(range(26))),
-    ...         function, lambda x: x, name='hello')
-    >>> mr.push('hello', function1, lambda x: x, name='hi')
-    >>> mr()
-    >>> print(mr['hello']) # [25, ...]
-    >>> print(mr['hi']) # [24, ...]
-
-    """
-
-    def __init__(self, ncpu=8, buffer_size=5):
-        super(MapReduce, self).__init__()
-        # variables
-        self._tasks = queue()
-        self._stop_now = False
-        self._task_results = {}
-
-        self.buffer_size = int(max(buffer_size, 1))
-        self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
-
-    def stop(self):
-        self._stop_now = True
-        return self
-
-    # ==================== Task manager ==================== #
-    def add_recipe(self, recipe):
-        # path to pickled file or pickled string
-        if isinstance(recipe, str):
-            if os.path.exists(recipe):
-                recipe = cPickle.load(open(recipe, 'r'))
-            else:
-                recipe = cPickle.loads(recipe)
-        # recipe must be list
-        if not isinstance(recipe, (tuple, list)):
-            recipe = (recipe,)
-        if not all(isinstance(i, FeatureRecipe) for i in recipe):
-            raise ValueError('Given recipe is not instance of FeatureRecipe, '
-                             'but has type={}'.format(map(type, recipe)))
-        for i in recipe:
-            self._tasks.append(i) # in this case, tasks contain recipe
-
-    def add_task(self, jobs, map_func, reduce_func=None, finalize_func=None,
-            init_func=None, name=None):
-        ''' Wrapped preprocessing procedure in multiprocessing.
-                ....root
-                / / / | \ \ \ ,
-                .mapping_func
-                \ \ \ | / / /
-                .reduce_func
-                ......|
-                .finalize_func
-
-        Parameters
-        ----------
-        jobs : list
-            [data_concern_job_1, job_2, ....]
-
-        map_func : function(dict, job_i)
-            function object to extract feature from each job, the dictionary
-            will contain all static data initilized from set_init function
-
-        reduce_func : function(dict, [job_i,...], finnished)
-            transfer all data to process 0 as a list for saving to disk, the
-            dictionary will contain all static data initilized from set_init
-            function
-
-        Notes
-        -----
-        Any None return by features_func will be ignored
-
-        '''
-        if not callable(map_func) or \
-            (reduce_func is not None and not callable(reduce_func)) or \
-            (finalize_func is not None and not callable(finalize_func)) or \
-                (init_func is not None and not callable(init_func)):
-            raise ValueError('map, reduce, finalize and init function must be callable'
-                             ' object, but map_func={}, reduce_func={}, '
-                             'finalize_func={} and init_func={}'
-                             ''.format(type(map_func), type(reduce_func),
-                                type(finalize_func), type(init_func)))
-        self._tasks.append([jobs, map_func, reduce_func, finalize_func, init_func, name])
-        return self
-
-    # ==================== internal helper methods ==================== #
-    def _run_mpi(self, task):
-        #####################################
-        # 0. parse task information.
-        if isinstance(task, (tuple, list)):
-            (jobs_list, map_func, reduce_func,
-             finalize_func, init_func, name) = task
-            if init_func is not None:
-                init_func()
-        elif isinstance(task, FeatureRecipe):
-            task.initialize() # init first
-            (jobs_list, map_func, reduce_func, finalize_func, name) = \
-            task.jobs, task.map_func, task.reduce_func, task.finalize_func, task.name
-        else:
-            raise ValueError('No support for type(task)={}.'.format(type(task)))
-
-        #####################################
-        # 1. Scatter jobs for all process.
-        try:
-            # str => the name of previous jobs
-            if len(jobs_list) == 0:
-                raise Exception('Found no jobs to execute.')
-            n_jobs = len(jobs_list)
-            jobs_list = segment_list(jobs_list, n_seg=self.ncpu)
-
-            # ====== work ====== #
-            def work_multi(jobs, res):
-                for j in jobs:
-                    j = map_func(j)
-                    # Generator: return a list of results
-                    if isinstance(j, types.GeneratorType):
-                        [res.put(_) for _ in j if _ is not None]
-                    elif j is not None:
-                        res.put(j)
-            # ====== create processes ====== #
-            results = Queue()
-            processes = [Process(target=work_multi, args=(j, results))
-                         for j in jobs_list]
-            [p.start() for p in processes]
-            # ====== start segment and process jobs ====== #
-            final_results = []
-            batch = []
-            exit_on_stop = False
-            # create progbar
-            progbar = Progbar(target=n_jobs, title='Task:' + str(name))
-            progbar.add(0) # update progress-bar
-            # running the jobs
-            for _ in range(n_jobs):
-                # check if immediately stop
-                if self._stop_now:
-                    exit_on_stop = True
-                    break
-                # processing
-                progbar.add(1)
-                batch.append(results.get())
-                # reduce the results
-                if len(batch) == self.buffer_size or _ == (n_jobs - 1):
-                    final_results.append(reduce_func(batch))
-                    batch = []
-            # ====== end all processes ====== #
-            # end the worker
-            if not exit_on_stop:
-                [p.join() for p in processes]
-            else:
-                [p.terminate() for p in processes if p.is_alive()]
-            results.close()
-            # ====== finalize the results ====== #
-            if finalize_func is not None:
-                print('Finalizing task: %s ...' % name)
-                final_results = finalize_func(final_results)
-                self._task_results[name] = final_results
-        except Exception, e:
-            sys.stderr.write("\nError! Ignored given task: name={}, error='{}'\n"
-                             ''.format(name, e))
-            import traceback; traceback.print_exc()
-
-    def __getitem__(self, key):
-        return self._task_results[key]
-
-    def __len__(self):
-        return len(self._tasks)
-
-    def run(self):
-        while not self._tasks.empty():
-            self._run_mpi(self._tasks.get())
-            # check if stop now
-            if self._stop_now:
-                self._stop_now = False
-                break
-        return self
-
-
-# ===========================================================================
-# Predefined tasks
-# ===========================================================================
-@add_metaclass(ABCMeta)
-class FeatureRecipe(object):
-
-    ''' Pickle-able recipe for extracting object, that can be used with
-    MapReduce
-
-    '''
-
-    def __init__(self, name=None):
-        self.name = name
-        self.jobs = []
-
-    @abstractmethod
-    def initialize(self):
-        """ This method is important, it enable a sequential
-        execution of many recipes
-        """
-        pass
-
-    # ==================== non-touchable properties ==================== #
-    @abstractmethod
-    def map_func(self, job):
-        pass
-
-    @abstractmethod
-    def reduce_func(self, list_of_job):
-        pass
-
-    @abstractmethod
-    def finalize_func(self, results):
-        pass
 
 
 # ===========================================================================
@@ -303,7 +68,6 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
                mspec(X, sum, sum2),
                mfcc(X, sum, sum2),
                vad_idx """
-    import sidekit
     if s.ndim >= 2:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
     # speech features, shape: [Time, Dimension]
@@ -365,13 +129,12 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
     return spec, mspec, mfcc, pitch, vad_idx
 
 
-class SpeechFeature(FeatureRecipe):
+class SpeechFeature(FeederRecipe):
 
     ''' Extract speech features from all audio files in given directory or
     file list, then saves them to a `keras.ext.dataset.Dataset`
 
-    Parameters
-    ----------
+    Require `indices` format for this task:
     segments : path, list
         if path, directory of all audio file, or segment csv file in
         following format (channel can be omitted), start and end is in second
@@ -379,6 +142,9 @@ class SpeechFeature(FeatureRecipe):
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
         sw02001-B_001980-002131 | /path/to/sw02001.sph | 0.0 | -1 | 1
+
+    Parameters
+    ----------
     win : float
         frame or window length in second
     shift : float
@@ -421,64 +187,93 @@ class SpeechFeature(FeatureRecipe):
     robust : bool
         run in robust mode, auto ignore error files
 
-    datatype : memmap, hdf5
-
     Example
     -------
+    >>> recipe = F.SpeechFeature(segments, OUTPUT_PATH, audio_ext='.sph',
+    >>>                          fs=8000, win=0.025, shift=0.01,
+    >>>                          n_filters=40, n_ceps=13, delta_order=2, energy=True,
+    >>>                          vad=True, get_spec=False, get_mspec=True, get_mfcc=True,
+    >>>                          datatype='memmap', dtype='float16')
+    >>> mr = F.MapReduce(12)
+    >>> mr.set_cache(3)
+    >>> mr.add_recipe(recipe)
+    >>> mr.run()
+
     '''
 
-    @autoinit
-    def __init__(self, segments, output, audio_ext=None, fs=8000,
+    def __init__(self, audio_ext=None, fs=8000,
                  win=0.025, shift=0.01, n_filters=40, n_ceps=13,
-                 downsample='sinc_best', delta_order=2, energy=True, vad=True,
-                 datatype='memmap', dtype='float32',
+                 downsample='sinc_best', delta_order=2,
+                 energy=True, vad=True, dtype='float32',
                  get_spec=False, get_mspec=True, get_mfcc=False,
                  get_pitch=False, pitch_threshold=0.5, robust=True):
-        super(SpeechFeature, self).__init__('SpeechFeatures')
-
-    def initialize(self):
-        if not self.get_spec and not self.get_mspec and not self.get_mfcc:
+        super(SpeechFeature, self).__init__()
+        # ====== which features to get ====== #
+        if not get_spec and not get_mspec \
+            and not get_mfcc and not get_pitch:
             raise Exception('You must specify which features you want: '
-                            'spectrogram, filter-banks, or MFCC.')
-        # ====== super function should be called at the beginning ====== #
-        segments = self.segments
-        audio_ext = as_tuple('' if self.audio_ext is None else self.audio_ext, 1, str)
-
-        # ====== load jobs ====== #
-        if isinstance(segments, str):
-            if not os.path.exists(segments):
-                raise ValueError('Path to segments must exists, however, '
-                                 'exist(segments)={}'.format(os.path.exists(segments)))
-            if os.path.isdir(segments):
-                file_list = get_all_files(segments)
-                file_list = [(os.path.basename(i), i, 0.0, -1.0)
-                             for i in file_list] # segment, path, start, end
-            else: # csv file
-                file_list = np.genfromtxt(segments, dtype=str, delimiter=' ')
-        elif isinstance(segments, (tuple, list)):
-            if isinstance(segments[0], str): # just a list of path to file
-                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
-                             for i in segments]
-            elif isinstance(segments[0], (tuple, list)):
-                if len(segments[0]) != 4 and len(segments[0]) != 5:
-                    raise Exception('segments must contain information in following for:'
-                                    '[name] [path] [start] [end]')
-                file_list = segments
-        # filter using support audio extension
-        file_list = [f for f in file_list if any(ext in f[1] for ext in audio_ext)]
-        # if no channel is provided, append the channel
-        file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
-        # convert into: audio_path -> segment(name, start, end, channel)
-        self.jobs = defaultdict(list)
-        for segment, file, start, end, channel in file_list:
-            self.jobs[file].append((segment, float(start), float(end), int(channel)))
-        self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
-        # ====== check output ====== #
-        self.dataset = Dataset(self.output)
+                            'spectrogram, filter-banks, MFCC, or pitch.')
+        self.get_spec = get_spec
+        self.get_mspec = get_mspec
+        self.get_mfcc = get_mfcc
+        self.get_pitch = get_pitch
+        # ====== other ====== #
+        self.audio_ext = as_tuple('' if audio_ext is None else audio_ext, 1, str)
+        # ====== feature infor ====== #
+        self.fs = fs
+        self.win = win
+        self.shift = shift
+        self.n_filters = n_filters
+        self.n_ceps = n_ceps
+        self.downsample = downsample
+        self.delta_order = int(delta_order)
+        self.energy = energy
+        self.vad = vad
         # constraint pitch threshold in 0-1
-        self.pitch_threshold = min(max(self.pitch_threshold, 0.), 1.)
+        self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
+        # ====== check output ====== #
+        self.dtype = dtype
+        self.robust = robust
+        # ====== intermediate variable ====== #
+        self.index = [] # contain name, start, end
+        self.index_end = 0
+        self.spec_sum1, self.spec_sum2 = 0., 0.
+        self.mspec_sum1, self.mspec_sum2 = 0., 0.
+        self.mfcc_sum1, self.mfcc_sum2 = 0., 0.
+        self.pitch_sum1, self.pitch_sum2 = 0., 0.
 
-    def map_func(self, f):
+    def shape_transform(self, shape):
+        """ Return the new shape that transformed by this Recipe """
+        return self.shape
+
+    def preprocess_indices(self, indices):
+        # store original indices shape because nwe indices
+        # only contain the number of files not all the segments
+        self.shape = (len(indices),)
+        # ====== load jobs ====== #
+        if isinstance(indices, np.ndarray):
+            if indices.ndim == 1: # just a list of path to file
+                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
+                             for i in indices]
+            else:
+                if indices.shape[1] != 4 and indices.shape[1] != 5:
+                    raise Exception('indices must contain information in following for:'
+                                    '[name] [path] [start] [end] [channel(optional)]')
+                file_list = indices
+        # filter using support audio extension
+        file_list = np.array([f for f in file_list
+                              if any(ext in f[1] for ext in self.audio_ext)])
+        # if no channel is provided, append the channel
+        if file_list.shape[1] == 4:
+            file_list = np.hstack([file_list,
+                                   np.zeros(shape=(file_list.shape[0], 1), dtype='int32')])
+        # convert into: audio_path -> segment(name, start, end, channel)
+        jobs = defaultdict(list)
+        for segment, file, start, end, channel in file_list:
+            jobs[file].append((segment, float(start), float(end), int(channel)))
+        return np.array(jobs.items(), dtype=object)
+
+    def map(self, audio_path, segments):
         '''
         Return
         ------
@@ -490,7 +285,6 @@ class SpeechFeature(FeatureRecipe):
         '''
         fs = self.fs
         try:
-            audio_path, segments = f
             # load audio data
             s, orig_fs = speech.read(audio_path)
             orig_fs = fs if orig_fs is None else orig_fs
@@ -503,28 +297,25 @@ class SpeechFeature(FeatureRecipe):
                 raise ValueError('Cannot perform upsample from frequency: '
                                  '{}Hz to {}Hz'.format(orig_fs, fs))
             N = len(s)
-            features = []
+            # processing all segments
             for name, start, end, channel in segments:
                 start = int(float(start) * fs)
                 end = int(N if end < 0 else end * fs)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                tmp = speech_features_extraction(data.ravel(), fs=fs,
+                features = speech_features_extraction(data.ravel(), fs=fs,
                     n_filters=self.n_filters, n_ceps=self.n_ceps,
                     win=self.win, shift=self.shift, delta_order=self.delta_order,
                     energy=self.energy, vad=self.vad, dtype=self.dtype,
                     pitch_threshold=self.pitch_threshold,
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
                     get_mfcc=self.get_mfcc, get_pitch=self.get_pitch)
-                if tmp is not None:
-                    features.append((name,) + tmp)
+                if features is not None:
+                    yield (name, features)
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)
-            # return an iterator of features
-            for f in features:
-                yield f
         except Exception, e:
-            msg = 'Ignore file: %s, error: %s' % (f[0], str(e))
+            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             warnings.warn(msg)
             if self.robust:
                 yield None
@@ -532,57 +323,10 @@ class SpeechFeature(FeatureRecipe):
                 import traceback; traceback.print_exc()
                 raise e
 
-    def reduce_func(self, results):
-        # contains (name, spec, mspec, mfcc, vad)
-        dataset = self.dataset
-        datatype = self.datatype
-
-        index = []
-        spec_sum1, spec_sum2 = 0., 0.
-        mspec_sum1, mspec_sum2 = 0., 0.
-        mfcc_sum1, mfcc_sum2 = 0., 0.
-        pitch_sum1, pitch_sum2 = 0., 0.
-
-        n = 0
-        for name, spec, mspec, mfcc, pitch, vad in results:
-            if spec is not None:
-                X, sum1, sum2 = spec
-                if 'spec' in dataset: dataset['spec'].append(X)
-                else: dataset[('spec', datatype)] = X
-                spec_sum1 += sum1; spec_sum2 += sum2
-                n = X.shape[0]; del X
-            if mspec is not None:
-                X, sum1, sum2 = mspec
-                if 'mspec' in dataset: dataset['mspec'].append(X)
-                else: dataset[('mspec', datatype)] = X
-                mspec_sum1 += sum1; mspec_sum2 += sum2
-                n = X.shape[0]; del X
-            if mfcc is not None:
-                X, sum1, sum2 = mfcc
-                if 'mfcc' in dataset: dataset['mfcc'].append(X)
-                else: dataset[('mfcc', datatype)] = X
-                mfcc_sum1 += sum1; mfcc_sum2 += sum2
-                n = X.shape[0]; del X
-            if pitch is not None:
-                X, sum1, sum2 = pitch
-                if 'pitch' in dataset: dataset['pitch'].append(X)
-                else: dataset[('pitch', datatype)] = X
-                pitch_sum1 += sum1; pitch_sum2 += sum2
-                n = X.shape[0]; del X
-            # index
-            index.append([name, n])
-            # VAD
-            if vad is not None:
-                assert vad.shape[0] == n,\
-                    'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
-                if 'vad' in dataset: dataset['vad'].append(X)
-                else: dataset[('vad', datatype)] = vad
-                del vad
-        dataset.flush()
-        return ((spec_sum1, spec_sum2),
-                (mspec_sum1, mspec_sum2),
-                (mfcc_sum1, mfcc_sum2),
-                (pitch_sum1, pitch_sum2), index)
+    def reduce(self, results):
+        # contains (name, (spec, mspec, mfcc, vad))
+        for r in results:
+            yield r
 
     def finalize_func(self, results):
         # contains (sum1, sum2, n)
@@ -612,39 +356,109 @@ class SpeechFeature(FeatureRecipe):
                 # name, start, end
                 indices.append([name, int(n), int(n + size)])
                 n += size
-        # ====== saving indices ====== #
-        with open(os.path.join(path, 'indices.csv'), 'w') as f:
-            for name, start, end in indices:
-                f.write('%s %d %d\n' % (name, start, end))
-
         # ====== helper ====== #
-        def save_mean_std(sum1, sum2, n, name, dataset):
-            mean = sum1 / n
-            std = np.sqrt(sum2 / n - mean**2)
-            assert not np.any(np.isnan(mean)), 'Mean contains NaN'
-            assert not np.any(np.isnan(std)), 'Std contains NaN'
-            dataset[name + '_mean'] = mean
-            dataset[name + '_std'] = std
-        # ====== save mean and std ====== #
-        if self.get_spec:
-            save_mean_std(spec_sum1, spec_sum2, n, 'spec', dataset)
-        if self.get_mspec:
-            save_mean_std(mspec_sum1, mspec_sum2, n, 'mspec', dataset)
-        if self.get_mfcc:
-            save_mean_std(mfcc_sum1, mfcc_sum2, n, 'mfcc', dataset)
-        if self.get_pitch:
-            save_mean_std(pitch_sum1, pitch_sum2, n, 'pitch', dataset)
         dataset.flush()
         dataset.close()
         return path
 
-    def __setstate__(self, states):
-        self.name = states[0]
-        for name, value in states[1].iteritems():
-            setattr(self, name, value)
 
-    def __getstate__(self):
-        return self.name, self._arguments
+class SpeechFeaturesSaver(object):
+    """ SpeechFeatureSaver
+    This function take output from Feeder with SpeechFeatures recipe
+    and update output dataset
+
+    Parameters
+    ----------
+    outpath: str
+        path to output dataset
+    datatype : memmap, hdf5
+        datatype to save given task
+    """
+
+    def __init__(self, outpath, datatype):
+        super(SpeechFeaturesSaver, self).__init__()
+        self.dataset = Dataset(outpath)
+        if datatype not in ('memmap', 'hdf5'):
+            raise ValueError('datatype must be "memmap", or "hdf5"')
+        self.datatype = datatype
+
+    def run(self, feeder):
+        dataset = self.dataset
+        datatype = self.datatype
+        # ====== indices ====== #
+        indices = []
+        start = 0
+        # ====== statistic ====== #
+        spec_sum1, spec_sum2 = 0., 0.
+        mspec_sum1, mspec_sum2 = 0., 0.
+        mfcc_sum1, mfcc_sum2 = 0., 0.
+        pitch_sum1, pitch_sum2 = 0., 0.
+
+        prog = Progbar(target=feeder.shape[0])
+        for name, (spec, mspec, mfcc, pitch, vad) in feeder:
+            if spec is not None:
+                X, sum1, sum2 = spec
+                if 'spec' in dataset: dataset['spec'].append(X)
+                else: dataset[('spec', datatype)] = X
+                spec_sum1 += sum1; spec_sum2 += sum2
+                n = X.shape[0]; del X
+            if mspec is not None:
+                X, sum1, sum2 = mspec
+                if 'mspec' in dataset: dataset['mspec'].append(X)
+                else: dataset[('mspec', datatype)] = X
+                mspec_sum1 += sum1; mspec_sum2 += sum2
+                n = X.shape[0]; del X
+            if mfcc is not None:
+                X, sum1, sum2 = mfcc
+                if 'mfcc' in dataset: dataset['mfcc'].append(X)
+                else: dataset[('mfcc', datatype)] = X
+                mfcc_sum1 += sum1; mfcc_sum2 += sum2
+                n = X.shape[0]; del X
+            if pitch is not None:
+                X, sum1, sum2 = pitch
+                if 'pitch' in dataset: dataset['pitch'].append(X)
+                else: dataset[('pitch', datatype)] = X
+                pitch_sum1 += sum1; pitch_sum2 += sum2
+                n = X.shape[0]; del X
+            # VAD
+            if vad is not None:
+                assert vad.shape[0] == n,\
+                    'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
+                if 'vad' in dataset: dataset['vad'].append(vad)
+                else: dataset[('vad', datatype)] = vad
+                del vad
+            # index
+            indices.append([name, start, start + n])
+            start += n
+            # ====== update progress ====== #
+            prog.title = name
+            prog.add(1)
+        # ====== end, flush the mean and std ====== #
+        dataset.flush()
+        # ====== saving indices ====== #
+        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
+            for name, start, end in indices:
+                f.write('%s %d %d\n' % (name, start, end))
+
+        # ====== save mean and std ====== #
+        def save_mean_std(sum1, sum2, name, dataset):
+            mean = sum1 / start
+            std = np.sqrt(sum2 / start - mean**2)
+            assert not np.any(np.isnan(mean)), 'Mean contains NaN'
+            assert not np.any(np.isnan(std)), 'Std contains NaN'
+            dataset[name + '_mean'] = mean
+            dataset[name + '_std'] = std
+        if spec is not None:
+            save_mean_std(spec_sum1, spec_sum2, 'spec', dataset)
+        if mspec is not None:
+            save_mean_std(mspec_sum1, mspec_sum2, 'mspec', dataset)
+        if mfcc is not None:
+            save_mean_std(mfcc_sum1, mfcc_sum2, 'mfcc', dataset)
+        if pitch is not None:
+            save_mean_std(pitch_sum1, pitch_sum2, 'pitch', dataset)
+        # ====== final flush() ====== #
+        dataset.flush()
+        dataset.close()
 
 
 # ===========================================================================
@@ -693,7 +507,7 @@ def video_features_extraction(X, boundingbox, desire_size):
             np.sum(finalX**2, axis=0, dtype='float64'))
 
 
-class VideoFeature(FeatureRecipe):
+class VideoFeature(FeederRecipe):
 
     ''' Extract speech features from all audio files in given directory or
     file list, then saves them to a `keras.ext.dataset.Dataset`

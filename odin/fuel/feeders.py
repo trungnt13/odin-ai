@@ -57,6 +57,9 @@ _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 def split_feeder(data, indices_path, transcription,
                  partitions=[0.6, 0.2, 0.2], seed=1208251813,
                  ncpu=1, buffer_size=12, maximum_queue_size=66):
+    """ Fast utilities to split single indices into multiple
+    Feeder parts
+    """
     partitions = np.cumsum(partitions).tolist()
     if partitions[-1] > 1:
         raise Exception("The sum of all partitions must be smaller than 1.0")
@@ -103,12 +106,6 @@ class Feeder(MutableData):
     indices: path(csv file), list, ndarray, dict
         indices represent following information: [name, start_id, end_id]
         if indices is dictionary, it must in the form: {name: (start, end)}
-    transcription: dict
-        if path to a file is specified, the file must specified
-        <name> -> [frame1, frame2, ...]
-        if list is given, the list must contain the same information
-        if dictionary is given, the dict must repesent the same mapping
-        above
     buffer_size: int
         the amount of data each process keep before return to main
         process.
@@ -144,38 +141,25 @@ class Feeder(MutableData):
 
     """
 
-    def __init__(self, data, indices, transcription=None,
-                 ncpu=1, buffer_size=12, maximum_queue_size=144):
+    def __init__(self, indices, ncpu=1, buffer_size=12, maximum_queue_size=144):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
-        if isinstance(indices, str):
-            if os.path.isfile(indices):
-                self._indices = np.genfromtxt(indices,
-                                              dtype=str, delimiter=' ')
-            elif os.path.isdir(indices):
-                self._indices = np.genfromtxt(os.path.join(indices, 'indices.csv'),
-                                              dtype=str, delimiter=' ')
+        if isinstance(indices, str) and os.path.isfile(indices):
+            self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
         elif isinstance(indices, (tuple, list)):
             self._indices = np.asarray(indices)
         elif isinstance(indices, np.ndarray):
             self._indices = indices
         elif isinstance(indices, dict):
-            self._indices = np.asarray([(i, j[0], j[1])
+            self._indices = np.asarray([as_tuple(i) + as_tuple(j)
                                         for i, j in indices.iteritems()])
         else:
             raise ValueError('Unsupport indices type: "%s".' % type(indices))
-        # first shape, based on indices
-        self._initial_shape = sum(int(e) - int(s) for _, s, e in self._indices)
-        # ====== Load data ====== #
-        if not isinstance(data, (tuple, list)):
-            data = (data,)
-        if any(not isinstance(d, Data) for d in data):
-            raise ValueError('data must be instance of odin.fuel.Data')
-        length = len(data[0])
-        if any(len(d) != length for d in data):
-            raise ValueError('All Data must have the same length (i.e. shape[0]).')
-        self._data = data if len(data) > 1 else data[0]
-        # set recipes
+        # backup original indices
+        self._original_indices = self._indices
+        # ====== data ====== #
+        self._data = None
+        # ====== Set default recipes ====== #
         self.recipe = FeederList(CreateBatch())
         # never use all available CPU
         if ncpu is None:
@@ -192,23 +176,6 @@ class Feeder(MutableData):
         self._all_iter = {}
         # store iter identity, so every iter has unique identity
         self._nb_created_iter = 0
-        # ====== transcription ====== #
-        # manager = Manager()
-        share_dict = None
-        if transcription is not None:
-            if isinstance(transcription, (list, tuple)):
-                share_dict = {i: j for i, j in transcription}
-            elif isinstance(transcription, dict):
-                share_dict = transcription
-            elif isinstance(transcription, str):
-                if os.path.isdir(transcription):
-                    p = [p for p in os.listdir(transcription)
-                         if 'transcription' in p][0]
-                    transcription = os.path.join(transcription, p)
-                share_dict = MmapDict(transcription)
-            else:
-                raise Exception('Cannot understand given transcipriont information.')
-        self._transcription = share_dict
 
     def set_recipes(self, recipes):
         # filter out None value
@@ -216,6 +183,7 @@ class Feeder(MutableData):
         recipes = [i for i in recipes if i is not None]
         if len(recipes) > 0:
             self.recipe = FeederList(*recipes)
+            self._indices = self.recipe.preprocess_indices(self._original_indices)
         return self
 
     def stop_all(self):
@@ -244,21 +212,22 @@ class Feeder(MutableData):
         """ This is just an "UPPER" estimation, some data points might be lost
         during preprocessing each indices by recipes.
         """
-        # this class has list of _data so .shape return list of shape
-        shape = super(Feeder, self).shape
-        if isinstance(shape[0], (tuple, list)):
-            shape = [(self._initial_shape,) + s[1:] for s in shape]
-        else:
-            shape = (self._initial_shape,) + shape[1:]
-        # ====== process each shape ====== #
+        shape = self._indices.shape
+        # ====== recipe process shape ====== #
         if self.recipe is not None:
             return tuple(self.recipe.shape_transform(shape))
         else:
             return tuple(shape)
 
     def __str__(self):
+        if self._data is None:
+            name = 'None'
+            dtype = 'unknown'
+        else:
+            name = self._data.name
+            dtype = self.dtype
         return '<Feeders dataset "%s": shape %s, type "<%s">' % \
-        (self._data.name, self.shape, self.dtype)
+        (name, self.shape, dtype)
 
     # ==================== Strings ==================== #
     def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,
@@ -284,47 +253,43 @@ class Feeder(MutableData):
         # data, jobs, map_function, results
         def work_multi(j, map, reduce, res, buffer_size, shared_couter):
             # 1 Data share between all processes
-            dat = self._data
-            # transcription is shared global variable
-            transcription = self._transcription
             batch = []
             n = len(j)
-            for count, (name, start, end) in enumerate(j):
-                # data can be list of Data, or just 1 Data
-                if isinstance(dat, (tuple, list)):
-                    x = [d[int(start):int(end)] for d in dat]
-                else:
-                    x = dat[int(start):int(end)]
-                # only support 32bit datatype, it is extremely faster
-                # check transcription
-                trans = None
-                if transcription is not None:
-                    if name not in transcription:
-                        continue # ignore the sample
-                    trans = transcription[name]
+            for count, info in enumerate(j):
                 # map tasks, if only 1 Data, just apply map on it, else apply
                 # map on list of Data
-                _ = (map(name, x, trans) if len(x) > 1
-                    else map(name, x[0], trans))
-                if _ is not None:
+                if len(info) == 1:
+                    _ = map(info)
+                elif len(info) == 2:
+                    _ = map(info[0], info[1])
+                else:
+                    _ = map(info[0], info[1:])
+                # append to batch
+                if isinstance(_, types.GeneratorType):
+                    batch += list(_)
+                elif _ is not None:
                     batch.append(_)
                 # reduce tasks
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
+                        print('Waiting', shared_couter.value)
                         time.sleep(0.1)
                     # CRITICAL: the nb_returned will be stored from last
                     # batch and added to the shared_couter which can cause
                     # a deadlock, so it must be reseted to 0 after each batch
-                    nb_returned = -1
+                    nb_returned = 0
                     # reduce and return the batch
-                    for nb_returned, b in enumerate(reduce(batch)):
-                        res.put(b); del b
+                    for b in reduce(batch):
+                        if b is not None:
+                            res.put(b)
+                            nb_returned += 1
+                            del b
                     # new batch
                     del batch; batch = []
                     # increase shared counter
-                    if nb_returned >= 0:
-                        shared_couter.add(nb_returned + 1)
+                    if nb_returned > 0:
+                        shared_couter.add(nb_returned)
             # ending signal
             res.put(None)
         #######################################################
@@ -344,6 +309,7 @@ class Feeder(MutableData):
         while working_processes > 0:
             # storing batch and return when cache is full
             batch = results.get()
+            print('Main Process running:', counter.value, working_processes, type(batch))
             if batch is None:
                 working_processes -= 1
             else:
@@ -383,7 +349,7 @@ class Feeder(MutableData):
         # ====== check ====== #
         if self.recipe is None:
             raise ValueError('You must set_recipes first')
-        # ====== process ====== #
+        # ====== get start and end for indices ====== #
         n = self._indices.shape[0]
         start = _apply_approx(n, self._start)
         end = _apply_approx(n, self._end)

@@ -15,21 +15,34 @@ from odin.utils import (segment_list, segment_axis, one_hot,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.decorators import functionable
 
+from .data import Data, MutableData
+from .utils import MmapDict
+
 
 # ===========================================================================
 # Recipes
 # ===========================================================================
 @add_metaclass(ABCMeta)
 class FeederRecipe(object):
-    """
-    map(x): x->(data, name)
-    reduce(x): x->list of returned object from map(x)
+    """ All method of this function a called in following order
+    preprocess_indices(indices): return new_indices
+    init(ntasks, batch_size, seed): right before create the iter
+
+    [multi-process]map(*x): x->(name, data)
+                            return (if iterator, it will be iterated to
+                                    get a list of results)
+    [multi-process]reduce(x): x->(object from map(x))
+                              return iterator
+    [single-process]finalize(x):
 
     Note
     ----
     This class should not store big amount of data, or the data
     will be replicated to all processes
     """
+
+    def preprocess_indices(self, indices):
+        return indices
 
     def init(self, ntasks, batch_size, seed):
         pass
@@ -55,14 +68,20 @@ class FeederList(FeederRecipe):
     def __len__(self):
         return len(self.recipes)
 
+    def __str__(self):
+        s = []
+        for i in self.recipes:
+            s.append(i.__class__.__name__)
+        return '<FeederList: ' + ', '.join(s) + '>'
+
     def init(self, ntasks, batch_size, seed):
         for i in self.recipes:
             i.init(ntasks, batch_size, seed)
 
     def map(self, *args):
-        for f in self.recipes:
-            args = (f.map(*args) if isinstance(args, (tuple, list)) else
-                    f.map(args))
+        for i, f in enumerate(self.recipes):
+            # return iterator (iterate over all of them)
+            args = f.map(*args)
             # break the chain if one of the recipes get error,
             # and return None
             if args is None:
@@ -74,6 +93,17 @@ class FeederList(FeederRecipe):
             x = f.reduce(x)
         return x
 
+    def finalize(self, x):
+        for f in self.recipes:
+            x = f.finalize(x)
+        return x
+
+    def preprocess_indices(self, indices):
+        # sequentially preprocess the indices
+        for f in self.recipes:
+            indices = f.preprocess_indices(indices)
+        return indices
+
     def shape_transform(self, shape):
         """ Return the new shape that transformed by this Recipe """
         for i in self.recipes:
@@ -81,6 +111,113 @@ class FeederList(FeederRecipe):
         return shape
 
 
+# ===========================================================================
+# Loader
+# ===========================================================================
+class DataLoader(MutableData):
+
+    def __init__(self, data):
+        super(DataLoader, self).__init__()
+        # ====== Load data ====== #
+        if not isinstance(data, (tuple, list)):
+            data = (data,)
+        if any(not isinstance(d, Data) for d in data):
+            raise ValueError('data must be instance of odin.fuel.Data')
+        length = len(data[0])
+        if any(len(d) != length for d in data):
+            raise ValueError('All Data must have the same length '
+                             '(i.e. shape[0]).')
+        self._data = data if len(data) > 1 else data[0]
+        # store first dimension
+        self._initial_shape = self._data.shape[0]
+
+    def preprocess_indices(self, indices):
+        self._initial_shape = sum(int(e) - int(s) for _, s, e in self._indices)
+        return indices
+
+    def map(self, name, info):
+        start, end = info
+        # data can be list of Data, or just 1 Data
+        if isinstance(self.data, (tuple, list)):
+            x = [d[int(start):int(end)] for d in self.data]
+        else:
+            x = self.data[int(start):int(end)]
+        return name, x
+
+    def shape_transform(self, shape):
+        if isinstance(shape[0], (tuple, list)):
+            shape = [(self._initial_shape,) + s[1:] for s in shape]
+        else:
+            shape = (self._initial_shape,) + shape[1:]
+        return shape
+
+
+class TransLoader(FeederRecipe):
+    """ Load transcription from dictionary using name specifed in
+    indices
+
+    map_func:
+        inputs: name, X
+        outputs: name, X, loaded_transcription
+    reduce_func:
+        inputs: same
+        outputs: same
+
+    Parameters
+    ----------
+    transcription: dict
+        if path to a file is specified, the file must specified
+        <name> -> [frame1, frame2, ...]
+        if list is given, the list must contain the same information
+        if dictionary is given, the dict must repesent the same mapping
+        above
+
+    """
+
+    def __init__(self, transcription, dtype, delimiter=' ', label_dict=None):
+        super(TransLoader, self).__init__()
+        # ====== transcription ====== #
+        share_dict = None
+        if isinstance(transcription, (list, tuple)):
+            share_dict = {i: j for i, j in transcription}
+        elif isinstance(transcription, dict):
+            share_dict = transcription
+        elif isinstance(transcription, str) and os.path.isfile(transcription):
+            share_dict = MmapDict(transcription)
+        else:
+            raise Exception('Cannot understand given transcipriont information.')
+        self._transcription = share_dict
+        # ====== datatype and delimiter ====== #
+        # NO 64bit data type
+        self.dtype = str(np.dtype(dtype)).replace('64', '32')
+        self.delimiter = delimiter
+        # ====== label dict if available ====== #
+        if label_dict is None:
+            label_func = lambda x: x
+        elif isinstance(label_dict, dict):
+            label_func = lambda x: label_dict[x]
+        elif callable(label_dict):
+            label_func = label_dict
+        else:
+            raise ValueError('label_dict must be a dictionary, function or None.')
+        self.label_dict = label_func
+
+    def map(self, name, X):
+        trans = self._transcription[name]
+        # ====== parse string using delimiter ====== #
+        if isinstance(trans, str):
+            trans = [self.label_dict(i)
+                     for i in trans.split(self.delimiter)
+                     if len(i) > 0]
+        else:
+            trans = [self.label_dict(i) for i in trans]
+        trans = np.asarray(trans, dtype=self.dtype)
+        return name, X, trans
+
+
+# ===========================================================================
+# Basic recipes
+# ===========================================================================
 class Filter(FeederRecipe):
 
     """
@@ -297,6 +434,22 @@ class Merge(FeederRecipe):
 # ===========================================================================
 # Label processing
 # ===========================================================================
+class LabelOneHot(FeederRecipe):
+
+    def __init__(self, n_classes):
+        super(LabelOneHot, self).__init__()
+        self._n_classes = int(n_classes)
+
+    def map(self, name, x, transcription):
+        if transcription is not None:
+            if isinstance(transcription, str):
+                transcription = [i for i in transcription.split(' ')
+                                 if len(i) > 0]
+            transcription = [int(i) for i in transcription]
+            transcription = one_hot(transcription, n_classes=self._n_classes)
+        return name, x, transcription
+
+
 class Name2Trans(FeederRecipe):
     """ This function convert the name (in indices) to transcription
     for given data
@@ -326,60 +479,6 @@ class Name2Trans(FeederRecipe):
 
     def map(self, name, x, transcription):
         transcription = self.converter_func(name, x)
-        return name, x, transcription
-
-
-class LabelParse(FeederRecipe):
-
-    """
-    Parameters
-    ----------
-    dict : dictionary or function
-        pass
-    """
-
-    def __init__(self, dtype, delimiter=' ', label_dict=None):
-        super(LabelParse, self).__init__()
-        # NO 64bit data type
-        self.dtype = str(np.dtype(dtype)).replace('64', '32')
-        self.delimiter = delimiter
-
-        if label_dict is None:
-            label_func = lambda x: x
-        elif isinstance(label_dict, dict):
-            label_func = lambda x: label_dict[x]
-        elif callable(label_dict):
-            label_func = label_dict
-        else:
-            raise ValueError('label_dict must be a dictionary, function or None.')
-        self.label_dict = label_func
-
-    def map(self, name, x, transcription):
-        if transcription is not None:
-            # ====== parse string using delimiter ====== #
-            if isinstance(transcription, str):
-                transcription = [self.label_dict(i)
-                                 for i in transcription.split(self.delimiter)
-                                 if len(i) > 0]
-            else:
-                transcription = [self.label_dict(i) for i in transcription]
-            transcription = np.asarray(transcription, dtype=self.dtype)
-        return name, x, transcription
-
-
-class LabelOneHot(FeederRecipe):
-
-    def __init__(self, n_classes):
-        super(LabelOneHot, self).__init__()
-        self._n_classes = int(n_classes)
-
-    def map(self, name, x, transcription):
-        if transcription is not None:
-            if isinstance(transcription, str):
-                transcription = [i for i in transcription.split(' ')
-                                 if len(i) > 0]
-            transcription = [int(i) for i in transcription]
-            transcription = one_hot(transcription, n_classes=self._n_classes)
         return name, x, transcription
 
 
@@ -546,15 +645,6 @@ class Sequencing(FeederRecipe):
             mid_shape = tuple(shape[1:-1])
             _.append((n, self.frame_length,) + mid_shape + (n_features,))
         return _ if return_multiple else _[0]
-
-
-class Sampling(FeederRecipe):
-
-    def __init__(self, distribution):
-        raise NotImplementedError
-
-    def reduce(self, batch):
-        pass
 
 
 # ===========================================================================
