@@ -314,14 +314,12 @@ class Feeder(MutableData):
             else:
                 # perform batch level permutation
                 if rng is not None and self._shuffle_level > 1:
-                    if not isinstance(batch, (tuple, list)):
-                        batch = batch[rng.permutation(batch.shape[0])]
-                    else:
-                        idx = rng.permutation(batch[0].shape[0])
-                        # different shape NO shuffle
-                        batch = [_[idx] for _ in batch]
+                    permutation = rng.permutation(batch[0].shape[0])
+                    # different shape NO shuffle
+                    batch = [b[permutation] for b in batch]
                 # return batch and check for returned signal
-                if (yield batch) == SIG_TERMINATE_ITERATOR:
+                if (yield batch[0] if len(batch) == 1
+                        else tuple(batch)) == SIG_TERMINATE_ITERATOR:
                     forced_terminated = True
                     break
                 del batch

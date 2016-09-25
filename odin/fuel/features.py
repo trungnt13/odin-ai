@@ -411,7 +411,7 @@ class SpeechFeaturesSaver(object):
                 vad_cache.append(vad)
                 del vad
             # ====== flush cache ====== #
-            if count % 12 == 0:
+            if count % 48 == 0: # 12 + 8
                 spec_cache = flush_feature('spec', spec_cache)
                 mspec_cache = flush_feature('mspec', mspec_cache)
                 mfcc_cache = flush_feature('mfcc', mfcc_cache)
