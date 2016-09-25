@@ -164,7 +164,7 @@ class Feeder(MutableData):
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
-        self.ncpu = max(min(ncpu, cpu_count() - 1), 1)
+        self.ncpu = max(min(ncpu, 2 * cpu_count() - 1), 1)
         self.maximum_queue_size = maximum_queue_size
         # ====== default ====== #
         self._buffer_size = buffer_size
@@ -273,7 +273,6 @@ class Feeder(MutableData):
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
                     while shared_couter.value > maximum_queue_size:
-                        print('Waiting', shared_couter.value)
                         time.sleep(0.1)
                     # CRITICAL: the nb_returned will be stored from last
                     # batch and added to the shared_couter which can cause
@@ -287,7 +286,8 @@ class Feeder(MutableData):
                             del b
                     # new batch
                     del batch; batch = []
-                    # increase shared counter
+                    # increase shared counter (this number must perfectly
+                    # counted, only 1 mismatch and deadlock happen)
                     if nb_returned > 0:
                         shared_couter.add(nb_returned)
             # ending signal
@@ -309,7 +309,6 @@ class Feeder(MutableData):
         while working_processes > 0:
             # storing batch and return when cache is full
             batch = results.get()
-            print('Main Process running:', counter.value, working_processes, type(batch))
             if batch is None:
                 working_processes -= 1
             else:
