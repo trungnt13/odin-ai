@@ -119,14 +119,17 @@ class Feeder(MutableData):
 
     Example
     -------
-    >>> feeder = F.Feeder(ds['mfcc'], ds.path, ncpu=12, buffer_size=12,
-    >>>                   maximum_queue_size=48)
-    >>> feeder.set_batch(256, seed=12082518, shuffle_level=2)
+    >>> ds = F.Dataset(os.path.join(temppath, 'ds'), read_only=True)
+    >>> feeder = F.Feeder(indices=ds['indices.csv'],
+    >>>                   ncpu=2, buffer_size=2, maximum_queue_size=12)
     >>> feeder.set_recipes([
-    >>>     F.recipes.Name2Trans(
-    >>>         lambda x, y: [cluster_idx.index(x.split('/')[0])] * y.shape[0]),
-    >>>     F.recipes.CreateBatch(lambda x: (x[0], x[1]) if len(set(x[1])) > 1 else None)
+    >>>     F.recipes.DataLoader(ds['X']),
+    >>>     F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
+    >>>     F.recipes.CreateBatch()
     >>> ])
+    >>> for i, j in feeder.set_batch(12, seed=1208251813, shuffle_level=2):
+    >>>     for x, y in zip(i, j):
+    >>>         print(transcription_test[str(x.tolist())] == y)
 
     Note
     ----

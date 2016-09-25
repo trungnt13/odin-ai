@@ -720,14 +720,10 @@ class CreateFile(FeederRecipe):
         self.return_name = return_name
 
     def reduce(self, batch):
-        for name, X, transcription in batch:
-            ret = [X] if not isinstance(X, list) else X
-            # ====== transcription ====== #
-            if transcription is not None:
-                if not isinstance(transcription, (list, tuple)):
-                    ret.append(transcription)
-                else:
-                    ret += transcription
+        for b in batch:
+            name, X = b[0], b[1]
+            Y = b[2:]
+            ret = X + Y
             # ====== return name ====== #
             if self.return_name:
                 ret = [name] + ret
