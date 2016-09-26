@@ -218,9 +218,13 @@ class Feeder(MutableData):
         shape = self._indices.shape
         # ====== recipe process shape ====== #
         if self.recipe is not None:
-            return tuple(self.recipe.shape_transform(shape))
+            shape = tuple(self.recipe.shape_transform(shape))
         else:
-            return tuple(shape)
+            shape = tuple(shape)
+        # ====== post process ====== #
+        if not isinstance(shape[0], tuple):
+            shape = (shape,)
+        return shape if len(shape) > 1 else shape[0]
 
     def __str__(self):
         if self._data is None:
