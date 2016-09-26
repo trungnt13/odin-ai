@@ -1016,7 +1016,7 @@ def get_tempdir():
     return tempfile.mkdtemp()
 
 
-def _get_managed_path(folder, name, override):
+def _get_managed_path(folder, name, override, is_folder=False):
     datadir_base = os.path.expanduser(os.path.join('~', '.odin'))
     if not os.access(datadir_base, os.W_OK):
         datadir_base = os.path.join('/tmp', '.odin')
@@ -1029,22 +1029,23 @@ def _get_managed_path(folder, name, override):
         if os.path.exists(datadir) and override:
             if os.path.isfile(datadir): # remove file
                 os.remove(datadir)
-            else: # remove folder
+            else: # remove and create new folder
                 shutil.rmtree(datadir)
+                os.mkdir(datadir)
     return datadir
 
 
 def get_datasetpath(name=None, override=False):
-    return _get_managed_path('datasets', name, override)
+    return _get_managed_path('datasets', name, override, is_folder=True)
 
 
 def get_modelpath(name=None, override=False):
     """ Default model path for saving ODIN networks """
-    return _get_managed_path('models', name, override)
+    return _get_managed_path('models', name, override, is_folder=False)
 
 
 def get_logpath(name=None, override=False):
-    return _get_managed_path('logs', name, override)
+    return _get_managed_path('logs', name, override, is_folder=False)
 
 
 # ===========================================================================
