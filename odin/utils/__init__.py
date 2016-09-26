@@ -1027,11 +1027,12 @@ def _get_managed_path(folder, name, override, is_folder=False):
     if isinstance(name, types.StringType):
         datadir = os.path.join(datadir, name)
         if os.path.exists(datadir) and override:
-            if os.path.isfile(datadir): # remove file
-                os.remove(datadir)
-            else: # remove and create new folder
-                shutil.rmtree(datadir)
-                os.mkdir(datadir)
+                if os.path.isfile(datadir): # remove file
+                    os.remove(datadir)
+                else: # remove and create new folder
+                    shutil.rmtree(datadir)
+        if is_folder and not os.path.exists(datadir):
+            os.mkdir(datadir)
     return datadir
 
 
