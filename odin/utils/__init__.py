@@ -747,6 +747,32 @@ class Progbar(object):
         self.update(self.seen_so_far + n, values)
 
 
+def progbar(func):
+    """ Wrap any list, tuple, ndarray or func object to
+    print ProgressBar when iterating over it
+    """
+    def iter_prog(l):
+        n = len(l) if hasattr(l, '__len__') else 120
+        friction = 1.2
+        prog = Progbar(target=n)
+        for i, j in enumerate(l):
+            if i >= prog.target - 1:
+                prog.target += int(i * max(friction, 0.1))
+                friction /= 1.2
+            prog.add(1)
+            yield j
+        prog.target = i + 1
+        prog.update(i + 1)
+
+    if callable(func):
+        from functools import wraps
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return iter_prog(func(*args, **kwargs))
+        return wrapper
+    return iter_prog(func)
+
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
 # urllib module, known to have issues with proxy management
 if sys.version_info[0] == 2:
@@ -791,15 +817,15 @@ def get_file(fname, origin, untar=False):
 
     if not os.path.exists(fpath):
         print('Downloading data from', origin)
-        global progbar
-        progbar = None
+        global _progbar
+        _progbar = None
 
         def dl_progress(count, block_size, total_size):
-            global progbar
-            if progbar is None:
-                progbar = Progbar(total_size)
+            global _progbar
+            if _progbar is None:
+                _progbar = Progbar(total_size)
             else:
-                progbar.update(count * block_size)
+                _progbar.update(count * block_size)
 
         error_msg = 'URL fetch failure on {}: {} -- {}'
         try:
@@ -813,7 +839,7 @@ def get_file(fname, origin, untar=False):
             if os.path.exists(fpath):
                 os.remove(fpath)
             raise
-        progbar = None
+        _progbar = None
 
     if untar:
         if not os.path.exists(untar_fpath):
@@ -1027,10 +1053,10 @@ def _get_managed_path(folder, name, override, is_folder=False):
     if isinstance(name, types.StringType):
         datadir = os.path.join(datadir, name)
         if os.path.exists(datadir) and override:
-                if os.path.isfile(datadir): # remove file
-                    os.remove(datadir)
-                else: # remove and create new folder
-                    shutil.rmtree(datadir)
+            if os.path.isfile(datadir): # remove file
+                os.remove(datadir)
+            else: # remove and create new folder
+                shutil.rmtree(datadir)
         if is_folder and not os.path.exists(datadir):
             os.mkdir(datadir)
     return datadir

@@ -19,11 +19,13 @@ class MmapDict(dict):
     HEADER = 'mmapdict'
     SIZE_BYTES = 48
 
-    def __init__(self, path):
+    def __init__(self, path, read_only=False):
         super(MmapDict, self).__init__()
-        self.__init(path)
+        self.__init(path, read_only)
+        self.read_only = read_only
 
-    def __init(self, path):
+    def __init(self, path, read_only):
+        # ====== already exist ====== #
         if os.path.exists(path) and os.path.getsize(path) > 0:
             file = open(str(path), mode='r+')
             if file.read(len(MmapDict.HEADER)) != MmapDict.HEADER:
@@ -36,7 +38,11 @@ class MmapDict(dict):
             # read dictionary
             file.seek(self._max_position)
             self._dict = cPickle.loads(file.read(dict_size))
+        # ====== create new file from scratch ====== #
         else:
+            if read_only:
+                raise Exception('File at path:"%s" does not exist '
+                                '(read-only mode).' % path)
             self._dict = {}
             # max position is header, include start and length of indices dict
             self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2
@@ -63,6 +69,8 @@ class MmapDict(dict):
         return self._path
 
     def flush(self):
+        if self.read_only:
+            raise Exception('Cannot flush to path:"%s" in read-only mode' % self._path)
         # ====== flush the data ====== #
         self._mmap.flush()
         self._mmap.close()
@@ -98,7 +106,8 @@ class MmapDict(dict):
         self._new_dict = {}
 
     def close(self):
-        self.flush()
+        if not self.read_only:
+            self.flush()
         self._mmap.close()
         self._file.close()
 
