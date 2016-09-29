@@ -14,6 +14,11 @@ def read(path, boxes=None):
     vid = imageio.get_reader(path)
     metadata = vid.get_meta_data()
     fps = metadata['fps']
+    nb_frames = metadata['nframes']
+    if boxes is not None:
+        pass
+    print(nb_frames)
+    exit()
     try:
         frames = []
         for i in vid:

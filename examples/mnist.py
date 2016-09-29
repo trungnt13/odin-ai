@@ -9,10 +9,10 @@ os.environ['ODIN'] = 'float32,cpu,theano,seed=12'
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
-from odin.utils import get_modelpath, ArgController, stdio
+from odin.utils import get_modelpath, ArgController, stdio, get_logpath
 import cPickle
 
-stdio('/Users/trungnt13/tmp/tmp.log')
+stdio(get_logpath('tmp.log', override=True))
 
 arg = ArgController(version=0.12
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
