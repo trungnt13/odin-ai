@@ -258,7 +258,7 @@ class Feeder(MutableData):
         rng = None if seed is None else np.random.RandomState(seed)
 
         # data, jobs, map_function, results
-        def work_multi(j, map, reduce, res, buffer_size, shared_couter):
+        def work_multi(j, map, reduce, res, buffer_size, shared_counter):
             # 1 Data share between all processes
             batch = []
             n = len(j)
@@ -272,17 +272,14 @@ class Feeder(MutableData):
                 else:
                     _ = map(info[0], info[1:])
                 # append to batch
-                if isinstance(_, types.GeneratorType):
-                    batch += list(_)
-                elif _ is not None:
-                    batch.append(_)
+                batch.append(_)
                 # reduce tasks
                 if len(batch) == buffer_size or count == n - 1:
                     # check if we need to wait for the consumer here
-                    while shared_couter.value > maximum_queue_size:
+                    while shared_counter.value > maximum_queue_size:
                         time.sleep(0.1)
                     # CRITICAL: the nb_returned will be stored from last
-                    # batch and added to the shared_couter which can cause
+                    # batch and added to the shared_counter which can cause
                     # a deadlock, so it must be reseted to 0 after each batch
                     nb_returned = 0
                     # reduce and return the batch
@@ -296,17 +293,17 @@ class Feeder(MutableData):
                     # increase shared counter (this number must perfectly
                     # counted, only 1 mismatch and deadlock happen)
                     if nb_returned > 0:
-                        shared_couter.add(nb_returned)
+                        shared_counter.add(nb_returned)
             # ending signal
             res.put(None)
         #######################################################
         yield None # stop here wait for main iterator start
         # Queue maxsize is max_length (maximum number of items can be in queue)
         results = Queue(maxsize=0)
-        counter = SharedCounter()
+        shared_counter = SharedCounter()
         processes = [Process(target=work_multi,
                              args=(j, map_func, reduce_func,
-                                   results, buffer_size, counter))
+                                   results, buffer_size, shared_counter))
                      for i, j in enumerate(jobs)]
         # start the workers
         [p.start() for p in processes]
@@ -331,7 +328,7 @@ class Feeder(MutableData):
                     break
                 del batch
                 # decrease Queue size counter
-                counter.add(-1)
+                shared_counter.add(-1)
         # ====== ending the iterator ====== #
         if not forced_terminated:
             # check Queue, queue must be empty

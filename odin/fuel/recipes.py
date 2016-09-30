@@ -82,7 +82,7 @@ class FeederList(FeederRecipe):
     def map(self, *args):
         for i, f in enumerate(self.recipes):
             # return iterator (iterate over all of them)
-            args = f.map(*args)
+            args = f.map(*as_tuple(args))
             # break the chain if one of the recipes get error,
             # and return None
             if args is None:

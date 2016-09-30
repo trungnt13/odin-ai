@@ -12,6 +12,7 @@ import numpy as np
 from odin.roles import add_updates, add_auxiliary_variable
 from odin import backend as K
 from odin import nnet as N
+from odin.utils import segment_list
 
 
 class BackendTest(unittest.TestCase):
@@ -215,6 +216,16 @@ class BackendTest(unittest.TestCase):
         )
         f = K.function([], y)
         self.assertEqual(f()[0].shape, (25, 12, 18, 8))
+
+    def test_segments_list(self):
+        for i in np.random.randint(120, 12082518, size=12):
+            tmp = segment_list(range(i), n_seg=12)
+            # must be 12 segments
+            self.assertEqual(len(tmp), 12)
+            # sum of all segments equal to original length
+            self.assertEqual(sum(len(j) for j in tmp), i)
+            # none of the segments length = 0
+            self.assertTrue(all(len(j) > 0 for j in tmp))
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

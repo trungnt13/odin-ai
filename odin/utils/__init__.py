@@ -359,17 +359,21 @@ def segment_list(l, size=None, n_seg=None):
     >>> [[1], [2], [3], [4, 5]]
     '''
     # by floor, make sure and process has it own job
-    if size is None:
-        size = int(max(1, numpy.floor(len(l) / float(n_seg))))
-    else:
+    if n_seg is None:
         n_seg = int(numpy.ceil(len(l) / float(size)))
     # start segmenting
     segments = []
     start = 0
-    while start < len(l):
-        end = start + size
-        segments.append(l[start:end])
-        start = end
+    remain_data = len(l)
+    remain_seg = n_seg
+    while remain_data > 0:
+        # ====== adaptive size ====== #
+        size = remain_data // remain_seg
+        segments.append(l[start:(start + size)])
+        # ====== update remain ====== #
+        start += size
+        remain_data -= size
+        remain_seg -= 1
     return segments
 
 

@@ -4,7 +4,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 import os
-os.environ['ODIN'] = 'float32,cpu,theano,seed=12'
+os.environ['ODIN'] = 'float32,gpu,theano,seed=12'
 
 from odin import backend as K
 from odin import nnet as N
@@ -23,9 +23,11 @@ arg = ArgController(version=0.12
 # ===========================================================================
 # Load data
 # ===========================================================================
-if 'mnist' in arg['ds'].lower():
+USE_MNIST_DATA = True if 'mnist' in arg['ds'].lower() else False
+
+if USE_MNIST_DATA:
     ds = fuel.load_mnist()
-elif 'cifar10' in arg['ds'].lower():
+else:
     ds = fuel.load_cifar10()
 print(ds)
 
@@ -39,9 +41,14 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 # Build network
 # ===========================================================================
 ops = N.Sequence([
-    # N.Dimshuffle((0, 'x', 1, 2)),
-    # N.Conv2D(16, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
-    # N.Pool2D(pool_size=(2, 2), strides=None),
+    N.Dimshuffle((0, 'x', 1, 2)) if USE_MNIST_DATA else None,
+    N.BatchNorm(axes='auto'),
+    N.Conv2D(32, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+    N.Pool2D(pool_size=(2, 2), strides=None),
+    N.Conv2D(64, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+    N.Pool2D(pool_size=(2, 2), strides=None),
+    N.Conv2D(128, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+    N.Pool2D(pool_size=(2, 2), strides=None),
     N.FlattenRight(outdim=2),
     N.Dense(512, activation=K.relu),
     N.Dense(128, activation=K.relu),

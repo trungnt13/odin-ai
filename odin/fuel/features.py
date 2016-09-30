@@ -298,6 +298,7 @@ class SpeechFeature(FeederRecipe):
                                  '{}Hz to {}Hz'.format(orig_fs, fs))
             N = len(s)
             # processing all segments
+            ret = []
             for name, start, end, channel in segments:
                 start = int(float(start) * fs)
                 end = int(N if end < 0 else end * fs)
@@ -310,23 +311,26 @@ class SpeechFeature(FeederRecipe):
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
                     get_mfcc=self.get_mfcc, get_pitch=self.get_pitch)
                 if features is not None:
-                    yield (name, features)
+                    ret.append((name, features))
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)
+            # return the results
+            return ret
         except Exception, e:
             msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             warnings.warn(msg)
             if self.robust:
-                yield None
+                return None
             else:
                 import traceback; traceback.print_exc()
                 raise e
 
-    def reduce(self, results):
-        # contains (name, (spec, mspec, mfcc, vad))
-        for r in results:
-            yield r
+    def reduce(self, files):
+        for segments in files:
+            for seg in segments:
+                # contains (name, (spec, mspec, mfcc, vad))
+                yield seg
 
 
 class SpeechFeaturesSaver(object):
