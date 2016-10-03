@@ -139,6 +139,44 @@ def signal_handling(sigint=None, sigtstp=None, sigquit=None):
 
 
 # ===========================================================================
+# UniqueHasher
+# ===========================================================================
+class UniqueHasher(object):
+    """ This hash create strict unique by using
+    its memory to remember which key has been assigned
+    """
+
+    def __init__(self, nb_labels=None):
+        super(UniqueHasher, self).__init__()
+        self.nb_labels = nb_labels
+        self._memory = {} # map: key -> hash_key
+        self._current_hash = {} # map: hash_key -> key
+
+    def hash(self, value):
+        hash_key = abs(hash(value))
+        if self.nb_labels is not None:
+            key = hash_key % self.nb_labels
+        # already processed hash
+        if hash_key in self._current_hash:
+            return self._current_hash[hash_key]
+        # not yet processed
+        if key in self._memory:
+            if self.nb_labels is not None and \
+                len(self._memory) >= self.nb_labels:
+                raise Exception('All %d labels have been assigned, outbound value:"%s"' %
+                                (self.nb_labels, value))
+            else:
+                while key in self._memory:
+                    key += 1
+                    if self.nb_labels is not None and key > self.nb_labels:
+                        key = 0
+        # key not in memory
+        self._current_hash[hash_key] = key
+        self._memory[key] = hash_key
+        return key
+
+
+# ===========================================================================
 # ArgCOntrol
 # ===========================================================================
 class ArgController(object):

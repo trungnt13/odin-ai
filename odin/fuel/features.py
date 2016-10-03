@@ -37,6 +37,7 @@ except:
     warnings.warn('The sampling framework "scikits.samplerate" is '
                   'NOT available, hence, downsampling features will be ignored.')
 
+
 __all__ = [
     'SpeechFeature',
     'SpeechFeaturesSaver',
