@@ -9,6 +9,7 @@ import os
 import types
 import warnings
 import cPickle
+import shutil
 from numbers import Number
 from multiprocessing import Pool, cpu_count, Process, Queue
 from six import add_metaclass
@@ -18,7 +19,7 @@ from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 import numpy as np
 
-from odin.preprocessing import speech, video
+from odin.preprocessing import speech, video, image
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
                         get_all_files, get_tempdir)
 from odin.utils.decorators import autoinit
@@ -42,6 +43,126 @@ __all__ = [
     'speech_features_extraction',
     'VideoFeature'
 ]
+
+
+# ===========================================================================
+# Helper saver
+# ===========================================================================
+class FeaturesSaver(object):
+    """ FeatureSaver
+    This function take output from Feeder with SpeechFeatures recipe
+    and update output dataset
+
+    Parameters
+    ----------
+    outpath: str
+        path to output dataset
+    name: str
+        list of name for each returned data
+    datatype : memmap, hdf5
+        datatype to save given task
+    save_stats: bool
+        if save_stats, the global mean and std will be calculated for
+        all sample
+    """
+
+    def __init__(self, outpath, name,
+                 datatype='memmap',
+                 save_stats=True, substitute_nan=None):
+        super(FeaturesSaver, self).__init__()
+        if datatype not in ('memmap', 'hdf5'):
+            raise ValueError('datatype must be "memmap", or "hdf5"')
+        self.datatype = datatype
+        if os.path.exists(outpath):
+            warnings.warn('Remove exist dataset at path:%s' % outpath)
+            shutil.rmtree(outpath)
+        self.dataset = Dataset(outpath)
+        self.name = as_tuple(name, t=str)
+        self.save_stats = bool(save_stats)
+        self.substitute_nan = substitute_nan
+
+    def run(self, feeder):
+        dataset = self.dataset
+        datatype = self.datatype
+        # ====== indices ====== #
+        indices = []
+        start = 0
+        # ====== statistic ====== #
+        sum1 = defaultdict(int)
+        sum2 = defaultdict(int)
+        # ====== cache ====== #
+        # all data are cached and periodically flushed
+        cache = defaultdict(list)
+
+        # ====== helper ====== #
+        def flush_feature(name, cache):
+            if len(cache) > 0:
+                cache = np.concatenate(cache, 0)
+                if name in dataset:
+                    dataset[name].append(cache)
+                else:
+                    dataset[(name, datatype)] = cache
+        # ====== processing ====== #
+        prog = Progbar(target=feeder.shape[0])
+        for count, (name, data) in enumerate(feeder):
+            # check data
+            if not isinstance(data, (tuple, list)):
+                data = (data,)
+            length = []
+            # processing
+            for n, d in zip(self.name, data):
+                cache[n].append(d)
+                if self.save_stats:
+                    sum1[n] += np.sum(d, axis=0, dtype='float64')
+                    sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
+                length.append(len(d))
+                del d
+            # check if lengths are matched
+            if len(set(length)) != 1:
+                raise Exception('length mismatch between all data: %s' % str(length))
+            # ====== flush cache ====== #
+            if (count + 1) % 48 == 0: # 12 + 8
+                for i, j in cache.iteritems():
+                    flush_feature(i, j)
+                del cache
+                cache = defaultdict(list)
+            # index
+            indices.append([name, start, start + length[0]])
+            start += length[0]
+            # ====== update progress ====== #
+            prog.title = name
+            prog.add(1)
+        # ====== end, flush the mean and std ====== #
+        for i, j in cache.iteritems():
+            flush_feature(i, j)
+        del cache
+        dataset.flush()
+        # ====== saving indices ====== #
+        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
+            for name, start, end in indices:
+                f.write('%s %d %d\n' % (name, start, end))
+        start += 1
+
+        # ====== save mean and std ====== #
+        def save_mean_std(sum1, sum2, name, dataset):
+            mean = sum1 / start
+            std = np.sqrt(sum2 / start - mean**2)
+            if self.substitute_nan is not None:
+                mean = np.where(np.isnan(mean), self.substitute_nan, mean)
+                std = np.where(np.isnan(std), self.substitute_nan, std)
+            else:
+                assert not np.any(np.isnan(mean)), 'Mean contains NaN'
+                assert not np.any(np.isnan(std)), 'Std contains NaN'
+            dataset[name + '_mean'] = mean
+            dataset[name + '_std'] = std
+        # save all stats
+        if self.save_stats:
+            for n in self.name:
+                s1, s2 = sum1[n], sum2[n]
+                save_mean_std(s1, s2, n, dataset)
+        # ====== final flush() ====== #
+        dataset.flush()
+        dataset.close()
 
 
 # ===========================================================================
@@ -333,131 +454,92 @@ class SpeechFeature(FeederRecipe):
                 yield seg
 
 
-class SpeechFeaturesSaver(object):
-    """ SpeechFeatureSaver
+# ===========================================================================
+# Images
+# ===========================================================================
+class ImageFeatures(FeederRecipe):
+    """ ImageFeauters extractor
     This function take output from Feeder with SpeechFeatures recipe
     and update output dataset
 
     Parameters
     ----------
-    outpath: str
-        path to output dataset
-    datatype : memmap, hdf5
-        datatype to save given task
+    image_ext: str, or list of str
+        extensions of images
+    grayscale: bool
+        force to convert Image to grayscale or not
+    crop: 4-tuple of int
+         (left, upper, right, lower)
+    target_size: 2-tuple of int
+        desire size for image (image will be padded if the size
+        mis-match)
+    transpose: int, or list of int
+        if a list of int is provided, will return a list of images
+        <0: Do nothing
+        0: PIL.Image.FLIP_LEFT_RIGHT
+        1: PIL.Image.FLIP_TOP_BOTTOM
+        2: PIL.Image.ROTATE_90
+        3: PIL.Image.ROTATE_180
+        4: PIL.Image.ROTATE_270
+        5: PIL.Image.TRANSPOSE
+    resample_mode: int
+        0 = PIL.Image.NEAREST: use nearest neighbour
+        1 = PIL.Image.LANCZOS: a high-quality downsampling filter
+        2 = PIL.Image.BILINEAR: linear interpolation
+        3 = PIL.Image.BICUBIC: cubic spline interpolation
+
     """
 
-    def __init__(self, outpath, datatype):
-        super(SpeechFeaturesSaver, self).__init__()
-        self.dataset = Dataset(outpath)
-        if datatype not in ('memmap', 'hdf5'):
-            raise ValueError('datatype must be "memmap", or "hdf5"')
-        self.datatype = datatype
+    def __init__(self, image_ext=None, grayscale=False,
+                 crop=None, target_size=None,
+                 transpose=None, resample_mode=2):
+        super(ImageFeatures, self).__init__()
+        self.image_ext = ('',) if image_ext is None else as_tuple(image_ext, t=str)
+        self.crop = crop if crop is None else as_tuple(crop, 4, int)
+        self.grayscale = bool(grayscale)
+        self.target_size = target_size
+        self.transpose = (-1,) if transpose is None else as_tuple(transpose, t=int)
+        self.resample_mode = resample_mode
 
-    def run(self, feeder):
-        dataset = self.dataset
-        datatype = self.datatype
-        # ====== indices ====== #
-        indices = []
-        start = 0
-        # ====== statistic ====== #
-        spec_sum1, spec_sum2 = 0., 0.
-        mspec_sum1, mspec_sum2 = 0., 0.
-        mfcc_sum1, mfcc_sum2 = 0., 0.
-        pitch_sum1, pitch_sum2 = 0., 0.
-        # ====== cache ====== #
-        # all data are cached and periodically flushed
-        spec_cache = []
-        mspec_cache = []
-        mfcc_cache = []
-        pitch_cache = []
-        vad_cache = []
+    def shape_transform(self, shape):
+        """ Return the new shape that transformed by this Recipe """
+        return (shape[0] * len(self.transpose),) + shape[1:]
 
-        # ====== helper ====== #
-        def flush_feature(name, cache):
-            if len(cache) > 0:
-                cache = np.concatenate(cache, 0)
-                if name in dataset:
-                    dataset[name].append(cache)
-                else:
-                    dataset[(name, datatype)] = cache
-            return []
-        # ====== processing ====== #
-        prog = Progbar(target=feeder.shape[0])
-        for count, (name, (spec, mspec, mfcc, pitch, vad)) in enumerate(feeder):
-            # ====== spec ====== #
-            if spec is not None:
-                X, sum1, sum2 = spec
-                spec_cache.append(X)
-                spec_sum1 += sum1; spec_sum2 += sum2
-                n = X.shape[0]; del X
-            # ====== mspec ====== #
-            if mspec is not None:
-                X, sum1, sum2 = mspec
-                mspec_cache.append(X)
-                mspec_sum1 += sum1; mspec_sum2 += sum2
-                n = X.shape[0]; del X
-            # ====== mfcc ====== #
-            if mfcc is not None:
-                X, sum1, sum2 = mfcc
-                mfcc_cache.append(X)
-                mfcc_sum1 += sum1; mfcc_sum2 += sum2
-                n = X.shape[0]; del X
-            # ====== pitch ====== #
-            if pitch is not None:
-                X, sum1, sum2 = pitch
-                pitch_cache.append(X)
-                pitch_sum1 += sum1; pitch_sum2 += sum2
-                n = X.shape[0]; del X
-            # ====== vad ====== #
-            if vad is not None:
-                assert vad.shape[0] == n,\
-                    'VAD mismatch features shape: %d != %d' % (vad.shape[0], n)
-                vad_cache.append(vad)
-                del vad
-            # ====== flush cache ====== #
-            if count % 48 == 0: # 12 + 8
-                spec_cache = flush_feature('spec', spec_cache)
-                mspec_cache = flush_feature('mspec', mspec_cache)
-                mfcc_cache = flush_feature('mfcc', mfcc_cache)
-                pitch_cache = flush_feature('pitch', pitch_cache)
-                vad_cache = flush_feature('vad', vad_cache)
-            # index
-            indices.append([name, start, start + n])
-            start += n
-            # ====== update progress ====== #
-            prog.title = name
-            prog.add(1)
-        # ====== end, flush the mean and std ====== #
-        flush_feature('spec', spec_cache)
-        flush_feature('mspec', mspec_cache)
-        flush_feature('mfcc', mfcc_cache)
-        flush_feature('pitch', pitch_cache)
-        flush_feature('vad', vad_cache)
-        dataset.flush()
-        # ====== saving indices ====== #
-        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
-            for name, start, end in indices:
-                f.write('%s %d %d\n' % (name, start, end))
+    def preprocess_indices(self, indices):
+        # filter using support audio extension
+        file_list = np.array([f for f in indices
+                              if any(ext in f for ext in self.image_ext)])
+        return file_list
 
-        # ====== save mean and std ====== #
-        def save_mean_std(sum1, sum2, name, dataset):
-            mean = sum1 / start
-            std = np.sqrt(sum2 / start - mean**2)
-            assert not np.any(np.isnan(mean)), 'Mean contains NaN'
-            assert not np.any(np.isnan(std)), 'Std contains NaN'
-            dataset[name + '_mean'] = mean
-            dataset[name + '_std'] = std
-        if spec is not None:
-            save_mean_std(spec_sum1, spec_sum2, 'spec', dataset)
-        if mspec is not None:
-            save_mean_std(mspec_sum1, mspec_sum2, 'mspec', dataset)
-        if mfcc is not None:
-            save_mean_std(mfcc_sum1, mfcc_sum2, 'mfcc', dataset)
-        if pitch is not None:
-            save_mean_std(pitch_sum1, pitch_sum2, 'pitch', dataset)
-        # ====== final flush() ====== #
-        dataset.flush()
-        dataset.close()
+    def map(self, path):
+        '''
+        Return
+        ------
+        [(name, spec(x, sum1, sum2), # if available, otherwise None
+                mspec(x, sum1, sum2), # if available, otherwise None
+                mfcc(x, sum1, sum2), # if available, otherwise None
+                pitch(x, sum1, sum2), # if available, otherwise None
+                vad), ...]
+        '''
+        X = image.read(path, grayscale=self.grayscale,
+                       crop=self.crop, scale=None,
+                       target_size=self.target_size,
+                       transpose=self.transpose,
+                       resample_mode=self.resample_mode)
+        if not isinstance(X, (tuple, list)):
+            X = (X,)
+        name = os.path.basename(path)
+        ret = []
+        for i, j in zip(self.transpose, X):
+            ret.append(('%s,%d' % (name, i),
+                        np.expand_dims(j, axis=0)))
+        return ret
+
+    def reduce(self, images):
+        for img in images:
+            for name, x in img:
+                # contains different transpose of images
+                yield (name, x)
 
 
 # ===========================================================================

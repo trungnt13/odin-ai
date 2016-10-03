@@ -263,10 +263,12 @@ class Feeder(MutableData):
             batch = []
             n = len(j)
             for count, info in enumerate(j):
-                # map tasks, if only 1 Data, just apply map on it, else apply
+                # map tasks, if oobjectnly 1 Data, just apply map on it, else apply
                 # map on list of Data
-                if len(info) == 1:
+                if not isinstance(info, (tuple, list, np.ndarray)):
                     _ = map(info)
+                elif len(info) == 1:
+                    _ = map(info[0])
                 elif len(info) == 2:
                     _ = map(info[0], info[1])
                 else:
@@ -321,9 +323,13 @@ class Feeder(MutableData):
                     permutation = rng.permutation(batch[0].shape[0])
                     # different shape NO shuffle
                     batch = [b[permutation] for b in batch]
+                # convert batch to tuple object if possible
+                if isinstance(batch, (tuple, list)) and len(batch) == 1:
+                    batch = batch[0]
+                elif isinstance(batch, list):
+                    batch = tuple(batch)
                 # return batch and check for returned signal
-                if (yield batch[0] if len(batch) == 1
-                        else tuple(batch)) == SIG_TERMINATE_ITERATOR:
+                if (yield batch) == SIG_TERMINATE_ITERATOR:
                     forced_terminated = True
                     break
                 del batch
