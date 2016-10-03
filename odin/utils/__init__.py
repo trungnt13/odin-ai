@@ -153,12 +153,12 @@ class UniqueHasher(object):
         self._current_hash = {} # map: hash_key -> key
 
     def hash(self, value):
-        hash_key = abs(hash(value))
+        key = abs(hash(value))
         if self.nb_labels is not None:
-            key = hash_key % self.nb_labels
+            key = key % self.nb_labels
         # already processed hash
-        if hash_key in self._current_hash:
-            return self._current_hash[hash_key]
+        if value in self._current_hash:
+            return self._current_hash[value]
         # not yet processed
         if key in self._memory:
             if self.nb_labels is not None and \
@@ -171,9 +171,20 @@ class UniqueHasher(object):
                     if self.nb_labels is not None and key > self.nb_labels:
                         key = 0
         # key not in memory
-        self._current_hash[hash_key] = key
-        self._memory[key] = hash_key
+        self._current_hash[value] = key
+        self._memory[key] = value
         return key
+
+    def map(self, order, array):
+        """ Re-order an ndarray to new column order """
+        order = as_tuple(order)
+        # get current order
+        curr_order = self._current_hash.items()
+        curr_order.sort(key=lambda x: x[1])
+        curr_order = [i[0] for i in curr_order]
+        # new column order
+        order = [curr_order.index(i) for i in order]
+        return array[:, order]
 
 
 # ===========================================================================
