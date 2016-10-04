@@ -116,6 +116,12 @@ class FeederList(FeederRecipe):
 # Loader
 # ===========================================================================
 class DataLoader(FeederRecipe):
+    """
+    Parameters
+    ----------
+    data: ndarray, Data, or list of them
+        all Data need to be loaded for the iteration
+    """
 
     def __init__(self, data):
         super(DataLoader, self).__init__()

@@ -587,8 +587,9 @@ class EarlyStopGeneralizationLoss(EarlyStop):
         function to process the results of whole epoch (i.e list of results
         returned from batch_end) to return comparable number.
     stop_callback: function
-        will be called when stop signal triggered
-        for example, lambda x: np.mean(x)
+        will be called when stop signal triggered, can be used to
+        decrease learning rate.
+        (for example, lambda x: learning_rate / 2)
     save_callback: function
         will be called when save signal triggered
 

@@ -144,6 +144,10 @@ def signal_handling(sigint=None, sigtstp=None, sigquit=None):
 class UniqueHasher(object):
     """ This hash create strict unique by using
     its memory to remember which key has been assigned
+    Note
+    ----
+    This function use deterministic hash, which give the same
+    id for all labels, whenever you call it
     """
 
     def __init__(self, nb_labels=None):
@@ -168,12 +172,15 @@ class UniqueHasher(object):
             else:
                 while key in self._memory:
                     key += 1
-                    if self.nb_labels is not None and key > self.nb_labels:
+                    if self.nb_labels is not None and key >= self.nb_labels:
                         key = 0
         # key not in memory
         self._current_hash[value] = key
         self._memory[key] = value
         return key
+
+    def __call__(self, value):
+        return self.hash(value)
 
     def map(self, order, array):
         """ Re-order an ndarray to new column order """
