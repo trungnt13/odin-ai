@@ -219,13 +219,38 @@ class BackendTest(unittest.TestCase):
 
     def test_segments_list(self):
         for i in np.random.randint(120, 12082518, size=12):
-            tmp = segment_list(range(i), n_seg=12)
+            tmp = segment_list(list(range(i)), n_seg=12)
             # must be 12 segments
             self.assertEqual(len(tmp), 12)
             # sum of all segments equal to original length
             self.assertEqual(sum(len(j) for j in tmp), i)
             # none of the segments length = 0
             self.assertTrue(all(len(j) > 0 for j in tmp))
+
+    def test_randomization(self):
+        # same rng generate the same random
+        x1 = K.rng(12)
+        a1 = x1.normal(shape=(10, 10), mean=0, std=1).eval()
+        b1 = x1.uniform(shape=(10, 10), low=-1, high=1).eval()
+        c1 = x1.binomial(shape=(10, 10), p=0.7).eval()
+
+        x2 = K.rng(12)
+        a2 = x2.normal(shape=(10, 10), mean=0, std=1).eval()
+        b2 = x2.uniform(shape=(10, 10), low=-1, high=1).eval()
+        c2 = x2.binomial(shape=(10, 10), p=0.7).eval()
+
+        self.assertTrue(np.array_equal(a1, a2))
+        self.assertTrue(np.array_equal(b1, b2))
+        self.assertTrue(np.array_equal(c1, c2))
+
+        self.assertTrue(np.abs(np.mean(a1)) < 0.1)
+        self.assertTrue(np.std(a1) >= 0.8 and np.std(a1) <= 1.2)
+        self.assertTrue(np.sum(c1) <= 80)
+        # direct random generation
+        a = K.random_normal(shape=(10, 10)).eval()
+        b = K.random_uniform(shape=(10, 10)).eval()
+        c = K.random_binomial(shape=(10, 10), p=0.1).eval()
+        self.assertTrue(np.sum(c) <= 20)
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

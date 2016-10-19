@@ -1,3 +1,15 @@
+# ===========================================================================
+# Available properties
+#  * device
+#  * device_info
+#  * floatX
+#  * epsilon
+#  * multigpu
+#  * optimizer
+#  * cnmem
+#  * backend
+#  * seed
+# ===========================================================================
 from __future__ import division, absolute_import
 
 import os
@@ -56,13 +68,31 @@ def _query_gpu_info():
 # Auto config
 # ===========================================================================
 RNG_GENERATOR = numpy.random.RandomState()
+CONFIG = None
 
 
-def auto_config(config=None):
-    if 'autoconfig' in globals():
-        warnings.warn('You should not auto_config twice, object autoconfig has'
-                      'already exists!')
-        return autoconfig
+def auto_config(config=None, check=False):
+    ''' Auto-configure ODIN using os.environ['ODIN'].
+
+    Parameters
+    ----------
+    config : object
+        predefined config object return from auto_config
+    check : boolean
+        if True, raise Exception of CONFIG have not initialized
+
+    Returns
+    -------
+    config : object
+        simple object (kind of dictionary) contain all configuraitons
+
+    '''
+    if CONFIG is None and check:
+        raise Exception('Configuration have not been initialized.')
+    elif CONFIG is not None:
+        warnings.warn('You should not auto_config twice, old configuration already '
+                      'existed, and cannot be re-configured.')
+        return CONFIG
     # ====== specific pattern ====== #
     valid_cnmem_name = re.compile('(cnmem)[=]?[10]?\.\d*')
     valid_seed = re.compile('seed\D?(\d*)')
@@ -123,7 +153,6 @@ def auto_config(config=None):
         device = config['device']
         cnmem = config['cnmem']
         seed = config['seed']
-
     # adject epsilon
     if floatX == 'float16':
         epsilon = 10e-5
@@ -131,7 +160,6 @@ def auto_config(config=None):
         epsilon = 10e-8
     elif floatX == 'float64':
         epsilon = 10e-12
-
     # ====== Log the configuration ====== #
     sys.stderr.write('[Auto-Config] Device : %s\n' % device)
     sys.stderr.write('[Auto-Config] Multi-GPU : %s\n' % multigpu)
@@ -141,14 +169,12 @@ def auto_config(config=None):
     sys.stderr.write('[Auto-Config] Epsilon: %s\n' % epsilon)
     sys.stderr.write('[Auto-Config] CNMEM  : %s\n' % cnmem)
     sys.stderr.write('[Auto-Config] SEED  : %s\n' % seed)
-
     if device == 'gpu':
         dev = _query_gpu_info()
         if not multigpu:
             dev = {'n': 1, 'dev0': dev['dev0']}
     else:
         dev = {'n': cpu_count()}
-
     # ==================== create theano flags ==================== #
     if backend == 'theano':
         if device == 'cpu':
@@ -186,15 +212,62 @@ def auto_config(config=None):
     class AttributeDict(dict):
         __getattr__ = dict.__getitem__
         __setattr__ = dict.__setitem__
-    config = AttributeDict()
-    config.update({'device': device, 'floatX': floatX, 'epsilon': epsilon,
+    global CONFIG
+    CONFIG = AttributeDict()
+    CONFIG.update({'device': device,
+                   'device_info': dev,
+                   'floatX': floatX, 'epsilon': epsilon,
                    'multigpu': multigpu, 'optimizer': optimizer,
-                   'cnmem': cnmem, 'backend': backend, 'seed': seed})
-
+                   'cnmem': cnmem, 'backend': backend,
+                   'seed': seed})
     global RNG_GENERATOR
     RNG_GENERATOR = numpy.random.RandomState(seed=seed)
-    global device
-    device = dev
-    global autoconfig
-    autoconfig = config
-    return config
+    return CONFIG
+
+
+# ===========================================================================
+# Getter
+# ===========================================================================
+def get_device():
+    auto_config(check=True)
+    return CONFIG['device']
+
+
+def get_device_info():
+    auto_config(check=True)
+    return CONFIG['device_info']
+
+
+def get_floatX():
+    auto_config(check=True)
+    return CONFIG['floatX']
+
+
+def get_epsilon():
+    auto_config(check=True)
+    return CONFIG['epsilon']
+
+
+def get_multigpu():
+    auto_config(check=True)
+    return CONFIG['multigpu']
+
+
+def get_optimizer():
+    auto_config(check=True)
+    return CONFIG['optimizer']
+
+
+def get_cnmem():
+    auto_config(check=True)
+    return CONFIG['cnmem']
+
+
+def get_backend():
+    auto_config(check=True)
+    return CONFIG['backend']
+
+
+def get_seed():
+    auto_config(check=True)
+    return CONFIG['seed']

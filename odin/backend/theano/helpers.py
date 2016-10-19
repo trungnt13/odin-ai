@@ -27,10 +27,10 @@ from odin.roles import (add_role, has_roles, TRAINING, DEPLOYING,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
-from odin.config import autoconfig, device
+from odin.config import CONFIG
 
-FLOATX = autoconfig.floatX
-NPROCESSORS = device['n']
+FLOATX = CONFIG.floatX
+NPROCESSORS = CONFIG['device_info']['n']
 logger = logging.getLogger(__name__)
 
 
@@ -227,15 +227,15 @@ def variable_scope(scope):
 
 
 def _check_target(target):
-    if autoconfig['device'] == 'cpu' or 'device=gpu' in os.environ['THEANO_FLAGS']:
-        target = None
-    else:
+    if CONFIG['multigpu']:
         if target is None:
             target = 'dev0'
         elif isinstance(target, numbers.Number):
             target = 'dev%d' % (int(target) % NPROCESSORS)
         else:
             target = str(target)
+    else:
+        target = None
     return target
 
 

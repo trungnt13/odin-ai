@@ -2,8 +2,8 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from odin.config import RNG_GENERATOR, autoconfig
-FLOATX = autoconfig.floatX
+from odin.config import RNG_GENERATOR, CONFIG
+FLOATX = CONFIG.floatX
 
 
 # ===========================================================================

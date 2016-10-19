@@ -11,13 +11,13 @@ from six.moves import zip, range
 import numpy as np
 
 from odin import backend as K, nnet as N
-from odin.config import autoconfig
+from odin.config import CONFIG
 
 import lasagne
 
 
 def random(*shape):
-    return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+    return np.random.rand(*shape).astype(CONFIG['floatX']) / 12
 
 
 def random_bin(*shape):
@@ -25,7 +25,7 @@ def random_bin(*shape):
 
 
 def zeros(*shape):
-    return np.zeros(shape).astype(autoconfig['floatX'])
+    return np.zeros(shape).astype(CONFIG['floatX'])
 
 
 class CompareTest(unittest.TestCase):
@@ -119,7 +119,7 @@ class CompareTest(unittest.TestCase):
         f = K.function([X, mask], y)
         out2 = f(x, x_mask)
         # ====== test ====== #
-        self.assertEqual(np.sum(np.abs(out1 - out2)), 0.)
+        self.assertAlmostEqual(np.sum(np.abs(out1 - out2)), 0.)
 
     def test_gru(self):
         # ====== pre-define parameters ====== #
@@ -182,7 +182,7 @@ class CompareTest(unittest.TestCase):
         f = K.function([X, mask], y)
         out2 = f(x, x_mask)
         # ====== test ====== #
-        self.assertEqual(np.sum(np.abs(out1 - out2)), 0.)
+        self.assertAlmostEqual(np.sum(np.abs(out1 - out2)), 0.)
 
     def test_odin_vs_lasagne(self):
         X1 = K.placeholder(shape=(None, 28, 28))
@@ -280,8 +280,9 @@ class CompareTest(unittest.TestCase):
         lasagne_list = [lasagne_net1, lasagne_net2, lasagne_net3]
         odin_list = [odin_net1, odin_net2, odin_net3]
 
+        print()
         for i, j in zip(lasagne_list, odin_list):
-            name = str(i) + str(j)
+            print('Test:', i.__name__, j.__name__)
             seed = np.random.randint(10e8)
             # ====== call the function ====== #
             np.random.seed(seed)
@@ -296,8 +297,8 @@ class CompareTest(unittest.TestCase):
             x = np.random.rand(*[12 if s is None else s for s in shape])
             y1 = f1(x)
             y2 = f2(x)
-            self.assertEqual(y1.shape, y2.shape, msg=name)
-            self.assertEqual(np.sum(np.abs(y1 - y2)), 0, msg=name)
+            self.assertEqual(y1.shape, y2.shape)
+            self.assertAlmostEqual(np.sum(np.abs(y1 - y2)), 0.)
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

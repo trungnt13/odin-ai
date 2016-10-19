@@ -78,7 +78,7 @@ class SimpleRecurrent(BaseRNN):
     >>> import numpy as np
     >>> from odin import backend as K, nnet as N
     >>> def random(*shape):
-    ...     return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+    ...     return np.random.rand(*shape).astype(CONFIG['floatX']) / 12
     >>> def random_bin(*shape):
     ...     return np.random.randint(0, 2, size=shape).astype('int32')
     >>> W = [random(28, 32), random(32, 32), random(32), random_bin(12, 28)]
@@ -177,7 +177,7 @@ class GRU(BaseRNN):
     >>> import numpy as np
     >>> from odin import backend as K, nnet as N
     >>> def random(*shape):
-    ...     return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+    ...     return np.random.rand(*shape).astype(CONFIG['floatX']) / 12
     >>> W_in_to_updategate = random(28, 32)
     >>> W_hid_to_updategate = random(32, 32)
     >>> b_updategate = random(32)
@@ -342,7 +342,7 @@ class LSTM(BaseRNN):
     >>> import numpy as np
     >>> from odin import backend as K, nnet as N
     >>> def random(*shape):
-    ...     return np.random.rand(*shape).astype(autoconfig['floatX']) / 12
+    ...     return np.random.rand(*shape).astype(CONFIG['floatX']) / 12
     >>> W_in_to_ingate = random(28, 32) / 12
     >>> W_hid_to_ingate = random(32, 32) / 12
     >>> b_ingate = random(32) / 12

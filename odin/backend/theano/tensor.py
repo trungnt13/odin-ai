@@ -26,7 +26,7 @@ try:
 except ImportError:
     from theano.sandbox.softsign import softsign as T_softsign
 
-from odin.config import autoconfig, device, RNG_GENERATOR
+from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
 from odin.roles import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING)
@@ -35,9 +35,9 @@ from .helpers import (add_shape, get_shape, _auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
                       is_training, ComputationGraph)
 
-FLOATX = autoconfig.floatX
-EPSILON = autoconfig.epsilon
-NPROCESSORS = device['n']
+FLOATX = CONFIG.floatX
+EPSILON = CONFIG.epsilon
+NPROCESSORS = CONFIG['device_info']['n']
 _RNG = RandomStreams(seed=RNG_GENERATOR.randint(10e8))
 
 # remember original min and max
@@ -48,9 +48,6 @@ _max = max
 # ===========================================================================
 # INTERNAL UTILS
 # ===========================================================================
-_theano_context_specifed = not ('device=gpu' in os.environ['THEANO_FLAGS'])
-
-
 def on_gpu():
     """Return whether the session is set to
     run on GPU or not (i.e. on CPU).
@@ -66,7 +63,7 @@ def on_gpu():
 
 if on_gpu():
     # dummy initialization to remove the overhead of running libgpuarray backend
-    if _theano_context_specifed:
+    if CONFIG['multigpu']:
         _ = theano.shared(value=np.asarray(1., dtype='float32'),
                          name='temporary_var', target='dev0')
     else:
@@ -1039,7 +1036,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
         rnd = _RNG.uniform(tuple(shape),
                            low=lower,
                            high=upper,
-                           dtype=autoconfig.floatX)
+                           dtype=FLOATX)
         rnd = addbroadcast(rnd, *shared_axes)
         x = relu(x, rnd)
     add_shape(x, input_shape)
@@ -1546,4 +1543,177 @@ def poolGlobal(x, pool_function=mean):
     input_shape = get_shape(x)
     x = pool_function(T.flatten(x, 3), axis=2)
     add_shape(x, input_shape[:2])
+    return x
+
+
+# ===========================================================================
+# RANDOMNESS
+# ===========================================================================
+class _RandomWrapper(object):
+
+    def __init__(self, rng):
+        super(_RandomWrapper, self).__init__()
+        self._rng = rng
+
+    def normal(self, shape, mean, std, dtype=FLOATX):
+        return self._rng.normal(size=shape, avg=mean, std=std, dtype=dtype)
+
+    def uniform(self, shape, low, high, dtype=FLOATX):
+        return self._rng.uniform(size=shape, low=low, high=high, dtype=dtype)
+
+    def binomial(self, shape, p, dtype=FLOATX):
+        return self._rng.binomial(size=shape, n=1, p=p, dtype=dtype)
+
+
+def rng(seed=None):
+    if seed is None:
+        seed = RNG_GENERATOR.randint(10e8)
+    return _RandomWrapper(RandomStreams(seed=seed))
+
+
+def random_normal(shape, mean=0.0, std=1.0, dtype=FLOATX, seed=None):
+    rng = _RNG
+    if seed is not None:
+        rng = RandomStreams(seed=seed)
+    return rng.normal(size=shape, avg=mean, std=std, dtype=dtype)
+
+
+def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX, seed=None):
+    rng = _RNG
+    if seed is not None:
+        rng = RandomStreams(seed=seed)
+    return rng.uniform(shape, low=low, high=high, dtype=dtype)
+
+
+def random_binomial(shape, p, dtype=FLOATX, seed=None):
+    rng = _RNG
+    if seed is not None:
+        rng = RandomStreams(seed=seed)
+    return rng.binomial(size=shape, n=1, p=p, dtype=dtype)
+
+
+# ===========================================================================
+# Noise
+# ===========================================================================
+def _process_noise_dim(input_shape, dims):
+    """
+    By default, each element is kept or dropped independently.  If `noise_shape`
+    is specified, it must be
+    [broadcastable](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+    to the shape of `x`, and only dimensions with `noise_shape[i] == shape(x)[i]`
+    will make independent decisions.  For example, if `shape(x) = [k, l, m, n]`
+    and `noise_shape = [k, 1, 1, n]`, each batch and channel component will be
+    kept independently and each row and column will be kept or not kept together.
+
+    Examples
+    --------
+    (None, 10, 10) with noise_dims=2
+    => (None, 10, 1)
+    """
+    if not isinstance(dims, (tuple, list)):
+        dims = [dims]
+    # ====== get noise shape ====== #
+    if dims is None:
+        noise_shape = input_shape
+    else:
+        return tuple([1 if i in dims else j
+                      for i, j in enumerate(input_shape)])
+    return noise_shape
+
+
+def apply_dropout(x, level=0.5, noise_dims=None, rescale=True, seed=None):
+    """Computes dropout.
+
+    With probability `keep_prob`, outputs the input element scaled up by
+    `1 / keep_prob`, otherwise outputs `0`.  The scaling is so that the expected
+    sum is unchanged.
+
+
+    Parameters
+    ----------
+    x: A tensor.
+    level: float(0.-1.)
+        probability dropout values in given tensor
+    rescale: bool
+        whether rescale the outputs by dividing the retain probablity
+    noise_dims: int or list(int)
+        these dimensions will be setted to 1 in noise_shape, and
+        used to broadcast the dropout mask.
+    seed: random seed or `tensor.rng`
+        random generator from tensor class
+
+    Note
+    ----
+    This function only apply noise on Variable with TRAINING role
+    """
+    input_shape = get_shape(x)
+    if not isinstance(seed, _RandomWrapper):
+        seed = rng(seed=seed)
+    # ====== not a training variable NO dropout ====== #
+    if not is_training(x):
+        return x
+    # ====== Dropout ====== #
+    retain_prob = 1. - level
+    shape = x.shape
+    if noise_dims is None:
+        x = x * seed.binomial(shape=shape, p=retain_prob, dtype=x.dtype)
+    else:
+        noise_shape = _process_noise_dim(shape, noise_dims)
+        # auto select broadcast shape
+        broadcast = [i for i, j in enumerate(noise_shape) if j == 1]
+        if len(broadcast) > 0:
+            x = x * addbroadcast(seed.binomial(shape=noise_shape,
+                                               p=retain_prob,
+                                               dtype=x.dtype), *broadcast)
+        else:
+            x = x * seed.binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype)
+    if rescale:
+        x /= retain_prob
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, input_shape)
+    return x
+
+
+def apply_noise(x, sigma=0.075, noise_dims=None, noise_type='gaussian', seed=None):
+    """
+    Parameters
+    ----------
+    x: A tensor.
+    sigma : float or tensor scalar
+        Standard deviation of added Gaussian noise
+    noise_type: 'gaussian' (or 'normal'), 'uniform'
+        distribution used for generating noise
+    noise_dims: int or list(int)
+        these dimensions will be setted to 1 in noise_shape, and
+        used to broadcast the dropout mask.
+    seed: random seed or `tensor.rng`
+        random generator from tensor class
+
+    Note
+    ----
+    This function only apply noise on Variable with TRAINING role
+    """
+    input_shape = get_shape(x)
+    noise_type = noise_type.lower()
+    if not isinstance(seed, _RandomWrapper):
+        seed = rng(seed=seed)
+    # ====== not a training variable NO dropout ====== #
+    if not is_training(x):
+        return x
+    # ====== applying noise ====== #
+    shape = x.shape
+    noise_shape = (shape if noise_dims is None
+                   else _process_noise_dim(shape, noise_dims))
+    if 'normal' in noise_type or 'gaussian' in noise_type:
+        noise = seed.normal(shape=noise_shape, mean=0.0, std=sigma, dtype=x.dtype)
+    elif 'uniform' in noise_type:
+        noise = seed.uniform(shape=noise_shape, low=-sigma, high=sigma, dtype=x.dtype)
+        # no idea why uniform does not give any broadcastable dimensions
+        if noise_dims is not None:
+            broadcastable = [i for i, j in enumerate(noise_shape) if j == 1]
+            if len(broadcastable) > 0:
+                noise = addbroadcast(noise, *broadcastable)
+    x = x + noise
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, input_shape)
     return x
