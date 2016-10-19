@@ -28,21 +28,16 @@ from .recipes import FeederRecipe
 
 try:
     import sidekit
+    import resampy
 except:
     warnings.warn('The speech processing framework "sidekit" is '
                   'NOT available, hence, you cannot use SpeechFeatures.')
-try: # this library may not available
-    from scikits.samplerate import resample
-except:
-    warnings.warn('The sampling framework "scikits.samplerate" is '
-                  'NOT available, hence, downsampling features will be ignored.')
-
 
 __all__ = [
     'SpeechFeature',
-    'SpeechFeaturesSaver',
     'speech_features_extraction',
-    'VideoFeature'
+    'VideoFeature',
+    'FeaturesSaver'
 ]
 
 
@@ -413,11 +408,8 @@ class SpeechFeature(FeederRecipe):
             # check frequency for downsampling (if necessary)
             if fs is None:
                 fs = orig_fs
-            elif fs < orig_fs: # downsample
-                s = resample(s, fs / orig_fs, 'sinc_best')
-            elif fs > orig_fs:
-                raise ValueError('Cannot perform upsample from frequency: '
-                                 '{}Hz to {}Hz'.format(orig_fs, fs))
+            elif fs != orig_fs: # downsample or upsample
+                s = resampy.resample(s, sr_orig=orig_fs, sr_new=fs, axis=0, filter='kaiser_best')
             N = len(s)
             # processing all segments
             ret = []

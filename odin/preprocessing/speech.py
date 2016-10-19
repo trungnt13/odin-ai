@@ -289,6 +289,7 @@ def istft(stft_matrix, hop_length=None, win_length=None, window=None,
 def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     r'''Compute delta features: local estimate of the derivative
     of the input data along the selected axis.
+
     Parameters
     ----------
     data      : np.ndarray

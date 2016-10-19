@@ -498,8 +498,9 @@ def reshape(x, shape_):
             new_shape.append(input_shape[i[0]])
         else:
             new_shape.append(i)
+    new_shape = tuple(new_shape)
     _ = _auto_infer_shape(T.reshape, x, newshape=new_shape)
-    x = T.reshape(x, tuple(new_shape))
+    x = T.reshape(x, new_shape)
     add_shape(x, _)
     return x
 

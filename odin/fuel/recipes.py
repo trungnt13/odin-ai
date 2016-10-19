@@ -306,6 +306,9 @@ class Whitening(FeederRecipe):
         super(Whitening, self).__init__()
 
 
+# ===========================================================================
+# Shape manipulation
+# ===========================================================================
 class Slice(FeederRecipe):
     """ Slice
     Parameters

@@ -61,9 +61,9 @@ class FlattenRight(NNOps):
 
 class Reshape(NNOps):
 
-    @autoinit
     def __init__(self, shape, **kwargs):
         super(Reshape, self).__init__(**kwargs)
+        self.shape = shape
 
     def _initialize(self, x):
         config = NNConfig(input_shape=K.get_shape(x))
