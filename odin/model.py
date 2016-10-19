@@ -15,7 +15,7 @@ from sklearn.base import (BaseEstimator, ClassifierMixin,
                           TransformerMixin, RegressorMixin)
 
 from odin import backend as K
-from odin.roles import add_role, has_roles, TRAINING, DEPLOYING
+from odin.basic import add_role, has_roles, TRAINING, DEPLOYING
 from odin.nnet import Sequence
 from odin.fuel import Data, speech_features_extraction
 from odin.training import (MainLoop, ProgressMonitor, History,

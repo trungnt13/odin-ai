@@ -13,7 +13,7 @@ from six.moves import zip, range
 import numpy as np
 
 from odin import backend as K
-from odin.roles import (add_role, has_roles, PARAMETER, VariableRole,
+from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
 from odin.utils import as_tuple, short_uuid
@@ -114,7 +114,7 @@ class NNConfig(object):
             name for the variable
         nnops: NNOps
             parent operator of this parameters
-        roles: odin.roles.VariableRole
+        roles: odin.basic.VariableRole
             categories of this variable
         nb_params: int
             number of parameters that horizontally stacked into

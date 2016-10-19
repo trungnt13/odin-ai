@@ -10,6 +10,8 @@ def run(device='cpu'):
         'rnn_test',
         'model_test'
     ]
+    print('*NOTE*: some of the tests probably failed on float32 because of '
+          'numerical instable, however, they worked on float64.')
     import os
     os.environ['ODIN'] = '%s,float64' % device
     for t in tests:

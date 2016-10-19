@@ -7,7 +7,7 @@ import cPickle
 import numpy as np
 
 from odin import backend as K, nnet as N, utils, fuel as F, training
-from odin.roles import has_roles, INITIAL_STATE
+from odin.basic import has_roles, INITIAL_STATE
 from sklearn.metrics import accuracy_score
 import lasagne
 import keras

@@ -5,7 +5,7 @@ from abc import abstractmethod
 import numpy as np
 
 from odin import backend as K
-from odin.roles import PARAMETER, WEIGHT, BIAS
+from odin.basic import PARAMETER, WEIGHT, BIAS
 from odin.utils.decorators import autoinit
 from odin.utils import as_tuple
 from .base import NNOps, NNConfig

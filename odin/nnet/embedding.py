@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 from odin import backend as K
-from odin.roles import EMBEDDING
+from odin.basic import EMBEDDING
 from .base import NNOps, NNConfig
 
 

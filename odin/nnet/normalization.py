@@ -6,7 +6,7 @@ from .base import NNOps, NNConfig
 
 from odin import backend as K
 from odin.utils.decorators import autoinit
-from odin.roles import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
+from odin.basic import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_INVSTD,
                         add_updates)
 

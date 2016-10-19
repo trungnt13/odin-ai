@@ -14,7 +14,7 @@ import numpy as np
 
 from odin.config import CONFIG
 from odin.utils import as_tuple
-from odin.roles import (add_role, AUXILIARY, LEARNING_RATE,
+from odin.basic import (add_role, AUXILIARY, LEARNING_RATE,
                         OPTIMIZER_HYPER_PARAMETER, VariableRole)
 FLOATX = CONFIG.floatX
 
@@ -23,12 +23,9 @@ _sum = sum
 _pow = pow
 _abs = abs
 
-if CONFIG['backend'] == 'theano':
-    from .theano import (is_variable, is_placeholder, gradients, get_shape,
-                         switch, get_value, variable, cast,
-                         square, sum, sqrt, maximum, abs, clip)
-elif CONFIG['backend'] == 'tensorflow':
-    from .tensorflow import (is_variable, is_placeholder, gradients)
+from .basic_ops import (is_variable, is_placeholder, gradients, get_shape,
+                        switch, get_value, variable, cast,
+                        square, sum, sqrt, maximum, abs, clip)
 
 __all__ = [
     "apply_momentum",

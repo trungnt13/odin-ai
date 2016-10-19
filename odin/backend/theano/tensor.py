@@ -21,17 +21,15 @@ from theano import tensor as T
 from theano.tensor.signal import pool
 from theano.tensor.nnet import conv3d2d
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
-try:
-    from theano.tensor.nnet.nnet import softsign as T_softsign
-except ImportError:
-    from theano.sandbox.softsign import softsign as T_softsign
+from theano.tensor.nnet.nnet import softsign as T_softsign
 
 from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
-from odin.roles import (add_role, TRAINING, PARAMETER,
-                        ACTIVATION_PARAMETER, DEPLOYING)
+from odin.basic import (add_role, TRAINING, PARAMETER,
+                        ACTIVATION_PARAMETER, DEPLOYING,
+                        add_shape, get_shape)
 
-from .helpers import (add_shape, get_shape, _auto_infer_shape, _check_target,
+from .helpers import (_auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
                       is_training, ComputationGraph)
 
@@ -43,6 +41,27 @@ _RNG = RandomStreams(seed=RNG_GENERATOR.randint(10e8))
 # remember original min and max
 _min = min
 _max = max
+
+# store simple theano ops
+backend_ops_relu = T.nnet.relu
+backend_ops_elu = T.nnet.elu
+backend_ops_softmax = T.nnet.softmax
+backend_ops_softplus = T.nnet.softplus
+backend_ops_softsign = T_softsign
+backend_ops_sigmoid = T.nnet.sigmoid
+backend_ops_hard_sigmoid = T.nnet.hard_sigmoid
+backend_ops_tanh = T.tanh
+
+backend_ops_square = T.sqr
+backend_ops_abs = T.abs_
+backend_ops_inv = T.inv
+backend_ops_sqr = T.sqr
+backend_ops_sqrt = T.sqrt
+backend_ops_exp = T.exp
+backend_ops_log = T.log
+backend_ops_round = T.round
+backend_ops_pow = T.pow
+backend_ops_clip = T.clip
 
 
 # ===========================================================================
@@ -354,81 +373,6 @@ def mod(x, y):
         output_shape = _auto_infer_shape(T.mod, x, y)
         add_shape(z, output_shape)
     return z
-
-
-def square(x):
-    input_shape = get_shape(x)
-    x = T.sqr(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def abs(x):
-    input_shape = get_shape(x)
-    x = T.abs_(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def inv(x):
-    input_shape = get_shape(x)
-    x = T.inv(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def sqrt(x):
-    input_shape = get_shape(x)
-    x = T.clip(x, 0., np.inf)
-    x = T.sqrt(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def exp(x):
-    input_shape = get_shape(x)
-    x = T.exp(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def log(x):
-    input_shape = get_shape(x)
-    x = T.log(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def round(x):
-    input_shape = get_shape(x)
-    x = T.round(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def pow(x, a):
-    input_shape = get_shape(x)
-    x = T.pow(x, a)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def clip(x, min_value, max_value):
-    if max_value < min_value:
-        max_value = min_value
-    input_shape = get_shape(x)
-    x = T.clip(x, min_value, max_value)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
 
 
 def maximum(x, y):
@@ -1039,72 +983,6 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
                            dtype=FLOATX)
         rnd = addbroadcast(rnd, *shared_axes)
         x = relu(x, rnd)
-    add_shape(x, input_shape)
-    return x
-
-
-def exp_linear(x, alpha=1.0):
-    """Exponential Linear Unit:
-    `f(x) =  alpha * (exp(x) - 1.) for x < 0`,
-    `f(x) = x for x >= 0`.
-    """
-    pos = T.nnet.relu(x)
-    neg = (x - T.abs_(x)) * 0.5
-    input_shape = get_shape(x)
-    x = pos + alpha * (T.exp(neg) - 1.)
-    add_shape(x, input_shape)
-    return x
-
-
-def relu(x, alpha=0.):
-    input_shape = get_shape(x)
-    x = T.nnet.relu(x, alpha)
-    add_shape(x, input_shape)
-    return x
-
-
-def softmax(x):
-    input_shape = get_shape(x)
-    x = T.nnet.softmax(x)
-    add_shape(x, input_shape)
-    return x
-
-
-def softplus(x):
-    input_shape = get_shape(x)
-    x = T.nnet.softplus(x)
-    add_shape(x, input_shape)
-    return x
-
-
-def softsign(x):
-    input_shape = get_shape(x)
-    x = T_softsign(x)
-    add_shape(x, input_shape)
-    return x
-
-
-def linear(x):
-    return x
-
-
-def sigmoid(x):
-    input_shape = get_shape(x)
-    x = T.nnet.sigmoid(x)
-    add_shape(x, input_shape)
-    return x
-
-
-def hard_sigmoid(x):
-    input_shape = get_shape(x)
-    x = T.nnet.hard_sigmoid(x)
-    add_shape(x, input_shape)
-    return x
-
-
-def tanh(x):
-    input_shape = get_shape(x)
-    x = T.tanh(x)
     add_shape(x, input_shape)
     return x
 

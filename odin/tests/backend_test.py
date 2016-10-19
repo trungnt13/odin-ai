@@ -9,7 +9,7 @@ from six.moves import zip, range
 
 import numpy as np
 
-from odin.roles import add_updates, add_auxiliary_variable
+from odin.basic import add_updates, add_auxiliary_variable
 from odin import backend as K
 from odin import nnet as N
 from odin.utils import segment_list
@@ -163,7 +163,7 @@ class BackendTest(unittest.TestCase):
 
         test_func(y, K.antirectify)
         test_func(y, K.randrectify, 0.3, 0.8, 'auto')
-        test_func(x, K.exp_linear, 1.0)
+        test_func(x, K.elu, 1.0)
         test_func(x, K.relu, 0.)
         test_func(x, K.tanh)
         test_func(x, K.softplus)

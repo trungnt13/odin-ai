@@ -7,7 +7,7 @@ from itertools import chain
 import numpy as np
 
 from odin import backend as K
-from odin.roles import has_roles, PARAMETER
+from odin.basic import has_roles, PARAMETER
 from odin.utils import as_tuple
 from odin.utils.decorators import functionable
 

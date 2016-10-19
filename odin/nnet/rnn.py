@@ -6,7 +6,7 @@ from six import add_metaclass
 import numpy as np
 
 from odin import backend as K
-from odin.roles import INITIAL_STATE, WEIGHT, BIAS
+from odin.basic import INITIAL_STATE, WEIGHT, BIAS
 
 from .base import NNConfig, NNOps
 

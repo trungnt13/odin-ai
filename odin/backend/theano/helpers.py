@@ -23,7 +23,9 @@ from theano.gof.graph import Constant
 from theano.tensor.shared_randomstreams import RandomStateSharedVariable
 from theano.tensor.sharedvar import SharedVariable
 
-from odin.roles import (add_role, has_roles, TRAINING, DEPLOYING,
+from odin.basic import (add_role, has_roles,
+                        add_shape, get_shape,
+                        TRAINING, DEPLOYING,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
@@ -31,7 +33,6 @@ from odin.config import CONFIG
 
 FLOATX = CONFIG.floatX
 NPROCESSORS = CONFIG['device_info']['n']
-logger = logging.getLogger(__name__)
 
 
 # ===========================================================================
@@ -90,59 +91,6 @@ def _auto_infer_shape(ops, *var, **kwargs):
         return tuple(s if s else None for s in output_shape)
     except theano.gof.MissingInputError:
         return 'None'
-
-
-def add_shape(var, shape):
-    # do nothing if not Number of tuple, list
-    if isinstance(shape, np.ndarray):
-        shape = shape.tolist()
-    if not isinstance(shape, (tuple, list)):
-        shape = (shape,)
-    # not Number or None, not a valid shape
-    if any(not isinstance(s, numbers.Number) and s is not None
-           for s in shape):
-        return
-
-    shape = as_shape_tuple(shape)
-    if len(shape) != var.ndim:
-        raise ValueError('Variable has ndim={} but given shape has ndim={}'
-                         '.'.format(var.ndim, len(shape)))
-    # ====== NO override ====== #
-    if hasattr(var.tag, 'shape') and var.tag.shape != shape:
-        warnings.warn('Variable already had shape=%s, and the given shape is: %s'
-                      '.' % (var.tag.shape, shape))
-    # ====== override or assign ====== #
-    else:
-        var.tag.shape = shape
-    return var
-
-
-def get_shape(x, not_none=False):
-    """Return the shape of a tensor, this function search for predefined shape
-    of `x` first, otherwise, return the theano shape
-
-    Warning: type returned will be different for
-    Theano backend (Theano tensor type) and TF backend (TF TensorShape).
-
-    Parameters
-    ----------
-    not_none : bool
-        if `not_none`=True, does not allow None in returned shape tuple.
-        Default value is False
-    """
-    if not hasattr(x, 'shape'):
-        raise Exception("Variable of %s doesn't has shape attribute." % type(x))
-    shape = x.shape
-    if hasattr(x.tag, 'shape'):
-        shape = x.tag.shape
-        if not_none:
-            shape = tuple([x.shape[i] if s is None else s
-                           for i, s in enumerate(shape)])
-    return shape
-
-
-def ndim(x):
-    return x.ndim
 
 
 # ===========================================================================
