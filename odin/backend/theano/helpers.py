@@ -2,10 +2,8 @@
 from __future__ import print_function, absolute_import, division
 
 import os
-import logging
 import warnings
 import numbers
-import cPickle
 from numbers import Number
 from contextlib import contextmanager
 from collections import OrderedDict
@@ -33,6 +31,17 @@ from odin.config import CONFIG
 
 FLOATX = CONFIG.floatX
 NPROCESSORS = CONFIG['device_info']['n']
+
+
+# ===========================================================================
+# Dummy method to be compatible with tensorflow
+# ===========================================================================
+def set_session(session):
+    warnings.warn('Current backend is "theano", SESSION is only available in tensorflow.')
+
+
+def get_session():
+    warnings.warn('Current backend is "theano", SESSION is only available in tensorflow.')
 
 
 # ===========================================================================
@@ -69,7 +78,7 @@ def _unique(seq, key=None):
                 yield item
 
 
-def _auto_infer_shape(ops, *var, **kwargs):
+def auto_infer_shape(ops, *var, **kwargs):
     """ You can set 'group_inputs' in kwargs so the inputs to ops
     will be ops(var) instead of ops(*var)
     """
@@ -232,6 +241,15 @@ def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
     # store the predefined shape of placeholder
     add_shape(placeholder, shape)
     return placeholder
+
+
+def as_tensor_variable(x, name=None, dtype=None):
+    if dtype is None:
+        dtype = x.dtype
+    x = T.as_tensor_variable(x, name=name)
+    if x.dtype != dtype:
+        x = T.cast(x, dtype)
+    return x
 
 
 def constant(value, dtype=None, shape=None, name='Const'):

@@ -106,6 +106,21 @@ def pow(x, a):
     return _copy_shape(x, backend_ops_pow, a)
 
 
+# ==================== others ==================== #
+def diag(x):
+    input_shape = get_shape(x)
+    x = backend_ops_diag(x)
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, (_min(input_shape),))
+    return x
+
+
+def eye(n, dtype=FLOATX):
+    x = backend_ops_eye(n, dtype=dtype)
+    add_shape(x, (n, n))
+    return x
+
+
 # ===========================================================================
 # Graph creator helper
 # ===========================================================================

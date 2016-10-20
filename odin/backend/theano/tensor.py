@@ -1,6 +1,5 @@
 # ===========================================================================
 # This module is adpated from: https://github.com/fchollet/keras
-# Revision: @80927fa
 # Original work Copyright (c) 2014-2015 keras contributors
 # Some idea are also borrowed from Lasagne library
 # Original work Copyright (c) 2014-2015 Lasagne contributors
@@ -11,7 +10,6 @@ from __future__ import division, absolute_import
 import os
 import math
 import numbers
-import cPickle
 from collections import OrderedDict
 
 import numpy as np
@@ -29,7 +27,7 @@ from odin.basic import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING,
                         add_shape, get_shape)
 
-from .helpers import (_auto_infer_shape, _check_target,
+from .helpers import (auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
                       is_training, ComputationGraph)
 
@@ -62,6 +60,9 @@ backend_ops_log = T.log
 backend_ops_round = T.round
 backend_ops_pow = T.pow
 backend_ops_clip = T.clip
+
+backend_ops_diag = T.diag
+backend_ops_eye = T.eye
 
 
 # ===========================================================================
@@ -198,28 +199,13 @@ def gather(reference, indices):
     return reference[indices]
 
 
-def diag(x, target=None):
-    target = _check_target(target)
-    input_shape = get_shape(x)
-    x = T.diag(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, (_min(input_shape),))
-    return x
-
-
-def eye(n, dtype=FLOATX):
-    x = T.eye(n, dtype=dtype)
-    add_shape(x, (n, n))
-    return x
-
-
 # ===========================================================================
 # ELEMENT-WISE OPERATIONS
 # ===========================================================================
 def var(x, axis=None, keepdims=False):
     y = T.var(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.var, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.var, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -227,7 +213,7 @@ def var(x, axis=None, keepdims=False):
 def max(x, axis=None, keepdims=False):
     y = T.max(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.max, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.max, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -235,7 +221,7 @@ def max(x, axis=None, keepdims=False):
 def min(x, axis=None, keepdims=False):
     y = T.min(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.min, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.min, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -245,7 +231,7 @@ def sum(x, axis=None, keepdims=False):
     """
     y = T.sum(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.sum, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.sum, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -255,7 +241,7 @@ def prod(x, axis=None, keepdims=False):
     """
     y = T.prod(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.prod, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.prod, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -266,7 +252,7 @@ def mean(x, axis=None, keepdims=False):
         dtype = FLOATX
     y = T.mean(x, axis=axis, keepdims=keepdims, dtype=dtype)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.mean, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.mean, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -274,7 +260,7 @@ def mean(x, axis=None, keepdims=False):
 def std(x, axis=None, keepdims=False):
     y = T.std(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.std, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.std, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -284,7 +270,7 @@ def any(x, axis=None, keepdims=False):
     """
     y = T.any(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.any, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.any, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -292,7 +278,7 @@ def any(x, axis=None, keepdims=False):
 def argmax(x, axis=-1, keepdims=False):
     y = T.argmax(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.argmax, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.argmax, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -300,7 +286,7 @@ def argmax(x, axis=-1, keepdims=False):
 def argmin(x, axis=-1, keepdims=False):
     y = T.argmin(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.argmin, x, axis=axis, keepdims=keepdims)
+        output_shape = auto_infer_shape(T.argmin, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -317,7 +303,7 @@ def arange(start, stop=None, step=1, dtype=None):
 def argsort(x, axis=-1):
     y = T.argsort(x, axis)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.argsort, x, axis=axis)
+        output_shape = auto_infer_shape(T.argsort, x, axis=axis)
         add_shape(y, output_shape)
     return y
 
@@ -338,7 +324,7 @@ def argtop_k(x, k=1):
 def add(x, y):
     z = T.add(x, y)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.add, x, y)
+        output_shape = auto_infer_shape(T.add, x, y)
         add_shape(z, output_shape)
     return z
 
@@ -346,7 +332,7 @@ def add(x, y):
 def sub(x, y):
     z = T.sub(x, y)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.sub, x, y)
+        output_shape = auto_infer_shape(T.sub, x, y)
         add_shape(z, output_shape)
     return z
 
@@ -354,7 +340,7 @@ def sub(x, y):
 def mul(x, y):
     z = T.mul(x, y)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.mul, x, y)
+        output_shape = auto_infer_shape(T.mul, x, y)
         add_shape(z, output_shape)
     return z
 
@@ -362,7 +348,7 @@ def mul(x, y):
 def div(x, y):
     z = T.true_div(x, y)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.true_div, x, y)
+        output_shape = auto_infer_shape(T.true_div, x, y)
         add_shape(z, output_shape)
     return z
 
@@ -370,7 +356,7 @@ def div(x, y):
 def mod(x, y):
     z = T.mod(x, y)
     if isinstance(get_shape(x), (tuple, list)):
-        output_shape = _auto_infer_shape(T.mod, x, y)
+        output_shape = auto_infer_shape(T.mod, x, y)
         add_shape(z, output_shape)
     return z
 
@@ -408,20 +394,20 @@ def reverse(x, axis=-1):
 def concatenate(tensors, axis=-1):
     x = T.concatenate(tensors, axis=axis)
     add_shape(x,
-        _auto_infer_shape(T.concatenate, *tensors,
+        auto_infer_shape(T.concatenate, *tensors,
                           axis=axis, group_inputs=True))
     return x
 
 
 def tile(x, n):
     y = T.tile(x, n)
-    add_shape(y, _auto_infer_shape(T.tile, x, reps=n))
+    add_shape(y, auto_infer_shape(T.tile, x, reps=n))
     return y
 
 
 def stack(*x):
     y = T.stack(*x)
-    add_shape(y, _auto_infer_shape(T.stack, *x))
+    add_shape(y, auto_infer_shape(T.stack, *x))
     return y
 
 
@@ -440,7 +426,7 @@ def reshape(x, shape_):
         else:
             new_shape.append(i)
     new_shape = tuple(new_shape)
-    _ = _auto_infer_shape(T.reshape, x, newshape=new_shape)
+    _ = auto_infer_shape(T.reshape, x, newshape=new_shape)
     x = T.reshape(x, new_shape)
     add_shape(x, _)
     return x
@@ -982,7 +968,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
                            high=upper,
                            dtype=FLOATX)
         rnd = addbroadcast(rnd, *shared_axes)
-        x = relu(x, rnd)
+        x = T.nnet.relu(x, rnd)
     add_shape(x, input_shape)
     return x
 
