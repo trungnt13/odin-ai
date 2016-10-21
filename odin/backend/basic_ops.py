@@ -1,5 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
+import __builtin__
+
 from odin.config import auto_config
 config = auto_config()
 
@@ -25,7 +27,7 @@ def ndim(x):
     if hasattr(x, 'ndim'):
         return x.ndim
     else:
-        return get_shape(x)
+        return x.get_shape().ndims
 
 
 # ==================== activations ==================== #
@@ -74,7 +76,7 @@ def clip(x, min_value, max_value):
 
 
 def square(x):
-    return _copy_shape(x, backend_ops_sqr)
+    return _copy_shape(x, backend_ops_square)
 
 
 def abs(x):
@@ -106,19 +108,71 @@ def pow(x, a):
     return _copy_shape(x, backend_ops_pow, a)
 
 
+def sign(x):
+    return _copy_shape(x, backend_ops_sign)
+
+
 # ==================== others ==================== #
 def diag(x):
     input_shape = get_shape(x)
     x = backend_ops_diag(x)
     if isinstance(input_shape, (tuple, list)):
-        add_shape(x, (_min(input_shape),))
+        add_shape(x, (__builtin__.min(input_shape),))
     return x
 
 
-def eye(n, dtype=FLOATX):
-    x = backend_ops_eye(n, dtype=dtype)
-    add_shape(x, (n, n))
+def eye(n, m=None, dtype=FLOATX):
+    """ Return a 2-D array with ones on the diagonal and zeros elsewhere.
+
+    Parameters
+    ----------
+    n : int
+      Number of rows in the output.
+    m : int, optional
+      Number of columns in the output. If None, defaults to `N`.
+    dtype : data-type, optional
+      Data-type of the returned array.
+
+    """
+    x = backend_ops_eye(n, m, dtype=dtype)
+    add_shape(x, (n, n if m is None else m))
     return x
+
+
+# ==================== comparators ==================== #
+def switch(condition, then_expression, else_expression):
+    return _copy_shape(condition, backend_ops_switch,
+                       then_expression, else_expression)
+
+
+def neq(a, b):
+    """a != b"""
+    return _copy_shape(a, backend_ops_neq, b)
+
+
+def eq(a, b):
+    """a == b"""
+    return _copy_shape(a, backend_ops_eq, b)
+
+
+def gt(a, b):
+    """a > b"""
+    return _copy_shape(a, backend_ops_gt, b)
+
+
+def ge(a, b):
+    """a >= b"""
+    return _copy_shape(a, backend_ops_ge, b)
+
+
+def lt(a, b):
+    """a < b"""
+    return _copy_shape(a, backend_ops_lt, b)
+
+
+def le(a, b):
+    """a <= b"""
+    return _copy_shape(a, backend_ops_le, b)
 
 
 # ===========================================================================

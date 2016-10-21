@@ -220,6 +220,9 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     if target is not None:
         kwargs['target'] = target
 
+    # something wrong with SharedVariable constructor for numpy boolean array
+    if value.dtype == np.bool:
+        value = value.astype('uint8')
     variable = theano.shared(value=value, name=name, strict=False, **kwargs)
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #

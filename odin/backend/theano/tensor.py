@@ -36,10 +36,6 @@ EPSILON = CONFIG.epsilon
 NPROCESSORS = CONFIG['device_info']['n']
 _RNG = RandomStreams(seed=RNG_GENERATOR.randint(10e8))
 
-# remember original min and max
-_min = min
-_max = max
-
 # store simple theano ops
 backend_ops_relu = T.nnet.relu
 backend_ops_elu = T.nnet.elu
@@ -52,8 +48,8 @@ backend_ops_tanh = T.tanh
 
 backend_ops_square = T.sqr
 backend_ops_abs = T.abs_
+backend_ops_sign = T.sgn
 backend_ops_inv = T.inv
-backend_ops_sqr = T.sqr
 backend_ops_sqrt = T.sqrt
 backend_ops_exp = T.exp
 backend_ops_log = T.log
@@ -63,6 +59,15 @@ backend_ops_clip = T.clip
 
 backend_ops_diag = T.diag
 backend_ops_eye = T.eye
+
+# Comparator
+backend_ops_switch = T.switch
+backend_ops_eq = T.eq
+backend_ops_neq = T.neq
+backend_ops_gt = T.gt
+backend_ops_ge = T.ge
+backend_ops_lt = T.lt
+backend_ops_le = T.le
 
 
 # ===========================================================================
@@ -95,9 +100,7 @@ if on_gpu():
 
 
 def eval(x):
-    """Run a graph.
-    """
-    # just a hack to return placeholder shape when eval
+    """ Run a graph. """
     return x.eval()
 
 
@@ -618,43 +621,7 @@ class Function(object):
         return self.function(*inputs)
 
 
-def grad_clip(x, clip):
-    """
-    This clip the gradient of expression, used on forward pass but clip the
-    gradient on backward pass
-
-    This is an elemwise operation.
-
-    Parameters
-    ----------
-    x: expression
-        the variable we want its gradient inputs clipped
-    lower_bound: float
-        The lower bound of the gradient value
-    upper_bound: float
-        The upper bound of the gradient value.
-
-    Example
-    -------
-    >>> x = theano.tensor.scalar()
-    >>>
-    >>> z = theano.tensor.grad(grad_clip(x, -1, 1)**2, x)
-    >>> z2 = theano.tensor.grad(x**2, x)
-    >>>
-    >>> f = theano.function([x], outputs = [z, z2])
-    >>>
-    >>> print(f(2.0))  # output (1.0, 4.0)
-
-    Note
-    ----
-    We register an opt in tensor/opt.py that remove the GradClip.
-    So it have 0 cost in the forward and only do work in the grad.
-
-    """
-    return theano.gradient.grad_clip(x, -clip, clip)
-
-
-def gradients(loss, variables, consider_constant=None, known_grads=None):
+def gradients(loss, variables, consider_constant=None):
     """
     Return symbolic gradients for one or more variables with respect to some
     cost.
@@ -672,10 +639,6 @@ def gradients(loss, variables, consider_constant=None, known_grads=None):
         term[s] for which we want gradients
     consider_constant : list of expressions(variables)
         expressions not to backpropagate through
-    known_grads : dict, optional
-        A dictionary mapping variables to their gradients. This is
-        useful in the case where you know the gradient on some
-        variables but do not know the original cost.
     Returns
     -------
     variable or list/tuple of variables (matches `wrt`)
@@ -704,9 +667,12 @@ def gradients(loss, variables, consider_constant=None, known_grads=None):
     >>> # a_grad=0. b_grad=0. y_grad=6.614
     """
     # TODO: float16 overflow, unsupport DeepCopyOps
-    return T.grad(loss, wrt=variables,
-        consider_constant=consider_constant, known_grads=known_grads,
+    return T.grad(loss, wrt=variables, consider_constant=consider_constant,
         disconnected_inputs='raise')
+
+
+def stop_gradient(vars):
+    return theano.gradient.disconnected_grad(vars)
 
 
 def jacobian(loss, variables):
@@ -715,45 +681,6 @@ def jacobian(loss, variables):
 
 def hessian(loss, variables):
     return theano.gradient.hessian(loss, variables, disconnected_inputs='warn')
-
-
-# ===========================================================================
-# Comparator
-# ===========================================================================
-def switch(condition, then_expression, else_expression):
-    """condition: scalar tensor.
-    """
-    return T.switch(condition, then_expression, else_expression)
-
-
-def neq(a, b):
-    """a != b"""
-    return T.neq(a, b)
-
-
-def eq(a, b):
-    """a == b"""
-    return T.eq(a, b)
-
-
-def gt(a, b):
-    """a > b"""
-    return T.gt(a, b)
-
-
-def ge(a, b):
-    """a >= b"""
-    return T.ge(a, b)
-
-
-def lt(a, b):
-    """a < b"""
-    return T.lt(a, b)
-
-
-def le(a, b):
-    """a <= b"""
-    return T.le(a, b)
 
 
 def one_hot(x, nb_class):

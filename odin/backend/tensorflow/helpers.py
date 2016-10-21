@@ -28,6 +28,12 @@ NPROCESSORS = CONFIG['device_info']['n']
 # ===========================================================================
 # Initialize session
 # ===========================================================================
+# with tf.Session() as sess:
+#   with tf.device("/gpu:1"):
+#     matrix1 = tf.constant([[3., 3.]])
+#     matrix2 = tf.constant([[2.],[2.]])
+#     product = tf.matmul(matrix1, matrix2
+
 _SESSION = tf.Session(config=tf.ConfigProto(
     intra_op_parallelism_threads=NPROCESSORS,
     allow_soft_placement=True))
@@ -182,15 +188,16 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     # Returns
         Tensor variable instance.
     '''
-    v = tf.Variable(value, dtype=dtype, name=name)
+    variable = tf.Variable(value, dtype=dtype, name=name)
     if tf.get_default_graph() is _SESSION.graph:
-        _SESSION.run(v.initializer)
+        _SESSION.run(variable.initializer)
     else:
         raise Exception("The default tensorflow session have not been associated "
                         "with ODIN session, hence, cannot initialized the variable."
                         "Consider using set_session() to manually assign current "
                         "ODIN session.")
-    return v
+    add_shape(variable, tuple(variable.get_shape()))
+    return variable
 
 
 def placeholder(shape, dtype=FLOATX, name=None, for_training=False):

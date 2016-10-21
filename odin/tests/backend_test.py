@@ -113,6 +113,44 @@ class BackendTest(unittest.TestCase):
         self.assertEquals(K.get_shape(K.argsort(x, -1)),
                           K.eval(K.argsort(x, -1)).shape)
 
+    def test_basic_ops(self):
+        np.random.seed(12082518)
+        x = K.variable(np.random.randn(8, 8))
+        y = K.variable(np.random.randn(8, 8))
+        z = K.variable(np.random.randint(0, 2, size=(8, 8)),
+                       dtype=np.bool)
+        w = K.variable(np.random.randint(0, 2, size=(8, 8)),
+                       dtype=np.bool)
+
+        self.assertEqual(np.sum(K.eval(K.relu(x, alpha=0.12))), 27.6733)
+        self.assertEqual(np.sum(K.eval(K.elu(x, alpha=0.12))), 28.9202)
+        self.assertEqual(np.sum(K.eval(K.softmax(x))), 8.0)
+        self.assertEqual(np.sum(K.eval(K.softplus(x))), 55.4564)
+        self.assertEqual(np.sum(K.eval(K.softsign(x))), 2.11582)
+        self.assertEqual(np.sum(K.eval(K.sigmoid(x))), 33.0427)
+        self.assertEqual(np.sum(K.eval(K.hard_sigmoid(x))), 33.0836)
+        self.assertEqual(np.sum(K.eval(K.tanh(x))), 2.90165)
+        self.assertEqual(np.sum(K.eval(K.square(x))), 74.4492)
+        self.assertEqual(np.sum(K.eval(K.sqrt(x))), 30.0212)
+        self.assertEqual(np.sum(K.eval(K.abs(x))), 55.9979)
+        self.assertEqual(np.sum(K.eval(K.sign(x))), 6.0)
+        self.assertEqual(np.sum(K.eval(K.inv(x))), 495.838)
+        self.assertEqual(np.sum(K.eval(K.exp(x))), 122.062)
+        self.assertEqual(np.sum(K.eval(K.log(K.abs(x)))), -34.4491)
+        self.assertEqual(np.sum(K.eval(K.round(x))), 5.0)
+        self.assertEqual(np.sum(K.eval(K.pow(x, 8))), 3981.53)
+        self.assertEqual(np.sum(K.eval(K.clip(x, -0.12, 0.12))), 0.620529)
+        self.assertEqual(np.sum(K.eval(K.diag(x))), 3.25289)
+        self.assertEqual(np.sum(K.eval(K.eye(12, 8))), 8.0)
+
+        self.assertEqual(np.sum(K.eval(K.eq(z, w))), 38)
+        self.assertEqual(np.sum(K.eval(K.neq(z, w))), 26)
+        self.assertEqual(np.sum(K.eval(K.gt(x, y))), 33)
+        self.assertEqual(np.sum(K.eval(K.ge(x, y))), 33)
+        self.assertEqual(np.sum(K.eval(K.lt(x, y))), 31)
+        self.assertEqual(np.sum(K.eval(K.le(x, y))), 31)
+        self.assertEqual(np.sum(K.eval(K.switch(z, x, y))), 1.39884)
+
     def test_simple_ops(self):
         x = K.variable(np.random.rand(25, 8, 12))
         y = K.variable(18)

@@ -3,8 +3,6 @@ from __future__ import print_function, division, absolute_import
 import re
 import numbers
 import warnings
-from six import add_metaclass
-from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 
 import numpy as np
@@ -190,9 +188,10 @@ def add_shape(var, shape):
         return
     # check shape tuple
     shape = as_shape_tuple(shape)
-    if len(shape) != var.ndim:
+    ndim = var.ndim if hasattr(var, 'ndim') else var.get_shape().ndims
+    if len(shape) != ndim:
         raise ValueError('Variable has ndim={} but given shape has ndim={}'
-                         '.'.format(var.ndim, len(shape)))
+                         '.'.format(ndim, len(shape)))
     # ====== NO override ====== #
     if hasattr(var.tag, 'shape') and var.tag.shape != shape:
         warnings.warn('Variable already had shape=%s, and the given shape is: %s'
@@ -217,8 +216,9 @@ def get_shape(x, not_none=False):
         Default value is False
     """
     # ====== get default shape ====== #
-    shape = None
-    if hasattr(x.tag, 'shape'):
+    if not hasattr(x, 'tag'):
+        shape = None
+    elif hasattr(x.tag, 'shape'):
         shape = x.tag.shape
     elif hasattr(x, 'shape'):
         shape = x.shape
