@@ -216,14 +216,12 @@ def get_shape(x, not_none=False):
         Default value is False
     """
     # ====== get default shape ====== #
-    if not hasattr(x, 'tag'):
-        shape = None
-    elif hasattr(x.tag, 'shape'):
+    if hasattr(x, 'tag') and hasattr(x.tag, 'shape'):
         shape = x.tag.shape
+    elif hasattr(x, 'get_shape'):
+        shape = tuple(x.get_shape().as_list())
     elif hasattr(x, 'shape'):
         shape = x.shape
-    elif hasattr(x, 'get_shape'):
-        shape = x.get_shape()
     else:
         raise ValueError('Cannot get shape of variable: ' + str(x))
     # ====== check tag shape ====== #

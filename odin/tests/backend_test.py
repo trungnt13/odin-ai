@@ -113,7 +113,7 @@ class BackendTest(unittest.TestCase):
         self.assertEquals(K.get_shape(K.argsort(x, -1)),
                           K.eval(K.argsort(x, -1)).shape)
 
-    def test_basic_ops(self):
+    def test_basic_ops_value(self):
         np.random.seed(12082518)
         x = K.variable(np.random.randn(8, 8))
         y = K.variable(np.random.randn(8, 8))
@@ -151,7 +151,23 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(np.sum(K.eval(K.le(x, y))), 31)
         self.assertEqual(round(np.sum(K.eval(K.switch(z, x, y))) * 100000), 139884)
 
-    def test_simple_ops(self):
+    def test_linear_algebra_value(self):
+        np.random.seed(1208)
+        x = K.variable(np.random.randn(2, 4, 3))
+        y = K.variable(np.random.rand(1, 2, 3, 5))
+
+        z = K.dot(x, y)
+        self.assertEqual(K.get_shape(z), (2, 4, 1, 2, 5))
+        self.assertAlmostEqual(np.sum(K.eval(z)), -1.0198305134529524)
+
+        np.random.seed(1208)
+        x = K.variable(np.random.randn(100, 3, 4, 5))
+        y = K.variable(np.random.rand(100, 12, 5, 6))
+        z = K.batched_dot(x, y)
+        self.assertEqual(K.get_shape(z), K.eval(z).shape)
+        self.assertEqual(repr(K.eval(z).sum()), "1655.4410728461617")
+
+    def test_simple_ops_shape(self):
         x = K.variable(np.random.rand(25, 8, 12))
         y = K.variable(18)
         z = K.variable(np.random.rand(25, 8, 12))
@@ -182,7 +198,7 @@ class BackendTest(unittest.TestCase):
 
         test_func(v, v, K.categorical_crossentropy)
 
-    def test_complex_ops(self):
+    def test_complex_ops_shape(self):
         x = K.variable(np.random.rand(25, 8, 12))
         y = K.variable(np.random.rand(8, 12))
 

@@ -126,8 +126,7 @@ def zeros(shape, dtype=FLOATX, name=None):
     """Instantiate an all-zeros variable.
     """
     x = T.zeros(shape=shape, dtype=dtype)
-    if isinstance(shape, (tuple, list)):
-        add_shape(x, shape)
+    add_shape(x, shape)
     return x
 
 
@@ -135,24 +134,25 @@ def ones(shape, dtype=FLOATX, name=None):
     """Instantiate an all-ones variable.
     """
     x = T.ones(shape=shape, dtype=dtype)
-    if isinstance(shape, (tuple, list)):
-        add_shape(x, shape)
+    add_shape(x, shape)
     return x
 
 
-def ones_like(x):
+def ones_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype
     input_shape = get_shape(x)
-    x = T.ones_like(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
+    x = T.ones_like(x, dtype=dtype, opt=True)
+    add_shape(x, input_shape)
     return x
 
 
-def zeros_like(x):
+def zeros_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype
     input_shape = get_shape(x)
-    x = T.zeros_like(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
+    x = T.zeros_like(x, dtype=dtype, opt=True)
+    add_shape(x, input_shape)
     return x
 
 
@@ -177,7 +177,31 @@ def dot(x, y):
     shapeX = get_shape(x)
     shapeY = get_shape(y)
     if isinstance(shapeX, (tuple, list)) and isinstance(shapeY, (tuple, list)):
-        add_shape(output, shapeX[:-1] + shapeY[1:])
+        if y.ndim > 2:
+            outshapeY = tuple([shapeY[i] for i in range(y.ndim)
+                               if i != y.ndim - 2])
+        else:
+            outshapeY = (shapeY[-1],)
+        add_shape(output, shapeX[:-1] + outshapeY)
+    return output
+
+
+def batched_dot(x, y):
+    """Batchwise dot product.
+
+    This function computes the dot product between the two tensors,
+    by iterating over the first dimension.
+    """
+    output = T.batched_dot(x, y)
+    shapeX = get_shape(x)
+    shapeY = get_shape(y)
+    if isinstance(shapeX, (tuple, list)) and isinstance(shapeY, (tuple, list)):
+        if y.ndim > 2:
+            outshapeY = tuple([shapeY[i] for i in range(1, y.ndim)
+                               if i != y.ndim - 2])
+        else:
+            outshapeY = (shapeY[-1],)
+        add_shape(output, shapeX[:-1] + outshapeY)
     return output
 
 

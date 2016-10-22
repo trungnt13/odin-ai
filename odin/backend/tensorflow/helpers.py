@@ -196,7 +196,7 @@ def variable(value, dtype=FLOATX, name=None, target=None):
                         "with ODIN session, hence, cannot initialized the variable."
                         "Consider using set_session() to manually assign current "
                         "ODIN session.")
-    add_shape(variable, tuple(variable.get_shape()))
+    add_shape(variable, tuple(variable.get_shape().as_list()))
     return variable
 
 

@@ -108,39 +108,138 @@ backend_ops_le = tf.less_equal
 
 
 # ===========================================================================
+# LINEAR ALGEBRA
+# Assumed overridden:
+# +, -, /, *, +=, -=, *=, /=
+# ===========================================================================
+def dot(x, y):
+    '''Multiplies 2 tensors.
+    When attempting to multiply a ND tensor
+    with a ND tensor, reproduces the Theano behavior
+    (e.g. (2, 3).(4, 3, 5) = (2, 4, 5))
+    '''
+    shapeX = get_shape(x)
+    shapeY = get_shape(y)
+    ndimX = x.get_shape().ndims
+    ndimY = y.get_shape().ndims
+    if ndimX > 2:
+        x = tf.reshape(x, (-1, shapeX[-1]))
+    if ndimY > 2:
+        y_dims = list(range(ndimY))
+        y_dims = [y_dims.pop(-2)] + y_dims
+        y = tf.transpose(y, perm=y_dims)
+        y = tf.reshape(y, (shapeY[-2], -1))
+        outshapeY = tuple([shapeY[i] for i in y_dims[1:]])
+    else:
+        outshapeY = (shapeY[-1],)
+    # calculate dot product and desire shape
+    output_shape = shapeX[:-1] + outshapeY
+    output = tf.reshape(tf.matmul(x, y), output_shape)
+    add_shape(output, output_shape)
+    return output
+
+
+def batched_dot(x, y):
+    """Batchwise dot product.
+    This function computes the dot product between the two tensors,
+    by iterating over the first dimension.
+    """
+    shapeX = get_shape(x)
+    shapeY = get_shape(y)
+    ndimX = x.get_shape().ndims
+    ndimY = y.get_shape().ndims
+    # same as dot but one more batch dimension
+    if ndimX > 2 + 1:
+        x = tf.reshape(x, (-1, np.prod(shapeX[1:-1]), shapeX[-1]))
+    if ndimY > 2 + 1:
+        y_dims = list(range(ndimY))
+        y_dims = [y_dims.pop(0), y_dims.pop(-2)] + y_dims
+        y = tf.transpose(y, perm=y_dims)
+        outshapeY = tuple([shapeY[i] for i in y_dims[2:]])
+        y = tf.reshape(y, (-1, shapeY[-2], np.prod(outshapeY)))
+    else:
+        outshapeY = (shapeY[-1],)
+    # calculate dot product and desire shape
+    output_shape = shapeX[:-1] + outshapeY
+    output = tf.reshape(tf.batch_matmul(x, y, adj_x=None, adj_y=None),
+                        [i if i is not None else -1 for i in output_shape])
+    add_shape(output, output_shape)
+    return output
+
+
+def transpose(x, axes=None):
+    '''Transposes a matrix.
+    '''
+    output_shape = get_shape(x)
+    x = tf.transpose(x, perm=axes)
+    if isinstance(output_shape, (tuple, list)):
+        if axes is None:
+            output_shape = output_shape[::-1]
+        else:
+            output_shape = [output_shape[i] for i in axes]
+        add_shape(x, tuple(output_shape))
+    return x
+
+
+def gather(reference, indices):
+    '''Retrieves the vectors of indices `indices`
+    in the 2D tensor `reference`.
+
+    # Arguments
+        reference: a 2D tensor.
+        indices: an int tensor of indices.
+
+    # Returns
+        A 3D tensor of same type as `reference`.
+    '''
+    return tf.gather(reference, indices)
+
+
+# ===========================================================================
+# Shape operator
+# ===========================================================================
+def broadcastable(x):
+    return x
+
+
+def addbroadcast(x, *axes):
+    return x
+
+
+# ===========================================================================
 # Predefined data
 # ===========================================================================
 def zeros(shape, dtype=FLOATX, name=None):
     """Instantiate an all-zeros variable.
     """
-    x = T.zeros(shape=shape, dtype=dtype)
-    if isinstance(shape, (tuple, list)):
-        add_shape(x, shape)
+    x = tf.zeros(shape, dtype=dtype, name=name)
+    add_shape(x, shape)
     return x
 
 
 def ones(shape, dtype=FLOATX, name=None):
     """Instantiate an all-ones variable.
     """
-    x = T.ones(shape=shape, dtype=dtype)
-    if isinstance(shape, (tuple, list)):
-        add_shape(x, shape)
+    x = tf.ones(shape, dtype=dtype, name=name)
+    add_shape(x, shape)
     return x
 
 
-def ones_like(x):
+def ones_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype.base_dtype
     input_shape = get_shape(x)
-    x = T.ones_like(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
+    x = tf.ones_like(x, dtype=dtype, optimize=True)
+    add_shape(x, input_shape)
     return x
 
 
-def zeros_like(x):
+def zeros_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype.base_dtype
     input_shape = get_shape(x)
-    x = T.zeros_like(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
+    x = tf.zeros_like(x, dtype=dtype, optimize=True)
+    add_shape(x, input_shape)
     return x
 
 
