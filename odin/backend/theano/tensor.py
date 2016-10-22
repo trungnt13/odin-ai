@@ -158,12 +158,11 @@ def zeros_like(x, dtype=None):
 
 def cast(x, dtype):
     if 'theano.' in str(x.__class__):
-        return T.cast(x, dtype)
+        input_shape = get_shape(x)
+        x = T.cast(x, dtype)
+        add_shape(x, input_shape)
+        return x
     return np.cast[dtype](x)
-
-
-def castX(x):
-    return cast(x, FLOATX)
 
 
 # ===========================================================================
@@ -188,7 +187,6 @@ def dot(x, y):
 
 def batched_dot(x, y):
     """Batchwise dot product.
-
     This function computes the dot product between the two tensors,
     by iterating over the first dimension.
     """
@@ -237,6 +235,25 @@ def var(x, axis=None, keepdims=False):
     return y
 
 
+def mean(x, axis=None, keepdims=False):
+    dtype = x.dtype
+    if 'int' in dtype:
+        dtype = FLOATX
+    y = T.mean(x, axis=axis, keepdims=keepdims, dtype=dtype)
+    if isinstance(get_shape(x), (tuple, list)):
+        output_shape = auto_infer_shape(T.mean, x, axis=axis, keepdims=keepdims)
+        add_shape(y, output_shape)
+    return y
+
+
+def std(x, axis=None, keepdims=False):
+    y = T.std(x, axis=axis, keepdims=keepdims)
+    if isinstance(get_shape(x), (tuple, list)):
+        output_shape = auto_infer_shape(T.std, x, axis=axis, keepdims=keepdims)
+        add_shape(y, output_shape)
+    return y
+
+
 def max(x, axis=None, keepdims=False):
     y = T.max(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
@@ -269,25 +286,6 @@ def prod(x, axis=None, keepdims=False):
     y = T.prod(x, axis=axis, keepdims=keepdims)
     if isinstance(get_shape(x), (tuple, list)):
         output_shape = auto_infer_shape(T.prod, x, axis=axis, keepdims=keepdims)
-        add_shape(y, output_shape)
-    return y
-
-
-def mean(x, axis=None, keepdims=False):
-    dtype = x.dtype
-    if 'int' in dtype:
-        dtype = FLOATX
-    y = T.mean(x, axis=axis, keepdims=keepdims, dtype=dtype)
-    if isinstance(get_shape(x), (tuple, list)):
-        output_shape = auto_infer_shape(T.mean, x, axis=axis, keepdims=keepdims)
-        add_shape(y, output_shape)
-    return y
-
-
-def std(x, axis=None, keepdims=False):
-    y = T.std(x, axis=axis, keepdims=keepdims)
-    if isinstance(get_shape(x), (tuple, list)):
-        output_shape = auto_infer_shape(T.std, x, axis=axis, keepdims=keepdims)
         add_shape(y, output_shape)
     return y
 
@@ -421,8 +419,7 @@ def reverse(x, axis=-1):
 def concatenate(tensors, axis=-1):
     x = T.concatenate(tensors, axis=axis)
     add_shape(x,
-        auto_infer_shape(T.concatenate, *tensors,
-                          axis=axis, group_inputs=True))
+        auto_infer_shape(T.concatenate, *tensors, axis=axis, group_inputs=True))
     return x
 
 

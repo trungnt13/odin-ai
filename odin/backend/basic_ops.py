@@ -181,3 +181,7 @@ def le(a, b):
 def function(inputs, outputs, updates=[]):
     f = Function(inputs, outputs, updates=updates)
     return f
+
+
+def castX(x):
+    return cast(x, FLOATX)

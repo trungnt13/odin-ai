@@ -23,6 +23,15 @@ NPROCESSORS = CONFIG['device_info']['n']
 _RNG = np.random.RandomState(seed=RNG_GENERATOR.randint(10e8))
 
 
+def _normalize_axis(axis, ndim):
+    if axis is None:
+        return None
+    if isinstance(axis, (tuple, list)):
+        return tuple([a % ndim if a is not None else a
+                for a in axis])
+    return axis % ndim
+
+
 def eval(x):
     '''Evaluates the value of a tensor.
     Returns a Numpy array.
@@ -108,6 +117,54 @@ backend_ops_le = tf.less_equal
 
 
 # ===========================================================================
+# Shape operator
+# ===========================================================================
+def broadcastable(x):
+    return x
+
+
+def addbroadcast(x, *axes):
+    return x
+
+
+# ===========================================================================
+# Predefined data
+# ===========================================================================
+def zeros(shape, dtype=FLOATX, name=None):
+    """Instantiate an all-zeros variable.
+    """
+    x = tf.zeros(shape, dtype=dtype, name=name)
+    return x
+
+
+def ones(shape, dtype=FLOATX, name=None):
+    """Instantiate an all-ones variable.
+    """
+    x = tf.ones(shape, dtype=dtype, name=name)
+    return x
+
+
+def ones_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype.base_dtype
+    x = tf.ones_like(x, dtype=dtype, optimize=True)
+    return x
+
+
+def zeros_like(x, dtype=None):
+    if dtype is None:
+        dtype = x.dtype.base_dtype
+    x = tf.zeros_like(x, dtype=dtype, optimize=True)
+    return x
+
+
+def cast(x, dtype):
+    if 'tensorflow.' in str(x.__class__):
+        return tf.cast(x, dtype)
+    return np.cast[dtype](x)
+
+
+# ===========================================================================
 # LINEAR ALGEBRA
 # Assumed overridden:
 # +, -, /, *, +=, -=, *=, /=
@@ -135,7 +192,6 @@ def dot(x, y):
     # calculate dot product and desire shape
     output_shape = shapeX[:-1] + outshapeY
     output = tf.reshape(tf.matmul(x, y), output_shape)
-    add_shape(output, output_shape)
     return output
 
 
@@ -163,26 +219,16 @@ def batched_dot(x, y):
     output_shape = shapeX[:-1] + outshapeY
     output = tf.reshape(tf.batch_matmul(x, y, adj_x=None, adj_y=None),
                         [i if i is not None else -1 for i in output_shape])
-    add_shape(output, output_shape)
     return output
 
 
 def transpose(x, axes=None):
-    '''Transposes a matrix.
-    '''
-    output_shape = get_shape(x)
-    x = tf.transpose(x, perm=axes)
-    if isinstance(output_shape, (tuple, list)):
-        if axes is None:
-            output_shape = output_shape[::-1]
-        else:
-            output_shape = [output_shape[i] for i in axes]
-        add_shape(x, tuple(output_shape))
-    return x
+    """ Transposes a matrix. """
+    return tf.transpose(x, perm=axes)
 
 
 def gather(reference, indices):
-    '''Retrieves the vectors of indices `indices`
+    """Retrieves the vectors of indices `indices`
     in the 2D tensor `reference`.
 
     # Arguments
@@ -191,66 +237,278 @@ def gather(reference, indices):
 
     # Returns
         A 3D tensor of same type as `reference`.
-    '''
+    """
     return tf.gather(reference, indices)
 
 
 # ===========================================================================
-# Shape operator
+# ELEMENT-WISE OPERATIONS
 # ===========================================================================
-def broadcastable(x):
-    return x
+def var(x, axis=None, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    x = tf.cast(x, FLOATX)
+    m = tf.reduce_mean(x, reduction_indices=axis, keep_dims=True)
+    devs_squared = tf.square(x - m)
+    return tf.reduce_mean(devs_squared,
+                          reduction_indices=axis,
+                          keep_dims=keepdims)
 
 
-def addbroadcast(x, *axes):
-    return x
+def mean(x, axis=None, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    x = tf.cast(x, FLOATX)
+    return tf.reduce_mean(x, reduction_indices=axis, keep_dims=keepdims)
 
 
-# ===========================================================================
-# Predefined data
-# ===========================================================================
-def zeros(shape, dtype=FLOATX, name=None):
-    """Instantiate an all-zeros variable.
+def std(x, axis=None, keepdims=False):
+    return tf.sqrt(var(x, axis=axis, keepdims=keepdims))
+
+
+def max(x, axis=None, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.reduce_max(x, reduction_indices=axis, keep_dims=keepdims)
+
+
+def min(x, axis=None, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.reduce_min(x, reduction_indices=axis, keep_dims=keepdims)
+
+
+def sum(x, axis=None, keepdims=False):
+    """Sum of the values in a tensor, alongside the specified axis.
     """
-    x = tf.zeros(shape, dtype=dtype, name=name)
-    add_shape(x, shape)
-    return x
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
 
 
-def ones(shape, dtype=FLOATX, name=None):
-    """Instantiate an all-ones variable.
+def prod(x, axis=None, keepdims=False):
+    """Multiply the values in a tensor, alongside the specified axis.
     """
-    x = tf.ones(shape, dtype=dtype, name=name)
-    add_shape(x, shape)
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.reduce_prod(x, reduction_indices=axis, keep_dims=keepdims)
+
+
+def any(x, axis=None, keepdims=False):
+    """Bitwise reduction (logical OR).
+    """
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.reduce_any(x, reduction_indices=axis, keep_dims=keepdims)
+
+
+def argmax(x, axis=-1, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.argmax(x, axis, keepdims=keepdims)
+
+
+def argmin(x, axis=-1, keepdims=False):
+    axis = _normalize_axis(axis, x.get_shape().ndims)
+    return tf.argmin(x, axis, keepdims=keepdims)
+
+
+def arange(start, stop=None, step=1, dtype=None):
+    x = tf.range(start, limit=stop, delta=step)
+    if dtype is not None:
+        x = tf.cast(x, dtype)
     return x
 
 
-def ones_like(x, dtype=None):
-    if dtype is None:
-        dtype = x.dtype.base_dtype
+def argsort(x, axis=-1):
+    raise NotImplementedError
+
+
+def argtop_k(x, k=1):
+    # top-k accuracy
+    return tf.nn.top_k(x, k=k, sorted=True)
+
+
+# ===========================================================================
+# Primitive ops
+# ===========================================================================
+def add(x, y):
+    return tf.add(x, y)
+
+
+def sub(x, y):
+    return tf.sub(x, y)
+
+
+def mul(x, y):
+    return tf.mul(x, y)
+
+
+def div(x, y):
+    return tf.div(x, y)
+
+
+def mod(x, y):
+    return tf.mod(x, y)
+
+
+def maximum(x, y):
+    return tf.maximum(x, y)
+
+
+def minimum(x, y):
+    return tf.minimum(x, y)
+
+
+# ===========================================================================
+# SHAPE OPERATIONS
+# ===========================================================================
+def reverse(x, axis=-1):
+    """Apply [::-1] to appropriate axis"""
+    if axis < 0:
+        axis += x.ndim
     input_shape = get_shape(x)
-    x = tf.ones_like(x, dtype=dtype, optimize=True)
-    add_shape(x, input_shape)
+    x = x[(slice(None),) * axis + (slice(None, None, -1),)]
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, input_shape, )
     return x
 
 
-def zeros_like(x, dtype=None):
-    if dtype is None:
-        dtype = x.dtype.base_dtype
+def concatenate(tensors, axis=-1):
+    x = T.concatenate(tensors, axis=axis)
+    add_shape(x,
+        auto_infer_shape(T.concatenate, *tensors, axis=axis, group_inputs=True))
+    return x
+
+
+def tile(x, n):
+    y = T.tile(x, n)
+    add_shape(y, auto_infer_shape(T.tile, x, reps=n))
+    return y
+
+
+def stack(*x):
+    y = T.stack(*x)
+    add_shape(y, auto_infer_shape(T.stack, *x))
+    return y
+
+
+def reshape(x, shape_):
+    """ x.shape = [25, 08, 12]
+    reshape(shape=([1], [2], [0]))
+    => x.shape = (08, 12, 25)
+    """
     input_shape = get_shape(x)
-    x = tf.zeros_like(x, dtype=dtype, optimize=True)
-    add_shape(x, input_shape)
+    new_shape = []
+    for i in shape_:
+        if i is None:
+            new_shape.append(-1)
+        elif isinstance(i, (list, tuple)):
+            new_shape.append(input_shape[i[0]])
+        else:
+            new_shape.append(i)
+    new_shape = tuple(new_shape)
+    _ = auto_infer_shape(T.reshape, x, newshape=new_shape)
+    x = T.reshape(x, new_shape)
+    add_shape(x, _)
     return x
 
 
-def cast(x, dtype):
-    if 'tensorflow.' in str(x.__class__):
-        return tf.cast(x, dtype)
-    return np.cast[dtype](x)
+def dimshuffle(x, pattern):
+    """Transpose dimensions.
+
+    pattern should be a tuple or list of
+    dimension indices, e.g. [0, 2, 1].
+    """
+    pattern = tuple(pattern)
+    input_shape = get_shape(x)
+    new_shape = tuple([1 if i == 'x' else input_shape[i] for i in pattern])
+    x = x.dimshuffle(pattern)
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, new_shape)
+    return x
 
 
-def castX(x):
-    return cast(x, FLOATX)
+def repeat(x, n, axes=None):
+    """Repeat a N-D tensor.
+
+    If x has shape (s1, s2, s3) and axis=(1, -1), the output
+    will have shape (s1, s2 * n[0], s3 * n[1]).
+    """
+    input_shape = get_shape(x)
+    if axes is not None:
+        if not isinstance(axes, (tuple, list)):
+            axes = (axes,)
+        axes = tuple([i % x.ndim for i in axes])
+        n = as_tuple(n, len(axes))
+        for i, j in zip(n, axes):
+            x = T.extra_ops.repeat(x, repeats=i, axis=j)
+    else:
+        x = T.extra_ops.repeat(x, n, None)
+    if isinstance(input_shape, (tuple, list)):
+        if axes is None and None not in input_shape:
+            add_shape(x, int(np.prod(input_shape) * n))
+        else:
+            add_shape(x, tuple([j if i not in axes or j is None
+                                else j * n[axes.index(i)]
+                                for i, j in enumerate(input_shape)]))
+    return x
+
+
+def expand_dims(x, dim=-1):
+    """Add a 1-sized dimension at index "dim".
+    """
+    pattern = [i for i in range(x.type.ndim)]
+    if dim < 0:
+        if x.type.ndim == 0:
+            dim = 0
+        else:
+            dim = dim % x.type.ndim + 1
+    pattern.insert(dim, 'x')
+    return dimshuffle(x, pattern)
+
+
+def squeeze(x, axis):
+    """Remove a 1-dimension from the tensor at index "axis".
+    """
+    input_shape = get_shape(x)
+    axis = axis % x.ndim
+    x = T.addbroadcast(x, axis)
+    x = T.squeeze(x)
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, tuple([j for i, j in enumerate(input_shape) if i != axis]))
+    return x
+
+
+def pad(x, axes=1, padding=1):
+    """Pad the all dimension given in axes` of a N-D tensor
+    with "padding" zeros left and right.
+
+    Example
+    -------
+    >>> X = [[1, 1, 1],
+             [1, 1, 1]]
+    >>> Y1 = pad(X, axes=1, padding=1)
+    >>> Y1 = [[0, 1, 1, 1, 0],
+              [0, 1, 1, 1, 0]]
+    >>> Y2 = pad(X, axes=(0, 1), padding=1)
+    >>> Y2 = [[0, 0, 0, 0, 0],
+              [0, 1, 1, 1, 0],
+              [0, 1, 1, 1, 0],
+              [0, 0, 0, 0, 0]]
+    """
+    if not isinstance(axes, (tuple, list)):
+        axes = (axes,)
+    axes = tuple([i % x.ndim for i in axes])
+    padding = as_tuple(padding, len(axes), int)
+
+    input_shape = x.shape
+    output_shape = tuple([input_shape[i] if i not in axes
+                         else input_shape[i] + 2 * padding[axes.index(i)]
+                         for i in range(x.ndim)])
+    output = T.zeros(output_shape)
+    indices = tuple([slice(None) if i not in axes
+                    else slice(padding[axes.index(i)], input_shape[i] + padding[axes.index(i)])
+                    for i in range(x.ndim)])
+    input_shape = get_shape(x)
+    x = T.set_subtensor(output[indices], x)
+    if isinstance(input_shape, (tuple, list)):
+        add_shape(x, tuple([input_shape[i] if i not in axes or input_shape[i] is None
+                            else input_shape[i] + 2 * padding[axes.index(i)]
+                            for i in range(x.ndim)]))
+    return x
 
 
 # ===========================================================================
@@ -301,7 +559,8 @@ def gradients(loss, variables, consider_constant=None):
     >>>     print(g.eval())
     >>> # a_grad=0. b_grad=0. y_grad=6.614
     """
-    return tf.gradients(loss, variables=variables, colocate_gradients_with_ops=True)
+    return tf.gradients(loss, variables=variables,
+                        colocate_gradients_with_ops=True)
 
 
 def stop_gradient(vars):
