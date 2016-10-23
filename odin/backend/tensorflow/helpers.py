@@ -12,6 +12,7 @@ from itertools import chain
 import numpy as np
 
 import tensorflow as tf
+from tensorflow.contrib.framework import is_tensor
 from tensorflow import variable_scope
 
 from odin.basic import (add_role, has_roles,
@@ -82,30 +83,6 @@ def _unique(seq, key=None):
                 yield item
 
 
-def auto_infer_shape(ops, *var, **kwargs):
-    """ You can set 'group_inputs' in kwargs so the inputs to ops
-    will be ops(var) instead of ops(*var)
-    """
-    try:
-        inputs = []
-        for i in var:
-            if isinstance(i, numbers.Number):
-                inputs.append(i)
-            else:
-                input_shape = (0 if s is None or (isinstance(s, Number) and s < 0)
-                               else s
-                               for s in get_shape(i))
-                inputs.append(T.alloc(0, *input_shape))
-        if 'group_inputs' in kwargs:
-            del kwargs['group_inputs']
-            output_shape = ops(inputs, **kwargs).shape.eval()
-        else:
-            output_shape = ops(*inputs, **kwargs).shape.eval()
-        return tuple(s if s else None for s in output_shape)
-    except theano.gof.MissingInputError:
-        return 'None'
-
-
 # ===========================================================================
 # Basic query
 # ===========================================================================
@@ -125,9 +102,8 @@ def is_placeholder(variable):
         ``True`` If the variable is a user-provided input to the graph.
 
     """
-    return (not variable.owner and
-            not isinstance(variable, SharedVariable) and
-            not isinstance(variable, Constant))
+    return isinstance(variable, tf.Tensor) and \
+        variable.op.node_def.op == "Placeholder"
 
 
 def is_trainable_variable(variable):
@@ -139,16 +115,15 @@ def is_trainable_variable(variable):
     random number generators.
 
     """
-    return (isinstance(variable, SharedVariable) and
-            not isinstance(variable, RandomStateSharedVariable) and
-            not hasattr(variable.tag, 'is_rng'))
+    return (isinstance(variable, tf.Variable) and
+            variable in _SESSION.graph.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES))
 
 
 def is_variable(variable):
     """ a variable is any tensor variable in (e.g. placeholder,
     trainable_variable, intermediate tensor, ...)
     """
-    return isinstance(variable, Variable)
+    return is_tensor(variable)
 
 
 def is_training(v):
@@ -162,7 +137,7 @@ def is_training(v):
     """
     if not isinstance(v, (tuple, list)):
         v = [v]
-    inputs = graph.inputs(v)
+    inputs = ComputationGraph(v).inputs
     for i in inputs:
         if has_roles(i, TRAINING, exact=True):
             return True
@@ -224,3 +199,157 @@ def constant(value, dtype=None, shape=None, name='Const'):
     x = tf.constant(value, dtype=dtype, shape=shape, name=name)
     add_shape(x, x.get_shape())
     return x
+
+
+# ===========================================================================
+# ComputationGraph
+# ===========================================================================
+@singleton
+class ComputationGraph(object):
+    r"""Encapsulates a managed Theano computation graph.
+
+    This implies that it not only contains the variables required to
+    compute the given outputs, but also all the auxiliary variables and
+    updates that were attached to these variables through the annotation
+    system.
+
+    All variables are presented in topologically sorted order according to
+    the apply nodes that they are an input to.
+
+    Parameters
+    ----------
+    outputs : (list of) :class:`~tensor.TensorVariable`
+        The output(s) of the computation graph.
+
+    Attributes
+    ----------
+    inputs : list of :class:`~tensor.TensorVariable`
+        The inputs of the computation graph. This does not include shared
+        variables and constants.
+    trainable_variables : list of :class:`~tensor.TensorSharedVariable`
+        All the shared variables in the graph.
+    parameters : list of :class:`~tensor.TensorSharedVariable`
+        All the shared variables which have the :const:`.PARAMETER` role.
+    outputs : list of :class:`~tensor.TensorVariable`
+        The outputs of the computations graph (as passed to the
+        constructor).
+    auxiliary_variables : list of :class:`~tensor.TensorVariable`
+        All variables which have the :const:`.AUXILIARY` role.
+    intermediary_variables : list of :class:`~tensor.TensorVariable`
+        Any variable that is not part of :attr:`inputs` or :attr:`outputs`.
+    variables : list of :class:`~tensor.TensorVariable`
+        All variables (including auxiliary) in the managed graph.
+    scans : list of :class:`~theano.scan_module.scan_op.Scan`
+        All Scan ops used in this computation graph.
+    scan_variables : list of :class:`~tensor.TensorVariable`
+        All variables of the inner graphs of Scan ops.
+    updates : :class:`~tensor.TensorSharedVariable` updates
+        All the updates found attached to the annotations.
+
+    """
+
+    def __init__(self, outputs):
+        if not isinstance(outputs, (tuple, list)):
+            outputs = [outputs]
+        self.outputs = list(outputs)
+        self._get_variables()
+
+    def _get_variables(self):
+        """Collect variables, updates and auxiliary variables.
+
+        In addition collects all :class:`.Scan` ops and recurses in the
+        respective inner Theano graphs.
+
+        """
+        updates = OrderedDict()
+
+        shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
+        usual_outputs = [o for o in self.outputs if not is_trainable_variable(o)]
+        variables = shared_outputs
+        trainable_variables = [v for v in shared_outputs if is_trainable_variable(v)]
+        inputs = []
+
+        if usual_outputs:
+            for o in self.outputs:
+                # ====== travese each node of graph ====== #
+                g = o.graph
+                for op_id in sorted(g._nodes_by_id):
+                    op = g._nodes_by_id[op_id]
+                    ins = op._inputs
+                    outs = op._outputs
+                    for v in ins + outs:
+                        if len(ins) == 0 and is_placeholder(v):
+                            inputs.append(v)
+                        elif v not in inputs:
+                            variables.append(v)
+
+                for name, collections in g._collections.iteritems():
+                    for v in collections:
+                        variables.append(v)
+                        if name == 'trainable_variables':
+                            trainable_variables.append(v)
+
+            inputs = list(set(inputs))
+            variables = list(set(variables))
+            trainable_variables = list(set(trainable_variables))
+        # ====== get all updates and auxiliary variables ====== #
+        for v in inputs + variables:
+            if hasattr(v, 'tag'):
+                # updates
+                _ = getattr(v.tag, 'updates', OrderedDict())
+                _ = OrderedDict([(i, j) for i, j in _.iteritems()
+                                 if is_variable(i)])
+                updates = dict_union(updates, _)
+                # auxiliary_variables
+                for _ in getattr(v.tag, 'auxiliary_variables', []):
+                    if _ not in variables:
+                        variables.append(_)
+        self._inputs = inputs
+        self.variables = variables
+        self._trainable_variables = trainable_variables
+        self.updates = updates
+
+    # ==================== Get variables ==================== #
+    @property
+    def inputs(self):
+        """ Same as placeholder """
+        return self.placeholders
+
+    @property
+    def placeholders(self):
+        """Inputs to the graph, excluding constants and shared variables."""
+        return self._inputs
+
+    @property
+    def intermediary_variables(self):
+        return [var for var in self.variables if
+                var not in self.placeholders and
+                var not in self.outputs]
+
+    @property
+    def trainable_variables(self):
+        return self._trainable_variables
+
+    @property
+    def parameters(self):
+        return [var for var in self.trainable_variables
+                if has_roles(var, [PARAMETER])]
+
+    @property
+    def auxiliary_variables(self):
+        return [var for var in self.variables if has_roles(var, [AUXILIARY])]
+
+    @property
+    def dict_of_placeholders(self):
+        """Return a mapping from an input name to the input."""
+        return {var.name: var for var in self.placeholders}
+
+    # ==================== others ==================== #
+    def __iter__(self):
+        for v in self.variables:
+            yield v
+
+    def __del__(self):
+        self.dispose()
+        del self.outputs
+        del self.variables

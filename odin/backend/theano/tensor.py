@@ -5,7 +5,7 @@
 # Original work Copyright (c) 2014-2015 Lasagne contributors
 # Modified work Copyright 2016-2017 TrungNT
 # ===========================================================================
-from __future__ import division, absolute_import
+from __future__ import division, absolute_import, print_function
 
 import os
 import math
@@ -502,16 +502,16 @@ def repeat(x, n, axes=None):
         n = as_tuple(n, len(axes))
         for i, j in zip(n, axes):
             x = T.extra_ops.repeat(x, repeats=i, axis=j)
+        if isinstance(input_shape, (tuple, list)):
+            if axes is None and None not in input_shape:
+                add_shape(x, int(np.prod(input_shape) * n))
+            else:
+                add_shape(x, tuple([j if i not in axes or j is None
+                                    else j * n[axes.index(i)]
+                                    for i, j in enumerate(input_shape)]))
+        return x
     else:
-        x = T.extra_ops.repeat(x, n, None)
-    if isinstance(input_shape, (tuple, list)):
-        if axes is None and None not in input_shape:
-            add_shape(x, int(np.prod(input_shape) * n))
-        else:
-            add_shape(x, tuple([j if i not in axes or j is None
-                                else j * n[axes.index(i)]
-                                for i, j in enumerate(input_shape)]))
-    return x
+        return tile(x, n)
 
 
 def squeeze(x, axis):
@@ -568,11 +568,13 @@ def pad(x, axes=1, padding=1):
 # ===========================================================================
 # VALUE MANIPULATION
 # ===========================================================================
-def get_value(x, borrow=False):
+def get_value(x):
+    if isinstance(x, (tuple, list)):
+        return [i.get_value(borrow=False) for i in x]
     if not hasattr(x, 'get_value'):
         raise Exception("'get_value() can only be called on a variable. " +
                         "If you have an expression instead, use eval().")
-    return x.get_value(borrow=borrow)
+    return x.get_value(borrow=False)
 
 
 def set_value(x, value):

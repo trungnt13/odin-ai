@@ -311,7 +311,7 @@ class ComputationGraph(object):
     """
 
     def __init__(self, outputs):
-        if isinstance(outputs, Variable):
+        if not isinstance(outputs, (tuple, list)):
             outputs = [outputs]
         self.outputs = list(outputs)
         self._get_variables()

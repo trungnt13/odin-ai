@@ -1,4 +1,4 @@
-from __future__ import division, absolute_import
+from __future__ import division, absolute_import, print_function
 
 import os
 import math
@@ -372,7 +372,8 @@ def concatenate(tensors, axis=-1):
 
 def tile(x, n):
     # TODO: error here
-    return tf.tile(x, n)
+    ndim = x.get_shape().ndims
+    return tf.tile(x, [1 for i in range(ndim - 1)] + [n])
 
 
 def stack(tensors):
@@ -421,39 +422,26 @@ def dimshuffle(x, pattern):
 def repeat(x, n, axes=None):
     """Repeat a N-D tensor.
 
-    If x has shape (s1, s2, s3) and axis=(1, -1), the output
+    If x has shape (s1, s2, s3) and axes=(1, -1), the output
     will have shape (s1, s2 * n[0], s3 * n[1]).
     """
-    input_shape = get_shape(x)
     if axes is not None:
+        ndim = x.get_shape().ndims
         if not isinstance(axes, (tuple, list)):
             axes = (axes,)
-        axes = tuple([i % x.ndim for i in axes])
+        axes = _normalize_axis(axes, ndim)
         n = as_tuple(n, len(axes))
-        for i, j in zip(n, axes):
-            x = T.extra_ops.repeat(x, repeats=i, axis=j)
+        return tf.tile(x, [n[axes.index(i)] if i in axes else 1
+                           for i in range(ndim)])
     else:
-        x = T.extra_ops.repeat(x, n, None)
-    if isinstance(input_shape, (tuple, list)):
-        if axes is None and None not in input_shape:
-            add_shape(x, int(np.prod(input_shape) * n))
-        else:
-            add_shape(x, tuple([j if i not in axes or j is None
-                                else j * n[axes.index(i)]
-                                for i, j in enumerate(input_shape)]))
-    return x
+        return tile(x, n)
 
 
 def squeeze(x, axis):
     """Remove a 1-dimension from the tensor at index "axis".
     """
-    input_shape = get_shape(x)
-    axis = axis % x.ndim
-    x = T.addbroadcast(x, axis)
-    x = T.squeeze(x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, tuple([j for i, j in enumerate(input_shape) if i != axis]))
-    return x
+    axis = axis % x.get_shape().ndims
+    return tf.squeeze(x, [axis])
 
 
 def pad(x, axes=1, padding=1):
@@ -473,26 +461,43 @@ def pad(x, axes=1, padding=1):
               [0, 1, 1, 1, 0],
               [0, 0, 0, 0, 0]]
     """
+    ndim = x.get_shape().ndims
     if not isinstance(axes, (tuple, list)):
         axes = (axes,)
-    axes = tuple([i % x.ndim for i in axes])
+    axes = tuple([i % ndim for i in axes])
     padding = as_tuple(padding, len(axes), int)
+    return tf.pad(x, [[padding[axes.index(i)], padding[axes.index(i)]] if i in axes
+                      else [0, 0]
+                      for i in range(ndim)])
 
-    input_shape = x.shape
-    output_shape = tuple([input_shape[i] if i not in axes
-                         else input_shape[i] + 2 * padding[axes.index(i)]
-                         for i in range(x.ndim)])
-    output = T.zeros(output_shape)
-    indices = tuple([slice(None) if i not in axes
-                    else slice(padding[axes.index(i)], input_shape[i] + padding[axes.index(i)])
-                    for i in range(x.ndim)])
-    input_shape = get_shape(x)
-    x = T.set_subtensor(output[indices], x)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, tuple([input_shape[i] if i not in axes or input_shape[i] is None
-                            else input_shape[i] + 2 * padding[axes.index(i)]
-                            for i in range(x.ndim)]))
-    return x
+
+# ===========================================================================
+# VALUE MANIPULATION
+# ===========================================================================
+def get_value(x):
+    if isinstance(x, (tuple, list)):
+        return get_session().run(x)
+    return x.eval(session=get_session())
+
+
+def set_value(x, value):
+    '''Sets the value of a tensor variable,
+    from a Numpy array.
+    '''
+    value = np.asarray(value, dtype=x.dtype.base_dtype)
+    if hasattr(x, '_assign_placeholder'):
+        assign_placeholder = x._assign_placeholder
+        assign_op = x._assign_op
+    else:
+        assign_placeholder = tf.placeholder(dtype=x.dtype.base_dtype, shape=value.shape)
+        assign_op = x.assign(assign_placeholder)
+        x._assign_placeholder = assign_placeholder
+        x._assign_op = assign_op
+    get_session().run(assign_op, feed_dict={assign_placeholder: value})
+
+
+def set_subtensor(x, y):
+    raise NotImplementedError
 
 
 # ===========================================================================
