@@ -405,14 +405,17 @@ def minimum(x, y):
 # ===========================================================================
 # SHAPE OPERATIONS
 # ===========================================================================
-def reverse(x, axis=-1):
+def reverse(x, axes=-1):
     """Apply [::-1] to appropriate axis"""
-    if axis < 0:
-        axis += x.ndim
+    if not isinstance(axes, (tuple, list)):
+        axes = (axes,)
+    axes = [i % x.ndim for i in axes]
     input_shape = get_shape(x)
-    x = x[(slice(None),) * axis + (slice(None, None, -1),)]
+    x = x[tuple([slice(None, None, -1) if i in axes
+                 else slice(None)
+                 for i in range(x.ndim)])]
     if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape, )
+        add_shape(x, input_shape)
     return x
 
 
@@ -429,20 +432,34 @@ def tile(x, n):
     return y
 
 
-def stack(*x):
-    y = T.stack(*x)
-    add_shape(y, auto_infer_shape(T.stack, *x))
+def stack(tensors):
+    """ (5, 2) and (5, 2) => (2, 5, 2) """
+    y = T.stack(*tensors)
+    add_shape(y, auto_infer_shape(T.stack, *tensors))
     return y
 
 
-def reshape(x, shape_):
+def expand_dims(x, dim=-1):
+    """Add a 1-sized dimension at index "dim".
+    """
+    pattern = [i for i in range(x.type.ndim)]
+    if dim < 0:
+        if x.type.ndim == 0:
+            dim = 0
+        else:
+            dim = dim % x.type.ndim + 1
+    pattern.insert(dim, 'x')
+    return dimshuffle(x, pattern)
+
+
+def reshape(x, shape):
     """ x.shape = [25, 08, 12]
     reshape(shape=([1], [2], [0]))
     => x.shape = (08, 12, 25)
     """
     input_shape = get_shape(x)
     new_shape = []
-    for i in shape_:
+    for i in shape:
         if i is None:
             new_shape.append(-1)
         elif isinstance(i, (list, tuple)):
@@ -495,19 +512,6 @@ def repeat(x, n, axes=None):
                                 else j * n[axes.index(i)]
                                 for i, j in enumerate(input_shape)]))
     return x
-
-
-def expand_dims(x, dim=-1):
-    """Add a 1-sized dimension at index "dim".
-    """
-    pattern = [i for i in range(x.type.ndim)]
-    if dim < 0:
-        if x.type.ndim == 0:
-            dim = 0
-        else:
-            dim = dim % x.type.ndim + 1
-    pattern.insert(dim, 'x')
-    return dimshuffle(x, pattern)
 
 
 def squeeze(x, axis):

@@ -355,55 +355,53 @@ def minimum(x, y):
 # ===========================================================================
 # SHAPE OPERATIONS
 # ===========================================================================
-def reverse(x, axis=-1):
+def reverse(x, axes=-1):
     """Apply [::-1] to appropriate axis"""
-    if axis < 0:
-        axis += x.ndim
-    input_shape = get_shape(x)
-    x = x[(slice(None),) * axis + (slice(None, None, -1),)]
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape, )
-    return x
+    if not isinstance(axes, (tuple, list)):
+        axes = (axes,)
+    ndim = x.get_shape().ndims
+    axes = _normalize_axis(axes, ndim)
+    dims = [True if i in axes else False for i in range(ndim)]
+    return tf.reverse(x, dims)
 
 
 def concatenate(tensors, axis=-1):
-    x = T.concatenate(tensors, axis=axis)
-    add_shape(x,
-        auto_infer_shape(T.concatenate, *tensors, axis=axis, group_inputs=True))
-    return x
+    axis = _normalize_axis(axis, tensors[0].get_shape().ndims)
+    return tf.concat(axis, tensors)
 
 
 def tile(x, n):
-    y = T.tile(x, n)
-    add_shape(y, auto_infer_shape(T.tile, x, reps=n))
-    return y
+    # TODO: error here
+    return tf.tile(x, n)
 
 
-def stack(*x):
-    y = T.stack(*x)
-    add_shape(y, auto_infer_shape(T.stack, *x))
-    return y
+def stack(tensors):
+    """ (5, 2) and (5, 2) => (2, 5, 2) """
+    return tf.pack(tensors)
 
 
-def reshape(x, shape_):
+def expand_dims(x, dim=-1):
+    """ Add a 1-sized dimension at index "dim". """
+    return tf.expand_dims(x, dim)
+
+
+def reshape(x, shape):
     """ x.shape = [25, 08, 12]
     reshape(shape=([1], [2], [0]))
     => x.shape = (08, 12, 25)
     """
     input_shape = get_shape(x)
     new_shape = []
-    for i in shape_:
+    for i in shape:
         if i is None:
             new_shape.append(-1)
         elif isinstance(i, (list, tuple)):
             new_shape.append(input_shape[i[0]])
         else:
             new_shape.append(i)
-    new_shape = tuple(new_shape)
-    _ = auto_infer_shape(T.reshape, x, newshape=new_shape)
-    x = T.reshape(x, new_shape)
-    add_shape(x, _)
-    return x
+    new_shape = tuple([-1 if i is None else i
+                       for i in new_shape])
+    return tf.reshape(x, new_shape)
 
 
 def dimshuffle(x, pattern):
@@ -412,12 +410,11 @@ def dimshuffle(x, pattern):
     pattern should be a tuple or list of
     dimension indices, e.g. [0, 2, 1].
     """
-    pattern = tuple(pattern)
-    input_shape = get_shape(x)
-    new_shape = tuple([1 if i == 'x' else input_shape[i] for i in pattern])
-    x = x.dimshuffle(pattern)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, new_shape)
+    x = tf.transpose(x, perm=[i for i in pattern if i != 'x'])
+    # insert new dimension
+    for i, p in enumerate(pattern):
+        if p == 'x':
+            x = tf.expand_dims(x, i)
     return x
 
 
@@ -445,19 +442,6 @@ def repeat(x, n, axes=None):
                                 else j * n[axes.index(i)]
                                 for i, j in enumerate(input_shape)]))
     return x
-
-
-def expand_dims(x, dim=-1):
-    """Add a 1-sized dimension at index "dim".
-    """
-    pattern = [i for i in range(x.type.ndim)]
-    if dim < 0:
-        if x.type.ndim == 0:
-            dim = 0
-        else:
-            dim = dim % x.type.ndim + 1
-    pattern.insert(dim, 'x')
-    return dimshuffle(x, pattern)
 
 
 def squeeze(x, axis):
