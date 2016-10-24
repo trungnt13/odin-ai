@@ -1254,4 +1254,3 @@ def poolGlobal(x, pool_function=mean):
     x = pool_function(T.flatten(x, 3), axis=2)
     add_shape(x, input_shape[:2])
     return x
-

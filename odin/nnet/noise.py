@@ -3,33 +3,6 @@ from __future__ import division, absolute_import
 from .base import NNOps, NNConfig
 
 from odin import backend as K
-from odin.utils.decorators import autoinit
-
-
-def _process_noise_dim(input_shape, dims):
-    """
-    By default, each element is kept or dropped independently.  If `noise_shape`
-    is specified, it must be
-    [broadcastable](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
-    to the shape of `x`, and only dimensions with `noise_shape[i] == shape(x)[i]`
-    will make independent decisions.  For example, if `shape(x) = [k, l, m, n]`
-    and `noise_shape = [k, 1, 1, n]`, each batch and channel component will be
-    kept independently and each row and column will be kept or not kept together.
-
-    Examples
-    --------
-    (None, 10, 10) with noise_dims=2
-    => (None, 10, 1)
-    """
-    if not isinstance(dims, (tuple, list)):
-        dims = [dims]
-    # ====== get noise shape ====== #
-    if dims is None:
-        noise_shape = input_shape
-    else:
-        return tuple([1 if i in dims else j
-                      for i, j in enumerate(input_shape)])
-    return noise_shape
 
 
 class Dropout(NNOps):
@@ -45,20 +18,21 @@ class Dropout(NNOps):
     x: A tensor.
     level: float(0.-1.)
         probability dropout values in given tensor
-    rescale: bool
-        whether rescale the outputs by dividing the retain probablity
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
-    rng: `tensor.rng`
-        random generator from tensor class
+    noise_type: 'gaussian' (or 'normal'), 'uniform'
+        distribution used for generating noise
+    rescale: bool
+        whether rescale the outputs by dividing the retain probablity
 
     Note
     ----
     This function only apply noise on Variable with TRAINING role
     """
 
-    def __init__(self, level=0.5, noise_dims=None, rescale=True, **kwargs):
+    def __init__(self, level=0.5, noise_dims=None,
+                 noise_type='gaussian', rescale=True, **kwargs):
         super(Dropout, self).__init__(**kwargs)
         self.level = level
         self.noise_dims = noise_dims
@@ -83,11 +57,11 @@ class Noise(NNOps):
     x: A tensor.
     sigma : float or tensor scalar
         Standard deviation of added Gaussian noise
-    noise_type: 'gaussian' (or 'normal'), 'uniform'
-        distribution used for generating noise
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
+    noise_type: 'gaussian' (or 'normal'), 'uniform'
+        distribution used for generating noise
 
     Note
     ----
