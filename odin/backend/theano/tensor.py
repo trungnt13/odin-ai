@@ -34,7 +34,6 @@ from .helpers import (auto_infer_shape, _check_target,
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 NPROCESSORS = CONFIG['device_info']['n']
-_RNG = RandomStreams(seed=RNG_GENERATOR.randint(10e8))
 
 # store simple theano ops
 backend_ops_relu = T.nnet.relu
@@ -68,6 +67,9 @@ backend_ops_gt = T.gt
 backend_ops_ge = T.ge
 backend_ops_lt = T.lt
 backend_ops_le = T.le
+
+backend_ops_categorical_crossentropy = T.nnet.categorical_crossentropy
+backend_ops_binary_crossentropy = T.nnet.binary_crossentropy
 
 
 # ===========================================================================
@@ -488,6 +490,16 @@ def dimshuffle(x, pattern):
     return x
 
 
+def flatten(x, outdim=1):
+    input_shape = get_shape(x)
+    other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
+    n = np.prod(input_shape[(outdim - 1):])
+    output_shape = other_shape + (n,)
+    x = T.flatten(x, outdim)
+    add_shape(x, output_shape)
+    return x
+
+
 def repeat(x, n, axes=None):
     """Repeat a N-D tensor.
 
@@ -579,10 +591,6 @@ def get_value(x):
 
 def set_value(x, value):
     x.set_value(np.asarray(value, dtype=x.dtype))
-
-
-def set_subtensor(x, y):
-    return T.set_subtensor(x, y)
 
 
 # ===========================================================================
@@ -786,11 +794,14 @@ def one_hot_max(x, axis=-1):
     >>>         [0.0, 1.0, 0.0],
     >>>         [1.0, 0.0, 0.0]]
     """
-    return T.cast(
+    input_shape = get_shape(x)
+    x = T.cast(
         T.eq(T.arange(x.shape[axis])[None, :],
              T.argmax(x, axis=axis, keepdims=True)),
         FLOATX
     )
+    add_shape(x, input_shape)
+    return x
 
 
 def apply_mask(x, mask):
@@ -804,152 +815,33 @@ def apply_mask(x, mask):
     >>> Mask:  [1, 1, 0]
     >>> Output: [128, 500, 0]
     """
-    return T.mul(x, expand_dims(mask, -1))
-
-
-# ===========================================================================
-# Ops
-# ===========================================================================
-def antirectify(x):
-    """
-    This is the combination of a sample-wise L2 normalization with the
-    concatenation of:
-        - the positive part of the input
-        - the negative part of the input
-    The result is a tensor of samples that are twice as large as
-    the input samples.
-    It can be used in place of a ReLU.
-        - Input shape: 2D tensor of shape (samples, n)
-        - Output shape: 2D tensor of shape (samples, 2*n)
-
-    Notes
-    -----
-    When applying ReLU, assuming that the distribution of the previous
-    output is approximately centered around 0., you are discarding half of
-    your input. This is inefficient.
-    Antirectifier allows to return all-positive outputs like ReLU, without
-    discarding any data.
-    Tests on MNIST show that Antirectifier allows to train networks with
-    twice less parameters yet with comparable classification accuracy
-    as an equivalent ReLU-based network.
-
-    """
-    if x.ndim != 2:
-        raise Exception('This Ops only support 2D input.')
     input_shape = get_shape(x)
-    x -= T.mean(x, axis=1, keepdims=True)
-    # l2 normalization
-    x /= T.sqrt(T.sum(T.square(x), axis=1, keepdims=True))
-    x = T.concatenate([T.nnet.relu(x, 0), T.nnet.relu(-x, 0)], axis=1)
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, (input_shape[0], input_shape[1] * 2))
-    return x
-
-
-def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
-    """ This function is adpated from Lasagne
-    Original work Copyright (c) 2014-2015 lasagne contributors
-    All rights reserved.
-    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-
-    Applies a randomized leaky rectify activation to x.
-
-    The randomized leaky rectifier was first proposed and used in the Kaggle
-    NDSB Competition, and later evaluated in [1]_. Compared to the standard
-    leaky rectifier :func:`leaky_rectify`, it has a randomly sampled slope
-    for negative input during training, and a fixed slope during evaluation.
-
-    Equation for the randomized rectifier linear unit during training:
-    :math:`\\varphi(x) = \\max((\\sim U(lower, upper)) \\cdot x, x)`
-
-    During evaluation, the factor is fixed to the arithmetic mean of `lower`
-    and `upper`.
-
-    Parameters
-    ----------
-    lower : Theano shared variable, expression, or constant
-        The lower bound for the randomly chosen slopes.
-
-    upper : Theano shared variable, expression, or constant
-        The upper bound for the randomly chosen slopes.
-
-    shared_axes : 'auto', 'all', int or tuple of int
-        The axes along which the random slopes of the rectifier units are
-        going to be shared. If ``'auto'`` (the default), share over all axes
-        except for the second - this will share the random slope over the
-        minibatch dimension for dense layers, and additionally over all
-        spatial dimensions for convolutional layers. If ``'all'``, share over
-        all axes, thus using a single random slope.
-
-     References
-    ----------
-    .. [1] Bing Xu, Naiyan Wang et al. (2015):
-       Empirical Evaluation of Rectified Activations in Convolutional Network,
-       http://arxiv.org/abs/1505.00853
-    """
-    input_shape = get_shape(x)
-    # ====== check lower and upper ====== #
-    if is_trainable_variable(lower):
-        add_role(lower, ACTIVATION_PARAMETER)
-        lower.name = 'lower'
-    if is_trainable_variable(upper):
-        add_role(upper, ACTIVATION_PARAMETER)
-        upper.name = 'upper'
-    if not is_variable(lower > upper) and lower > upper:
-        raise ValueError("Upper bound for Randomized Rectifier needs "
-                         "to be higher than lower bound.")
-    # ====== check shared_axes ====== #
-    if shared_axes == 'auto':
-        shared_axes = (0,) + tuple(range(2, len(input_shape)))
-    elif shared_axes == 'all':
-        shared_axes = tuple(range(len(input_shape)))
-    elif isinstance(shared_axes, int):
-        shared_axes = (shared_axes,)
-    else:
-        shared_axes = shared_axes
-    # ====== main logic ====== #
-    if not is_training(x) or upper == lower:
-        x = T.nnet.relu(x, (upper + lower) / 2.0)
-    else: # Training mode
-        shape = list(input_shape)
-        if any(s is None for s in shape):
-            shape = list(x.shape)
-        for ax in shared_axes:
-            shape[ax] = 1
-
-        rnd = _RNG.uniform(tuple(shape),
-                           low=lower,
-                           high=upper,
-                           dtype=FLOATX)
-        rnd = addbroadcast(rnd, *shared_axes)
-        x = T.nnet.relu(x, rnd)
+    x = T.mul(x, expand_dims(mask, -1))
     add_shape(x, input_shape)
     return x
 
 
-def categorical_crossentropy(output, target):
-    input_shape = get_shape(output)
-    # scale preds so that the class probas of each sample sum to 1
-    output /= output.sum(axis=-1, keepdims=True)
-    output = T.clip(output, EPSILON, 1.0 - EPSILON)
-    x = T.nnet.categorical_crossentropy(output, target)
-    add_shape(x, input_shape[0])
-    return x
+# ===========================================================================
+# RANDOMNESS
+# ===========================================================================
+_RNG = RandomStreams(seed=CONFIG['seed'])
 
 
-def squared_error(output, target):
-    return T.square(output - target)
+def set_rng(seed):
+    global _RNG
+    _RNG = RandomStreams(seed=seed)
 
 
-def binary_crossentropy(output, target):
-    input_shape = get_shape(output)
-    if output.ndim > 1: output = output.ravel()
-    if target.ndim > 1: target = target.ravel()
-    # avoid numerical instability with _EPSILON clipping
-    output = T.clip(output, EPSILON, 1.0 - EPSILON)
-    x = T.nnet.binary_crossentropy(output, target)
-    add_shape(x, input_shape[0])
-    return x
+def random_normal(shape, mean=0.0, std=1.0, dtype=FLOATX):
+    return _RNG.normal(size=shape, avg=mean, std=std, dtype=dtype)
+
+
+def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX):
+    return _RNG.uniform(shape, low=low, high=high, dtype=dtype)
+
+
+def random_binomial(shape, p, dtype=FLOATX, seed=None):
+    return _RNG.binomial(size=shape, n=1, p=p, dtype=dtype)
 
 
 # ===========================================================================
@@ -1363,175 +1255,3 @@ def poolGlobal(x, pool_function=mean):
     add_shape(x, input_shape[:2])
     return x
 
-
-# ===========================================================================
-# RANDOMNESS
-# ===========================================================================
-class _RandomWrapper(object):
-
-    def __init__(self, rng):
-        super(_RandomWrapper, self).__init__()
-        self._rng = rng
-
-    def normal(self, shape, mean, std, dtype=FLOATX):
-        return self._rng.normal(size=shape, avg=mean, std=std, dtype=dtype)
-
-    def uniform(self, shape, low, high, dtype=FLOATX):
-        return self._rng.uniform(size=shape, low=low, high=high, dtype=dtype)
-
-    def binomial(self, shape, p, dtype=FLOATX):
-        return self._rng.binomial(size=shape, n=1, p=p, dtype=dtype)
-
-
-def rng(seed=None):
-    if seed is None:
-        seed = RNG_GENERATOR.randint(10e8)
-    return _RandomWrapper(RandomStreams(seed=seed))
-
-
-def random_normal(shape, mean=0.0, std=1.0, dtype=FLOATX, seed=None):
-    rng = _RNG
-    if seed is not None:
-        rng = RandomStreams(seed=seed)
-    return rng.normal(size=shape, avg=mean, std=std, dtype=dtype)
-
-
-def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX, seed=None):
-    rng = _RNG
-    if seed is not None:
-        rng = RandomStreams(seed=seed)
-    return rng.uniform(shape, low=low, high=high, dtype=dtype)
-
-
-def random_binomial(shape, p, dtype=FLOATX, seed=None):
-    rng = _RNG
-    if seed is not None:
-        rng = RandomStreams(seed=seed)
-    return rng.binomial(size=shape, n=1, p=p, dtype=dtype)
-
-
-# ===========================================================================
-# Noise
-# ===========================================================================
-def _process_noise_dim(input_shape, dims):
-    """
-    By default, each element is kept or dropped independently.  If `noise_shape`
-    is specified, it must be
-    [broadcastable](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
-    to the shape of `x`, and only dimensions with `noise_shape[i] == shape(x)[i]`
-    will make independent decisions.  For example, if `shape(x) = [k, l, m, n]`
-    and `noise_shape = [k, 1, 1, n]`, each batch and channel component will be
-    kept independently and each row and column will be kept or not kept together.
-
-    Examples
-    --------
-    (None, 10, 10) with noise_dims=2
-    => (None, 10, 1)
-    """
-    if not isinstance(dims, (tuple, list)):
-        dims = [dims]
-    # ====== get noise shape ====== #
-    if dims is None:
-        noise_shape = input_shape
-    else:
-        return tuple([1 if i in dims else j
-                      for i, j in enumerate(input_shape)])
-    return noise_shape
-
-
-def apply_dropout(x, level=0.5, noise_dims=None, rescale=True, seed=None):
-    """Computes dropout.
-
-    With probability `keep_prob`, outputs the input element scaled up by
-    `1 / keep_prob`, otherwise outputs `0`.  The scaling is so that the expected
-    sum is unchanged.
-
-
-    Parameters
-    ----------
-    x: A tensor.
-    level: float(0.-1.)
-        probability dropout values in given tensor
-    rescale: bool
-        whether rescale the outputs by dividing the retain probablity
-    noise_dims: int or list(int)
-        these dimensions will be setted to 1 in noise_shape, and
-        used to broadcast the dropout mask.
-    seed: random seed or `tensor.rng`
-        random generator from tensor class
-
-    Note
-    ----
-    This function only apply noise on Variable with TRAINING role
-    """
-    input_shape = get_shape(x)
-    if not isinstance(seed, _RandomWrapper):
-        seed = rng(seed=seed)
-    # ====== not a training variable NO dropout ====== #
-    if not is_training(x):
-        return x
-    # ====== Dropout ====== #
-    retain_prob = 1. - level
-    shape = x.shape
-    if noise_dims is None:
-        x = x * seed.binomial(shape=shape, p=retain_prob, dtype=x.dtype)
-    else:
-        noise_shape = _process_noise_dim(shape, noise_dims)
-        # auto select broadcast shape
-        broadcast = [i for i, j in enumerate(noise_shape) if j == 1]
-        if len(broadcast) > 0:
-            x = x * addbroadcast(seed.binomial(shape=noise_shape,
-                                               p=retain_prob,
-                                               dtype=x.dtype), *broadcast)
-        else:
-            x = x * seed.binomial(shape=noise_shape, p=retain_prob, dtype=x.dtype)
-    if rescale:
-        x /= retain_prob
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x
-
-
-def apply_noise(x, sigma=0.075, noise_dims=None, noise_type='gaussian', seed=None):
-    """
-    Parameters
-    ----------
-    x: A tensor.
-    sigma : float or tensor scalar
-        Standard deviation of added Gaussian noise
-    noise_type: 'gaussian' (or 'normal'), 'uniform'
-        distribution used for generating noise
-    noise_dims: int or list(int)
-        these dimensions will be setted to 1 in noise_shape, and
-        used to broadcast the dropout mask.
-    seed: random seed or `tensor.rng`
-        random generator from tensor class
-
-    Note
-    ----
-    This function only apply noise on Variable with TRAINING role
-    """
-    input_shape = get_shape(x)
-    noise_type = noise_type.lower()
-    if not isinstance(seed, _RandomWrapper):
-        seed = rng(seed=seed)
-    # ====== not a training variable NO dropout ====== #
-    if not is_training(x):
-        return x
-    # ====== applying noise ====== #
-    shape = x.shape
-    noise_shape = (shape if noise_dims is None
-                   else _process_noise_dim(shape, noise_dims))
-    if 'normal' in noise_type or 'gaussian' in noise_type:
-        noise = seed.normal(shape=noise_shape, mean=0.0, std=sigma, dtype=x.dtype)
-    elif 'uniform' in noise_type:
-        noise = seed.uniform(shape=noise_shape, low=-sigma, high=sigma, dtype=x.dtype)
-        # no idea why uniform does not give any broadcastable dimensions
-        if noise_dims is not None:
-            broadcastable = [i for i, j in enumerate(noise_shape) if j == 1]
-            if len(broadcastable) > 0:
-                noise = addbroadcast(noise, *broadcastable)
-    x = x + noise
-    if isinstance(input_shape, (tuple, list)):
-        add_shape(x, input_shape)
-    return x

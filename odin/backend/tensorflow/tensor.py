@@ -16,7 +16,7 @@ from odin.basic import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING,
                         add_shape, get_shape)
 
-from .helpers import (get_session, as_tensor_variable)
+from .helpers import (get_session, as_tensor_variable, ComputationGraph)
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 NPROCESSORS = CONFIG['device_info']['n']
@@ -37,17 +37,6 @@ def eval(x):
     Returns a Numpy array.
     '''
     return x.eval(session=get_session())
-
-# if alpha == 0:
-#     return 0.5 * (x + abs(x))
-# else:
-#     # We can't use 0.5 and 1 for one and half.  as if alpha is a
-#     # numpy dtype, they will be considered as float64, so would
-#     # cause upcast to float64.
-#     alpha = tensor.as_tensor_variable(alpha)
-#     f1 = 0.5 * (1 + alpha)
-#     f2 = 0.5 * (1 - alpha)
-#     return f1 * x + f2 * abs(x)
 
 
 # ===========================================================================
@@ -99,6 +88,9 @@ backend_ops_pow = tf.pow
 backend_ops_clip = tf.clip_by_value
 
 backend_ops_diag = tf.diag_part
+
+backend_ops_categorical_crossentropy = tf.nn.softmax_cross_entropy_with_logits
+backend_ops_binary_crossentropy = tf.nn.sigmoid_cross_entropy_with_logits
 
 
 def backend_ops_eye(n, m, dtype):
@@ -296,13 +288,19 @@ def any(x, axis=None, keepdims=False):
 
 
 def argmax(x, axis=-1, keepdims=False):
-    axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.argmax(x, axis, keepdims=keepdims)
+    axis %= x.get_shape().ndims
+    x = tf.argmax(x, axis)
+    if keepdims:
+        x = tf.expand_dims(x, axis)
+    return x
 
 
 def argmin(x, axis=-1, keepdims=False):
-    axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.argmin(x, axis, keepdims=keepdims)
+    axis %= x.get_shape().ndims
+    x = tf.argmin(x, axis)
+    if keepdims:
+        x = tf.expand_dims(x, axis)
+    return x
 
 
 def arange(start, stop=None, step=1, dtype=None):
@@ -419,6 +417,15 @@ def dimshuffle(x, pattern):
     return x
 
 
+def flatten(x, outdim=1):
+    input_shape = x.get_shape().as_list()
+    other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
+    n = np.prod(input_shape[(outdim - 1):])
+    output_shape = [-1 if i is None else i
+                    for i in other_shape + (n,)]
+    return tf.reshape(x, output_shape)
+
+
 def repeat(x, n, axes=None):
     """Repeat a N-D tensor.
 
@@ -496,10 +503,6 @@ def set_value(x, value):
     get_session().run(assign_op, feed_dict={assign_placeholder: value})
 
 
-def set_subtensor(x, y):
-    raise NotImplementedError
-
-
 # ===========================================================================
 # Graph manipulation
 # ===========================================================================
@@ -554,3 +557,201 @@ def gradients(loss, variables, consider_constant=None):
 
 def stop_gradient(vars):
     return tf.stop_gradient(vars)
+
+
+def jacobian(loss, variables):
+    raise NotImplementedError
+
+
+def hessian(loss, variables):
+    raise NotImplementedError
+
+
+def Scan(fn,
+         sequences=None,
+         outputs_info=None,
+         n_steps=None,
+         truncate_gradient=-1,
+         backwards=False,
+         name=None):
+    """
+    Note
+    ----
+    backwards mode only invert sequences then iterate over them
+    """
+    return theano.scan(fn,
+                       sequences=sequences,
+                       outputs_info=outputs_info,
+                       non_sequences=None,
+                       n_steps=n_steps,
+                       truncate_gradient=truncate_gradient,
+                       go_backwards=backwards,
+                       mode=None,
+                       name=name,
+                       profile=False,
+                       allow_gc=None,
+                       strict=False)
+
+
+class Function(object):
+    """ Two way to call this Function
+    f(x1, x2, x3)
+    or f('x1'=x1, 'x2'=x2, 'x3'=x3)
+    """
+
+    def __init__(self, inputs, outputs, updates=[], **kwargs):
+        # ====== validate input ====== #
+        if isinstance(inputs, dict):
+            self.inputs_name = inputs.keys()
+            self.inputs = inputs.values()
+        elif not isinstance(inputs, (tuple, list)):
+            self.inputs = [inputs]
+        if not hasattr(self, 'inputs_name'):
+            self.inputs_name = [i.name for i in self.inputs]
+        # ====== validate outputs ====== #
+        return_list = True
+        if not isinstance(outputs, (tuple, list)):
+            outputs = (outputs,)
+            return_list = False
+        self.outputs = list(outputs)
+        self.return_list = return_list
+        # ====== validate updates ====== #
+        if not isinstance(updates, OrderedDict):
+            updates = OrderedDict(updates)
+        updates = dict_union(updates, ComputationGraph(outputs).updates)
+        updates = updates.items()
+        # create updates ops
+        with tf.control_dependencies(self.outputs):
+            updates_ops = []
+            for update in updates:
+                if isinstance(update, (tuple, list)):
+                    p, new_p = update
+                    updates_ops.append(tf.assign(p, new_p))
+                else:
+                    # assumed already an op
+                    updates_ops.append(update)
+            self.updates_op = tf.group(*updates_ops)
+
+    def __call__(self, *inputs, **kwargs):
+        # dictionary as inputs
+        if len(kwargs) == len(self.inputs_name):
+            inputs = [kwargs[i] for i in self.inputs_name]
+        # ====== create feed_dict ====== #
+        feed_dict = {}
+        for tensor, value in zip(self.inputs, inputs):
+            feed_dict[tensor] = value
+        # ====== run the output ====== #
+        session = get_session()
+        updated = session.run(self.outputs + [self.updates_op],
+                              feed_dict=feed_dict)
+        # ====== get the results ====== #
+        outputs = updated[:len(self.outputs)]
+        if not self.return_list:
+            outputs = outputs[0]
+        return outputs
+
+
+# ===========================================================================
+# utilities
+# ===========================================================================
+def one_hot(x, nb_class):
+    '''Input: nD integer tensor of shape (batch_size, dim1, dim2, ... dim(n-1))
+    Output: (n + 1)D one hot representation of the input
+    with shape (batch_size, dim1, dim2, ... dim(n-1), nb_classes)
+    '''
+    return tf.one_hot(x, depth=nb_class, axis=-1)
+
+
+def confusion_matrix(y_pred, y_true, labels=None):
+    """
+    Computes the confusion matrix of given vectors containing
+    actual observations and predicted observations.
+    Parameters
+    ----------
+    pred : 1-d or 2-d tensor variable
+    actual : 1-d or 2-d tensor variable
+    labels : array, shape = [n_classes], optional
+        List of labels to index the matrix. This may be used to reorder
+        or select a subset of labels.
+        If none is given, those that appear at least once
+        in ``y_true`` or ``y_pred`` are used in sorted order.
+
+    """
+    from tensorflow.contrib.metrics import confusion_matrix
+    if y_true.get_shape().ndims == 2:
+        y_true = tf.argmax(y_true, -1)
+    elif y_true.get_shape().ndims != 1:
+        raise ValueError('actual must be 1-d or 2-d tensor variable')
+
+    if y_pred.get_shape().ndims == 2:
+        y_pred = tf.argmax(y_pred, axis=-1)
+    elif y_pred.get_shape().ndims != 1:
+        raise ValueError('pred must be 1-d or 2-d tensor variable')
+
+    return confusion_matrix(y_pred, y_true,
+                            num_classes=None if labels is None else len(labels))
+
+
+def one_hot_max(x, axis=-1):
+    """
+    Example
+    -------
+    >>> Input: [[0.0, 0.0, 0.5],
+    >>>         [0.0, 0.3, 0.1],
+    >>>         [0.6, 0.0, 0.2]]
+    >>> Output: [[0.0, 0.0, 1.0],
+    >>>         [0.0, 1.0, 0.0],
+    >>>         [1.0, 0.0, 0.0]]
+    """
+    dtype = x.dtype.base_dtype
+    return tf.cast(
+        tf.equal(tf.cast(arange(x.get_shape()[axis])[None, :], 'int32'),
+                 tf.cast(argmax(x, axis=axis, keepdims=True), 'int32')
+                ),
+        dtype
+    )
+
+
+def apply_mask(x, mask):
+    """
+    x : 3D tensor
+    mask : 2D tensor
+
+    Example
+    -------
+    >>> Input: [128, 500, 120]
+    >>> Mask:  [1, 1, 0]
+    >>> Output: [128, 500, 0]
+    """
+    return tf.mul(x, tf.expand_dims(mask, -1))
+
+
+# ===========================================================================
+# RANDOMNESS
+# ===========================================================================
+_RNG = np.random.RandomState(seed=CONFIG['seed'])
+
+
+def set_rng(seed):
+    global _RNG
+    _RNG = np.random.RandomState(seed=seed)
+
+
+def random_normal(shape, mean=0.0, std=1.0, dtype=FLOATX):
+    return tf.random_normal(shape, mean=mean, stddev=std,
+                            dtype=dtype.base_dtype if hasattr(dtype, 'base_dtype') else dtype,
+                            seed=_RNG.randint(10e6))
+
+
+def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX):
+    return tf.random_uniform(shape, minval=low, maxval=high,
+                             dtype=dtype.base_dtype if hasattr(dtype, 'base_dtype') else dtype,
+                             seed=_RNG.randint(10e6))
+
+
+def random_binomial(shape, p, dtype=FLOATX, seed=None):
+    if hasattr(dtype, 'base_dtype'):
+        dtype = dtype.base_dtype
+    return tf.select(tf.random_uniform(shape, dtype=dtype, seed=_RNG.randint(10e6)) <= p,
+                     tf.ones(shape, dtype=dtype),
+                     tf.zeros(shape, dtype=dtype))

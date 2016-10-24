@@ -283,15 +283,15 @@ class BackendTest(unittest.TestCase):
 
     def test_randomization(self):
         # same rng generate the same random
-        x1 = K.rng(12)
-        a1 = x1.normal(shape=(10, 10), mean=0, std=1).eval()
-        b1 = x1.uniform(shape=(10, 10), low=-1, high=1).eval()
-        c1 = x1.binomial(shape=(10, 10), p=0.7).eval()
+        K.set_rng(12)
+        a1 = K.random_normal(shape=(10, 10), mean=0, std=1).eval()
+        b1 = K.random_uniform(shape=(10, 10), low=-1, high=1).eval()
+        c1 = K.random_binomial(shape=(10, 10), p=0.7).eval()
 
-        x2 = K.rng(12)
-        a2 = x2.normal(shape=(10, 10), mean=0, std=1).eval()
-        b2 = x2.uniform(shape=(10, 10), low=-1, high=1).eval()
-        c2 = x2.binomial(shape=(10, 10), p=0.7).eval()
+        K.set_rng(12)
+        a2 = K.random_normal(shape=(10, 10), mean=0, std=1).eval()
+        b2 = K.random_uniform(shape=(10, 10), low=-1, high=1).eval()
+        c2 = K.random_binomial(shape=(10, 10), p=0.7).eval()
 
         self.assertTrue(np.array_equal(a1, a2))
         self.assertTrue(np.array_equal(b1, b2))

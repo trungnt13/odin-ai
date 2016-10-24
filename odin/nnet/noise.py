@@ -58,22 +58,19 @@ class Dropout(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    def __init__(self, level=0.5, noise_dims=None, rescale=True,
-                 seed=None, **kwargs):
+    def __init__(self, level=0.5, noise_dims=None, rescale=True, **kwargs):
         super(Dropout, self).__init__(**kwargs)
         self.level = level
         self.noise_dims = noise_dims
         self.rescale = rescale
-        self.seed = seed
 
     def _initialize(self, x):
         return NNConfig()
 
     def _apply(self, x):
-        if not hasattr(self, 'rng'):
-            self.rng = K.rng(self.seed)
         return K.apply_dropout(x, level=self.level,
-            noise_dims=self.noise_dims, rescale=self.rescale, seed=self.rng)
+                               noise_dims=self.noise_dims,
+                               rescale=self.rescale)
 
     def _transpose(self):
         return self
@@ -98,21 +95,19 @@ class Noise(NNOps):
     """
 
     def __init__(self, sigma=0.075, noise_dims=None,
-                 noise_type='gaussian', seed=None, **kwargs):
+                 noise_type='gaussian', **kwargs):
         super(Noise, self).__init__(**kwargs)
         self.sigma = sigma
         self.noise_dims = noise_dims
         self.noise_type = noise_type
-        self.seed = seed
 
     def _initialize(self, x):
         return NNConfig()
 
     def _apply(self, x):
-        if not hasattr(self, 'rng'):
-            self.rng = K.rng(self.seed)
-        return K.apply_noise(x, sigma=self.sigma, noise_dims=self.noise_dims,
-                             noise_type=self.noise_type, seed=self.rng)
+        return K.apply_noise(x, sigma=self.sigma,
+                             noise_dims=self.noise_dims,
+                             noise_type=self.noise_type)
 
     def _transpose(self):
         return self

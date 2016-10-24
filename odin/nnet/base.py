@@ -539,7 +539,6 @@ class VariationalDense(NNOps):
                  seed=None, **kwargs):
         super(VariationalDense, self).__init__(**kwargs)
         # hack to prevent infinite useless loop of transpose
-        self._rng = K.rng(seed=seed)
         self.activation = K.linear if activation is None else activation
 
     # ==================== helper ==================== #
@@ -557,8 +556,8 @@ class VariationalDense(NNOps):
 
     def sampling(self, x):
         mean, logsigma = self.get_mean_logsigma(x)
-        epsilon = self._rng.normal(shape=K.get_shape(mean), mean=0.0, std=1.0,
-                                   dtype=mean.dtype)
+        epsilon = K.random_normal(shape=K.get_shape(mean), mean=0.0, std=1.0,
+                                  dtype=mean.dtype)
         z = mean + K.exp(logsigma) * epsilon
         return z
 

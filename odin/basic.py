@@ -8,6 +8,7 @@ from collections import OrderedDict
 import numpy as np
 
 from odin.utils import as_shape_tuple, struct
+from odin.config import get_backend
 
 
 # ===========================================================================
@@ -202,7 +203,7 @@ def add_shape(var, shape):
     return var
 
 
-def get_shape(x, not_none=False):
+def get_shape(x, not_none=False, native=False):
     """Return the shape of a tensor, this function search for predefined shape
     of `x` first, otherwise, return the theano shape
 
@@ -214,7 +215,18 @@ def get_shape(x, not_none=False):
     not_none : bool
         if `not_none`=True, does not allow None in returned shape tuple.
         Default value is False
+    native : bool
+        if True, return the native shape information returned by backend (i.e.
+        object shape not int shape)
     """
+    if native:
+        if get_backend() == 'theano':
+            return x.shape
+        elif get_backend() == 'tensorflow':
+            from tensorflow import shape
+            return shape(x)
+        else:
+            raise Exception("No support for native shape of backend: " + get_backend())
     # ====== get default shape ====== #
     if hasattr(x, 'tag') and hasattr(x.tag, 'shape'):
         shape = x.tag.shape
