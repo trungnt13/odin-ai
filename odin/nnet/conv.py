@@ -325,9 +325,7 @@ class Conv2D(BaseConv):
         conved = K.conv2d(x,
             kernel=self.W,
             strides=self.stride,
-            border_mode=self.pad,
-            image_shape=self.input_shape,
-            filter_shape=K.get_shape(self.W))
+            border_mode=self.pad)
         return conved
 
 

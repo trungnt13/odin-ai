@@ -15,6 +15,7 @@ from odin.utils import as_tuple, as_shape_tuple, dict_union
 from odin.basic import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING,
                         add_shape, get_shape)
+from odin.utils import shape_calculation
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph)
 FLOATX = CONFIG.floatX
@@ -760,52 +761,55 @@ def random_binomial(shape, p, dtype=FLOATX, seed=None):
 # ===========================================================================
 # Helper
 # ===========================================================================
-def conv2d(x, kernel, strides=(1, 1),
-           border_mode='valid', image_shape=None, filter_shape=None):
+def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
+           filter_dilation=(1, 1)):
+    """ Dimension is ordered by
+    TH input shape: (samples, input_depth, rows, cols)
+    TH kernel shape: (depth, input_depth, rows, cols)
+
+    Parameters
+    ----------
+    border_mode: string
+        "same", "valid" or "full".
+
+    Note
+    ----
+    Only support float32 on CPU
     """
-    border_mode: string, "same" or "valid".
-    dim_ordering : th (defaults)
-        TH input shape: (samples, input_depth, rows, cols)
-        TH kernel shape: (depth, input_depth, rows, cols)
-    """
+    dtype = x.dtype.base_dtype
+    # store original information for calculating output_shape
+    pad = border_mode
+    image_shape = get_shape(x)
+    filter_shape = get_shape(kernel)
     if border_mode == 'same':
-        th_border_mode = 'half'
-        np_kernel = kernel.eval()
+        th_border_mode = 'SAME'
     elif border_mode == 'valid':
-        th_border_mode = 'valid'
+        th_border_mode = 'VALID'
     elif border_mode == 'full':
-        th_border_mode = 'full'
+        th_border_mode = 'FULL'
     elif isinstance(border_mode, (tuple, list)):
         th_border_mode = border_mode
     else:
         raise Exception('Border mode not supported: ' + str(border_mode))
+    # convert to TF order
+    x = tf.transpose(x, (0, 2, 3, 1))
+    kernel = tf.transpose(kernel, (2, 3, 1, 0))
+    if dtype == 'float64': # only conv in float32
+        x = tf.cast(x, 'float32')
+        kernel = tf.cast(kernel, 'float32')
 
-    # Theano might not accept long type
-    def int_or_none(value):
-        try:
-            return int(value)
-        except TypeError:
-            return None
-
-    if image_shape is not None:
-        image_shape = tuple(int_or_none(v) for v in image_shape)
-
-    if filter_shape is not None:
-        filter_shape = tuple(int_or_none(v) for v in filter_shape)
-
-    conv_out = T.nnet.conv2d(x, kernel,
-                             border_mode=th_border_mode,
-                             subsample=strides,
-                             input_shape=image_shape,
-                             filter_shape=filter_shape)
-
-    if border_mode == 'same':
-        if np_kernel.shape[2] % 2 == 0:
-            conv_out = conv_out[:, :, :(x.shape[2] + strides[0] - 1) // strides[0], :]
-        if np_kernel.shape[3] % 2 == 0:
-            conv_out = conv_out[:, :, :, :(x.shape[3] + strides[1] - 1) // strides[1]]
-
-    return conv_out
+    if filter_dilation == (1, 1):
+        x = tf.nn.conv2d(x, kernel, strides=(1,) + strides + (1,),
+                         padding=th_border_mode)
+    else:
+        assert filter_dilation[0] == filter_dilation[1]
+        assert strides == (1, 1), 'Invalid strides for dilated convolution'
+        x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=th_border_mode)
+    # ====== estimate output shape ====== #
+    x = tf.cast(tf.transpose(x, (0, 3, 1, 2)), dtype)
+    add_shape(x, shape_calculation.conv_shape(image_shape, filter_shape,
+                                              filter_dilation, strides, pad))
+    return x
 
 
 def deconv2d(x, kernel, image_shape, filter_shape=None,
@@ -1109,4 +1113,3 @@ def poolGlobal(x, pool_function=mean):
     x = pool_function(T.flatten(x, 3), axis=2)
     add_shape(x, input_shape[:2])
     return x
-
