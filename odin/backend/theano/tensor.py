@@ -945,9 +945,8 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
         if np_kernel.shape[3] % 2 == 0:
             conv_out = conv_out[:, :, :, :(x.shape[3] + strides[1] - 1) // strides[1]]
     # ====== estimate output shape ====== #
-    add_shape(conv_out, shape_calculation.conv_shape(image_shape, filter_shape,
-                                                     filter_dilation, strides,
-                                                     border_mode))
+    add_shape(conv_out, shape_calculation.get_conv_output_shape(image_shape, filter_shape,
+                                                     border_mode, strides, filter_dilation))
     return conv_out
 
 

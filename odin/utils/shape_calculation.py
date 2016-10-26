@@ -5,102 +5,107 @@ import numpy as np
 from odin.utils import as_tuple
 
 
-def conv_output_length(input_length, filter_size, stride, pad=0):
-    """Helper function to compute the output size of a convolution operation
-
-    This function computes the length along a single axis, which corresponds
-    to a 1D convolution. It can also be used for convolutions with higher
-    dimensionalities by using it individually for each axis.
+def _get_conv_shape_1axis(image_shape, kernel_shape, border_mode,
+                          subsample, dilation=1):
+    """
+    This function compute the output shape of convolution operation.
+    original code: abstract_conv.py (theano)
 
     Parameters
     ----------
-    input_length : int or None
-        The size of the input.
-
-    filter_size : int
-        The size of the filter.
-
-    stride : int
-        The stride of the convolution operation.
-
-    pad : int, 'full' or 'same' (default: 0)
-        By default, the convolution is only computed where the input and the
-        filter fully overlap (a valid convolution). When ``stride=1``, this
-        yields an output that is smaller than the input by ``filter_size - 1``.
-        The `pad` argument allows you to implicitly pad the input with zeros,
-        extending the output size.
-
-        A single integer results in symmetric zero-padding of the given size on
-        both borders.
-
-        ``'full'`` pads with one less than the filter size on both sides. This
-        is equivalent to computing the convolution wherever the input and the
-        filter overlap by at least one position.
-
-        ``'same'`` pads with half the filter size on both sides (one less on
-        the second side for an even filter size). When ``stride=1``, this
-        results in an output size equal to the input size.
+    image_shape: int or None. Corresponds to the input image shape on a
+        given axis. None if undefined.
+    kernel_shape: int or None. Corresponds to the kernel shape on a given
+        axis. None if undefined.
+    border_mode: string or int. If it is a string, it must be
+        'valid', 'half' or 'full'. If it is an integer, it must correspond to
+        the padding on the considered axis.
+    subsample: int. It must correspond to the subsampling on the
+        considered axis.
+    dilation: int. It must correspond to the dilation on the
+        considered axis.
 
     Returns
     -------
-    int or None
-        The output size corresponding to the given convolution parameters, or
-        ``None`` if `input_size` is ``None``.
+    out_shp: int corresponding to the output image shape on the
+        considered axis. None if undefined.
 
-    Raises
-    ------
-    ValueError
-        When an invalid padding is specified, a `ValueError` is raised.
     """
-    if input_length is None:
+    if None in [image_shape, kernel_shape, border_mode,
+                subsample, dilation]:
         return None
-    if pad == 'valid':
-        output_length = input_length - filter_size + 1
-    elif pad == 'full':
-        output_length = input_length + filter_size - 1
-    elif pad == 'same':
-        output_length = input_length
-    elif isinstance(pad, int):
-        output_length = input_length + 2 * pad - filter_size + 1
+    # Implicit dilated kernel shape
+    dil_kernel_shape = (kernel_shape - 1) * dilation + 1
+    if border_mode == "half" or border_mode == "same":
+        pad = dil_kernel_shape // 2
+    elif border_mode == "full":
+        pad = dil_kernel_shape - 1
+    elif border_mode == "valid":
+        pad = 0
     else:
-        raise ValueError('Invalid pad: {0}'.format(pad))
+        pad = border_mode
+        if pad < 0:
+            raise ValueError("border_mode must be >= 0")
 
-    # This is the integer arithmetic equivalent to
-    # np.ceil(output_length / stride)
-    output_length = (output_length + stride - 1) // stride
-
-    return output_length
-
-
-def conv_shape(image_shape, filter_shape, filter_dilation,
-               stride, pad):
-    if not isinstance(image_shape, (tuple, list)) or \
-    not isinstance(filter_shape, (tuple, list)):
-        return None
-    # ====== important configuration ====== #
-    n = len(image_shape) - 2
-    num_filters = filter_shape[0]
-    filter_size = filter_shape[2:]
-    if pad == 'valid':
-        pad = as_tuple(0, n)
-    elif pad in ('full', 'same'):
-        pad = pad
+    # In case of symbolic shape, we want to build the smallest graph
+    # (image_shape + 2 * pad - dil_kernel_shape) // subsample + 1
+    if pad == 0:
+        out_shp = (image_shape - dil_kernel_shape)
     else:
-        pad = as_tuple(pad, n, int)
-    filter_dilation = as_tuple(filter_dilation, n, int)
-    batchsize = image_shape[0]
-    pad = pad if isinstance(pad, tuple) else (pad,) * n
-    # ====== calculate shape ====== #
-    if filter_dilation == (1,) * n:
-        output_shape = ((batchsize, num_filters) +
-                        tuple(conv_output_length(input, filter, stride, p)
-                              for input, filter, stride, p
-                              in zip(image_shape[2:], filter_size,
-                                     stride, pad)))
+        out_shp = (image_shape + 2 * pad - dil_kernel_shape)
+    if subsample != 1:
+        out_shp = out_shp // subsample
+    out_shp = out_shp + 1
+
+    return out_shp
+
+
+def get_conv_output_shape(image_shape, kernel_shape,
+                          border_mode, subsample,
+                          filter_dilation=None):
+    """
+    This function compute the output shape of convolution operation.
+    original code: abstract_conv.py (theano)
+
+    Parameters
+    ----------
+    image_shape: tuple of int (symbolic or numeric) corresponding to the input
+        image shape. Its four (or five) element must correspond respectively
+        to: batch size, number of input channels, height and width (and
+        possibly depth) of the image. None where undefined.
+    kernel_shape: tuple of int (symbolic or numeric) corresponding to the
+        kernel shape. Its four (or five) elements must correspond respectively
+        to: number of output channels, number of input channels, height and
+        width (and possibly depth) of the kernel. None where undefined.
+    border_mode: string, int (symbolic or numeric) or tuple of int (symbolic
+        or numeric). If it is a string, it must be 'valid', 'half' or 'full'.
+        If it is a tuple, its two (or three) elements respectively correspond
+        to the padding on height and width (and possibly depth) axis.
+    subsample: tuple of int (symbolic or numeric). Its or three elements
+        espectively correspond to the subsampling on height and width (and
+        possibly depth) axis.
+    filter_dilation: tuple of int (symbolic or numeric). Its two elements
+        correspond respectively to the dilation on height and width axis.
+
+    Returns
+    -------
+    output_shape: tuple of int corresponding to the output image shape. Its
+        four element must correspond respectively to: batch size, number of
+        output channels, height and width of the image. None where undefined.
+
+    """
+    bsize, imshp = image_shape[0], image_shape[2:]
+    nkern, kshp = kernel_shape[0], kernel_shape[2:]
+
+    if filter_dilation is None:
+        filter_dilation = np.ones(len(subsample), dtype='int')
+
+    if isinstance(border_mode, tuple):
+        out_shp = tuple(_get_conv_shape_1axis(
+            imshp[i], kshp[i], border_mode[i],
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
     else:
-        output_shape = ((batchsize, num_filters) +
-                       tuple(conv_output_length(input, (filter - 1) * dilate + 1, 1, 0)
-                             for input, filter, dilate
-                             in zip(image_shape[2:], filter_size,
-                                    filter_dilation)))
-    return output_shape
+        out_shp = tuple(_get_conv_shape_1axis(
+            imshp[i], kshp[i], border_mode,
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    return (bsize, nkern) + out_shp

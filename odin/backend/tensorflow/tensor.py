@@ -807,8 +807,8 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
         x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=th_border_mode)
     # ====== estimate output shape ====== #
     x = tf.cast(tf.transpose(x, (0, 3, 1, 2)), dtype)
-    add_shape(x, shape_calculation.conv_shape(image_shape, filter_shape,
-                                              filter_dilation, strides, pad))
+    add_shape(x, shape_calculation.get_conv_output_shape(image_shape, filter_shape,
+                                              pad, strides, filter_dilation))
     return x
 
 
