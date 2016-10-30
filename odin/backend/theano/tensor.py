@@ -950,27 +950,25 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     return conv_out
 
 
-def deconv2d(x, kernel, image_shape, filter_shape=None,
-    strides=(1, 1), border_mode='valid', flip_filters=True):
+def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
+             filter_dilation=(1, 1)):
     """
     Run on cuDNN if available.
     border_mode: string, "same" or "valid".
     img_shape: (n, channels, width, height) of original image
     filter_shape: (n_filter, channels, w, h) of original filters
     """
-    if len(image_shape) != 4:
-        raise ValueError('img_shape for deconvolution operator must be 4-D')
+    flip_filters = True
+    if len(output_shape) != 4:
+        raise ValueError('output_shape for deconvolution operator must be 4-D')
     border_mode = 'half' if border_mode == 'same' else border_mode
-    op = T.nnet.abstract_conv.AbstractConv2d_gradInputs(
-        imshp=tuple([int(i) if isinstance(i, (long, float, int)) else None
-                     for i in image_shape]),
-        kshp=filter_shape,
+    x = T.nnet.abstract_conv.conv2d_grad_wrt_inputs(x, kernel,
+        input_shape=tuple([int(i) if isinstance(i, (long, float, int)) else None
+                           for i in output_shape]),
         subsample=strides, border_mode=border_mode,
         filter_flip=flip_filters)
-    transposed_x = op(kernel, x, image_shape[2:])
-    if isinstance(image_shape, (tuple, list)):
-        add_shape(transposed_x, image_shape)
-    return transposed_x
+    add_shape(x, output_shape)
+    return x
 
 
 def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',

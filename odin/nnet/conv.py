@@ -7,74 +7,8 @@ import numpy as np
 from odin import backend as K
 from odin.basic import PARAMETER, WEIGHT, BIAS
 from odin.utils.decorators import autoinit
-from odin.utils import as_tuple
+from odin.utils import as_tuple, shape_calculation
 from .base import NNOps, NNConfig
-
-
-def conv_output_length(input_length, filter_size, stride, pad=0):
-    """Helper function to compute the output size of a convolution operation
-
-    This function computes the length along a single axis, which corresponds
-    to a 1D convolution. It can also be used for convolutions with higher
-    dimensionalities by using it individually for each axis.
-
-    Parameters
-    ----------
-    input_length : int
-        The size of the input.
-
-    filter_size : int
-        The size of the filter.
-
-    stride : int
-        The stride of the convolution operation.
-
-    pad : int, 'full' or 'same' (default: 0)
-        By default, the convolution is only computed where the input and the
-        filter fully overlap (a valid convolution). When ``stride=1``, this
-        yields an output that is smaller than the input by ``filter_size - 1``.
-        The `pad` argument allows you to implicitly pad the input with zeros,
-        extending the output size.
-
-        A single integer results in symmetric zero-padding of the given size on
-        both borders.
-
-        ``'full'`` pads with one less than the filter size on both sides. This
-        is equivalent to computing the convolution wherever the input and the
-        filter overlap by at least one position.
-
-        ``'same'`` pads with half the filter size on both sides (one less on
-        the second side for an even filter size). When ``stride=1``, this
-        results in an output size equal to the input size.
-
-    Returns
-    -------
-    int
-        The output size corresponding to the given convolution parameters.
-
-    Raises
-    ------
-    RuntimeError
-        When an invalid padding is specified, a `RuntimeError` is raised.
-    """
-    if input_length is None:
-        return None
-    if pad == 'valid':
-        output_length = input_length - filter_size + 1
-    elif pad == 'full':
-        output_length = input_length + filter_size - 1
-    elif pad == 'same':
-        output_length = input_length
-    elif isinstance(pad, int):
-        output_length = input_length + 2 * pad - filter_size + 1
-    else:
-        raise ValueError('Invalid pad: {0}'.format(pad))
-
-    # This is the integer arithmetic equivalent to
-    # np.ceil(output_length / stride)
-    output_length = (output_length + stride - 1) // stride
-
-    return output_length
 
 
 class BaseConv(NNOps):
@@ -88,31 +22,11 @@ class BaseConv(NNOps):
         super(BaseConv, self).__init__(**kwargs)
         self.activation = K.linear if activation is None else activation
         if n is not None:
-            if self.pad not in ('valid', 'full', 'same', 'half'):
+            if self.pad not in ('valid', 'full', 'same'):
                 self.pad = as_tuple(pad, n, int)
             if hasattr(self, 'stride'):
                 self.stride = as_tuple(stride, n, int)
             self.filter_size = as_tuple(filter_size, n, int)
-
-    # ==================== Utilities ==================== #
-    def get_W_shape(self, input_shape):
-        """Get the shape of the weight matrix `W`.
-
-        Returns
-        -------
-        tuple of int
-            The shape of the weight matrix.
-        """
-        return (self.num_filters, input_shape[1],) + self.filter_size
-
-    def get_output_shape_for(self, input_shape):
-        pad = self.pad if isinstance(self.pad, tuple) else (self.pad,) * self.n
-        batchsize = input_shape[0]
-        return ((batchsize, self.num_filters) +
-                tuple(conv_output_length(input, filter, stride, p)
-                      for input, filter, stride, p
-                      in zip(input_shape[2:], self.filter_size,
-                             self.stride, pad)))
 
     # ==================== abstract methods ==================== #
     def _transpose(self):
@@ -131,15 +45,16 @@ class BaseConv(NNOps):
                              (self.n, input_shape, self.n + 2, self.n))
         if self.pad == 'valid':
             self.pad = 'valid' # as_tuple(0, self.n)
-        elif self.pad not in ('full', 'same', 'half'):
+        elif self.pad not in ('full', 'same'):
             self.pad = as_tuple(self.pad, self.n, int)
         if hasattr(self, 'stride'):
             self.stride = as_tuple(self.stride, self.n, int)
         self.filter_size = as_tuple(self.filter_size, self.n, int)
         # ====== create config ====== #
-        output_shape = self.get_output_shape_for(input_shape)
-        self.output_shape = output_shape # assign output_shape
         config = NNConfig(input_shape=input_shape)
+        kernel_shape = (self.num_filters, input_shape[1]) + self.filter_size
+        output_shape = shape_calculation.get_conv_output_shape(
+            input_shape, kernel_shape, self.pad, self.stride)
         # weights
         config.create_params(self.W_init, shape=self.get_W_shape(input_shape),
                              name='W', nnops=self, roles=WEIGHT)
@@ -161,7 +76,6 @@ class BaseConv(NNOps):
             activation = conved + K.expand_dims(self.b, 0)
         else:
             activation = conved + K.dimshuffle(self.b, ('x', 0) + ('x',) * self.n)
-        K.add_shape(activation, self.output_shape)
         activation = self.activation(activation)
         # set shape for output
         return activation
@@ -210,20 +124,19 @@ class TransposeConv(NNOps):
                             '.'.format(self.conv.output_shape[1:], output_shape[1:],
                                 K.get_shape(x)[1:]))
         # ====== prepare the deconvolution ====== #
-        W_shape = self.conv.get_W_shape(output_shape)
         stride = self.conv.stride
         border_mode = self.conv.pad
         W = self.conv.W
+        dilation = (1,) * len(output_shape[2:]) if not hasattr(self, 'dilation') else self.dilation
         # if Dilated Convolution, must transpose the Weights
         if hasattr(self.conv, 'dilation'):
             W = K.transpose(W, (1, 0, 2, 3))
             border_mode = 'valid'
         conved = K.deconv2d(x, W,
                             image_shape=output_shape,
-                            filter_shape=W_shape,
                             strides=stride,
                             border_mode=border_mode,
-                            flip_filters=False) # because default of Conv2D is True
+                            filter_dilation=dilation) # because default of Conv2D is True
         if hasattr(self, 'b'):
             if self.conv.untie_biases:
                 conved = K.add(conved, K.expand_dims(self.b, 0))

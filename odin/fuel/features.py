@@ -26,13 +26,6 @@ from odin.utils.decorators import autoinit
 from .dataset import Dataset
 from .recipes import FeederRecipe
 
-try:
-    import sidekit
-    import resampy
-except:
-    warnings.warn('The speech processing framework "sidekit" is '
-                  'NOT available, hence, you cannot use SpeechFeatures.')
-
 __all__ = [
     'SpeechFeature',
     'speech_features_extraction',
@@ -60,11 +53,15 @@ class FeaturesSaver(object):
     save_stats: bool
         if save_stats, the global mean and std will be calculated for
         all sample
+    no_stats: list of string
+        list of name that won't be used for calculating stats
     """
 
     def __init__(self, outpath, name,
                  datatype='memmap',
-                 save_stats=True, substitute_nan=None):
+                 save_stats=True,
+                 no_stats=[],
+                 substitute_nan=None):
         super(FeaturesSaver, self).__init__()
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
@@ -74,6 +71,7 @@ class FeaturesSaver(object):
             shutil.rmtree(outpath)
         self.dataset = Dataset(outpath)
         self.name = as_tuple(name, t=str)
+        self.no_stats = as_tuple(no_stats, t=str)
         self.save_stats = bool(save_stats)
         self.substitute_nan = substitute_nan
 
@@ -108,7 +106,7 @@ class FeaturesSaver(object):
             # processing
             for n, d in zip(self.name, data):
                 cache[n].append(d)
-                if self.save_stats:
+                if self.save_stats and n not in self.no_stats:
                     sum1[n] += np.sum(d, axis=0, dtype='float64')
                     sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
                 length.append(len(d))
@@ -117,7 +115,7 @@ class FeaturesSaver(object):
             if len(set(length)) != 1:
                 raise Exception('length mismatch between all data: %s' % str(length))
             # ====== flush cache ====== #
-            if (count + 1) % 48 == 0: # 12 + 8
+            if (count + 1) % 20 == 0: # 12 + 8
                 for i, j in cache.iteritems():
                     flush_feature(i, j)
                 del cache
@@ -154,6 +152,8 @@ class FeaturesSaver(object):
         # save all stats
         if self.save_stats:
             for n in self.name:
+                if n in self.no_stats:
+                    continue
                 s1, s2 = sum1[n], sum2[n]
                 save_mean_std(s1, s2, n, dataset)
         # ====== final flush() ====== #
@@ -185,6 +185,7 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
                mspec(X, sum, sum2),
                mfcc(X, sum, sum2),
                vad_idx """
+    import sidekit
     if s.ndim >= 2:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
     # speech features, shape: [Time, Dimension]
@@ -231,19 +232,13 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
             if spec is not None else None)
 
     # for future normalization
-    mfcc = (mfcc.astype(dtype),
-            np.sum(mfcc, axis=0, dtype='float64'),
-            np.sum(mfcc**2, axis=0, dtype='float64')) if mfcc is not None else None
-    pitch = (pitch.astype(dtype),
-             np.sum(pitch, axis=0, dtype='float64'),
-             np.sum(pitch**2, axis=0, dtype='float64')) if pitch is not None else None
-    spec = (spec.astype(dtype),
-            np.sum(spec, axis=0, dtype='float64'),
-            np.sum(spec**2, axis=0, dtype='float64')) if spec is not None else None
-    mspec = (mspec.astype(dtype),
-             np.sum(mspec, axis=0, dtype='float64'),
-             np.sum(mspec**2, axis=0, dtype='float64')) if mspec is not None else None
-    return spec, mspec, mfcc, pitch, vad_idx
+    ret = []
+    if spec is not None: ret.append(spec.astype(dtype))
+    if mspec is not None: ret.append(mspec.astype(dtype))
+    if mfcc is not None: ret.append(mfcc.astype(dtype))
+    if pitch is not None: ret.append(pitch.astype(dtype))
+    if vad_idx is not None: ret.append(vad_idx)
+    return tuple(ret)
 
 
 class SpeechFeature(FeederRecipe):
@@ -279,14 +274,6 @@ class SpeechFeature(FeederRecipe):
         if tuple or list provodied, it must represents (distribNb, nbTrainIt)
         where distribNb is number of distribution, nbTrainIt is number of iteration
         (default: distribNb=8, nbTrainIt=12)
-    downsample : str
-        One of the following algorithms:
-        sinc_medium : Band limited sinc interpolation, medium quality, 121dB SNR, 90% BW.
-        linear : Linear interpolator, very fast, poor quality.
-        sinc_fastest : Band limited sinc interpolation, fastest, 97dB SNR, 80% BW.
-        zero_order_hold : Zero order hold interpolator, very fast, poor quality.
-        sinc_best : Band limited sinc interpolation, best quality, 145dB SNR, 96% BW.
-        (default: best quality algorithm is used)
     get_spec : bool
         return spectrogram
     get_mspec : bool
@@ -304,6 +291,10 @@ class SpeechFeature(FeederRecipe):
     robust : bool
         run in robust mode, auto ignore error files
 
+    Return
+    ------
+    spec, mspec, mfcc, pitch, vad_idx
+
     Example
     -------
     >>> recipe = F.SpeechFeature(segments, OUTPUT_PATH, audio_ext='.sph',
@@ -319,8 +310,7 @@ class SpeechFeature(FeederRecipe):
     '''
 
     def __init__(self, audio_ext=None, fs=8000,
-                 win=0.025, shift=0.01, n_filters=40, n_ceps=13,
-                 downsample='sinc_best', delta_order=2,
+                 win=0.025, shift=0.01, n_filters=40, n_ceps=13, delta_order=2,
                  energy=True, vad=True, dtype='float32',
                  get_spec=False, get_mspec=True, get_mfcc=False,
                  get_pitch=False, pitch_threshold=0.5, robust=True):
@@ -342,7 +332,6 @@ class SpeechFeature(FeederRecipe):
         self.shift = shift
         self.n_filters = n_filters
         self.n_ceps = n_ceps
-        self.downsample = downsample
         self.delta_order = int(delta_order)
         self.energy = energy
         self.vad = vad
@@ -351,13 +340,6 @@ class SpeechFeature(FeederRecipe):
         # ====== check output ====== #
         self.dtype = dtype
         self.robust = robust
-        # ====== intermediate variable ====== #
-        self.index = [] # contain name, start, end
-        self.index_end = 0
-        self.spec_sum1, self.spec_sum2 = 0., 0.
-        self.mspec_sum1, self.mspec_sum2 = 0., 0.
-        self.mfcc_sum1, self.mfcc_sum2 = 0., 0.
-        self.pitch_sum1, self.pitch_sum2 = 0., 0.
 
     def shape_transform(self, shape):
         """ Return the new shape that transformed by this Recipe """
@@ -409,6 +391,7 @@ class SpeechFeature(FeederRecipe):
             if fs is None:
                 fs = orig_fs
             elif fs != orig_fs: # downsample or upsample
+                import resampy
                 s = resampy.resample(s, sr_orig=orig_fs, sr_new=fs, axis=0, filter='kaiser_best')
             N = len(s)
             # processing all segments

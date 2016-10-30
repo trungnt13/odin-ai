@@ -1,4 +1,4 @@
-from __future__ import print_function, division, absolute_import
+# from __future__ import print_function, division, absolute_import
 
 import cPickle
 
@@ -7,8 +7,8 @@ from odin.basic import add_role
 # ==================== import utilities modules ==================== #
 from .basic_ops import *
 from .advance_ops import *
-# from . import init
-# from . import optimizers
+from . import init
+from . import optimizers
 
 
 def pickling_variable(v, target=None):

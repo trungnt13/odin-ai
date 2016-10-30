@@ -812,27 +812,35 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     return x
 
 
-def deconv2d(x, kernel, image_shape, filter_shape=None,
-    strides=(1, 1), border_mode='valid', flip_filters=True):
+def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
+             filter_dilation=(1, 1)):
     """
     Run on cuDNN if available.
     border_mode: string, "same" or "valid".
     img_shape: (n, channels, width, height) of original image
     filter_shape: (n_filter, channels, w, h) of original filters
     """
-    if len(image_shape) != 4:
-        raise ValueError('img_shape for deconvolution operator must be 4-D')
-    border_mode = 'half' if border_mode == 'same' else border_mode
-    op = T.nnet.abstract_conv.AbstractConv2d_gradInputs(
-        imshp=tuple([int(i) if isinstance(i, (long, float, int)) else None
-                     for i in image_shape]),
-        kshp=filter_shape,
-        subsample=strides, border_mode=border_mode,
-        filter_flip=flip_filters)
-    transposed_x = op(kernel, x, image_shape[2:])
-    if isinstance(image_shape, (tuple, list)):
-        add_shape(transposed_x, image_shape)
-    return transposed_x
+    if len(output_shape) != 4:
+        raise ValueError('output_shape for deconvolution operator must be 4-D')
+
+    x = tf.transpose(x, (0, 2, 3, 1))
+    kernel = tf.transpose(kernel, (2, 3, 1, 0))
+    kernel = tf.transpose(kernel, (0, 1, 3, 2))
+    tf_output_shape = (output_shape[0], output_shape[2], output_shape[3], output_shape[1])
+
+    if border_mode == 'same':
+        padding = 'SAME'
+    elif border_mode == 'valid':
+        padding = 'VALID'
+    elif border_mode == 'full':
+        padding = 'FULL'
+    strides = (1,) + strides + (1,)
+
+    x = tf.nn.conv2d_transpose(x, kernel, tf_output_shape, strides,
+                               padding=padding)
+    x = tf.transpose(x, (0, 3, 1, 2))
+    add_shape(x, output_shape)
+    return x
 
 
 def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
