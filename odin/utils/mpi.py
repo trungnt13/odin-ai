@@ -152,6 +152,9 @@ class SelfIterator(object):
             raise StopIteration
 
     def stop(self):
+        # call finalize if everything is running
+        if not self._is_finished:
+            self._finalize()
         self._is_finished = True
 
     def copy(self):
@@ -213,6 +216,10 @@ class MPI(SelfIterator):
         self._maximum_queue_size = maximum_queue_size
         self._buffer_size = buffer_size
 
+    def _copy(self):
+        return MPI(self._jobs, self._map_func, self._reduce_func,
+                   self._ncpu, self._buffer_size, self._maximum_queue_size)
+
     def _init(self):
         jobs = segment_list(self._jobs, n_seg=self._ncpu)
 
@@ -250,9 +257,10 @@ class MPI(SelfIterator):
                            for i, j in enumerate(jobs)]
 
     def _finalize(self):
-        print('shit')
-        [p.join() for p in self.__processes]
-        # [p.terminate() for p in processes if p.is_alive()]
+        if len(self) == 0:
+            [p.join() for p in self.__processes]
+        else:
+            [p.terminate() for p in self.__processes if p.is_alive()]
         self.__results.close()
 
     def _next(self):
@@ -272,6 +280,7 @@ class MPI(SelfIterator):
             r = self.__results.get()
         # still None, no more tasks to do
         if r is None: raise StopIteration
+        # otherwise, something to return
         return self._reduce_func(r)
 
     def __len__(self):
