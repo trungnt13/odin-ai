@@ -14,7 +14,7 @@ from numbers import Number
 from multiprocessing import Pool, cpu_count, Process, Queue
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
 
 from collections import defaultdict
 import numpy as np
@@ -30,14 +30,15 @@ __all__ = [
     'SpeechFeature',
     'speech_features_extraction',
     'VideoFeature',
-    'FeaturesSaver'
+    'FeatureProcessor'
 ]
 
 
 # ===========================================================================
 # Helper saver
 # ===========================================================================
-class FeaturesSaver(object):
+@add_metaclass(ABCMeta)
+class FeatureProcessor(object):
     """ FeatureSaver
     This function take output from Feeder with SpeechFeatures recipe
     and update output dataset
@@ -55,14 +56,13 @@ class FeaturesSaver(object):
         all sample
     no_stats: list of string
         list of name that won't be used for calculating stats
+    substitute_nan: None or float
+        replace NaN value in mean and std by given value.
     """
 
-    def __init__(self, outpath, name,
-                 datatype='memmap',
-                 save_stats=True,
-                 no_stats=[],
-                 substitute_nan=None):
-        super(FeaturesSaver, self).__init__()
+    def __init__(self, outpath, datatype='memmap', save_stats=True, no_stats=[],
+                 substitute_nan=None, ncpu=1):
+        super(FeatureProcessor, self).__init__()
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
@@ -70,11 +70,17 @@ class FeaturesSaver(object):
             warnings.warn('Remove exist dataset at path:%s' % outpath)
             shutil.rmtree(outpath)
         self.dataset = Dataset(outpath)
-        self.name = as_tuple(name, t=str)
         self.no_stats = as_tuple(no_stats, t=str)
         self.save_stats = bool(save_stats)
         self.substitute_nan = substitute_nan
 
+    # ==================== Abstract methods ==================== #
+    @abstractproperty
+    def features_name(self):
+        """ Return all name of given features"""
+        pass
+
+    # ==================== API methods ==================== #
     def run(self, feeder):
         dataset = self.dataset
         datatype = self.datatype

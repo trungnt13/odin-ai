@@ -109,9 +109,6 @@ class Feeder(MutableData):
     buffer_size: int
         the amount of data each process keep before return to main
         process.
-    shuffle_level: int (0-3)
-        0 - only shuffle the indices list
-        1 - shuffle the indices list and enable shuffling in all recipes
     maximum_queue_size: int (default: 66)
         maximum number of batch will be cached in Queue before main process
         get it and feed to the GPU (if the too many results in Queue, all

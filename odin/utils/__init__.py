@@ -28,7 +28,9 @@ except:
 import numpy
 import six
 
+from .mpi import SelfIterator, segment_list
 from .profile import *
+from . import mpi
 
 
 # ===========================================================================
@@ -403,34 +405,6 @@ def pad_center(data, size, axis=-1, **kwargs):
                                                                n))
 
     return numpy.pad(data, lengths, **kwargs)
-
-
-def segment_list(l, size=None, n_seg=None):
-    '''
-    Example
-    -------
-    >>> segment_list([1,2,3,4,5],2)
-    >>> [[1, 2, 3], [4, 5]]
-    >>> segment_list([1,2,3,4,5],4)
-    >>> [[1], [2], [3], [4, 5]]
-    '''
-    # by floor, make sure and process has it own job
-    if n_seg is None:
-        n_seg = int(numpy.ceil(len(l) / float(size)))
-    # start segmenting
-    segments = []
-    start = 0
-    remain_data = len(l)
-    remain_seg = n_seg
-    while remain_data > 0:
-        # ====== adaptive size ====== #
-        size = remain_data // remain_seg
-        segments.append(l[start:(start + size)])
-        # ====== update remain ====== #
-        start += size
-        remain_data -= size
-        remain_seg -= 1
-    return segments
 
 
 def segment_axis(a, frame_length=2048, hop_length=512,
@@ -1230,23 +1204,6 @@ def play_audio(data, fs, volumn=1, speed=1):
 # System query
 # ===========================================================================
 __process_pid_map = {}
-
-
-class SharedCounter(object):
-    """ A multiprocessing syncrhonized counter """
-
-    def __init__(self):
-        self.val = Value('i', 0)
-        self.lock = Lock()
-
-    def add(self, value=1):
-        with self.lock:
-            self.val.value += value
-
-    @property
-    def value(self):
-        with self.lock:
-            return self.val.value
 
 
 def get_process_status(pid=None, memory_usage=False, memory_shared=False,
