@@ -637,7 +637,6 @@ class CreateBatch(FeederRecipe):
         Y = [[] for i in range(length - 2)]
         for b in batch:
             name = b[0]; data = b[1]; others = b[2:]
-            print('Group:', name, [d.shape for d in data])
             # training data can be list of Data or just 1 Data
             for i, j in zip(X, data):
                 i.append(j)

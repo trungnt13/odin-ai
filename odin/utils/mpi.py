@@ -268,6 +268,8 @@ class MPI(SelfIterator):
         jobs = segment_list(self._jobs, n_seg=self._ncpu)
 
         def wrapped_map(tasks, return_queue, counter, length):
+            maximum_queue_size = self._maximum_queue_size
+            minimum_queue_size = max(maximum_queue_size // self._ncpu, 1)
             for i in range(0, len(tasks), self._buffer_size):
                 t = tasks[i:i + self._buffer_size]
                 length.add(-len(t)) # monitor current length
@@ -281,14 +283,19 @@ class MPI(SelfIterator):
                     if r is not None:
                         return_queue.put(r)
                         nb_returned += 1
+                        # sometime 1 batch get too big, and we need to stop
+                        # putting too many data into the queue.
+                        if nb_returned >= minimum_queue_size:
+                            counter.add(nb_returned)
+                            nb_returned = 0
+                            while counter.value > maximum_queue_size:
+                                time.sleep(0.1)
                 # increase shared counter (this number must perfectly
                 # counted, only 1 mismatch and deadlock will happen)
-                print('Number returned:', nb_returned)
                 if nb_returned > 0:
                     counter.add(nb_returned)
                 # check if we need to wait for the consumer here
-                while counter.value > self._maximum_queue_size:
-                    print('sleep')
+                while counter.value > maximum_queue_size:
                     time.sleep(0.1)
             # ending signal
             return_queue.put(None)

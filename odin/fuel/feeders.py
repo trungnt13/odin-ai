@@ -257,7 +257,6 @@ class Feeder(MutableData):
                 else:
                     x = [np.array(d[start:end]) for d in self._data]
                 x = process_func(name, x)
-                print('Process:', x[0], [i.shape for i in x[1]])
                 batch.append(x)
             return group_func(batch)
 
