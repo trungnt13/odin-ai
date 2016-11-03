@@ -42,8 +42,9 @@ from odin.utils import (segment_list, segment_axis, one_hot,
                         Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.decorators import cache
+from odin.utils.mpi import MPI
 
-from .data import Data, MutableData
+from .data import Data, MutableData, as_data
 from .dataset import Dataset
 from .utils import MmapDict
 from .recipes import FeederList, CreateBatch
@@ -109,10 +110,6 @@ class Feeder(MutableData):
     buffer_size: int
         the amount of data each process keep before return to main
         process.
-    maximum_queue_size: int (default: 66)
-        maximum number of batch will be cached in Queue before main process
-        get it and feed to the GPU (if the too many results in Queue, all
-        subprocess will be paused)
 
     Example
     -------
@@ -141,7 +138,8 @@ class Feeder(MutableData):
 
     """
 
-    def __init__(self, indices, ncpu=1, buffer_size=12, maximum_queue_size=144):
+    def __init__(self, data, indices, dtype=None,
+                 ncpu=1, buffer_size=12):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         if isinstance(indices, str) and os.path.isfile(indices):
@@ -155,56 +153,47 @@ class Feeder(MutableData):
                                         for i, j in indices.iteritems()])
         else:
             raise ValueError('Unsupport indices type: "%s".' % type(indices))
-        # backup original indices
-        self._original_indices = self._indices
-        # ====== data ====== #
-        self._data = None
+        # ====== Load data ====== #
+        if not isinstance(data, (tuple, list)):
+            data = (data,)
+        data = tuple([as_data(d) for d in data])
+        length = len(data[0])
+        if any(len(d) != length for d in data):
+            raise ValueError('All Data must have the same length '
+                             '(i.e. shape[0]).')
+        self._data = data
+        # store first dimension
+        self._initial_shape = np.sum(self._indices[:, -1].astype('int32') -
+                                     self._indices[:, -2].astype('int32'))
+        # ====== desire dtype ====== #
+        self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
         # ====== Set default recipes ====== #
-        self.recipe = FeederList(CreateBatch())
+        self.recipes = FeederList(CreateBatch())
         # never use all available CPU
-        if ncpu is None:
-            ncpu = cpu_count() - 1
-        self.ncpu = max(min(ncpu, 2 * cpu_count() - 1), 1)
-        self.maximum_queue_size = maximum_queue_size
-        # ====== default ====== #
-        self._buffer_size = buffer_size
-        self._batch_size = 256
-        self._seed = None
-        self._start = 0.
-        self._end = 1.
-        # ====== manage all iteration ====== #
-        self._all_iter = {}
-        # store iter identity, so every iter has unique identity
-        self._nb_created_iter = 0
+        self.set_multiprocessing(ncpu, buffer_size)
+        self.__running_iter = []
+
+    def set_multiprocessing(self, ncpu=None, buffer_size=None):
+        if ncpu is not None:
+            self.ncpu = ncpu
+        if buffer_size is not None:
+            self.buffer_size = buffer_size
+        return self
 
     def set_recipes(self, recipes):
         # filter out None value
-        recipes = as_tuple(recipes)
-        recipes = [i for i in recipes if i is not None]
+        recipes = [i for i in as_tuple(recipes) if i is not None]
         if len(recipes) > 0:
-            self.recipe = FeederList(*recipes)
-            self._indices = self.recipe.preprocess_indices(self._original_indices)
+            self.recipes = FeederList(*recipes)
         return self
 
     def stop_all(self):
         """ Call this method to stop all processes in case you
         spamming to many iteration
         """
-        for i in self._all_iter.values():
-            try:
-                i.next()
-                i.send(SIG_TERMINATE_ITERATOR)
-                for j in i:
-                    pass
-            except:
-                pass
-        self._all_iter = {}
-
-    def get_running_iter(self, include_identity=False):
-        """ Get all currently running iteration """
-        if include_identity:
-            return self._all_iter.items()
-        return self._all_iter.values()
+        for i in self.__running_iter:
+            i.stop()
+        self.__running_iter = []
 
     # ==================== override from Data ==================== #
     @property
@@ -212,171 +201,84 @@ class Feeder(MutableData):
         """ This is just an "UPPER" estimation, some data points might be lost
         during preprocessing each indices by recipes.
         """
-        shape = self._indices.shape
-        # ====== recipe process shape ====== #
-        if self.recipe is not None:
-            shape = tuple(self.recipe.shape_transform(shape))
-        else:
-            shape = tuple(shape)
-        # ====== post process ====== #
-        if not isinstance(shape[0], tuple):
-            shape = (shape,)
-        return shape if len(shape) > 1 else shape[0]
+        shape = [d.shape for d in self._data]
+        shape = [(self._initial_shape,) + s[1:] for s in shape]
+        shape = self.recipes.shape_transform(shape)
+        if len(shape) == 1:
+            shape = shape[0]
+        return tuple(shape)
 
     def __str__(self):
         if self._data is None:
             name = 'None'
             dtype = 'unknown'
         else:
-            name = self._data.name
+            name = ' '.join([i.name for i in self._data])
             dtype = self.dtype
-        return '<Feeders dataset "%s": shape %s, type "<%s">' % \
-        (name, self.shape, dtype)
+        return '<Feeders dataset: %s, shape: %s, type: %s, #iter: %d>' % \
+        (name, self.shape, dtype, len(self.__running_iter))
 
     # ==================== Strings ==================== #
-    def _prepare_iter(self, batch_size, buffer_size, ntasks, jobs, seed,
-                      iter_identity):
-        """
-        No LOCK
-        -------
-        2-2: 0.68 0.66 0.66
-        4-4: 0.59 0.59 0.62
-
-        LOCK
-        ----
-        2-2: 0.69 0.66 0.66
-        4-4: 0.6 0.6 0.58
-        """
-        map_func = self.recipe.map
-        reduce_func = self.recipe.reduce
-        maximum_queue_size = self.maximum_queue_size
-        self.recipe.init(ntasks, batch_size,
-                         seed if self._shuffle_level > 0 else None)
-        rng = None if seed is None else np.random.RandomState(seed)
-
-        # data, jobs, map_function, results
-        def work_multi(j, map, reduce, res, buffer_size, shared_counter):
-            # 1 Data share between all processes
-            batch = []
-            n = len(j)
-            for count, info in enumerate(j):
-                # map tasks, if oobjectnly 1 Data, just apply map on it, else apply
-                # map on list of Data
-                if not isinstance(info, (tuple, list, np.ndarray)):
-                    _ = map(info)
-                elif len(info) == 1:
-                    _ = map(info[0])
-                elif len(info) == 2:
-                    _ = map(info[0], info[1])
-                else:
-                    _ = map(info[0], info[1:])
-                # append to batch
-                batch.append(_)
-                # reduce tasks
-                if len(batch) == buffer_size or count == n - 1:
-                    # check if we need to wait for the consumer here
-                    while shared_counter.value > maximum_queue_size:
-                        time.sleep(0.1)
-                    # CRITICAL: the nb_returned will be stored from last
-                    # batch and added to the shared_counter which can cause
-                    # a deadlock, so it must be reseted to 0 after each batch
-                    nb_returned = 0
-                    # reduce and return the batch
-                    for b in reduce(batch):
-                        if b is not None:
-                            res.put(b)
-                            nb_returned += 1
-                            del b
-                    # new batch
-                    del batch; batch = []
-                    # increase shared counter (this number must perfectly
-                    # counted, only 1 mismatch and deadlock happen)
-                    if nb_returned > 0:
-                        shared_counter.add(nb_returned)
-            # ending signal
-            res.put(None)
-        #######################################################
-        yield None # stop here wait for main iterator start
-        # Queue maxsize is max_length (maximum number of items can be in queue)
-        results = Queue(maxsize=0)
-        shared_counter = SharedCounter()
-        processes = [Process(target=work_multi,
-                             args=(j, map_func, reduce_func,
-                                   results, buffer_size, shared_counter))
-                     for i, j in enumerate(jobs)]
-        # start the workers
-        [p.start() for p in processes]
-        # return the results
-        forced_terminated = False
-        working_processes = len(processes)
-        while working_processes > 0:
-            # storing batch and return when cache is full
-            batch = results.get()
-            if batch is None:
-                working_processes -= 1
-            else:
-                # perform batch level permutation
-                if rng is not None and self._shuffle_level > 1:
-                    permutation = rng.permutation(batch[0].shape[0])
-                    # different shape NO shuffle
-                    batch = [b[permutation] for b in batch]
-                # convert batch to tuple object if possible
-                if isinstance(batch, (tuple, list)) and len(batch) == 1:
-                    batch = batch[0]
-                elif isinstance(batch, list):
-                    batch = tuple(batch)
-                # return batch and check for returned signal
-                if (yield batch) == SIG_TERMINATE_ITERATOR:
-                    forced_terminated = True
-                    break
-                del batch
-                # decrease Queue size counter
-                shared_counter.add(-1)
-        # ====== ending the iterator ====== #
-        if not forced_terminated:
-            # check Queue, queue must be empty
-            if not results.empty():
-                raise Exception('Queue results not empty, something wrong '
-                                'with multiprocessing.')
-            # end the worker
-            [p.join() for p in processes]
-        # Exit because of stop_all
-        else:
-            [p.terminate() for p in processes if p.is_alive()]
-        results.close()
-        # Finish 1 iteration, callback to remove this iter
-        del self._all_iter[iter_identity]
-        if forced_terminated:
-            yield
-
     def __iter__(self):
         # ====== check ====== #
-        if self.recipe is None:
-            raise ValueError('You must set_recipes first')
+        if self.recipes is None:
+            raise ValueError('You must "set_recipes" first')
         # ====== get start and end for indices ====== #
         n = self._indices.shape[0]
         start = _apply_approx(n, self._start)
         end = _apply_approx(n, self._end)
         indices = self._indices[start:end]
+        outtype = self._outtype
         # ====== shuffle the indices ====== #
-        seed = None
+        rng = None
         if self._seed is not None:
-            np.random.seed(self._seed)
-            indices = indices[np.random.permutation(indices.shape[0])]
-            # seed for the iteration
-            seed = np.random.randint(10e8)
+            rng = np.random.RandomState(self._seed)
+            indices = indices[rng.permutation(indices.shape[0])]
             # reset the seed
             self._seed = None
         # ====== create iter and its identity ====== #
-        self._nb_created_iter += 1
-        it_identity = 'iter%d' % self._nb_created_iter
-        it = self._prepare_iter(self._batch_size,
-                                self._buffer_size,
-                                len(indices),
-                                segment_list(indices, n_seg=self.ncpu),
-                                seed, it_identity)
-        it.next() # just for initlaize the iterator
-        self._all_iter[it_identity] = it
+        process_func = self.recipes.process
+        group_func = self.recipes.group
+        self.recipes.prepare(
+            batch_size=self._batch_size,
+            seed=rng.randint(10e6) if rng is not None else None,
+            shuffle_level=self._shuffle_level,
+        )
+
+        # ====== create wrapped functions ====== #
+        def map_func(jobs):
+            batch = []
+            for name, start, end in jobs:
+                start = int(start)
+                end = int(end)
+                # data can be list of Data, or just 1 Data
+                if outtype is not None:
+                    x = [np.array(d[start:end], dtype=t) for d, t in zip(self._data, outtype)]
+                else:
+                    x = [np.array(d[start:end]) for d in self._data]
+                x = process_func(name, x)
+                print('Process:', x[0], [i.shape for i in x[1]])
+                batch.append(x)
+            return group_func(batch)
+
+        def reduce_func(results):
+            # perform batch level permutation
+            if rng is not None and self._shuffle_level > 1:
+                permutation = rng.permutation(results[0].shape[0])
+                # different shape NO shuffle
+                results = [r[permutation] for r in results]
+            # convert batch to tuple object if possible
+            if isinstance(results, (tuple, list)) and len(results) == 1:
+                results = results[0]
+            elif isinstance(results, list):
+                results = tuple(results)
+            return results
+        # ====== track and return ====== #
+        it = MPI(indices, map_func, reduce_func,
+                 ncpu=self.ncpu,
+                 buffer_size=self.buffer_size,
+                 maximum_queue_size=144)
+        self.__running_iter.append(it)
         return it
 
     def save_cache(self, path, name, dtype='float32',

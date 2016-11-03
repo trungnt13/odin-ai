@@ -17,7 +17,7 @@ from odin.utils.decorators import autoattr, cache
 from odin.utils import queue, struct, as_tuple
 
 __all__ = [
-    'data',
+    'as_data',
     'open_hdf5',
     'close_all_hdf5',
     'get_all_hdf_dataset',
@@ -39,7 +39,7 @@ BLOCK_SIZE = 300 * 1024 * 1024 # in bytes
 # ===========================================================================
 # Helper function
 # ===========================================================================
-def data(x):
+def as_data(x):
     """ make sure x is Data """
     if isinstance(x, Data):
         return x
@@ -128,12 +128,12 @@ class Data(object):
         self._start = 0.
         self._end = 1.
         self._seed = None
+        self._shuffle_level = 0
         self._status = 0 # flag show that array valued changed
         # main data object that have shape, dtype ...
         self._data = None
 
         self._transformer = lambda x: x
-        self._shuffle_level = 0
 
     # ====== transformer ====== #
     def transform(self, transformer):

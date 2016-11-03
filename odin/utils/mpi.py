@@ -10,6 +10,9 @@ from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_proc
 
 import numpy as np
 
+from odin import SIG_TERMINATE_ITERATOR
+
+
 # ===========================================================================
 # Helper methods
 # ===========================================================================
@@ -104,12 +107,14 @@ class SelfIterator(object):
     Note
     ----
     raise StopIteration at the end of the iteration
+    _is_finished is assigned to 2 if stop() is called
 
     """
 
     def __init__(self):
         super(SelfIterator, self).__init__()
         self._is_finished = False
+        self._is_initialized = False
 
     def __str__(self):
         return '<%s: length=%d: finished=%s: replicable=%s>' % \
@@ -117,6 +122,7 @@ class SelfIterator(object):
 
     # ==================== general API ==================== #
     def __iter__(self):
+        self._is_initialized = True
         self._init()
         return self
 
@@ -133,7 +139,14 @@ class SelfIterator(object):
 
     #python 2
     def next(self):
-        if self.finnished: raise StopIteration
+        # check if initilaized
+        if not self._is_initialized:
+            self._init()
+            self._is_initialized = True
+        # check if finished
+        if self.finnished:
+            raise StopIteration
+        # run the iteration
         try:
             return self._next()
         except StopIteration: # first time finish
@@ -143,7 +156,14 @@ class SelfIterator(object):
 
     #python 3
     def __next__(self):
-        if self.finnished: raise StopIteration
+        # check if initilaized
+        if not self._is_initialized:
+            self._init()
+            self._is_initialized = True
+        # check if finished
+        if self.finnished:
+            raise StopIteration
+        # run the iteration
         try:
             return self._next()
         except StopIteration: # first time finish
@@ -153,9 +173,10 @@ class SelfIterator(object):
 
     def stop(self):
         # call finalize if everything is running
-        if not self._is_finished:
+        need_to_finalize = not self._is_finished
+        self._is_finished = SIG_TERMINATE_ITERATOR
+        if need_to_finalize:
             self._finalize()
-        self._is_finished = True
 
     def copy(self):
         return self._copy()
@@ -196,6 +217,24 @@ class MPI(SelfIterator):
         pass
     reduce_func: callable
         pass
+    buffer_size: int
+        the amount of data each process keep before return to main
+        process.
+    maximum_queue_size: int (default: 66)
+        maximum number of batch will be cached in Queue before main process
+        get it and feed to the GPU (if the too many results in Queue, all
+        subprocess will be paused)
+
+
+    No LOCK
+    -------
+    2-2: 0.68 0.66 0.66
+    4-4: 0.59 0.59 0.62
+
+    LOCK
+    ----
+    2-2: 0.69 0.66 0.66
+    4-4: 0.6 0.6 0.58
     """
 
     def __init__(self, jobs, map_func, reduce_func,
@@ -215,6 +254,11 @@ class MPI(SelfIterator):
         self._ncpu = max(min(ncpu, 2 * cpu_count() - 1), 1)
         self._maximum_queue_size = maximum_queue_size
         self._buffer_size = buffer_size
+        # processes manager
+        self.__processes_started = False
+        self.__shared_counter = SharedCounter()
+        self.__results = Queue(maxsize=0)
+        self.__nb_working_processes = self._ncpu
 
     def _copy(self):
         return MPI(self._jobs, self._map_func, self._reduce_func,
@@ -239,28 +283,29 @@ class MPI(SelfIterator):
                         nb_returned += 1
                 # increase shared counter (this number must perfectly
                 # counted, only 1 mismatch and deadlock will happen)
+                print('Number returned:', nb_returned)
                 if nb_returned > 0:
                     counter.add(nb_returned)
                 # check if we need to wait for the consumer here
                 while counter.value > self._maximum_queue_size:
+                    print('sleep')
                     time.sleep(0.1)
             # ending signal
             return_queue.put(None)
-
         # ====== multiprocessing variables ====== #
-        self.__shared_counter = SharedCounter()
-        self.__results = Queue(maxsize=0)
-        self.__processes_started = False
-        self.__nb_working_processes = self._ncpu
         self.__processes = [Process(target=wrapped_map,
                                     args=(j, self.__results, self.__shared_counter, self._length))
                            for i, j in enumerate(jobs)]
 
     def _finalize(self):
-        if len(self) == 0:
-            [p.join() for p in self.__processes]
-        else:
+        self.__nb_working_processes = 0
+        if not self.__processes_started:
+            return
+        # terminate or join all processes
+        if self.finnished == SIG_TERMINATE_ITERATOR:
             [p.terminate() for p in self.__processes if p.is_alive()]
+        else:
+            [p.join() for p in self.__processes]
         self.__results.close()
 
     def _next(self):
@@ -280,7 +325,8 @@ class MPI(SelfIterator):
             r = self.__results.get()
         # still None, no more tasks to do
         if r is None: raise StopIteration
-        # otherwise, something to return
+        # otherwise, something to return and reduce the counter
+        self.__shared_counter.add(-1)
         return self._reduce_func(r)
 
     def __len__(self):

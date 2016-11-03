@@ -28,7 +28,7 @@ except:
 import numpy
 import six
 
-from .mpi import SelfIterator, segment_list
+from .mpi import SelfIterator, segment_list, SharedCounter
 from .profile import *
 from . import mpi
 

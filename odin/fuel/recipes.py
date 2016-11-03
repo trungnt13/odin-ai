@@ -29,12 +29,11 @@ class FeederRecipe(object):
     preprocess_indices(indices): return new_indices
     init(ntasks, batch_size, seed): right before create the iter
 
-    [multi-process]map(*x): x->(name, data)
+    [multi-process]process(*x): x->(name, data)
                             return (if iterator, it will be iterated to
                                     get a list of results)
-    [multi-process]reduce(x): x->(object from map(x))
+    [multi-process]group(x): x->(object from group(x))
                               return iterator
-    [single-process]finalize(x):
 
     Note
     ----
@@ -42,20 +41,17 @@ class FeederRecipe(object):
     will be replicated to all processes
     """
 
-    def preprocess_indices(self, indices):
-        return indices
-
-    def init(self, ntasks, batch_size, seed):
+    def prepare(self, **kwargs):
         pass
-
-    def map(self, *args):
-        return args
-
-    def reduce(self, x):
-        return x
 
     def shape_transform(self, shape):
         return shape
+
+    def process(self, *args):
+        return args
+
+    def group(self, x):
+        return x
 
 
 class FeederList(FeederRecipe):
@@ -75,35 +71,24 @@ class FeederList(FeederRecipe):
             s.append(i.__class__.__name__)
         return '<FeederList: ' + ', '.join(s) + '>'
 
-    def init(self, ntasks, batch_size, seed):
+    def prepare(self, **kwargs):
         for i in self.recipes:
-            i.init(ntasks, batch_size, seed)
+            i.prepare(**kwargs)
 
-    def map(self, *args):
+    def process(self, *args):
         for i, f in enumerate(self.recipes):
             # return iterator (iterate over all of them)
-            args = f.map(*as_tuple(args))
+            args = f.process(*as_tuple(args))
             # break the chain if one of the recipes get error,
             # and return None
             if args is None:
                 return None
         return args
 
-    def reduce(self, x):
+    def group(self, x):
         for f in self.recipes:
-            x = f.reduce(x)
+            x = f.group(x)
         return x
-
-    def finalize(self, x):
-        for f in self.recipes:
-            x = f.finalize(x)
-        return x
-
-    def preprocess_indices(self, indices):
-        # sequentially preprocess the indices
-        for f in self.recipes:
-            indices = f.preprocess_indices(indices)
-        return indices
 
     def shape_transform(self, shape):
         """ Return the new shape that transformed by this Recipe """
@@ -115,45 +100,6 @@ class FeederList(FeederRecipe):
 # ===========================================================================
 # Loader
 # ===========================================================================
-class DataLoader(FeederRecipe):
-    """
-    Parameters
-    ----------
-    data: ndarray, Data, or list of them
-        all Data need to be loaded for the iteration
-    """
-
-    def __init__(self, data):
-        super(DataLoader, self).__init__()
-        # ====== Load data ====== #
-        if not isinstance(data, (tuple, list)):
-            data = (data,)
-        if any(not isinstance(d, Data) for d in data):
-            raise ValueError('data must be instance of odin.fuel.Data')
-        length = len(data[0])
-        if any(len(d) != length for d in data):
-            raise ValueError('All Data must have the same length '
-                             '(i.e. shape[0]).')
-        self._data = data
-        # store first dimension
-        self._initial_shape = length
-
-    def preprocess_indices(self, indices):
-        self._initial_shape = sum(int(e) - int(s) for _, s, e in indices)
-        return indices
-
-    def map(self, name, info):
-        start, end = int(info[0]), int(info[1])
-        # data can be list of Data, or just 1 Data
-        x = [d[start:end] for d in self._data]
-        return name, x
-
-    def shape_transform(self, shape):
-        shape = [d.shape for d in self._data]
-        shape = [(self._initial_shape,) + s[1:] for s in shape]
-        return shape
-
-
 class TransLoader(FeederRecipe):
     """ Load transcription from dictionary using name specifed in
     indices
@@ -204,7 +150,7 @@ class TransLoader(FeederRecipe):
             raise ValueError('label_dict must be a dictionary, function or None.')
         self.label_dict = label_func
 
-    def map(self, name, X):
+    def process(self, name, X):
         trans = self._transcription[name]
         # ====== parse string using delimiter ====== #
         if isinstance(trans, str):
@@ -238,7 +184,7 @@ class Filter(FeederRecipe):
                             'but given type is: %s' % str(type(filter_func)))
         self._filter_func = functionable(filter_func)
 
-    def map(self, name, *args):
+    def process(self, name, *args):
         is_ok = self._filter_func(name, *args)
         if is_ok:
             return (name,) + args
@@ -249,25 +195,30 @@ class Filter(FeederRecipe):
 # Features preprocessing
 # ===========================================================================
 class Normalization(FeederRecipe):
-    """ Normalization """
+    """ Normalization
+    Note
+    ----
+    All computation are performed in float32, hence, the return dtype
+    is always float32
+    """
 
     def __init__(self, mean=None, std=None, local_normalize=False):
         super(Normalization, self).__init__()
-        if mean is not None:
-            if isinstance(mean, (tuple, list)):
-                mean = [mean[:].astype('float32') for i in mean]
-            else:
-                mean = mean[:].astype('float32')
-        if std is not None:
-            if isinstance(std, (tuple, list)):
-                std = [std[:].astype('float32') for i in std]
-            else:
-                std = std[:].astype('float32')
+        # mean
+        if isinstance(mean, (tuple, list)):
+            mean = [i[:].astype('float32') for i in mean]
+        elif mean is not None:
+            mean = mean[:].astype('float32')
+        # std
+        if isinstance(std, (tuple, list)):
+            std = [i[:].astype('float32') for i in std]
+        elif std is not None:
+            std = std[:].astype('float32')
         self.mean = mean
         self.std = std
         self.local_normalize = local_normalize
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         X = [x.astype('float32') for x in X]
         if self.local_normalize:
             X = [(x - x.mean(0)) / x.std(0) for x in X]
@@ -285,7 +236,7 @@ class FeatureScaling(FeederRecipe):
     def __init__(self):
         super(FeatureScaling, self).__init__()
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         # ====== scaling features to [0, 1] ====== #
         _ = []
         for x in X:
@@ -343,7 +294,7 @@ class Slice(FeederRecipe):
             target_data = (target_data,)
         self._target_data = [int(i) for i in target_data]
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         results = []
         for _, x in enumerate(X):
             # apply the indices if _ in target_data
@@ -401,7 +352,7 @@ class Merge(FeederRecipe):
         super(Merge, self).__init__()
         self.merge_func = merge_func
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         if len(X) > 1:
             X = self.merge_func(X)
         return (name, X) + args
@@ -429,7 +380,7 @@ class LabelOneHot(FeederRecipe):
         super(LabelOneHot, self).__init__()
         self._n_classes = int(n_classes)
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         _ = []
         for transcription in args:
             if isinstance(transcription, str):
@@ -469,7 +420,7 @@ class Name2Trans(FeederRecipe):
             raise ValueError('"converter_func" must be callable.')
         self.converter_func = converter_func
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         # X: is a list of ndarray
         transcription = np.array(self.converter_func(name, X))
         return name, X, transcription
@@ -514,7 +465,7 @@ class Stacking(FeederRecipe):
              for i in idx if (i + self.n) <= len(trans)])
         return trans
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         if X[0].shape[0] < self.n: # not enough data points for stacking
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
                           'into %d features.' % (name, X[0].shape[0], self.n))
@@ -596,7 +547,7 @@ class Sequencing(FeederRecipe):
         self.endvalue = endvalue
         self.transcription_transform = transcription_transform
 
-    def map(self, name, X, *args):
+    def process(self, name, X, *args):
         # not enough data points for sequencing
         if X[0].shape[0] < self.frame_length:
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
@@ -670,25 +621,28 @@ class CreateBatch(FeederRecipe):
                              'parameters (X) or (X, y).')
         self.batch_filter = batch_filter
 
-    def init(self, ntasks, batch_size, seed):
-        if seed is None:
-            self.rng = None
-        else:
+    def prepare(self, **kwargs):
+        shuffle_level = kwargs.get('shuffle_level', 0)
+        seed = kwargs.get('seed', None)
+        self.rng = None
+        if seed is not None and shuffle_level >= 1:
             self.rng = np.random.RandomState(seed=seed)
-        self.batch_size = batch_size
+        self.batch_size = kwargs.get('batch_size', 64)
 
-    def reduce(self, batch):
+    def group(self, batch):
         """ batch: contains [(name, np.ndarray-X, np.ndarray-transcription), ...] """
         length = len(batch[0]) # size of 1 batch
         nb_data = len(batch[0][1])
         X = [[] for i in range(nb_data)]
         Y = [[] for i in range(length - 2)]
         for b in batch:
+            name = b[0]; data = b[1]; others = b[2:]
+            print('Group:', name, [d.shape for d in data])
             # training data can be list of Data or just 1 Data
-            for i, j in zip(X, b[1]):
+            for i, j in zip(X, data):
                 i.append(j)
             # labels can be None (no labels given)
-            for i, j in zip(Y, b[2:]):
+            for i, j in zip(Y, others):
                 i.append(j)
         # ====== stack everything into big array ====== #
         X = [np.vstack(x) for x in X]
@@ -728,7 +682,7 @@ class CreateFile(FeederRecipe):
         super(CreateFile, self).__init__()
         self.return_name = return_name
 
-    def reduce(self, batch):
+    def group(self, batch):
         for b in batch:
             name, X = b[0], b[1]
             Y = b[2:]
