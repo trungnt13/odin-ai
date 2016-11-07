@@ -122,8 +122,10 @@ class TransLoader(FeederRecipe):
 
     """
 
-    def __init__(self, transcription, dtype, delimiter=' ', label_dict=None):
+    def __init__(self, transcription, dtype, delimiter=' ', label_dict=None,
+                 ignore_not_found=True):
         super(TransLoader, self).__init__()
+        self.ignore_not_found = ignore_not_found
         # ====== transcription ====== #
         share_dict = None
         if isinstance(transcription, (list, tuple)):
@@ -151,6 +153,8 @@ class TransLoader(FeederRecipe):
         self.label_dict = label_func
 
     def process(self, name, X):
+        if name not in self._transcription and self.ignore_not_found:
+            return None
         trans = self._transcription[name]
         # ====== parse string using delimiter ====== #
         if isinstance(trans, str):

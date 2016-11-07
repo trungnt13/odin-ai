@@ -257,7 +257,8 @@ class Feeder(MutableData):
                 else:
                     x = [np.array(d[start:end]) for d in self._data]
                 x = process_func(name, x)
-                batch.append(x)
+                if x is not None:
+                    batch.append(x)
             return group_func(batch)
 
         def reduce_func(results):
