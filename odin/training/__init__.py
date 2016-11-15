@@ -11,7 +11,7 @@ from odin import (SIG_TERMINATE_ITERATOR, SIG_TRAIN_ROLLBACK,
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
-from odin.utils import struct, signal_handling
+from odin.utils import struct
 from odin.utils.decorators import terminatable_iterator
 
 from .callbacks import *
@@ -493,7 +493,4 @@ class MainLoop(object):
             t.stop_all()
 
     def run(self):
-        # with signal_handling(sigint=self._signal_handlers,
-        #                      sigtstp=self._signal_handlers,
-        #                      sigquit=self._signal_handlers):
         self.__run()

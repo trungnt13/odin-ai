@@ -26,6 +26,11 @@ from odin.utils.decorators import autoinit
 from .dataset import Dataset
 from .recipes import FeederRecipe
 
+try:
+    import sidekit
+except:
+    warnings.warn('You need "sidekit" for audio signal processing.')
+
 __all__ = [
     'SpeechFeature',
     'speech_features_extraction',
@@ -34,11 +39,38 @@ __all__ = [
 ]
 
 
+@add_metaclass(ABCMeta)
+class FeatureProcessor(object):
+
+    """ FeatureProcessor """
+
+    def __init__(self, output_path, datatype='memmap',
+                 save_stats=True, no_stats=[],
+                 substitute_nan=None, ncpu=1):
+        super(FeatureProcessor, self).__init__()
+        if datatype not in ('memmap', 'hdf5'):
+            raise ValueError('datatype must be "memmap", or "hdf5"')
+        self.datatype = datatype
+        if os.path.exists(output_path):
+            warnings.warn('Remove exist dataset at path:%s' % output_path)
+            shutil.rmtree(output_path)
+        self.dataset = Dataset(output_path)
+        self.no_stats = as_tuple(no_stats, t=str)
+        self.save_stats = bool(save_stats)
+        self.substitute_nan = substitute_nan
+
+    # ==================== Abstract properties ==================== #
+    @abstractproperty
+    def features_name(self):
+        """ Return all name of given features"""
+        pass
+
+
 # ===========================================================================
 # Helper saver
 # ===========================================================================
 @add_metaclass(ABCMeta)
-class FeatureProcessor(object):
+class FeaturePRun(object):
     """ FeatureSaver
     This function take output from Feeder with SpeechFeatures recipe
     and update output dataset
@@ -191,7 +223,6 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
                mspec(X, sum, sum2),
                mfcc(X, sum, sum2),
                vad_idx """
-    import sidekit
     if s.ndim >= 2:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
     # speech features, shape: [Time, Dimension]

@@ -144,8 +144,9 @@ def signal_handling(sigint=None, sigtstp=None, sigquit=None):
 # UniqueHasher
 # ===========================================================================
 class UniqueHasher(object):
-    """ This hash create strict unique by using
+    """ This hash create strictly unique hash value by using
     its memory to remember which key has been assigned
+
     Note
     ----
     This function use deterministic hash, which give the same
@@ -894,6 +895,9 @@ def get_file(fname, origin, untar=False):
     return fpath
 
 
+# ===========================================================================
+# Python utilities
+# ===========================================================================
 def get_all_files(path, filter_func=None):
     ''' Recurrsively get all files in the given path '''
     file_list = []
@@ -911,6 +915,31 @@ def get_all_files(path, filter_func=None):
                     continue
                 file_list.append(p)
     return file_list
+
+
+def package_installed(name, version=None):
+    import pip
+    for i in pip.get_installed_distributions():
+        if name.lower() == i.key.lower() and \
+        (version is None or version == i.version):
+            return True
+    return False
+
+
+def package_list(include_version=False):
+    """
+    Return
+    ------
+    ['odin', 'lasagne', 'keras', ...] if include_version is False
+    else ['odin==8.12', 'lasagne==25.18', ...]
+    """
+
+    all_packages = []
+    import pip
+    for i in pip.get_installed_distributions():
+        all_packages.append(i.key +
+            (('==' + i.version) if include_version is True else ''))
+    return all_packages
 
 
 def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
