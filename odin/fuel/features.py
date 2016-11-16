@@ -23,6 +23,7 @@ from odin.preprocessing import speech, video, image
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
                         get_all_files, get_tempdir)
 from odin.utils.decorators import autoinit
+from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
 
@@ -32,176 +33,16 @@ except:
     warnings.warn('You need "sidekit" for audio signal processing.')
 
 __all__ = [
-    'SpeechFeature',
     'speech_features_extraction',
-    'VideoFeature',
-    'FeatureProcessor'
+    'FeatureProcessor',
+    'SpeechProcessor'
 ]
 
 
-@add_metaclass(ABCMeta)
-class FeatureProcessor(object):
-
-    """ FeatureProcessor """
-
-    def __init__(self, output_path, datatype='memmap',
-                 save_stats=True, no_stats=[],
-                 substitute_nan=None, ncpu=1):
-        super(FeatureProcessor, self).__init__()
-        if datatype not in ('memmap', 'hdf5'):
-            raise ValueError('datatype must be "memmap", or "hdf5"')
-        self.datatype = datatype
-        if os.path.exists(output_path):
-            warnings.warn('Remove exist dataset at path:%s' % output_path)
-            shutil.rmtree(output_path)
-        self.dataset = Dataset(output_path)
-        self.no_stats = as_tuple(no_stats, t=str)
-        self.save_stats = bool(save_stats)
-        self.substitute_nan = substitute_nan
-
-    # ==================== Abstract properties ==================== #
-    @abstractproperty
-    def features_name(self):
-        """ Return all name of given features"""
-        pass
-
-
 # ===========================================================================
-# Helper saver
+# Helper
 # ===========================================================================
-@add_metaclass(ABCMeta)
-class FeaturePRun(object):
-    """ FeatureSaver
-    This function take output from Feeder with SpeechFeatures recipe
-    and update output dataset
-
-    Parameters
-    ----------
-    outpath: str
-        path to output dataset
-    name: str
-        list of name for each returned data
-    datatype : memmap, hdf5
-        datatype to save given task
-    save_stats: bool
-        if save_stats, the global mean and std will be calculated for
-        all sample
-    no_stats: list of string
-        list of name that won't be used for calculating stats
-    substitute_nan: None or float
-        replace NaN value in mean and std by given value.
-    """
-
-    def __init__(self, outpath, datatype='memmap', save_stats=True, no_stats=[],
-                 substitute_nan=None, ncpu=1):
-        super(FeatureProcessor, self).__init__()
-        if datatype not in ('memmap', 'hdf5'):
-            raise ValueError('datatype must be "memmap", or "hdf5"')
-        self.datatype = datatype
-        if os.path.exists(outpath):
-            warnings.warn('Remove exist dataset at path:%s' % outpath)
-            shutil.rmtree(outpath)
-        self.dataset = Dataset(outpath)
-        self.no_stats = as_tuple(no_stats, t=str)
-        self.save_stats = bool(save_stats)
-        self.substitute_nan = substitute_nan
-
-    # ==================== Abstract methods ==================== #
-    @abstractproperty
-    def features_name(self):
-        """ Return all name of given features"""
-        pass
-
-    # ==================== API methods ==================== #
-    def run(self, feeder):
-        dataset = self.dataset
-        datatype = self.datatype
-        # ====== indices ====== #
-        indices = []
-        start = 0
-        # ====== statistic ====== #
-        sum1 = defaultdict(int)
-        sum2 = defaultdict(int)
-        # ====== cache ====== #
-        # all data are cached and periodically flushed
-        cache = defaultdict(list)
-
-        # ====== helper ====== #
-        def flush_feature(name, cache):
-            if len(cache) > 0:
-                cache = np.concatenate(cache, 0)
-                if name in dataset:
-                    dataset[name].append(cache)
-                else:
-                    dataset[(name, datatype)] = cache
-        # ====== processing ====== #
-        prog = Progbar(target=feeder.shape[0])
-        for count, (name, data) in enumerate(feeder):
-            # check data
-            if not isinstance(data, (tuple, list)):
-                data = (data,)
-            length = []
-            # processing
-            for n, d in zip(self.name, data):
-                cache[n].append(d)
-                if self.save_stats and n not in self.no_stats:
-                    sum1[n] += np.sum(d, axis=0, dtype='float64')
-                    sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
-                length.append(len(d))
-                del d
-            # check if lengths are matched
-            if len(set(length)) != 1:
-                raise Exception('length mismatch between all data: %s' % str(length))
-            # ====== flush cache ====== #
-            if (count + 1) % 20 == 0: # 12 + 8
-                for i, j in cache.iteritems():
-                    flush_feature(i, j)
-                del cache
-                cache = defaultdict(list)
-            # index
-            indices.append([name, start, start + length[0]])
-            start += length[0]
-            # ====== update progress ====== #
-            prog.title = name
-            prog.add(1)
-        # ====== end, flush the mean and std ====== #
-        for i, j in cache.iteritems():
-            flush_feature(i, j)
-        del cache
-        dataset.flush()
-        # ====== saving indices ====== #
-        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
-            for name, start, end in indices:
-                f.write('%s %d %d\n' % (name, start, end))
-        start += 1
-
-        # ====== save mean and std ====== #
-        def save_mean_std(sum1, sum2, name, dataset):
-            mean = sum1 / start
-            std = np.sqrt(sum2 / start - mean**2)
-            if self.substitute_nan is not None:
-                mean = np.where(np.isnan(mean), self.substitute_nan, mean)
-                std = np.where(np.isnan(std), self.substitute_nan, std)
-            else:
-                assert not np.any(np.isnan(mean)), 'Mean contains NaN'
-                assert not np.any(np.isnan(std)), 'Std contains NaN'
-            dataset[name + '_mean'] = mean
-            dataset[name + '_std'] = std
-        # save all stats
-        if self.save_stats:
-            for n in self.name:
-                if n in self.no_stats:
-                    continue
-                s1, s2 = sum1[n], sum2[n]
-                save_mean_std(s1, s2, n, dataset)
-        # ====== final flush() ====== #
-        dataset.flush()
-        dataset.close()
-
-
-# ===========================================================================
-# Speech features
-# ===========================================================================
+# ==================== For speech ==================== #
 def _append_energy_and_deltas(s, energy, delta_order):
     # s.shape = [Time, Dimension]
     if s is None:
@@ -217,8 +58,8 @@ def _append_energy_and_deltas(s, energy, delta_order):
 
 
 def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
-                               delta_order, energy, vad, dtype, pitch_threshold,
-                               get_spec, get_mspec, get_mfcc, get_pitch):
+                               delta_order, energy, pitch_threshold,
+                               get_spec, get_mspec, get_mfcc, get_pitch, get_vad):
     """ return spec(X, sum, sum2),
                mspec(X, sum, sum2),
                mfcc(X, sum, sum2),
@@ -249,10 +90,10 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
     mfcc = mfcc if get_mfcc else None
     # VAD
     vad_idx = None
-    if vad:
+    if get_vad:
         distribNb, nbTrainIt = 8, 12
-        if isinstance(vad, (tuple, list)):
-            distribNb, nbTrainIt = vad
+        if isinstance(get_vad, (tuple, list)):
+            distribNb, nbTrainIt = get_vad
         # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
         # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
         vad_idx = sidekit.frontend.vad.vad_energy(logEnergy,
@@ -270,20 +111,160 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
 
     # for future normalization
     ret = []
-    if spec is not None: ret.append(spec.astype(dtype))
-    if mspec is not None: ret.append(mspec.astype(dtype))
-    if mfcc is not None: ret.append(mfcc.astype(dtype))
-    if pitch is not None: ret.append(pitch.astype(dtype))
+    if spec is not None: ret.append(spec)
+    if mspec is not None: ret.append(mspec)
+    if mfcc is not None: ret.append(mfcc)
+    if pitch is not None: ret.append(pitch)
     if vad_idx is not None: ret.append(vad_idx)
     return tuple(ret)
 
 
-class SpeechFeature(FeederRecipe):
+# ==================== general ==================== #
+@add_metaclass(ABCMeta)
+class FeatureProcessor(object):
+
+    """ FeatureProcessor """
+
+    def __init__(self, output_path, datatype='memmap',
+                 save_stats=True, substitute_nan=None,
+                 ncpu=1):
+        super(FeatureProcessor, self).__init__()
+        if datatype not in ('memmap', 'hdf5'):
+            raise ValueError('datatype must be "memmap", or "hdf5"')
+        self.datatype = datatype
+        if os.path.exists(output_path):
+            warnings.warn('Remove exist dataset at path: "%s"' % output_path)
+            shutil.rmtree(output_path)
+        self.dataset = Dataset(output_path)
+        self.save_stats = bool(save_stats)
+        self.substitute_nan = substitute_nan
+        self.ncpu = ncpu
+
+    # ==================== Abstract properties ==================== #
+    @abstractproperty
+    def features_properties(self):
+        """ Return list of features' properties
+        (name, dtype, statistic-able)
+        """
+        pass
+
+    @abstractmethod
+    def map(self, job):
+        pass
+
+    def run(self):
+        if not hasattr(self, 'jobs'):
+            raise Exception('the Processor must has "jobs" attribute, which is '
+                            'the list of all jobs.')
+        prog = Progbar(target=len(self.jobs))
+        dataset = self.dataset
+        datatype = self.datatype
+        if self.ncpu is None: # auto select number of CPU
+            ncpu = min(len(self.jobs), int(1.2 * cpu_count()))
+        else:
+            ncpu = self.ncpu
+        # ====== indices ====== #
+        indices = []
+        # ====== statistic ====== #
+        sum1 = defaultdict(int)
+        sum2 = defaultdict(int)
+        # all data are cached for periodically flushed
+        cache = defaultdict(list)
+        cache_limit = max(2, int(0.12 * len(self.jobs)))
+        ref_vars = {'start': 0, 'processed_count': 0}
+
+        # ====== helper ====== #
+        def flush_feature(name, cache_data):
+            if len(cache_data) > 0:
+                cache_data = np.concatenate(cache_data, 0)
+                if name in dataset:
+                    dataset[name].append(cache_data)
+                else:
+                    dataset[(name, datatype)] = cache_data
+
+        def wrapped_reduce(result):
+            name, data = result
+            ref_vars['processed_count'] += 1
+            # check data
+            if not isinstance(data, (tuple, list)):
+                data = (data,)
+            length = [] # store length of all data for validation
+            # processing
+            for prop, d in zip(self.features_properties, data):
+                length.append(len(d))
+                n, t, s = prop # name, dtype, stats
+                cache[n].append(d.astype(t))
+                if s: # save stats
+                    sum1[n] += np.sum(d, axis=0, dtype='float64')
+                    sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
+                del d
+            # check if lengths are matched
+            if len(set(length)) != 1:
+                raise Exception('length mismatch between all data: %s' % str(length))
+            # ====== flush cache ====== #
+            if ref_vars['processed_count'] % cache_limit == 0: # 12 + 8
+                for i, j in cache.iteritems():
+                    flush_feature(i, j)
+                cache.clear()
+            # index
+            indices.append([name, ref_vars['start'], ref_vars['start'] + length[0]])
+            ref_vars['start'] += length[0]
+            # ====== update progress ====== #
+            return name
+
+        # ====== processing ====== #
+        mpi = MPI(self.jobs, self.map, wrapped_reduce,
+                  ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
+        for name in mpi:
+            prog.title = '%-20s' % name
+            prog.add(1)
+        # ====== end, flush the mean and std ====== #
+        for i, j in cache.iteritems():
+            flush_feature(i, j)
+        cache = None
+        dataset.flush()
+        # ====== saving indices ====== #
+        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
+            for name, start, end in indices:
+                f.write('%s %d %d\n' % (name, start, end))
+
+        # ====== save mean and std ====== #
+        def save_mean_std(sum1, sum2, name, dataset):
+            N = dataset[name].shape[0]
+            mean = sum1 / N
+            std = np.sqrt(sum2 / N - mean**2)
+            if self.substitute_nan is not None:
+                mean = np.where(np.isnan(mean), self.substitute_nan, mean)
+                std = np.where(np.isnan(std), self.substitute_nan, std)
+            else:
+                assert not np.any(np.isnan(mean)), 'Mean contains NaN'
+                assert not np.any(np.isnan(std)), 'Std contains NaN'
+            dataset[name + '_sum1'] = sum1
+            dataset[name + '_sum2'] = sum2
+            dataset[name + '_mean'] = mean
+            dataset[name + '_std'] = std
+        # save all stats
+        if self.save_stats:
+            print('Saving statistics of each data ...')
+            for n, d, s in self.features_properties:
+                if s: # save stats
+                    s1, s2 = sum1[n], sum2[n]
+                    save_mean_std(s1, s2, n, dataset)
+        # ====== final flush() ====== #
+        dataset.flush()
+        dataset.close()
+
+
+# ===========================================================================
+# Speech features
+# ===========================================================================
+class SpeechProcessor(FeatureProcessor):
 
     ''' Extract speech features from all audio files in given directory or
     file list, then saves them to a `keras.ext.dataset.Dataset`
 
-    Require `indices` format for this task:
+    Parameters
+    ----------
     segments : path, list
         if path, directory of all audio file, or segment csv file in
         following format (channel can be omitted), start and end is in second
@@ -291,9 +272,6 @@ class SpeechFeature(FeederRecipe):
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
         sw02001-B_001980-002131 | /path/to/sw02001.sph | 0.0 | -1 | 1
-
-    Parameters
-    ----------
     win : float
         frame or window length in second
     shift : float
@@ -343,26 +321,73 @@ class SpeechFeature(FeederRecipe):
     >>> mr.set_cache(3)
     >>> mr.add_recipe(recipe)
     >>> mr.run()
-
     '''
 
-    def __init__(self, audio_ext=None, fs=8000,
-                 win=0.025, shift=0.01, n_filters=40, n_ceps=13, delta_order=2,
-                 energy=True, vad=True, dtype='float32',
+    def __init__(self, segments, output_path,
+                 audio_ext=None, fs=8000,
+                 win=0.025, shift=0.01, n_filters=40, n_ceps=13,
+                 delta_order=2, energy=True, pitch_threshold=0.5,
                  get_spec=False, get_mspec=True, get_mfcc=False,
-                 get_pitch=False, pitch_threshold=0.5, robust=True):
-        super(SpeechFeature, self).__init__()
+                 get_pitch=False, get_vad=True,
+                 save_stats=True, substitute_nan=None,
+                 dtype='float32', datatype='memmap', ncpu=1):
+        super(SpeechProcessor, self).__init__(output_path=output_path,
+            datatype=datatype, save_stats=save_stats,
+            substitute_nan=substitute_nan, ncpu=ncpu)
+        audio_ext = as_tuple('' if audio_ext is None else audio_ext, t=str)
+        # ====== load jobs ====== #
+        # NOT loaded segments
+        if isinstance(segments, str):
+            if not os.path.exists(segments):
+                raise ValueError('Path to segments must exists, however, '
+                                 'exist(segments)={}'.format(os.path.exists(segments)))
+            # given a directory
+            if os.path.isdir(segments):
+                file_list = get_all_files(segments)
+                file_list = [(os.path.basename(i), i, 0.0, -1.0)
+                             for i in file_list] # segment, path, start, end
+            # given csv file
+            else:
+                file_list = np.genfromtxt(segments, dtype=str, delimiter=' ')
+        # LOADED segments
+        elif isinstance(segments, (tuple, list)):
+            # just a list of path to file
+            if isinstance(segments[0], str):
+                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
+                             for i in segments]
+            # list of all information
+            elif isinstance(segments[0], (tuple, list)):
+                if len(segments[0]) != 4 and len(segments[0]) != 5:
+                    raise Exception('segments must contain information in following for:'
+                                    '[name] [path] [start] [end]')
+                file_list = segments
+        # filter using support audio extension
+        file_list = [f for f in file_list if any(ext == f[1][-len(ext):] for ext in audio_ext)]
+        # if no channel is provided, append the channel
+        file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
+        # convert into: audio_path -> segment(name, start, end, channel)
+        self.jobs = defaultdict(list)
+        for segment, file, start, end, channel in file_list:
+            self.jobs[file].append((segment, float(start), float(end), int(channel)))
+        self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
         # ====== which features to get ====== #
         if not get_spec and not get_mspec \
             and not get_mfcc and not get_pitch:
             raise Exception('You must specify which features you want: '
                             'spectrogram, filter-banks, MFCC, or pitch.')
+        features_properties = []
+        if get_spec: features_properties.append(('spec', dtype, True))
+        if get_mspec: features_properties.append(('mspec', dtype, True))
+        if get_mfcc: features_properties.append(('mfcc', dtype, True))
+        if get_pitch: features_properties.append(('pitch', dtype, True))
+        if get_vad: features_properties.append(('vad', 'uint8', False))
+        self.__features_properties = features_properties
+
         self.get_spec = get_spec
         self.get_mspec = get_mspec
         self.get_mfcc = get_mfcc
         self.get_pitch = get_pitch
-        # ====== other ====== #
-        self.audio_ext = as_tuple('' if audio_ext is None else audio_ext, 1, str)
+        self.get_vad = get_vad
         # ====== feature infor ====== #
         self.fs = fs
         self.win = win
@@ -371,54 +396,23 @@ class SpeechFeature(FeederRecipe):
         self.n_ceps = n_ceps
         self.delta_order = int(delta_order)
         self.energy = energy
-        self.vad = vad
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
-        # ====== check output ====== #
-        self.dtype = dtype
-        self.robust = robust
 
-    def shape_transform(self, shape):
-        """ Return the new shape that transformed by this Recipe """
-        return self.shape
+    # ==================== Abstract properties ==================== #
+    @property
+    def features_properties(self):
+        """ Returnn all name of given features"""
+        return self.__features_properties
 
-    def preprocess_indices(self, indices):
-        # store original indices shape because nwe indices
-        # only contain the number of files not all the segments
-        self.shape = (len(indices),)
-        # ====== load jobs ====== #
-        if isinstance(indices, np.ndarray):
-            if indices.ndim == 1: # just a list of path to file
-                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
-                             for i in indices]
-            else:
-                if indices.shape[1] != 4 and indices.shape[1] != 5:
-                    raise Exception('indices must contain information in following for:'
-                                    '[name] [path] [start] [end] [channel(optional)]')
-                file_list = indices
-        # filter using support audio extension
-        file_list = np.array([f for f in file_list
-                              if any(ext in f[1] for ext in self.audio_ext)])
-        # if no channel is provided, append the channel
-        if file_list.shape[1] == 4:
-            file_list = np.hstack([file_list,
-                                   np.zeros(shape=(file_list.shape[0], 1), dtype='int32')])
-        # convert into: audio_path -> segment(name, start, end, channel)
-        jobs = defaultdict(list)
-        for segment, file, start, end, channel in file_list:
-            jobs[file].append((segment, float(start), float(end), int(channel)))
-        return np.array(jobs.items(), dtype=object)
-
-    def map(self, audio_path, segments):
+    def map(self, job):
         '''
         Return
         ------
-        [(name, spec(x, sum1, sum2), # if available, otherwise None
-                mspec(x, sum1, sum2), # if available, otherwise None
-                mfcc(x, sum1, sum2), # if available, otherwise None
-                pitch(x, sum1, sum2), # if available, otherwise None
-                vad), ...]
+        [(name, spec, mspec, mfcc, pitch, vad), ...]
         '''
+
+        audio_path, segments = job[0] if len(job) == 1 else job
         fs = self.fs
         try:
             # load audio data
@@ -440,31 +434,21 @@ class SpeechFeature(FeederRecipe):
                 features = speech_features_extraction(data.ravel(), fs=fs,
                     n_filters=self.n_filters, n_ceps=self.n_ceps,
                     win=self.win, shift=self.shift, delta_order=self.delta_order,
-                    energy=self.energy, vad=self.vad, dtype=self.dtype,
-                    pitch_threshold=self.pitch_threshold,
+                    energy=self.energy, pitch_threshold=self.pitch_threshold,
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
-                    get_mfcc=self.get_mfcc, get_pitch=self.get_pitch)
+                    get_mfcc=self.get_mfcc, get_pitch=self.get_pitch,
+                    get_vad=self.get_vad)
                 if features is not None:
                     ret.append((name, features))
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)
             # return the results
-            return ret
+            return (i for i in ret)
         except Exception, e:
             msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
-            warnings.warn(msg)
-            if self.robust:
-                return None
-            else:
-                import traceback; traceback.print_exc()
-                raise e
-
-    def reduce(self, files):
-        for segments in files:
-            for seg in segments:
-                # contains (name, (spec, mspec, mfcc, vad))
-                yield seg
+            import traceback; traceback.print_exc()
+            raise e
 
 
 # ===========================================================================

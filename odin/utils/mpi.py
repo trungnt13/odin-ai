@@ -214,9 +214,9 @@ class MPI(SelfIterator):
     jobs: str
         pass
     map_func: callable
-        pass
+        take input as a single job (i.e. map_func(job))
     reduce_func: callable
-        pass
+        take input as a non-None returned object from map_func
     buffer_size: int
         the amount of data each process keep before return to main
         process.
@@ -226,15 +226,63 @@ class MPI(SelfIterator):
         subprocess will be paused)
 
 
-    No LOCK
-    -------
+    Notes
+    -----
+    If map_func return None, it won't be queued to the results for reduct_func
+    If map_func return a Generator, MPI will traverses through it and queues all
+    returned values.
+
+    Benchmark
+    ---------
+    NO LOCK
     2-2: 0.68 0.66 0.66
     4-4: 0.59 0.59 0.62
-
     LOCK
-    ----
     2-2: 0.69 0.66 0.66
     4-4: 0.6 0.6 0.58
+
+    Example
+    -------
+    >>> jobs = list(range(0, 12 * 2, 1))
+    >>> def map_func(sub_jobs):
+    >>>     ret = [i + 1 for i in sub_jobs]
+    >>>     print('Map:', ret)
+    >>>     return ret
+    >>> def reduce_func(result):
+    >>>     return sum(result)
+    >>> x = MPI(jobs, map_func, reduce_func,
+    >>>         ncpu=3, buffer_size=2, maximum_queue_size=12)
+    >>> for i in x.run():
+    >>>     print(i)
+    >>> print('--------')
+    >>> for i in x.run():
+    >>>     print(i)
+    >>> # Map: [1, 2]
+    >>> # Map: [9, 10]
+    >>> # Map: [3, 4]
+    >>> # Map: [5, 6]
+    >>> # Map: [7, 8]
+    >>> # 3
+    >>> # Map: [17, 18]
+    >>> # 7
+    >>> # Map: [11, 12]
+    >>> # 11
+    >>> # 19
+    >>> # 15
+    >>> # Map: [13, 14]
+    >>> # 23
+    >>> # 27
+    >>> # Map: [15, 16]
+    >>> # Map: [19, 20]
+    >>> # 35
+    >>> # 31
+    >>> # Map: [21, 22]
+    >>> # 39
+    >>> # Map: [23, 24]
+    >>> # 43
+    >>> # 47
+    >>> # ----
+    >>> # Exception (cannot re-run the same MPI)
     """
 
     def __init__(self, jobs, map_func, reduce_func,
@@ -338,3 +386,9 @@ class MPI(SelfIterator):
 
     def __len__(self):
         return max(self._length.value, 0)
+
+    def run(self):
+        if self.finnished:
+            raise Exception('The MPI already finished, call copy() to '
+                            'replicate this MPI, and re-run it if you want.')
+        return iter(self)

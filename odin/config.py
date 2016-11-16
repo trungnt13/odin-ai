@@ -13,8 +13,9 @@
 from __future__ import division, absolute_import
 
 import os
-import sys
 import re
+import sys
+import pip
 import subprocess
 import warnings
 from multiprocessing import cpu_count
@@ -27,6 +28,13 @@ from odin.utils import TemporaryDirectory
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _check_package_available(name):
+    for i in pip.get_installed_distributions():
+        if name.lower() == i.key.lower():
+            return True
+    return False
+
+
 def _query_gpu_info():
     """ This function query GPU information:
     ngpu
@@ -123,6 +131,7 @@ def auto_config(config=None, check=False):
             # ====== Devices ====== #
             elif 'multigpu' in i:
                 multigpu = True
+                device = 'gpu'
             elif 'cpu' in i:
                 device = 'cpu'
             elif 'gpu' in i:
@@ -177,6 +186,9 @@ def auto_config(config=None, check=False):
         dev = {'n': cpu_count()}
     # ==================== create theano flags ==================== #
     if backend == 'theano':
+        if multigpu and not _check_package_available('pygpu'):
+            raise Exception('"multigpu" option in theano requires installation of '
+                            'libgpuarray and pygpu.')
         if device == 'cpu':
             contexts = "device=%s" % device
         else:
