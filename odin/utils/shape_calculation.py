@@ -118,8 +118,9 @@ def __get_conv_shape_1axis(image_shape, kernel_shape, border_mode,
     out_shp = out_shp + 1
 
     # ====== get exact same border_mode for theano ====== #
-    if (border_mode == 'half' or border_mode == 'same') and kernel_shape % 2 == 0:
-        out_shp -= 1
+    if (border_mode == 'half' or border_mode == 'same') and \
+        kernel_shape % 2 == 0:
+        out_shp = (image_shape + subsample - 1) // subsample
     return out_shp
 
 
