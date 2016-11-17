@@ -25,28 +25,20 @@ DEALINGS IN THE SOFTWARE.
 from __future__ import print_function, division, absolute_import
 
 import os
-import math
-import time
-import types
-import inspect
 from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
 from six.moves import zip, zip_longest, range
-from multiprocessing import cpu_count, Process, Queue
 
 import numpy as np
 
-from odin import SIG_TERMINATE_ITERATOR
-from odin.utils import (segment_list, segment_axis, one_hot,
+from odin.utils import (segment_list, one_hot,
                         Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
-from odin.utils.decorators import cache
 from odin.utils.mpi import MPI
 
 from .data import Data, MutableData, as_data
 from .dataset import Dataset
-from .utils import MmapDict
 from .recipes import FeederList, CreateBatch
 
 # ===========================================================================

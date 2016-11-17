@@ -69,6 +69,8 @@ def _query_gpu_info():
             dev = {'n': ngpu}
             for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
                 dev['dev%d' % i] = [name, com, mem]
+        else:
+            print('[WARNING] Cannot use "deviceQuery" to get GPU information for configuration.')
     return dev
 
 
@@ -185,6 +187,7 @@ def auto_config(config=None, check=False):
     else:
         dev = {'n': cpu_count()}
     # ==================== create theano flags ==================== #
+    ########## Theano
     if backend == 'theano':
         if multigpu and not _check_package_available('pygpu'):
             raise Exception('"multigpu" option in theano requires installation of '
@@ -215,7 +218,12 @@ def auto_config(config=None, check=False):
         flags += ',exception_verbosity=high'
         os.environ['THEANO_FLAGS'] = flags
         import theano
+    ########## Tensorflow
     elif backend == 'tensorflow':
+        if device == 'cpu':
+            os.environ['CUDA_VISIBLE_DEVICES'] = ""
+        else:
+            pass
         import tensorflow
     else:
         raise ValueError('Unsupport backend: ' + backend)
@@ -241,11 +249,27 @@ def auto_config(config=None, check=False):
 # Getter
 # ===========================================================================
 def get_device():
+    """ Return type of device: cpu or gpu """
     auto_config(check=True)
     return CONFIG['device']
 
 
+def get_nb_processors():
+    """ In case using CPU, return number of cores
+    If GPU is used, return number of graphics card.
+    """
+    auto_config(check=True)
+    return CONFIG['device_info']['n']
+
+
 def get_device_info():
+    """ Device info contains:
+    {"n": ngpu,
+     "dev0": [device_name, device_compute_capability, device_total_memory],
+     "dev1": [device_name, device_compute_capability, device_total_memory],
+     ...
+    }
+    """
     auto_config(check=True)
     return CONFIG['device_info']
 

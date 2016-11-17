@@ -538,6 +538,7 @@ class functionable(object):
             self._source = None
         self._sandbox = _serialize_function_sandbox(func, self._source)
 
+    # ==================== properties ==================== #
     @property
     def function(self):
         return self._function
@@ -558,6 +559,11 @@ class functionable(object):
     def source(self):
         return self._source
 
+    @property
+    def sandbox(self):
+        return self._sandbox
+
+    # ==================== methods ==================== #
     def __call__(self, *args, **kwargs):
         kwargs_ = dict(self._function_kwargs)
         kwargs_.update(kwargs)

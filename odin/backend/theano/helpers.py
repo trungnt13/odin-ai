@@ -166,6 +166,22 @@ def is_training(v):
 
 
 # ===========================================================================
+# VALUE MANIPULATION
+# ===========================================================================
+def get_value(x):
+    if isinstance(x, (tuple, list)):
+        return [i.get_value(borrow=False) for i in x]
+    if not hasattr(x, 'get_value'):
+        raise Exception("'get_value() can only be called on a variable. " +
+                        "If you have an expression instead, use eval().")
+    return x.get_value(borrow=False)
+
+
+def set_value(x, value):
+    x.set_value(np.asarray(value, dtype=x.dtype))
+
+
+# ===========================================================================
 # VARIABLE MANIPULATION
 # ===========================================================================
 _CURRENT_VARIABLE_SCOPE = ""
@@ -199,13 +215,13 @@ def _check_target(target):
 def variable(value, dtype=FLOATX, name=None, target=None):
     """Instantiate a tensor variable.
     """
+    # ensure unique name
     if name is None:
-        global _VAR_ID
-        name = 'VAR_%d' % _VAR_ID
-        _VAR_ID += 1
-    if len(_CURRENT_VARIABLE_SCOPE) > 0: # not global scope
+        global _VAR_ID; name = 'VAR_%d' % _VAR_ID; _VAR_ID += 1
+    # ====== get the right scope for variable ====== #
+    if len(_CURRENT_VARIABLE_SCOPE) > 0:
         name = _CURRENT_VARIABLE_SCOPE + "/" + name
-    # ====== check valid name ====== #
+    # ====== check loaded variable ====== #
     if name in _CREATED_VARIABLE:
         warnings.warn("Load value of new variable to old variable, "
                       "var's name:" + name)
@@ -215,11 +231,9 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     # ====== validate inputs ====== #
     value = np.asarray(value, dtype=dtype)
     target = _check_target(target)
-
     kwargs = {}
     if target is not None:
         kwargs['target'] = target
-
     # something wrong with SharedVariable constructor for numpy boolean array
     if value.dtype == np.bool:
         value = value.astype('uint8')

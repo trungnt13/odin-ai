@@ -480,31 +480,6 @@ def pad(x, axes=1, padding=1):
 
 
 # ===========================================================================
-# VALUE MANIPULATION
-# ===========================================================================
-def get_value(x):
-    if isinstance(x, (tuple, list)):
-        return get_session().run(x)
-    return x.eval(session=get_session())
-
-
-def set_value(x, value):
-    '''Sets the value of a tensor variable,
-    from a Numpy array.
-    '''
-    value = np.asarray(value, dtype=x.dtype.base_dtype)
-    if hasattr(x, '_assign_placeholder'):
-        assign_placeholder = x._assign_placeholder
-        assign_op = x._assign_op
-    else:
-        assign_placeholder = tf.placeholder(dtype=x.dtype.base_dtype, shape=value.shape)
-        assign_op = x.assign(assign_placeholder)
-        x._assign_placeholder = assign_placeholder
-        x._assign_op = assign_op
-    get_session().run(assign_op, feed_dict={assign_placeholder: value})
-
-
-# ===========================================================================
 # Graph manipulation
 # ===========================================================================
 def gradients(loss, variables, consider_constant=None):

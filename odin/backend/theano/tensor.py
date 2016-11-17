@@ -579,22 +579,6 @@ def pad(x, axes=1, padding=1):
 
 
 # ===========================================================================
-# VALUE MANIPULATION
-# ===========================================================================
-def get_value(x):
-    if isinstance(x, (tuple, list)):
-        return [i.get_value(borrow=False) for i in x]
-    if not hasattr(x, 'get_value'):
-        raise Exception("'get_value() can only be called on a variable. " +
-                        "If you have an expression instead, use eval().")
-    return x.get_value(borrow=False)
-
-
-def set_value(x, value):
-    x.set_value(np.asarray(value, dtype=x.dtype))
-
-
-# ===========================================================================
 # GRAPH MANIPULATION
 # ===========================================================================
 def Scan(fn,

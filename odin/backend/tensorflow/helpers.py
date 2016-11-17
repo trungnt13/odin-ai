@@ -108,6 +108,31 @@ def is_training(v):
 
 
 # ===========================================================================
+# VALUE MANIPULATION
+# ===========================================================================
+def get_value(x):
+    if isinstance(x, (tuple, list)):
+        return get_session().run(x)
+    return x.eval(session=get_session())
+
+
+def set_value(x, value):
+    '''Sets the value of a tensor variable,
+    from a Numpy array.
+    '''
+    value = np.asarray(value, dtype=x.dtype.as_numpy_dtype)
+    if hasattr(x, '_assign_placeholder'):
+        assign_placeholder = x._assign_placeholder
+        assign_op = x._assign_op
+    else:
+        assign_placeholder = tf.placeholder(dtype=x.dtype.base_dtype, shape=value.shape)
+        assign_op = x.assign(assign_placeholder)
+        x._assign_placeholder = assign_placeholder
+        x._assign_op = assign_op
+    get_session().run(assign_op, feed_dict={assign_placeholder: value})
+
+
+# ===========================================================================
 # VARIABLE MANIPULATION
 # ===========================================================================
 _CREATED_VARIABLE = {}
@@ -126,6 +151,19 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     # Returns
         Tensor variable instance.
     '''
+    # ensure unique name
+    if name is None:
+        global _VAR_ID; name = 'VAR_%d' % _VAR_ID; _VAR_ID += 1
+    #### Found cached variable, just load new value into it
+    current_scope = tf.get_variable_scope().name
+    full_name = name if len(current_scope) == 0 else current_scope + '/' + name
+    if full_name in _CREATED_VARIABLE:
+        warnings.warn("Load value of new variable to old variable, "
+                      "var's name:" + name)
+        variable = _CREATED_VARIABLE[name]
+        set_value(variable, value)
+        return variable
+    #### create totally new variable
     variable = tf.Variable(value, dtype=dtype, name=name)
     if tf.get_default_graph() is _SESSION.graph:
         _SESSION.run(variable.initializer)
@@ -135,6 +173,7 @@ def variable(value, dtype=FLOATX, name=None, target=None):
                         "Consider using set_session() to manually assign current "
                         "ODIN session.")
     add_shape(variable, tuple(variable.get_shape().as_list()))
+    _CREATED_VARIABLE[variable.name.split(':')[0]] = variable
     return variable
 
 
