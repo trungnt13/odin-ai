@@ -36,7 +36,7 @@ def read(path, grayscale=False, crop=None, scale=None, target_size=None,
         3 = PIL.Image.BICUBIC: cubic spline interpolation
     Return
     ------
-    image: (channel, height, width) if RGB image
+    image: (height, width, channel) if RGB image
            (height, width) if Grayscale image
 
     Example
@@ -120,6 +120,5 @@ def read(path, grayscale=False, crop=None, scale=None, target_size=None,
         img.close()
     # ====== end ====== #
     orig_img.close()
-    X = [x.transpose(-1, 0, 1) if x.ndim == 3 else x
-         for x in X]
+    # X = [x.transpose(-1, 0, 1) if x.ndim == 3 else x for x in X]
     return X[0] if len(X) == 1 else X

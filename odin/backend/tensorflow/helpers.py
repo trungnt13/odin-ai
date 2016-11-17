@@ -158,9 +158,13 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     current_scope = tf.get_variable_scope().name
     full_name = name if len(current_scope) == 0 else current_scope + '/' + name
     if full_name in _CREATED_VARIABLE:
-        warnings.warn("Load value of new variable to old variable, "
-                      "var's name:" + name)
         variable = _CREATED_VARIABLE[name]
+        if get_shape(variable) != value.shape:
+            raise Exception('Found pre-defined variable with shape="%s" but new'
+                            ' value has shape="%s"' % (get_shape(variable), value.shape))
+        else:
+            warnings.warn("Load value of new variable to old variable, "
+                          "var's name:" + name)
         set_value(variable, value)
         return variable
     #### create totally new variable

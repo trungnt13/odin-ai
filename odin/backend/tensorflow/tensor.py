@@ -12,10 +12,11 @@ import tensorflow as tf
 
 from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
+from odin.utils.shape_calculation import (get_conv_output_shape,
+                                          get_pool_output_shape)
 from odin.basic import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING,
                         add_shape, get_shape)
-from odin.utils import shape_calculation
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph)
 FLOATX = CONFIG.floatX
@@ -736,6 +737,26 @@ def random_binomial(shape, p, dtype=FLOATX, seed=None):
 # ===========================================================================
 # Helper
 # ===========================================================================
+def __validate_strides_padding_dilation(strides, border_mode, filter_dilation, ndim):
+    if border_mode == 'same' or border_mode == 'valid' or border_mode == 'full':
+        border_mode = border_mode.upper()
+    elif isinstance(border_mode, (tuple, list, int)):
+        border_mode = as_tuple(border_mode, N=ndim, t=int)
+    else:
+        raise Exception('Border mode not supported: ' + str(border_mode))
+    # strides shape
+    if strides is None:
+        strides = (1,) * ndim
+    else:
+        strides = as_tuple(strides, N=ndim, t=int)
+    # dilation shape
+    if filter_dilation is None:
+        filter_dilation = (1,) * ndim
+    else:
+        filter_dilation = as_tuple(filter_dilation, N=ndim, t=int)
+    return strides, border_mode, filter_dilation
+
+
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            filter_dilation=(1, 1)):
     """ Dimension is ordered by
@@ -749,41 +770,42 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
 
     Note
     ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     Only support float32 on CPU
+
     """
-    dtype = x.dtype.base_dtype
     # store original information for calculating output_shape
-    pad = border_mode
     image_shape = get_shape(x)
-    filter_shape = get_shape(kernel)
-    if border_mode == 'same':
-        th_border_mode = 'SAME'
-    elif border_mode == 'valid':
-        th_border_mode = 'VALID'
-    elif border_mode == 'full':
-        th_border_mode = 'FULL'
-    elif isinstance(border_mode, (tuple, list)):
-        th_border_mode = border_mode
-    else:
-        raise Exception('Border mode not supported: ' + str(border_mode))
+    kernel_shape = get_shape(kernel)
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=2)
     # convert to TF order
-    x = tf.transpose(x, (0, 2, 3, 1))
-    kernel = tf.transpose(kernel, (2, 3, 1, 0))
-    if dtype == 'float64': # only conv in float32
+    is_float64 = False
+    if 'float64' in x.dtype.name: # only conv in float32
         x = tf.cast(x, 'float32')
+        is_float64 = True
+    if 'float64' in kernel.dtype.name:
         kernel = tf.cast(kernel, 'float32')
 
     if filter_dilation == (1, 1):
         x = tf.nn.conv2d(x, kernel, strides=(1,) + strides + (1,),
-                         padding=th_border_mode)
+                         padding=border_mode)
     else:
         assert filter_dilation[0] == filter_dilation[1]
         assert strides == (1, 1), 'Invalid strides for dilated convolution'
-        x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=th_border_mode)
+        x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=border_mode)
     # ====== estimate output shape ====== #
-    x = tf.cast(tf.transpose(x, (0, 3, 1, 2)), dtype)
-    add_shape(x, shape_calculation.get_conv_output_shape(image_shape, filter_shape,
-                                              pad, strides, filter_dilation))
+    if is_float64: x = tf.cast(x, 'float64')
+    add_shape(x, get_conv_output_shape((image_shape[0], image_shape[3],
+                                        image_shape[1], image_shape[2]),
+                                       (kernel_shape[3], kernel_shape[2],
+                                        kernel_shape[0], kernel_shape[1]),
+                                       border_mode, strides, filter_dilation))
     return x
 
 
@@ -797,78 +819,60 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
     """
     if len(output_shape) != 4:
         raise ValueError('output_shape for deconvolution operator must be 4-D')
-
-    x = tf.transpose(x, (0, 2, 3, 1))
-    kernel = tf.transpose(kernel, (2, 3, 1, 0))
-    kernel = tf.transpose(kernel, (0, 1, 3, 2))
-    tf_output_shape = (output_shape[0], output_shape[2], output_shape[3], output_shape[1])
-
-    if border_mode == 'same':
-        padding = 'SAME'
-    elif border_mode == 'valid':
-        padding = 'VALID'
-    elif border_mode == 'full':
-        padding = 'FULL'
-    strides = (1,) + strides + (1,)
-
-    x = tf.nn.conv2d_transpose(x, kernel, tf_output_shape, strides,
-                               padding=padding)
-    x = tf.transpose(x, (0, 3, 1, 2))
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=2)
+    x = tf.nn.conv2d_transpose(x, kernel, output_shape, (1,) + strides + (1,),
+                               padding=border_mode)
     add_shape(x, output_shape)
     return x
 
 
 def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
-           image_shape=None, filter_shape=None):
+           filter_dilation=(1, 1, 1)):
+    """
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
+    """
+    volume_shape = get_shape(x)
+    kernel_shape = get_shape(kernel)
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=3)
+    # no dilation for tensorflow
+    if filter_dilation != (1, 1, 1):
+        raise Exception("tensorflow has not supported 3D-dilation yet.")
+    # convert to TF order
+    is_float64 = False
+    if 'float64' in x.dtype.name: # only conv in float32
+        x = tf.cast(x, 'float32')
+        is_float64 = True
+    if 'float64' in kernel.dtype.name:
+        kernel = tf.cast(kernel, 'float32')
+    # ====== estimate output shape ====== #
+    if is_float64: x = tf.cast(x, 'float64')
+    x = tf.nn.conv3d(x, kernel, (1,) + strides + (1,), border_mode)
+    add_shape(x, get_conv_output_shape((volume_shape[0], volume_shape[4],
+                                        volume_shape[1], volume_shape[2], volume_shape[3]),
+                                       (kernel_shape[4], kernel_shape[3],
+                                        kernel_shape[0], kernel_shape[1], kernel_shape[2]),
+                                       border_mode, strides, filter_dilation))
+    return x
+
+
+def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
+             filter_dilation=(1, 1, 1)):
     """
     Run on cuDNN if available.
     border_mode: string, "same" or "valid".
-    dim_ordering : th (defaults)
-        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
-        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+    img_shape: (n, channels, width, height) of original image
+    filter_shape: (n_filter, channels, w, h) of original filters
     """
-    if False and on_gpu(): # Using DNN on GPU
-        from theano.sandbox.cuda import dnn
-        if border_mode == 'same':
-            border_mode = 'half'
-        conv_out = dnn.dnn_conv3d(img=x,
-                                kerns=kernel,
-                                subsample=strides,
-                                border_mode=border_mode,
-                                conv_mode='conv')
-    else: # Using default implementation of Theano
-        if border_mode not in {'same', 'valid', 'full'} and not isinstance(border_mode, (tuple, list)):
-            raise Exception('Invalid border mode: ' + str(border_mode))
-
-        if border_mode == 'same':
-            assert(strides == (1, 1, 1))
-            pad_dim1 = (kernel.shape[2] - 1)
-            pad_dim2 = (kernel.shape[3] - 1)
-            pad_dim3 = (kernel.shape[4] - 1)
-            output_shape = (x.shape[0], x.shape[1],
-                            x.shape[2] + pad_dim1,
-                            x.shape[3] + pad_dim2,
-                            x.shape[4] + pad_dim3)
-            output = T.zeros(output_shape)
-            indices = (slice(None), slice(None),
-                       slice(pad_dim1 // 2, x.shape[2] + pad_dim1 // 2),
-                       slice(pad_dim2 // 2, x.shape[3] + pad_dim2 // 2),
-                       slice(pad_dim3 // 2, x.shape[4] + pad_dim3 // 2))
-            x = T.set_subtensor(output[indices], x)
-            border_mode = 'valid'
-
-        border_mode_3d = (border_mode, border_mode, border_mode)
-        conv_out = conv3d2d.conv3d(signals=x.dimshuffle(0, 2, 1, 3, 4),
-                                   filters=kernel.dimshuffle(0, 2, 1, 3, 4),
-                                   border_mode=border_mode_3d,
-                                   signals_shape=None,
-                                   filters_shape=None)
-        conv_out = conv_out.dimshuffle(0, 2, 1, 3, 4)
-
-        # support strides by manually slicing the output
-        if strides != (1, 1, 1):
-            conv_out = conv_out[:, :, ::strides[0], ::strides[1], ::strides[2]]
-    return conv_out
+    raise Exception('tensorflow has not supported deconv3d.')
 
 
 def pool2d(x, pool_size=(2, 2), ignore_border=True,

@@ -23,10 +23,11 @@ from theano.tensor.nnet.nnet import softsign as T_softsign
 
 from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
+from odin.utils.shape_calculation import (get_conv_output_shape,
+                                          get_pool_output_shape)
 from odin.basic import (add_role, TRAINING, PARAMETER,
                         ACTIVATION_PARAMETER, DEPLOYING,
                         add_shape, get_shape)
-from odin.utils import shape_calculation
 
 from .helpers import (auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
@@ -832,64 +833,6 @@ def random_binomial(shape, p, dtype=FLOATX, seed=None):
 # ===========================================================================
 # Helper
 # ===========================================================================
-def pool_output_length(input_length, pool_size, stride, pad, ignore_border):
-    """ Copyright (c) 2014-2015 Lasagne contributors
-    All rights reserved.
-    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-
-    Compute the output length of a pooling operator
-    along a single dimension.
-
-    Parameters
-    ----------
-    input_length : integer
-        The length of the input in the pooling dimension
-    pool_size : integer
-        The length of the pooling region
-    stride : integer
-        The stride between successive pooling regions
-    pad : integer
-        The number of elements to be added to the input on each side.
-    ignore_border: bool
-        If ``True``, partial pooling regions will be ignored.
-        Must be ``True`` if ``pad != 0``.
-
-    Returns
-    -------
-    output_length
-        * None if either input is None.
-        * Computed length of the pooling operator otherwise.
-
-    Notes
-    -----
-    When ``ignore_border == True``, this is given by the number of full
-    pooling regions that fit in the padded input length,
-    divided by the stride (rounding down).
-
-    If ``ignore_border == False``, a single partial pooling region is
-    appended if at least one input element would be left uncovered otherwise.
-    """
-    if input_length is None or pool_size is None:
-        return None
-
-    if ignore_border:
-        output_length = input_length + 2 * pad - pool_size + 1
-        output_length = (output_length + stride - 1) // stride
-
-    # output length calculation taken from:
-    # https://github.com/Theano/Theano/blob/master/theano/tensor/signal/downsample.py
-    else:
-        assert pad == 0
-
-        if stride >= pool_size:
-            output_length = (input_length + stride - 1) // stride
-        else:
-            output_length = max(
-                0, (input_length - pool_size + stride - 1) // stride) + 1
-
-    return output_length
-
-
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            filter_dilation=(1, 1)):
     """ Dimension is ordered by
@@ -900,37 +843,59 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     ----------
     border_mode: string
         "same", "valid" or "full".
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
+    image_shape = get_shape(x)
+    image_shape = (image_shape[0], image_shape[3],
+                   image_shape[1], image_shape[2])
+    kernel_shape = get_shape(kernel)
+    kernel_shape = (kernel_shape[3], kernel_shape[2],
+                    kernel_shape[0], kernel_shape[1])
+    # strides shape
+    if strides is None:
+        strides = (1, 1)
+    else:
+        strides = as_tuple(strides, N=2, t=int)
+    # dilation shape
+    if filter_dilation is None:
+        filter_dilation = (1, 1)
+    else:
+        filter_dilation = as_tuple(filter_dilation, N=2, t=int)
+    # border_mode or padding
     if border_mode == 'same':
-        th_border_mode = 'half'
-        np_kernel = kernel.eval()
-    elif border_mode == 'valid':
-        th_border_mode = 'valid'
-    elif border_mode == 'full':
-        th_border_mode = 'full'
-    elif isinstance(border_mode, (tuple, list)):
-        th_border_mode = border_mode
+        border_mode = 'half'
+    elif border_mode == 'valid' or border_mode == 'full':
+        pass
+    elif isinstance(border_mode, (tuple, list, int)):
+        border_mode = as_tuple(border_mode, N=2, t=int)
     else:
         raise Exception('Border mode not supported: ' + str(border_mode))
-
-    image_shape = get_shape(x)
-    filter_shape = get_shape(kernel)
-
+    # ====== convert input to theano format ====== #
+    x = x.dimshuffle((0, 3, 1, 2))
+    kernel = kernel.dimshuffle((3, 2, 0, 1))
     conv_out = T.nnet.conv2d(x, kernel,
-                             border_mode=th_border_mode,
+                             border_mode=border_mode,
                              subsample=strides,
                              input_shape=image_shape,
-                             filter_shape=filter_shape,
+                             filter_shape=kernel_shape,
                              filter_dilation=filter_dilation)
-
-    if border_mode == 'same':
-        if np_kernel.shape[2] % 2 == 0:
+    if border_mode == 'half':
+        if kernel_shape[2] % 2 == 0:
             conv_out = conv_out[:, :, :(x.shape[2] + strides[0] - 1) // strides[0], :]
-        if np_kernel.shape[3] % 2 == 0:
+        if kernel_shape[3] % 2 == 0:
             conv_out = conv_out[:, :, :, :(x.shape[3] + strides[1] - 1) // strides[1]]
     # ====== estimate output shape ====== #
-    add_shape(conv_out, shape_calculation.get_conv_output_shape(image_shape, filter_shape,
-                                                     border_mode, strides, filter_dilation))
+    conv_out = conv_out.dimshuffle((0, 2, 3, 1))
+    add_shape(conv_out, get_conv_output_shape(image_shape, kernel_shape,
+                                              border_mode, strides,
+                                              filter_dilation))
     return conv_out
 
 
@@ -956,56 +921,92 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
 
 
 def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
-           image_shape=None, filter_shape=None):
+           filter_dilation=(1, 1, 1)):
     """
     Run on cuDNN if available.
     border_mode: string, "same" or "valid".
-    dim_ordering : th (defaults)
+
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
         TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
         TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
-    if False and on_gpu(): # Using DNN on GPU
-        from theano.sandbox.cuda import dnn
-        if border_mode == 'same':
-            border_mode = 'half'
-        conv_out = dnn.dnn_conv3d(img=x,
-                                kerns=kernel,
-                                subsample=strides,
-                                border_mode=border_mode,
-                                conv_mode='conv')
-    else: # Using default implementation of Theano
-        if border_mode not in {'same', 'valid', 'full'} and not isinstance(border_mode, (tuple, list)):
-            raise Exception('Invalid border mode: ' + str(border_mode))
-
-        if border_mode == 'same':
-            assert(strides == (1, 1, 1))
-            pad_dim1 = (kernel.shape[2] - 1)
-            pad_dim2 = (kernel.shape[3] - 1)
-            pad_dim3 = (kernel.shape[4] - 1)
-            output_shape = (x.shape[0], x.shape[1],
-                            x.shape[2] + pad_dim1,
-                            x.shape[3] + pad_dim2,
-                            x.shape[4] + pad_dim3)
-            output = T.zeros(output_shape)
-            indices = (slice(None), slice(None),
-                       slice(pad_dim1 // 2, x.shape[2] + pad_dim1 // 2),
-                       slice(pad_dim2 // 2, x.shape[3] + pad_dim2 // 2),
-                       slice(pad_dim3 // 2, x.shape[4] + pad_dim3 // 2))
-            x = T.set_subtensor(output[indices], x)
-            border_mode = 'valid'
-
-        border_mode_3d = (border_mode, border_mode, border_mode)
-        conv_out = conv3d2d.conv3d(signals=x.dimshuffle(0, 2, 1, 3, 4),
-                                   filters=kernel.dimshuffle(0, 2, 1, 3, 4),
-                                   border_mode=border_mode_3d,
-                                   signals_shape=None,
-                                   filters_shape=None)
-        conv_out = conv_out.dimshuffle(0, 2, 1, 3, 4)
-
-        # support strides by manually slicing the output
-        if strides != (1, 1, 1):
-            conv_out = conv_out[:, :, ::strides[0], ::strides[1], ::strides[2]]
+    # get and convert volume_shape to theano format
+    volume_shape = get_shape(x)
+    volume_shape = (volume_shape[0], volume_shape[4],
+                    volume_shape[1], volume_shape[2], volume_shape[3])
+    # get and convert filter_shape to theano format
+    kernel_shape = get_shape(kernel)
+    kernel_shape = (kernel_shape[4], kernel_shape[3],
+                    kernel_shape[0], kernel_shape[1], kernel_shape[2])
+    # strides shape
+    if strides is None:
+        strides = (1, 1, 1)
+    else:
+        strides = as_tuple(strides, N=3, t=int)
+    # dilation shape
+    if filter_dilation is None:
+        filter_dilation = (1, 1, 1)
+    else:
+        filter_dilation = as_tuple(filter_dilation, N=3, t=int)
+    # border_mode or padding
+    if border_mode == 'same':
+        border_mode = 'half'
+    elif border_mode == 'valid' or border_mode == 'full':
+        pass
+    elif isinstance(border_mode, (tuple, list, int)):
+        border_mode = as_tuple(border_mode, N=3, t=int)
+    else:
+        raise Exception('Border mode not supported: ' + str(border_mode))
+    # ====== convert input to theano format ====== #
+    x = x.dimshuffle((0, 4, 1, 2, 3))
+    kernel = kernel.dimshuffle((4, 3, 0, 1, 2))
+    # call convolution
+    conv_out = T.nnet.conv3d(x, kernel,
+                             border_mode=border_mode,
+                             subsample=strides,
+                             input_shape=volume_shape,
+                             filter_shape=kernel_shape,
+                             filter_dilation=filter_dilation)
+    if border_mode == 'half':
+        if kernel_shape[2] % 2 == 0:
+            conv_out = conv_out[:, :, :(x.shape[2] + strides[0] - 1) // strides[0], :, :]
+        if kernel_shape[3] % 2 == 0:
+            conv_out = conv_out[:, :, :, :(x.shape[3] + strides[1] - 1) // strides[1], :]
+        if kernel_shape[4] % 2 == 0:
+            conv_out = conv_out[:, :, :, :, :(x.shape[4] + strides[2] - 1) // strides[2]]
+    # back to theano form
+    output_shape = get_conv_output_shape(volume_shape, kernel_shape,
+                                         border_mode, strides, filter_dilation)
+    # convert back to tensorflow shape
+    conv_out = conv_out.dimshuffle((0, 2, 3, 4, 1))
+    add_shape(conv_out, output_shape)
     return conv_out
+
+
+def deconv3d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
+             filter_dilation=(1, 1)):
+    """
+    Run on cuDNN if available.
+    border_mode: string, "same" or "valid".
+    img_shape: (n, channels, width, height) of original image
+    filter_shape: (n_filter, channels, w, h) of original filters
+    """
+    flip_filters = True
+    if len(output_shape) != 4:
+        raise ValueError('output_shape for deconvolution operator must be 4-D')
+    border_mode = 'half' if border_mode == 'same' else border_mode
+    x = T.nnet.abstract_conv.conv2d_grad_wrt_inputs(x, kernel,
+        input_shape=tuple([int(i) if isinstance(i, (long, float, int)) else None
+                           for i in output_shape]),
+        subsample=strides, border_mode=border_mode,
+        filter_flip=flip_filters)
+    add_shape(x, output_shape)
+    return x
 
 
 def pool2d(x, pool_size=(2, 2), ignore_border=True,
