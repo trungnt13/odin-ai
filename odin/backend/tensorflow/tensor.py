@@ -812,10 +812,14 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
 def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
              filter_dilation=(1, 1)):
     """
-    Run on cuDNN if available.
-    border_mode: string, "same" or "valid".
-    img_shape: (n, channels, width, height) of original image
-    filter_shape: (n_filter, channels, w, h) of original filters
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
     if len(output_shape) != 4:
         raise ValueError('output_shape for deconvolution operator must be 4-D')
@@ -867,10 +871,14 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
 def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
              filter_dilation=(1, 1, 1)):
     """
-    Run on cuDNN if available.
-    border_mode: string, "same" or "valid".
-    img_shape: (n, channels, width, height) of original image
-    filter_shape: (n_filter, channels, w, h) of original filters
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
     raise Exception('tensorflow has not supported deconv3d.')
 

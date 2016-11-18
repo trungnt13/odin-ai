@@ -833,6 +833,29 @@ def random_binomial(shape, p, dtype=FLOATX, seed=None):
 # ===========================================================================
 # Helper
 # ===========================================================================
+def __validate_strides_padding_dilation(strides, border_mode, filter_dilation, ndim):
+    # border_mode or padding
+    if border_mode == 'same':
+        border_mode = 'half'
+    elif border_mode == 'valid' or border_mode == 'full':
+        pass
+    elif isinstance(border_mode, (tuple, list, int)):
+        border_mode = as_tuple(border_mode, N=ndim, t=int)
+    else:
+        raise Exception('Border mode not supported: ' + str(border_mode))
+    # strides shape
+    if strides is None:
+        strides = (1,) * ndim
+    else:
+        strides = as_tuple(strides, N=ndim, t=int)
+    # dilation shape
+    if filter_dilation is None:
+        filter_dilation = (1,) * ndim
+    else:
+        filter_dilation = as_tuple(filter_dilation, N=ndim, t=int)
+    return strides, border_mode, filter_dilation
+
+
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            filter_dilation=(1, 1)):
     """ Dimension is ordered by
@@ -851,6 +874,10 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
         ---
         TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
         TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
+    Warning
+    -------
+    For "same" or "half" border_mode, the shape of output only equal
+    to input if kernel shape is odd.
     """
     image_shape = get_shape(x)
     image_shape = (image_shape[0], image_shape[3],
@@ -858,25 +885,8 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     kernel_shape = get_shape(kernel)
     kernel_shape = (kernel_shape[3], kernel_shape[2],
                     kernel_shape[0], kernel_shape[1])
-    # strides shape
-    if strides is None:
-        strides = (1, 1)
-    else:
-        strides = as_tuple(strides, N=2, t=int)
-    # dilation shape
-    if filter_dilation is None:
-        filter_dilation = (1, 1)
-    else:
-        filter_dilation = as_tuple(filter_dilation, N=2, t=int)
-    # border_mode or padding
-    if border_mode == 'same':
-        border_mode = 'half'
-    elif border_mode == 'valid' or border_mode == 'full':
-        pass
-    elif isinstance(border_mode, (tuple, list, int)):
-        border_mode = as_tuple(border_mode, N=2, t=int)
-    else:
-        raise Exception('Border mode not supported: ' + str(border_mode))
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=2)
     # ====== convert input to theano format ====== #
     x = x.dimshuffle((0, 3, 1, 2))
     kernel = kernel.dimshuffle((3, 2, 0, 1))
@@ -902,20 +912,36 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
 def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
              filter_dilation=(1, 1)):
     """
-    Run on cuDNN if available.
-    border_mode: string, "same" or "valid".
-    img_shape: (n, channels, width, height) of original image
-    filter_shape: (n_filter, channels, w, h) of original filters
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
+    Warining
+    --------
+    Transposed_conv won't procedure the same shape as original image if kernel
+    value is even (i.e. x % 2 == 0).
     """
-    flip_filters = True
     if len(output_shape) != 4:
         raise ValueError('output_shape for deconvolution operator must be 4-D')
-    border_mode = 'half' if border_mode == 'same' else border_mode
+    # ====== convert to theano formated shapes ====== #
+    x = x.dimshuffle((0, 3, 1, 2))
+    kernel = kernel.dimshuffle((3, 2, 0, 1))
+    # ====== params ====== #
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=2)
+    # ====== grad_wrt_inputs ====== #
     x = T.nnet.abstract_conv.conv2d_grad_wrt_inputs(x, kernel,
-        input_shape=tuple([int(i) if isinstance(i, (long, float, int)) else None
-                           for i in output_shape]),
+        input_shape=(output_shape[0], output_shape[3],
+                     output_shape[1], output_shape[2]),
         subsample=strides, border_mode=border_mode,
-        filter_flip=flip_filters)
+        filter_flip=True,
+        filter_dilation=filter_dilation)
+    # back to tf-shape
+    x = x.dimshuffle((0, 2, 3, 1))
     add_shape(x, output_shape)
     return x
 
@@ -943,25 +969,8 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
     kernel_shape = get_shape(kernel)
     kernel_shape = (kernel_shape[4], kernel_shape[3],
                     kernel_shape[0], kernel_shape[1], kernel_shape[2])
-    # strides shape
-    if strides is None:
-        strides = (1, 1, 1)
-    else:
-        strides = as_tuple(strides, N=3, t=int)
-    # dilation shape
-    if filter_dilation is None:
-        filter_dilation = (1, 1, 1)
-    else:
-        filter_dilation = as_tuple(filter_dilation, N=3, t=int)
-    # border_mode or padding
-    if border_mode == 'same':
-        border_mode = 'half'
-    elif border_mode == 'valid' or border_mode == 'full':
-        pass
-    elif isinstance(border_mode, (tuple, list, int)):
-        border_mode = as_tuple(border_mode, N=3, t=int)
-    else:
-        raise Exception('Border mode not supported: ' + str(border_mode))
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=3)
     # ====== convert input to theano format ====== #
     x = x.dimshuffle((0, 4, 1, 2, 3))
     kernel = kernel.dimshuffle((4, 3, 0, 1, 2))
@@ -988,23 +997,39 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
     return conv_out
 
 
-def deconv3d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
-             filter_dilation=(1, 1)):
+def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
+             filter_dilation=(1, 1, 1)):
     """
-    Run on cuDNN if available.
-    border_mode: string, "same" or "valid".
-    img_shape: (n, channels, width, height) of original image
-    filter_shape: (n_filter, channels, w, h) of original filters
+    Note
+    ----
+    dim_ordering : tf-tensorflow (defaults), th-theano
+        TH input shape: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3)
+        TF input shape: (samples, conv_dim1, conv_dim2, conv_dim3, input_depth)
+        ---
+        TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
+        TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
+    Warining
+    --------
+    Transposed_conv won't procedure the same shape as original image if kernel
+    value is even (i.e. x % 2 == 0).
     """
-    flip_filters = True
-    if len(output_shape) != 4:
+    if len(output_shape) != 5:
         raise ValueError('output_shape for deconvolution operator must be 4-D')
-    border_mode = 'half' if border_mode == 'same' else border_mode
-    x = T.nnet.abstract_conv.conv2d_grad_wrt_inputs(x, kernel,
-        input_shape=tuple([int(i) if isinstance(i, (long, float, int)) else None
-                           for i in output_shape]),
+    # ====== convert to theano formated shapes ====== #
+    x = x.dimshuffle((0, 4, 1, 2, 3))
+    kernel = kernel.dimshuffle((4, 3, 0, 1, 2))
+    # ====== params ====== #
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=3)
+    # ====== grad_wrt_inputs ====== #
+    x = T.nnet.abstract_conv.conv3d_grad_wrt_inputs(x, kernel,
+        input_shape=(output_shape[0], output_shape[4],
+                     output_shape[1], output_shape[2], output_shape[3]),
         subsample=strides, border_mode=border_mode,
-        filter_flip=flip_filters)
+        filter_flip=True,
+        filter_dilation=filter_dilation)
+    # back to tf-shape
+    x = x.dimshuffle((0, 2, 3, 4, 1))
     add_shape(x, output_shape)
     return x
 
