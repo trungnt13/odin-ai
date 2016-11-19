@@ -98,6 +98,8 @@ def is_training(v):
     TRAINING role can be override by: ``add_role(x, DEPLOYING)``
 
     """
+    if has_roles(v, TRAINING, exact=True):
+        return True
     if not isinstance(v, (tuple, list)):
         v = [v]
     inputs = ComputationGraph(v).inputs
@@ -180,9 +182,9 @@ def variable(value, dtype=FLOATX, name=None, target=None,
     add_shape(variable, tuple(variable.get_shape().as_list()))
     # ====== save all created variable ====== #
     if for_training:
-        add_role(placeholder, TRAINING)
+        add_role(variable, TRAINING)
     else:
-        add_role(placeholder, DEPLOYING)
+        add_role(variable, DEPLOYING)
     _CREATED_VARIABLE[variable.name.split(':')[0]] = variable
     return variable
 
