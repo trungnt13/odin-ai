@@ -42,6 +42,6 @@ class Embedding(NNOps):
     def _apply(self, x):
         input_shape = K.get_shape(x)
         output_shape = input_shape + (self.output_size, )
-        x = self.W[K.cast(x, 'int32')]
+        x = K.gather(self.W, K.cast(x, 'int32'))
         K.add_shape(x, output_shape)
         return x

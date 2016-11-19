@@ -10,10 +10,6 @@ from .normalization import BatchNorm
 from .helper import Sequence, Merge
 
 
-import keras
-keras.layers.MaxoutDense
-
-
 def lstm_batch_norm(num_units,
                     W_input_init=K.init.glorot_uniform,
                     W_hidden_init=K.init.orthogonal,
