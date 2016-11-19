@@ -735,7 +735,7 @@ def random_binomial(shape, p, dtype=FLOATX, seed=None):
 
 
 # ===========================================================================
-# Helper
+# Convolution
 # ===========================================================================
 def __validate_strides_padding_dilation(strides, border_mode, filter_dilation, ndim):
     if border_mode == 'same' or border_mode == 'valid' or border_mode == 'full':
@@ -801,10 +801,7 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
         x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=border_mode)
     # ====== estimate output shape ====== #
     if is_float64: x = tf.cast(x, 'float64')
-    add_shape(x, get_conv_output_shape((image_shape[0], image_shape[3],
-                                        image_shape[1], image_shape[2]),
-                                       (kernel_shape[3], kernel_shape[2],
-                                        kernel_shape[0], kernel_shape[1]),
+    add_shape(x, get_conv_output_shape(image_shape, kernel_shape,
                                        border_mode, strides, filter_dilation))
     return x
 
@@ -860,10 +857,7 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
     # ====== estimate output shape ====== #
     if is_float64: x = tf.cast(x, 'float64')
     x = tf.nn.conv3d(x, kernel, (1,) + strides + (1,), border_mode)
-    add_shape(x, get_conv_output_shape((volume_shape[0], volume_shape[4],
-                                        volume_shape[1], volume_shape[2], volume_shape[3]),
-                                       (kernel_shape[4], kernel_shape[3],
-                                        kernel_shape[0], kernel_shape[1], kernel_shape[2]),
+    add_shape(x, get_conv_output_shape(volume_shape, kernel_shape,
                                        border_mode, strides, filter_dilation))
     return x
 
@@ -883,8 +877,37 @@ def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
     raise Exception('tensorflow has not supported deconv3d.')
 
 
-def pool2d(x, pool_size=(2, 2), ignore_border=True,
-           strides=(1, 1), pad=(0, 0), mode='max'):
+# ===========================================================================
+# Pooling
+# ===========================================================================
+def __validate_pool_stride_border(pool_size, strides, border_mode, mode, ndim):
+    # pool_size
+    if pool_size is None:
+        pool_size = (2,) * ndim
+    else:
+        pool_size = as_tuple(pool_size, ndim, int)
+    # strides
+    if strides is None:
+        strides = pool_size
+    else:
+        strides = as_tuple(strides, ndim, int)
+    # border_mode
+    if border_mode is None or border_mode == 'valid':
+        border_mode = 'VALID'
+    elif border_mode == 'same':
+        border_mode = 'SAME'
+    else:
+        border_mode = as_tuple(border_mode, ndim, int)
+    # pooling mode
+    if 'max' in mode.lower():
+        mode = 'max'
+    elif 'avg' in mode.lower():
+        mode = 'avg'
+    return pool_size, strides, border_mode, mode
+
+
+def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
+           ignore_border=True, mode='max'):
     """
     Parameters
     ----------
@@ -904,51 +927,34 @@ def pool2d(x, pool_size=(2, 2), ignore_border=True,
         (pad_h, pad_w), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
         pad_w is the size of the left and right margins.
-    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
-        Operation executed on each window. `max` and `sum` always exclude
-        the padding in the computation. `average` gives you the choice to
-        include or exclude it.
+    mode : {'max', 'avg'}
+        Operation executed on each window. `max` or `average`
 
     Note
     ----
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
-    if strides is None:
-        strides = pool_size
-    pool_size = as_tuple(pool_size, 2, int)
-    strides = as_tuple(strides, 2, int)
-    pad = as_tuple(pad, 2, int)
-    # ====== On GPU: use CuDNN ====== #
-    if mode != 'sum' and on_gpu():
-        from theano.sandbox.cuda import dnn
-        if not ignore_border:
-            raise ValueError('CuDNN does not support ignore_border = False.')
-        pool_out = dnn.dnn_pool(x, ws=pool_size, stride=strides, mode=mode, pad=pad)
-    # ====== Use default Theano implementation ====== #
-    else:
-        pool_out = pool.pool_2d(x, ds=pool_size, st=strides,
-                                ignore_border=ignore_border,
-                                padding=pad,
-                                mode=mode)
-    # ====== Estimate output shape ====== #
     input_shape = get_shape(x)
-    output_shape = list(input_shape)  # copy / convert to mutable list
-    output_shape[2] = pool_output_length(input_shape[2],
-                                         pool_size=pool_size[0],
-                                         stride=strides[0],
-                                         pad=pad[0],
-                                         ignore_border=ignore_border)
-    output_shape[3] = pool_output_length(input_shape[3],
-                                         pool_size=pool_size[1],
-                                         stride=strides[1],
-                                         pad=pad[1],
-                                         ignore_border=ignore_border)
-    add_shape(pool_out, tuple(output_shape))
-    return pool_out
+    pool_size, strides, border_mode, mode = __validate_pool_stride_border(
+        pool_size, strides, border_mode, mode, ndim=2)
+    ndim = len(input_shape) - 3
+    # ====== pooling ====== #
+    if mode == 'max':
+        x = tf.nn.max_pool(x, ksize=(1,) * ndim + pool_size + (1,),
+                           strides=(1,) * ndim + strides + (1,),
+                           padding=border_mode)
+    elif mode == 'avg':
+        x = tf.nn.avg_pool(x, ksize=(1,) * ndim + pool_size + (1,),
+                           strides=(1,) * ndim + strides + (1,),
+                           padding=border_mode)
+    output_shape = get_pool_output_shape(input_shape, pool_size,
+        ignore_border=ignore_border, strides=strides, pad=border_mode)
+    add_shape(x, tuple(output_shape))
+    return x
 
 
-def pool3d(x, pool_size=(2, 2, 2), ignore_border=True,
-           strides=(1, 1, 1), pad=(0, 0, 0), mode='max'):
+def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
+           ignore_border=True, mode='max'):
     """
     Parameters
     ----------
@@ -968,64 +974,30 @@ def pool3d(x, pool_size=(2, 2, 2), ignore_border=True,
         (pad_h, pad_w, pad_l), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
         pad_w is the size of the left and right margins.
-    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
-        Operation executed on each window. `max` and `sum` always exclude
-        the padding in the computation. `average` gives you the choice to
-        include or exclude it.
+    mode : {'max', 'avg'}
+        Operation executed on each window. `max` or `average`
 
     Note
     ----
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
-    if strides is None:
-        strides = pool_size
-    pool_size = as_tuple(pool_size, 3, int)
-    strides = as_tuple(strides, 3, int)
-    pad = as_tuple(pad, 3, int)
-    # ====== On GPU: use CuDNN ====== #
-    if mode != 'sum' and on_gpu():
-        from theano.sandbox.cuda import dnn
-        if not ignore_border:
-            raise ValueError('CuDNN does not support ignore_border = False.')
-        pool_out = dnn.dnn_pool(x, ws=pool_size, stride=strides, mode=mode, pad=pad)
-    # ====== Use default Theano implementation ====== #
-    else:
-        if len(set(pad)) > 1:
-            raise ValueError('Only support same padding on CPU.')
-        padding = (pad[0], pad[0])
-        output = pool.pool_2d(input=dimshuffle(x, (0, 1, 4, 3, 2)),
-                              ds=(pool_size[1], pool_size[0]),
-                              st=(strides[1], strides[0]),
-                              ignore_border=ignore_border,
-                              padding=padding,
-                              mode=mode)
-        # pooling over conv_dim3
-        pool_out = pool.pool_2d(input=dimshuffle(output, (0, 1, 4, 3, 2)),
-                                ds=(1, pool_size[2]),
-                                st=(1, strides[2]),
-                                ignore_border=ignore_border,
-                                padding=padding,
-                                mode=mode)
-    # ====== Estimate output shape ====== #
     input_shape = get_shape(x)
-    output_shape = list(input_shape)  # copy / convert to mutable list
-    output_shape[2] = pool_output_length(input_shape[2],
-                                         pool_size=pool_size[0],
-                                         stride=strides[0],
-                                         pad=pad[0],
-                                         ignore_border=ignore_border)
-    output_shape[3] = pool_output_length(input_shape[3],
-                                         pool_size=pool_size[1],
-                                         stride=strides[1],
-                                         pad=pad[1],
-                                         ignore_border=ignore_border)
-    output_shape[4] = pool_output_length(input_shape[4],
-                                         pool_size=pool_size[2],
-                                         stride=strides[2],
-                                         pad=pad[2],
-                                         ignore_border=ignore_border)
-    add_shape(pool_out, tuple(output_shape))
-    return pool_out
+    pool_size, strides, border_mode, mode = __validate_pool_stride_border(
+        pool_size, strides, border_mode, mode, ndim=3)
+    ndim = len(input_shape) - 4
+    # ====== pooling ====== #
+    if mode == 'max':
+        x = tf.nn.max_pool3d(x, ksize=(1,) * ndim + strides + (1,),
+                             strides=(1,) * ndim + pool_size + (1,),
+                             padding=border_mode)
+    elif mode == 'avg':
+        x = tf.nn.avg_pool3d(x, ksize=(1,) * ndim + strides + (1,),
+                             strides=(1,) * ndim + pool_size + (1,),
+                             padding=border_mode)
+    output_shape = get_pool_output_shape(input_shape, pool_size,
+        ignore_border=ignore_border, strides=strides, pad=border_mode)
+    add_shape(x, tuple(output_shape))
+    return x
 
 
 def poolWTA(x, pool_size=(2, 2), axis=1):

@@ -1,5 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
+from math import ceil
 import numpy as np
 
 
@@ -8,20 +9,21 @@ import numpy as np
 # Contain code from theano: theano/tensor/signal/pool.py
 # Copyright (c) 2008--2016, Theano Development Team
 # ===========================================================================
-def get_pool_output_shape(imgshape, ws, ignore_border=False, stride=None, pad=None):
+def get_pool_output_shape(imgshape, ws, ignore_border=False,
+                          strides=None, pad=None):
     """
     Parameters
     ----------
     imgshape : tuple, list, or similar of integer or scalar Theano variable
-        The shape of a tensor of images. The last N elements are
-        interpreted as the number of rows, and the number of cols.
+        order: (samples, pool_dim1, pool_dim2, pool_dim3, ..., input_depth)
+        (i.e tensorflow-NHWC format)
     ws : list or tuple of N ints
         Downsample factor over rows and column.
         ws indicates the pool region size.
     ignore_border : bool
         If ws doesn't divide imgshape, do we include an extra row/col/slice
         of partial downsampling (False) or ignore it (True).
-    stride : list or tuple of N ints or None
+    strides : list or tuple of N ints or None
         Stride size, which is the number of shifts over rows/cols/slices to get the
         next pool region. If stride is None, it is considered equal to ws
         (no overlap on pooling regions).
@@ -32,6 +34,18 @@ def get_pool_output_shape(imgshape, ws, ignore_border=False, stride=None, pad=No
         right margins. No padding is added if pad is None.
 
     """
+    # convert tensorflow shape to theano shape
+    imgshape = (imgshape[0], imgshape[-1]) + tuple(imgshape[1:-1])
+    ndim = len(ws)
+    # check valid pad (list or tuple of int)
+    if isinstance(pad, str):
+        if 'valid' in pad.lower():
+            pad = (0,) * ndim
+        elif 'same' in pad.lower():
+            out_shape = tuple([int(ceil(float(i) / float(j)))
+                               for i, j in zip(imgshape[-ndim:], strides)])
+            return (imgshape[0],) + imgshape[2:-ndim] + out_shape + (imgshape[1],)
+
     def compute_out(v, downsample, stride):
         if ignore_border:
             if downsample == stride:
@@ -45,16 +59,19 @@ def get_pool_output_shape(imgshape, ws, ignore_border=False, stride=None, pad=No
             else:
                 return max(0, (v - 1 - downsample + stride) // stride) + 1
     # ====== check input arguments ====== #
-    ndim = len(ws)
     if len(imgshape) < ndim:
         raise TypeError('imgshape must have at least {} dimensions'.format(ndim))
-    if stride is None:
-        stride = ws
+    if strides is None:
+        strides = ws
     if pad is None:
         pad = (0,) * ndim
-    patch_shape = tuple(imgshape[-ndim + i] + pad[i] * 2 for i in range(ndim))
-    out_shape = [compute_out(patch_shape[i], ws[i], stride[i]) for i in xrange(ndim)]
+    patch_shape = tuple(imgshape[-ndim + i] + pad[i] * 2
+                        for i in range(ndim))
+    out_shape = [compute_out(patch_shape[i], ws[i], strides[i])
+                 for i in range(ndim)]
     rval = tuple(imgshape[:-ndim]) + tuple(out_shape)
+    # convert theano shape to tensorflow shape
+    rval = (rval[0],) + rval[2:] + (rval[1],)
     return rval
 
 
@@ -65,30 +82,6 @@ def get_pool_output_shape(imgshape, ws, ignore_border=False, stride=None, pad=No
 # ===========================================================================
 def __get_conv_shape_1axis(image_shape, kernel_shape, border_mode,
                           subsample, dilation=1):
-    """
-    This function compute the output shape of convolution operation.
-    original code: abstract_conv.py (theano)
-
-    Parameters
-    ----------
-    image_shape: int or None. Corresponds to the input image shape on a
-        given axis. None if undefined.
-    kernel_shape: int or None. Corresponds to the kernel shape on a given
-        axis. None if undefined.
-    border_mode: string or int. If it is a string, it must be
-        'valid', 'half' or 'full'. If it is an integer, it must correspond to
-        the padding on the considered axis.
-    subsample: int. It must correspond to the subsampling on the
-        considered axis.
-    dilation: int. It must correspond to the dilation on the
-        considered axis.
-
-    Returns
-    -------
-    out_shp: int corresponding to the output image shape on the
-        considered axis. None if undefined.
-
-    """
     if None in [image_shape, kernel_shape, border_mode,
                 subsample, dilation]:
         return None
@@ -134,9 +127,11 @@ def get_conv_output_shape(image_shape, kernel_shape,
     Parameters
     ----------
     image_shape: tuple of int (symbolic or numeric) corresponding to the input
-        order: (samples, input_depth, conv_dim1, conv_dim2, conv_dim3, ...)
+        order: (samples, conv_dim1, conv_dim2, conv_dim3, ..., input_depth)
+        (i.e tensorflow-NHWC format)
     kernel_shape: tuple of int (symbolic or numeric) corresponding to the
-        order: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3, ...)
+        order: (kernel_dim1, kernel_dim2, kernel_dim3, ..., input_depth, out_depth)
+        (i.e tensorflow-NHWC format)
     border_mode: string, int (symbolic or numeric) or tuple of int (symbolic
         or numeric). If it is a string, it must be 'valid', 'half' or 'full'.
         If it is a tuple, its two (or three) elements respectively correspond
@@ -154,12 +149,14 @@ def get_conv_output_shape(image_shape, kernel_shape,
         output channels, height and width of the image. None where undefined.
 
     """
+    # ======  convert tensorflow shape to theano shape ====== #
+    image_shape = (image_shape[0], image_shape[-1]) + tuple(image_shape[1:-1])
+    kernel_shape = (kernel_shape[-1], kernel_shape[-2]) + tuple(kernel_shape[:-2])
+    # ====== infer shape ====== #
     bsize, imshp = image_shape[0], image_shape[2:]
     nkern, kshp = kernel_shape[0], kernel_shape[2:]
-
     if filter_dilation is None:
         filter_dilation = np.ones(len(subsample), dtype='int')
-
     if isinstance(border_mode, tuple):
         out_shp = tuple(__get_conv_shape_1axis(
             imshp[i], kshp[i], border_mode[i],
@@ -168,4 +165,5 @@ def get_conv_output_shape(image_shape, kernel_shape,
         out_shp = tuple(__get_conv_shape_1axis(
             imshp[i], kshp[i], border_mode,
             subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    # ====== convert theano to tensorflow shape ====== #
     return (bsize, ) + out_shp + (nkern,)
