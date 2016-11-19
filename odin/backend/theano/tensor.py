@@ -1063,18 +1063,17 @@ def __validate_pool_stride_border(x, pool_size, strides, border_mode, mode, ndim
         border_mode = (0,) * ndim
     elif border_mode == 'same':
         # pad x by hand
-        input_shape = get_shape(x)[1:-1]
+        input_shape = get_shape(x)[-ndim - 1:-1]
         native_shape = get_shape(x, native=True)
         output_shape = [math.ceil(float(i) / float(j)) for i, j in zip(input_shape, strides)]
         pad_size = [int((out - 1) * st + ps - ins)
                     for ins, out, ps, st in zip(input_shape, output_shape, pool_size, strides)]
-        print(pad_size)
         # pad if necessary
         if _sum(pad_size) > 0:
-            padded_x = T.zeros((native_shape[0],) +
+            padded_x = T.zeros(tuple([native_shape[i] for i in range(x.ndim - ndim - 1)]) +
                                tuple([i + j for i, j in zip(input_shape, pad_size)]) +
                                (native_shape[-1],))
-            indices = [slice(None)] + \
+            indices = [slice(None) for i in range(x.ndim - ndim - 1)] + \
                 [slice(i // 2, i // 2 + j) for i, j in zip(pad_size, input_shape)] + \
                 [slice(None)]
             x = T.set_subtensor(padded_x[indices], x)
@@ -1172,7 +1171,7 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
     # ====== On GPU: use CuDNN ====== #
     pool_out = pool.pool_3d(x, ws=pool_size, stride=strides,
                             ignore_border=ignore_border,
-                            pad=(0, 0) if isinstance(border_mode, str) else border_mode,
+                            pad=(0, 0, 0) if isinstance(border_mode, str) else border_mode,
                             mode=mode)
     # ====== Estimate output shape ====== #
     pool_out = __img_tensorflow_format(pool_out)
