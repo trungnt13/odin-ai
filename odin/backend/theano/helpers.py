@@ -212,7 +212,8 @@ def _check_target(target):
     return target
 
 
-def variable(value, dtype=FLOATX, name=None, target=None):
+def variable(value, dtype=FLOATX, name=None, target=None,
+             for_training=False):
     """Instantiate a tensor variable.
     """
     # ensure unique name
@@ -244,6 +245,10 @@ def variable(value, dtype=FLOATX, name=None, target=None):
     variable = theano.shared(value=value, name=name, strict=False, **kwargs)
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #
+    if for_training:
+        add_role(placeholder, TRAINING)
+    else:
+        add_role(placeholder, DEPLOYING)
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 

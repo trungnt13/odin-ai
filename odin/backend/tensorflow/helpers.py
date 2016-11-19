@@ -140,7 +140,8 @@ _CREATED_VARIABLE = {}
 _VAR_ID = 0
 
 
-def variable(value, dtype=FLOATX, name=None, target=None):
+def variable(value, dtype=FLOATX, name=None, target=None,
+             for_training=False):
     '''Instantiates a tensor.
 
     # Arguments
@@ -177,6 +178,11 @@ def variable(value, dtype=FLOATX, name=None, target=None):
                         "Consider using set_session() to manually assign current "
                         "ODIN session.")
     add_shape(variable, tuple(variable.get_shape().as_list()))
+    # ====== save all created variable ====== #
+    if for_training:
+        add_role(placeholder, TRAINING)
+    else:
+        add_role(placeholder, DEPLOYING)
     _CREATED_VARIABLE[variable.name.split(':')[0]] = variable
     return variable
 

@@ -658,6 +658,90 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
 
     return cluster_cost, total_cost
 
+# ===========================================================================
+# Addition pooling
+# ===========================================================================
+def poolWTA(x, pool_size=(2, 2), axis=1):
+    """ This function is adpated from Lasagne
+    Original work Copyright (c) 2014-2015 lasagne contributors
+    All rights reserved.
+    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
+
+    'Winner Take All' layer
+
+    This layer performs 'Winner Take All' (WTA) across feature maps: zero out
+    all but the maximal activation value within a region.
+
+    Parameters
+    ----------
+    pool_size : integer
+        the number of feature maps per region.
+
+    axis : integer
+        the axis along which the regions are formed.
+
+    **kwargs
+        Any additional keyword arguments are passed to the :class:`Layer`
+        superclass.
+
+    Notes
+    -----
+    This layer requires that the size of the axis along which it groups units
+    is a multiple of the pool size.
+    """
+    input_shape = get_shape(x)
+    num_feature_maps = input_shape[axis]
+    num_pools = num_feature_maps // pool_size
+
+    if input_shape[axis] % pool_size != 0:
+        raise ValueError("Number of input feature maps (%d) is not a "
+                         "multiple of the region size (pool_size=%d)" %
+                         (num_feature_maps, pool_size))
+
+    pool_shape = ()
+    arange_shuffle_pattern = ()
+    for k in range(axis):
+        pool_shape += (input_shape[k],)
+        arange_shuffle_pattern += ('x',)
+
+    pool_shape += (num_pools, pool_size)
+    arange_shuffle_pattern += ('x', 0)
+
+    for k in range(axis + 1, x.ndim):
+        pool_shape += (input_shape[k],)
+        arange_shuffle_pattern += ('x',)
+
+    input_reshaped = reshape(x, pool_shape)
+    max_indices = argmax(input_reshaped, axis=axis + 1, keepdims=True)
+
+    arange = T.arange(pool_size).dimshuffle(*arange_shuffle_pattern)
+    mask = reshape(T.eq(max_indices, arange), input_shape)
+    output = x * mask
+    add_shape(output, input_shape)
+    return output
+
+
+def poolGlobal(x, pool_function=mean):
+    """ Global pooling
+
+    This layer pools globally across all trailing dimensions beyond the 2nd.
+
+    Parameters
+    ----------
+    pool_function : callable
+        the pooling function to use. This defaults to `theano.tensor.mean`
+        (i.e. mean-pooling) and can be replaced by any other aggregation
+        function.
+
+    Note
+    ----
+    output_shape = input_shape[:2]
+    """
+    input_shape = get_shape(x)
+    x = pool_function(T.flatten(x, 3), axis=2)
+    add_shape(x, input_shape[:2])
+    return x
+
 
 # ===========================================================================
 # Noise
@@ -689,7 +773,8 @@ def _process_noise_dim(input_shape, dims, ndim):
     return noise_shape
 
 
-def apply_dropout(x, level=0.5, noise_dims=None, noise_type='uniform', rescale=True):
+def apply_dropout(x, level=0.5, noise_dims=None, noise_type='uniform',
+                  rescale=True):
     """Computes dropout.
 
     With probability `keep_prob`, outputs the input element scaled up by
@@ -700,15 +785,16 @@ def apply_dropout(x, level=0.5, noise_dims=None, noise_type='uniform', rescale=T
     Parameters
     ----------
     x: A tensor.
+        input tensor
     level: float(0.-1.)
         probability dropout values in given tensor
-,    rescale: bool
-        whether rescale the outputs by dividing the retain probablity
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
     noise_type: 'gaussian' (or 'normal'), 'uniform'
         distribution used for generating noise
+    rescale: bool
+        whether rescale the outputs by dividing the retain probablity
     seed: random seed or `tensor.rng`
         random generator from tensor class
 
