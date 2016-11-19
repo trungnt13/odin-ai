@@ -16,6 +16,7 @@ class Dropout(NNOps):
     Parameters
     ----------
     x: A tensor.
+        input tensor (any shape)
     level: float(0.-1.)
         probability dropout values in given tensor
     noise_dims: int or list(int)
@@ -31,11 +32,13 @@ class Dropout(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    def __init__(self, level=0.5, noise_dims=None,
-                 noise_type='gaussian', rescale=True, **kwargs):
+    def __init__(self, level=0.5,
+                 noise_dims=None, noise_type='uniform',
+                 rescale=True, **kwargs):
         super(Dropout, self).__init__(**kwargs)
         self.level = level
         self.noise_dims = noise_dims
+        self.noise_type = noise_type
         self.rescale = rescale
 
     def _initialize(self, x):
@@ -44,6 +47,7 @@ class Dropout(NNOps):
     def _apply(self, x):
         return K.apply_dropout(x, level=self.level,
                                noise_dims=self.noise_dims,
+                               noise_type=self.noise_type,
                                rescale=self.rescale)
 
     def _transpose(self):
@@ -55,8 +59,10 @@ class Noise(NNOps):
     Parameters
     ----------
     x: A tensor.
-    sigma : float or tensor scalar
-        Standard deviation of added Gaussian noise
+        input tensor (any shape)
+    level : float or tensor scalar
+        Standard deviation of added Gaussian noise, or range of
+        uniform noise
     noise_dims: int or list(int)
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
@@ -68,10 +74,10 @@ class Noise(NNOps):
     This function only apply noise on Variable with TRAINING role
     """
 
-    def __init__(self, sigma=0.075, noise_dims=None,
+    def __init__(self, level=0.075, noise_dims=None,
                  noise_type='gaussian', **kwargs):
         super(Noise, self).__init__(**kwargs)
-        self.sigma = sigma
+        self.level = level
         self.noise_dims = noise_dims
         self.noise_type = noise_type
 
@@ -79,7 +85,7 @@ class Noise(NNOps):
         return NNConfig()
 
     def _apply(self, x):
-        return K.apply_noise(x, sigma=self.sigma,
+        return K.apply_noise(x, level=self.level,
                              noise_dims=self.noise_dims,
                              noise_type=self.noise_type)
 

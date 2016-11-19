@@ -4,73 +4,60 @@ from __future__ import division, absolute_import
 import numpy as np
 
 from odin import backend as K
-from odin.utils import as_tuple
 from odin.utils.decorators import autoinit
 
 from .base import NNOps, NNConfig
 
 
-class Pool2D(NNOps):
+class Pool(NNOps):
     """
     Parameters
     ----------
-    strides : tuple of 2 ints
+    pool_size : tuple of int or just an int.
+        Factor by which to downscale (vertical ws, horizontal ws, ...).
+    strides : tuple of two ints or theano vector of ints of size 2.
         Stride size, which is the number of shifts over rows/cols to get the
-        next pool region. If strides is None, it is considered equal to
-        pool_size (no overlap on pooling regions).
-    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
-        Operation executed on each window. `max` and `sum` always exclude
-        the padding in the computation. `average` gives you the choice to
-        include or exclude it.
+        next pool region. If stride is None, it is considered equal to ws
+        (no overlap on pooling regions).
+    pad : tuple of two ints or theano vector of ints of size 2.
+        (pad_h, pad_w), pad zeros to extend beyond four borders of the
+        images, pad_h is the size of the top and bottom margins, and
+        pad_w is the size of the left and right margins.
+    ignore_border : bool (default None, will print a warning and set to False)
+        When True, (5,5) input with ws=(2,2) will generate a (2,2) output.
+        (3,3) otherwise.
+    mode : {'max', 'avg'}
+        Operation executed on each window. `max` or `average`
+    pool_func : 'auto' or callable
+        if 'auto', auto select pool function based on number of input
+        dimension (pool2D for 4D input, pool3D for 5D input)
 
+    Note
+    ----
+    This pooling algorithm has non-deterministic behaviour on cuDNN
     """
 
     @autoinit
-    def __init__(self, pool_size=(2, 2), ignore_border=True,
-           strides=None, pad=(0, 0), mode='max', **kwargs):
-        super(Pool2D, self).__init__(**kwargs)
+    def __init__(self, pool_size=2, strides=None, pad='valid',
+                 ignore_border=True, mode='max',
+                 pool_func='auto', **kwargs):
+        super(Pool, self).__init__(**kwargs)
 
     def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x)[1:])
+        config = NNConfig(ndim=K.ndim(x))
         return config
 
     def _apply(self, x):
-        return K.pool2d(x, pool_size=self.pool_size, strides=self.strides,
-                        pad=self.pad, ignore_border=self.ignore_border,
-                        mode=self.mode)
-
-    def _transpose(self):
-        raise NotImplementedError
-
-
-class Pool3D(NNOps):
-    """
-    Parameters
-    ----------
-    strides : tuple of 3 ints
-        Stride size, which is the number of shifts over rows/cols to get the
-        next pool region. If strides is None, it is considered equal to
-        pool_size (no overlap on pooling regions).
-    mode : {'max', 'sum', 'average_inc_pad', 'average_exc_pad'}
-        Operation executed on each window. `max` and `sum` always exclude
-        the padding in the computation. `average` gives you the choice to
-        include or exclude it.
-
-    """
-
-    @autoinit
-    def __init__(self, pool_size=(2, 2, 2), ignore_border=True,
-           strides=None, pad=(0, 0, 0), mode='max', **kwargs):
-        super(Pool3D, self).__init__(**kwargs)
-
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x)[1:])
-        return config
-
-    def _apply(self, x):
-        return K.pool3d(x, pool_size=self.pool_size, strides=self.strides,
-                        pad=self.pad, ignore_border=self.ignore_border,
-                        mode=self.mode)
+        if self.pool_func == 'auto':
+            if self.ndim == 4:
+                pool_func = K.pool2d
+            elif self.ndim == 5:
+                pool_func = K.pool3d
+        else: # user sepecifed pool_func
+            pool_func = self.pool_func
+        return pool_func(x, pool_size=self.pool_size, strides=self.strides,
+                         border_mode=self.pad, ignore_border=self.ignore_border,
+                         mode=self.mode)
 
     def _transpose(self):
         raise NotImplementedError
