@@ -309,6 +309,16 @@ class History(Callback):
         return None
 
     # ==================== helpers ==================== #
+    @property
+    def event_types(self):
+        """ Return all exist event types in this history """
+        return list(set([i[2] for i in self._history]))
+
+    @property
+    def event_names(self):
+        """ Return all exist event name in this history """
+        return list(set([i[1] for i in self._history]))
+
     def query(self, event_name=None, event_type=None):
         event_name = '' if event_name is None else str(event_name)
         event_type = '' if event_type is None else str(event_type)
@@ -462,7 +472,8 @@ class NaNDetector(Callback):
 # ===========================================================================
 @add_metaclass(ABCMeta)
 class EarlyStop(Callback):
-    """ Early Stopping algorithm based on Generalization Loss criterion,
+    """
+    Early Stopping algorithm based on Generalization Loss criterion,
     this is strict measure on validation
 
     ``LOWER is better``
@@ -569,7 +580,16 @@ class EarlyStop(Callback):
 
 
 class EarlyStopGeneralizationLoss(EarlyStop):
-    """ Early Stopping algorithm based on Generalization Loss criterion,
+    """
+    EarlyStopGeneralizationLoss(self, name, threshold, patience=1,
+              get_value=lambda x: np.mean([i[0] for i in x]
+                                          if isinstance(x[0], (tuple, list))
+                                          else x),
+              stop_callback=None,
+              save_callback=None)
+
+
+    Early Stopping algorithm based on Generalization Loss criterion,
     this is strict measure on validation
 
     ``LOWER is better``
@@ -631,7 +651,16 @@ class EarlyStopGeneralizationLoss(EarlyStop):
 
 
 class EarlyStopPatience(EarlyStop):
-    """ Adapted algorithm from keras:
+    """
+    EarlyStopPatience(self, name, threshold, patience=1,
+              get_value=lambda x: np.mean([i[0] for i in x]
+                                          if isinstance(x[0], (tuple, list))
+                                          else x),
+              stop_callback=None,
+              save_callback=None)
+
+
+    Adapted algorithm from keras:
     All contributions by François Chollet:
     Copyright (c) 2015, François Chollet.
     All rights reserved.

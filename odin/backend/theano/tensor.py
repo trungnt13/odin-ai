@@ -241,7 +241,7 @@ def var(x, axis=None, keepdims=False):
 
 def mean(x, axis=None, keepdims=False):
     dtype = x.dtype
-    if 'int' in dtype:
+    if 'int' in str(dtype) or 'bool' in str(dtype):
         dtype = FLOATX
     y = T.mean(x, axis=axis, keepdims=keepdims, dtype=dtype)
     if isinstance(get_shape(x), (tuple, list)):

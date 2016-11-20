@@ -13,7 +13,7 @@ from odin.utils import as_tuple
 from odin.basic import add_updates, get_shape, add_shape, add_role, ACTIVATION_PARAMETER
 
 from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
-                        concatenate, clip, log, one_hot, reshape, constant,
+                        concatenate, clip, log, one_hot, reshape, constant, any,
                         eq, ge, lt, cast, mean, argmax, argtop_k, Scan, relu,
                         exp, sqrt, pow, sum, square, switch, flatten, eval,
                         is_trainable_variable, is_training, addbroadcast,
@@ -382,7 +382,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
         x = relu(x, (upper + lower) / 2.0)
     else: # Training mode
         shape = list(input_shape)
-        if any(s is None for s in shape):
+        if __builtin__.any(s is None for s in shape):
             shape = list(x.shape)
         for ax in shared_axes:
             shape[ax] = 1
@@ -535,11 +535,12 @@ def categorical_accuracy(y_pred, y_true, top_k=1):
 
     if top_k == 1:
         # standard categorical accuracy
-        top = cast(argmax(y_pred, axis=-1), y_true.dtype)
+        top = argmax(y_pred, axis=-1)
+        y_true = cast(y_true, top.dtype)
         return eq(top, y_true)
     else:
         # top-k accuracy
-        top = cast(argtop_k(y_pred, top_k), y_true.dtype)
+        top = argtop_k(y_pred, top_k)
         y_true = expand_dims(y_true, dim=-1)
         return any(eq(top, y_true), axis=-1)
 

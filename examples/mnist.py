@@ -4,7 +4,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 import os
-os.environ['ODIN'] = 'float32,cpu,theano,seed=12'
+os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12'
 
 from odin import backend as K
 from odin import nnet as N
@@ -17,7 +17,7 @@ stdio(get_logpath('tmp.log', override=True))
 arg = ArgController(version=0.12
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
 ).add('-epoch', 'number of epoch', 3
-).add('-lr', 'learning rate', 0.01
+).add('-lr', 'learning rate', 0.001
 ).parse()
 
 # ===========================================================================
@@ -44,8 +44,7 @@ ops = N.Sequence([
     N.Conv(64, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
     N.Pool(pool_size=(2, 2), strides=None),
     N.FlattenRight(outdim=2),
-    N.Dense(512, activation=K.relu),
-    N.Dense(128, activation=K.relu),
+    N.Dense(256, activation=K.relu),
     N.Dense(10, activation=K.softmax)
 ], debug=True)
 ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
@@ -65,7 +64,8 @@ f_train = K.function([X, y], [cost_train, optimizer.norm],
                      updates=updates)
 print('Building testing functions ...')
 f_test = K.function([X, y], [cost_test_1, cost_test_2, cost_test_3])
-
+print('Building predicting functions ...')
+f_pred = K.function(X, y_pred_score)
 
 # ===========================================================================
 # Build trainer
@@ -92,3 +92,5 @@ task['History'].print_info()
 task['History'].print_batch('train')
 task['History'].print_batch('valid')
 task['History'].print_epoch('test')
+task['History'].benchmark('train', 'batch_end')
+task['History'].benchmark('valid', 'batch_end')

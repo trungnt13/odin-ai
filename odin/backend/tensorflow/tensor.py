@@ -250,7 +250,9 @@ def var(x, axis=None, keepdims=False):
 
 def mean(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    x = tf.cast(x, FLOATX)
+    dtype = x.dtype
+    if 'int' in str(dtype) or 'bool' in str(dtype):
+        x = tf.cast(x, FLOATX)
     return tf.reduce_mean(x, reduction_indices=axis, keep_dims=keepdims)
 
 
