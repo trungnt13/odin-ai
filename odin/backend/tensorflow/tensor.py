@@ -547,32 +547,6 @@ def hessian(loss, variables):
     raise NotImplementedError
 
 
-def Scan(fn,
-         sequences=None,
-         outputs_info=None,
-         n_steps=None,
-         truncate_gradient=-1,
-         backwards=False,
-         name=None):
-    """
-    Note
-    ----
-    backwards mode only invert sequences then iterate over them
-    """
-    return theano.scan(fn,
-                       sequences=sequences,
-                       outputs_info=outputs_info,
-                       non_sequences=None,
-                       n_steps=n_steps,
-                       truncate_gradient=truncate_gradient,
-                       go_backwards=backwards,
-                       mode=None,
-                       name=name,
-                       profile=False,
-                       allow_gc=None,
-                       strict=False)
-
-
 class Function(object):
     """ Two way to call this Function
     f(x1, x2, x3)
@@ -1003,84 +977,69 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
     add_shape(x, tuple(output_shape))
     return x
 
-
-def poolWTA(x, pool_size=(2, 2), axis=1):
-    """ This function is adpated from Lasagne
-    Original work Copyright (c) 2014-2015 lasagne contributors
-    All rights reserved.
-    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-
-    'Winner Take All' layer
-
-    This layer performs 'Winner Take All' (WTA) across feature maps: zero out
-    all but the maximal activation value within a region.
-
-    Parameters
-    ----------
-    pool_size : integer
-        the number of feature maps per region.
-
-    axis : integer
-        the axis along which the regions are formed.
-
-    **kwargs
-        Any additional keyword arguments are passed to the :class:`Layer`
-        superclass.
-
-    Notes
-    -----
-    This layer requires that the size of the axis along which it groups units
-    is a multiple of the pool size.
+# ===========================================================================
+# RNN and loop
+# ===========================================================================
+def Scan(fn,
+         sequences=None,
+         outputs_info=None,
+         n_steps=None,
+         truncate_gradient=-1,
+         backwards=False,
+         name=None):
     """
-    input_shape = get_shape(x)
-    num_feature_maps = input_shape[axis]
-    num_pools = num_feature_maps // pool_size
-
-    if input_shape[axis] % pool_size != 0:
-        raise ValueError("Number of input feature maps (%d) is not a "
-                         "multiple of the region size (pool_size=%d)" %
-                         (num_feature_maps, pool_size))
-
-    pool_shape = ()
-    arange_shuffle_pattern = ()
-    for k in range(axis):
-        pool_shape += (input_shape[k],)
-        arange_shuffle_pattern += ('x',)
-
-    pool_shape += (num_pools, pool_size)
-    arange_shuffle_pattern += ('x', 0)
-
-    for k in range(axis + 1, x.ndim):
-        pool_shape += (input_shape[k],)
-        arange_shuffle_pattern += ('x',)
-
-    input_reshaped = reshape(x, pool_shape)
-    max_indices = argmax(input_reshaped, axis=axis + 1, keepdims=True)
-
-    arange = T.arange(pool_size).dimshuffle(*arange_shuffle_pattern)
-    mask = reshape(T.eq(max_indices, arange), input_shape)
-    output = x * mask
-    add_shape(output, input_shape)
-    return output
-
-
-def poolGlobal(x, pool_function=mean):
-    """ Global pooling
-
-    This layer pools globally across all trailing dimensions beyond the 2nd.
-
-    Parameters
-    ----------
-    pool_function : callable
-        the pooling function to use. This defaults to `theano.tensor.mean`
-        (i.e. mean-pooling) and can be replaced by any other aggregation
-        function.
-
     Note
     ----
-    output_shape = input_shape[:2]
+    backwards mode only invert sequences then iterate over them
     """
-    input_shape = get_shape(x)
-    x = pool_function(T.flatten(x, 3), axis=2)
-    add_shape(x, input_shape[:2])
-    return x
+    return theano.scan(fn,
+                       sequences=sequences,
+                       outputs_info=outputs_info,
+                       non_sequences=None,
+                       n_steps=n_steps,
+                       truncate_gradient=truncate_gradient,
+                       go_backwards=backwards,
+                       mode=None,
+                       name=name,
+                       profile=False,
+                       allow_gc=None,
+                       strict=False)
+
+
+def rnn_dnn(hidden_size, num_layers,
+            rnn_mode,
+            input_mode='linear',
+            direction_mode='unidirectional',
+            dropout=0.):
+    """CuDNN v5 RNN implementation.
+
+    Parameters
+    ----------
+    hidden_size : int
+        the number of units within the RNN model.
+    num_layers : int
+        the number of layers for the RNN model.
+    rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
+        See cudnn documentation for ``cudnnRNNMode_t``.
+    input_mode : {'linear', 'skip'}
+        linear: input will be multiplied by a biased matrix
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
+    direction_mode : {'unidirectional', 'bidirectional'}
+        unidirectional: The network operates recurrently from the
+                        first input to the last.
+        bidirectional: The network operates from first to last then from last
+                       to first and concatenates the results at each layer.
+    dropout: float (0.0-1.0)
+        whether to enable dropout. With it is 0, dropout is disabled.
+    """
+    # ====== Check arguments ====== #
+    if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
+        raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
+                         % rnn_mode)
+    if input_mode not in ('linear', 'skip'):
+        raise ValueError("input_mode=%s must be: 'linear', 'skip'" % input_mode)
+    if direction_mode not in ('unidirectional', 'bidirectional'):
+        raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
+                         % direction_mode)

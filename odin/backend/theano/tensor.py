@@ -585,32 +585,6 @@ def pad(x, axes=1, padding=1):
 # ===========================================================================
 # GRAPH MANIPULATION
 # ===========================================================================
-def Scan(fn,
-         sequences=None,
-         outputs_info=None,
-         n_steps=None,
-         truncate_gradient=-1,
-         backwards=False,
-         name=None):
-    """
-    Note
-    ----
-    backwards mode only invert sequences then iterate over them
-    """
-    return theano.scan(fn,
-                       sequences=sequences,
-                       outputs_info=outputs_info,
-                       non_sequences=None,
-                       n_steps=n_steps,
-                       truncate_gradient=truncate_gradient,
-                       go_backwards=backwards,
-                       mode=None,
-                       name=name,
-                       profile=False,
-                       allow_gc=None,
-                       strict=False)
-
-
 class Function(object):
     """ Two way to call this Function
     f(x1, x2, x3)
@@ -1181,3 +1155,70 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
         ignore_border=ignore_border, strides=strides, pad=border_mode)
     add_shape(pool_out, tuple(output_shape))
     return pool_out
+
+# ===========================================================================
+# RNN
+# ===========================================================================
+def Scan(fn,
+         sequences=None,
+         outputs_info=None,
+         n_steps=None,
+         truncate_gradient=-1,
+         backwards=False,
+         name=None):
+    """
+    Note
+    ----
+    backwards mode only invert sequences then iterate over them
+    """
+    return theano.scan(fn,
+                       sequences=sequences,
+                       outputs_info=outputs_info,
+                       non_sequences=None,
+                       n_steps=n_steps,
+                       truncate_gradient=truncate_gradient,
+                       go_backwards=backwards,
+                       mode=None,
+                       name=name,
+                       profile=False,
+                       allow_gc=None,
+                       strict=False)
+
+
+def rnn_dnn(hidden_size, num_layers,
+            rnn_mode,
+            input_mode='linear',
+            direction_mode='unidirectional',
+            dropout=0.):
+    """CuDNN v5 RNN implementation.
+
+    Parameters
+    ----------
+    hidden_size : int
+        the number of units within the RNN model.
+    num_layers : int
+        the number of layers for the RNN model.
+    rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
+        See cudnn documentation for ``cudnnRNNMode_t``.
+    input_mode : {'linear', 'skip'}
+        linear: input will be multiplied by a biased matrix
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
+    direction_mode : {'unidirectional', 'bidirectional'}
+        unidirectional: The network operates recurrently from the
+                        first input to the last.
+        bidirectional: The network operates from first to last then from last
+                       to first and concatenates the results at each layer.
+    dropout: float (0.0-1.0)
+        whether to enable dropout. With it is 0, dropout is disabled.
+    """
+    # ====== Check arguments ====== #
+    if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
+        raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
+                         % rnn_mode)
+    if input_mode not in ('linear', 'skip'):
+        raise ValueError("input_mode=%s must be: 'linear', 'skip'" % input_mode)
+    if direction_mode not in ('unidirectional', 'bidirectional'):
+        raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
+                         % direction_mode)

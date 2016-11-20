@@ -195,14 +195,13 @@ def auto_config(config=None, check=False):
         if device == 'cpu':
             contexts = "device=%s" % device
         else:
-            if dev['n'] == 1: # single gpu
+            if not _check_package_available('pygpu'): # single gpu
                 contexts = 'device=gpu'
             else: # multi gpu
-                contexts = "contexts="
-                contexts += ';'.join(["dev%d->cuda%d" % (j, j)
-                                      for j in range(dev['n'])])
-            # TODO: bizarre degradation in performance if not specify device=gpu
-            # device = 'device=gpu'
+                contexts = "device=cuda"
+                # contexts = 'contexts='
+                # contexts += ';'.join(["dev%d->cuda%d" % (j, j)
+                #                       for j in range(dev['n'])])
         flags = contexts + ",mode=FAST_RUN,floatX=%s" % floatX
         # ====== others ====== #
         # Speedup CuDNNv4

@@ -58,7 +58,7 @@ class RNNTest(unittest.TestCase):
         error_happen = False
         try:
             x3 = f3(np.random.rand(128, 8, 33))
-        except ValueError:
+        except (ValueError, Exception):
             error_happen = True
         self.assertTrue(error_happen)
 

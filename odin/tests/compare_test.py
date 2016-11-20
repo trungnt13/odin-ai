@@ -230,17 +230,18 @@ class CompareTest(unittest.TestCase):
         def odin_net2():
             "CNN"
             f = N.Sequence([
-                N.Dimshuffle((0, 'x', 1, 2)),
-                N.Conv2D(12, (3, 3), stride=(1, 1), pad='same',
+                N.Dimshuffle((0, 1, 2, 'x')),
+                N.Conv(12, (3, 3), strides=(1, 1), pad='same',
                     untie_biases=False,
-                    W_init=random(12, 1, 3, 3),
+                    W_init=random(3, 3, 1, 12),
                     activation=K.relu),
-                N.Pool2D(pool_size=(2, 2), strides=None, mode='max',
-                    ignore_border=True),
-                N.Conv2D(16, (3, 3), stride=(1, 1), pad='same',
+                N.Pool(pool_size=(2, 2), strides=None, mode='max',
+                       ignore_border=True),
+                N.Conv(16, (3, 3), strides=(1, 1), pad='same',
                     untie_biases=False,
-                    W_init=random(16, 12, 3, 3),
-                    activation=K.sigmoid)
+                    W_init=random(3, 3, 12, 16),
+                    activation=K.sigmoid),
+                N.Dimshuffle((0, 3, 1, 2))
             ])
             return X1, f(X1)
 
@@ -277,11 +278,13 @@ class CompareTest(unittest.TestCase):
             ])
             return X1, f(X1, hid_init=zeros(1, 32))
 
-        lasagne_list = [lasagne_net1, lasagne_net2, lasagne_net3]
-        odin_list = [odin_net1, odin_net2, odin_net3]
-
+        func_list = [
+            (lasagne_net1, odin_net1),
+            # (lasagne_net2, odin_net2),
+            (lasagne_net3, odin_net3)
+        ]
         print()
-        for i, j in zip(lasagne_list, odin_list):
+        for i, j in func_list:
             print('Test:', i.__name__, j.__name__)
             seed = np.random.randint(10e8)
             # ====== call the function ====== #

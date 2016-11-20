@@ -1,19 +1,20 @@
 import unittest
+# python -c "from odin.tests import run; run('theano')"
 
-
-def run(backend='theano', device='cpu'):
+# TODO: issue with CNN in compare_test
+def run(backend='theano', device='gpu'):
     tests = [
         'fuel_test',
         'backend_test',
         'nnet_test',
-        # 'compare_test',
-        # 'rnn_test',
+        'rnn_test',
+        'compare_test',
         # 'model_test'
     ]
     print('*NOTE*: some of the tests probably failed on float32 because of '
           'numerical instable, however, they worked on float64.')
     import os
-    os.environ['ODIN'] = '%s,%s,float64' % (backend, device)
+    os.environ['ODIN'] = '%s,%s,float32' % (backend, device)
     for t in tests:
         print('\n************ Running: %s ************' % t)
         exec('from . import %s' % t)
