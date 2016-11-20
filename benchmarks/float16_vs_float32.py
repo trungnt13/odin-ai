@@ -36,10 +36,8 @@ stdio(get_logpath('tmp.log'))
 ds = fuel.load_cifar10()
 print(ds)
 
-X_train = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X_train',
-                        for_training=True)
-X_score = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X_score',
-                        for_training=False)
+X_train = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X_train')
+X_score = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X_score')
 y = K.placeholder(shape=(None,), name='y', dtype='int32')
 
 # ===========================================================================

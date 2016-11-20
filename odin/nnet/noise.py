@@ -27,9 +27,6 @@ class Dropout(NNOps):
     rescale: bool
         whether rescale the outputs by dividing the retain probablity
 
-    Note
-    ----
-    This function only apply noise on Variable with TRAINING role
     """
 
     def __init__(self, level=0.5,
@@ -69,9 +66,6 @@ class Noise(NNOps):
     noise_type: 'gaussian' (or 'normal'), 'uniform'
         distribution used for generating noise
 
-    Note
-    ----
-    This function only apply noise on Variable with TRAINING role
     """
 
     def __init__(self, level=0.075, noise_dims=None,

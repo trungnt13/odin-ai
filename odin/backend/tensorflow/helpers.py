@@ -14,7 +14,6 @@ from tensorflow import variable_scope
 
 from odin.basic import (add_role, has_roles,
                         add_shape, get_shape,
-                        TRAINING, DEPLOYING,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
@@ -89,26 +88,6 @@ def is_variable(variable):
     return is_tensor(variable)
 
 
-def is_training(v):
-    """ A variable is in TRAINING mode if at least one of its inputs has
-    training role.
-
-    Note
-    ----
-    TRAINING role can be override by: ``add_role(x, DEPLOYING)``
-
-    """
-    if has_roles(v, TRAINING, exact=True):
-        return True
-    if not isinstance(v, (tuple, list)):
-        v = [v]
-    inputs = ComputationGraph(v).inputs
-    for i in inputs:
-        if has_roles(i, TRAINING, exact=True):
-            return True
-    return False
-
-
 # ===========================================================================
 # VALUE MANIPULATION
 # ===========================================================================
@@ -142,8 +121,7 @@ _CREATED_VARIABLE = {}
 _VAR_ID = 0
 
 
-def variable(value, dtype=FLOATX, name=None, target=None,
-             for_training=False):
+def variable(value, dtype=FLOATX, name=None, target=None):
     '''Instantiates a tensor.
 
     # Arguments
@@ -181,22 +159,14 @@ def variable(value, dtype=FLOATX, name=None, target=None,
                         "ODIN session.")
     add_shape(variable, tuple(variable.get_shape().as_list()))
     # ====== save all created variable ====== #
-    if for_training:
-        add_role(variable, TRAINING)
-    else:
-        add_role(variable, DEPLOYING)
     _CREATED_VARIABLE[variable.name.split(':')[0]] = variable
     return variable
 
 
-def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
+def placeholder(shape, dtype=FLOATX, name=None):
     shape = as_shape_tuple(shape)
     # ====== Modify add name prefix ====== #
     placeholder = tf.placeholder(dtype, shape=shape, name=name)
-    if for_training:
-        add_role(placeholder, TRAINING)
-    else:
-        add_role(placeholder, DEPLOYING)
     # store the predefined shape of placeholder
     add_shape(placeholder, shape)
     return placeholder

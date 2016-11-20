@@ -6,7 +6,6 @@ import numpy as np
 
 from odin.config import RNG_GENERATOR, CONFIG
 from . import tensor as K
-from .helpers import is_training
 
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon

@@ -167,7 +167,7 @@ class BatchNorm(NNOps):
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
-        is_training = K.is_training(x)
+        is_training = K.is_training()
         ndim = K.ndim(x)
         # if is training, normalize input by its own mean and std
         if not is_training:

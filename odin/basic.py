@@ -25,19 +25,6 @@ class VariableRole(object):
                       self.__class__.__name__[:-4]).upper()
 
 
-# ==================== Role for computation ==================== #
-class TrainingRole(VariableRole):
-    pass
-#: The variable is used for training mode (i.e enalbe dropout out, etc)
-TRAINING = TrainingRole()
-
-
-class DeployingRole(VariableRole):
-    pass
-#: Override Training role
-DEPLOYING = DeployingRole()
-
-
 # ==================== Variational ==================== #
 class VariationalRole(VariableRole):
     pass
@@ -290,13 +277,8 @@ def add_role(var, role):
     """
     _check_tag(var)
     roles = getattr(var.tag, 'roles', [])
-    # exclusively process for TRAINING and DEPLOYING mode
-    if role.__class__ in (TrainingRole, DeployingRole):
-        exclude_role = TrainingRole if role.__class__ is DeployingRole else DeployingRole
-        roles = [r for r in roles if not isinstance(r, exclude_role)]
-    else: # normali processing
-        roles = [old_role for old_role in roles
-                 if not isinstance(role, old_role.__class__)]
+    roles = [old_role for old_role in roles
+             if not isinstance(role, old_role.__class__)]
     # add a role if it isn't in the list
     if not any(isinstance(old_role, role.__class__) for old_role in roles):
         roles += [role]
@@ -335,6 +317,10 @@ def has_roles(var, roles, match_all=False, exact=False):
         decesdant roles.
 
     """
+    # don't have tag attribute
+    if not hasattr(var, 'tag'):
+        return False
+    # prepare roles
     if not hasattr(roles, '__iter__'):
         roles = [roles]
     var_roles = getattr(var.tag, 'roles', [])

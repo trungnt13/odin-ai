@@ -37,7 +37,7 @@ class Task(object):
                              'python function, method, or hasattr __call__.')
         if not isinstance(data, (tuple, list)):
             data = [data]
-        data = [fuel.data(i) for i in data]
+        data = [fuel.as_data(i) for i in data]
 
         self._func = func
         self._data = data
@@ -340,7 +340,7 @@ class MainLoop(object):
     def _validate_data(self, data):
         if not isinstance(data, (list, tuple)):
             data = [data]
-        return [fuel.data(i) for i in data]
+        return [fuel.as_data(i) for i in data]
 
     def set_task(self, func, data, epoch=1, p=1., name=None):
         '''

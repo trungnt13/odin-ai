@@ -102,7 +102,7 @@ class Switcher(NNOps):
     def _apply(self, x, **kwargs):
         is_training = False
         for i in as_tuple(x):
-            if K.is_variable(i) and K.is_training(i):
+            if K.is_variable(i) and K.is_training():
                 is_training = True
         if is_training:
             self.ops = [self.training]
@@ -127,19 +127,32 @@ class Sequence(HelperOps):
     strict_transpose : bool
         if True, only operators with transposed implemented are added
         to tranpose operator
+    debug : bool
+        if True, print Ops name and its output shape after applying
+        each operator in the sequence.
 
     Example
     -------
 
     """
 
-    def __init__(self, ops, strict_transpose=False, **kwargs):
+    def __init__(self, ops, strict_transpose=False, debug=False, **kwargs):
         super(Sequence, self).__init__(ops, **kwargs)
         self.strict_transpose = bool(strict_transpose)
+        self.debug = debug
 
     def _apply(self, x, **kwargs):
+        if self.debug:
+            print('**************** Start monitoring Ops Sequences ****************')
+            print('Is training:', K.is_training())
+            print('First input:', K.get_shape(x))
         for op in self.ops:
             x = op(x, **_shrink_kwargs(op, kwargs))
+            if self.debug:
+                print(str(op), '->', K.get_shape(x))
+        # end debug
+        if self.debug:
+            print()
         return x
 
     def _transpose(self):

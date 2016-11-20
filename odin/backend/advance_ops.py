@@ -378,7 +378,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
     else:
         shared_axes = shared_axes
     # ====== main logic ====== #
-    if not is_training(x) or upper == lower:
+    if not is_training() or upper == lower:
         x = relu(x, (upper + lower) / 2.0)
     else: # Training mode
         shape = list(input_shape)
@@ -535,11 +535,11 @@ def categorical_accuracy(y_pred, y_true, top_k=1):
 
     if top_k == 1:
         # standard categorical accuracy
-        top = argmax(y_pred, axis=-1)
+        top = cast(argmax(y_pred, axis=-1), y_true.dtype)
         return eq(top, y_true)
     else:
         # top-k accuracy
-        top = argtop_k(y_pred, top_k)
+        top = cast(argtop_k(y_pred, top_k), y_true.dtype)
         y_true = expand_dims(y_true, dim=-1)
         return any(eq(top, y_true), axis=-1)
 
@@ -805,12 +805,12 @@ def apply_dropout(x, level=0.5, noise_dims=None, noise_type='uniform',
 
     Note
     ----
-    This function only apply noise on Variable with TRAINING role
+    This function only apply noise on Variable when training is enable
     """
     input_shape = get_shape(x)
     retain_prob = 1. - level
     # ====== not a training variable NO dropout ====== #
-    if not is_training(x):
+    if not is_training():
         return x
     if 'normal' in noise_type or 'gaussian' in noise_type:
         randfunc = lambda shape: random_normal(shape=shape, mean=1.0,
@@ -857,12 +857,12 @@ def apply_noise(x, level=0.075, noise_dims=None, noise_type='gaussian'):
 
     Note
     ----
-    This function only apply noise on Variable with TRAINING role
+    This function only apply noise on Variable when training is enable
     """
     input_shape = get_shape(x)
     noise_type = noise_type.lower()
     # ====== not a training variable NO dropout ====== #
-    if not is_training(x):
+    if not is_training():
         return x
     # ====== applying noise ====== #
     shape = get_shape(x, native=True)

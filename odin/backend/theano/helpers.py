@@ -23,7 +23,6 @@ from theano.tensor.sharedvar import SharedVariable
 
 from odin.basic import (add_role, has_roles,
                         add_shape, get_shape,
-                        TRAINING, DEPLOYING,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_shape_tuple
@@ -147,26 +146,6 @@ def is_variable(variable):
     return isinstance(variable, Variable)
 
 
-def is_training(v):
-    """ A variable is in TRAINING mode if at least one of its inputs has
-    training role.
-
-    Note
-    ----
-    TRAINING role can be override by: ``add_role(x, DEPLOYING)``
-
-    """
-    if has_roles(v, TRAINING, exact=True):
-        return True
-    if not isinstance(v, (tuple, list)):
-        v = [v]
-    inputs = graph.inputs(v)
-    for i in inputs:
-        if has_roles(i, TRAINING, exact=True):
-            return True
-    return False
-
-
 # ===========================================================================
 # VALUE MANIPULATION
 # ===========================================================================
@@ -214,8 +193,7 @@ def _check_target(target):
     return target
 
 
-def variable(value, dtype=FLOATX, name=None, target=None,
-             for_training=False):
+def variable(value, dtype=FLOATX, name=None, target=None):
     """Instantiate a tensor variable.
     """
     # ensure unique name
@@ -247,25 +225,17 @@ def variable(value, dtype=FLOATX, name=None, target=None,
     variable = theano.shared(value=value, name=name, strict=False, **kwargs)
     add_shape(variable, tuple(variable.shape.eval()))
     # ====== save all created variable ====== #
-    if for_training:
-        add_role(variable, TRAINING)
-    else:
-        add_role(variable, DEPLOYING)
     _CREATED_VARIABLE[name] = variable # save original shared variables
     return variable
 
 
-def placeholder(shape, dtype=FLOATX, name=None, for_training=False):
+def placeholder(shape, dtype=FLOATX, name=None):
     """Instantiate an input data placeholder variable.
     """
     shape = as_shape_tuple(shape)
     broadcast = tuple([True if i == 1 else False for i in shape])
     # ====== Modify add name prefix ====== #
     placeholder = T.TensorType(dtype, broadcast)(name)
-    if for_training:
-        add_role(placeholder, TRAINING)
-    else:
-        add_role(placeholder, DEPLOYING)
     # store the predefined shape of placeholder
     add_shape(placeholder, shape)
     return placeholder

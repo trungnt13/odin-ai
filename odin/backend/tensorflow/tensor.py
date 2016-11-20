@@ -14,8 +14,7 @@ from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
-from odin.basic import (add_role, TRAINING, PARAMETER,
-                        ACTIVATION_PARAMETER, DEPLOYING,
+from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
                         add_shape, get_shape)
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph)
@@ -184,7 +183,8 @@ def dot(x, y):
     else:
         outshapeY = (shapeY[-1],)
     # calculate dot product and desire shape
-    output_shape = shapeX[:-1] + outshapeY
+    output_shape = [-1 if i is None else i
+                    for i in shapeX[:-1] + outshapeY]
     output = tf.reshape(tf.matmul(x, y), output_shape)
     return output
 
@@ -528,8 +528,7 @@ def gradients(loss, variables, consider_constant=None):
     >>>     print(g.eval())
     >>> # a_grad=0. b_grad=0. y_grad=6.614
     """
-    return tf.gradients(loss, variables=variables,
-                        colocate_gradients_with_ops=True)
+    return tf.gradients(loss, variables, colocate_gradients_with_ops=True)
 
 
 def stop_gradient(vars):
@@ -580,9 +579,10 @@ class Function(object):
         # ====== validate input ====== #
         if isinstance(inputs, dict):
             self.inputs_name = inputs.keys()
-            self.inputs = inputs.values()
+            inputs = inputs.values()
         elif not isinstance(inputs, (tuple, list)):
-            self.inputs = [inputs]
+            inputs = [inputs]
+        self.inputs = inputs
         if not hasattr(self, 'inputs_name'):
             self.inputs_name = [i.name for i in self.inputs]
         # ====== validate outputs ====== #
@@ -656,12 +656,12 @@ def confusion_matrix(y_pred, y_true, labels=None):
     """
     from tensorflow.contrib.metrics import confusion_matrix
     if y_true.get_shape().ndims == 2:
-        y_true = tf.argmax(y_true, -1)
+        y_true = argmax(y_true, -1)
     elif y_true.get_shape().ndims != 1:
         raise ValueError('actual must be 1-d or 2-d tensor variable')
 
     if y_pred.get_shape().ndims == 2:
-        y_pred = tf.argmax(y_pred, axis=-1)
+        y_pred = argmax(y_pred, -1)
     elif y_pred.get_shape().ndims != 1:
         raise ValueError('pred must be 1-d or 2-d tensor variable')
 

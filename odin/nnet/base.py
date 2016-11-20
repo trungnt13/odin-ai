@@ -587,7 +587,7 @@ class VariationalDense(NNOps):
         mean, logsigma = self.get_mean_logsigma(x)
         # variational output
         output = mean
-        if K.is_training(x):
+        if K.is_training():
             output = self.sampling(x)
         # set shape for output
         K.add_shape(output, input_shape[:-1] + (self.num_units,))

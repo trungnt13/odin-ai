@@ -10,6 +10,22 @@ if config['backend'] == 'theano':
 elif config['backend'] == 'tensorflow':
     from .tensorflow import *
 
+# ===========================================================================
+# TRaining flag
+# ===========================================================================
+__IS_TRAINING = False
+
+
+def is_training():
+    if __IS_TRAINING:
+        return 1
+    return 0
+
+
+def set_training(train):
+    global __IS_TRAINING
+    __IS_TRAINING = train
+
 
 # ===========================================================================
 # Some useful general helper

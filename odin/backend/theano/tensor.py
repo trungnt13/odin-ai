@@ -26,13 +26,12 @@ from odin.config import CONFIG, RNG_GENERATOR
 from odin.utils import as_tuple, as_shape_tuple, dict_union
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
-from odin.basic import (add_role, TRAINING, PARAMETER,
-                        ACTIVATION_PARAMETER, DEPLOYING,
+from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
                         add_shape, get_shape)
 
 from .helpers import (auto_infer_shape, _check_target,
                       is_trainable_variable, is_variable, is_placeholder,
-                      is_training, ComputationGraph)
+                      ComputationGraph)
 
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
