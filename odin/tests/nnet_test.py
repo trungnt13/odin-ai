@@ -38,33 +38,33 @@ class NNetTest(unittest.TestCase):
         self.assertEquals(K.get_shape(y), (None, 10))
 
     def test_conv2D(self):
-        x = K.placeholder((None, 3, 28, 28))
-        f1 = N.Conv2D(16, (3, 3), stride=(2, 2), pad='same')
+        x = K.placeholder((None, 28, 28, 3))
+        f1 = N.Conv(16, (3, 3), strides=(2, 2), pad='same')
         y = f1(x)
 
         f = K.function(x, y)
-        z = f(np.random.rand(12, 3, 28, 28))
+        z = f(np.random.rand(12, 28, 28, 3))
 
-        self.assertEquals(z.shape, (12, 16, 14, 14))
-        self.assertEquals(K.get_shape(y), (None, 16, 14, 14))
+        self.assertEquals(z.shape, (12, 14, 14, 16))
+        self.assertEquals(K.get_shape(y), (None, 14, 14, 16))
 
         # ====== transpose convolution ====== #
         y = f1.T(y)
         f = K.function(x, y)
-        z = f(np.random.rand(12, 3, 28, 28))
-        self.assertEquals(z.shape, (12, 3, 28, 28))
-        self.assertEquals(K.get_shape(y), (None, 3, 28, 28))
+        z = f(np.random.rand(12, 28, 28, 3))
+        self.assertEquals(z.shape, (12, 28, 28, 3))
+        self.assertEquals(K.get_shape(y), (None, 28, 28, 3))
 
     def test_conv3D(self):
-        x = K.placeholder((None, 3, 28, 28, 28))
-        f1 = N.Conv3D(16, (3, 3, 3), stride=1, pad='valid')
+        x = K.placeholder((None, 28, 28, 28, 3))
+        f1 = N.Conv(16, (3, 3, 3), strides=1, pad='valid')
         y = f1(x)
 
         f = K.function(x, y)
-        z = f(np.random.rand(12, 3, 28, 28, 28))
+        z = f(np.random.rand(12, 28, 28, 28, 3))
 
-        self.assertEquals(z.shape, (12, 16, 26, 26, 26))
-        self.assertEquals(K.get_shape(y), (None, 16, 26, 26, 26))
+        self.assertEquals(z.shape, (12, 26, 26, 26, 16))
+        self.assertEquals(K.get_shape(y), (None, 26, 26, 26, 16))
 
         # ====== transpose convolution ====== #
         # currently not support
@@ -75,69 +75,65 @@ class NNetTest(unittest.TestCase):
         # self.assertEquals(K.get_shape(y), (None, 3, 28, 28, 28))
 
     def test_dilatedConv(self):
-        x = K.placeholder((None, 3, 28, 28))
-        f1 = N.DilatedConv2D(16, (3, 3), dilation=(2, 2))
+        x = K.placeholder((None, 28, 28, 3))
+        f1 = N.Conv(16, (3, 3), dilation=(2, 2))
         y = f1(x)
 
         f = K.function(x, y)
-        z = f(np.random.rand(12, 3, 28, 28))
+        z = f(np.random.rand(12, 28, 28, 3))
 
-        self.assertEquals(z.shape, (12, 16, 24, 24))
-        self.assertEquals(K.get_shape(y), (None, 16, 24, 24))
+        self.assertEquals(z.shape, (12, 24, 24, 16))
+        self.assertEquals(K.get_shape(y), (None, 24, 24, 16))
 
     def test_batch_norm(self):
-        x = K.placeholder((None, 8, 12), for_training=True)
+        K.set_training(True)
+        x = K.placeholder((None, 8, 12))
         y = N.BatchNorm()(x)
         f = K.function(x, y)
         z = f(np.random.rand(25, 8, 12))
         self.assertEquals(z.shape, (25, 8, 12))
 
         # ====== Not training ====== #
-        x = K.placeholder((None, 8, 12), for_training=False)
+        K.set_training(False)
+        x = K.placeholder((None, 8, 12))
         y = N.BatchNorm()(x)
         f = K.function(x, y)
         z = f(np.random.rand(25, 8, 12))
         self.assertEquals(z.shape, (25, 8, 12))
 
     def test_noise(self):
-        x = K.placeholder((2, 3), for_training=True)
-        f1 = N.Noise(sigma=0.5, noise_dims=0, noise_type='gaussian', seed=25)
+        K.set_training(True)
+        x = K.placeholder((2, 3))
+        f1 = N.Noise(level=0.5, noise_dims=0, noise_type='gaussian')
         y = f1(x)
         f = K.function(x, y)
         z = f(np.ones((2, 3)))
-        self.assertEquals(z.tolist(),
-            [[1.692906141281128, 1.508149266242981, -0.018559932708740234],
-            [1.692906141281128, 1.508149266242981, -0.018559932708740234]])
+        z = z.tolist()
+        self.assertTrue(all(i == z[0] for i in z))
 
-        f1 = N.Noise(sigma=0.5, noise_dims=1, noise_type='gaussian', seed=25)
+        f1 = N.Noise(level=0.5, noise_dims=1, noise_type='gaussian')
         y = f1(x)
         f = K.function(x, y)
         z = f(np.ones((2, 3)))
-        self.assertEquals(z.tolist(),
-            [[-0.03506612777709961, -0.03506612777709961, -0.03506612777709961],
-             [1.66799795627594, 1.66799795627594, 1.66799795627594]])
+        z = z.T.tolist()
+        self.assertTrue(all(i == z[0] for i in z))
 
     def test_dropout(self):
-        x = K.placeholder((4, 6), for_training=True)
-        f1 = N.Dropout(level=0.5, noise_dims=0, rescale=True, seed=25)
+        K.set_training(True)
+        x = K.placeholder((4, 6))
+        f1 = N.Dropout(level=0.5, noise_dims=0, rescale=True)
         y = f1(x)
         f = K.function(x, y)
         z = f(np.ones((4, 6)))
-        self.assertEquals(z.tolist(),
-                          [[2.0, 2.0, 0.0, 0.0, 2.0, 2.0],
-                           [2.0, 2.0, 0.0, 0.0, 2.0, 2.0],
-                           [2.0, 2.0, 0.0, 0.0, 2.0, 2.0],
-                           [2.0, 2.0, 0.0, 0.0, 2.0, 2.0]])
+        z = z.tolist()
+        self.assertTrue(all(i == z[0] for i in z))
 
-        f1 = N.Dropout(level=0.5, noise_dims=1, rescale=True, seed=25)
+        f1 = N.Dropout(level=0.5, noise_dims=1, rescale=True)
         y = f1(x)
         f = K.function(x, y)
         z = f(np.ones((4, 6)))
-        self.assertEquals(z.tolist(),
-                          [[2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
-                           [2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
-                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        z = z.T.tolist()
+        self.assertTrue(all(i == z[0] for i in z))
 
     def test_shape(self):
         x = K.variable(np.ones((25, 8, 12)))
@@ -156,41 +152,43 @@ class NNetTest(unittest.TestCase):
         test_func(N.Dimshuffle((2, 0, 1)))
 
     def test_seq(self):
-        X = K.placeholder((None, 1, 28, 28), for_training=True)
-
+        X = K.placeholder((None, 28, 28, 1))
         f = N.Sequence([
-            N.Conv2D(8, (3, 3), stride=1, pad='same'),
+            N.Conv(8, (3, 3), strides=1, pad='same'),
+            N.Dimshuffle(pattern=(0, 3, 1, 2)),
             N.FlattenLeft(outdim=2),
-            N.Noise(sigma=0.3, noise_dims=None, noise_type='gaussian', seed=12),
+            N.Noise(level=0.3, noise_dims=None, noise_type='gaussian'),
             N.Dense(128, activation=K.relu),
-            N.Dropout(level=0.3, noise_dims=None, seed=8),
+            N.Dropout(level=0.3, noise_dims=None),
             N.Dense(10, activation=K.softmax)
         ])
-        y = f(X)
-        yT = f.T(y)
+        K.set_training(True); y = f(X)
+        K.set_training(False); yT = f.T(y)
         f1 = K.function(X, y)
         f2 = K.function(X, yT)
 
         f = cPickle.loads(cPickle.dumps(f))
-        y = f(X)
-        yT = f.T(y)
+        K.set_training(True); y = f(X)
+        K.set_training(False); yT = f.T(y)
         f3 = K.function(X, y)
         f4 = K.function(X, yT)
 
-        x = np.random.rand(12, 1, 28, 28)
+        x = np.random.rand(12, 28, 28, 1)
 
         self.assertEquals(f1(x).shape, (2688, 10))
         self.assertEquals(f3(x).shape, (2688, 10))
-        self.assertEqual(f1(x).sum(), f3(x).sum())
+        self.assertEqual(np.round(f1(x).sum(), 4),
+                         np.round(f3(x).sum(), 4))
         self.assertEquals(K.get_shape(y), (None, 10))
 
-        self.assertEquals(f2(x).shape, (12, 1, 28, 28))
-        self.assertEquals(f4(x).shape, (12, 1, 28, 28))
-        self.assertEqual(f2(x).sum(), f4(x).sum())
-        self.assertEquals(K.get_shape(yT), (None, 1, 28, 28))
+        self.assertEquals(f2(x).shape, (12, 28, 28, 1))
+        self.assertEquals(f4(x).shape, (12, 28, 28, 1))
+        self.assertEqual(str(f2(x).sum())[:4], str(f4(x).sum())[:4])
+        self.assertEquals(K.get_shape(yT), (None, 28, 28, 1))
 
     def test_load_save1(self):
-        X = K.placeholder((None, 1, 28, 28), for_training=True)
+        K.set_training(True)
+        X = K.placeholder((None, 1, 28, 28))
         f = N.Dense(128, activation=K.relu)
         f(X)
         W, b = [K.get_value(p).sum() for p in f.parameters]
@@ -214,7 +212,8 @@ class NNetTest(unittest.TestCase):
         self.assertEqual(activation1, activation)
 
     def test_load_save2(self):
-        X = K.placeholder((None, 1, 28, 28), for_training=True)
+        K.set_training(True)
+        X = K.placeholder((None, 1, 28, 28))
 
         f = N.Dense(128, activation=K.relu)
         y = f(X)
@@ -236,8 +235,8 @@ class NNetTest(unittest.TestCase):
     def test_load_save3(self):
         X = K.placeholder(shape=(None, 28, 28))
         ops = N.Sequence([
-            N.Dimshuffle((0, 'x', 1, 2)),
-            N.Conv2D(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+            N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+            N.Conv(8, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
             K.pool2d,
             N.FlattenRight(outdim=2),
             N.Dense(64, activation=K.relu),

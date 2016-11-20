@@ -39,7 +39,7 @@ class BackendTest(unittest.TestCase):
         t = K.dot(x, y)
         self.assertEquals(K.get_shape(t), (8, 25))
         self.assertEquals(K.get_shape(t), K.eval(t).shape)
-        t = K.dot(t, z)
+        t = K.dot(t, K.dimshuffle(z, (1, 0, 2)))
         self.assertEquals(K.get_shape(t), (8, 18, 13))
 
         # ====== transpose ====== #
@@ -165,7 +165,7 @@ class BackendTest(unittest.TestCase):
         y = K.variable(np.random.rand(100, 12, 5, 6))
         z = K.batched_dot(x, y)
         self.assertEqual(K.get_shape(z), K.eval(z).shape)
-        self.assertEqual(repr(K.eval(z).sum()), "1655.4410728461617")
+        self.assertEqual(repr(K.eval(z).sum())[:10], "1655.44107")
 
     def test_simple_ops_shape(self):
         x = K.variable(np.random.rand(25, 8, 12))
@@ -194,7 +194,7 @@ class BackendTest(unittest.TestCase):
         test_func(x, z, K.maximum)
 
         # test_func(x, z, K.concatenate)
-        test_func(x, z, K.stack)
+        test_func(x, z, lambda *x: K.stack(x))
 
         test_func(v, v, K.categorical_crossentropy)
 

@@ -166,7 +166,9 @@ def dot(x, y):
     '''Multiplies 2 tensors.
     When attempting to multiply a ND tensor
     with a ND tensor, reproduces the Theano behavior
-    (e.g. (2, 3).(4, 3, 5) = (2, 4, 5))
+    e.g.
+    (2, 3).(4, 3, 5) = (2, 4, 5)
+    (2, 3, 4).(4, 5) = (2, 3, 5)
     '''
     shapeX = get_shape(x)
     shapeY = get_shape(y)

@@ -175,7 +175,10 @@ def cast(x, dtype):
 # +, -, /, *, +=, -=, *=, /=
 # ===========================================================================
 def dot(x, y):
-    # TODO: float16 overflow
+    """ 2 special cases:
+    (2, 3).(4, 3, 5) = (2, 4, 5)
+    (2, 3, 4).(4, 5) = (2, 3, 5)
+    """
     output = T.dot(x, y)
     shapeX = get_shape(x)
     shapeY = get_shape(y)

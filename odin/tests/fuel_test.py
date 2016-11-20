@@ -46,12 +46,8 @@ class FuelTest(unittest.TestCase):
             ds.close()
             # ====== test feeder ====== #
             ds = F.Dataset(os.path.join(temppath, 'ds'), read_only=True)
-            feeder = F.Feeder(ds['indices.csv'],
-                              ncpu=2, buffer_size=2, maximum_queue_size=12)
-            feeder.set_recipes([
-                F.recipes.DataLoader(ds['X']),
-                F.recipes.CreateBatch()
-            ])
+            feeder = F.Feeder(ds['X'], ds['indices.csv'],
+                              ncpu=2, buffer_size=2)
             # ==================== No recipes ==================== #
             # ====== NO shuffle ====== #
             n = 0
@@ -79,7 +75,6 @@ class FuelTest(unittest.TestCase):
             # ==================== Convert indices ==================== #
             n = 0
             feeder.set_recipes([
-                F.recipes.DataLoader(ds['X']),
                 F.recipes.Name2Trans(
                     converter_func=lambda name, x: [int(name.split('_')[-1])] * x[0].shape[0]),
                 F.recipes.CreateBatch()
@@ -119,10 +114,9 @@ class FuelTest(unittest.TestCase):
             # ==================== Transcription ==================== #
             del feeder
             ds = F.Dataset(os.path.join(temppath, 'ds'))
-            feeder = F.Feeder(indices=ds['indices.csv'],
-                              ncpu=2, buffer_size=2, maximum_queue_size=12)
+            feeder = F.Feeder(ds['X'], indices=ds['indices.csv'],
+                              ncpu=2, buffer_size=2)
             feeder.set_recipes([
-                F.recipes.DataLoader(ds['X']),
                 F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
                 F.recipes.CreateBatch()
             ])

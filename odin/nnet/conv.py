@@ -80,7 +80,7 @@ class Conv(NNOps):
         The activation that is applied to the layer activations. If None
         is provided, the layer will be linear.
 
-    filter_dilation : int or iterable of int
+    dilation : int or iterable of int
         Specifying the dilation factor of the filters. A factor of
         :math:`x` corresponds to :math:`x - 1` zeros inserted between
         adjacent filter elements.
@@ -107,7 +107,7 @@ class Conv(NNOps):
                  b_init=K.init.constant(0),
                  untie_biases=False,
                  activation=K.linear,
-                 filter_dilation=1, **kwargs):
+                 dilation=1, **kwargs):
         super(Conv, self).__init__(**kwargs)
         self.activation = K.linear if activation is None else activation
 
@@ -131,10 +131,10 @@ class Conv(NNOps):
         else:
             self.strides = as_tuple(self.strides, ndim, int)
         # dilation
-        if self.filter_dilation is None:
-            self.filter_dilation = (1,) * ndim
+        if self.dilation is None:
+            self.dilation = (1,) * ndim
         else:
-            self.filter_dilation = as_tuple(self.filter_dilation, ndim, int)
+            self.dilation = as_tuple(self.dilation, ndim, int)
         # filter size
         self.filter_size = as_tuple(self.filter_size, ndim, int)
         # ====== create config ====== #
@@ -148,7 +148,7 @@ class Conv(NNOps):
             if self.untie_biases:
                 output_shape = get_conv_output_shape(input_shape, kernel_shape,
                         border_mode=self.pad, subsample=self.strides,
-                        filter_dilation=self.filter_dilation)
+                        filter_dilation=self.dilation)
                 biases_shape = output_shape[1:]
             else:
                 biases_shape = (self.num_filters,)
@@ -181,7 +181,7 @@ class Conv(NNOps):
         conved = conv_func(x, kernel=self.W,
                            strides=self.strides,
                            border_mode=self.pad,
-                           filter_dilation=self.filter_dilation)
+                           filter_dilation=self.dilation)
         return conved
 
 
@@ -223,7 +223,7 @@ class TransposeConv(NNOps):
         stride = self.conv.strides
         border_mode = self.conv.pad
         W = self.conv.W
-        dilation = self.conv.filter_dilation
+        dilation = self.conv.dilation
         # if Dilated Convolution, must transpose the Weights
         if self.conv.ndim == 2:
             deconv_func = K.deconv2d
@@ -241,7 +241,7 @@ class TransposeConv(NNOps):
             if self.conv.untie_biases:
                 conved += K.expand_dims(self.b, 0)
             else:
-                conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
+                conved += K.dimshuffle(self.b, ('x',) * (self.conv.ndim + 1) + (0,))
         activated = self.conv.activation(conved)
         K.add_shape(activated, output_shape)
         return activated

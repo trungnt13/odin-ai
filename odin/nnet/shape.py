@@ -9,6 +9,14 @@ from odin.utils.decorators import autoinit
 from .base import NNOps, NNConfig
 
 
+def _validate_input_shape(input_shape):
+    # input shape cannot contain zeros
+    if isinstance(input_shape, (tuple, list)) and \
+    any(i == 0 for i in input_shape):
+        raise ValueError('Input shape, %s, contains 0, and cannot be reshaped'
+                        % str(input_shape))
+
+
 class FlattenLeft(NNOps):
     """ Flatten the array from the left.
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(3584, 28)
@@ -24,6 +32,7 @@ class FlattenLeft(NNOps):
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
+        _validate_input_shape(input_shape)
         other_shape = tuple([input_shape[i]
                              for i in range(K.ndim(x) - self.outdim + 1,
                                             K.ndim(x))])
@@ -31,7 +40,7 @@ class FlattenLeft(NNOps):
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape)
+        return Reshape(shape, name=self.name + '_transpose')
 
 
 class FlattenRight(NNOps):
@@ -49,6 +58,7 @@ class FlattenRight(NNOps):
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
+        _validate_input_shape(input_shape)
         other_shape = tuple([input_shape[i]
                              for i in range(self.outdim - 1)])
         n = np.prod(input_shape[(self.outdim - 1):])
@@ -56,7 +66,7 @@ class FlattenRight(NNOps):
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape)
+        return Reshape(shape, name=self.name + '_transpose')
 
 
 class Reshape(NNOps):
@@ -70,11 +80,13 @@ class Reshape(NNOps):
         return config
 
     def _apply(self, x):
-        return K.reshape(x, shape_=self.shape)
+        input_shape = K.get_shape(x)
+        _validate_input_shape(input_shape)
+        return K.reshape(x, shape=self.shape)
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape)
+        return Reshape(shape, name=self.name + '_transpose')
 
 
 class Dimshuffle(NNOps):
@@ -92,7 +104,7 @@ class Dimshuffle(NNOps):
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape)
+        return Reshape(shape, name=self.name + '_transpose')
 
 
 class Squeeze(NNOps):
@@ -114,4 +126,4 @@ class Squeeze(NNOps):
         pattern = ['x' if i == axis
                    else (i - 1 if i > axis else i)
                    for i in range(ndim)]
-        return Dimshuffle(pattern=pattern)
+        return Dimshuffle(pattern=pattern, name=self.name + '_transpose')

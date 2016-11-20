@@ -143,7 +143,7 @@ class Sequence(HelperOps):
 
     def _apply(self, x, **kwargs):
         if self.debug:
-            print('**************** Start monitoring Ops Sequences ****************')
+            print('**************** Sequences: %s ****************' % self.name)
             print('Is training:', K.is_training())
             print('First input:', K.get_shape(x))
         for op in self.ops:
@@ -164,7 +164,8 @@ class Sequence(HelperOps):
                 transpose_ops.append(i)
         # reversed the order of ops for transpose
         transpose_ops = list(reversed(transpose_ops))
-        seq = Sequence(transpose_ops)
+        seq = Sequence(transpose_ops, debug=self.debug,
+                       name=self.name + '_transpose')
         return seq
 
     # ==================== Arithemic operator ==================== #
