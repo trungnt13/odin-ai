@@ -159,14 +159,16 @@ class BackendTest(unittest.TestCase):
 
         z = K.dot(x, y)
         self.assertEqual(K.get_shape(z), (2, 4, 1, 2, 5))
-        self.assertAlmostEqual(np.sum(K.eval(z)), -1.0198305134529524)
+        self.assertEqual(repr(np.sum(K.eval(z)))[:8],
+                         "-1.0198305134529524"[:8])
 
         np.random.seed(1208)
         x = K.variable(np.random.randn(100, 3, 4, 5))
         y = K.variable(np.random.rand(100, 12, 5, 6))
         z = K.batched_dot(x, y)
         self.assertEqual(K.get_shape(z), K.eval(z).shape)
-        self.assertEqual(repr(K.eval(z).sum())[:10], "1655.44107")
+        self.assertEqual(repr(K.eval(z).sum())[:7],
+                         "1655.44")
 
     def test_simple_ops_shape(self):
         x = K.variable(np.random.rand(25, 8, 12))

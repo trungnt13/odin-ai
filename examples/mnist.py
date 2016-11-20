@@ -4,7 +4,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 import os
-os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12'
+os.environ['ODIN'] = 'float32,gpu,theano,seed=12'
 
 from odin import backend as K
 from odin import nnet as N
@@ -92,5 +92,7 @@ task['History'].print_info()
 task['History'].print_batch('train')
 task['History'].print_batch('valid')
 task['History'].print_epoch('test')
-task['History'].benchmark('train', 'batch_end')
-task['History'].benchmark('valid', 'batch_end')
+print('Benchmark TRAIN-batch:', task['History'].benchmark('train', 'batch_end').mean)
+print('Benchmark TRAIN-epoch:', task['History'].benchmark('train', 'epoch_end').mean)
+print('Benchmark PRED-batch:', task['History'].benchmark('valid', 'batch_end').mean)
+print('Benchmark PRED-epoch:', task['History'].benchmark('valid', 'epoch_end').mean)
