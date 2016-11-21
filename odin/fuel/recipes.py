@@ -635,40 +635,43 @@ class CreateBatch(FeederRecipe):
 
     def group(self, batch):
         """ batch: contains [(name, np.ndarray-X, np.ndarray-transcription), ...] """
-        length = len(batch[0]) # size of 1 batch
-        nb_data = len(batch[0][1])
-        X = [[] for i in range(nb_data)]
-        Y = [[] for i in range(length - 2)]
-        for b in batch:
-            name = b[0]; data = b[1]; others = b[2:]
-            # training data can be list of Data or just 1 Data
-            for i, j in zip(X, data):
-                i.append(j)
-            # labels can be None (no labels given)
-            for i, j in zip(Y, others):
-                i.append(j)
-        # ====== stack everything into big array ====== #
-        X = [np.vstack(x) for x in X]
-        shape0 = X[0].shape[0]
-        Y = [np.concatenate(y, axis=0) for y in Y]
-        # ====== shuffle for the whole batch ====== #
-        if self.rng is not None:
-            permutation = self.rng.permutation(shape0)
-            X = [x[permutation] for x in X]
-            Y = [y[permutation] if y.shape[0] == shape0 else y
-                 for y in Y]
-        # ====== create batch ====== #
-        batch_filter = self.batch_filter
-        for i in range((shape0 - 1) // self.batch_size + 1):
-            start = i * self.batch_size
-            end = start + self.batch_size
-            # list of Data is given
-            x = [x[start:end] for x in X]
-            y = [y[start:end] for y in Y]
-            ret = batch_filter(x + y)
-            # always return tuple or list
-            if ret is not None:
-                yield ret if isinstance(ret, (tuple, list)) else (ret,)
+        if len(batch) == 0:
+            yield None
+        else:
+            length = len(batch[0]) # size of 1 batch
+            nb_data = len(batch[0][1])
+            X = [[] for i in range(nb_data)]
+            Y = [[] for i in range(length - 2)]
+            for b in batch:
+                name = b[0]; data = b[1]; others = b[2:]
+                # training data can be list of Data or just 1 Data
+                for i, j in zip(X, data):
+                    i.append(j)
+                # labels can be None (no labels given)
+                for i, j in zip(Y, others):
+                    i.append(j)
+            # ====== stack everything into big array ====== #
+            X = [np.vstack(x) for x in X]
+            shape0 = X[0].shape[0]
+            Y = [np.concatenate(y, axis=0) for y in Y]
+            # ====== shuffle for the whole batch ====== #
+            if self.rng is not None:
+                permutation = self.rng.permutation(shape0)
+                X = [x[permutation] for x in X]
+                Y = [y[permutation] if y.shape[0] == shape0 else y
+                     for y in Y]
+            # ====== create batch ====== #
+            batch_filter = self.batch_filter
+            for i in range((shape0 - 1) // self.batch_size + 1):
+                start = i * self.batch_size
+                end = start + self.batch_size
+                # list of Data is given
+                x = [x[start:end] for x in X]
+                y = [y[start:end] for y in Y]
+                ret = batch_filter(x + y)
+                # always return tuple or list
+                if ret is not None:
+                    yield ret if isinstance(ret, (tuple, list)) else (ret,)
 
 
 class CreateFile(FeederRecipe):
