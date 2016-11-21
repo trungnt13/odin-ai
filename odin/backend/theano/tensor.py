@@ -497,11 +497,16 @@ def dimshuffle(x, pattern):
 
 def flatten(x, outdim=1):
     input_shape = get_shape(x)
-    other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
-    n = np.prod(input_shape[(outdim - 1):])
-    output_shape = other_shape + (n,)
+    ndim = x.ndim
     x = T.flatten(x, outdim)
-    add_shape(x, output_shape)
+    if isinstance(input_shape, (tuple, list)):
+        remove_dims = input_shape[:(ndim - outdim + 1)]
+        remain_dims = input_shape[(ndim - outdim + 1):]
+        n = None
+        if all(i is not None for i in remove_dims):
+            n = np.prod(remove_dims)
+        output_shape = (n,) + remain_dims
+        add_shape(x, output_shape)
     return x
 
 

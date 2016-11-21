@@ -3,22 +3,25 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-import os
-os.environ['ODIN'] = 'float32,gpu,theano,seed=12'
-
-from odin import backend as K
-from odin import nnet as N
-from odin import fuel, training
 from odin.utils import get_modelpath, ArgController, stdio, get_logpath
-import cPickle
 
 stdio(get_logpath('tmp.log', override=True))
 
 arg = ArgController(version=0.12
+).add('-backend', 'theano or tensorflow', 'theano'
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
 ).add('-epoch', 'number of epoch', 3
 ).add('-lr', 'learning rate', 0.001
 ).parse()
+
+import os
+os.environ['ODIN'] = 'float32,gpu,%s,seed=12' % arg['backend']
+
+from odin import backend as K
+from odin import nnet as N
+from odin import fuel, training
+import cPickle
+
 
 # ===========================================================================
 # Load data

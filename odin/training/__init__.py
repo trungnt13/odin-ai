@@ -6,13 +6,11 @@ from six.moves import range, zip
 
 import numpy as np
 
-from odin import (SIG_TERMINATE_ITERATOR, SIG_TRAIN_ROLLBACK,
-                  SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
+from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
 from odin.utils import struct
-from odin.utils.decorators import terminatable_iterator
 
 from .callbacks import *
 
@@ -153,7 +151,10 @@ class Task(object):
                     forced_to_terminate = True
                     # send signal to the data iterators also
                     for i in data_it:
-                        i.send(SIG_TERMINATE_ITERATOR)
+                        if hasattr(i, 'stop'):
+                            i.stop()
+                        else: # just iterate all over
+                            for _ in i: pass
                     break # break the loop
             # ====== check if terminate ====== #
             if forced_to_terminate:

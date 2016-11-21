@@ -244,11 +244,12 @@ class ArgController(object):
         Parameters
         ----------
         name: str
-            pass
+            [-name] for optional parameters
+            [name] for positional parameters
         help: str
-            pass
+            description of the argument
         default: str
-            pass
+            default value for the argument
         preprocess: callable
             take in the parsed argument and preprocess it into necessary
             information
@@ -282,6 +283,7 @@ class ArgController(object):
         if self.parser is None:
             raise Exception('Call add to assign at least 1 argument for '
                             'for the function.')
+        # TODO fix bug here
         exit_now = False
         try:
             if len(sys.argv) == 1 and self._require_input:

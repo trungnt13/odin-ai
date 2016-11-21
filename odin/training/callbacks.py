@@ -729,8 +729,8 @@ class ProgressMonitor(Callback):
     title : str
         pattern to serialize return from function to string
     format: str
-        format for the results, using the new python style (e.g. {0}, {1}),
-        and not %s, %d ...
+        format for the results, using the new python style
+        (e.g. {0}, {1}, {:.4f}), ... and not %s, %d ...)
     tracking: list
         list of [(index, postprocessing_func)], tracking information at given
         index of the return value during batch_end, then, postprocess and print
