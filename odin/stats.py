@@ -8,6 +8,7 @@ from odin.utils import as_tuple
 
 
 def freqcount(x):
+    """ x: list, iterable """
     freq = defaultdict(int)
     for i in x:
         freq[i] += 1

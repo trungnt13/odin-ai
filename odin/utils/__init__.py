@@ -785,7 +785,7 @@ class Progbar(object):
         self.update(self.seen_so_far + n, values)
 
 
-def progbar(func):
+def progbar(list_iter_func):
     """ Wrap any list, tuple, ndarray or func object to
     print ProgressBar when iterating over it
     """
@@ -801,15 +801,15 @@ def progbar(func):
             yield j
         prog.target = i + 1
         prog.update(i + 1)
-
-    if callable(func):
+    # ====== create progress monitoring ====== #
+    if callable(list_iter_func):
         from functools import wraps
 
-        @wraps(func)
+        @wraps(list_iter_func)
         def wrapper(*args, **kwargs):
-            return iter_prog(func(*args, **kwargs))
+            return iter_prog(list_iter_func(*args, **kwargs))
         return wrapper
-    return iter_prog(func)
+    return iter_prog(list_iter_func)
 
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
 # urllib module, known to have issues with proxy management

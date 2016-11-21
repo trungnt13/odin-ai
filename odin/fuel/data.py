@@ -234,10 +234,10 @@ class Data(object):
 
     def __len__(self):
         """ len always return 1 number """
-        if isinstance(self._data, (tuple, list)):
-            res = [dat.shape[0] for dat in self._data]
-            return min(res) # return expected length of iterator
-        return self.shape[0]
+        shape = self.shape
+        if isinstance(shape[0], (tuple, list)):
+            return min([s[0] for s in shape])
+        return shape[0]
 
     @property
     def T(self):
