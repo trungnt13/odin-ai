@@ -41,6 +41,7 @@ from .data import Data, MutableData, as_data
 from .dataset import Dataset
 from .recipes import FeederList, CreateBatch
 
+
 # ===========================================================================
 # Multiprocessing Feeders
 # ===========================================================================
@@ -131,7 +132,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, dtype=None,
-                 ncpu=1, buffer_size=12):
+                 ncpu=1, buffer_size=12, maximum_queue_size=20):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         if isinstance(indices, str) and os.path.isfile(indices):
@@ -162,14 +163,16 @@ class Feeder(MutableData):
         # ====== Set default recipes ====== #
         self.recipes = FeederList(CreateBatch())
         # never use all available CPU
-        self.set_multiprocessing(ncpu, buffer_size)
+        self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         self.__running_iter = []
 
-    def set_multiprocessing(self, ncpu=None, buffer_size=None):
+    def set_multiprocessing(self, ncpu=None, buffer_size=None, maximum_queue_size=None):
         if ncpu is not None:
             self.ncpu = ncpu
         if buffer_size is not None:
             self.buffer_size = buffer_size
+        if maximum_queue_size is not None:
+            self.maximum_queue_size = maximum_queue_size
         return self
 
     def set_recipes(self, recipes):
@@ -269,7 +272,7 @@ class Feeder(MutableData):
         it = MPI(indices, map_func, reduce_func,
                  ncpu=self.ncpu,
                  buffer_size=self.buffer_size,
-                 maximum_queue_size=144)
+                 maximum_queue_size=self.maximum_queue_size)
         self.__running_iter.append(it)
         return it
 

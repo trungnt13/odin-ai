@@ -18,6 +18,7 @@ from odin.utils.decorators import functionable
 
 from .data import Data, MutableData
 from .utils import MmapDict
+from memory_profiler import profile
 
 
 # ===========================================================================
@@ -543,7 +544,7 @@ class Sequencing(FeederRecipe):
 
     def __init__(self, frame_length=256, hop_length=128,
                  end='cut', endvalue=0.,
-                 transcription_transform=lambda x: Counter(x).most_common()[0][0]):
+                 transcription_transform=lambda x: x[-1]):
         super(Sequencing, self).__init__()
         self.frame_length = frame_length
         self.hop_length = hop_length

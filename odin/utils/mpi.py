@@ -11,8 +11,6 @@ from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_proc
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
-
-
 # ===========================================================================
 # Helper methods
 # ===========================================================================
@@ -338,6 +336,7 @@ class MPI(SelfIterator):
                             nb_returned = 0
                             while counter.value > maximum_queue_size:
                                 time.sleep(0.1)
+                del ret # delete old data (this work, checked)
                 # increase shared counter (this number must perfectly
                 # counted, only 1 mismatch and deadlock will happen)
                 if nb_returned > 0:
