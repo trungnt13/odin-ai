@@ -1190,8 +1190,9 @@ def Scan(fn,
                        strict=False)
 
 
-def rnn_dnn(hidden_size, num_layers,
+def rnn_dnn(X, hidden_size, num_layers,
             rnn_mode,
+            parameters=None,
             input_mode='linear',
             direction_mode='unidirectional',
             dropout=0.):

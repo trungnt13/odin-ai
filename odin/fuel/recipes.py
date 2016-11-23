@@ -7,7 +7,7 @@ import warnings
 from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
-from six.moves import zip, range
+from six.moves import zip, zip_longest, range
 
 import numpy as np
 
@@ -635,44 +635,55 @@ class CreateBatch(FeederRecipe):
         self.batch_size = kwargs.get('batch_size', 64)
 
     def group(self, batch):
-        """ batch: contains [(name, np.ndarray-X, np.ndarray-transcription), ...] """
+        """ batch: contains
+            [
+                (name, [list of data], [list of others]),
+                (name, [list of data], [list of others]),
+                (name, [list of data], [list of others]),
+                ...
+            ]
+        Note
+        ----
+        We assume the shape[0] (or length) of all "data" and "others" are
+        the same
+        """
         if len(batch) == 0:
             yield None
         else:
-            length = len(batch[0]) # size of 1 batch
-            nb_data = len(batch[0][1])
-            X = [[] for i in range(nb_data)]
-            Y = [[] for i in range(length - 2)]
-            for b in batch:
-                name = b[0]; data = b[1]; others = b[2:]
-                # training data can be list of Data or just 1 Data
-                for i, j in zip(X, data):
-                    i.append(j)
-                # labels can be None (no labels given)
-                for i, j in zip(Y, others):
-                    i.append(j)
-            # ====== stack everything into big array ====== #
-            X = [np.vstack(x) for x in X]
-            shape0 = X[0].shape[0]
-            Y = [np.concatenate(y, axis=0) for y in Y]
-            # ====== shuffle for the whole batch ====== #
-            if self.rng is not None:
-                permutation = self.rng.permutation(shape0)
-                X = [x[permutation] for x in X]
-                Y = [y[permutation] if y.shape[0] == shape0 else y
-                     for y in Y]
-            # ====== create batch ====== #
+            rng = self.rng
+            batch_size = self.batch_size
             batch_filter = self.batch_filter
-            for i in range((shape0 - 1) // self.batch_size + 1):
-                start = i * self.batch_size
-                end = start + self.batch_size
-                # list of Data is given
-                x = [x[start:end] for x in X]
-                y = [y[start:end] for y in Y]
-                ret = batch_filter(x + y)
-                # always return tuple or list
-                if ret is not None:
-                    yield ret if isinstance(ret, (tuple, list)) else (ret,)
+            indices = [range((b[1][0].shape[0] - 1) // batch_size + 1)
+                       for b in batch]
+            # shuffle if possible
+            if rng is not None:
+                [rng.shuffle(i) for i in indices]
+            # ====== create batch of data ====== #
+            for idx in zip_longest(*indices):
+                ret = []
+                for i, b in zip(idx, batch):
+                    # skip if one of the data is not enough
+                    if i is None: continue
+                    # pick data from each given input
+                    name = b[0]; data = b[1]; others = b[2:]
+                    start = i * batch_size
+                    end = start + batch_size
+                    _ = [d[start:end] for d in data] + \
+                    [o[start:end] for o in others]
+                    ret.append(_)
+                ret = [np.concatenate(x, axis=0) for x in zip(*ret)]
+                # # shuffle 1 more time
+                if rng is not None:
+                    permutation = rng.permutation(ret[0].shape[0])
+                    ret = [r[permutation] for r in ret]
+                # return the batches
+                for i in range((ret[0].shape[0] - 1) // batch_size + 1):
+                    start = i * batch_size
+                    end = start + batch_size
+                    _ = batch_filter([x[start:end] for x in ret])
+                    # always return tuple or list
+                    if _ is not None:
+                        yield _ if isinstance(_, (tuple, list)) else (ret,)
 
 
 class CreateFile(FeederRecipe):
