@@ -1,7 +1,7 @@
 from __future__ import print_function
 import os
 import sys
-import uuid
+# import uuid
 import time
 import math
 import types
@@ -102,7 +102,7 @@ _uuid_chars = (map(chr, range(65, 91)) + # ABCD
 _uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
 
 
-def short_uuid():
+def uuid():
     """ Generate random UUID 8 characters with very very low collision """
     # m = time.time()
     # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)

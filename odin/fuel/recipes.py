@@ -604,6 +604,10 @@ class CreateBatch(FeederRecipe):
     batch_filter: callable
         must be a function has take a list of np.ndarray as first arguments
         ([X]) or ([X, y]), you can return None to ignore given batch
+    batch_sequencing: bool
+        if True, all data from different files will be processed one-by-one,
+        instead of picking data from each files and return small batches from
+        them
 
     Example
     -------
@@ -615,7 +619,7 @@ class CreateBatch(FeederRecipe):
 
     """
 
-    def __init__(self, batch_filter=None):
+    def __init__(self, batch_filter=None, batch_sequencing=False):
         super(CreateBatch, self).__init__()
         self.rng = None
         self.batch_size = 256
@@ -653,7 +657,7 @@ class CreateBatch(FeederRecipe):
             rng = self.rng
             batch_size = self.batch_size
             batch_filter = self.batch_filter
-            indices = [range((b[1][0].shape[0] - 1) // batch_size + 1)
+            indices = [list(range((b[1][0].shape[0] - 1) // batch_size + 1))
                        for b in batch]
             # shuffle if possible
             if rng is not None:

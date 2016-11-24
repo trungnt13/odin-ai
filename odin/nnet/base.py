@@ -16,7 +16,7 @@ from odin import backend as K
 from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
-from odin.utils import as_tuple, short_uuid
+from odin.utils import as_tuple, uuid
 from odin.utils.decorators import autoinit, cache
 
 
@@ -273,7 +273,7 @@ class NNOps(object):
 
         self.name = name
         if name is None:
-            self.name = "%s_%s" % (self.__class__.__name__, short_uuid())
+            self.name = "%s_%s" % (self.__class__.__name__, uuid())
 
         self._configuration = None
         self._transpose_ops = None

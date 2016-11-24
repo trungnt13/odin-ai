@@ -17,7 +17,7 @@ def lstm_batch_norm(num_units,
                     activation=K.tanh, gate_activation=K.sigmoid,
                     tied_input=False, batch_norm=True, name=None):
     if name is None:
-        name = 'lstm_batch_norm_%s' % utils.short_uuid()
+        name = 'lstm_batch_norm_%s' % utils.uuid()
     # ====== create input_gates ====== #
     ops_list = []
     bias = None if batch_norm else K.init.constant(0)

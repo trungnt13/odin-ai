@@ -21,15 +21,17 @@ from theano.tensor.signal import pool
 from theano.tensor.nnet import conv3d2d
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 from theano.tensor.nnet.nnet import softsign as T_softsign
+if theano.gpuarray.pygpu is not None and theano.gpuarray.pygpu_activated:
+    from theano.gpuarray import dnn
 
 from odin.config import CONFIG, RNG_GENERATOR
-from odin.utils import as_tuple, as_shape_tuple, dict_union
+from odin.utils import as_tuple, as_shape_tuple, dict_union, package_installed, uuid
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
                         add_shape, get_shape)
 
-from .helpers import (auto_infer_shape, _check_target,
+from .helpers import (auto_infer_shape, _check_target, variable,
                       is_trainable_variable, is_variable, is_placeholder,
                       ComputationGraph)
 
@@ -77,32 +79,6 @@ backend_ops_binary_crossentropy = T.nnet.binary_crossentropy
 # ===========================================================================
 # INTERNAL UTILS
 # ===========================================================================
-def on_gpu():
-    """Return whether the session is set to
-    run on GPU or not (i.e. on CPU).
-    """
-    import theano.sandbox.cuda
-
-    return 'gpu' in theano.config.device or \
-    'cuda' in theano.config.device or \
-    'gpu' in theano.config.contexts or \
-    'cuda' in theano.config.contexts or \
-    theano.sandbox.cuda.cuda_enabled
-
-
-if on_gpu():
-    # dummy initialization to remove the overhead of running libgpuarray backend
-    if CONFIG['multigpu']:
-        _ = theano.shared(value=np.asarray(1., dtype='float32'),
-                         name='temporary_var', target='dev0')
-    else:
-        _ = theano.shared(value=np.asarray(1., dtype='float32'),
-                         name='temporary_var')
-    T.grad(2 * _, _).eval()
-    _.set_value(None)
-    del _
-
-
 def eval(x):
     """ Run a graph. """
     return x.eval()
@@ -1161,6 +1137,7 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
     add_shape(pool_out, tuple(output_shape))
     return pool_out
 
+
 # ===========================================================================
 # RNN
 # ===========================================================================
@@ -1190,22 +1167,29 @@ def Scan(fn,
                        strict=False)
 
 
-def rnn_dnn(X, hidden_size, num_layers,
-            rnn_mode,
+def rnn_dnn(X, hidden_size, rnn_mode,
+            num_layers=1,
+            initial_states=None,
             parameters=None,
             input_mode='linear',
             direction_mode='unidirectional',
-            dropout=0.):
+            dropout=0., name=None):
     """CuDNN v5 RNN implementation.
 
     Parameters
     ----------
+    X : input varialbe or placeholder
+        shape=(batch_size, timesteps, input_dims)
     hidden_size : int
         the number of units within the RNN model.
-    num_layers : int
-        the number of layers for the RNN model.
     rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
         See cudnn documentation for ``cudnnRNNMode_t``.
+    num_layers : int
+        the number of layers for the RNN model.
+    initial_states: list of tensor
+        pass
+    parameters: list of tensor
+        pass
     input_mode : {'linear', 'skip'}
         linear: input will be multiplied by a biased matrix
         skip: No operation is performed on the input.  The size must
@@ -1218,7 +1202,18 @@ def rnn_dnn(X, hidden_size, num_layers,
                        to first and concatenates the results at each layer.
     dropout: float (0.0-1.0)
         whether to enable dropout. With it is 0, dropout is disabled.
+
+    Returns
+    -------
+    [output, hidden_states, cell_states] for lstm
+    [output, hidden_states] for gru and rnn
+
+    output_shape: (batch_size, timesteps, hidden_size)
+    hidden_shape: (num_layers, batch_size, hidden_size)
+    cell_shape: (num_layers, batch_size, hidden_size)
+
     """
+    if name is None: name = uuid()
     # ====== Check arguments ====== #
     if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
         raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
@@ -1228,3 +1223,48 @@ def rnn_dnn(X, hidden_size, num_layers,
     if direction_mode not in ('unidirectional', 'bidirectional'):
         raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
                          % direction_mode)
+    # ====== create RNNBlock ====== #
+    input_shape = get_shape(X)
+    if X.ndim != 3:
+        raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
+    # IF we dimshuffle here, a lot of error concern GPUarray,
+    # and cudnn will happen
+    batch_size = X.shape[0]
+    rnnb = dnn.RNNBlock(dtype=theano.config.floatX, hidden_size=hidden_size,
+                        num_layers=num_layers, rnn_mode=rnn_mode,
+                        input_mode=input_mode, direction_mode=direction_mode,
+                        context_name=None)
+    layer_info = [input_shape[-1], hidden_size] + [hidden_size, hidden_size] * (num_layers - 1)
+    # ====== create parameters ====== #
+    # check parameters
+    if parameters is None:
+        if rnn_mode == 'lstm':
+            from odin.backend.init import lstm as init_func
+        elif rnn_mode == 'gru':
+            from odin.backend.init import gru as init_func
+        else:
+            from odin.backend.init import rnn as init_func
+        parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                     one_vector=True, return_variable=False)
+                                     for i in range(num_layers)]).astype(FLOATX)
+        parameters = variable(parameters, name=name)
+    else:
+        pass
+    # check initial states
+    if initial_states is None:
+        h0 = zeros((num_layers, batch_size, hidden_size))
+        if rnn_mode == 'lstm':
+            c0 = zeros((num_layers, batch_size, hidden_size))
+        else:
+            c0 = None
+    else:
+        if rnn_mode == 'lstm':
+            h0, c0 = initial_states
+        else:
+            h0 = initial_states[0] if isinstance(initial_states, (list, tuple)) \
+                else initial_states
+            c0 = None
+    # ====== get output ====== #
+    output = rnnb.apply(w=parameters, x=X.dimshuffle(1, 0, 2),
+                        hx=h0, cx=c0)
+    return [output[0].dimshuffle(1, 0, 2)] + output[1:]

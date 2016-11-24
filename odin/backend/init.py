@@ -3,6 +3,9 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 from odin.config import RNG_GENERATOR, CONFIG
+from odin.utils import uuid
+from .basic_ops import variable
+
 FLOATX = CONFIG.floatX
 
 
@@ -142,3 +145,129 @@ def orthogonal(shape, gain=1.0):
     q = u if u.shape == flat_shape else v
     q = q.reshape(shape)
     return np.cast[FLOATX](gain * q)
+
+
+# ===========================================================================
+# Fast initialization
+# ===========================================================================
+from odin.basic import add_role, WEIGHT, BIAS, PARAMETER
+
+
+def rnn(input_dim, hidden_dim,
+        W_init=glorot_uniform, b_init=constant(0.),
+        one_vector=False, return_variable=True,
+        name=None):
+    pass
+
+
+def lstm(input_dim, hidden_dim,
+         W_init=glorot_uniform, b_init=constant(0.),
+         one_vector=False, return_variable=True,
+         name=None):
+    """ Fast initalize all Standard LSTM weights (without peephole connection)
+
+    Parameters
+    ----------
+    one_vector: bool
+        if True, all the weights are flatten and concatenated into 1 big vector
+    return_variable: bool
+        if False, only return the numpy array
+
+    Return
+    ------
+    [W_i, b_wi, W_f, b_wf, W_c, b_wc, W_o, b_wo,
+     R_i, b_ri, R_f, b_rf, R_c, b_rc, R_o, b_ro]
+
+    """
+    if name is None: name = uuid()
+    W_i = W_init((input_dim, hidden_dim))
+    b_wi = b_init((hidden_dim))
+    W_f = W_init((input_dim, hidden_dim))
+    b_wf = b_init((hidden_dim))
+    W_c = W_init((input_dim, hidden_dim))
+    b_wc = b_init((hidden_dim))
+    W_o = W_init((input_dim, hidden_dim))
+    b_wo = b_init((hidden_dim))
+    R_i = W_init((hidden_dim, hidden_dim))
+    b_ri = b_init((hidden_dim))
+    R_f = W_init((hidden_dim, hidden_dim))
+    b_rf = b_init((hidden_dim))
+    R_c = W_init((hidden_dim, hidden_dim))
+    b_rc = b_init((hidden_dim))
+    R_o = W_init((hidden_dim, hidden_dim))
+    b_ro = b_init((hidden_dim))
+    # params
+    params = [W_i, b_wi, W_f, b_wf, W_c, b_wc, W_o, b_wo,
+              R_i, b_ri, R_f, b_rf, R_c, b_rc, R_o, b_ro]
+    roles = [WEIGHT, BIAS]
+    if one_vector:
+        params = [np.concatenate([p.flatten() for p in params])]
+        roles = [PARAMETER]
+    # names
+    if one_vector:
+        names = [name + '_lstm']
+    else:
+        names = ["_W_i", "_b_wi", "_W_f", "_b_wf", "_W_c", "_b_wc", "_W_o", "_b_wo",
+                 "_R_i", "_b_ri", "_R_f", "_b_rf", "_R_c", "_b_rc", "_R_o", "_b_ro"]
+        names = [name + i for i in names]
+    # create variable or not
+    if return_variable:
+        params = [variable(p, name=n) for p, n in zip(params, names)]
+        for i, p in enumerate(params):
+            add_role(p, roles[i % 2])
+    return params if len(params) > 1 else params[0]
+
+
+def gru(input_dim, hidden_dim,
+        W_init=glorot_uniform, b_init=constant(0.),
+        one_vector=False, return_variable=True,
+        name=None):
+    """ Fast initalize all Standard GRU weights
+
+    Parameters
+    ----------
+    one_vector: bool
+        if True, all the weights are flatten and concatenated into 1 big vector
+    return_variable: bool
+        if False, only return the numpy array
+
+    Return
+    ------
+    [W_r, b_wr, W_i, b_wi,
+     W_h, b_wh, R_r, b_rr,
+     R_i, b_ru, R_h, b_rh]
+    """
+    if name is None: name = uuid()
+    '''self.params is passed so that any paramters could be appended to it'''
+    W_r = W_init((input_dim, hidden_dim))
+    b_wr = b_init((hidden_dim))
+    W_i = W_init((input_dim, hidden_dim))
+    b_wi = b_init((hidden_dim))
+    W_h = W_init((input_dim, hidden_dim))
+    b_wh = b_init((hidden_dim))
+    R_r = W_init((hidden_dim, hidden_dim))
+    b_rr = b_init((hidden_dim))
+    R_i = W_init((hidden_dim, hidden_dim))
+    b_ru = b_init((hidden_dim))
+    R_h = W_init((hidden_dim, hidden_dim))
+    b_rh = b_init((hidden_dim))
+    # params
+    params = [W_r, b_wr, W_i, b_wi, W_h, b_wh,
+              R_r, b_rr, R_i, b_ru, R_h, b_rh]
+    roles = [WEIGHT, BIAS]
+    if one_vector:
+        params = [np.concatenate([p.flatten() for p in params])]
+        roles = [PARAMETER]
+    # names
+    if one_vector:
+        names = [name + '_gru']
+    else:
+        names = ["_W_r", "_b_wr", "_W_i", "_b_wi", "_W_h", "_b_wh",
+                 "_R_r", "_b_rr", "_R_i", "_b_ru", "_R_h", "_b_rh"]
+        names = [name + i for i in names]
+    # create variable or not
+    if return_variable:
+        params = [variable(p, name=n) for p, n in zip(params, names)]
+        for i, p in enumerate(params):
+            add_role(p, roles[i % 2])
+    return params if len(params) > 1 else params[0]

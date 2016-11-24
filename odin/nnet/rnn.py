@@ -522,3 +522,49 @@ class LSTM(BaseRNN):
                                  roles=WEIGHT,
                                  nb_params=3)
         return config
+
+
+# ===========================================================================
+# DNN
+# ===========================================================================
+class RNNDnn(NNOps):
+
+    def __init__(self, hidden_size, rnn_mode,
+            num_layers=1,
+            initial_states=None,
+            parameters=None,
+            input_mode='linear',
+            direction_mode='unidirectional',
+            dropout=0., **kwargs):
+        super(RNNDnn, self).__init__(**kwargs)
+        # ====== defaults recurrent control ====== #
+        self.repeat_states = True
+        self.iterate = True
+        self.backwards = False
+        self.n_steps = None
+        self.batch_size = None
+
+    @abstractmethod
+    def _rnn(self, **kwargs):
+        pass
+
+    def get_recurrent_info(self, kwargs):
+        """ Return information that control how this ops recurrently
+        performed
+
+        Parameters
+        ----------
+        kwargs: keywords arguments
+            all arguments given that will override default configuration
+
+        """
+        kwargs = kwargs if isinstance(kwargs, dict) else {}
+        return {
+            'iterate': kwargs.pop('iterate', self.iterate),
+            'backwards': kwargs.pop('backwards', self.backwards),
+            'repeat_states': kwargs.pop('repeat_states', self.repeat_states),
+            'name': kwargs.pop('name', self.name),
+            'n_steps': kwargs.pop('n_steps', self.n_steps),
+            'batch_size': kwargs.pop('batch_size', self.batch_size),
+        }
+
