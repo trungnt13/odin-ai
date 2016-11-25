@@ -805,8 +805,6 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
         TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
         TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
-    if len(output_shape) != 4:
-        raise ValueError('output_shape for deconvolution operator must be 4-D')
     strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
         strides, border_mode, filter_dilation, ndim=2)
     x = tf.nn.conv2d_transpose(x, kernel, output_shape, (1,) + strides + (1,),
@@ -893,7 +891,7 @@ def __validate_pool_stride_border(pool_size, strides, border_mode, mode, ndim):
     return pool_size, strides, border_mode, mode
 
 
-def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
+def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid',
            ignore_border=True, mode='max'):
     """
     Parameters

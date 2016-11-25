@@ -157,7 +157,8 @@ class Conv(NNOps):
         return config
 
     def _apply(self, x):
-        # calculate projection
+        # store last input for deconvolution ops
+        self._last_input = x
         conved = self.convolve(x)
         output_shape = K.get_shape(conved)
         if not hasattr(self, 'b'):
@@ -215,7 +216,6 @@ class TransposeConv(NNOps):
         return config
 
     def _apply(self, x):
-        output_shape = self.conv.input_shape
         if K.ndim(x) != self.conv.ndim + 2:
             raise ValueError('Input has %d dimensions, but this Ops require %d-D '
                              'tensor.' % (K.ndim(x), self.conv.ndim + 2))
@@ -233,17 +233,17 @@ class TransposeConv(NNOps):
             raise Exception('No support for %d-D input in TransposedConv' %
                             self.conv.ndim)
         conved = deconv_func(x, kernel=W,
-                            output_shape=output_shape,
+                            output_shape=K.get_shape(self.conv._last_input, native=True),
                             strides=stride,
                             border_mode=border_mode,
-                            filter_dilation=dilation) # because default of Conv2D is True
+                            filter_dilation=dilation)
         if hasattr(self, 'b'):
             if self.conv.untie_biases:
                 conved += K.expand_dims(self.b, 0)
             else:
                 conved += K.dimshuffle(self.b, ('x',) * (self.conv.ndim + 1) + (0,))
         activated = self.conv.activation(conved)
-        K.add_shape(activated, output_shape)
+        K.add_shape(activated, self.conv.input_shape)
         return activated
 
     def _transpose(self):

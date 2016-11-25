@@ -86,18 +86,18 @@ class NNConfig(object):
     @autoinit
     def __init__(self, **kwargs):
         super(NNConfig, self).__init__()
-        self._paramters = []
+        # name -> variables
+        self._paramters = {}
 
     @property
     def parameters(self):
-        return self._paramters
+        return self._paramters.values()
 
     def __getattr__(self, name):
         if name in self._arguments:
             return self._arguments[name]
-        for i in self._paramters:
-            if name == i.name:
-                return i
+        if name in self._paramters:
+            return self._paramters[name]
         raise AttributeError('Cannot find attribute={} in arguments and parameters'
                              '.'.format(name))
 
@@ -162,7 +162,6 @@ class NNConfig(object):
             shape = (shape[0] * nb_params,) if len(shape) == 1 \
                 else shape[:-1] + (shape[-1] * nb_params,)
             spec = K.concatenate(spec, axis=-1)
-            spec.name = nnops.name + '/' + name
         # ====== assign annotations ====== #
         # only add role for trainable variables
         for i in roles:
@@ -170,27 +169,23 @@ class NNConfig(object):
                 add_role(spec, i)
         # return actual variable or expression
         # override other parameters with same name
-        for i, j in enumerate(self._paramters):
-            if j.name == name:
-                self._paramters[i] = spec
-        if spec not in self._paramters:
-            self._paramters.append(spec)
+        self._paramters[name] = spec
         return spec
 
     def inflate(self, obj):
         """ Infate configuration into given object  """
         for i, j in self._arguments.iteritems():
             setattr(obj, i, j)
-        for i in self._paramters:
-            name = i.name.split('/')[-1].split(':')[0]
-            setattr(obj, name, i)
+        for name, var in self._paramters.iteritems():
+            # name = i.name.split('/')[-1].split(':')[0]
+            setattr(obj, name, var)
 
     def reset(self, obj):
         """  """
         for i in self._arguments.keys():
             setattr(obj, i, None)
-        for i in self._paramters:
-            setattr(obj, i.name, None)
+        for name in self._paramters.keys():
+            setattr(obj, name, None)
 
     def __eq__(self, other):
         if hasattr(other, '_arguments'):
@@ -209,18 +204,20 @@ class NNConfig(object):
         s = 'Arguments:\n'
         for i, j in self._arguments.iteritems():
             s += ' - ' + str(i) + ':' + str(j) + '\n'
-        s += ' - Parameters: ' + ', '.join([str(i) for i in self._paramters])
+        s += ' - Parameters: ' + ', '.join([str(i) for i in self._paramters.values()])
         return s
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return self._arguments, [K.pickling_variable(i) for i in self.parameters]
+        return self._arguments, {name: K.pickling_variable(var)
+                                 for name, var in self._paramters.iteritems()}
 
     def __setstate__(self, states):
         self._arguments = states[0]
         for i, j in self._arguments.iteritems():
             setattr(self, i, j)
-        self._paramters = [K.pickling_variable(i) for i in states[1]]
+        self._paramters = {name: K.pickling_variable(var)
+                           for name, var in states[1].iteritems()}
 
 
 # ===========================================================================
@@ -495,8 +492,8 @@ class Dense(NNOps):
         transpose._original_dense = self
         #create the config
         config = NNConfig(num_inputs=num_inputs)
-        config.create_params(self.W.T, shape=(num_inputs, num_units), name='W',
-                             nnops=transpose)
+        config.create_params(K.transpose(self.W), shape=(num_inputs, num_units),
+                             name='W', nnops=transpose)
         if self.b_init is not None:
             config.create_params(self.b_init, shape=(num_units,), name='b',
                                  nnops=transpose, roles=BIAS)
