@@ -81,7 +81,7 @@ RNG_GENERATOR = numpy.random.RandomState()
 CONFIG = None
 
 
-def auto_config(config=None, check=False):
+def auto_config(config=None):
     ''' Auto-configure ODIN using os.environ['ODIN'].
 
     Parameters
@@ -97,9 +97,7 @@ def auto_config(config=None, check=False):
         simple object (kind of dictionary) contain all configuraitons
 
     '''
-    if CONFIG is None and check:
-        raise Exception('Configuration have not been initialized.')
-    elif CONFIG is not None:
+    if CONFIG is not None:
         warnings.warn('You should not auto_config twice, old configuration already '
                       'existed, and cannot be re-configured.')
         return CONFIG
@@ -247,9 +245,14 @@ def auto_config(config=None, check=False):
 # ===========================================================================
 # Getter
 # ===========================================================================
+def __validate_config():
+    if CONFIG is None:
+        raise Exception("auto_config has not been called.")
+
+
 def get_device():
     """ Return type of device: cpu or gpu """
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['device']
 
 
@@ -257,7 +260,7 @@ def get_nb_processors():
     """ In case using CPU, return number of cores
     If GPU is used, return number of graphics card.
     """
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['device_info']['n']
 
 
@@ -269,40 +272,40 @@ def get_device_info():
      ...
     }
     """
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['device_info']
 
 
 def get_floatX():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['floatX']
 
 
 def get_epsilon():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['epsilon']
 
 
 def get_multigpu():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['multigpu']
 
 
 def get_optimizer():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['optimizer']
 
 
 def get_cnmem():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['cnmem']
 
 
 def get_backend():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['backend']
 
 
 def get_seed():
-    auto_config(check=True)
+    __validate_config()
     return CONFIG['seed']

@@ -78,7 +78,7 @@ def is_trainable_variable(variable):
 
     """
     return (isinstance(variable, tf.Variable) and
-            variable in _SESSION.graph.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES))
+            variable.op.node_def.op == "Variable")
 
 
 def is_variable(variable):
