@@ -34,6 +34,7 @@ class BackendTest(unittest.TestCase):
         y = K.variable(np.random.rand(12, 25))
         z = K.placeholder((25, 18, 13))
         w = K.placeholder((25, 18))
+        m = K.placeholder((18, 18))
 
         # ====== dot ====== #
         t = K.dot(x, y)
@@ -51,7 +52,7 @@ class BackendTest(unittest.TestCase):
         self.assertEquals(K.get_shape(K.eye(5)),
                           K.eval(K.eye(5)).shape)
         # ====== diag ====== #
-        self.assertEquals(K.get_shape(K.diag(w)), (18,))
+        self.assertEquals(K.get_shape(K.diag(m)), (18,))
         # self.assertEquals(K.get_shape(K.diag(x)),
         # K.eval(K.diag(y)).shape)
         self.assertEquals(K.get_shape(K.square(x)),
@@ -110,8 +111,8 @@ class BackendTest(unittest.TestCase):
         test_func(K.argmax)
         test_func(K.argmin)
 
-        self.assertEquals(K.get_shape(K.argsort(x, -1)),
-                          K.eval(K.argsort(x, -1)).shape)
+        self.assertEquals(K.get_shape(K.argsort(x)),
+                          K.eval(K.argsort(x)).shape)
 
     def test_basic_ops_value(self):
         np.random.seed(12082518)
@@ -230,7 +231,7 @@ class BackendTest(unittest.TestCase):
         test_func(x, K.sigmoid)
         test_func(x, K.hard_sigmoid)
 
-    def test_computation_graph(self):
+    def test_computational_graph1(self):
         X = K.placeholder(shape=(None, 32), name='input')
         z = K.variable(np.random.rand(10, 10), name='z')
         f = N.Sequence([
@@ -251,7 +252,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(len(tmp.updates), 1)
         self.assertEqual(K.ComputationGraph(y), tmp)
 
-    def test_computational_graph(self):
+    def test_computational_graph2(self):
         np.random.seed(1208)
 
         X = K.variable(np.zeros((8, 12)), name='X')
@@ -271,7 +272,7 @@ class BackendTest(unittest.TestCase):
         f = K.function(Z, [a] + g1.auxiliary_variables)
 
         output = f(np.random.rand(8, 8))
-        self.assertEqual(repr(np.sum(output[0]))[:6], "32.209")
+        self.assertEqual(repr(np.sum(output[0]))[:5], "32.20")
         self.assertEqual(np.sum(output[1]), 0)
         self.assertEqual(np.unique(K.eval(X)).tolist(), [12.])
 
@@ -311,14 +312,14 @@ class BackendTest(unittest.TestCase):
     def test_randomization(self):
         # same rng generate the same random
         K.set_rng(12)
-        a1 = K.random_normal(shape=(10, 10), mean=0, std=1).eval()
-        b1 = K.random_uniform(shape=(10, 10), low=-1, high=1).eval()
-        c1 = K.random_binomial(shape=(10, 10), p=0.7).eval()
+        a1 = K.eval(K.random_normal(shape=(10, 10), mean=0, std=1))
+        b1 = K.eval(K.random_uniform(shape=(10, 10), low=-1, high=1))
+        c1 = K.eval(K.random_binomial(shape=(10, 10), p=0.7))
 
         K.set_rng(12)
-        a2 = K.random_normal(shape=(10, 10), mean=0, std=1).eval()
-        b2 = K.random_uniform(shape=(10, 10), low=-1, high=1).eval()
-        c2 = K.random_binomial(shape=(10, 10), p=0.7).eval()
+        a2 = K.eval(K.random_normal(shape=(10, 10), mean=0, std=1))
+        b2 = K.eval(K.random_uniform(shape=(10, 10), low=-1, high=1))
+        c2 = K.eval(K.random_binomial(shape=(10, 10), p=0.7))
 
         self.assertTrue(np.array_equal(a1, a2))
         self.assertTrue(np.array_equal(b1, b2))
@@ -328,9 +329,9 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(np.std(a1) >= 0.8 and np.std(a1) <= 1.2)
         self.assertTrue(np.sum(c1) <= 80)
         # direct random generation
-        a = K.random_normal(shape=(10, 10)).eval()
-        b = K.random_uniform(shape=(10, 10)).eval()
-        c = K.random_binomial(shape=(10, 10), p=0.1).eval()
+        a = K.eval(K.random_normal(shape=(10, 10)))
+        b = K.eval(K.random_uniform(shape=(10, 10)))
+        c = K.eval(K.random_binomial(shape=(10, 10), p=0.1))
         self.assertTrue(np.sum(c) <= 20)
 
 if __name__ == '__main__':

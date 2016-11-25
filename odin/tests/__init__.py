@@ -2,13 +2,15 @@ import unittest
 # python -c "from odin.tests import run; run('theano')"
 
 # TODO: issue with CNN in compare_test
+
+
 def run(backend='theano', device='gpu'):
     tests = [
-        'fuel_test',
+        # 'fuel_test',
         'backend_test',
         'nnet_test',
-        'rnn_test',
-        'compare_test',
+        # 'rnn_test',
+        # 'compare_test',
         # 'model_test'
     ]
     print('*NOTE*: some of the tests probably failed on float32 because of '

@@ -308,8 +308,13 @@ def arange(start, stop=None, step=1, dtype=None):
     return x
 
 
-def argsort(x, axis=-1):
-    y = T.argsort(x, axis)
+def argsort(x):
+    """ The indices in -1 axis will be sorted by the values in
+    descending order.
+    """
+    axis = -1
+    _ = [slice(None) for i in range(x.ndim - 1)] + [slice(None, None, -1)]
+    y = T.argsort(x, axis)[_]
     if isinstance(get_shape(x), (tuple, list)):
         output_shape = auto_infer_shape(T.argsort, x, axis=axis)
         add_shape(y, output_shape)

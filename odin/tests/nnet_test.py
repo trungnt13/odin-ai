@@ -252,9 +252,6 @@ class NNetTest(unittest.TestCase):
         x = np.random.rand(32, 28, 28)
         self.assertEqual(np.sum(f1(x) - f2(x)), 0.)
 
-    def test_rnn(self):
-        pass
-
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

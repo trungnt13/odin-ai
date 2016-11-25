@@ -261,7 +261,7 @@ class ComputationGraph(object):
         shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
         usual_outputs = [o for o in self.outputs if not is_trainable_variable(o)]
         variables = shared_outputs
-        trainable_variables = [v for v in shared_outputs if is_trainable_variable(v)]
+        trainable_variables = [v for v in shared_outputs]
         inputs = []
 
         if usual_outputs:
@@ -278,7 +278,7 @@ class ComputationGraph(object):
                     if is_tensor(v):
                         variables.append(v)
             inputs = list(set(inputs))
-            variables = list(set(variables))
+            variables = list(set(variables + usual_outputs))
             trainable_variables = list(set(trainable_variables))
         # ====== get all updates and auxiliary variables ====== #
         for v in inputs + variables:

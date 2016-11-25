@@ -290,7 +290,10 @@ def any(x, axis=None, keepdims=False):
     """Bitwise reduction (logical OR).
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_any(x, reduction_indices=axis, keep_dims=keepdims)
+    original_dtype = x.dtype
+    x = tf.cast(x, tf.bool)
+    x = tf.reduce_any(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.cast(x, original_dtype)
 
 
 def argmax(x, axis=-1, keepdims=False):
@@ -316,8 +319,14 @@ def arange(start, stop=None, step=1, dtype=None):
     return x
 
 
-def argsort(x, axis=-1):
-    raise NotImplementedError
+def argsort(x):
+    """ The indices in -1 axis will be sorted by the values in
+    descending order.
+    """
+    # the return value contains (values, indices)
+    # but we only take the indices
+    return tf.nn.top_k(x, k=x.get_shape()[-1], sorted=True)[1]
+    # raise NotImplementedError
 
 
 def argtop_k(x, k=1):
