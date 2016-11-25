@@ -9,7 +9,7 @@ from six.moves import zip, range
 
 import numpy as np
 
-from odin.basic import add_updates, add_auxiliary_variable
+from odin.basic import add_updates, add_auxiliary_variable, add_role, AUXILIARY
 from odin import backend as K
 from odin import nnet as N
 from odin.utils import segment_list
@@ -250,6 +250,30 @@ class BackendTest(unittest.TestCase):
         tmp.intermediary_variables # no idea how to test this
         self.assertEqual(len(tmp.updates), 1)
         self.assertEqual(K.ComputationGraph(y), tmp)
+
+    def test_computational_graph(self):
+        np.random.seed(1208)
+
+        X = K.variable(np.zeros((8, 12)), name='X')
+        Y = K.variable(np.random.rand(12, 8), name='Y')
+        Z = K.placeholder(shape=(8, 8), name='Z')
+        a = K.dot(X, Y)
+        add_role(a, AUXILIARY)
+        add_updates(a, X, X + 12)
+        a = a + Z
+        g1 = K.ComputationGraph(a)
+
+        self.assertEqual(len(g1.trainable_variables), 2)
+        self.assertEqual(len(g1.placeholders), 1)
+        self.assertEqual(len(g1.updates), 1)
+        self.assertEqual(len(g1.auxiliary_variables), 1)
+
+        f = K.function(Z, [a] + g1.auxiliary_variables)
+
+        output = f(np.random.rand(8, 8))
+        self.assertEqual(repr(np.sum(output[0]))[:6], "32.209")
+        self.assertEqual(np.sum(output[1]), 0)
+        self.assertEqual(np.unique(K.eval(X)).tolist(), [12.])
 
     def test_confusion_matrix(self):
         from sklearn.metrics import confusion_matrix

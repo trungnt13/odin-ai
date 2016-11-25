@@ -245,6 +245,17 @@ class ComputationGraph(object):
         respective inner Theano graphs.
 
         """
+        def get_all_variables(x):
+            """ recursively travel down the inputs tree to get all
+            variables """
+            variables = []
+            op = x.op
+            inputs = op._inputs
+            variables += inputs
+            for i in inputs:
+                variables += get_all_variables(i)
+            return variables
+
         updates = OrderedDict()
 
         shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
@@ -255,24 +266,17 @@ class ComputationGraph(object):
 
         if usual_outputs:
             for o in self.outputs:
+                trainable_collections = {i.name: i
+                    for i in o.graph._collections['trainable_variables']}
                 # ====== travese each node of graph ====== #
-                g = o.graph
-                for op_id in sorted(g._nodes_by_id):
-                    op = g._nodes_by_id[op_id]
-                    ins = op._inputs
-                    outs = op._outputs
-                    for v in ins + outs:
-                        if len(ins) == 0 and is_placeholder(v):
-                            inputs.append(v)
-                        elif v not in inputs:
-                            variables.append(v)
-
-                for name, collections in g._collections.iteritems():
-                    for v in collections:
+                for v in get_all_variables(o):
+                    if is_placeholder(v):
+                        inputs.append(v)
+                    elif v.op.node_def.op == "Variable" and v.name in trainable_collections:
+                        v = trainable_collections[v.name]
+                        trainable_variables.append(v)
+                    if is_tensor(v):
                         variables.append(v)
-                        if name == 'trainable_variables':
-                            trainable_variables.append(v)
-
             inputs = list(set(inputs))
             variables = list(set(variables))
             trainable_variables = list(set(trainable_variables))
