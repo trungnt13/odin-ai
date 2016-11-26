@@ -11,13 +11,14 @@ import numpy as np
 import tensorflow as tf
 
 from odin.config import CONFIG, RNG_GENERATOR
-from odin.utils import as_tuple, as_shape_tuple, dict_union
+from odin.utils import as_tuple, as_shape_tuple, dict_union, uuid
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
-                        add_shape, get_shape)
+                        add_shape, get_shape, is_training)
 
-from .helpers import (get_session, as_tensor_variable, ComputationGraph)
+from .helpers import (get_session, as_tensor_variable, ComputationGraph,
+                      variable)
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 NPROCESSORS = CONFIG['device_info']['n']
@@ -1014,22 +1015,29 @@ def Scan(fn,
                        strict=False)
 
 
-def rnn_dnn(X, hidden_size, num_layers,
-            rnn_mode,
+def rnn_dnn(X, hidden_size, rnn_mode,
+            num_layers=1,
+            initial_states=None,
             parameters=None,
             input_mode='linear',
             direction_mode='unidirectional',
-            dropout=0.):
+            dropout=0., name=None):
     """CuDNN v5 RNN implementation.
 
     Parameters
     ----------
+    X : input varialbe or placeholder
+        shape=(batch_size, timesteps, input_dims)
     hidden_size : int
         the number of units within the RNN model.
-    num_layers : int
-        the number of layers for the RNN model.
     rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
         See cudnn documentation for ``cudnnRNNMode_t``.
+    num_layers : int
+        the number of layers for the RNN model.
+    initial_states: list of tensor
+        pass
+    parameters: list of tensor
+        pass
     input_mode : {'linear', 'skip'}
         linear: input will be multiplied by a biased matrix
         skip: No operation is performed on the input.  The size must
@@ -1042,13 +1050,102 @@ def rnn_dnn(X, hidden_size, num_layers,
                        to first and concatenates the results at each layer.
     dropout: float (0.0-1.0)
         whether to enable dropout. With it is 0, dropout is disabled.
+
+    Returns
+    -------
+    [output, hidden_states, cell_states] for lstm
+    [output, hidden_states] for gru and rnn
+
+    output_shape: (batch_size, timesteps, hidden_size)
+    hidden_shape: (num_layers, batch_size, hidden_size)
+    cell_shape: (num_layers, batch_size, hidden_size)
+
+    Note
+    ----
+    dropout is turn off if K.set_training(False) or K.is_training() == False
+
     """
+    if name is None: name = uuid()
     # ====== Check arguments ====== #
     if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
         raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
                          % rnn_mode)
     if input_mode not in ('linear', 'skip'):
         raise ValueError("input_mode=%s must be: 'linear', 'skip'" % input_mode)
+    input_mode = 'linear_input' if input_mode == 'linear' else 'skip_input'
     if direction_mode not in ('unidirectional', 'bidirectional'):
         raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
                          % direction_mode)
+    # ====== create RNNBlock ====== #
+    from tensorflow.contrib import cudnn_rnn
+    input_shape = get_shape(X)
+    if X.get_shape().ndims != 3:
+        raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
+    # IF we dimshuffle here, a lot of error concern GPUarray,
+    # and cudnn will happen
+    batch_size = get_shape(X, native=True)[0]
+    if rnn_mode == 'lstm':
+        rnn = cudnn_rnn.CudnnLSTM(num_layers=num_layers,
+                                  num_units=hidden_size,
+                                  input_size=input_shape[-1],
+                                  input_mode=input_mode,
+                                  direction=direction_mode,
+                                  dropout=dropout,
+                                  seed=0,
+                                  seed2=0)
+    elif rnn_mode == 'gru':
+        rnn = cudnn_rnn.CudnnGRU(num_layers=num_layers,
+                       num_units=hidden_size,
+                       input_size=input_shape[-1],
+                       input_mode=input_mode,
+                       direction=direction_mode,
+                       dropout=dropout,
+                       seed=0,
+                       seed2=0)
+
+    if direction_mode == 'unidirectional':
+        layer_info = [input_shape[-1], hidden_size] + \
+                     [hidden_size, hidden_size] * (num_layers - 1)
+    else:
+        layer_info = [input_shape[-1], hidden_size] * 2 + \
+                     [hidden_size * 2, hidden_size] * ((num_layers - 1) * 2)
+
+    # with tf.device('/cpu:0'):
+        # print(rnn.params_size().eval(session=get_session()))
+    # ====== create parameters ====== #
+    # check parameters
+    if parameters is None:
+        if rnn_mode == 'lstm':
+            from odin.backend.init import lstm as init_func
+        elif rnn_mode == 'gru':
+            from odin.backend.init import gru as init_func
+        else:
+            from odin.backend.init import rnn as init_func
+        parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                     one_vector=True, return_variable=False)
+                                     for i in range(num_layers)]).astype(FLOATX)
+        parameters = variable(parameters, name=name)
+    else:
+        pass
+    # check initial states
+    if initial_states is None:
+        h0 = zeros((num_layers, batch_size, hidden_size))
+        if rnn_mode == 'lstm':
+            c0 = zeros((num_layers, batch_size, hidden_size))
+        else:
+            c0 = None
+    else:
+        if rnn_mode == 'lstm':
+            h0, c0 = initial_states
+        else:
+            h0 = initial_states[0] if isinstance(initial_states, (list, tuple)) \
+                else initial_states
+            c0 = None
+    args = {'input_h': h0}
+    if c0 is not None:
+        args['input_c'] = c0
+    # ====== get output ====== #
+    output = rnn(input_data=tf.transpose(X, (1, 0, 2)),
+                 params=parameters, is_training=bool(is_training()),
+                 **args)
+    return [tf.transpose(output[0], (1, 0, 2))] + list(output[1:])

@@ -33,7 +33,8 @@ NPROCESSORS = CONFIG['device_info']['n']
 
 _SESSION = tf.Session(config=tf.ConfigProto(
     intra_op_parallelism_threads=NPROCESSORS,
-    allow_soft_placement=True))
+    allow_soft_placement=True,
+    log_device_placement=False))
 
 
 def set_session(session):

@@ -11,7 +11,7 @@ arg = ArgController(version=0.12
 ).add('-backend', 'theano or tensorflow', 'tensorflow'
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
 ).add('-epoch', 'number of epoch', 3
-).add('-lr', 'learning rate', 0.001
+).add('-lr', 'learning rate', 0.01
 ).parse()
 
 import os

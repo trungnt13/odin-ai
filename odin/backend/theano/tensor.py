@@ -1239,7 +1239,12 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                         num_layers=num_layers, rnn_mode=rnn_mode,
                         input_mode=input_mode, direction_mode=direction_mode,
                         context_name=None)
-    layer_info = [input_shape[-1], hidden_size] + [hidden_size, hidden_size] * (num_layers - 1)
+    if direction_mode == 'unidirectional':
+        layer_info = [input_shape[-1], hidden_size] + \
+                     [hidden_size, hidden_size] * (num_layers - 1)
+    else:
+        layer_info = [input_shape[-1], hidden_size] * 2 + \
+                     [hidden_size * 2, hidden_size] * ((num_layers - 1) * 2)
     # ====== create parameters ====== #
     # check parameters
     if parameters is None:

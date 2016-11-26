@@ -12,6 +12,23 @@ from odin.config import get_backend
 
 
 # ===========================================================================
+# TRaining flag
+# ===========================================================================
+__IS_TRAINING = False
+
+
+def is_training():
+    if __IS_TRAINING:
+        return 1
+    return 0
+
+
+def set_training(train):
+    global __IS_TRAINING
+    __IS_TRAINING = train
+
+
+# ===========================================================================
 # Variable ROles
 # ===========================================================================
 class VariableRole(object):

@@ -3,28 +3,14 @@ from __future__ import print_function, division, absolute_import
 import __builtin__
 
 from odin.config import auto_config
+from odin.basic import set_training, is_training
+
 config = auto_config()
 
 if config['backend'] == 'theano':
     from .theano import *
 elif config['backend'] == 'tensorflow':
     from .tensorflow import *
-
-# ===========================================================================
-# TRaining flag
-# ===========================================================================
-__IS_TRAINING = False
-
-
-def is_training():
-    if __IS_TRAINING:
-        return 1
-    return 0
-
-
-def set_training(train):
-    global __IS_TRAINING
-    __IS_TRAINING = train
 
 
 # ===========================================================================
