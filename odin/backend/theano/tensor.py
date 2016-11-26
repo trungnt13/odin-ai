@@ -1239,12 +1239,15 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                         num_layers=num_layers, rnn_mode=rnn_mode,
                         input_mode=input_mode, direction_mode=direction_mode,
                         context_name=None)
+
     if direction_mode == 'unidirectional':
         layer_info = [input_shape[-1], hidden_size] + \
                      [hidden_size, hidden_size] * (num_layers - 1)
     else:
         layer_info = [input_shape[-1], hidden_size] * 2 + \
                      [hidden_size * 2, hidden_size] * ((num_layers - 1) * 2)
+
+    nb_params = rnnb.get_param_size([12, input_shape[-1]])
     # ====== create parameters ====== #
     # check parameters
     if parameters is None:
@@ -1260,6 +1263,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         parameters = variable(parameters, name=name)
     else:
         pass
+    assert nb_params == get_shape(parameters)[0], \
+        "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
     if initial_states is None:
         h0 = zeros((num_layers, batch_size, hidden_size))

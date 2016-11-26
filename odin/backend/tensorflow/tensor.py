@@ -1001,18 +1001,7 @@ def Scan(fn,
     ----
     backwards mode only invert sequences then iterate over them
     """
-    return theano.scan(fn,
-                       sequences=sequences,
-                       outputs_info=outputs_info,
-                       non_sequences=None,
-                       n_steps=n_steps,
-                       truncate_gradient=truncate_gradient,
-                       go_backwards=backwards,
-                       mode=None,
-                       name=name,
-                       profile=False,
-                       allow_gc=None,
-                       strict=False)
+    raise NotImplementedError
 
 
 def rnn_dnn(X, hidden_size, rnn_mode,
@@ -1093,15 +1082,21 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                                   dropout=dropout,
                                   seed=0,
                                   seed2=0)
-    elif rnn_mode == 'gru':
-        rnn = cudnn_rnn.CudnnGRU(num_layers=num_layers,
-                       num_units=hidden_size,
-                       input_size=input_shape[-1],
-                       input_mode=input_mode,
-                       direction=direction_mode,
-                       dropout=dropout,
-                       seed=0,
-                       seed2=0)
+    else:
+        if rnn_mode == 'gru':
+            rnn_class = cudnn_rnn.CudnnGRU
+        elif rnn_mode == 'rnn_relu':
+            rnn_class = cudnn_rnn.CudnnRNNRelu
+        elif rnn_mode == 'rnn_tanh':
+            rnn_class = cudnn_rnn.CudnnRNNTanh
+        rnn = rnn_class(num_layers=num_layers,
+                        num_units=hidden_size,
+                        input_size=input_shape[-1],
+                        input_mode=input_mode,
+                        direction=direction_mode,
+                        dropout=dropout,
+                        seed=0,
+                        seed2=0)
 
     if direction_mode == 'unidirectional':
         layer_info = [input_shape[-1], hidden_size] + \
@@ -1110,8 +1105,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         layer_info = [input_shape[-1], hidden_size] * 2 + \
                      [hidden_size * 2, hidden_size] * ((num_layers - 1) * 2)
 
-    # with tf.device('/cpu:0'):
-        # print(rnn.params_size().eval(session=get_session()))
+    with tf.device('/cpu:0'):
+        nb_params = rnn.params_size().eval(session=get_session())
     # ====== create parameters ====== #
     # check parameters
     if parameters is None:
@@ -1127,6 +1122,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         parameters = variable(parameters, name=name)
     else:
         pass
+    assert nb_params == get_shape(parameters)[0], \
+        "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
     if initial_states is None:
         h0 = zeros((num_layers, batch_size, hidden_size))

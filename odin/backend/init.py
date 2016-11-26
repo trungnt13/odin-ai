@@ -157,7 +157,29 @@ def rnn(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
         one_vector=False, return_variable=True,
         name=None):
-    pass
+    if name is None: name = uuid()
+    W_i = W_init((input_dim, hidden_dim))
+    b_wi = b_init((hidden_dim))
+    R_h = W_init((hidden_dim, hidden_dim))
+    b_wh = b_init((hidden_dim))
+    # params
+    params = [W_i, b_wi, R_h, b_wh]
+    roles = [WEIGHT, BIAS]
+    if one_vector:
+        params = [np.concatenate([p.flatten() for p in params])]
+        roles = [PARAMETER]
+    # names
+    if one_vector:
+        names = [name + '_rnn']
+    else:
+        names = ["_W_i", "_b_wi", "_R_h", "_b_wh"]
+        names = [name + i for i in names]
+    # create variable or not
+    if return_variable:
+        params = [variable(p, name=n) for p, n in zip(params, names)]
+        for i, p in enumerate(params):
+            add_role(p, roles[i % 2])
+    return params if len(params) > 1 else params[0]
 
 
 def lstm(input_dim, hidden_dim,
