@@ -46,71 +46,49 @@ class FuelTest(unittest.TestCase):
             ds.close()
             # ====== test feeder ====== #
             ds = F.Dataset(os.path.join(temppath, 'ds'), read_only=True)
+            REF = ds['X'][:].ravel().tolist()
             feeder = F.Feeder(ds['X'], ds['indices.csv'],
                               ncpu=2, buffer_size=2)
             # ==================== No recipes ==================== #
+            def test_iter_no_trans(it):
+                x = []
+                n = 0
+                for i in it:
+                    x += i.ravel().tolist()
+                    n += i.shape[0]
+                x = np.sort(x).tolist()
+                self.assertEqual(x, REF)
+                self.assertEqual(n, ds['X'].shape[0])
             # ====== NO shuffle ====== #
-            n = 0
-            for i in feeder.set_batch(12, seed=None, shuffle_level=0):
-                x = i[1:] - i[:-1]
-                self.assertTrue(np.all(x == 5)) # must always be True
-                n += i.shape[0]
-            self.assertEqual(n, 2000)
+            test_iter_no_trans(feeder.set_batch(12, seed=None, shuffle_level=0))
             # ====== shuffle 0 ====== #
-            n = 0
-            s = 0
-            for i in feeder.set_batch(12, seed=1203, shuffle_level=0):
-                x = i[1:] - i[:-1]
-                s += np.sum(x)
-                n += i.shape[0]
-            # always equal to this value because we only shuffle the order
-            # of the indices
-            self.assertEqual(s, 177000)
-            self.assertEqual(n, 2000)
+            test_iter_no_trans(feeder.set_batch(12, seed=1203, shuffle_level=0))
             # ====== shuffle 2 ====== #
-            n = 0
-            for i in feeder.set_batch(12, seed=1203, shuffle_level=2):
-                n += i.shape[0]
-            self.assertEqual(n, 2000)
-            # ==================== Convert indices ==================== #
-            n = 0
+            test_iter_no_trans(feeder.set_batch(12, seed=1203, shuffle_level=2))
+            # ==================== Convert name to indices ==================== #
             feeder.set_recipes([
                 F.recipes.Name2Trans(
                     converter_func=lambda name, x: [int(name.split('_')[-1])] * x[0].shape[0]),
                 F.recipes.CreateBatch()
             ])
+            def test_iter_trans(it):
+                x = []
+                y = 0
+                n = 0
+                for i, j in it:
+                    x += i.ravel().tolist()
+                    n += i.shape[0]
+                    y += np.sum(j)
+                x = np.sort(x).tolist()
+                self.assertEqual(x, REF)
+                self.assertEqual(y, 99000)
+                self.assertEqual(n, ds['X'].shape[0])
             # ====== NO shuffle ====== #
-            n = 0
-            y = 0
-            for i, j in feeder.set_batch(12, seed=None, shuffle_level=0):
-                x = i[1:] - i[:-1]
-                self.assertTrue(np.all(x == 5)) # must always be True
-                n += i.shape[0]
-                y += np.sum(j)
-            self.assertEqual(n, 2000)
-            self.assertEqual(y, 99000)
+            test_iter_trans(feeder.set_batch(12, seed=None, shuffle_level=0))
             # ====== shuffle 0 ====== #
-            n = 0
-            s = 0
-            y = 0
-            for i, j in feeder.set_batch(12, seed=1203, shuffle_level=0):
-                x = i[1:] - i[:-1]
-                s += np.sum(x)
-                n += i.shape[0]
-                y += np.sum(j)
-            # always equal to this value because we only shuffle the order
-            # of the indices
-            self.assertEqual(s, 177000)
-            self.assertEqual(y, 99000)
-            self.assertEqual(n, 2000)
+            test_iter_trans(feeder.set_batch(12, seed=1203, shuffle_level=0))
             # ====== shuffle 2 ====== #
-            n = 0
-            y = 0
-            for i, j in feeder.set_batch(12, seed=1203, shuffle_level=2):
-                n += i.shape[0]
-                y += np.sum(j)
-            self.assertEqual(n, 2000)
-            self.assertEqual(y, 99000)
+            test_iter_trans(feeder.set_batch(12, seed=1203, shuffle_level=2))
             # ==================== Transcription ==================== #
             del feeder
             ds = F.Dataset(os.path.join(temppath, 'ds'))
@@ -120,9 +98,16 @@ class FuelTest(unittest.TestCase):
                 F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
                 F.recipes.CreateBatch()
             ])
+            n = 0
+            X = []
             for i, j in feeder.set_batch(12, seed=1208251813, shuffle_level=2):
+                X += i.ravel().tolist()
+                n += i.shape[0]
                 for x, y in zip(i, j):
                     self.assertTrue(transcription_test[str(x.tolist())] == y)
+            X = np.sort(X).tolist()
+            self.assertEqual(X, REF)
+            self.assertEqual(n, ds['X'].shape[0])
 
     def test_dataset(self):
         pass

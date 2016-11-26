@@ -8,7 +8,7 @@ from odin.utils import get_modelpath, ArgController, stdio, get_logpath
 stdio(get_logpath('tmp.log', override=True))
 
 arg = ArgController(version=0.12
-).add('-backend', 'theano or tensorflow', 'theano'
+).add('-backend', 'theano or tensorflow', 'tensorflow'
 ).add('-ds', 'dataset cifar10, or mnist', 'mnist'
 ).add('-epoch', 'number of epoch', 3
 ).add('-lr', 'learning rate', 0.001

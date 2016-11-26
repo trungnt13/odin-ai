@@ -6,7 +6,7 @@ import unittest
 
 def run(backend='theano', device='gpu'):
     tests = [
-        # 'fuel_test',
+        'fuel_test',
         'backend_test',
         'nnet_test',
         # 'rnn_test',
