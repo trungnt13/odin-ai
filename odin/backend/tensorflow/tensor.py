@@ -1097,13 +1097,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                         dropout=dropout,
                         seed=0,
                         seed2=0)
-
-    if direction_mode == 'unidirectional':
-        layer_info = [input_shape[-1], hidden_size] + \
-                     [hidden_size, hidden_size] * (num_layers - 1)
-    else:
-        layer_info = [input_shape[-1], hidden_size] * 2 + \
-                     [hidden_size * 2, hidden_size] * ((num_layers - 1) * 2)
+    layer_info = [input_shape[-1], hidden_size] + \
+                 [hidden_size, hidden_size] * (num_layers - 1)
 
     with tf.device('/cpu:0'):
         nb_params = rnn.params_size().eval(session=get_session())
@@ -1117,7 +1112,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         else:
             from odin.backend.init import rnn as init_func
         parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                     one_vector=True, return_variable=False)
+                                     one_vector=True, return_variable=False,
+                                     bidirectional=True if direction_mode == 'bidirectional' else False)
                                      for i in range(num_layers)]).astype(FLOATX)
         parameters = variable(parameters, name=name)
     else:
@@ -1125,6 +1121,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     assert nb_params == get_shape(parameters)[0], \
         "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
+    num_layers = num_layers * 2 if direction_mode == 'bidirectional' else num_layers
     if initial_states is None:
         h0 = zeros((num_layers, batch_size, hidden_size))
         if rnn_mode == 'lstm':
@@ -1138,6 +1135,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
             h0 = initial_states[0] if isinstance(initial_states, (list, tuple)) \
                 else initial_states
             c0 = None
+    # preprocess arguments
     args = {'input_h': h0}
     if c0 is not None:
         args['input_c'] = c0

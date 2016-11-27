@@ -155,15 +155,33 @@ from odin.basic import add_role, WEIGHT, BIAS, PARAMETER
 
 def rnn(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
-        one_vector=False, return_variable=True,
-        name=None):
+        bidirectional=False, one_vector=False,
+        return_variable=True, name=None):
+    """ Fast initalize all Standard RNN weights (without peephole connection)
+
+    Parameters
+    ----------
+    one_vector: bool
+        if True, all the weights are flatten and concatenated into 1 big vector
+    return_variable: bool
+        if False, only return the numpy array
+    bidirectional: bool
+        if True, return parameters for both forward and backward RNN
+
+    Return
+    ------
+    [W_i, b_wi, R_h, b_wh]
+
+    """
     if name is None: name = uuid()
-    W_i = W_init((input_dim, hidden_dim))
-    b_wi = b_init((hidden_dim))
-    R_h = W_init((hidden_dim, hidden_dim))
-    b_wh = b_init((hidden_dim))
-    # params
-    params = [W_i, b_wi, R_h, b_wh]
+
+    def init():
+        W_i = W_init((input_dim, hidden_dim))
+        b_wi = b_init((hidden_dim))
+        R_h = W_init((hidden_dim, hidden_dim))
+        b_wh = b_init((hidden_dim))
+        return [W_i, b_wi, R_h, b_wh]
+    params = init() + init() if bidirectional else init()
     roles = [WEIGHT, BIAS]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
@@ -173,6 +191,8 @@ def rnn(input_dim, hidden_dim,
         names = [name + '_rnn']
     else:
         names = ["_W_i", "_b_wi", "_R_h", "_b_wh"]
+        if bidirectional:
+            names = [i + '_fw' for i in names] + [i + '_bw' for i in names]
         names = [name + i for i in names]
     # create variable or not
     if return_variable:
@@ -183,9 +203,9 @@ def rnn(input_dim, hidden_dim,
 
 
 def lstm(input_dim, hidden_dim,
-         W_init=glorot_uniform, b_init=constant(0.),
-         one_vector=False, return_variable=True,
-         name=None):
+        W_init=glorot_uniform, b_init=constant(0.),
+        bidirectional=False, one_vector=False,
+        return_variable=True, name=None):
     """ Fast initalize all Standard LSTM weights (without peephole connection)
 
     Parameters
@@ -194,6 +214,8 @@ def lstm(input_dim, hidden_dim,
         if True, all the weights are flatten and concatenated into 1 big vector
     return_variable: bool
         if False, only return the numpy array
+    bidirectional: bool
+        if True, return parameters for both forward and backward RNN
 
     Return
     ------
@@ -202,25 +224,27 @@ def lstm(input_dim, hidden_dim,
 
     """
     if name is None: name = uuid()
-    W_i = W_init((input_dim, hidden_dim))
-    b_wi = b_init((hidden_dim))
-    W_f = W_init((input_dim, hidden_dim))
-    b_wf = b_init((hidden_dim))
-    W_c = W_init((input_dim, hidden_dim))
-    b_wc = b_init((hidden_dim))
-    W_o = W_init((input_dim, hidden_dim))
-    b_wo = b_init((hidden_dim))
-    R_i = W_init((hidden_dim, hidden_dim))
-    b_ri = b_init((hidden_dim))
-    R_f = W_init((hidden_dim, hidden_dim))
-    b_rf = b_init((hidden_dim))
-    R_c = W_init((hidden_dim, hidden_dim))
-    b_rc = b_init((hidden_dim))
-    R_o = W_init((hidden_dim, hidden_dim))
-    b_ro = b_init((hidden_dim))
-    # params
-    params = [W_i, b_wi, W_f, b_wf, W_c, b_wc, W_o, b_wo,
+
+    def init():
+        W_i = W_init((input_dim, hidden_dim))
+        b_wi = b_init((hidden_dim))
+        W_f = W_init((input_dim, hidden_dim))
+        b_wf = b_init((hidden_dim))
+        W_c = W_init((input_dim, hidden_dim))
+        b_wc = b_init((hidden_dim))
+        W_o = W_init((input_dim, hidden_dim))
+        b_wo = b_init((hidden_dim))
+        R_i = W_init((hidden_dim, hidden_dim))
+        b_ri = b_init((hidden_dim))
+        R_f = W_init((hidden_dim, hidden_dim))
+        b_rf = b_init((hidden_dim))
+        R_c = W_init((hidden_dim, hidden_dim))
+        b_rc = b_init((hidden_dim))
+        R_o = W_init((hidden_dim, hidden_dim))
+        b_ro = b_init((hidden_dim))
+        return [W_i, b_wi, W_f, b_wf, W_c, b_wc, W_o, b_wo,
               R_i, b_ri, R_f, b_rf, R_c, b_rc, R_o, b_ro]
+    params = init() + init() if bidirectional else init()
     roles = [WEIGHT, BIAS]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
@@ -231,6 +255,8 @@ def lstm(input_dim, hidden_dim,
     else:
         names = ["_W_i", "_b_wi", "_W_f", "_b_wf", "_W_c", "_b_wc", "_W_o", "_b_wo",
                  "_R_i", "_b_ri", "_R_f", "_b_rf", "_R_c", "_b_rc", "_R_o", "_b_ro"]
+        if bidirectional:
+            names = [i + '_fw' for i in names] + [i + '_bw' for i in names]
         names = [name + i for i in names]
     # create variable or not
     if return_variable:
@@ -242,8 +268,8 @@ def lstm(input_dim, hidden_dim,
 
 def gru(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
-        one_vector=False, return_variable=True,
-        name=None):
+        bidirectional=False, one_vector=False,
+        return_variable=True, name=None):
     """ Fast initalize all Standard GRU weights
 
     Parameters
@@ -252,6 +278,8 @@ def gru(input_dim, hidden_dim,
         if True, all the weights are flatten and concatenated into 1 big vector
     return_variable: bool
         if False, only return the numpy array
+    bidirectional: bool
+        if True, return parameters for both forward and backward RNN
 
     Return
     ------
@@ -260,22 +288,23 @@ def gru(input_dim, hidden_dim,
      R_i, b_ru, R_h, b_rh]
     """
     if name is None: name = uuid()
-    '''self.params is passed so that any paramters could be appended to it'''
-    W_r = W_init((input_dim, hidden_dim))
-    b_wr = b_init((hidden_dim))
-    W_i = W_init((input_dim, hidden_dim))
-    b_wi = b_init((hidden_dim))
-    W_h = W_init((input_dim, hidden_dim))
-    b_wh = b_init((hidden_dim))
-    R_r = W_init((hidden_dim, hidden_dim))
-    b_rr = b_init((hidden_dim))
-    R_i = W_init((hidden_dim, hidden_dim))
-    b_ru = b_init((hidden_dim))
-    R_h = W_init((hidden_dim, hidden_dim))
-    b_rh = b_init((hidden_dim))
-    # params
-    params = [W_r, b_wr, W_i, b_wi, W_h, b_wh,
-              R_r, b_rr, R_i, b_ru, R_h, b_rh]
+
+    def init():
+        W_r = W_init((input_dim, hidden_dim))
+        b_wr = b_init((hidden_dim))
+        W_i = W_init((input_dim, hidden_dim))
+        b_wi = b_init((hidden_dim))
+        W_h = W_init((input_dim, hidden_dim))
+        b_wh = b_init((hidden_dim))
+        R_r = W_init((hidden_dim, hidden_dim))
+        b_rr = b_init((hidden_dim))
+        R_i = W_init((hidden_dim, hidden_dim))
+        b_ru = b_init((hidden_dim))
+        R_h = W_init((hidden_dim, hidden_dim))
+        b_rh = b_init((hidden_dim))
+        return [W_r, b_wr, W_i, b_wi, W_h, b_wh,
+                R_r, b_rr, R_i, b_ru, R_h, b_rh]
+    params = init() + init() if bidirectional else init()
     roles = [WEIGHT, BIAS]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
@@ -286,6 +315,8 @@ def gru(input_dim, hidden_dim,
     else:
         names = ["_W_r", "_b_wr", "_W_i", "_b_wi", "_W_h", "_b_wh",
                  "_R_r", "_b_rr", "_R_i", "_b_ru", "_R_h", "_b_rh"]
+        if bidirectional:
+            names = [i + '_fw' for i in names] + [i + '_bw' for i in names]
         names = [name + i for i in names]
     # create variable or not
     if return_variable:

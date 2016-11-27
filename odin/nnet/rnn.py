@@ -527,7 +527,7 @@ class LSTM(BaseRNN):
 # ===========================================================================
 # DNN
 # ===========================================================================
-class RNNDnn(NNOps):
+class CudnnRNN(NNOps):
 
     def __init__(self, hidden_size, rnn_mode,
             num_layers=1,
