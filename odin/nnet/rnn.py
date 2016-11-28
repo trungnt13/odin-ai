@@ -528,6 +528,45 @@ class LSTM(BaseRNN):
 # DNN
 # ===========================================================================
 class CudnnRNN(NNOps):
+    """CuDNN v5 RNN implementation.
+
+    Parameters
+    ----------
+    X : input varialbe or placeholder
+        shape=(batch_size, timesteps, input_dims)
+    hidden_size : int
+        the number of units within the RNN model.
+    rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
+        See cudnn documentation for ``cudnnRNNMode_t``.
+    num_layers : int
+        the number of layers for the RNN model.
+    initial_states: list of tensor
+        pass
+    parameters: list of tensor
+        pass
+    input_mode : {'linear', 'skip'}
+        linear: input will be multiplied by a biased matrix
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
+    direction_mode : {'unidirectional', 'bidirectional'}
+        unidirectional: The network operates recurrently from the
+                        first input to the last.
+        bidirectional: The network operates from first to last then from last
+                       to first and concatenates the results at each layer.
+    dropout: float (0.0-1.0)
+        whether to enable dropout. With it is 0, dropout is disabled.
+
+    Returns
+    -------
+    [output, hidden_states, cell_states] for lstm
+    [output, hidden_states] for gru and rnn
+
+    output_shape: (batch_size, timesteps, hidden_size)
+    hidden_shape: (num_layers, batch_size, hidden_size)
+    cell_shape: (num_layers, batch_size, hidden_size)
+
+    """
 
     def __init__(self, hidden_size, rnn_mode,
             num_layers=1,
@@ -536,7 +575,7 @@ class CudnnRNN(NNOps):
             input_mode='linear',
             direction_mode='unidirectional',
             dropout=0., **kwargs):
-        super(RNNDnn, self).__init__(**kwargs)
+        super(CudnnRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
         self.repeat_states = True
         self.iterate = True
@@ -567,4 +606,3 @@ class CudnnRNN(NNOps):
             'n_steps': kwargs.pop('n_steps', self.n_steps),
             'batch_size': kwargs.pop('batch_size', self.batch_size),
         }
-

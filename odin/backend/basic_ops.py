@@ -13,6 +13,10 @@ elif config['backend'] == 'theano':
     from .theano import *
 
 
+def backend():
+    return config['backend']
+
+
 # ===========================================================================
 # Some useful general helper
 # ===========================================================================

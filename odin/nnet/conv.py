@@ -232,8 +232,11 @@ class TransposeConv(NNOps):
         else:
             raise Exception('No support for %d-D input in TransposedConv' %
                             self.conv.ndim)
+        # theano require batch_dims is Constant or None, but tensorflow
+        # require batch_dims is a native TensorVariable
         conved = deconv_func(x, kernel=W,
-                            output_shape=K.get_shape(self.conv._last_input, native=True),
+                            output_shape=K.get_shape(self.conv._last_input,
+                                native=True if K.backend() == 'tensorflow' else False),
                             strides=stride,
                             border_mode=border_mode,
                             filter_dilation=dilation)

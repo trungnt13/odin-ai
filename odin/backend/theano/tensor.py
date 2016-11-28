@@ -899,8 +899,6 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
     Transposed_conv won't procedure the same shape as original image if kernel
     value is even (i.e. x % 2 == 0).
     """
-    if len(output_shape) != 4:
-        raise ValueError('output_shape for deconvolution operator must be 4-D')
     # ====== convert to theano formated shapes ====== #
     x = __img_theano_format(x)
     kernel = __ker_theano_format(kernel)

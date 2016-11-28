@@ -33,8 +33,7 @@ class BackendTest(unittest.TestCase):
         x = K.variable(np.random.rand(8, 12))
         y = K.variable(np.random.rand(12, 25))
         z = K.placeholder((25, 18, 13))
-        w = K.placeholder((25, 18))
-        m = K.placeholder((18, 18))
+        w = K.placeholder((18, 18))
 
         # ====== dot ====== #
         t = K.dot(x, y)
@@ -52,7 +51,7 @@ class BackendTest(unittest.TestCase):
         self.assertEquals(K.get_shape(K.eye(5)),
                           K.eval(K.eye(5)).shape)
         # ====== diag ====== #
-        self.assertEquals(K.get_shape(K.diag(m)), (18,))
+        self.assertEquals(K.get_shape(K.diag(w)), (18,))
         # self.assertEquals(K.get_shape(K.diag(x)),
         # K.eval(K.diag(y)).shape)
         self.assertEquals(K.get_shape(K.square(x)),
