@@ -7,10 +7,10 @@ from odin.basic import set_training, is_training
 
 config = auto_config()
 
-if config['backend'] == 'theano':
-    from .theano import *
-elif config['backend'] == 'tensorflow':
+if config['backend'] == 'tensorflow':
     from .tensorflow import *
+elif config['backend'] == 'theano':
+    from .theano import *
 
 
 # ===========================================================================

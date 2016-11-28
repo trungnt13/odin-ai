@@ -1232,6 +1232,10 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     input_shape = get_shape(X)
     if X.ndim != 3:
         raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
+    if input_shape[-1] != hidden_size and 'skip' in input_mode:
+        raise ValueError('In skip_input mode, input size must be equal to hidden size'
+                         ', but input_size=%d != hidden_size=%d' %
+                         (input_shape[-1], hidden_size))
     # IF we dimshuffle here, a lot of error concern GPUarray,
     # and cudnn will happen
     batch_size = X.shape[0]

@@ -2,8 +2,6 @@ import unittest
 # python -c "from odin.tests import run; run('theano')"
 # python -c "from odin.tests import run; run('tensorflow')"
 
-# TODO: issue with CNN in compare_test
-
 
 def run(backend='theano', device='gpu'):
     tests = [

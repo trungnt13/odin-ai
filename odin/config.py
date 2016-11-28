@@ -106,7 +106,7 @@ def auto_config(config=None):
     valid_seed = re.compile('seed\D?(\d*)')
 
     floatX = 'float32'
-    backend = 'theano'
+    backend = 'tensorflow'
     optimizer = 'fast_run'
     epsilon = 10e-8
     device = 'cpu'
