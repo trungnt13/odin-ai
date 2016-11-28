@@ -1260,7 +1260,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                                      for i in range(num_layers)]).astype(FLOATX)
         parameters = variable(parameters, name=name)
     else:
-        pass
+        if get_shape(parameters)[0] != nb_params:
+            raise ValueError('parameters must be 1-D vector of length %d' % nb_params)
     assert nb_params == get_shape(parameters)[0], \
         "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
@@ -1281,4 +1282,9 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     # ====== get output ====== #
     output = rnnb.apply(w=parameters, x=X.dimshuffle(1, 0, 2),
                         hx=h0, cx=c0)
-    return [output[0].dimshuffle(1, 0, 2)] + output[1:]
+    output = [output[0].dimshuffle(1, 0, 2)] + list(output[1:])
+    add_shape(output[0], (input_shape[0], input_shape[1],
+                          hidden_size * (2 if direction_mode == 'bidirectional' else 1)))
+    for o in output[1:]:
+        add_shape(o, (num_layers, input_shape[0], hidden_size))
+    return output

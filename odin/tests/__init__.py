@@ -1,5 +1,6 @@
 import unittest
 # python -c "from odin.tests import run; run('theano')"
+# python -c "from odin.tests import run; run('tensorflow')"
 
 # TODO: issue with CNN in compare_test
 
@@ -9,7 +10,7 @@ def run(backend='theano', device='gpu'):
         'fuel_test',
         'backend_test',
         'nnet_test',
-        # 'rnn_test',
+        'rnn_test',
         # 'compare_test',
         # 'model_test'
     ]

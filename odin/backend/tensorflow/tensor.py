@@ -1070,6 +1070,10 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     input_shape = get_shape(X)
     if X.get_shape().ndims != 3:
         raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
+    if input_shape[-1] != hidden_size and 'skip' in input_mode:
+        raise ValueError('In skip_input mode, input size must be equal to hidden size'
+                         ', but input_size=%d != hidden_size=%d' %
+                         (input_shape[-1], hidden_size))
     # IF we dimshuffle here, a lot of error concern GPUarray,
     # and cudnn will happen
     batch_size = get_shape(X, native=True)[0]
@@ -1119,7 +1123,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                                      for i in range(num_layers)]).astype(FLOATX)
         parameters = variable(parameters, name=name)
     else:
-        pass
+        if get_shape(parameters)[0] != nb_params:
+            raise ValueError('parameters must be 1-D vector of length %d' % nb_params)
     assert nb_params == get_shape(parameters)[0], \
         "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
@@ -1145,4 +1150,9 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     output = rnn(input_data=tf.transpose(X, (1, 0, 2)),
                  params=parameters, is_training=bool(is_training()),
                  **args)
-    return [tf.transpose(output[0], (1, 0, 2))] + list(output[1:])
+    output = [tf.transpose(output[0], (1, 0, 2))] + list(output[1:])
+    add_shape(output[0], (input_shape[0], input_shape[1],
+                          hidden_size * (2 if direction_mode == 'bidirectional' else 1)))
+    for o in output[1:]:
+        add_shape(o, (num_layers, input_shape[0], hidden_size))
+    return output
