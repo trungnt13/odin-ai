@@ -1097,9 +1097,11 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                         dropout=dropout,
                         seed=0,
                         seed2=0)
+    # layer info (note in case of bidirectional, output from previous
+    # layers are concatenated).
     layer_info = [input_shape[-1], hidden_size] + \
-                 [hidden_size, hidden_size] * (num_layers - 1)
-
+                 [hidden_size * (2 if direction_mode == 'bidirectional' else 1),
+                  hidden_size] * (num_layers - 1)
     with tf.device('/cpu:0'):
         nb_params = rnn.params_size().eval(session=get_session())
     # ====== create parameters ====== #

@@ -1239,10 +1239,11 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                         num_layers=num_layers, rnn_mode=rnn_mode,
                         input_mode=input_mode, direction_mode=direction_mode,
                         context_name=None)
-
+    # layer info (note in case of bidirectional, output from previous
+    # layers are concatenated).
     layer_info = [input_shape[-1], hidden_size] + \
-                 [hidden_size, hidden_size] * (num_layers - 1)
-
+                 [hidden_size * (2 if direction_mode == 'bidirectional' else 1),
+                  hidden_size] * (num_layers - 1)
     nb_params = rnnb.get_param_size([12, input_shape[-1]])
     # ====== create parameters ====== #
     # check parameters
