@@ -216,6 +216,8 @@ def get_shape(x, not_none=False, native=False):
 
     Parameters
     ----------
+    x: theano or tensorflow variable, numpy.ndarray
+        variable for getting the shape
     not_none : bool
         if `not_none`=True, does not allow None in returned shape tuple.
         Default value is False

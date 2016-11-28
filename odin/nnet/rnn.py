@@ -6,7 +6,8 @@ from six import add_metaclass
 import numpy as np
 
 from odin import backend as K
-from odin.basic import INITIAL_STATE, WEIGHT, BIAS
+from odin.basic import INITIAL_STATE, WEIGHT, BIAS, PARAMETER
+from odin.utils import as_tuple
 
 from .base import NNConfig, NNOps
 
@@ -568,41 +569,83 @@ class CudnnRNN(NNOps):
 
     """
 
-    def __init__(self, hidden_size, rnn_mode,
-            num_layers=1,
-            initial_states=None,
-            parameters=None,
+    def __init__(self, hidden_size,
+            W_init=K.init.glorot_uniform,
+            b_init=K.init.constant(0.),
+            initial_states=K.init.constant(0.),
+            rnn_mode='lstm', num_layers=1,
             input_mode='linear',
             direction_mode='unidirectional',
             dropout=0., **kwargs):
         super(CudnnRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
-        self.repeat_states = True
-        self.iterate = True
-        self.backwards = False
-        self.n_steps = None
-        self.batch_size = None
+        self.hidden_size = hidden_size
+        self.rnn_mode = rnn_mode
+        self.num_layers = num_layers
+        self.input_mode = input_mode
+        self.direction_mode = direction_mode
+        self.dropout = dropout
 
-    @abstractmethod
-    def _rnn(self, **kwargs):
-        pass
+        self.initial_states = as_tuple(initial_states, N=2 if rnn_mode == 'lstm' else 1)
+        self.W_init = W_init
+        self.b_init = b_init
 
-    def get_recurrent_info(self, kwargs):
-        """ Return information that control how this ops recurrently
-        performed
+    # ==================== abstract methods ==================== #
+    def _transpose(self):
+        # flip the input and hidden
+        raise NotImplementedError
 
-        Parameters
-        ----------
-        kwargs: keywords arguments
-            all arguments given that will override default configuration
+    def _initialize(self, x):
+        input_shape = K.get_shape(x)
+        config = NNConfig(input_shape=input_shape[1:])
+        is_bidirectional = self.direction_mode == 'bidirectional'
+        # ====== create params ====== #
+        layer_info = [input_shape[-1], self.hidden_size] + \
+                     [self.hidden_size * (2 if is_bidirectional else 1),
+                      self.hidden_size] * (self.num_layers - 1)
+        if self.rnn_mode == 'lstm':
+            from odin.backend.init import lstm as init_func
+        elif self.rnn_mode == 'gru':
+            from odin.backend.init import gru as init_func
+        else:
+            from odin.backend.init import rnn as init_func
+        parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                     W_init=self.W_init, b_init=self.b_init,
+                                     one_vector=True, return_variable=False,
+                                     bidirectional=True if is_bidirectional else False)
+                                     for i in range(self.num_layers)]).astype(K.floatX())
+        config.create_params(parameters, shape=parameters.shape, name='params',
+                             nnops=self, roles=PARAMETER)
+        # ====== create initials states ====== #
+        num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
+        batch_size = 1 if input_shape[0] is None else input_shape[0]
+        config.create_params(self.initial_states[0],
+                             shape=(num_layers, batch_size, self.hidden_size),
+                             name='h0', nnops=self, roles=INITIAL_STATE)
+        if self.rnn_mode == 'lstm':
+            config.create_params(self.initial_states[1],
+                                 shape=(num_layers, batch_size, self.hidden_size),
+                                 name='c0', nnops=self, roles=INITIAL_STATE)
+        return config
 
-        """
-        kwargs = kwargs if isinstance(kwargs, dict) else {}
-        return {
-            'iterate': kwargs.pop('iterate', self.iterate),
-            'backwards': kwargs.pop('backwards', self.backwards),
-            'repeat_states': kwargs.pop('repeat_states', self.repeat_states),
-            'name': kwargs.pop('name', self.name),
-            'n_steps': kwargs.pop('n_steps', self.n_steps),
-            'batch_size': kwargs.pop('batch_size', self.batch_size),
-        }
+    def _apply(self, x):
+        batch_size = K.get_shape(x, native=True)[0]
+        # hidden state
+        h0 = self.h0
+        if K.get_shape(self.h0)[1] is 1:
+            h0 = K.repeat(h0, batch_size, axes=1)
+        initial_states = [h0]
+        # cell state for lstm
+        if self.rnn_mode == 'lstm':
+            c0 = self.c0
+            if K.get_shape(c0)[1] is 1:
+                c0 = K.repeat(c0, batch_size, axes=1)
+            initial_states.append(c0)
+        # return CuDNN RNN
+        return K.rnn_dnn(x, hidden_size=self.hidden_size, rnn_mode=self.rnn_mode,
+                         num_layers=self.num_layers,
+                         initial_states=initial_states,
+                         parameters=self.params,
+                         input_mode=self.input_mode,
+                         direction_mode=self.direction_mode,
+                         dropout=self.dropout, name=self.name)
