@@ -2,11 +2,12 @@ from __future__ import division, absolute_import, print_function
 
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
+from itertools import chain
 
 import numpy as np
 
 from odin import backend as K
-from odin.basic import INITIAL_STATE, WEIGHT, BIAS, PARAMETER
+from odin.basic import INITIAL_STATE, WEIGHT, BIAS, PARAMETER, has_roles
 from odin.utils import as_tuple
 
 from .base import NNConfig, NNOps
@@ -533,18 +534,19 @@ class CudnnRNN(NNOps):
 
     Parameters
     ----------
-    X : input varialbe or placeholder
-        shape=(batch_size, timesteps, input_dims)
     hidden_size : int
         the number of units within the RNN model.
+    W_init:
+        initial description for weights
+    b_init:
+        initial description for bias
+    initial_states: list of tensor
+        h0 with shape [num_layers, batch_size, hidden_size]
+        c0 (lstm) with shape [num_layers, batch_size, hidden_size]
     rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
         See cudnn documentation for ``cudnnRNNMode_t``.
     num_layers : int
         the number of layers for the RNN model.
-    initial_states: list of tensor
-        pass
-    parameters: list of tensor
-        pass
     input_mode : {'linear', 'skip'}
         linear: input will be multiplied by a biased matrix
         skip: No operation is performed on the input.  The size must
@@ -555,6 +557,11 @@ class CudnnRNN(NNOps):
                         first input to the last.
         bidirectional: The network operates from first to last then from last
                        to first and concatenates the results at each layer.
+    params_split: boolean (defaults: False)
+        if True, separately initialized each parameter of RNN, then flatten and
+        concatenate all of them into one big vector for Cudnn, this results
+        more flexible control over parameters but significantly reduce the
+        speed.
     dropout: float (0.0-1.0)
         whether to enable dropout. With it is 0, dropout is disabled.
 
@@ -576,6 +583,7 @@ class CudnnRNN(NNOps):
             rnn_mode='lstm', num_layers=1,
             input_mode='linear',
             direction_mode='unidirectional',
+            params_split=False,
             dropout=0., **kwargs):
         super(CudnnRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
@@ -584,10 +592,19 @@ class CudnnRNN(NNOps):
         self.num_layers = num_layers
         self.input_mode = input_mode
         self.direction_mode = direction_mode
+        self.params_split = params_split
         self.dropout = dropout
 
-        self.initial_states = as_tuple(initial_states, N=2 if rnn_mode == 'lstm' else 1)
+        if initial_states is not None:
+            self.initial_states = as_tuple(initial_states,
+                                           N=2 if rnn_mode == 'lstm' else 1)
+        else:
+            self.initial_states = None
+        if not callable(W_init):
+            raise ValueError('W_init must be callable with input is variable shape')
         self.W_init = W_init
+        if not callable(b_init):
+            raise ValueError('b_init must be callable with input is variable shape')
         self.b_init = b_init
 
     # ==================== abstract methods ==================== #
@@ -609,43 +626,86 @@ class CudnnRNN(NNOps):
             from odin.backend.init import gru as init_func
         else:
             from odin.backend.init import rnn as init_func
-        parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                     W_init=self.W_init, b_init=self.b_init,
-                                     one_vector=True, return_variable=False,
-                                     bidirectional=True if is_bidirectional else False)
-                                     for i in range(self.num_layers)]).astype(K.floatX())
-        config.create_params(parameters, shape=parameters.shape, name='params',
-                             nnops=self, roles=PARAMETER)
+        # initialize each parameter in params_split=True
+        if self.params_split:
+            with K.variable_scope(self.name):
+                parameters = [init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                        W_init=self.W_init, b_init=self.b_init,
+                                        one_vector=False, return_variable=True,
+                                        bidirectional=is_bidirectional,
+                                        name='layer%d' % i)
+                              for i in range(self.num_layers)]
+            # print([(j.name, j.tag.roles) for i in parameters for j in i]); exit()
+            for p in chain(*parameters):
+                config.create_params(p, shape=K.get_shape(p),
+                                     name=p.name.split(':')[0].split('/')[1],
+                                     nnops=self)
+        # else initialize all in 1 big vector
+        else:
+            parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                         one_vector=True, return_variable=False,
+                                         bidirectional=True if is_bidirectional else False)
+                                         for i in range(self.num_layers)])
+            config.create_params(parameters, shape=parameters.shape,
+                                 name='params', nnops=self)
         # ====== create initials states ====== #
-        num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
-        batch_size = 1 if input_shape[0] is None else input_shape[0]
-        config.create_params(self.initial_states[0],
-                             shape=(num_layers, batch_size, self.hidden_size),
-                             name='h0', nnops=self, roles=INITIAL_STATE)
-        if self.rnn_mode == 'lstm':
-            config.create_params(self.initial_states[1],
-                                 shape=(num_layers, batch_size, self.hidden_size),
-                                 name='c0', nnops=self, roles=INITIAL_STATE)
+        if self.initial_states is not None:
+            num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
+            batch_size = 1 if input_shape[0] is None else input_shape[0]
+            require_shape = (num_layers, batch_size, self.hidden_size)
+            # check hidden states
+            h0 = self.initial_states[0]
+            check_shape = require_shape
+            if K.is_variable(h0) or isinstance(h0, np.ndarray):
+                if K.get_shape(h0)[::2] != (num_layers, self.hidden_size):
+                    raise ValueError('Require hidden_state of size: %s, but '
+                                     'given state of size: %s' %
+                                     (require_shape, K.get_shape(h0)))
+                check_shape = K.get_shape(h0)
+            config.create_params(h0, shape=check_shape, name='h0',
+                                 nnops=self, roles=INITIAL_STATE)
+            # do the same for cell states
+            if self.rnn_mode == 'lstm':
+                c0 = self.initial_states[1]
+                check_shape = require_shape
+                if K.is_variable(c0) or isinstance(c0, np.ndarray):
+                    if K.get_shape(c0)[::2] != (num_layers, self.hidden_size):
+                        raise ValueError('Require cell_state of size: %s, but '
+                                         'given state of size: %s' %
+                                         (require_shape, K.get_shape(c0)))
+                    check_shape = K.get_shape(c0)
+                config.create_params(c0, shape=check_shape, name='c0',
+                                     nnops=self, roles=INITIAL_STATE)
         return config
 
     def _apply(self, x):
         batch_size = K.get_shape(x, native=True)[0]
-        # hidden state
-        h0 = self.h0
-        if K.get_shape(self.h0)[1] is 1:
-            h0 = K.repeat(h0, batch_size, axes=1)
-        initial_states = [h0]
-        # cell state for lstm
-        if self.rnn_mode == 'lstm':
-            c0 = self.c0
-            if K.get_shape(c0)[1] is 1:
-                c0 = K.repeat(c0, batch_size, axes=1)
-            initial_states.append(c0)
-        # return CuDNN RNN
+        # ====== hidden state ====== #
+        if self.initial_states is not None:
+            h0 = self.h0
+            if K.get_shape(self.h0)[1] is 1:
+                h0 = K.repeat(h0, batch_size, axes=1)
+            initial_states = [h0]
+            # cell state for lstm
+            if self.rnn_mode == 'lstm':
+                c0 = self.c0
+                if K.get_shape(c0)[1] is 1:
+                    c0 = K.repeat(c0, batch_size, axes=1)
+                initial_states.append(c0)
+        else:
+            initial_states = None
+        # ====== parameters ====== #
+        if self.params_split:
+            parameters = K.concatenate([K.flatten(i, outdim=1)
+                                        for i in self.parameters
+                                        if not has_roles(i, INITIAL_STATE)])
+        else:
+            parameters = self.params
+        # ====== return CuDNN RNN ====== #
         return K.rnn_dnn(x, hidden_size=self.hidden_size, rnn_mode=self.rnn_mode,
                          num_layers=self.num_layers,
                          initial_states=initial_states,
-                         parameters=self.params,
+                         parameters=parameters,
                          input_mode=self.input_mode,
                          direction_mode=self.direction_mode,
                          dropout=self.dropout, name=self.name)

@@ -333,5 +333,16 @@ class BackendTest(unittest.TestCase):
         c = K.eval(K.random_binomial(shape=(10, 10), p=0.1))
         self.assertTrue(np.sum(c) <= 20)
 
+    def test_flatten(self):
+        x = K.placeholder(shape=(None, 8, 12, 25, 18))
+        for i in range(1, 5):
+            y = K.flatten(x, outdim=i)
+            f = K.function(x, y)
+            shape1 = K.get_shape(y)
+            shape2 = f(np.random.rand(16, 8, 12, 25, 18)).shape
+            self.assertEqual(len(shape1), len(shape2))
+            self.assertTrue(all(i == j for i, j in zip(shape1, shape2)
+                                if i is not None))
+
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

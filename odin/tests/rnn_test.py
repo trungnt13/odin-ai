@@ -6,6 +6,7 @@ from __future__ import print_function, division
 import os
 import cPickle
 import unittest
+import timeit
 from six.moves import zip, range
 
 import numpy as np
@@ -22,7 +23,7 @@ class RNNTest(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def test_cudnn_rnn(self):
+    def test_cudnn_rnn_backend(self):
         print()
         np.random.seed(1208)
         batch_size = 25
@@ -39,6 +40,7 @@ class RNNTest(unittest.TestCase):
                         else:
                             X = X_skip
                             x = np.random.rand(batch_size, 8, 12)
+                        start = timeit.default_timer()
                         y = K.rnn_dnn(X, hidden_size=hidden_size,
                                       rnn_mode=rnn_mode,
                                       input_mode=input_mode,
@@ -47,13 +49,59 @@ class RNNTest(unittest.TestCase):
                         # perform function
                         f = K.function(X, y)
                         output = f(x)
+                        benchmark = timeit.default_timer() - start
                         self.assertEqual([list(i.shape) for i in output],
                                          [[batch_size if j is None else j
                                            for j in K.get_shape(i)]
                                           for i in y])
-                        print("*PASSED* [Layers]%s [Mode]%-8s [Input]%-6s [Direction]%s" %
-                            (nb_layers, rnn_mode, input_mode, direction_mode))
+                        print("*PASSED* [Layers]%s [Mode]%-8s [Input]%-6s [Direction]%s [Benchmark]%.4f" %
+                            (nb_layers, rnn_mode, input_mode, direction_mode, benchmark))
                         # [np.array(i).sum() for i in output]
+
+    def test_cudnn_rnn_nnet(self):
+        print()
+        np.random.seed(1208)
+        batch_size = 6
+        hidden_size = 4
+        X_linear = K.placeholder(shape=(None, 3, 8), name='X_linear')
+        X_skip = K.placeholder(shape=(None, 3, hidden_size), name='X_skip')
+        for direction_mode in ['bidirectional', 'unidirectional']:
+            is_bidirectional = direction_mode == 'bidirectional'
+            for nb_layers in [1, 2]:
+                real_layers = nb_layers * 2 if is_bidirectional else nb_layers
+                for rnn_mode in ['gru', 'lstm', 'rnn_relu', 'rnn_tanh']:
+                    for init_state, init_state_name in zip([
+                        None, # None init
+                        K.init.uniform, # function init
+                        K.variable(np.random.rand(real_layers, 1, hidden_size)), # variable
+                        K.variable(np.random.rand(real_layers, batch_size, hidden_size)), # variable
+                        K.zeros(shape=(real_layers, 1, hidden_size)),
+                        K.ones(shape=(real_layers, batch_size, hidden_size))
+                    ], ['None', 'Function', 'Var1', 'VarB', 'Tensor1', 'TensorB']):
+                        for input_mode in ['linear', 'skip']:
+                            if input_mode == 'linear':
+                                X = X_linear
+                                x = np.random.rand(batch_size, 3, 8)
+                            else:
+                                X = X_skip
+                                x = np.random.rand(batch_size, 3, hidden_size)
+                            start = timeit.default_timer()
+                            f = N.CudnnRNN(hidden_size=hidden_size, rnn_mode=rnn_mode,
+                                           input_mode=input_mode, num_layers=nb_layers,
+                                           direction_mode=direction_mode,
+                                           initial_states=init_state,
+                                           params_split=False)
+                            # perform function
+                            y = f(X)
+                            f = K.function(X, y)
+                            output = f(x)
+                            benchmark = timeit.default_timer() - start
+                            self.assertTrue([list(i.shape) for i in output] ==
+                                            [[batch_size if j is None else j
+                                              for j in K.get_shape(i)]
+                                             for i in y])
+                            print("*PASSED* [Layers]%s [Mode]%-8s [Input]%-6s [Direction]%-12s [State]%s [Benchmark]%.4f" %
+                                (nb_layers, rnn_mode, input_mode, direction_mode, init_state_name, benchmark))
 
     def test_simple_rnn(self):
         np.random.seed(12082518)

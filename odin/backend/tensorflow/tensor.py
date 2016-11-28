@@ -434,6 +434,8 @@ def dimshuffle(x, pattern):
 
 
 def flatten(x, outdim=1):
+    if outdim == 1:
+        return tf.reshape(x, [-1])
     input_shape = x.get_shape().as_list()
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
     n = np.prod(input_shape[(outdim - 1):])
@@ -1024,9 +1026,12 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     num_layers : int
         the number of layers for the RNN model.
     initial_states: list of tensor
-        pass
-    parameters: list of tensor
-        pass
+        h0 with shape [num_layers, batch_size, hidden_size]
+        c0 (lstm) with shape [num_layers, batch_size, hidden_size]
+    parameters: vector
+        vector contain all flatten weights and bias
+        check `backend.init.lstm`, `backend.init.gru`, and `backend.init.rnn`
+        for more information
     input_mode : {'linear', 'skip'}
         linear: input will be multiplied by a biased matrix
         skip: No operation is performed on the input.  The size must
@@ -1065,6 +1070,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     if direction_mode not in ('unidirectional', 'bidirectional'):
         raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
                          % direction_mode)
+    is_bidirectional = direction_mode == 'bidirectional'
     # ====== create RNNBlock ====== #
     from tensorflow.contrib import cudnn_rnn
     input_shape = get_shape(X)
@@ -1104,7 +1110,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     # layer info (note in case of bidirectional, output from previous
     # layers are concatenated).
     layer_info = [input_shape[-1], hidden_size] + \
-                 [hidden_size * (2 if direction_mode == 'bidirectional' else 1),
+                 [hidden_size * (2 if is_bidirectional else 1),
                   hidden_size] * (num_layers - 1)
     with tf.device('/cpu:0'):
         nb_params = rnn.params_size().eval(session=get_session())
@@ -1119,16 +1125,13 @@ def rnn_dnn(X, hidden_size, rnn_mode,
             from odin.backend.init import rnn as init_func
         parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
                                      one_vector=True, return_variable=False,
-                                     bidirectional=True if direction_mode == 'bidirectional' else False)
+                                     bidirectional=True if is_bidirectional else False)
                                      for i in range(num_layers)]).astype(FLOATX)
         parameters = variable(parameters, name=name)
-    else:
-        if get_shape(parameters)[0] != nb_params:
-            raise ValueError('parameters must be 1-D vector of length %d' % nb_params)
     assert nb_params == get_shape(parameters)[0], \
         "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
-    num_layers = num_layers * 2 if direction_mode == 'bidirectional' else num_layers
+    num_layers = num_layers * 2 if is_bidirectional else num_layers
     if initial_states is None:
         h0 = zeros((num_layers, batch_size, hidden_size))
         if rnn_mode == 'lstm':
@@ -1152,7 +1155,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                  **args)
     output = [tf.transpose(output[0], (1, 0, 2))] + list(output[1:])
     add_shape(output[0], (input_shape[0], input_shape[1],
-                          hidden_size * (2 if direction_mode == 'bidirectional' else 1)))
+                          hidden_size * (2 if is_bidirectional else 1)))
     for o in output[1:]:
         add_shape(o, (num_layers, input_shape[0], hidden_size))
     return output

@@ -268,7 +268,7 @@ class ComputationGraph(object):
         if usual_outputs:
             for o in self.outputs:
                 trainable_collections = {i.name: i
-                    for i in o.graph._collections['trainable_variables']}
+                    for i in o.graph._collections.get('trainable_variables', {})}
                 # ====== travese each node of graph ====== #
                 for v in get_all_variables(o):
                     if is_placeholder(v):
