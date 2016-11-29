@@ -32,7 +32,7 @@ class RNNTest(unittest.TestCase):
         X_skip = K.placeholder(shape=(None, 8, 12), name='X_skip')
         for direction_mode in ['bidirectional', 'unidirectional']:
             for nb_layers in [1, 2, 3]:
-                for rnn_mode in ['gru', 'lstm', 'rnn_relu', 'rnn_tanh']:
+                for rnn_mode in ['gru', 'lstm', 'rnn_tanh']:
                     for input_mode in ['linear', 'skip']:
                         if input_mode == 'linear':
                             X = X_linear

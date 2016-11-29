@@ -579,7 +579,7 @@ class CudnnRNN(NNOps):
     def __init__(self, hidden_size,
             W_init=K.init.glorot_uniform,
             b_init=K.init.constant(0.),
-            initial_states=K.init.constant(0.),
+            initial_states=None,
             rnn_mode='lstm', num_layers=1,
             input_mode='linear',
             direction_mode='unidirectional',

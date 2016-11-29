@@ -30,11 +30,20 @@ NPROCESSORS = CONFIG['device_info']['n']
 #     matrix1 = tf.constant([[3., 3.]])
 #     matrix2 = tf.constant([[2.],[2.]])
 #     product = tf.matmul(matrix1, matrix2
-
-_SESSION = tf.Session(config=tf.ConfigProto(
-    intra_op_parallelism_threads=NPROCESSORS,
-    allow_soft_placement=True,
-    log_device_placement=False))
+__session_args = {
+    'intra_op_parallelism_threads': NPROCESSORS,
+    'allow_soft_placement': True,
+    'log_device_placement': False,
+}
+if CONFIG['device'] == 'gpu':
+    if CONFIG['cnmem'] > 0:
+        __session_args['gpu_options'] = tf.GPUOptions(
+            per_process_gpu_memory_fraction=CONFIG['cnmem'],
+            allow_growth=False)
+    else:
+        __session_args['gpu_options'] = tf.GPUOptions(
+            allow_growth=True)
+_SESSION = tf.Session(config=tf.ConfigProto(**__session_args))
 
 
 def set_session(session):

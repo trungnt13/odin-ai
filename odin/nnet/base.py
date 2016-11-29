@@ -261,7 +261,7 @@ class NNOps(object):
     Note
     ----
     All NNOps are pickle-able!
-
+    if NNOps is applied to a list of inputs, it will process each input seperated
     """
 
     def __init__(self, name=None):

@@ -148,8 +148,10 @@ class Sequence(HelperOps):
             print('First input:', K.get_shape(x))
         for op in self.ops:
             x = op(x, **_shrink_kwargs(op, kwargs))
+            # print after finnish the op
             if self.debug:
-                print(str(op), '->', K.get_shape(x))
+                print(str(op), '->', [K.get_shape(i) for i in x]
+                      if isinstance(x, (tuple, list)) else K.get_shape(x))
         # end debug
         if self.debug:
             print()

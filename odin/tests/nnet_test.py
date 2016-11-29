@@ -252,6 +252,18 @@ class NNetTest(unittest.TestCase):
         x = np.random.rand(32, 28, 28)
         self.assertEqual(np.sum(f1(x) - f2(x)), 0.)
 
+    def test_slice_ops(self):
+        X = K.placeholder(shape=(None, 28, 28, 28, 3))
+        f = N.Sequence([
+            N.Conv(32, 3, pad='same', activation=K.linear),
+            N.BatchNorm(activation=K.relu),
+            N.Flatten(outdim=4)[:, 8:12, 18:25, 13:],
+        ])
+        y = f(X)
+        fn = K.function(X, y)
+        self.assertTrue(fn(np.random.rand(12, 28, 28, 28, 3)).shape[1:] ==
+                        K.get_shape(y)[1:])
+        self.assertEqual(K.get_shape(y)[1:], (4, 7, 883))
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')
