@@ -43,14 +43,14 @@ class FlattenLeft(NNOps):
         return Reshape(shape, name=self.name + '_transpose')
 
 
-class FlattenRight(NNOps):
+class Flatten(NNOps):
     """ Flatten the array from the right.
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
     """
 
     @autoinit
     def __init__(self, outdim=2, **kwargs):
-        super(FlattenRight, self).__init__(**kwargs)
+        super(Flatten, self).__init__(**kwargs)
 
     def _initialize(self, x):
         config = NNConfig(input_shape=K.get_shape(x))
@@ -59,10 +59,7 @@ class FlattenRight(NNOps):
     def _apply(self, x):
         input_shape = K.get_shape(x)
         _validate_input_shape(input_shape)
-        other_shape = tuple([input_shape[i]
-                             for i in range(self.outdim - 1)])
-        n = np.prod(input_shape[(self.outdim - 1):])
-        return K.reshape(x, other_shape + (n,))
+        return K.flatten(x, outdim=self.outdim)
 
     def _transpose(self):
         shape = tuple([-1 if i is None else i for i in self.input_shape])

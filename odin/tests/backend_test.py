@@ -275,6 +275,33 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(np.sum(output[1]), 0)
         self.assertEqual(np.unique(K.eval(X)).tolist(), [12.])
 
+    def test_computational_graph3(self):
+        # validate the number of updates found by ComputationGraph
+        X = K.placeholder(shape=(None, 28, 28, 3))
+        f = N.Sequence([
+            N.Conv(32, 3, pad='same', activation=K.linear),
+            N.BatchNorm(activation=K.relu),
+            N.Flatten(outdim=2),
+            N.Dense(16),
+            N.BatchNorm(),
+            N.Dense(10)
+        ])
+        K.set_training(True); y_train = f(X)
+        K.set_training(False); y_score = f(X)
+        self.assertTrue(K.get_shape(y_train) == K.get_shape(y_score) and
+                        K.get_shape(y_score) == (None, 10))
+        cc_train = K.ComputationGraph(y_train)
+        cc_score = K.ComputationGraph(y_score)
+        self.assertTrue(len(cc_score.updates) == 0)
+        self.assertTrue(len(cc_train.updates) == 4)
+        # create real function
+        fn_train = K.function(X, y_train)
+        fn_score = K.function(X, y_score)
+        shape1 = fn_train(np.random.rand(12, 28, 28, 3)).shape
+        shape2 = fn_score(np.random.rand(12, 28, 28, 3)).shape
+        self.assertTrue(shape1 == shape2 and
+                        shape1 == (12, 10))
+
     def test_confusion_matrix(self):
         from sklearn.metrics import confusion_matrix
         y1 = np.random.randint(0, 8, size=100)

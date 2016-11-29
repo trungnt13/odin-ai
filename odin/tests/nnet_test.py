@@ -238,7 +238,7 @@ class NNetTest(unittest.TestCase):
             N.Dimshuffle(pattern=(0, 1, 2, 'x')),
             N.Conv(8, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
             K.pool2d,
-            N.FlattenRight(outdim=2),
+            N.Flatten(outdim=2),
             N.Dense(64, activation=K.relu),
             N.Dense(10, activation=K.softmax)
         ])

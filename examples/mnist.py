@@ -46,7 +46,7 @@ ops = N.Sequence([
     N.Pool(pool_size=(2, 2), strides=None),
     N.Conv(64, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
     N.Pool(pool_size=(2, 2), strides=None),
-    N.FlattenRight(outdim=2),
+    N.Flatten(outdim=2),
     N.Dense(256, activation=K.relu),
     N.Dense(10, activation=K.softmax)
 ], debug=True)

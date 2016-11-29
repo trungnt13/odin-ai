@@ -54,7 +54,7 @@ net_odin = N.Sequence([
     N.Conv2D(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
     N.Pool2D(pool_size=(2, 2), strides=None, mode='max'),
     N.Dimshuffle(pattern=(0, 2, 1, 3)),
-    N.FlattenRight(outdim=3),
+    N.Flatten(outdim=3),
     # ====== LSTM ====== #
     N.Merge([
         N.Dense(64, activation=K.linear, name='ingate'), # input-gate
@@ -63,7 +63,7 @@ net_odin = N.Sequence([
         N.Dense(64, activation=K.linear, name='outgate') # output-gate
     ], merge_function=K.concatenate),
     N.LSTM(num_units=64)[:, -1],
-    # N.FlattenRight(outdim=2),
+    # N.Flatten(outdim=2),
     N.Dense(1, activation=K.sigmoid)
 ])
 print('Building ODIN network ...')

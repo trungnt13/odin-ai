@@ -44,7 +44,7 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 # Build network
 # ===========================================================================
 ops = N.Sequence([
-    N.FlattenRight(outdim=2),
+    N.Flatten(outdim=2),
     N.Dense(512, activation=K.relu),
     N.Dense(256, activation=K.relu),
     N.Dense(10, activation=K.softmax)

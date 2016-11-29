@@ -71,7 +71,7 @@ class ModelTest(unittest.TestCase):
     def test_mnist(self):
         ds = fuel.load_mnist()
         m = model.SequentialClassifier(
-            N.FlattenRight(outdim=2),
+            N.Flatten(outdim=2),
             N.Dense(64, activation=K.relu),
             N.Dense(10, activation=K.softmax)
         )

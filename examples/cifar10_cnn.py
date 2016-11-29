@@ -38,7 +38,7 @@ f = N.Sequence([
 
     N.Dropout(level=0.25),
 
-    N.FlattenRight(outdim=2),
+    N.Flatten(outdim=2),
     N.Dense(512, activation=K.relu),
     N.Dropout(level=0.5),
     N.Dense(10, activation=K.softmax)

@@ -67,7 +67,7 @@ class RNNTest(unittest.TestCase):
         X_skip = K.placeholder(shape=(None, 3, hidden_size), name='X_skip')
         for direction_mode in ['bidirectional', 'unidirectional']:
             is_bidirectional = direction_mode == 'bidirectional'
-            for nb_layers in [1, 2]:
+            for nb_layers in [2]:
                 real_layers = nb_layers * 2 if is_bidirectional else nb_layers
                 for rnn_mode in ['gru', 'lstm', 'rnn_relu', 'rnn_tanh']:
                     for init_state, init_state_name in zip([
