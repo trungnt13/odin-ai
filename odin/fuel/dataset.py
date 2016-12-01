@@ -22,7 +22,8 @@ __all__ = [
     'load_cifar10',
     'load_cifar100',
     'load_mspec_test',
-    'load_imdb'
+    'load_imdb',
+    'load_digit_wav'
 ]
 
 
@@ -341,7 +342,7 @@ class Dataset(object):
 # ===========================================================================
 # Predefined dataset
 # ===========================================================================
-def _load_data_from_path(datapath):
+def _load_data_from_path(datapath, create_dataset=True):
     from zipfile import ZipFile, ZIP_DEFLATED
     if not os.path.isdir(datapath):
         datapath_tmp = datapath.replace('.zip', '') + '.tmp'
@@ -350,8 +351,10 @@ def _load_data_from_path(datapath):
         zf.extractall(path=datapath)
         zf.close()
         os.remove(datapath_tmp)
-    ds = Dataset(datapath)
-    return ds
+    if create_dataset:
+        ds = Dataset(datapath)
+        return ds
+    return datapath
 
 
 def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST.zip'):
@@ -437,3 +440,20 @@ def load_imdb(nb_words=None, maxlen=None):
         ds['y_test'] = y_test
         ds.flush()
     return ds
+
+
+def load_digit_wav():
+    from zipfile import ZipFile, ZIP_DEFLATED
+    path = 'https://s3.amazonaws.com/ai-datasets/digit_wav.zip'
+    datapath = get_file('digit_wav.zip', path)
+    try:
+        outpath = datapath.replace('.zip', '')
+        if os.path.exists(outpath):
+            shutil.rmtree(outpath)
+        zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
+        zf.extractall(path=outpath + '/../'); zf.close()
+    except:
+        # remove downloaded zip files
+        os.remove(datapath)
+        import traceback; traceback.print_exc()
+    return outpath
