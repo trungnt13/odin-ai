@@ -52,7 +52,6 @@ ops = N.Sequence([
     N.CudnnRNN(18, initial_states=None, rnn_mode='lstm', num_layers=2,
               input_mode='linear', direction_mode='unidirectional',
               params_split=False),
-    lambda x: x[0], # only get the main output
 
     N.Flatten(outdim=2),
     N.Dense(128, activation=K.relu),

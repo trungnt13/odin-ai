@@ -23,11 +23,10 @@ class FuelTest(unittest.TestCase):
     def test_speech_processor(self):
         try:
             datapath = F.load_digit_wav()
-        except:
-            pass
-
+        except Exception, e:
+            print('Error (skip this test):', str(e))
+            return
         output_path = utils.get_datasetpath(name='digit', override=True)
-
         feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
                                  win=0.02, shift=0.01, n_filters=40, n_ceps=13,
                                  delta_order=2, energy=True, pitch_threshold=0.5,
@@ -37,9 +36,26 @@ class FuelTest(unittest.TestCase):
                                  dtype='float32', datatype='memmap', ncpu=4)
         feat.run()
         ds = F.Dataset(output_path)
-        ds.archive()
-        print(ds.archive_path)
-        ds.close()
+
+        def is_equal(x1, x2):
+            x1 = repr(np.array(x1, 'float32').tolist())
+            x2 = repr(np.array(x2, 'float32').tolist())
+            n = 0
+            for i, j in zip(x1, x2):
+                if i == j:
+                    n += 1
+            return n >= max(len(x1), len(x2)) // 2
+        # these numbers are highly numerical instable
+        self.assertTrue(is_equal(ds['mfcc'].sum(axis=None), -224662.796875))
+        self.assertTrue(is_equal(ds['mspec'].sum(axis=None), -9484961.0))
+        self.assertTrue(is_equal(ds['spec'].sum(axis=None), 265804.65625))
+        self.assertTrue(is_equal(ds['mfcc_mean'].sum(axis=None), -8.937535285949707))
+        self.assertTrue(is_equal(ds['mspec_mean'].sum(axis=None), -377.3306579589844))
+        self.assertTrue(is_equal(ds['spec_mean'].sum(axis=None), 10.574236869812012))
+        self.assertTrue(is_equal(ds['mfcc_std'].sum(axis=None), 45.329566955566406))
+        self.assertTrue(is_equal(ds['mspec_std'].sum(axis=None), 146.80599975585938))
+        self.assertTrue(is_equal(ds['spec_std'].sum(axis=None), 67.6201171875))
+        self.assertTrue(is_equal(ds['vad'].sum(axis=None), 9174.0))
 
     def test_feeders(self):
         with utils.TemporaryDirectory() as temppath:
@@ -89,8 +105,8 @@ class FuelTest(unittest.TestCase):
             test_iter_no_trans(feeder.set_batch(12, seed=1203, shuffle_level=2))
             # ==================== Convert name to indices ==================== #
             feeder.set_recipes([
-                F.recipes.Name2Trans(
-                    converter_func=lambda name, x: [int(name.split('_')[-1])] * x[0].shape[0]),
+                F.recipes.Name2Trans(converter_func=
+                    lambda name: int(name.split('_')[-1])),
                 F.recipes.CreateBatch()
             ])
 

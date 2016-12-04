@@ -562,6 +562,9 @@ class CudnnRNN(NNOps):
         concatenate all of them into one big vector for Cudnn, this results
         more flexible control over parameters but significantly reduce the
         speed.
+    return_states: boolean (defaults: False)
+        if True, this Ops returns the [output, hidden_staes, cell_states (lstm)]
+        otherwise only return the output
     dropout: float (0.0-1.0)
         whether to enable dropout. With it is 0, dropout is disabled.
 
@@ -584,6 +587,7 @@ class CudnnRNN(NNOps):
             input_mode='linear',
             direction_mode='unidirectional',
             params_split=False,
+            return_states=False,
             dropout=0., **kwargs):
         super(CudnnRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
@@ -593,6 +597,7 @@ class CudnnRNN(NNOps):
         self.input_mode = input_mode
         self.direction_mode = direction_mode
         self.params_split = params_split
+        self.return_states = return_states
         self.dropout = dropout
 
         if initial_states is not None:
@@ -702,10 +707,13 @@ class CudnnRNN(NNOps):
         else:
             parameters = self.params
         # ====== return CuDNN RNN ====== #
-        return K.rnn_dnn(x, hidden_size=self.hidden_size, rnn_mode=self.rnn_mode,
-                         num_layers=self.num_layers,
-                         initial_states=initial_states,
-                         parameters=parameters,
-                         input_mode=self.input_mode,
-                         direction_mode=self.direction_mode,
-                         dropout=self.dropout, name=self.name)
+        results = K.rnn_dnn(x, hidden_size=self.hidden_size, rnn_mode=self.rnn_mode,
+                           num_layers=self.num_layers,
+                           initial_states=initial_states,
+                           parameters=parameters,
+                           input_mode=self.input_mode,
+                           direction_mode=self.direction_mode,
+                           dropout=self.dropout, name=self.name)
+        if not self.return_states:
+            results = results[0] # only get the output
+        return results

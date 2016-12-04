@@ -90,7 +90,8 @@ class RNNTest(unittest.TestCase):
                                            input_mode=input_mode, num_layers=nb_layers,
                                            direction_mode=direction_mode,
                                            initial_states=init_state,
-                                           params_split=False)
+                                           params_split=False,
+                                           return_states=True)
                             # perform function
                             y = f(X)
                             f = K.function(X, y)

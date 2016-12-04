@@ -403,17 +403,18 @@ class Name2Trans(FeederRecipe):
 
     Parameters
     ----------
-    converter_func: callbale (2 input arguments)
-        for example, lambda name, x: ['true' in name] * x[0].shape[0]
-        (Note: x is always a list)
+    converter_func: callbale (1 input arguments)
+        for example, lambda name: 1 if 'true' in name else 0
+        the return label then is duplicated for all data points in 1 file.
+        (e.g. X.shape = (1208, 13), then, transcription=[ret] * 1208)
 
     Example
+    -------
     >>> cluster_idx = ['spa-car', 'por-brz', 'spa-lac', 'spa-eur']
     >>> feeder = F.Feeder(ds['mfcc'], ds.path, ncpu=1, buffer_size=12)
     >>> feeder.set_batch(256, seed=None, shuffle_level=0)
     >>> feeder.set_recipes([
-    >>>     F.recipes.NameToTranscription(
-    >>>         lambda x, y: [cluster_idx.index(x)] * y.shape[0]),
+    >>>     F.recipes.NameToTranscription(lambda x: cluster_idx.index(x),
     >>>     F.recipes.CreateBatch()
     >>> ])
 
@@ -427,7 +428,9 @@ class Name2Trans(FeederRecipe):
 
     def process(self, name, X, *args):
         # X: is a list of ndarray
-        transcription = np.array(self.converter_func(name, X))
+        label = self.converter_func(name)
+        labels = [label] * X[0].shape[0]
+        transcription = np.array(labels)
         return name, X, transcription
 
 
@@ -554,7 +557,7 @@ class Sequencing(FeederRecipe):
 
     def process(self, name, X, *args):
         # not enough data points for sequencing
-        if X[0].shape[0] < self.frame_length:
+        if X[0].shape[0] < self.frame_length and self.end == 'cut':
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
                           'into %d features.' % (name, X[0].shape[0], self.frame_length))
             return None
@@ -566,13 +569,17 @@ class Sequencing(FeederRecipe):
         _ = []
         if self.transcription_transform is not None:
             for a in args:
-                a = segment_axis(np.asarray(a),
+                original_dtype = a.dtype
+                a = segment_axis(np.asarray(a, dtype='str'),
                                 self.frame_length, self.hop_length,
                                 axis=0, end=self.end,
-                                endvalue=self.endvalue)
-                a = np.asarray([self.transcription_transform(i)
-                                for i in a])
-
+                                endvalue='__end__')
+                # need to remove padded value
+                a = np.asarray([
+                    self.transcription_transform(
+                        [j for j in i if j != '__end__']) for i in a],
+                    dtype=original_dtype
+                )
                 _.append(a)
             args = tuple(_)
         return (name, tuple(X)) + args
