@@ -23,7 +23,8 @@ __all__ = [
     'load_cifar100',
     'load_mspec_test',
     'load_imdb',
-    'load_digit_wav'
+    'load_digit_wav',
+    'load_digit_audio'
 ]
 
 
@@ -69,17 +70,24 @@ def _parse_data_descriptor(path, name, read_only):
 
 @singleton
 class Dataset(object):
+    """ This Dataset can automatically parse memmap (created by MmapData),
+    MmapDict, pickled dictionary and hdf5 files and keep tracking the changes.
 
-    """
+    Any file name with "readme" prefix will be parsed as text and showed as
+    readme.
+
     Note
     ----
-    for developer:
-    _data_map contains: name -> (dtype, shape, Data or pathtoData)
+    for developer: _data_map contains: name -> (dtype, shape, Data or pathtoData)
+    readme included with the dataset should contain license information
     """
 
     def __init__(self, path, read_only=False):
         path = os.path.abspath(path)
         self.read_only = read_only
+        self._readme_info = ['README:', '-------', ' No information!']
+        self._readme_path = None
+        # parse all data from path
         if path is not None:
             if os.path.isfile(path) and '.zip' in os.path.basename(path):
                 self._load_archive(path,
@@ -102,6 +110,16 @@ class Dataset(object):
         # ====== load all Data ====== #
         files = os.listdir(path)
         for f in files:
+            # found README
+            if 'readme' == f[:6].lower():
+                readme_path = os.path.join(path, f)
+                with open(readme_path, 'r') as readme_file:
+                    readme = readme_file.readlines()[:3]
+                    readme = [' ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
+                    readme.append(' For more information: ' + readme_path)
+                    self._readme_info = ['README:', '-------'] + readme
+                    self._readme_path = readme_path
+            # parse data
             data = _parse_data_descriptor(path, f, self.read_only)
             if data is None: continue
             for key, d in data:
@@ -307,6 +325,8 @@ class Dataset(object):
     def __str__(self):
         s = ['==========  Dataset:%s Total:%d  ==========' %
              (self.path, len(self._data_map))]
+        s += self._readme_info
+        s += ['Data:', '-------']
         # ====== Find longest string ====== #
         longest_name = 0
         longest_shape = 0
@@ -323,13 +343,23 @@ class Dataset(object):
             longest_file = max(len(str(data)), longest_file)
             print_info.append([name, dtype, shape, data])
         # ====== return print string ====== #
-        format_str = ('Name:%-' + str(longest_name) + 's  '
+        format_str = (' Name:%-' + str(longest_name) + 's  '
                       'dtype:%-7s  '
                       'shape:%-' + str(longest_shape) + 's  '
                       'file:%-' + str(longest_file) + 's')
         for name, dtype, shape, path in print_info:
             s.append(format_str % (name, dtype, shape, path))
         return '\n'.join(s)
+
+    @property
+    def readme(self):
+        """ return text string of README of this dataset """
+        if self._readme_path is not None:
+            with open(self._readme_path, 'r') as f:
+                readme = f.read()
+        else:
+            readme = self._readme_info[-1]
+        return readme
 
     # ==================== Pickle ==================== #
     def __getstate__(self):
@@ -457,3 +487,20 @@ def load_digit_wav():
         os.remove(datapath)
         import traceback; traceback.print_exc()
     return outpath
+
+
+def load_digit_audio(dtype='float32'):
+    """
+    path : str
+        local path or url to hdf5 datafile
+    """
+    if dtype.lower() == 'float32':
+        path = 'https://s3.amazonaws.com/ai-datasets/digit32.zip'
+        name = 'digit32'
+    elif dtype.lower() == 'float16':
+        path = 'https://s3.amazonaws.com/ai-datasets/digit16.zip'
+        name = 'digit16'
+    else:
+        raise ValueError('Unsupport dtype=%s, only float32 or float16' % str(dtype))
+    datapath = get_file(name, path)
+    return _load_data_from_path(datapath)

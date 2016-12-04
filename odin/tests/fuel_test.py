@@ -20,6 +20,27 @@ class FuelTest(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_speech_processor(self):
+        try:
+            datapath = F.load_digit_wav()
+        except:
+            pass
+
+        output_path = utils.get_datasetpath(name='digit', override=True)
+
+        feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
+                                 win=0.02, shift=0.01, n_filters=40, n_ceps=13,
+                                 delta_order=2, energy=True, pitch_threshold=0.5,
+                                 get_spec=True, get_mspec=True, get_mfcc=True,
+                                 get_pitch=False, get_vad=True,
+                                 save_stats=True, substitute_nan=None,
+                                 dtype='float32', datatype='memmap', ncpu=4)
+        feat.run()
+        ds = F.Dataset(output_path)
+        ds.archive()
+        print(ds.archive_path)
+        ds.close()
+
     def test_feeders(self):
         with utils.TemporaryDirectory() as temppath:
             np.random.seed(1208251813)
@@ -49,6 +70,7 @@ class FuelTest(unittest.TestCase):
             REF = ds['X'][:].ravel().tolist()
             feeder = F.Feeder(ds['X'], ds['indices.csv'],
                               ncpu=2, buffer_size=2)
+
             # ==================== No recipes ==================== #
             def test_iter_no_trans(it):
                 x = []
@@ -71,6 +93,7 @@ class FuelTest(unittest.TestCase):
                     converter_func=lambda name, x: [int(name.split('_')[-1])] * x[0].shape[0]),
                 F.recipes.CreateBatch()
             ])
+
             def test_iter_trans(it):
                 x = []
                 y = 0

@@ -34,7 +34,6 @@ except:
 
 __all__ = [
     'speech_features_extraction',
-    'FeatureProcessor',
     'SpeechProcessor'
 ]
 
@@ -123,7 +122,19 @@ def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
 @add_metaclass(ABCMeta)
 class FeatureProcessor(object):
 
-    """ FeatureProcessor """
+    """ FeatureProcessor
+
+    Example
+    -------
+    >>> feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
+    >>>                          win=0.025, shift=0.01, n_filters=40, n_ceps=13,
+    >>>                          delta_order=2, energy=True, pitch_threshold=0.5,
+    >>>                          get_spec=True, get_mspec=True, get_mfcc=True,
+    >>>                          get_pitch=False, get_vad=True,
+    >>>                          save_stats=True, substitute_nan=None,
+    >>>                          dtype='float32', datatype='memmap', ncpu=4)
+    >>> feat.run()
+    """
 
     def __init__(self, output_path, datatype='memmap',
                  save_stats=True, substitute_nan=None,
@@ -248,6 +259,7 @@ class FeatureProcessor(object):
             print('Saving statistics of each data ...')
             for n, d, s in self.features_properties:
                 if s: # save stats
+                    print(' * Name:', n)
                     s1, s2 = sum1[n], sum2[n]
                     save_mean_std(s1, s2, n, dataset)
         # ====== final flush() ====== #
@@ -312,15 +324,14 @@ class SpeechProcessor(FeatureProcessor):
 
     Example
     -------
-    >>> recipe = F.SpeechFeature(segments, OUTPUT_PATH, audio_ext='.sph',
-    >>>                          fs=8000, win=0.025, shift=0.01,
-    >>>                          n_filters=40, n_ceps=13, delta_order=2, energy=True,
-    >>>                          vad=True, get_spec=False, get_mspec=True, get_mfcc=True,
-    >>>                          datatype='memmap', dtype='float16')
-    >>> mr = F.MapReduce(12)
-    >>> mr.set_cache(3)
-    >>> mr.add_recipe(recipe)
-    >>> mr.run()
+    >>> feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
+    >>>                          win=0.025, shift=0.01, n_filters=40, n_ceps=13,
+    >>>                          delta_order=2, energy=True, pitch_threshold=0.5,
+    >>>                          get_spec=True, get_mspec=True, get_mfcc=True,
+    >>>                          get_pitch=False, get_vad=True,
+    >>>                          save_stats=True, substitute_nan=None,
+    >>>                          dtype='float32', datatype='memmap', ncpu=4)
+    >>> feat.run()
     '''
 
     def __init__(self, segments, output_path,
