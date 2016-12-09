@@ -43,9 +43,8 @@ class BatchNorm(NNOps):
     ----------
     axes : 'auto', int or tuple of int
         The axis or axes to normalize over. If ``'auto'`` (the default),
-        normalize over all axes except for the second: this will normalize over
-        the minibatch dimension for dense layers, and additionally over all
-        spatial dimensions for convolutional layers.
+        normalize over all axes except for the final (often used to represent
+        channel or feature map).
     epsilon : scalar
         Small constant :math:`\\epsilon` added to the variance before taking
         the square root and dividing by it, to avoid numerical problems
@@ -143,7 +142,7 @@ class BatchNorm(NNOps):
         config = NNConfig(input_shape=input_shape)
         if self.axes == 'auto':
             # default: normalize over all but the second axis
-            self.axes = (0,) + tuple(range(2, len(input_shape)))
+            self.axes = tuple(range(0, len(input_shape) - 1))
         elif isinstance(self.axes, int):
             self.axes = (self.axes,)
         # create parameters, ignoring all dimensions in axes

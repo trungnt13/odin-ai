@@ -1,10 +1,11 @@
 # ===========================================================================
 # Should reach: > 0.9861111% on test set with default configuration
+# Note: without CNN the performance is decreased by 10%
 # One titan X:
-# Benchmark TRAIN-batch: 0.11614914765 (s)
-# Benchmark TRAIN-epoch: 5.98400415693 (s)
-# Benchmark PRED-batch: 0.183033730263 (s)
-# Benchmark PRED-epoch: 3.5595933524 (s)
+#  Benchmark TRAIN-batch: 0.11614914765 (s)
+#  Benchmark TRAIN-epoch: 5.98400415693 (s)
+#  Benchmark PRED-batch: 0.183033730263 (s)
+#  Benchmark PRED-epoch: 3.5595933524 (s)
 # ===========================================================================
 from __future__ import print_function, absolute_import, division
 
@@ -16,6 +17,7 @@ args = ArgController(
 ).add('-dev', 'gpu or cpu', 'gpu'
 ).add('-dt', 'dtype: float32 or float16', 'float32'
 ).add('-feat', 'feature type: mfcc, mspec, or spec', 'mspec'
+).add('-cnn', 'enable CNN or not', True
 # for trainign
 ).add('-lr', 'learning rate', 0.0001
 ).add('-epoch', 'number of epoch', 8
@@ -93,8 +95,7 @@ y = K.placeholder(shape=(None,), dtype='int32', name='y')
 # ===========================================================================
 # Create network
 # ===========================================================================
-f = N.Sequence([
-    # ====== CNN ====== #
+CNN = [
     N.Dimshuffle(pattern=(0, 1, 2, 'x')),
     N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
            activation=K.linear),
@@ -103,8 +104,10 @@ f = N.Sequence([
            activation=K.linear),
     N.BatchNorm(activation=K.relu),
     N.Pool(pool_size=2, strides=None, pad='valid', mode='max'),
-    N.Flatten(outdim=3),
+    N.Flatten(outdim=3)
+] if args['cnn'] else []
 
+f = N.Sequence(CNN + [
     # ====== RNN ====== #
     N.CudnnRNN(128, rnn_mode='lstm', num_layers=3,
                direction_mode='bidirectional'),
