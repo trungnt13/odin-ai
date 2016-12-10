@@ -13,6 +13,7 @@ import numpy as np
 
 from odin import backend as K
 from odin import nnet as N
+from odin.config import get_device
 
 
 class RNNTest(unittest.TestCase):
@@ -24,6 +25,8 @@ class RNNTest(unittest.TestCase):
         pass
 
     def test_cudnn_rnn_backend(self):
+        if get_device() == 'cpu':
+            return
         print()
         np.random.seed(1208)
         batch_size = 25
@@ -59,6 +62,8 @@ class RNNTest(unittest.TestCase):
                         # [np.array(i).sum() for i in output]
 
     def test_cudnn_rnn_nnet(self):
+        if get_device() == 'cpu':
+            return
         print()
         np.random.seed(1208)
         batch_size = 6

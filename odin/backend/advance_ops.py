@@ -246,13 +246,12 @@ def rnn_decorator(*args, **kwargs):
             # print('BatchSize:', batch_size)
             # print('Repeat:', repeat_states)
             # print('Name:', name)
-            results, updates = Scan(
-                scan_function,
-                sequences=[i for i in sequences_given if i is not None],
-                outputs_info=states_given,
-                n_steps=n_steps,
-                backwards=backwards,
-                name=name)
+            results = Scan(scan_function,
+                           sequences=[i for i in sequences_given if i is not None],
+                           outputs_info=states_given,
+                           n_steps=n_steps,
+                           backwards=backwards,
+                           name=name)
             # all the result in form (nb_time, nb_samples, trailing_dims)
             # we reshape them back to same as input
             results = [dimshuffle(i, [1, 0] + range(2, ndim(i)))
@@ -261,11 +260,6 @@ def rnn_decorator(*args, **kwargs):
             # but keras don't do this step (need to validate the performance)
             if backwards:
                 results = [r[:, ::-1] for r in results]
-            # ====== adding updates for all results if available ====== #
-            if updates:
-                for key, value in updates.iteritems():
-                    for r in results:
-                        add_updates(r, key, value)
             return results
         return recurrent_apply
     # NO arguments are passed, just decorator

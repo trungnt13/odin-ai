@@ -29,7 +29,7 @@ from odin.utils import as_tuple, as_shape_tuple, dict_union, package_installed, 
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
-                        add_shape, get_shape)
+                        add_shape, get_shape, add_updates)
 
 from .helpers import (auto_infer_shape, _check_target, variable,
                       is_trainable_variable, is_variable, is_placeholder,
@@ -1150,7 +1150,6 @@ def Scan(fn,
          sequences=None,
          outputs_info=None,
          n_steps=None,
-         truncate_gradient=-1,
          backwards=False,
          name=None):
     """
@@ -1158,18 +1157,26 @@ def Scan(fn,
     ----
     backwards mode only invert sequences then iterate over them
     """
-    return theano.scan(fn,
-                       sequences=sequences,
-                       outputs_info=outputs_info,
-                       non_sequences=None,
-                       n_steps=n_steps,
-                       truncate_gradient=truncate_gradient,
-                       go_backwards=backwards,
-                       mode=None,
-                       name=name,
-                       profile=False,
-                       allow_gc=None,
-                       strict=False)
+    output, updates = theano.scan(fn,
+                                  sequences=sequences,
+                                  outputs_info=outputs_info,
+                                  non_sequences=None,
+                                  n_steps=n_steps,
+                                  truncate_gradient=-1,
+                                  go_backwards=backwards,
+                                  mode=None,
+                                  name=name,
+                                  profile=False,
+                                  allow_gc=None,
+                                  strict=False)
+    if updates:
+        for key, value in updates.iteritems():
+            if isinstance(output, (tuple, list)):
+                for o in output:
+                    add_updates(o, key, value)
+            else:
+                add_updates(output, key, value)
+    return output
 
 
 def rnn_dnn(X, hidden_size, rnn_mode,

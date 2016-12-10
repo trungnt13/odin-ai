@@ -995,7 +995,6 @@ def Scan(fn,
          sequences=None,
          outputs_info=None,
          n_steps=None,
-         truncate_gradient=-1,
          backwards=False,
          name=None):
     """
@@ -1003,7 +1002,35 @@ def Scan(fn,
     ----
     backwards mode only invert sequences then iterate over them
     """
-    raise NotImplementedError
+    # ====== check sequences ====== #
+    if sequences is None:
+        sequences = []
+    elif not isinstance(sequences, (tuple, list)):
+        sequences = [sequences]
+    sequences = [tf.unstack(seq, axis=0) for seq in sequences]
+    if backwards:
+        for i in sequences:
+            i.reverse()
+    # ====== check output info ====== #
+    if outputs_info is None:
+        outputs_info = []
+    elif not isinstance(outputs_info, (tuple, list)):
+        outputs_info = [outputs_info]
+    else:
+        outputs_info = list(outputs_info)
+    nb_outputs = len(outputs_info)
+    # ====== start iteration ====== #
+    successive_outputs = [list() for i in range(nb_outputs)]
+    outputs = outputs_info
+    for step, inputs in enumerate(zip(*sequences)):
+        inputs = list(inputs) + list(outputs)
+        outputs = fn(*inputs)
+        for i, o in enumerate(outputs):
+            successive_outputs[i].append(o)
+        if n_steps is not None and step + 1 >= n_steps:
+            break
+    outputs = [tf.pack(output) for output in successive_outputs]
+    return outputs
 
 
 def rnn_dnn(X, hidden_size, rnn_mode,
