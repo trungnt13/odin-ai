@@ -244,7 +244,12 @@ def get_shape(x, not_none=False, native=False):
         raise ValueError('Cannot get shape of variable: ' + str(x))
     # ====== check tag shape ====== #
     if not_none and isinstance(shape, (tuple, list)):
-        shape = tuple([x.shape[i] if s is None else s
+        if get_backend() == 'theano':
+            x_shape = x.shape
+        else:
+            import tensorflow as tf
+            x_shape = tf.shape(x)
+        shape = tuple([x_shape[i] if s is None else s
                        for i, s in enumerate(shape)])
     return shape
 
