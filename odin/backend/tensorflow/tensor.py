@@ -1033,7 +1033,7 @@ def Scan(fn,
         return outputs
     outputs = tf.scan(step_, sequences,
                 initializer=outputs_info,
-                parallel_iterations=32, back_prop=True,
+                parallel_iterations=32, back_prop=is_training(),
                 swap_memory=False, infer_shape=True,
                 name=name)
     # consistent return as theano
