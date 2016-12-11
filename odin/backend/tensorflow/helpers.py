@@ -255,11 +255,19 @@ class ComputationGraph(object):
         respective inner Theano graphs.
 
         """
+        _travelled_op = [] # to prevent recursive ops
+
         def get_all_variables(x):
             """ recursively travel down the inputs tree to get all
             variables """
             variables = []
             op = x.op
+            # ====== check travelled ops ====== #
+            if op in _travelled_op:
+                return variables
+            else:
+                _travelled_op.append(op)
+            # ====== get all variable ====== #
             inputs = op._inputs
             variables += inputs
             for i in inputs:
@@ -280,6 +288,7 @@ class ComputationGraph(object):
                     for i in o.graph._collections.get('trainable_variables', {})}
                 # ====== travese each node of graph ====== #
                 for v in get_all_variables(o):
+                    _travelled_op = [] # reset the tracking list
                     if is_placeholder(v):
                         inputs.append(v)
                     elif v.op.node_def.op == "Variable" and v.name in trainable_collections:
