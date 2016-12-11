@@ -1,4 +1,5 @@
 from __future__ import division, absolute_import, print_function
+from __builtin__ import min as min_
 
 import os
 import math
@@ -1007,10 +1008,11 @@ def Scan(fn,
         sequences = []
     elif not isinstance(sequences, (tuple, list)):
         sequences = [sequences]
-    sequences = [tf.unstack(seq, axis=0) for seq in sequences]
     if backwards:
-        for i in sequences:
-            i.reverse()
+        sequences = [tf.reverse(seq, [True] + [False] * (seq.get_shape().ndims - 1))
+                     for seq in sequences]
+    if n_steps:
+        sequences = [seq[:n_steps] for seq in sequences]
     # ====== check output info ====== #
     if outputs_info is None:
         outputs_info = []
@@ -1019,17 +1021,24 @@ def Scan(fn,
     else:
         outputs_info = list(outputs_info)
     nb_outputs = len(outputs_info)
-    # ====== start iteration ====== #
-    successive_outputs = [list() for i in range(nb_outputs)]
-    outputs = outputs_info
-    for step, inputs in enumerate(zip(*sequences)):
-        inputs = list(inputs) + list(outputs)
+
+    # ====== modified step function ====== #
+    def step_(outputs, inputs):
+        inputs = inputs + outputs
         outputs = fn(*inputs)
-        for i, o in enumerate(outputs):
-            successive_outputs[i].append(o)
-        if n_steps is not None and step + 1 >= n_steps:
-            break
-    outputs = [tf.pack(output) for output in successive_outputs]
+        if not isinstance(outputs, (tuple, list)):
+            outputs = [outputs]
+        else:
+            outputs = list(outputs)
+        return outputs
+    outputs = tf.scan(step_, sequences,
+                initializer=outputs_info,
+                parallel_iterations=32, back_prop=True,
+                swap_memory=False, infer_shape=True,
+                name=name)
+    # consistent return as theano
+    if nb_outputs == 1:
+        outputs = outputs[0]
     return outputs
 
 
