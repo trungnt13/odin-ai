@@ -13,7 +13,24 @@ import numpy as np
 
 from odin import backend as K
 from odin import nnet as N
-from odin.config import get_device
+from odin.config import get_device, get_floatX, get_backend
+
+import lasagne
+
+
+np.random.seed(12082518)
+
+
+def random(*shape):
+    return np.random.rand(*shape).astype(get_floatX()) / 12
+
+
+def random_bin(*shape):
+    return np.random.randint(0, 2, size=shape).astype('int32')
+
+
+def zeros(*shape):
+    return np.zeros(shape).astype(get_floatX())
 
 
 class RNNTest(unittest.TestCase):
@@ -23,6 +40,159 @@ class RNNTest(unittest.TestCase):
 
     def tearDown(self):
         pass
+
+    def test_lstm(self):
+        W_in_to_ingate = random(28, 32) / 12
+        W_hid_to_ingate = random(32, 32) / 12
+        b_ingate = random(32) / 12
+
+        W_in_to_forgetgate = random(28, 32) / 12
+        W_hid_to_forgetgate = random(32, 32) / 12
+        b_forgetgate = random(32) / 12
+
+        W_in_to_cell = random(28, 32) / 12
+        W_hid_to_cell = random(32, 32) / 12
+        b_cell = random(32) / 12
+
+        W_in_to_outgate = random(28, 32) / 12
+        W_hid_to_outgate = random(32, 32) / 12
+        b_outgate = random(32) / 12
+
+        W_cell_to_ingate = random(32) / 12
+        W_cell_to_forgetgate = random(32) / 12
+        W_cell_to_outgate = random(32) / 12
+
+        cell_init = random(1, 32) / 12
+        hid_init = random(1, 32) / 12
+        # ====== pre-define parameters ====== #
+        x = random(12, 28, 28)
+        x_mask = np.random.randint(0, 2, size=(12, 28))
+        # x_mask = np.ones(shape=(12, 28))
+        # ====== odin ====== #
+        X = K.placeholder(shape=(None, 28, 28), name='X')
+        mask = K.placeholder(shape=(None, 28), name='mask', dtype='int32')
+
+        f = N.Sequence([
+            N.Merge([N.Dense(32, W_init=W_in_to_ingate, b_init=b_ingate, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_forgetgate, b_init=b_forgetgate, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_cell, b_init=b_cell, activation=K.linear),
+                     N.Dense(32, W_init=W_in_to_outgate, b_init=b_outgate, activation=K.linear)
+                    ], merge_function=K.concatenate),
+            N.LSTM(32, activation=K.tanh, gate_activation=K.sigmoid,
+                  W_init=[W_hid_to_ingate, W_hid_to_forgetgate, W_hid_to_cell, W_hid_to_outgate],
+                  W_peepholes=[W_cell_to_ingate, W_cell_to_forgetgate, W_cell_to_outgate],
+                  name='lstm')
+        ])
+        y = f(X, hid_init=hid_init, cell_init=cell_init, mask=mask)
+        f = K.function([X, mask], y)
+        out1 = f(x, x_mask)
+        # ====== lasagne ====== #
+        if get_backend() == 'tensorflow':
+            self.assertEqual(int(np.sum(out1)), int(43.652363))
+            return
+        l = lasagne.layers.InputLayer(shape=(None, 28, 28))
+        l.input_var = X
+        l_mask = lasagne.layers.InputLayer(shape=(None, 28))
+        l_mask.input_var = mask
+        l = lasagne.layers.LSTMLayer(l, num_units=32,
+            ingate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_ingate,
+                         W_hid=W_hid_to_ingate,
+                         W_cell=W_cell_to_ingate,
+                         b=b_ingate),
+            forgetgate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_forgetgate,
+                         W_hid=W_hid_to_forgetgate,
+                         W_cell=W_cell_to_forgetgate,
+                         b=b_forgetgate),
+            cell=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.tanh,
+                         W_in=W_in_to_cell,
+                         W_hid=W_hid_to_cell,
+                         W_cell=None,
+                         b=b_cell),
+            outgate=lasagne.layers.Gate(nonlinearity=lasagne.nonlinearities.sigmoid,
+                         W_in=W_in_to_outgate,
+                         W_hid=W_hid_to_outgate,
+                         W_cell=W_cell_to_outgate,
+                         b=b_outgate),
+            nonlinearity=lasagne.nonlinearities.tanh,
+            cell_init=cell_init,
+            hid_init=hid_init,
+            mask_input=l_mask,
+            precompute_input=True,
+            backwards=False
+        )
+        y = lasagne.layers.get_output(l)
+        f = K.function([X, mask], y)
+        out2 = f(x, x_mask)
+        # ====== test ====== #
+        self.assertAlmostEqual(np.sum(np.abs(out1 - out2)), 0.)
+
+    def test_gru(self):
+        # ====== pre-define parameters ====== #
+        W_in_to_updategate = random(28, 32)
+        W_hid_to_updategate = random(32, 32)
+        b_updategate = random(32)
+        #
+        W_in_to_resetgate = random(28, 32)
+        W_hid_to_resetgate = random(32, 32)
+        b_resetgate = random(32)
+        #
+        W_in_to_hidden_update = random(28, 32)
+        W_hid_to_hidden_update = random(32, 32)
+        b_hidden_update = random(32)
+        #
+        hid_init = random(1, 32)
+        x = random(12, 28, 28)
+        x_mask = np.random.randint(0, 2, size=(12, 28))
+        # ====== odin ====== #
+        X = K.placeholder(shape=(None, 28, 28), name='X')
+        mask = K.placeholder(shape=(None, 28), name='mask', dtype='int32')
+
+        f = N.Sequence([
+            N.Merge([N.Dense(32, W_init=W_in_to_updategate, b_init=b_updategate, activation=K.linear, name='update'),
+                     N.Dense(32, W_init=W_in_to_resetgate, b_init=b_resetgate, activation=K.linear, name='reset'),
+                     N.Dense(32, W_init=W_in_to_hidden_update, b_init=b_hidden_update, activation=K.linear, name='hidden')],
+                    merge_function=K.concatenate),
+            N.GRU(32, activation=K.tanh, gate_activation=K.sigmoid,
+                  W_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update])
+        ])
+        y = f(X, hid_init=hid_init, mask=mask)
+        f = K.function([X, mask], y)
+        out1 = f(x, x_mask)
+        # ====== lasagne ====== #
+        if get_backend() == 'tensorflow':
+            self.assertEqual(int(np.sum(out1)), int(2490.0596))
+            return
+        l = lasagne.layers.InputLayer(shape=(None, 28, 28))
+        l.input_var = X
+        l_mask = lasagne.layers.InputLayer(shape=(None, 28))
+        l_mask.input_var = mask
+        l = lasagne.layers.GRULayer(l, num_units=32,
+            updategate=lasagne.layers.Gate(W_cell=None,
+                                           W_in=W_in_to_updategate,
+                                           W_hid=W_hid_to_updategate,
+                                           b=b_updategate,
+                            nonlinearity=lasagne.nonlinearities.sigmoid),
+            resetgate=lasagne.layers.Gate(W_cell=None,
+                                          W_in=W_in_to_resetgate,
+                                          W_hid=W_hid_to_resetgate,
+                                          b=b_resetgate,
+                            nonlinearity=lasagne.nonlinearities.sigmoid),
+            hidden_update=lasagne.layers.Gate(W_cell=None,
+                                              W_in=W_in_to_hidden_update,
+                                              W_hid=W_hid_to_hidden_update,
+                                              b=b_hidden_update,
+                            nonlinearity=lasagne.nonlinearities.tanh),
+            hid_init=hid_init,
+            mask_input=l_mask,
+            precompute_input=True
+        )
+        y = lasagne.layers.get_output(l)
+        f = K.function([X, mask], y)
+        out2 = f(x, x_mask)
+        # ====== test ====== #
+        self.assertAlmostEqual(np.sum(np.abs(out1 - out2)), 0.)
 
     def test_cudnn_rnn_backend(self):
         if get_device() == 'cpu':
@@ -136,10 +306,10 @@ class RNNTest(unittest.TestCase):
         x3 = f2(x)
         self.assertEqual(np.sum(x2[0] == x3[0]), np.prod(x2[0].shape))
         # ====== other input shape ====== #
-        y = f(X3)
-        f3 = K.function([X3], y)
         error_happen = False
         try:
+            y = f(X3)
+            f3 = K.function([X3], y)
             x3 = f3(np.random.rand(128, 8, 33))
         except (ValueError, Exception):
             error_happen = True

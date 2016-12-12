@@ -206,6 +206,9 @@ def rnn_decorator(*args, **kwargs):
                 states_given = [None if state is None else
                                 T.unbroadcast(state, *range(state.ndim))
                                 for state in _]
+            # everything is fine with tensorflow
+            else:
+                states_given = list(_)
             # ====== shuffle sequences variable to get time dimension first
             sequences_given = [dimshuffle(i, (1, 0) + tuple(range(2, ndim(i))))
                                if i is not None else i

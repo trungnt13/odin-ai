@@ -2,6 +2,7 @@ from __future__ import division, absolute_import, print_function
 from __builtin__ import min as min_
 
 import os
+import copy
 import math
 import numbers
 import cPickle
@@ -101,14 +102,30 @@ def backend_ops_eye(n, m, dtype):
     get_session().run(x.initializer)
     return x
 
+
 # Comparator
-backend_ops_switch = tf.select
 backend_ops_eq = tf.equal
 backend_ops_neq = tf.not_equal
 backend_ops_gt = tf.greater
 backend_ops_ge = tf.greater_equal
 backend_ops_lt = tf.less
 backend_ops_le = tf.less_equal
+
+
+def switch(condition, then_expression, else_expression):
+    if condition.dtype != tf.bool:
+        condition = tf.cast(condition, 'bool')
+    x_shape = copy.copy(then_expression.get_shape())
+    # tensorflow require the last dimension of 3 variables is equal, too
+    # it is irrelevant since condition can have shape[-1] = 1
+    cond_ndims = condition.get_shape().ndims
+    if cond_ndims > 1 and condition.get_shape()[-1] != x_shape[-1]:
+        cond_shape = tf.shape(condition)
+        condition = tf.reshape(condition,
+            [cond_shape[i] for i in range(cond_ndims - 1)])
+    x = tf.select(condition, then_expression, else_expression)
+    x.set_shape(x_shape)
+    return x
 
 
 # ===========================================================================
@@ -1031,7 +1048,8 @@ def Scan(fn,
         else:
             outputs = list(outputs)
         return outputs
-    outputs = tf.scan(step_, sequences,
+    outputs = tf.scan(step_,
+                elems=sequences,
                 initializer=outputs_info,
                 parallel_iterations=32, back_prop=is_training(),
                 swap_memory=False, infer_shape=True,

@@ -150,13 +150,6 @@ def eye(n, m=None, dtype=FLOATX):
 
 
 # ==================== comparators ==================== #
-def switch(condition, then_expression, else_expression):
-    if backend() == 'tensorflow':
-        condition = cast(condition, 'bool')
-    return _copy_shape(condition, backend_ops_switch,
-                       then_expression, else_expression)
-
-
 def neq(a, b):
     """a != b"""
     return _copy_shape(a, backend_ops_neq, b)

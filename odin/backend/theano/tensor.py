@@ -64,7 +64,6 @@ backend_ops_diag = T.diag
 backend_ops_eye = T.eye
 
 # Comparator
-backend_ops_switch = T.switch
 backend_ops_eq = T.eq
 backend_ops_neq = T.neq
 backend_ops_gt = T.gt
@@ -74,6 +73,12 @@ backend_ops_le = T.le
 
 backend_ops_categorical_crossentropy = T.nnet.categorical_crossentropy
 backend_ops_binary_crossentropy = T.nnet.binary_crossentropy
+
+
+def switch(condition, then_expression, else_expression):
+    x = T.switch(condition, then_expression, else_expression)
+    add_shape(x, get_shape(then_expression))
+    return x
 
 
 # ===========================================================================
