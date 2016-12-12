@@ -88,7 +88,7 @@ class RNNTest(unittest.TestCase):
         out1 = f(x, x_mask)
         # ====== lasagne ====== #
         if get_backend() == 'tensorflow':
-            self.assertEqual(int(np.sum(out1)), int(43.652363))
+            self.assertTrue(repr(np.sum(out1))[:4] == repr(43.652363)[:4])
             return
         l = lasagne.layers.InputLayer(shape=(None, 28, 28))
         l.input_var = X
@@ -162,7 +162,7 @@ class RNNTest(unittest.TestCase):
         out1 = f(x, x_mask)
         # ====== lasagne ====== #
         if get_backend() == 'tensorflow':
-            self.assertEqual(int(np.sum(out1)), int(2490.0596))
+            self.assertTrue(repr(np.sum(out1))[:8] == repr(2490.0596)[:8])
             return
         l = lasagne.layers.InputLayer(shape=(None, 28, 28))
         l.input_var = X
@@ -287,7 +287,7 @@ class RNNTest(unittest.TestCase):
         X1 = K.placeholder(shape=(None, 8, 32))
         X2 = K.placeholder(shape=(None, 8, 32))
         X3 = K.placeholder(shape=(None, 8, 33))
-        f = N.SimpleRecurrent(32, activation=K.relu)
+        f = N.RNN(32, activation=K.relu)
         #
         y = f(X, mask=K.ones(shape=(128, 8)))
         graph = K.ComputationGraph(y)

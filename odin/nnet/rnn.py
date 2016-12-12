@@ -11,6 +11,7 @@ from odin.basic import INITIAL_STATE, WEIGHT, BIAS, PARAMETER, has_roles
 from odin.utils import as_tuple
 
 from .base import NNConfig, NNOps
+from .normalization import BatchNorm
 
 
 # ===========================================================================
@@ -63,8 +64,29 @@ def _slice_x(X, idx):
 # ===========================================================================
 # RNN
 # ===========================================================================
-class SimpleRecurrent(BaseRNN):
+class RNN(BaseRNN):
+
     """
+    Parameters
+    ----------
+    num_units: int
+        number of hidden units
+    activation: callable
+        activate function for output of RNN
+    W_init : variable, expression, numpy array or callable
+        Initial value, expression or initializer for the weights.
+        These should be a 2D matrix with shape
+    b_init : variable, expression, numpy array, callable or ``None``
+        Initial value, expression or initializer for the biases. If set to
+        ``None``, the layer will have no biases. Otherwise, biases should be
+        a 1D array with shape ``(num_units,)``
+    input_mode : {'linear', 'skip', 'norm'}
+        linear: input will be multiplied by a biased matrix
+        norm: same as linear, but batch norm will be added for input connection
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
+
     Example
     -------
     >>> import numpy as np
@@ -77,7 +99,7 @@ class SimpleRecurrent(BaseRNN):
     >>> f = N.Sequence([
     ...     N.Dense(num_units=32, W_init=W[0], b_init=W[2],
     ...         activation=K.linear),
-    ...     N.SimpleRecurrent(num_units=32, activation=K.relu,
+    ...     N.RNN(num_units=32, activation=K.relu,
     ...         W_init=W[1])
     >>> ])
     >>> return X1, f(X1, hid_init=zeros(1, 32))[0]
@@ -85,25 +107,35 @@ class SimpleRecurrent(BaseRNN):
     """
 
     def __init__(self, num_units, activation=K.relu,
-                 W_init=K.init.glorot_uniform, **kwargs):
-        super(SimpleRecurrent, self).__init__(**kwargs)
+                 W_init=K.init.glorot_uniform,
+                 b_init=K.init.constant(0.),
+                 input_mode='linear', **kwargs):
+        super(RNN, self).__init__(**kwargs)
         self.num_units = int(num_units)
         self.activation = K.linear if activation is None else activation
         self.W_init = W_init
+        self.b_init = b_init
+        self.input_mode = input_mode
 
     @K.rnn_decorator(sequences=['X', 'mask'], states=['hid_init'])
     def _rnn(self, X, hid_init, mask=None):
-        next_states = self.activation(X + K.dot(hid_init, self.W))
+        bias = 0. if self.b_init is None else self.b
+        next_states = self.activation(X + K.dot(hid_init, self.W_hid) + bias)
         if mask is not None:
             next_states = K.switch(mask, next_states, hid_init)
         return next_states
 
     def _apply(self, X, hid_init=None, mask=None, **kwargs):
         input_shape = K.get_shape(X)
+        X = K.dot(X, self.W_in) if self.input_mode != 'skip' else X
+        if self.input_mode == 'norm':
+            # normalize all axes except the time dimension
+            bn = BatchNorm(axes=(0, 1), activation=K.linear)
+            X = bn(X)
         out = self._rnn(X, hid_init=self.hid_init, mask=mask,
                         **self.get_recurrent_info(kwargs))
         for i in out:
-            K.add_shape(i, shape=input_shape)
+            K.add_shape(i, shape=tuple(input_shape[:-1]) + (self.num_units,))
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
@@ -111,12 +143,38 @@ class SimpleRecurrent(BaseRNN):
         input_shape = K.get_shape(X)
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
-        # ====== check input ====== #
-        input_shape = K.get_shape(X)
-        if input_shape[-1] != self.num_units:
-            raise Exception('Input trailing_dimension=%d (the final dim) must '
-                            'equal to the number of hidden unit, '
-                            'which is: %d' % (input_shape[-1], self.num_units))
+        # ====== initialize inner parameters ====== #
+        W_init = as_tuple(self.W_init, N=2)
+        if self.input_mode != 'skip':
+            config.create_params(W_init[0],
+                                 shape=(input_shape[-1], self.num_units),
+                                 name='W_in',
+                                 nnops=self,
+                                 roles=WEIGHT)
+        else: # skip input mode
+            if input_shape[-1] != self.num_units:
+                raise Exception('Skip input mode, input trailing_dimension=%d '
+                                '(the final dim) must equal to the number of '
+                                'hidden unit, which is: %d' %
+                                (input_shape[-1], self.num_units))
+        config.create_params(W_init[1],
+                             shape=(self.num_units, self.num_units),
+                             name='W_hid',
+                             nnops=self,
+                             roles=WEIGHT)
+        if self.b_init is not None:
+            config.create_params(self.b_init,
+                                 shape=(self.num_units,),
+                                 name='b',
+                                 nnops=self,
+                                 roles=BIAS)
+        # ====== check mask ====== #
+        if mask is not None and (K.ndim(mask) != K.ndim(X) - 1 or
+                                 K.get_shape(mask)[-1] != input_shape[1]):
+            raise Exception('Mask must has "%d" dimensions and the time dimension '
+                            '(i.e. the second dimension) must equal to "%d"'
+                            ', but the given mask has shape "%s".' %
+                            (K.ndim(X) - 1, input_shape[1], K.get_shape(mask)))
         # ====== initialize states ====== #
         if hid_init is None:
             hid_init = K.init.constant(0.)
@@ -129,19 +187,6 @@ class SimpleRecurrent(BaseRNN):
         # turn off repeat_states if batch_size already included
         if K.get_shape(state_init)[0] != 1:
             self.repeat_states = False
-        # ====== check mask ====== #
-        if mask is not None and (K.ndim(mask) != K.ndim(X) - 1 or
-                                 K.get_shape(mask)[-1] != input_shape[1]):
-            raise Exception('Mask must has "%d" dimensions and the time dimension '
-                            '(i.e. the second dimension) must equal to "%d"'
-                            ', but the given mask has shape "%s".' %
-                            (K.ndim(X) - 1, input_shape[1], K.get_shape(mask)))
-        # ====== initialize inner parameters ====== #
-        config.create_params(self.W_init,
-                             shape=(self.num_units, self.num_units),
-                             name='W',
-                             nnops=self,
-                             roles=WEIGHT)
         return config
 
 
@@ -310,6 +355,7 @@ class GRU(BaseRNN):
 class LSTM(BaseRNN):
 
     """
+
     Parameters
     ----------
     num_units: int
@@ -520,6 +566,7 @@ class LSTM(BaseRNN):
 # DNN
 # ===========================================================================
 class CudnnRNN(NNOps):
+
     """CuDNN v5 RNN implementation.
 
     Parameters

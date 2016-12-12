@@ -125,7 +125,7 @@ class CompareTest(unittest.TestCase):
             f = N.Sequence([
                 N.Dense(num_units=32, W_init=W[0], b_init=W[2],
                     activation=K.linear),
-                N.SimpleRecurrent(num_units=32, activation=K.relu,
+                N.RNN(num_units=32, activation=K.relu,
                     W_init=W[1])
             ])
             return X1, f(X1, hid_init=zeros(1, 32))
