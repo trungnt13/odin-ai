@@ -79,8 +79,9 @@ class RNNTest(unittest.TestCase):
                      N.Dense(32, W_init=W_in_to_outgate, b_init=b_outgate, activation=K.linear)
                     ], merge_function=K.concatenate),
             N.LSTM(32, activation=K.tanh, gate_activation=K.sigmoid,
-                  W_init=[W_hid_to_ingate, W_hid_to_forgetgate, W_hid_to_cell, W_hid_to_outgate],
+                  W_hid_init=[W_hid_to_ingate, W_hid_to_forgetgate, W_hid_to_cell, W_hid_to_outgate],
                   W_peepholes=[W_cell_to_ingate, W_cell_to_forgetgate, W_cell_to_outgate],
+                  input_mode='skip',
                   name='lstm')
         ])
         y = f(X, hid_init=hid_init, cell_init=cell_init, mask=mask)
@@ -155,7 +156,8 @@ class RNNTest(unittest.TestCase):
                      N.Dense(32, W_init=W_in_to_hidden_update, b_init=b_hidden_update, activation=K.linear, name='hidden')],
                     merge_function=K.concatenate),
             N.GRU(32, activation=K.tanh, gate_activation=K.sigmoid,
-                  W_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update])
+                  W_hid_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update],
+                  input_mode='skip')
         ])
         y = f(X, hid_init=hid_init, mask=mask)
         f = K.function([X, mask], y)
@@ -287,7 +289,7 @@ class RNNTest(unittest.TestCase):
         X1 = K.placeholder(shape=(None, 8, 32))
         X2 = K.placeholder(shape=(None, 8, 32))
         X3 = K.placeholder(shape=(None, 8, 33))
-        f = N.RNN(32, activation=K.relu)
+        f = N.RNN(32, activation=K.relu, input_mode='skip')
         #
         y = f(X, mask=K.ones(shape=(128, 8)))
         graph = K.ComputationGraph(y)

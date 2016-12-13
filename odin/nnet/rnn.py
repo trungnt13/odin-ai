@@ -145,23 +145,26 @@ class RNN(BaseRNN):
                           num_units=self.num_units)
         # ====== initialize inner parameters ====== #
         W_init = as_tuple(self.W_init, N=2)
+        # input connection
         if self.input_mode != 'skip':
             config.create_params(W_init[0],
                                  shape=(input_shape[-1], self.num_units),
                                  name='W_in',
                                  nnops=self,
                                  roles=WEIGHT)
-        else: # skip input mode
-            if input_shape[-1] != self.num_units:
-                raise Exception('Skip input mode, input trailing_dimension=%d '
-                                '(the final dim) must equal to the number of '
-                                'hidden unit, which is: %d' %
-                                (input_shape[-1], self.num_units))
+        # skip input mode
+        elif input_shape[-1] != self.num_units:
+            raise Exception('Skip input mode, input trailing_dimension=%d '
+                            '(the final dim) must equal to the number of '
+                            'hidden unit, which is: %d' %
+                            (input_shape[-1], self.num_units))
+        # hidden connection
         config.create_params(W_init[1],
                              shape=(self.num_units, self.num_units),
                              name='W_hid',
                              nnops=self,
                              roles=WEIGHT)
+        # bias
         if self.b_init is not None:
             config.create_params(self.b_init,
                                  shape=(self.num_units,),
@@ -208,6 +211,16 @@ class GRU(BaseRNN):
         Initializer for hidden-to-hidden weight matrices, if a list is given,
         the weights will be initialized in following order:
         "[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update]"
+    b_init : variable, expression, numpy array, callable or ``None``
+        Initial value, expression or initializer for the biases. If set to
+        ``None``, the layer will have no biases. Otherwise, biases should be
+        a 1D array with shape ``(num_units,)``
+    input_mode : {'linear', 'skip', 'norm'}
+        linear: input will be multiplied by a biased matrix
+        norm: same as linear, but batch norm will be added for input connection
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
 
     Example
     -------
@@ -251,7 +264,10 @@ class GRU(BaseRNN):
     def __init__(self, num_units,
                  activation=K.tanh,
                  gate_activation=K.sigmoid,
-                 W_init=K.init.glorot_normal,
+                 W_in_init=K.init.glorot_uniform,
+                 W_hid_init=K.init.orthogonal,
+                 b_init=K.init.constant(0.),
+                 input_mode='linear',
                  **kwargs):
         super(GRU, self).__init__(**kwargs)
         self.num_units = int(num_units)
@@ -259,7 +275,10 @@ class GRU(BaseRNN):
                            else activation)
         self.gate_activation = (K.sigmoid if gate_activation is None
                                 else gate_activation)
-        self.W_init = W_init
+        self.W_in_init = W_in_init
+        self.W_hid_init = W_hid_init
+        self.b_init = b_init
+        self.input_mode = input_mode
 
     @K.rnn_decorator(sequences=['X', 'mask'], states=['hid_init'])
     def _rnn(self, X, hid_init, mask=None):
@@ -271,18 +290,21 @@ class GRU(BaseRNN):
         prev_states = hid_init
         nb_units = self.num_units
         # hidden connection of all gates and states update
-        hid_connection = K.dot(prev_states, self.W)
+        hid_connection = K.dot(prev_states, self.W_hid)
         # hidden to hidden connection
         hid_gate = _slice_x(hid_connection, slice(None, nb_units * 2))
         X_gate = _slice_x(X, slice(None, nb_units * 2))
+        b_gate = 0 if self.b_init is None else _slice_x(self.b, slice(None, nb_units * 2))
+        # states
         hid_states = _slice_x(hid_connection, slice(nb_units * 2, None))
         X_states = _slice_x(X, slice(nb_units * 2, None))
+        b_states = 0 if self.b_init is None else _slice_x(self.b, slice(nb_units * 2, None))
         # new gates
-        _ = self.gate_activation(X_gate + hid_gate)
+        _ = self.gate_activation(X_gate + hid_gate + b_gate)
         update_values = _slice_x(_, slice(None, nb_units))
         reset_values = _slice_x(_, slice(nb_units, nb_units * 2))
         # calculate new gates
-        new_states = self.activation(X_states + reset_values * hid_states)
+        new_states = self.activation(X_states + reset_values * hid_states + b_states)
         # final new states
         next_states = (new_states * update_values +
                        prev_states * (1 - update_values))
@@ -292,9 +314,16 @@ class GRU(BaseRNN):
         return next_states
 
     def _apply(self, X, hid_init=None, mask=None, **kwargs):
-        # check input_shape
         input_shape = K.get_shape(X)
-        if input_shape[-1] == self.num_units:
+        # linear or norm input mode
+        if self.input_mode != 'skip':
+            X = K.dot(X, self.W_in)
+            if self.input_mode == 'norm':
+                # normalize all axes except the time dimension
+                bn = BatchNorm(axes=(0, 1), activation=K.linear)
+                X = bn(X)
+        # skip input
+        elif input_shape[-1] == self.num_units:
             X = K.repeat(X, 3, axes=-1)
         # add broadcastable dimension for mask
         if mask is not None:
@@ -312,13 +341,37 @@ class GRU(BaseRNN):
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
         # ====== check input ====== #
-        if input_shape[-1] != self.num_units and \
+        if self.input_mode != 'skip':
+            config.create_params(self.W_in_init,
+                                 shape=(input_shape[-1], self.num_units),
+                                 name='W_in',
+                                 nnops=self,
+                                 roles=WEIGHT,
+                                 nb_params=3)
+        elif input_shape[-1] != self.num_units and \
         input_shape[-1] != self.num_units * 3:
-            raise Exception('Input trailing_dimension=%d (the final dim) must '
-                            'equal to the number of hidden units (tied input '
-                            'connection), or triple the number of hidden units'
-                            '(1 for W_update, 1 for W_reset, and 1 for W_hidden) '
-                            'which is: %d' % (input_shape[-1], self.num_units * 3))
+            raise Exception('Skip input mode, Input trailing_dimension=%d '
+                            '(the final dim) must equal to the number of hidden '
+                            'units (tied input connection), or triple the number '
+                            'of hidden units (1 for W_update, 1 for W_reset, '
+                            'and 1 for W_hidden) which is: %d' %
+                            (input_shape[-1], self.num_units * 3))
+        # ====== initialize inner parameters ====== #
+        # W_update, W_reset, W_hidden
+        config.create_params(self.W_hid_init,
+                             shape=(self.num_units, self.num_units),
+                             name='W_hid',
+                             nnops=self,
+                             roles=WEIGHT,
+                             nb_params=3)
+        # bias
+        if self.b_init is not None:
+            config.create_params(self.b_init,
+                                 shape=(self.num_units,),
+                                 name='b',
+                                 nnops=self,
+                                 roles=BIAS,
+                                 nb_params=3)
         # ====== initialize states ====== #
         if hid_init is None:
             hid_init = K.init.constant(0)
@@ -338,14 +391,6 @@ class GRU(BaseRNN):
                             '(i.e. the second dimension) must equal to "%d"'
                             ', but the given mask has shape "%s".' %
                             (input_shape[1], K.get_shape(mask)))
-        # ====== initialize inner parameters ====== #
-        # W_update, W_reset, W_hidden
-        config.create_params(self.W_init,
-                             shape=(self.num_units, self.num_units),
-                             name='W',
-                             nnops=self,
-                             roles=WEIGHT,
-                             nb_params=3)
         return config
 
 
@@ -425,8 +470,11 @@ class LSTM(BaseRNN):
     def __init__(self, num_units,
                  activation=K.tanh,
                  gate_activation=K.sigmoid,
-                 W_init=K.init.orthogonal,
+                 W_in_init=K.init.glorot_uniform,
+                 W_hid_init=K.init.orthogonal,
                  W_peepholes=K.init.glorot_uniform,
+                 b_init=K.init.constant(0.),
+                 input_mode='linear',
                  return_cell_memory=False,
                  **kwargs):
         super(LSTM, self).__init__(**kwargs)
@@ -435,13 +483,16 @@ class LSTM(BaseRNN):
                            else activation)
         self.gate_activation = (K.sigmoid if gate_activation is None
                                 else gate_activation)
-        self.W_init = W_init
+        self.W_in_init = W_in_init
+        self.W_hid_init = W_hid_init
         self.W_peepholes = W_peepholes
+        self.b_init = b_init
+        self.input_mode = input_mode
         self.return_cell_memory = return_cell_memory
 
     @K.rnn_decorator(sequences=['X', 'mask'],
                      states=['hid_init', 'cell_init'])
-    def _rnn(self, X, hid_init, cell_init, tied_input, mask=None):
+    def _rnn(self, X, hid_init, cell_init, mask=None):
         #####################################
         # X: sequences inputs (included bias)
         # init: prev_states
@@ -451,7 +502,8 @@ class LSTM(BaseRNN):
         prev_memory = cell_init
         nb_units = self.num_units
         # hidden to hidden connection
-        _ = X + K.dot(prev_states, self.W)
+        bias = 0 if self.b_init is None else self.b
+        _ = X + K.dot(prev_states, self.W_hid) + bias
         hid_input = _slice_x(_, slice(None, nb_units))
         hid_forget = _slice_x(_, slice(nb_units, nb_units * 2))
         hid_hidden = _slice_x(_, slice(nb_units * 2, nb_units * 3))
@@ -486,16 +538,22 @@ class LSTM(BaseRNN):
     def _apply(self, X, hid_init=None, cell_init=None, mask=None, **kwargs):
         # check input_shape
         input_shape = K.get_shape(X)
-        tied_input = False
-        if input_shape[-1] == self.num_units:
+        # linear or norm input mode
+        if self.input_mode != 'skip':
+            X = K.dot(X, self.W_in)
+            if self.input_mode == 'norm':
+                # normalize all axes except the time dimension
+                bn = BatchNorm(axes=(0, 1), activation=K.linear)
+                X = bn(X)
+        # skip input
+        elif input_shape[-1] == self.num_units:
             X = K.repeat(X, 4, axes=-1)
         # add broadcastable dimension for mask
         if mask is not None:
             mask = K.expand_dims(mask, dim=-1)
         # recurrent
         out = self._rnn(X, hid_init=self.hid_init, cell_init=self.cell_init,
-                        tied_input=tied_input, mask=mask,
-                        **self.get_recurrent_info(kwargs))
+                        mask=mask, **self.get_recurrent_info(kwargs))
         if not self.return_cell_memory:
             out = out[:-1]
         for i in out:
@@ -508,14 +566,46 @@ class LSTM(BaseRNN):
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
         # ====== check input ====== #
-        if input_shape[-1] != self.num_units and \
+        if self.input_mode != 'skip':
+            config.create_params(self.W_in_init,
+                                 shape=(input_shape[-1], self.num_units),
+                                 name='W_in',
+                                 nnops=self,
+                                 roles=WEIGHT,
+                                 nb_params=4)
+        # skip input mode
+        elif input_shape[-1] != self.num_units and \
         input_shape[-1] != self.num_units * 4: # 3 gates + 1 hid_update
-            raise Exception('Input trailing_dimension=%d (the final dim) must '
-                            'equal to the number of hidden units (tied input '
-                            'connection), or 4-th the number of hidden units'
-                            '(1 for W_input, 1 for W_forget, 1 for W_hidden, and '
-                            '1 for W_output), which is: %d' %
+            raise Exception('Skip input mode, input trailing_dimension=%d '
+                            '(the final dim) must equal to the number of hidden '
+                            'units (tied input connection), or 4-th the number '
+                            'of hidden units (1 for W_input, 1 for W_forget, '
+                            '1 for W_hidden, and 1 for W_output), which is: %d' %
                             (input_shape[-1], self.num_units * 4))
+        # ====== initialize inner parameters ====== #
+        # W_input, W_forget, W_hidden, W_output
+        config.create_params(self.W_hid_init,
+                             shape=(self.num_units, self.num_units),
+                             name='W_hid',
+                             nnops=self,
+                             roles=WEIGHT,
+                             nb_params=4)
+        # W_input, W_forget, W_output (peepholes is diagonal matrix)
+        if self.W_peepholes is not None:
+            config.create_params(self.W_peepholes,
+                                 shape=(self.num_units,),
+                                 name='peepholes',
+                                 nnops=self,
+                                 roles=WEIGHT,
+                                 nb_params=3)
+        # bias
+        if self.b_init is not None:
+            config.create_params(self.b_init,
+                                 shape=(self.num_units,),
+                                 name='b',
+                                 nnops=self,
+                                 roles=BIAS,
+                                 nb_params=4)
         # ====== initialize states ====== #
         if hid_init is None:
             hid_init = K.init.constant(0.)
@@ -543,22 +633,6 @@ class LSTM(BaseRNN):
                             '(i.e. the second dimension) must equal to "%d"'
                             ', but the given mask has shape "%s".' %
                             (input_shape[1], K.get_shape(mask)))
-        # ====== initialize inner parameters ====== #
-        # W_input, W_forget, W_hidden, W_output
-        config.create_params(self.W_init,
-                             shape=(self.num_units, self.num_units),
-                             name='W',
-                             nnops=self,
-                             roles=WEIGHT,
-                             nb_params=4)
-        # W_input, W_forget, W_output (peepholes is diagonal matrix)
-        if self.W_peepholes is not None:
-            config.create_params(self.W_peepholes,
-                                 shape=(self.num_units,),
-                                 name='peepholes',
-                                 nnops=self,
-                                 roles=WEIGHT,
-                                 nb_params=3)
         return config
 
 
