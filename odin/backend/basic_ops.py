@@ -1,9 +1,11 @@
 from __future__ import print_function, division, absolute_import
 
 import __builtin__
+import platform
 
 from odin.config import auto_config
 from odin.basic import set_training, is_training
+from odin.utils import package_installed, exec_commands
 
 config = auto_config()
 
@@ -19,6 +21,43 @@ def backend():
 
 def floatX():
     return config['floatX']
+
+
+def device():
+    return config['device']
+
+
+def cuDNN():
+    """ return True if running on GPU with cuDNN available """
+    if config['device'] == 'gpu':
+        # theano backend
+        if config['backend'] == 'theano':
+            try:
+                if package_installed(name='pygpu'):
+                    from theano.gpuarray import dnn
+                    from theano.gpuarray.type import list_contexts
+                    return dnn.dnn_available(list_contexts()[0])
+                else:
+                    from theano.sandbox.cuda import dnn
+                    return dnn.dnn_available()
+            except ImportError:
+                return False
+        # tensorflow backend
+        else:
+            import commands
+            if platform.system() == "Darwin":
+                x = commands.getstatusoutput('ls /usr/local/cuda/lib')
+                x = x[-1].split('\n')
+            elif platform.version() == "Windows":
+                raise Exception('No support for Windows')
+            else:
+                x = commands.getstatusoutput('ldconfig -p')
+                x = x[-1].split('=>')
+            if __builtin__.any('libcudnn' in i for i in x):
+                return True
+            else:
+                return False
+    return False
 
 
 # ===========================================================================

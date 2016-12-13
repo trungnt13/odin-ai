@@ -828,3 +828,17 @@ class CudnnRNN(NNOps):
         if not self.return_states:
             results = results[0] # only get the output
         return results
+
+
+# ===========================================================================
+# Auto RNN
+# ===========================================================================
+def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
+            initial_states=None,
+            rnn_mode='lstm', num_layers=1,
+            input_mode='linear',
+            direction_mode='unidirectional',
+            params_split=False,
+            return_states=False,
+            dropout=0., name=None):
+    pass

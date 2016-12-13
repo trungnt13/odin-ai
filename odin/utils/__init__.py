@@ -1149,12 +1149,18 @@ def get_logpath(name=None, override=False, root='~'):
 # Misc
 # ===========================================================================
 def exec_commands(cmds):
-    ''' Exec commands in parallel in multiple process
+    ''' Execute a command or list of commands in parallel with multiple process
     (as much as we have CPU)
+
+    Parameters
+    ----------
+    cmds: str or list of str
+        string represent command you want to run
 
     Return
     ------
     failed: list of failed command
+
     '''
     if not cmds: return [] # empty list
     if not isinstance(cmds, (list, tuple)):
