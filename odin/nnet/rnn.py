@@ -1,5 +1,6 @@
 from __future__ import division, absolute_import, print_function
 
+import inspect
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 from itertools import chain
@@ -15,13 +16,20 @@ from odin.basic import (INITIAL_STATE, WEIGHT, BIAS, PARAMETER,
 from odin.utils import as_tuple
 
 from .base import NNConfig, NNOps
-from .helper import Sequence
+from .helper import Sequence, HelperOps
 from .normalization import BatchNorm
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _slice_x(X, idx):
+    """ Slice tensor at its last dimension """
+    ndim = K.ndim(X)
+    _ = [slice(None, None, None) for i in range(ndim - 1)]
+    return X[_ + [idx]]
+
+
 @add_metaclass(ABCMeta)
 class BaseRNN(NNOps):
 
@@ -59,11 +67,90 @@ class BaseRNN(NNOps):
         }
 
 
-def _slice_x(X, idx):
-    """ Slice tensor at its last dimension """
-    ndim = K.ndim(X)
-    _ = [slice(None, None, None) for i in range(ndim - 1)]
-    return X[_ + [idx]]
+class BidirectionalRNN(HelperOps):
+    """ BidirectionalRNN
+
+    Parameters
+    ----------
+    forward: p
+        p
+    backward: p
+        p
+    mode: callable
+        callable:
+    """
+
+    def __init__(self, forward, backward=None, mode=K.concatenate, **kwargs):
+        if not isinstance(forward, BaseRNN):
+            raise ValueError('forward must be instance of BaseRNN, but it is %s'
+                            % str(forward.__class__))
+        if backward is None:
+            if isinstance(forward, RNN):
+                backward = RNN(num_units=forward.num_units,
+                               activation=forward.activation,
+                               W_init=forward.W_init,
+                               b_init=forward.b_init,
+                               input_mode=forward.input_mode,
+                               name=forward.name + '_backward',
+                               backwards=not forward.backwards)
+            elif isinstance(forward, GRU):
+                backward = GRU(num_units=forward.num_units,
+                               activation=forward.activation,
+                               gate_activation=forward.gate_activation,
+                               W_in_init=forward.W_in_init,
+                               W_hid_init=forward.W_hid_init,
+                               b_init=forward.b_init,
+                               input_mode=forward.input_mode,
+                               name=forward.name + '_backward',
+                               backwards=not forward.backwards)
+            elif isinstance(forward, LSTM):
+                backward = LSTM(num_units=forward.num_units,
+                                activation=forward.activation,
+                                gate_activation=forward.gate_activation,
+                                W_in_init=forward.W_in_init,
+                                W_hid_init=forward.W_hid_init,
+                                W_peepholes=forward.W_peepholes,
+                                b_init=forward.b_init,
+                                input_mode=forward.input_mode,
+                                return_cell_memory=forward.return_cell_memory,
+                                name=forward.name + '_backward',
+                                backwards=not forward.backwards)
+            else:
+                raise Exception('No support for auto-infer backward of %s' %
+                                str(forward.__class__))
+        super(BidirectionalRNN, self).__init__(ops=[forward, backward], **kwargs)
+        # ====== check mode ====== #
+        if isinstance(mode, str):
+            if 'concat' in mode.lower():
+                mode = K.concatenate
+            elif any(i in mode.lower() for i in ['sum', 'add']):
+                mode = K.add
+        if not callable(mode):
+            raise ValueError("mode must be callable with two input arguments, "
+                             "which are output of forward and backward ops.")
+        self.mode = mode
+
+    def _initialize(self, X):
+        input_shape = K.get_shape(X)
+        config = NNConfig(input_shape=input_shape)
+        return config
+
+    def _apply(self, X, hid_init=None, cell_init=None, mask=None, **kwargs):
+        forward = self.ops[0].apply(X, hid_init=hid_init, cell_init=cell_init,
+                                    mask=mask, **kwargs)
+        backward = self.ops[1].apply(X, hid_init=hid_init, cell_init=cell_init,
+                                     mask=mask, **kwargs)
+        return_list = False
+        if isinstance(forward, (tuple, list)) or isinstance(backward, (tuple, list)):
+            return_list = True
+        results = list(zip(as_tuple(forward), as_tuple(backward)))
+        # post processing the outputs:
+        results = [self.mode(r[0], r[1]) if self.mode in (K.add, K.sub, K.mul, K.div, K.mod)
+                   else self.mode(r)
+                   for r in results]
+        if not return_list:
+            results = results[0]
+        return results
 
 
 # ===========================================================================
@@ -778,7 +865,7 @@ class CudnnRNN(NNOps):
         # flip the input and hidden
         raise NotImplementedError
 
-    def _initialize(self, x):
+    def _initialize(self, x, hid_init=None, cell_init=None):
         input_shape = K.get_shape(x)
         config = NNConfig(input_shape=input_shape[1:])
         is_bidirectional = self.direction_mode == 'bidirectional'
@@ -844,7 +931,7 @@ class CudnnRNN(NNOps):
                                      nnops=self, roles=INITIAL_STATE)
         return config
 
-    def _apply(self, x):
+    def _apply(self, x, hid_init=None, cell_init=None):
         batch_size = K.get_shape(x, native=True)[0]
         # ====== hidden state ====== #
         if self.initial_states is not None:
@@ -993,8 +1080,10 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
                 creator = LSTM
             # direction mode
             if direction_mode == 'unidirectional':
-                layers += [creator(backwards=False, **kwargs)]
+                layers.append(creator(backwards=False, **kwargs))
             else:
-                layers += [creator(backwards=False, **kwargs),
-                           creator(backwards=True, **kwargs)]
+                layers.append(
+                    BidirectionalRNN(forward=creator(backwards=False, **kwargs),
+                        mode='concat')
+                )
         return Sequence(layers, debug=True)

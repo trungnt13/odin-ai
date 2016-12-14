@@ -31,6 +31,9 @@ def _shrink_kwargs(op, kwargs):
 
 class HelperOps(NNOps):
     """ HelperOps
+    In general, helper is the operator that take in a list of NNOps
+    and make an unique output from them.
+
     Parameters
     ----------
     ops: NNOps or callable
