@@ -190,8 +190,8 @@ class NNetTest(unittest.TestCase):
         K.set_training(True)
         X = K.placeholder((None, 1, 28, 28))
         f = N.Dense(128, activation=K.relu)
-        f(X)
-        W, b = [K.get_value(p).sum() for p in f.parameters]
+        y = f(X)
+        W, b = [K.get_value(p).sum() for p in K.ComputationGraph(y).parameters]
         num_units = f.num_units
         W_init = f.W_init
         b_init = f.b_init
@@ -264,6 +264,20 @@ class NNetTest(unittest.TestCase):
         self.assertTrue(fn(np.random.rand(12, 28, 28, 28, 3)).shape[1:] ==
                         K.get_shape(y)[1:])
         self.assertEqual(K.get_shape(y)[1:], (4, 7, 883))
+
+    def test_helper_ops_variables(self):
+        X = K.placeholder(shape=(10, 20))
+        f = N.Sequence([
+            N.Dense(12),
+            N.Dense(8),
+            N.BatchNorm(),
+            N.Dense(25, W_init=K.zeros(shape=(8, 25)))
+        ])
+        y = f(X)
+        self.assertEqual(K.get_shape(y), (10, 25))
+        self.assertEqual(len(f.variables), 10)
+        self.assertEqual(len(f.parameters), 7)
+        self.assertEqual(len(f.trainable_variables), 9)
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

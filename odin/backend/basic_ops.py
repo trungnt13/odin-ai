@@ -27,7 +27,7 @@ def device():
     return config['device']
 
 
-def cuDNN():
+def cudnn_available():
     """ return True if running on GPU with cuDNN available """
     if config['device'] == 'gpu':
         # theano backend

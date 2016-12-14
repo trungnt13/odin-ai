@@ -45,12 +45,10 @@ class HelperOps(NNOps):
                     for i in as_tuple(ops) if callable(i)]
 
     @property
-    def parameters(self):
-        all_parameters = list(
-            chain(*[i.parameters for i in as_tuple(self.ops)
-                    if hasattr(i, 'parameters')])
-        )
-        return [i for i in all_parameters if has_roles(i, PARAMETER)]
+    def variables(self):
+        all_variables = chain(*[i.variables for i in as_tuple(self.ops)
+                                if hasattr(i, 'variables')])
+        return list(all_variables)
 
     def _initialize(self, *args, **kwargs):
         return NNConfig()

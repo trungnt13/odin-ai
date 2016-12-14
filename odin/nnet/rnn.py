@@ -7,10 +7,15 @@ from itertools import chain
 import numpy as np
 
 from odin import backend as K
-from odin.basic import INITIAL_STATE, WEIGHT, BIAS, PARAMETER, has_roles
+from odin.basic import (INITIAL_STATE, WEIGHT, BIAS, PARAMETER,
+                        has_roles, BATCH_NORM_SHIFT_PARAMETER,
+                        BATCH_NORM_SCALE_PARAMETER,
+                        BATCH_NORM_POPULATION_MEAN,
+                        BATCH_NORM_POPULATION_INVSTD)
 from odin.utils import as_tuple
 
 from .base import NNConfig, NNOps
+from .helper import Sequence
 from .normalization import BatchNorm
 
 
@@ -23,11 +28,11 @@ class BaseRNN(NNOps):
     def __init__(self, **kwargs):
         super(BaseRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
-        self.repeat_states = True
-        self.iterate = True
-        self.backwards = False
-        self.n_steps = None
-        self.batch_size = None
+        self.repeat_states = kwargs.pop('repeat_states', True)
+        self.iterate = kwargs.pop('iterate', True)
+        self.backwards = kwargs.pop('backwards', False)
+        self.n_steps = kwargs.pop('n_steps', None)
+        self.batch_size = kwargs.pop('batch_size', None)
 
     @abstractmethod
     def _rnn(self, **kwargs):
@@ -130,7 +135,9 @@ class RNN(BaseRNN):
         X = K.dot(X, self.W_in) if self.input_mode != 'skip' else X
         if self.input_mode == 'norm':
             # normalize all axes except the time dimension
-            bn = BatchNorm(axes=(0, 1), activation=K.linear)
+            bn = BatchNorm(axes=(0, 1), activation=K.linear,
+                           gamma_init=self.gamma, beta_init=self.beta,
+                           mean_init=self.mean, inv_std_init=self.inv_std)
             X = bn(X)
         out = self._rnn(X, hid_init=self.hid_init, mask=mask,
                         **self.get_recurrent_info(kwargs))
@@ -152,6 +159,19 @@ class RNN(BaseRNN):
                                  name='W_in',
                                  nnops=self,
                                  roles=WEIGHT)
+            if self.input_mode == 'norm':
+                config.create_params(K.init.constant(0.), shape=(self.num_units,),
+                                     name='beta',
+                                     nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
+                config.create_params(K.init.constant(1.), shape=(self.num_units,),
+                                     name='gamma',
+                                     nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
+                config.create_params(K.init.constant(0.), shape=(self.num_units,),
+                                     name='mean',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
+                config.create_params(K.init.constant(1.), shape=(self.num_units,),
+                                     name='inv_std',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_INVSTD)
         # skip input mode
         elif input_shape[-1] != self.num_units:
             raise Exception('Skip input mode, input trailing_dimension=%d '
@@ -320,7 +340,9 @@ class GRU(BaseRNN):
             X = K.dot(X, self.W_in)
             if self.input_mode == 'norm':
                 # normalize all axes except the time dimension
-                bn = BatchNorm(axes=(0, 1), activation=K.linear)
+                bn = BatchNorm(axes=(0, 1), activation=K.linear,
+                               gamma_init=self.gamma, beta_init=self.beta,
+                               mean_init=self.mean, inv_std_init=self.inv_std)
                 X = bn(X)
         # skip input
         elif input_shape[-1] == self.num_units:
@@ -348,6 +370,19 @@ class GRU(BaseRNN):
                                  nnops=self,
                                  roles=WEIGHT,
                                  nb_params=3)
+            if self.input_mode == 'norm':
+                config.create_params(K.init.constant(0.), shape=(self.num_units * 3,),
+                                     name='beta',
+                                     nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
+                config.create_params(K.init.constant(1.), shape=(self.num_units * 3,),
+                                     name='gamma',
+                                     nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
+                config.create_params(K.init.constant(0.), shape=(self.num_units * 3,),
+                                     name='mean',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
+                config.create_params(K.init.constant(1.), shape=(self.num_units * 3,),
+                                     name='inv_std',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_INVSTD)
         elif input_shape[-1] != self.num_units and \
         input_shape[-1] != self.num_units * 3:
             raise Exception('Skip input mode, Input trailing_dimension=%d '
@@ -543,7 +578,9 @@ class LSTM(BaseRNN):
             X = K.dot(X, self.W_in)
             if self.input_mode == 'norm':
                 # normalize all axes except the time dimension
-                bn = BatchNorm(axes=(0, 1), activation=K.linear)
+                bn = BatchNorm(axes=(0, 1), activation=K.linear,
+                               gamma_init=self.gamma, beta_init=self.beta,
+                               mean_init=self.mean, inv_std_init=self.inv_std)
                 X = bn(X)
         # skip input
         elif input_shape[-1] == self.num_units:
@@ -573,6 +610,19 @@ class LSTM(BaseRNN):
                                  nnops=self,
                                  roles=WEIGHT,
                                  nb_params=4)
+            if self.input_mode == 'norm':
+                config.create_params(K.init.constant(0.), shape=(self.num_units * 4,),
+                                     name='beta',
+                                     nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
+                config.create_params(K.init.constant(1.), shape=(self.num_units * 4,),
+                                     name='gamma',
+                                     nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
+                config.create_params(K.init.constant(0.), shape=(self.num_units * 4,),
+                                     name='mean',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
+                config.create_params(K.init.constant(1.), shape=(self.num_units * 4,),
+                                     name='inv_std',
+                                     nnops=self, roles=BATCH_NORM_POPULATION_INVSTD)
         # skip input mode
         elif input_shape[-1] != self.num_units and \
         input_shape[-1] != self.num_units * 4: # 3 gates + 1 hid_update
@@ -841,4 +891,110 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
             params_split=False,
             return_states=False,
             dropout=0., name=None):
-    pass
+    """ Automatically select best RNN implementation (using Cudnn RNN
+    if available).
+
+    Parameters
+    ----------
+    hidden_size : int
+        the number of units within the RNN model.
+    W_init:
+        initial description for weights
+    b_init:
+        initial description for bias
+    initial_states: list of tensor
+        h0 with shape [num_layers, batch_size, hidden_size]
+        c0 (lstm) with shape [num_layers, batch_size, hidden_size]
+    rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
+        See cudnn documentation for ``cudnnRNNMode_t``.
+    num_layers : int
+        the number of layers for the RNN model.
+    input_mode : {'linear', 'skip'}
+        linear: input will be multiplied by a biased matrix
+        skip: No operation is performed on the input.  The size must
+        match the hidden size.
+        (CuDNN docs: cudnnRNNInputMode_t)
+    direction_mode : {'unidirectional', 'bidirectional'}
+        unidirectional: The network operates recurrently from the
+                        first input to the last.
+        bidirectional: The network operates from first to last then from last
+                       to first and concatenates the results at each layer.
+    params_split: boolean (defaults: False)
+        if True, separately initialized each parameter of RNN, then flatten and
+        concatenate all of them into one big vector for Cudnn, this results
+        more flexible control over parameters but significantly reduce the
+        speed.
+    return_states: boolean (defaults: False)
+        if True, this Ops returns the [output, hidden_staes, cell_states (lstm)]
+        otherwise only return the output
+    dropout: float (0.0-1.0)
+        whether to enable dropout. With it is 0, dropout is disabled.
+
+    Returns
+    -------
+    [output, hidden_states, cell_states] for lstm
+    [output, hidden_states] for gru and rnn
+
+    output_shape: (batch_size, timesteps, hidden_size)
+    hidden_shape: (num_layers, batch_size, hidden_size)
+    cell_shape: (num_layers, batch_size, hidden_size)
+
+    """
+    # ====== using cudnn ====== #
+    if K.cudnn_available():
+        if input_mode == 'norm':
+            input_mode = 'linear'
+        return CudnnRNN(hidden_size=hidden_size,
+            W_init=W_init, b_init=b_init,
+            initial_states=initial_states,
+            rnn_mode=rnn_mode, num_layers=num_layers,
+            input_mode=input_mode,
+            direction_mode=direction_mode,
+            params_split=params_split,
+            return_states=return_states,
+            dropout=dropout, name=name)
+    # ====== using scan ====== #
+    else:
+        layers = []
+        for i in range(num_layers):
+            creator = None
+            if 'rnn' in rnn_mode:
+                kwargs = {'num_units':hidden_size,
+                          'W_init':W_init,
+                          'b_init':b_init,
+                          'input_mode':input_mode,
+                          'name':name}
+                if 'relu' in rnn_mode:
+                    kwargs['activation'] = K.relu
+                else:
+                    kwargs['activation'] = K.tanh
+                creator = RNN
+            elif rnn_mode == 'gru':
+                kwargs = {'num_units':hidden_size,
+                 'activation':K.tanh,
+                 'gate_activation':K.sigmoid,
+                 'W_in_init':W_init,
+                 'W_hid_init':W_init,
+                 'b_init':b_init,
+                 'input_mode':input_mode,
+                 'name':name}
+                creator = GRU
+            elif rnn_mode == 'lstm':
+                kwargs = {'num_units':hidden_size,
+                 'activation':K.tanh,
+                 'gate_activation':K.sigmoid,
+                 'W_in_init':W_init,
+                 'W_hid_init':W_init,
+                 'W_peepholes':W_init,
+                 'b_init':b_init,
+                 'input_mode':input_mode,
+                 'return_cell_memory':return_states,
+                 'name':name}
+                creator = LSTM
+            # direction mode
+            if direction_mode == 'unidirectional':
+                layers += [creator(backwards=False, **kwargs)]
+            else:
+                layers += [creator(backwards=False, **kwargs),
+                           creator(backwards=True, **kwargs)]
+        return Sequence(layers, debug=True)

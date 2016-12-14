@@ -6,6 +6,7 @@ import types
 import cPickle
 import warnings
 from itertools import chain
+from collections import OrderedDict
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 from six.moves import zip, range
@@ -87,17 +88,18 @@ class NNConfig(object):
     def __init__(self, **kwargs):
         super(NNConfig, self).__init__()
         # name -> variables
-        self._paramters = {}
+        self._variables = OrderedDict()
 
     @property
-    def parameters(self):
-        return self._paramters.values()
+    def variables(self):
+        """ Return the list of all TensorVariables attached to this Config"""
+        return self._variables.values()
 
     def __getattr__(self, name):
         if name in self._arguments:
             return self._arguments[name]
-        if name in self._paramters:
-            return self._paramters[name]
+        if name in self._variables:
+            return self._variables[name]
         raise AttributeError('Cannot find attribute={} in arguments and parameters'
                              '.'.format(name))
 
@@ -169,14 +171,14 @@ class NNConfig(object):
                 add_role(spec, i)
         # return actual variable or expression
         # override other parameters with same name
-        self._paramters[name] = spec
+        self._variables[name] = spec
         return spec
 
     def inflate(self, obj):
         """ Infate configuration into given object  """
         for i, j in self._arguments.iteritems():
             setattr(obj, i, j)
-        for name, var in self._paramters.iteritems():
+        for name, var in self._variables.iteritems():
             # name = i.name.split('/')[-1].split(':')[0]
             setattr(obj, name, var)
 
@@ -184,7 +186,7 @@ class NNConfig(object):
         """  """
         for i in self._arguments.keys():
             setattr(obj, i, None)
-        for name in self._paramters.keys():
+        for name in self._variables.keys():
             setattr(obj, name, None)
 
     def __eq__(self, other):
@@ -197,27 +199,27 @@ class NNConfig(object):
 
     def copy(self):
         config = NNConfig(**self._arguments)
-        config._paramters = self._paramters
+        config._variables = self._variables
         return config
 
     def __str__(self):
         s = 'Arguments:\n'
         for i, j in self._arguments.iteritems():
             s += ' - ' + str(i) + ':' + str(j) + '\n'
-        s += ' - Parameters: ' + ', '.join([str(i) for i in self._paramters.values()])
+        s += ' - Parameters: ' + ', '.join([str(i) for i in self._variables.values()])
         return s
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return self._arguments, {name: K.pickling_variable(var)
-                                 for name, var in self._paramters.iteritems()}
+        return self._arguments, [(name, K.pickling_variable(var))
+                                 for name, var in self._variables.iteritems()]
 
     def __setstate__(self, states):
         self._arguments = states[0]
         for i, j in self._arguments.iteritems():
             setattr(self, i, j)
-        self._paramters = {name: K.pickling_variable(var)
-                           for name, var in states[1].iteritems()}
+        self._variables = OrderedDict([(name, K.pickling_variable(var))
+                           for name, var in states[1]])
 
 
 # ===========================================================================
@@ -264,7 +266,7 @@ class NNOps(object):
     if NNOps is applied to a list of inputs, it will process each input seperated
     """
 
-    def __init__(self, name=None):
+    def __init__(self, name=None, **kwargs):
         super(NNOps, self).__init__()
         self._arguments = {}
 
@@ -284,11 +286,21 @@ class NNOps(object):
         return self._transpose_ops
 
     @property
-    def parameters(self):
+    def variables(self):
         if self._configuration is None:
             raise Exception("This operators haven't initialized.")
-        return [i for i in self._configuration.parameters
-                if has_roles(i, PARAMETER)]
+        return self._configuration.variables
+
+    @property
+    def parameters(self):
+        """ return all TensorVariables which have the PARAMETER role"""
+        return [i for i in self.variables if has_roles(i, PARAMETER)]
+
+    @property
+    def trainable_variables(self):
+        """ return all TensorVariables which are trainable """
+        return [i for i in self.variables
+                if K.is_trainable_variable(i)]
 
     @property
     def configuration(self):
