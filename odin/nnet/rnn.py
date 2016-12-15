@@ -709,8 +709,7 @@ class LSTM(BaseRNN):
             else:
                 self.c0 = c0
         # turn off repeat_states if batch_size already included
-        if not (K.get_shape(h0)[0] == 1 and
-                K.get_shape(h0)[0] == 1):
+        if K.get_shape(h0)[0] != 1 and K.get_shape(c0)[0] != 1:
             self.repeat_states = False
         # ====== precompute input ====== #
         # linear or norm input mode
@@ -726,8 +725,8 @@ class LSTM(BaseRNN):
         elif input_shape[-1] == self.num_units:
             X = K.repeat(X, 4, axes=-1)
         # ====== compute recurrent output ====== #
-        out = self._rnn(X, hid_init=self.hid_init, cell_init=self.cell_init,
-                        mask=mask, **self.get_recurrent_info(kwargs))
+        out = self._rnn(X, h0=h0, c0=c0, mask=mask,
+                        **self.get_recurrent_info(kwargs))
         if not self.return_cell_memory:
             out = out[:-1]
         for i in out:
