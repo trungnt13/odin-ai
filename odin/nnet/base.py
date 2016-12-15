@@ -172,6 +172,8 @@ class NNConfig(object):
         # return actual variable or expression
         # override other parameters with same name
         self._variables[name] = spec
+        # set parameter attribute for NNOps
+        setattr(nnops, name, spec)
         return spec
 
     def inflate(self, obj):

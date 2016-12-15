@@ -135,11 +135,9 @@ class BidirectionalRNN(HelperOps):
         config = NNConfig(input_shape=input_shape)
         return config
 
-    def _apply(self, X, hid_init=None, cell_init=None, mask=None, **kwargs):
-        forward = self.ops[0].apply(X, hid_init=hid_init, cell_init=cell_init,
-                                    mask=mask, **kwargs)
-        backward = self.ops[1].apply(X, hid_init=hid_init, cell_init=cell_init,
-                                     mask=mask, **kwargs)
+    def _apply(self, X, h0=None, c0=None, mask=None, **kwargs):
+        forward = self.ops[0].apply(X, h0=h0, c0=c0, mask=mask, **kwargs)
+        backward = self.ops[1].apply(X, h0=h0, c0=c0, mask=mask, **kwargs)
         return_list = False
         if isinstance(forward, (tuple, list)) or isinstance(backward, (tuple, list)):
             return_list = True
@@ -209,16 +207,41 @@ class RNN(BaseRNN):
         self.b_init = b_init
         self.input_mode = input_mode
 
-    @K.rnn_decorator(sequences=['X', 'mask'], states=['hid_init'])
-    def _rnn(self, X, hid_init, mask=None):
+    @K.rnn_decorator(sequences=['X', 'mask'], states=['h0'])
+    def _rnn(self, X, h0, mask=None):
         bias = 0. if self.b_init is None else self.b
-        next_states = self.activation(X + K.dot(hid_init, self.W_hid) + bias)
+        next_states = self.activation(X + K.dot(h0, self.W_hid) + bias)
         if mask is not None:
-            next_states = K.switch(mask, next_states, hid_init)
+            next_states = K.switch(mask, next_states, h0)
         return next_states
 
-    def _apply(self, X, hid_init=None, mask=None, **kwargs):
+    def _apply(self, X, h0=None, mask=None, **kwargs):
         input_shape = K.get_shape(X)
+        # ====== check mask ====== #
+        if mask is not None and (K.ndim(mask) != K.ndim(X) - 1 or
+                                 K.get_shape(mask)[-1] != input_shape[1]):
+            raise Exception('Mask must has "%d" dimensions and the time dimension '
+                            '(i.e. the second dimension) must equal to "%d"'
+                            ', but the given mask has shape "%s".' %
+                            (K.ndim(X) - 1, input_shape[1], K.get_shape(mask)))
+        # ====== initialize states ====== #
+        if h0 is None and hasattr(self, 'h0'):
+            h0 = self.h0
+        else:
+            h0 = K.init.constant(0.) if h0 is None else h0
+            # only store trainable variable or constant
+            if callable(h0) or K.is_trainable_variable(h0):
+                h0 = self.configuration.create_params(h0,
+                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
+                    name='h0',
+                    nnops=self,
+                    roles=INITIAL_STATE)
+            else:
+                self.h0 = h0
+        # turn off repeat_states if batch_size already included
+        if K.get_shape(h0)[0] != 1:
+            self.repeat_states = False
+        # ====== precompute input ====== #
         X = K.dot(X, self.W_in) if self.input_mode != 'skip' else X
         if self.input_mode == 'norm':
             # normalize all axes except the time dimension
@@ -226,14 +249,14 @@ class RNN(BaseRNN):
                            gamma_init=self.gamma, beta_init=self.beta,
                            mean_init=self.mean, inv_std_init=self.inv_std)
             X = bn(X)
-        out = self._rnn(X, hid_init=self.hid_init, mask=mask,
+        out = self._rnn(X, h0=h0, mask=mask,
                         **self.get_recurrent_info(kwargs))
         for i in out:
             K.add_shape(i, shape=tuple(input_shape[:-1]) + (self.num_units,))
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
-    def _initialize(self, X, hid_init=None, mask=None):
+    def _initialize(self, X):
         input_shape = K.get_shape(X)
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
@@ -278,25 +301,6 @@ class RNN(BaseRNN):
                                  name='b',
                                  nnops=self,
                                  roles=BIAS)
-        # ====== check mask ====== #
-        if mask is not None and (K.ndim(mask) != K.ndim(X) - 1 or
-                                 K.get_shape(mask)[-1] != input_shape[1]):
-            raise Exception('Mask must has "%d" dimensions and the time dimension '
-                            '(i.e. the second dimension) must equal to "%d"'
-                            ', but the given mask has shape "%s".' %
-                            (K.ndim(X) - 1, input_shape[1], K.get_shape(mask)))
-        # ====== initialize states ====== #
-        if hid_init is None:
-            hid_init = K.init.constant(0.)
-        # create init of state
-        state_init = config.create_params(hid_init,
-            shape=(1,) + input_shape[2:-1] + (self.num_units,),
-            name='hid_init',
-            nnops=self,
-            roles=INITIAL_STATE)
-        # turn off repeat_states if batch_size already included
-        if K.get_shape(state_init)[0] != 1:
-            self.repeat_states = False
         return config
 
 
@@ -387,14 +391,14 @@ class GRU(BaseRNN):
         self.b_init = b_init
         self.input_mode = input_mode
 
-    @K.rnn_decorator(sequences=['X', 'mask'], states=['hid_init'])
-    def _rnn(self, X, hid_init, mask=None):
+    @K.rnn_decorator(sequences=['X', 'mask'], states=['h0'])
+    def _rnn(self, X, h0, mask=None):
         #####################################
         # X: sequences inputs (included bias)
         # init: prev_states
         # W: concatenated [W_update, W_reset]
         # mask: mask inputs (optional)
-        prev_states = hid_init
+        prev_states = h0
         nb_units = self.num_units
         # hidden connection of all gates and states update
         hid_connection = K.dot(prev_states, self.W_hid)
@@ -420,8 +424,36 @@ class GRU(BaseRNN):
             next_states = K.switch(mask, next_states, prev_states)
         return next_states
 
-    def _apply(self, X, hid_init=None, mask=None, **kwargs):
+    def _apply(self, X, h0=None, mask=None, **kwargs):
         input_shape = K.get_shape(X)
+        # ====== check mask ====== #
+        if mask is not None and (K.ndim(mask) != 2 or
+                                 K.get_shape(mask)[-1] != input_shape[1]):
+            raise Exception('Mask must be a 2-D matrix and the time dimension '
+                            '(i.e. the second dimension) must equal to "%d"'
+                            ', but the given mask has shape "%s".' %
+                            (input_shape[1], K.get_shape(mask)))
+        # add broadcastable dimension for mask
+        if mask is not None:
+            mask = K.expand_dims(mask, dim=-1)
+        # ====== initialize states ====== #
+        if h0 is None and hasattr(self, 'h0'):
+            h0 = self.h0
+        else:
+            h0 = K.init.constant(0.) if h0 is None else h0
+            # only store trainable variable or constant
+            if callable(h0) or K.is_trainable_variable(h0):
+                h0 = self.configuration.create_params(h0,
+                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
+                    name='h0',
+                    nnops=self,
+                    roles=INITIAL_STATE)
+            else:
+                self.h0 = h0
+        # turn off repeat_states if batch_size already included
+        if K.get_shape(h0)[0] != 1:
+            self.repeat_sxtates = False
+        # ====== precompute inputs ====== #
         # linear or norm input mode
         if self.input_mode != 'skip':
             X = K.dot(X, self.W_in)
@@ -434,18 +466,16 @@ class GRU(BaseRNN):
         # skip input
         elif input_shape[-1] == self.num_units:
             X = K.repeat(X, 3, axes=-1)
-        # add broadcastable dimension for mask
-        if mask is not None:
-            mask = K.expand_dims(mask, dim=-1)
+        # ====== compute recurrent output ====== #
         # recurrent
-        out = self._rnn(X, hid_init=self.hid_init, mask=mask,
+        out = self._rnn(X, h0=h0, mask=mask,
                         **self.get_recurrent_info(kwargs))
         for i in out:
             K.add_shape(i, shape=input_shape)
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
-    def _initialize(self, X, hid_init=None, mask=None):
+    def _initialize(self, X):
         input_shape = K.get_shape(X)
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
@@ -494,25 +524,6 @@ class GRU(BaseRNN):
                                  nnops=self,
                                  roles=BIAS,
                                  nb_params=3)
-        # ====== initialize states ====== #
-        if hid_init is None:
-            hid_init = K.init.constant(0)
-        # create init of state
-        state_init = config.create_params(hid_init,
-            shape=(1,) + input_shape[2:-1] + (self.num_units,),
-            name='hid_init',
-            nnops=self,
-            roles=INITIAL_STATE)
-        # turn off repeat_states if batch_size already included
-        if K.get_shape(state_init)[0] != 1:
-            self.repeat_states = False
-        # ====== check mask ====== #
-        if mask is not None and (K.ndim(mask) != 2 or
-                                 K.get_shape(mask)[-1] != input_shape[1]):
-            raise Exception('Mask must be a 2-D matrix and the time dimension '
-                            '(i.e. the second dimension) must equal to "%d"'
-                            ', but the given mask has shape "%s".' %
-                            (input_shape[1], K.get_shape(mask)))
         return config
 
 
@@ -613,15 +624,15 @@ class LSTM(BaseRNN):
         self.return_cell_memory = return_cell_memory
 
     @K.rnn_decorator(sequences=['X', 'mask'],
-                     states=['hid_init', 'cell_init'])
-    def _rnn(self, X, hid_init, cell_init, mask=None):
+                     states=['h0', 'c0'])
+    def _rnn(self, X, h0, c0, mask=None):
         #####################################
         # X: sequences inputs (included bias)
         # init: prev_states
         # W: concatenated [W_update, W_reset]
         # mask: mask inputs (optional)
-        prev_states = hid_init
-        prev_memory = cell_init
+        prev_states = h0
+        prev_memory = c0
         nb_units = self.num_units
         # hidden to hidden connection
         bias = 0 if self.b_init is None else self.b
@@ -657,9 +668,51 @@ class LSTM(BaseRNN):
             next_memory = K.switch(mask, next_memory, prev_memory)
         return next_states, next_memory
 
-    def _apply(self, X, hid_init=None, cell_init=None, mask=None, **kwargs):
+    def _apply(self, X, h0=None, c0=None, mask=None, **kwargs):
         # check input_shape
         input_shape = K.get_shape(X)
+        # ====== check mask ====== #
+        if mask is not None and (K.ndim(mask) != 2 or
+                                 K.get_shape(mask)[-1] != input_shape[1]):
+            raise Exception('Mask must be a 2-D matrix and the time dimension '
+                            '(i.e. the second dimension) must equal to "%d"'
+                            ', but the given mask has shape "%s".' %
+                            (input_shape[1], K.get_shape(mask)))
+        # add broadcastable dimension for mask
+        if mask is not None:
+            mask = K.expand_dims(mask, dim=-1)
+        # ====== initialize states ====== #
+        # hidden states
+        if h0 is None and hasattr(self, 'h0'):
+            h0 = self.h0
+        else:
+            h0 = K.init.constant(0.) if h0 is None else h0
+            if callable(h0) or K.is_trainable_variable(h0):
+                h0 = self.configuration.create_params(h0,
+                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
+                    name='h0',
+                    nnops=self,
+                    roles=INITIAL_STATE)
+            else:
+                self.h0 = h0
+        # memory
+        if c0 is None and hasattr(self, 'c0'):
+            c0 = self.c0
+        else:
+            c0 = K.init.constant(0.) if c0 is None else c0
+            if callable(c0) or K.is_trainable_variable(c0):
+                c0 = self.configuration.create_params(c0,
+                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
+                    name='c0',
+                    nnops=self,
+                    roles=INITIAL_STATE)
+            else:
+                self.c0 = c0
+        # turn off repeat_states if batch_size already included
+        if not (K.get_shape(h0)[0] == 1 and
+                K.get_shape(h0)[0] == 1):
+            self.repeat_states = False
+        # ====== precompute input ====== #
         # linear or norm input mode
         if self.input_mode != 'skip':
             X = K.dot(X, self.W_in)
@@ -672,10 +725,7 @@ class LSTM(BaseRNN):
         # skip input
         elif input_shape[-1] == self.num_units:
             X = K.repeat(X, 4, axes=-1)
-        # add broadcastable dimension for mask
-        if mask is not None:
-            mask = K.expand_dims(mask, dim=-1)
-        # recurrent
+        # ====== compute recurrent output ====== #
         out = self._rnn(X, hid_init=self.hid_init, cell_init=self.cell_init,
                         mask=mask, **self.get_recurrent_info(kwargs))
         if not self.return_cell_memory:
@@ -685,7 +735,7 @@ class LSTM(BaseRNN):
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
-    def _initialize(self, X, hid_init=None, cell_init=None, mask=None):
+    def _initialize(self, X):
         input_shape = K.get_shape(X)
         config = NNConfig(input_shape=input_shape,
                           num_units=self.num_units)
@@ -743,33 +793,6 @@ class LSTM(BaseRNN):
                                  nnops=self,
                                  roles=BIAS,
                                  nb_params=4)
-        # ====== initialize states ====== #
-        if hid_init is None:
-            hid_init = K.init.constant(0.)
-        if cell_init is None:
-            cell_init = K.init.constant(0.)
-        # create init of state
-        hid_init = config.create_params(hid_init,
-            shape=(1,) + input_shape[2:-1] + (self.num_units,),
-            name='hid_init',
-            nnops=self,
-            roles=INITIAL_STATE)
-        cell_init = config.create_params(cell_init,
-            shape=(1,) + input_shape[2:-1] + (self.num_units,),
-            name='cell_init',
-            nnops=self,
-            roles=INITIAL_STATE)
-        # turn off repeat_states if batch_size already included
-        if not (K.get_shape(hid_init)[0] == 1 and
-                K.get_shape(cell_init)[0] == 1):
-            self.repeat_states = False
-        # ====== check mask ====== #
-        if mask is not None and (K.ndim(mask) != 2 or
-                                 K.get_shape(mask)[-1] != input_shape[1]):
-            raise Exception('Mask must be a 2-D matrix and the time dimension '
-                            '(i.e. the second dimension) must equal to "%d"'
-                            ', but the given mask has shape "%s".' %
-                            (input_shape[1], K.get_shape(mask)))
         return config
 
 
@@ -830,7 +853,6 @@ class CudnnRNN(NNOps):
     def __init__(self, hidden_size,
             W_init=K.init.glorot_uniform,
             b_init=K.init.constant(0.),
-            initial_states=None,
             rnn_mode='lstm', num_layers=1,
             input_mode='linear',
             direction_mode='unidirectional',
@@ -848,11 +870,6 @@ class CudnnRNN(NNOps):
         self.return_states = return_states
         self.dropout = dropout
 
-        if initial_states is not None:
-            self.initial_states = as_tuple(initial_states,
-                                           N=2 if rnn_mode == 'lstm' else 1)
-        else:
-            self.initial_states = None
         if not callable(W_init):
             raise ValueError('W_init must be callable with input is variable shape')
         self.W_init = W_init
@@ -902,12 +919,12 @@ class CudnnRNN(NNOps):
             config.create_params(parameters, shape=parameters.shape,
                                  name='params', nnops=self)
         # ====== create initials states ====== #
-        if self.initial_states is not None:
+        if self.hid_init is not None:
             num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
             batch_size = 1 if input_shape[0] is None else input_shape[0]
             require_shape = (num_layers, batch_size, self.hidden_size)
             # check hidden states
-            h0 = self.initial_states[0]
+            h0 = hid_init
             check_shape = require_shape
             if K.is_variable(h0) or isinstance(h0, np.ndarray):
                 if K.get_shape(h0)[::2] != (num_layers, self.hidden_size):
@@ -917,36 +934,38 @@ class CudnnRNN(NNOps):
                 check_shape = K.get_shape(h0)
             config.create_params(h0, shape=check_shape, name='h0',
                                  nnops=self, roles=INITIAL_STATE)
-            # do the same for cell states
-            if self.rnn_mode == 'lstm':
-                c0 = self.initial_states[1]
-                check_shape = require_shape
-                if K.is_variable(c0) or isinstance(c0, np.ndarray):
-                    if K.get_shape(c0)[::2] != (num_layers, self.hidden_size):
-                        raise ValueError('Require cell_state of size: %s, but '
-                                         'given state of size: %s' %
-                                         (require_shape, K.get_shape(c0)))
-                    check_shape = K.get_shape(c0)
-                config.create_params(c0, shape=check_shape, name='c0',
-                                     nnops=self, roles=INITIAL_STATE)
+        # do the same for cell states
+        if self.rnn_mode == 'lstm' and cell_init is not None:
+            c0 = cell_init
+            check_shape = require_shape
+            if K.is_variable(c0) or isinstance(c0, np.ndarray):
+                if K.get_shape(c0)[::2] != (num_layers, self.hidden_size):
+                    raise ValueError('Require cell_state of size: %s, but '
+                                     'given state of size: %s' %
+                                     (require_shape, K.get_shape(c0)))
+                check_shape = K.get_shape(c0)
+            config.create_params(c0, shape=check_shape, name='c0',
+                                 nnops=self, roles=INITIAL_STATE)
         return config
 
     def _apply(self, x, hid_init=None, cell_init=None):
         batch_size = K.get_shape(x, native=True)[0]
         # ====== hidden state ====== #
-        if self.initial_states is not None:
+        initial_states = None
+        if hasattr(self, 'h0'):
             h0 = self.h0
             if K.get_shape(self.h0)[1] is 1:
                 h0 = K.repeat(h0, batch_size, axes=1)
             initial_states = [h0]
-            # cell state for lstm
-            if self.rnn_mode == 'lstm':
+        # cell state for lstm
+        if self.rnn_mode == 'lstm':
+            if hasattr(self, 'c0'):
                 c0 = self.c0
                 if K.get_shape(c0)[1] is 1:
                     c0 = K.repeat(c0, batch_size, axes=1)
                 initial_states.append(c0)
-        else:
-            initial_states = None
+            else:
+                initial_states.append(None)
         # ====== parameters ====== #
         if self.params_split:
             parameters = K.concatenate([K.flatten(i, outdim=1)
