@@ -1062,8 +1062,8 @@ def Scan(fn,
 
 def rnn_dnn(X, hidden_size, rnn_mode,
             num_layers=1,
-            initial_states=None,
             parameters=None,
+            h0=None, c0=None,
             input_mode='linear',
             direction_mode='unidirectional',
             dropout=0., name=None):
@@ -1079,8 +1079,9 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         See cudnn documentation for ``cudnnRNNMode_t``.
     num_layers : int
         the number of layers for the RNN model.
-    initial_states: list of tensor
+    h0: tensor
         h0 with shape [num_layers, batch_size, hidden_size]
+    c0: tensor
         c0 (lstm) with shape [num_layers, batch_size, hidden_size]
     parameters: vector
         vector contain all flatten weights and bias
@@ -1113,6 +1114,8 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     dropout is turn off if K.set_training(False) or K.is_training() == False
 
     """
+    if CONFIG['device'] == 'cpu':
+        raise Exception('This opt is not supported with CPU.')
     if name is None: name = uuid()
     # ====== Check arguments ====== #
     if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
@@ -1186,22 +1189,12 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         "Require %d parameters but only %d provided" % (nb_params, get_shape(parameters)[0])
     # check initial states
     num_layers = num_layers * 2 if is_bidirectional else num_layers
-    if initial_states is None:
-        h0 = zeros((num_layers, batch_size, hidden_size))
-        if rnn_mode == 'lstm':
-            c0 = zeros((num_layers, batch_size, hidden_size))
-        else:
-            c0 = None
-    else:
-        if rnn_mode == 'lstm':
-            h0, c0 = initial_states
-        else:
-            h0 = initial_states[0] if isinstance(initial_states, (list, tuple)) \
-                else initial_states
-            c0 = None
+    h0 = zeros((num_layers, batch_size, hidden_size)) if h0 is None else h0
+    c0 = (zeros((num_layers, batch_size, hidden_size))
+          if rnn_mode == 'lstm' and c0 is None else c0)
     # preprocess arguments
     args = {'input_h': h0}
-    if c0 is not None:
+    if rnn_mode == 'lstm':
         args['input_c'] = c0
     # ====== get output ====== #
     output = rnn(input_data=tf.transpose(X, (1, 0, 2)),

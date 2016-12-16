@@ -84,7 +84,7 @@ class RNNTest(unittest.TestCase):
                   input_mode='skip',
                   name='lstm')
         ])
-        y = f(X, hid_init=hid_init, cell_init=cell_init, mask=mask)
+        y = f(X, h0=hid_init, c0=cell_init, mask=mask)
         f = K.function([X, mask], y)
         out1 = f(x, x_mask)
         # ====== lasagne ====== #
@@ -159,7 +159,7 @@ class RNNTest(unittest.TestCase):
                   W_hid_init=[W_hid_to_updategate, W_hid_to_resetgate, W_hid_to_hidden_update],
                   input_mode='skip')
         ])
-        y = f(X, hid_init=hid_init, mask=mask)
+        y = f(X, h0=hid_init, mask=mask)
         f = K.function([X, mask], y)
         out1 = f(x, x_mask)
         # ====== lasagne ====== #
@@ -263,14 +263,13 @@ class RNNTest(unittest.TestCase):
                                 X = X_skip
                                 x = np.random.rand(batch_size, 3, hidden_size)
                             start = timeit.default_timer()
-                            f = N.CudnnRNN(hidden_size=hidden_size, rnn_mode=rnn_mode,
+                            f = N.CudnnRNN(num_units=hidden_size, rnn_mode=rnn_mode,
                                            input_mode=input_mode, num_layers=nb_layers,
                                            direction_mode=direction_mode,
-                                           initial_states=init_state,
                                            params_split=False,
                                            return_states=True)
                             # perform function
-                            y = f(X)
+                            y = f(X, h0=init_state, c0=init_state)
                             f = K.function(X, y)
                             output = f(x)
                             benchmark = timeit.default_timer() - start

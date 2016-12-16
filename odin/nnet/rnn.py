@@ -30,6 +30,21 @@ def _slice_x(X, idx):
     return X[_ + [idx]]
 
 
+def _check_rnn_hidden_states(h0, ops, input_shape, name):
+    if h0 is None and hasattr(ops, name):
+        h0 = getattr(ops, name)
+    else:
+        h0 = K.init.constant(0.) if h0 is None else h0
+        # only store trainable variable or constant
+        if callable(h0) or K.is_trainable_variable(h0) or isinstance(h0, np.ndarray):
+            h0 = ops.configuration.create_params(h0,
+                shape=(1,) + input_shape[2:-1] + (ops.num_units,),
+                name=name, nnops=ops, roles=INITIAL_STATE)
+        else: # still store the states so it can be re-used on other inputs
+            ops.h0 = h0
+    return h0
+
+
 @add_metaclass(ABCMeta)
 class BaseRNN(NNOps):
 
@@ -225,19 +240,7 @@ class RNN(BaseRNN):
                             ', but the given mask has shape "%s".' %
                             (K.ndim(X) - 1, input_shape[1], K.get_shape(mask)))
         # ====== initialize states ====== #
-        if h0 is None and hasattr(self, 'h0'):
-            h0 = self.h0
-        else:
-            h0 = K.init.constant(0.) if h0 is None else h0
-            # only store trainable variable or constant
-            if callable(h0) or K.is_trainable_variable(h0):
-                h0 = self.configuration.create_params(h0,
-                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
-                    name='h0',
-                    nnops=self,
-                    roles=INITIAL_STATE)
-            else:
-                self.h0 = h0
+        h0 = _check_rnn_hidden_states(h0, self, input_shape, 'h0')
         # turn off repeat_states if batch_size already included
         if K.get_shape(h0)[0] != 1:
             self.repeat_states = False
@@ -437,22 +440,10 @@ class GRU(BaseRNN):
         if mask is not None:
             mask = K.expand_dims(mask, dim=-1)
         # ====== initialize states ====== #
-        if h0 is None and hasattr(self, 'h0'):
-            h0 = self.h0
-        else:
-            h0 = K.init.constant(0.) if h0 is None else h0
-            # only store trainable variable or constant
-            if callable(h0) or K.is_trainable_variable(h0):
-                h0 = self.configuration.create_params(h0,
-                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
-                    name='h0',
-                    nnops=self,
-                    roles=INITIAL_STATE)
-            else:
-                self.h0 = h0
+        h0 = _check_rnn_hidden_states(h0, self, input_shape, 'h0')
         # turn off repeat_states if batch_size already included
         if K.get_shape(h0)[0] != 1:
-            self.repeat_sxtates = False
+            self.repeat_states = False
         # ====== precompute inputs ====== #
         # linear or norm input mode
         if self.input_mode != 'skip':
@@ -683,31 +674,8 @@ class LSTM(BaseRNN):
             mask = K.expand_dims(mask, dim=-1)
         # ====== initialize states ====== #
         # hidden states
-        if h0 is None and hasattr(self, 'h0'):
-            h0 = self.h0
-        else:
-            h0 = K.init.constant(0.) if h0 is None else h0
-            if callable(h0) or K.is_trainable_variable(h0):
-                h0 = self.configuration.create_params(h0,
-                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
-                    name='h0',
-                    nnops=self,
-                    roles=INITIAL_STATE)
-            else:
-                self.h0 = h0
-        # memory
-        if c0 is None and hasattr(self, 'c0'):
-            c0 = self.c0
-        else:
-            c0 = K.init.constant(0.) if c0 is None else c0
-            if callable(c0) or K.is_trainable_variable(c0):
-                c0 = self.configuration.create_params(c0,
-                    shape=(1,) + input_shape[2:-1] + (self.num_units,),
-                    name='c0',
-                    nnops=self,
-                    roles=INITIAL_STATE)
-            else:
-                self.c0 = c0
+        h0 = _check_rnn_hidden_states(h0, self, input_shape, 'h0')
+        c0 = _check_rnn_hidden_states(c0, self, input_shape, 'c0')
         # turn off repeat_states if batch_size already included
         if K.get_shape(h0)[0] != 1 and K.get_shape(c0)[0] != 1:
             self.repeat_states = False
@@ -798,13 +766,43 @@ class LSTM(BaseRNN):
 # ===========================================================================
 # DNN
 # ===========================================================================
+def _check_cudnn_hidden_init(s0, shape, nnops, name):
+    nb_layers, batch_size, hidden_size = shape
+    # ====== init s0 ====== #
+    if s0 is None and hasattr(nnops, name):
+        s0 = getattr(nnops, name)
+    elif s0 is not None:
+        if callable(s0) or K.is_trainable_variable(s0) or isinstance(s0, np.ndarray):
+            _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
+                else K.get_shape(s0)
+            s0 = nnops.configuration.create_params(s0, shape=_, name=name,
+                                                   nnops=nnops,
+                                                   roles=INITIAL_STATE)
+        # ====== check s0 shape ====== #
+        init_shape = K.get_shape(s0)
+        if K.ndim(s0) == 2:
+            if K.get_shape(s0)[-1] != hidden_size:
+                raise ValueError('init state has %d dimension, but the hidden_size=%d' %
+                                (init_shape[-1], hidden_size))
+        elif init_shape[::2] != (nb_layers, hidden_size):
+            raise ValueError('Require init states of size: %s, but '
+                             'given state of size: %s' % (shape, init_shape))
+        # ====== return the right shape ====== #
+        if K.ndim(s0) == 2:
+            s0 = K.expand_dims(s0, dim=0)
+        if K.get_shape(s0)[1] == 1:
+            s0 = K.repeat(s0, n=batch_size, axes=1)
+        setattr(nnops, name, s0)
+    return s0
+
+
 class CudnnRNN(NNOps):
 
     """CuDNN v5 RNN implementation.
 
     Parameters
     ----------
-    hidden_size : int
+    num_units : int
         the number of units within the RNN model.
     W_init:
         initial description for weights
@@ -843,13 +841,13 @@ class CudnnRNN(NNOps):
     [output, hidden_states, cell_states] for lstm
     [output, hidden_states] for gru and rnn
 
-    output_shape: (batch_size, timesteps, hidden_size)
-    hidden_shape: (num_layers, batch_size, hidden_size)
-    cell_shape: (num_layers, batch_size, hidden_size)
+    output_shape: (batch_size, timesteps,  num_units)
+    hidden_shape: (num_layers, batch_size, num_units)
+    cell_shape: (num_layers, batch_size,   num_units)
 
     """
 
-    def __init__(self, hidden_size,
+    def __init__(self, num_units,
             W_init=K.init.glorot_uniform,
             b_init=K.init.constant(0.),
             rnn_mode='lstm', num_layers=1,
@@ -860,9 +858,9 @@ class CudnnRNN(NNOps):
             dropout=0., **kwargs):
         super(CudnnRNN, self).__init__(**kwargs)
         # ====== defaults recurrent control ====== #
-        self.hidden_size = hidden_size
+        self.num_units = int(num_units)
+        self.num_layers = int(num_layers)
         self.rnn_mode = rnn_mode
-        self.num_layers = num_layers
         self.input_mode = input_mode
         self.direction_mode = direction_mode
         self.params_split = params_split
@@ -881,14 +879,14 @@ class CudnnRNN(NNOps):
         # flip the input and hidden
         raise NotImplementedError
 
-    def _initialize(self, x, hid_init=None, cell_init=None):
+    def _initialize(self, x):
         input_shape = K.get_shape(x)
         config = NNConfig(input_shape=input_shape[1:])
         is_bidirectional = self.direction_mode == 'bidirectional'
         # ====== create params ====== #
-        layer_info = [input_shape[-1], self.hidden_size] + \
-                     [self.hidden_size * (2 if is_bidirectional else 1),
-                      self.hidden_size] * (self.num_layers - 1)
+        layer_info = [input_shape[-1], self.num_units] + \
+                     [self.num_units * (2 if is_bidirectional else 1),
+                      self.num_units] * (self.num_layers - 1)
         if self.rnn_mode == 'lstm':
             from odin.backend.init import lstm as init_func
         elif self.rnn_mode == 'gru':
@@ -917,54 +915,16 @@ class CudnnRNN(NNOps):
                                          for i in range(self.num_layers)])
             config.create_params(parameters, shape=parameters.shape,
                                  name='params', nnops=self)
-        # ====== create initials states ====== #
-        if self.hid_init is not None:
-            num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
-            batch_size = 1 if input_shape[0] is None else input_shape[0]
-            require_shape = (num_layers, batch_size, self.hidden_size)
-            # check hidden states
-            h0 = hid_init
-            check_shape = require_shape
-            if K.is_variable(h0) or isinstance(h0, np.ndarray):
-                if K.get_shape(h0)[::2] != (num_layers, self.hidden_size):
-                    raise ValueError('Require hidden_state of size: %s, but '
-                                     'given state of size: %s' %
-                                     (require_shape, K.get_shape(h0)))
-                check_shape = K.get_shape(h0)
-            config.create_params(h0, shape=check_shape, name='h0',
-                                 nnops=self, roles=INITIAL_STATE)
-        # do the same for cell states
-        if self.rnn_mode == 'lstm' and cell_init is not None:
-            c0 = cell_init
-            check_shape = require_shape
-            if K.is_variable(c0) or isinstance(c0, np.ndarray):
-                if K.get_shape(c0)[::2] != (num_layers, self.hidden_size):
-                    raise ValueError('Require cell_state of size: %s, but '
-                                     'given state of size: %s' %
-                                     (require_shape, K.get_shape(c0)))
-                check_shape = K.get_shape(c0)
-            config.create_params(c0, shape=check_shape, name='c0',
-                                 nnops=self, roles=INITIAL_STATE)
         return config
 
-    def _apply(self, x, hid_init=None, cell_init=None):
+    def _apply(self, x, h0=None, c0=None, mask=None):
         batch_size = K.get_shape(x, native=True)[0]
+        is_bidirectional = self.direction_mode == 'bidirectional'
         # ====== hidden state ====== #
-        initial_states = None
-        if hasattr(self, 'h0'):
-            h0 = self.h0
-            if K.get_shape(self.h0)[1] is 1:
-                h0 = K.repeat(h0, batch_size, axes=1)
-            initial_states = [h0]
-        # cell state for lstm
-        if self.rnn_mode == 'lstm':
-            if hasattr(self, 'c0'):
-                c0 = self.c0
-                if K.get_shape(c0)[1] is 1:
-                    c0 = K.repeat(c0, batch_size, axes=1)
-                initial_states.append(c0)
-            else:
-                initial_states.append(None)
+        num_layers = self.num_layers * 2 if is_bidirectional else self.num_layers
+        require_shape = (num_layers, batch_size, self.num_units)
+        h0 = _check_cudnn_hidden_init(h0, require_shape, self, 'h0')
+        c0 = _check_cudnn_hidden_init(c0, require_shape, self, 'c0')
         # ====== parameters ====== #
         if self.params_split:
             parameters = K.concatenate([K.flatten(i, outdim=1)
@@ -973,10 +933,10 @@ class CudnnRNN(NNOps):
         else:
             parameters = self.params
         # ====== return CuDNN RNN ====== #
-        results = K.rnn_dnn(x, hidden_size=self.hidden_size, rnn_mode=self.rnn_mode,
+        results = K.rnn_dnn(x, hidden_size=self.num_units, rnn_mode=self.rnn_mode,
                            num_layers=self.num_layers,
-                           initial_states=initial_states,
                            parameters=parameters,
+                           h0=h0, c0=c0,
                            input_mode=self.input_mode,
                            direction_mode=self.direction_mode,
                            dropout=self.dropout, name=self.name)
@@ -988,7 +948,7 @@ class CudnnRNN(NNOps):
 # ===========================================================================
 # Auto RNN
 # ===========================================================================
-def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
+def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
             initial_states=None,
             rnn_mode='lstm', num_layers=1,
             input_mode='linear',
@@ -1001,7 +961,7 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
 
     Parameters
     ----------
-    hidden_size : int
+    num_units : int
         the number of units within the RNN model.
     W_init:
         initial description for weights
@@ -1040,16 +1000,16 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
     [output, hidden_states, cell_states] for lstm
     [output, hidden_states] for gru and rnn
 
-    output_shape: (batch_size, timesteps, hidden_size)
-    hidden_shape: (num_layers, batch_size, hidden_size)
-    cell_shape: (num_layers, batch_size, hidden_size)
+    output_shape: (batch_size, timesteps, num_units)
+    hidden_shape: (num_layers, batch_size, num_units)
+    cell_shape: (num_layers, batch_size, num_units)
 
     """
     # ====== using cudnn ====== #
     if K.cudnn_available():
         if input_mode == 'norm':
             input_mode = 'linear'
-        return CudnnRNN(hidden_size=hidden_size,
+        return CudnnRNN(num_units=num_units,
             W_init=W_init, b_init=b_init,
             initial_states=initial_states,
             rnn_mode=rnn_mode, num_layers=num_layers,
@@ -1064,7 +1024,7 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
         for i in range(num_layers):
             creator = None
             if 'rnn' in rnn_mode:
-                kwargs = {'num_units':hidden_size,
+                kwargs = {'num_units':num_units,
                           'W_init':W_init,
                           'b_init':b_init,
                           'input_mode':input_mode,
@@ -1075,7 +1035,7 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
                     kwargs['activation'] = K.tanh
                 creator = RNN
             elif rnn_mode == 'gru':
-                kwargs = {'num_units':hidden_size,
+                kwargs = {'num_units':num_units,
                  'activation':K.tanh,
                  'gate_activation':K.sigmoid,
                  'W_in_init':W_init,
@@ -1085,7 +1045,7 @@ def AutoRNN(hidden_size, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.
                  'name':name}
                 creator = GRU
             elif rnn_mode == 'lstm':
-                kwargs = {'num_units':hidden_size,
+                kwargs = {'num_units':num_units,
                  'activation':K.tanh,
                  'gate_activation':K.sigmoid,
                  'W_in_init':W_init,
