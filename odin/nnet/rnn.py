@@ -947,7 +947,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
             direction_mode='unidirectional',
             params_split=False,
             return_states=False,
-            dropout=0., name=None):
+            dropout=0., name=None, prefer_cudnn=True):
     """ Automatically select best RNN implementation (using Cudnn RNN
     if available).
 
@@ -995,7 +995,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
 
     """
     # ====== using cudnn ====== #
-    if K.cudnn_available():
+    if prefer_cudnn and K.cudnn_available():
         if input_mode == 'norm':
             input_mode = 'linear'
         return CudnnRNN(num_units=num_units,
@@ -1015,8 +1015,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                 kwargs = {'num_units':num_units,
                           'W_init':W_init,
                           'b_init':b_init,
-                          'input_mode':input_mode,
-                          'name':name + '_%d' % i}
+                          'input_mode':input_mode}
                 if 'relu' in rnn_mode:
                     kwargs['activation'] = K.relu
                 else:
@@ -1029,8 +1028,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                  'W_in_init':W_init,
                  'W_hid_init':W_init,
                  'b_init':b_init,
-                 'input_mode':input_mode,
-                 'name':name + '_%d' % i}
+                 'input_mode':input_mode}
                 creator = GRU
             elif rnn_mode == 'lstm':
                 kwargs = {'num_units':num_units,
@@ -1041,15 +1039,16 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                  'W_peepholes':W_init,
                  'b_init':b_init,
                  'input_mode':input_mode,
-                 'return_cell_memory':return_states,
-                 'name':name + '_%d' % i}
+                 'return_cell_memory':return_states}
                 creator = LSTM
             # direction mode
+            layer_name = name + '_%d' % i if name is not None else None
             if direction_mode == 'unidirectional':
-                layers.append(creator(backwards=False, **kwargs))
+                layers.append(creator(backwards=False, name=layer_name, **kwargs))
             else:
                 layers.append(
-                    BidirectionalRNN(forward=creator(backwards=False, **kwargs),
+                    BidirectionalRNN(
+                        forward=creator(backwards=False, name=layer_name, **kwargs),
                         mode='concat')
                 )
         return Sequence(layers, debug=False)

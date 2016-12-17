@@ -32,14 +32,12 @@ import numpy as np
 np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
-from odin.utils import get_modelpath, stdio, get_logpath, uuid
+from odin.utils import get_modelpath, stdio, get_logpath
 from odin.basic import has_roles, BIAS, WEIGHT
 from odin import training
 
 # set log path
-NAME = uuid()
-print("Auto generated identification:", NAME)
-stdio(path=get_logpath('digit_audio_%s.log' % NAME, override=True))
+stdio(path=get_logpath('digit_audio.log', override=True))
 
 # ===========================================================================
 # Load dataset and some consts
@@ -109,8 +107,8 @@ CNN = [
 
 f = N.Sequence(CNN + [
     # ====== RNN ====== #
-    N.CudnnRNN(128, rnn_mode='lstm', num_layers=3,
-               direction_mode='bidirectional'),
+    N.AutoRNN(128, rnn_mode='lstm', num_layers=3,
+              direction_mode='bidirectional', prefer_cudnn=True),
 
     # ====== Dense ====== #
     N.Flatten(outdim=2),
