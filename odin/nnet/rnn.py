@@ -788,10 +788,6 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
             raise ValueError('Require init states of size: %s, but '
                              'given state of size: %s' % (shape, init_shape))
         # ====== return the right shape ====== #
-        if K.ndim(s0) == 2:
-            s0 = K.expand_dims(s0, dim=0)
-        if K.get_shape(s0)[1] == 1:
-            s0 = K.repeat(s0, n=batch_size, axes=1)
         setattr(nnops, name, s0)
     return s0
 
@@ -808,9 +804,6 @@ class CudnnRNN(NNOps):
         initial description for weights
     b_init:
         initial description for bias
-    initial_states: list of tensor
-        h0 with shape [num_layers, batch_size, hidden_size]
-        c0 (lstm) with shape [num_layers, batch_size, hidden_size]
     rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
         See cudnn documentation for ``cudnnRNNMode_t``.
     num_layers : int
@@ -949,7 +942,6 @@ class CudnnRNN(NNOps):
 # Auto RNN
 # ===========================================================================
 def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
-            initial_states=None,
             rnn_mode='lstm', num_layers=1,
             input_mode='linear',
             direction_mode='unidirectional',
@@ -967,9 +959,6 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
         initial description for weights
     b_init:
         initial description for bias
-    initial_states: list of tensor
-        h0 with shape [num_layers, batch_size, hidden_size]
-        c0 (lstm) with shape [num_layers, batch_size, hidden_size]
     rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
         See cudnn documentation for ``cudnnRNNMode_t``.
     num_layers : int
@@ -1011,7 +1000,6 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
             input_mode = 'linear'
         return CudnnRNN(num_units=num_units,
             W_init=W_init, b_init=b_init,
-            initial_states=initial_states,
             rnn_mode=rnn_mode, num_layers=num_layers,
             input_mode=input_mode,
             direction_mode=direction_mode,
@@ -1028,7 +1016,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                           'W_init':W_init,
                           'b_init':b_init,
                           'input_mode':input_mode,
-                          'name':name}
+                          'name':name + '_%d' % i}
                 if 'relu' in rnn_mode:
                     kwargs['activation'] = K.relu
                 else:
@@ -1042,7 +1030,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                  'W_hid_init':W_init,
                  'b_init':b_init,
                  'input_mode':input_mode,
-                 'name':name}
+                 'name':name + '_%d' % i}
                 creator = GRU
             elif rnn_mode == 'lstm':
                 kwargs = {'num_units':num_units,
@@ -1054,7 +1042,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                  'b_init':b_init,
                  'input_mode':input_mode,
                  'return_cell_memory':return_states,
-                 'name':name}
+                 'name':name + '_%d' % i}
                 creator = LSTM
             # direction mode
             if direction_mode == 'unidirectional':
@@ -1064,4 +1052,4 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
                     BidirectionalRNN(forward=creator(backwards=False, **kwargs),
                         mode='concat')
                 )
-        return Sequence(layers, debug=True)
+        return Sequence(layers, debug=False)

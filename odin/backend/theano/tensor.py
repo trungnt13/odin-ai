@@ -1247,6 +1247,18 @@ def rnn_dnn(X, hidden_size, rnn_mode,
         raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
                          % direction_mode)
     is_bidirectional = direction_mode == 'bidirectional'
+
+    # ====== helper function ====== #
+    def check_init_states(s0, nb_layers, batch_size):
+        if s0 is None: return None
+        if s0.ndim < 3:
+            s0 = expand_dims(s0, dim=0)
+        s0shape = get_shape(s0)
+        if s0shape[0] == 1 and s0shape[0] != nb_layers:
+            s0 = repeat(s0, n=nb_layers, axes=0)
+        if s0shape[1] == 1:
+            s0 = repeat(s0, n=batch_size, axes=1)
+        return s0
     # ====== create RNNBlock ====== #
     input_shape = get_shape(X)
     if X.ndim != 3:
@@ -1287,8 +1299,10 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     # check initial states
     num_layers = num_layers * 2 if is_bidirectional else num_layers
     h0 = zeros((num_layers, batch_size, hidden_size)) if h0 is None else h0
+    h0 = check_init_states(h0, num_layers, batch_size)
     c0 = (zeros((num_layers, batch_size, hidden_size))
           if rnn_mode == 'lstm' and c0 is None else c0)
+    c0 = check_init_states(c0, num_layers, batch_size)
     # ====== get output ====== #
     output = rnnb.apply(w=parameters, x=X.dimshuffle(1, 0, 2),
                         hx=h0, cx=c0)
