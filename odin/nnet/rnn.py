@@ -899,15 +899,15 @@ class CudnnRNN(NNOps):
             for p in chain(*parameters):
                 config.create_params(p, shape=K.get_shape(p),
                                      name=p.name.split(':')[0].split('/')[1],
-                                     nnops=self)
+                                     nnops=self, roles=PARAMETER)
         # else initialize all in 1 big vector
         else:
             parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
                                          one_vector=True, return_variable=False,
-                                         bidirectional=True if is_bidirectional else False)
+                                         bidirectional=is_bidirectional)
                                          for i in range(self.num_layers)])
             config.create_params(parameters, shape=parameters.shape,
-                                 name='params', nnops=self)
+                                 name='params', nnops=self, roles=PARAMETER)
         return config
 
     def _apply(self, x, h0=None, c0=None, mask=None):

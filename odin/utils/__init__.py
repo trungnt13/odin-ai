@@ -35,6 +35,27 @@ from . import shape_calculation
 
 
 # ===========================================================================
+# Basics
+# ===========================================================================
+def is_path(path):
+    if isinstance(path, str):
+        path = os.path.abspath(path)
+        if os.path.exists(path):
+            #the file is there
+            return True
+        elif os.access(os.path.dirname(path), os.W_OK):
+            #the file does not exists but write privileges are given
+            return True
+    return False
+
+
+def is_string(s):
+    if isinstance(s, (unicode, str)):
+        return True
+    False
+
+
+# ===========================================================================
 # Others
 # ===========================================================================
 def raise_return(e):
@@ -230,11 +251,6 @@ class ArgController(object):
                 val = int(val)
         except:
             val = str(val)
-            val_lower = val.lower()
-            if val_lower == 'true' or val_lower == 'yes':
-                val = True
-            elif val_lower == 'false' or val_lower == 'no':
-                val = False
         return val
 
     def add(self, name, help, default=None, preprocess=None):
@@ -258,7 +274,7 @@ class ArgController(object):
             self.parser = argparse.ArgumentParser(
                 description='Automatic argument parser (yes,true > True; no,false > False)',
                 version=self.version, add_help=True)
-        # ====== exist default inputs ====== #
+        # ====== NO default value ====== #
         if default is None:
             if self._is_positional(name):
                 self.parser.add_argument(name, help=help, type=str, action="store",
@@ -267,7 +283,13 @@ class ArgController(object):
                 self.parser.add_argument(name, help=help, type=str, action="store",
                     required=True, metavar='')
             self._require_input = True
-        # ====== No defaults inputs ====== #
+        # ====== boolean default value ====== #
+        elif isinstance(default, bool):
+            help += ' (default: %s)' % str(default)
+            self.parser.add_argument(name, help=help,
+                                     action="store_%s" % str(not default).lower())
+            preprocess = lambda x: bool(x)
+        # ====== add defaults value ====== #
         else:
             help += ' (default: %s)' % str(default)
             self.parser.add_argument(name, help=help, type=str, action="store",
@@ -322,7 +344,7 @@ class ArgController(object):
 
 
 # ===========================================================================
-# Simple math
+# Simple math and processing
 # ===========================================================================
 def one_hot(y, n_classes=None):
     '''Convert class vector (integers from 0 to nb_classes)
@@ -335,6 +357,75 @@ def one_hot(y, n_classes=None):
     for i in range(len(y)):
         Y[i, y[i]] = 1.
     return Y
+
+
+def pad_sequences(sequences, maxlen=None, dtype='int32',
+                  padding='pre', truncating='pre', value=0.,
+                  transformer=None):
+    """Pads each sequence to the same length:
+    the length of the longest sequence.
+
+    If maxlen is provided, any sequence longer
+    than maxlen is truncated to maxlen.
+    Truncation happens off either the beginning (default) or
+    the end of the sequence.
+
+    Supports post-padding and pre-padding (default).
+
+    Parameters
+    ----------
+    sequences: list
+        a list that contains a list of object
+    maxlen: int
+        maximum length of each individual sequence
+    dtype: np.dtype
+        desire data type of output array
+    padding: 'pre' or 'post'
+        pad either before or after each sequence.
+    truncating: 'pre' or 'post'
+        remove values from sequences larger than maxlen either
+        in the beginning or in the end of the sequence
+    value: object
+        padding object
+    transformer: callable
+        a function transform each element in sequence into desire value
+        (e.g. a dictionary)
+
+    Returns
+    -------
+    numpy array with dimensions (number_of_sequences, maxlen)
+    """
+    # ====== check valid input ====== #
+    if truncating not in ('pre', 'post'):
+        raise ValueError('truncating must be "pre" or "post", given value is %s'
+                         % truncating)
+    if padding not in ('pre', 'post'):
+        raise ValueError('padding must be "pre" or "post", given value is %s'
+                         % padding)
+    if transformer is None:
+        transformer = lambda x: x
+    if not callable(transformer):
+        raise ValueError('transformer must be callable, but given value is %s' %
+                         type(transformer))
+    # ====== processing ====== #
+    if maxlen is None:
+        maxlen = int(max(len(s) for s in sequences))
+    nb_samples = len(sequences)
+    value = numpy.cast[dtype](value)
+    X = numpy.full(shape=(nb_samples, maxlen), fill_value=value, dtype=dtype)
+    for idx, s in enumerate(sequences):
+        s = [transformer(_) for _ in s]
+        if len(s) == 0: continue # empty list
+        # check truncating
+        if len(s) >= maxlen:
+            slice_ = slice(None, None)
+            s = s[-maxlen:] if truncating == 'pre' else s[:maxlen]
+        # check padding
+        elif len(s) < maxlen:
+            slice_ = slice(-len(s), None) if padding == 'pre' else slice(None, len(s))
+        # assign value
+        X[idx, slice_] = numpy.asarray(s, dtype=dtype)
+    return X
 
 
 def pad_center(data, size, axis=-1, **kwargs):
@@ -845,6 +936,10 @@ def get_file(fname, origin, untar=False):
     This function is adpated from: https://github.com/fchollet/keras
     Original work Copyright (c) 2014-2015 keras contributors
     Modified work Copyright 2016-2017 TrungNT
+
+    Return
+    ------
+    file path of the downloaded file
     '''
     datadir = get_datasetpath()
     if untar:
@@ -1028,18 +1123,6 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
     return ids
 
 
-def is_path(path):
-    if isinstance(path, str):
-        path = os.path.abspath(path)
-        if os.path.exists(path):
-            #the file is there
-            return True
-        elif os.access(os.path.dirname(path), os.W_OK):
-            #the file does not exists but write privileges are given
-            return True
-    return False
-
-
 def ordered_set(seq):
     seen = {}
     result = []
@@ -1120,8 +1203,8 @@ def _get_managed_path(folder, name, override, is_folder=False, root='~'):
     if not os.path.exists(datadir):
         os.makedirs(datadir)
     # ====== check given path with name ====== #
-    if isinstance(name, types.StringType):
-        datadir = os.path.join(datadir, name)
+    if is_string(name):
+        datadir = os.path.join(datadir, str(name))
         if os.path.exists(datadir) and override:
             if os.path.isfile(datadir): # remove file
                 os.remove(datadir)

@@ -1028,7 +1028,7 @@ def Scan(fn,
     if backwards:
         sequences = [tf.reverse(seq, [True] + [False] * (seq.get_shape().ndims - 1))
                      for seq in sequences]
-    if n_steps:
+    if isinstance(n_steps, numbers.Number):
         sequences = [seq[:n_steps] for seq in sequences]
     # ====== check output info ====== #
     if outputs_info is None:

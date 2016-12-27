@@ -428,9 +428,9 @@ class NNSliceOps(NNOps):
         return NNConfig()
 
     @property
-    def parameters(self):
-        if hasattr(self.ops, 'parameters'):
-            return self.ops.parameters
+    def variables(self):
+        if hasattr(self.ops, 'variables'):
+            return self.ops.variables
         return []
 
     def _apply(self, x, **kwargs):

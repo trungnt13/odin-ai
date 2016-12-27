@@ -137,7 +137,8 @@ def inv(x):
 
 
 def sqrt(x):
-    x = clip(x, 0., np.inf)
+    x = clip(x, as_tensor_variable(0., dtype=x.dtype),
+             as_tensor_variable(np.inf, dtype=x.dtype))
     return _copy_shape(x, backend_ops_sqrt)
 
 

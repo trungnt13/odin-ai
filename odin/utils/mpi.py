@@ -283,16 +283,20 @@ class MPI(SelfIterator):
     >>> # Exception (cannot re-run the same MPI)
     """
 
-    def __init__(self, jobs, map_func, reduce_func,
+    def __init__(self, jobs, map_func, reduce_func=None,
                  ncpu=1, buffer_size=1, maximum_queue_size=144):
         super(MPI, self).__init__()
         self._jobs = jobs
+        # ====== check map_func ====== #
         if not callable(map_func):
             raise Exception('"map_func" must be callable')
         self._map_func = map_func
+        # ====== check reduce_func ====== #
+        if reduce_func is None: reduce_func = lambda x: x
         if not callable(reduce_func):
-            raise Exception('"reduce_func" must be callable')
+            raise Exception('"reduce_func" must be callable or None')
         self._reduce_func = reduce_func
+        # ====== MPI parameters ====== #
         self._length = SharedCounter(len(jobs))
         # never use all available CPU
         if ncpu is None:
@@ -387,6 +391,7 @@ class MPI(SelfIterator):
         return max(self._length.value, 0)
 
     def run(self):
+        """"""
         if self.finnished:
             raise Exception('The MPI already finished, call copy() to '
                             'replicate this MPI, and re-run it if you want.')

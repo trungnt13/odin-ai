@@ -30,6 +30,11 @@ class Embedding(NNOps):
         self.output_size = output_size
         self.W_init = W_init
 
+    @property
+    def embedding_shape(self):
+        """ Return the estimated embedding matrix shape """
+        return (self.input_size, self.output_size)
+
     def _initialize(self, x):
         config = NNConfig(input_size=self.input_size,
                           output_size=self.output_size)

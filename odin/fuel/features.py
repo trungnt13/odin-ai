@@ -345,7 +345,8 @@ class SpeechProcessor(FeatureProcessor):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, save_stats=save_stats,
             substitute_nan=substitute_nan, ncpu=ncpu)
-        audio_ext = as_tuple('' if audio_ext is None else audio_ext, t=str)
+        audio_ext = as_tuple('' if audio_ext is None else audio_ext,
+                             t=(str, unicode))
         # ====== load jobs ====== #
         # NOT loaded segments
         if isinstance(segments, str):
@@ -502,7 +503,8 @@ class ImageFeatures(FeederRecipe):
                  crop=None, target_size=None,
                  transpose=None, resample_mode=2):
         super(ImageFeatures, self).__init__()
-        self.image_ext = ('',) if image_ext is None else as_tuple(image_ext, t=str)
+        self.image_ext = ('',) if image_ext is None else as_tuple(image_ext,
+                                                                  t=(str, unicode))
         self.crop = crop if crop is None else as_tuple(crop, 4, int)
         self.grayscale = bool(grayscale)
         self.target_size = target_size

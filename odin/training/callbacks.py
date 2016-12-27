@@ -436,7 +436,7 @@ class NaNDetector(Callback):
 
     def __init__(self, name, patience=-1, rollback=True):
         super(NaNDetector, self).__init__()
-        self.name = as_tuple(name, t=str)
+        self.name = as_tuple(name, t=(str, unicode))
         self.patience = patience
         self.rollback = rollback
         self._current_patience = patience
