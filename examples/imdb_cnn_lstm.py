@@ -39,9 +39,9 @@ nb_epoch = 3
 ds = F.load_imdb(nb_words=max_features, maxlen=maxlen)
 
 X_train = K.placeholder(shape=(None,) + ds['X_train'].shape[1:],
-                        name='X_train', for_training=True)
+                        name='X_train')
 X_score = K.placeholder(shape=(None,) + ds['X_train'].shape[1:],
-                        name='X_score', for_training=False)
+                        name='X_score')
 y = K.placeholder(shape=(None,), name='y', dtype='int32')
 
 # ===========================================================================
@@ -51,12 +51,12 @@ f = N.Sequence([
     N.Embedding(max_features, embedding_size),
     N.Dropout(0.25),
     N.Dimshuffle(pattern=(0, 2, 1, 'x')), # convolution on time dimension
-    N.Conv2D(nb_filter,
-             filter_size=(filter_length, 1),
-             pad='valid',
-             stride=(1, 1),
-             activation=K.relu),
-    N.Pool2D(pool_size=(pool_length, 1), mode='max'),
+    N.Conv(nb_filter,
+           filter_size=(filter_length, 1),
+           pad='valid',
+           stride=(1, 1),
+           activation=K.relu),
+    N.Pool(pool_size=(pool_length, 1), mode='max'),
     N.Squeeze(axis=-1),
     N.Dimshuffle(pattern=(0, 2, 1)),
     N.Merge([
@@ -68,15 +68,15 @@ f = N.Sequence([
     N.LSTM(num_units=lstm_output_size)[:, -1],
     N.Dense(1, activation=K.sigmoid)
 ])
-y_pred_train = f(X_train)
-y_pred_score = f(X_score)
+K.set_training(True); y_pred_train = f(X_train)
+K.set_training(False); y_pred_score = f(X_score)
 
 cost_train = K.mean(K.binary_crossentropy(y_pred_train, y))
 cost_score = K.mean(K.binary_accuracy(y_pred_score, y))
 
 parameters = f.parameters
 
-updates = K.optimizers.adam(cost_train, parameters, learning_rate=0.001)
+updates = K.optimizers.Adam(lr=0.001).get_updates(cost_train, parameters)
 
 print('Building training function ...')
 f_train = K.function([X_train, y], cost_train, updates)

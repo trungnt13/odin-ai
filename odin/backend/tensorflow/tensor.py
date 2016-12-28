@@ -48,7 +48,7 @@ def eval(x):
 # ===========================================================================
 def backend_ops_relu(x, alpha=0.):
     # Adapted implementation from theano
-    if alpha == 0:
+    if alpha == 0.:
         return tf.nn.relu(x)
     else:
         # We can't use 0.5 and 1 for one and half.  as if alpha is a
@@ -93,8 +93,12 @@ backend_ops_clip = tf.clip_by_value
 
 backend_ops_diag = tf.diag_part
 
-backend_ops_categorical_crossentropy = tf.nn.softmax_cross_entropy_with_logits
-backend_ops_binary_crossentropy = tf.nn.sigmoid_cross_entropy_with_logits
+# backend_ops_categorical_crossentropy = tf.nn.softmax_cross_entropy_with_logits
+backend_ops_categorical_crossentropy = \
+    lambda x, y: - tf.reduce_sum(y * tf.log(x),
+                                 reduction_indices=x.get_shape().ndims - 1)
+backend_ops_binary_crossentropy = \
+    lambda x, y: tf.nn.sigmoid_cross_entropy_with_logits(tf.log(x / (1. - x)), y)
 
 
 def backend_ops_eye(n, m, dtype):
@@ -271,7 +275,7 @@ def var(x, axis=None, keepdims=False):
 
 def mean(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    dtype = x.dtype
+    dtype = x.dtype.base_dtype
     if 'int' in str(dtype) or 'bool' in str(dtype):
         x = tf.cast(x, FLOATX)
     return tf.reduce_mean(x, reduction_indices=axis, keep_dims=keepdims)
@@ -601,10 +605,9 @@ class Function(object):
         self.outputs = list(outputs)
         self.return_list = return_list
         # ====== validate updates ====== #
-        if not isinstance(updates, OrderedDict):
-            updates = OrderedDict(updates)
-        updates = dict_union(updates, ComputationGraph(outputs).updates)
-        updates = updates.items()
+        if isinstance(updates, dict):
+            updates = updates.items()
+        updates += ComputationGraph(outputs).updates.items()
         # create updates ops
         with tf.control_dependencies(self.outputs):
             updates_ops = []
@@ -612,8 +615,7 @@ class Function(object):
                 if isinstance(update, (tuple, list)):
                     p, new_p = update
                     updates_ops.append(tf.assign(p, new_p))
-                else:
-                    # assumed already an op
+                else: # assumed already an assign op
                     updates_ops.append(update)
             self.updates_op = tf.group(*updates_ops)
 

@@ -431,16 +431,18 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None):
 
 
 def categorical_crossentropy(output, target):
-    """ NOTE: the crossentropy is different between tensorflow and
-    theano """
+    """ NOTE: the crossentropy is different between tensorflow and theano
+    If the `output` and `target` are mistaken the position, the gradients of
+    cross-entropy cost w.r.t to all variables may be None in tensorflow.
+    """
     input_shape = get_shape(output)
-    # scale preds so that the class probas of each sample sum to 1
+    # scale preds so that the class  of each sample sum to 1
     output /= sum(output, axis=-1, keepdims=True)
     output = clip(output, EPSILON, 1.0 - EPSILON)
     if ndim(target) == 1:
         target = one_hot(target, get_shape(output)[-1])
     x = backend_ops_categorical_crossentropy(output, target)
-    add_shape(x, input_shape[0])
+    add_shape(x, (input_shape[0],))
     return x
 
 

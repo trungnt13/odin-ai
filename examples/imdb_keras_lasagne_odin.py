@@ -50,10 +50,10 @@ def rmsprop(loss, params, lr=0.001, rho=0.9, epsilon=1e-8):
 # ===========================================================================
 net_odin = N.Sequence([
     N.Embedding(input_size=max_features, output_size=embedding_size),
-    N.Dimshuffle(pattern=(0, 'x', 1, 2)),
-    N.Conv2D(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
-    N.Pool2D(pool_size=(2, 2), strides=None, mode='max'),
-    N.Dimshuffle(pattern=(0, 2, 1, 3)),
+    N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+    N.Conv(8, (3, 3), stride=(1, 1), pad='same', activation=K.relu),
+    N.Pool(pool_size=(2, 2), strides=None, mode='max'),
+    # N.Dimshuffle(pattern=(0, 2, 1, 3)),
     N.Flatten(outdim=3),
     # ====== LSTM ====== #
     N.Merge([
@@ -65,7 +65,7 @@ net_odin = N.Sequence([
     N.LSTM(num_units=64)[:, -1],
     # N.Flatten(outdim=2),
     N.Dense(1, activation=K.sigmoid)
-])
+], debug=True)
 print('Building ODIN network ...')
 y_odin = net_odin(X)
 

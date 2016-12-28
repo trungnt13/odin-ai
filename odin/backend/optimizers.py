@@ -24,7 +24,7 @@ _pow = pow
 _abs = abs
 
 from .basic_ops import (is_variable, is_placeholder, gradients, get_shape,
-                        switch, get_value, variable, cast,
+                        switch, get_value, variable, cast, constant,
                         square, sum, sqrt, maximum, abs, clip)
 
 __all__ = [
@@ -289,6 +289,7 @@ class Optimizer(object):
 
     @property
     def norm(self):
+        """Return L2-norm value of all gradients """
         return self._norm
 
     @abstractmethod
@@ -432,12 +433,12 @@ class RMSProp(Optimizer):
            Coursera. http://www.youtube.com/watch?v=O3sxAc4hxZU (formula @5:20)
     """
 
-    def __init__(self, lr=0.001, rho=0.9, epsilon=1e-7,
+    def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(RMSProp, self).__init__(lr, clipnorm, clipvalue)
         self.rho = _as_variable(rho, name='rho',
                                 roles=OPTIMIZER_HYPER_PARAMETER)
-        self.epsilon = epsilon
+        self.epsilon = constant(epsilon, dtype=FLOATX)
 
     def get_updates(self, loss_or_grads, params):
         grads = self.get_gradients(loss_or_grads, params)
@@ -512,7 +513,7 @@ class Adadelta(Optimizer):
            arXiv Preprint arXiv:1212.5701.
     """
 
-    def __init__(self, lr=1.0, rho=0.95, epsilon=1e-7,
+    def __init__(self, lr=1.0, rho=0.95, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adadelta, self).__init__(lr, clipnorm, clipvalue)
         self.rho = _as_variable(rho, name='rho',
@@ -581,7 +582,7 @@ class Adam(Optimizer):
            arXiv preprint arXiv:1412.6980.
     """
 
-    def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+    def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adam, self).__init__(lr, clipnorm, clipvalue)
         self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
@@ -649,7 +650,7 @@ class Adamax(Optimizer):
            arXiv preprint arXiv:1412.6980.
     """
 
-    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adamax, self).__init__(lr, clipnorm, clipvalue)
         self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
@@ -723,7 +724,7 @@ class Nadam(Optimizer):
 
     """
 
-    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-7,
+    def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  schedule_decay=0.004, clipnorm=None, clipvalue=None):
         super(Nadam, self).__init__(lr, clipnorm, clipvalue)
         self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
@@ -815,7 +816,7 @@ class Adagrad(Optimizer):
            Notes on AdaGrad. http://www.ark.cs.cmu.edu/cdyer/adagrad.pdf
     """
 
-    def __init__(self, lr=0.01, epsilon=1e-7,
+    def __init__(self, lr=0.01, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adagrad, self).__init__(lr, clipnorm, clipvalue)
         self.epsilon = epsilon

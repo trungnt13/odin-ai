@@ -79,6 +79,13 @@ def ndim(x):
         return x.get_shape().ndims
 
 
+def get_dtype(x):
+    dtype = x.dtype
+    if hasattr(dtype, 'base_dtype'):
+        dtype = dtype.base_dtype
+    return dtype
+
+
 # ==================== activations ==================== #
 def relu(x, alpha=0.):
     return _copy_shape(x, backend_ops_relu, alpha)
@@ -121,6 +128,8 @@ def tanh(x):
 def clip(x, min_value, max_value):
     if max_value < min_value:
         max_value = min_value
+    min_value = as_tensor_variable(min_value, dtype=get_dtype(x))
+    max_value = as_tensor_variable(max_value, dtype=get_dtype(x))
     return _copy_shape(x, backend_ops_clip, min_value, max_value)
 
 
@@ -137,8 +146,7 @@ def inv(x):
 
 
 def sqrt(x):
-    x = clip(x, as_tensor_variable(0., dtype=x.dtype),
-             as_tensor_variable(np.inf, dtype=x.dtype))
+    x = clip(x, 0., np.inf)
     return _copy_shape(x, backend_ops_sqrt)
 
 
