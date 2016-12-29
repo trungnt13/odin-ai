@@ -1,7 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-os.environ['ODIN'] = 'float32,cpu,theano,seed=12082518'
+os.environ['ODIN'] = 'float32,cpu,tensorflow,seed=12082518'
 import cPickle
 from itertools import chain
 
@@ -30,7 +30,7 @@ lstm_output_size = 70
 
 # Training
 batch_size = 30
-nb_epoch = 3
+nb_epoch = 2
 
 
 # ===========================================================================
@@ -50,24 +50,23 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 f = N.Sequence([
     N.Embedding(max_features, embedding_size),
     N.Dropout(0.25),
-    N.Dimshuffle(pattern=(0, 2, 1, 'x')), # convolution on time dimension
+    N.Dimshuffle(pattern=(0, 1, 'x', 2)), # convolution on time dimension
     N.Conv(nb_filter,
            filter_size=(filter_length, 1),
            pad='valid',
            stride=(1, 1),
            activation=K.relu),
     N.Pool(pool_size=(pool_length, 1), mode='max'),
-    N.Squeeze(axis=-1),
-    N.Dimshuffle(pattern=(0, 2, 1)),
+    N.Flatten(outdim=3),
     N.Merge([
         N.Dense(lstm_output_size, activation=K.linear, name='ingate'), # input-gate
         N.Dense(lstm_output_size, activation=K.linear, name='forgetgate'), # forget-gate
         N.Dense(lstm_output_size, activation=K.linear, name='cellupdate'), # cell-update
         N.Dense(lstm_output_size, activation=K.linear, name='outgate') # output-gate
     ], merge_function=K.concatenate),
-    N.LSTM(num_units=lstm_output_size)[:, -1],
+    N.LSTM(num_units=lstm_output_size, input_mode='skip')[:, -1],
     N.Dense(1, activation=K.sigmoid)
-])
+], debug=True)
 K.set_training(True); y_pred_train = f(X_train)
 K.set_training(False); y_pred_score = f(X_score)
 
@@ -75,6 +74,7 @@ cost_train = K.mean(K.binary_crossentropy(y_pred_train, y))
 cost_score = K.mean(K.binary_accuracy(y_pred_score, y))
 
 parameters = f.parameters
+print('Params:', [p.name for p in parameters])
 
 updates = K.optimizers.Adam(lr=0.001).get_updates(cost_train, parameters)
 
@@ -93,8 +93,8 @@ trainer.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=nb_epoch, name='
 trainer.set_subtask(f_score, (ds['X_test'], ds['y_test']), freq=0.5, name='Valid')
 trainer.set_callback([
     training.History(),
-    training.ProgressMonitor('Train', format='Results: %.4f'),
-    training.ProgressMonitor('Valid', format='Results: %.4f')
+    training.ProgressMonitor('Train', format='Results: {:.4f}'),
+    training.ProgressMonitor('Valid', format='Results: {:.4f}')
 ])
 trainer.run()
 

@@ -134,6 +134,8 @@ def clip(x, min_value, max_value):
 
 
 def square(x):
+    if x.__class__.__name__ == 'IndexedSlices':
+        x = add(x, 0.)
     return _copy_shape(x, backend_ops_square)
 
 
@@ -231,8 +233,9 @@ def le(a, b):
 # ===========================================================================
 # Graph creator helper
 # ===========================================================================
-def function(inputs, outputs, updates=[]):
-    f = Function(inputs, outputs, updates=updates)
+def function(inputs, outputs, updates=[], **kwargs):
+    f = Function(inputs=inputs, outputs=outputs,
+                 updates=updates, **kwargs)
     return f
 
 

@@ -192,7 +192,11 @@ def add_shape(var, shape):
            for s in shape):
         return
     # check shape tuple
-    shape = as_shape_tuple(shape)
+    try:
+        shape = as_shape_tuple(shape)
+    except:
+        return var
+    # check ndim
     ndim = var.ndim if hasattr(var, 'ndim') else var.get_shape().ndims
     if len(shape) != ndim:
         raise ValueError('Variable has ndim={} but given shape has ndim={}'

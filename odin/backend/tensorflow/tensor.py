@@ -607,7 +607,7 @@ class Function(object):
         # ====== validate updates ====== #
         if isinstance(updates, dict):
             updates = updates.items()
-        updates += ComputationGraph(outputs).updates.items()
+        updates = updates + ComputationGraph(outputs).updates.items()
         # create updates ops
         with tf.control_dependencies(self.outputs):
             updates_ops = []

@@ -115,6 +115,10 @@ class Squeeze(NNOps):
         return config
 
     def _apply(self, x):
+        input_shape = K.get_shape(x)
+        if input_shape[self.axis] != 1:
+            raise ValueError('The squeeze axis=%d must be 1, but got %d instead' %
+                             (self.axis, input_shape[self.axis]))
         return K.squeeze(x, axis=self.axis)
 
     def _transpose(self):

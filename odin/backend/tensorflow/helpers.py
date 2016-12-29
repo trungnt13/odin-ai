@@ -176,7 +176,7 @@ def variable(value, dtype=FLOATX, name=None, target=None):
 def placeholder(shape, dtype=FLOATX, name=None):
     shape = as_shape_tuple(shape)
     # ====== Modify add name prefix ====== #
-    placeholder = tf.placeholder(dtype, shape=shape, name=name)
+    placeholder = tf.placeholder(dtype=dtype, shape=shape, name=name)
     # store the predefined shape of placeholder
     add_shape(placeholder, shape)
     return placeholder
