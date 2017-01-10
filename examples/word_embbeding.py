@@ -20,7 +20,9 @@ import numpy as np
 
 from odin import backend as K, nnet as N, fuel as F
 from odin.basic import has_roles, EMBEDDING
-from odin.preprocessing.text import (Tokenizer, language, POSfilter, TYPEfilter)
+from odin.preprocessing.text import (Tokenizer, language, POSfilter,
+                                     TYPEfilter, CasePreprocessor,
+                                     TransPreprocessor)
 from odin import training
 
 # ===========================================================================
@@ -51,17 +53,20 @@ if os.path.exists(tokenizer_path):
 else:
     print('\nRebuild tokenizer ...')
     tk = Tokenizer(nb_words=MAX_NB_WORDS, char_level=False,
-                   stopwords=False, lemmatization=True, lower=True,
+                   stopwords=False, lemmatization=True,
+                   preprocessors=[TransPreprocessor(),
+                                  CasePreprocessor(lower=True, keep_name=True, split=' ')],
                    filters=[TYPEfilter(is_alpha=True, is_digit=True),
                             POSfilter(NOUN=True, PROPN=True,
                                       ADJ=True, VERB=True, ADV=True)],
                    nb_threads=None, batch_size=1024 * 3,
-                   engine='odin'
+                   order='word', engine='odin'
     )
     tk.fit(chain(*newsgroup.values()), vocabulary=embedding)
     cPickle.dump(tk, open(tokenizer_path, 'w'), protocol=cPickle.HIGHEST_PROTOCOL)
-print('Top popular words:', tk.top_k(n=12))
-print('Length of dictionary:', len(tk.dictionary), tk.nb_words)
+print('========== Summary ==========')
+for i, j in tk.summary.iteritems():
+    print(i, ':', j)
 
 # ===========================================================================
 # Build dataset
@@ -100,7 +105,7 @@ y_in = K.placeholder(shape=(None, nb_labels), dtype='float32', name='y_in')
 
 f = N.Sequence([
     N.Embedding(tk.nb_words, embedding_dims,
-                W_init=tk.embed(embedding)),
+                W_init=tk.embed(embedding, token_not_found='raise')),
     N.Dimshuffle(pattern=(0, 1, 'x', 2)),
 
     N.Conv(num_filters=128, filter_size=(5, 1), strides=1, pad='valid',

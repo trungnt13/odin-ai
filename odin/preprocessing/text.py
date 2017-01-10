@@ -116,6 +116,9 @@ class TransPreprocessor(TextPreprocessor):
         self.__uni_trans = dict((ord(char), new) for char in old)
 
     def preprocess(self, text):
+        if isinstance(text, (tuple, list)):
+            text = ' '.join(text)
+        # ====== translate the text ====== #
         if isinstance(text, unicode):
             text = text.translate(self.__uni_trans)
         else:
@@ -307,6 +310,12 @@ class Tokenizer(object):
         if 'word', order the dictionary by word frequency
         if 'doc', order the dictionary by docs frequency (i.e. the number
         of documents that the word appears in)
+
+    Note
+    ----
+    This module use `multiprocessing` to significantly speed up tokenizing
+    process for big documents, but it might be slow on trivial dataset.
+
     """
 
     def __init__(self, nb_words=None,
@@ -319,7 +328,8 @@ class Tokenizer(object):
                  batch_size=2048,
                  nb_threads=None,
                  order='word',
-                 engine='odin'):
+                 engine='odin',
+                 print_progress=True):
         # ====== internal states ====== #
         if engine not in ('spacy', 'odin'):
             raise ValueError('We only support 2 text processing engines: Spacy, or ODIN.')
@@ -328,6 +338,7 @@ class Tokenizer(object):
         self.__engine = engine
         self.__order = order
         self.__longest_document = ['', 0]
+        self.print_progress = print_progress
         # ====== dictionary info ====== #
         self._nb_words = nb_words
         self.nb_docs = 0
@@ -364,12 +375,13 @@ class Tokenizer(object):
         word_counts.sort(key=lambda x: x[1], reverse=True)
         # create the ordered dictionary
         word_dictionary = OrderedDict()
+        # ====== add all tokens in order ====== #
         n = self.nb_words
         for i, (w, _) in enumerate(word_counts):
-            if i > n:
+            if i + 1 >= n:
                 break
             word_dictionary[w] = i + 1
-        word_dictionary[''] = 0
+        # ====== add NULL token ====== #
         word_dictionary[u''] = 0
         self._word_dictionary = word_dictionary
         return word_dictionary
@@ -409,6 +421,9 @@ class Tokenizer(object):
 
     @property
     def summary(self):
+        """ Return a dictionary with description -> statistics of
+        the Tokenizer
+        """
         return {
             '#Words': len(self._word_counts),
             '#Docs': self.nb_docs,
@@ -659,14 +674,32 @@ class Tokenizer(object):
             results = X
         return results
 
-    def embed(self, vocabulary):
+    def embed(self, vocabulary, dtype='float32',
+              token_not_found='ignore'):
         """Any word not found in the vocabulary will be set to all-zeros"""
+        # ====== check vocab ======= #
+        if not isinstance(vocabulary, dict):
+            raise ValueError('"vocabulary" must be any instance of dict.')
+        # ====== check token_not_found ====== #
+        if not isinstance(token_not_found, Number) and \
+        not is_string(token_not_found) and \
+        token_not_found not in ('ignore', 'raise'):
+            raise ValueError('token_not_found can be: "ignore", "raise"'
+                             ', an integer of token index, or a string '
+                             'represented a token.')
+        if token_not_found not in ('ignore', 'raise'):
+            token_not_found = int(self.dictionary[token_not_found])
+        elif isinstance(token_not_found, Number):
+            token_not_found = int(token_not_found)
+        # ====== create embedding matrix ====== #
         ndim = len(vocabulary.itervalues().next())
-        matrix = np.zeros(shape=(len(self.dictionary), ndim))
-        for i, word in enumerate(self.dictionary):
+        matrix = np.zeros(shape=(len(self.dictionary), ndim), dtype=dtype)
+        for word, idx in self.dictionary.iteritems():
+            if len(word) == 0: continue
             if word in vocabulary:
-                matrix[i, :] = vocabulary[word]
+                matrix[idx, :] = vocabulary[word]
+            elif token_not_found == 'raise':
+                raise Exception('Cannot find token "%s" in the vocabulary.' % word)
+            elif isinstance(token_not_found, int):
+                matrix[idx, :] == matrix[token_not_found, :]
         return matrix
-
-    def __del__(self):
-        pass
