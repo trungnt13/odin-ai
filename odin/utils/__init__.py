@@ -15,7 +15,8 @@ import contextlib
 import platform
 import argparse
 from multiprocessing import cpu_count, Value, Lock, current_process
-from collections import OrderedDict, deque, Iterable
+from collections import OrderedDict, deque, Iterable, Iterator
+from itertools import islice, tee
 
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
@@ -53,6 +54,16 @@ def is_string(s):
     if isinstance(s, (unicode, str)):
         return True
     False
+
+
+def iter_chunk(it, n):
+    """ Chunking an iterator into small chunk of size `n` """
+    if not isinstance(it, Iterator):
+        it = iter(it)
+    obj = list(islice(it, n))
+    while obj:
+        yield obj
+        obj = list(islice(it, n))
 
 
 # ===========================================================================
