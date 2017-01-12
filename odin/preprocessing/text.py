@@ -372,17 +372,17 @@ class Tokenizer(object):
         # sort the dictionary
         word_counts = self._word_counts.items() if self.__order == 'word' \
             else self._word_docs.items()
-        word_counts.sort(key=lambda x: x[1], reverse=True)
+        # sorted by both attribute for deterministic dictionary
+        word_counts.sort(key=lambda x: (x[1], x[0]), reverse=True)
         # create the ordered dictionary
         word_dictionary = OrderedDict()
+        word_dictionary[u''] = 0
         # ====== add all tokens in order ====== #
         n = self.nb_words
         for i, (w, _) in enumerate(word_counts):
             if i + 1 >= n:
                 break
             word_dictionary[w] = i + 1
-        # ====== add NULL token ====== #
-        word_dictionary[u''] = 0
         self._word_dictionary = word_dictionary
         return word_dictionary
 
@@ -442,13 +442,13 @@ class Tokenizer(object):
     def top_k(self, n=12):
         top = []
         count = self._word_counts if self.__order == 'word' else self._word_docs
-        for i, w in enumerate(self._word_dictionary.iterkeys()):
+        for i, w in enumerate(self.dictionary.iterkeys()):
             top.append((w, count[w]))
             if i >= n: break
         return top
 
     # ==================== methods ==================== #
-    def _preprocess_docs_spacy(self, texts, vocabulary):
+    def _preprocess_docs_spacy(self, texts, vocabulary, keep_order):
         def textit(texts):
             for t in texts:
                 for p in self.preprocessors:
@@ -491,7 +491,7 @@ class Tokenizer(object):
                                 doc_tokens.append(char)
             yield nb_docs + 1, doc_tokens
 
-    def _preprocess_docs_odin(self, texts, vocabulary):
+    def _preprocess_docs_odin(self, texts, vocabulary, keep_order):
         # ====== main processing ====== #
         def initializer(filters, preprocessors,
                         lang, lemma, charlevel, stopwords):
@@ -501,13 +501,18 @@ class Tokenizer(object):
             globals()['__lemma'] = lemma
             globals()['__charlevel'] = charlevel
             globals()['__stopwords'] = stopwords
-
+        # add the index for ordering
         nb_docs = 0
         pool = Pool(processes=self.nb_threads, initializer=initializer,
                     initargs=(self.filters, self.preprocessors, self.language,
                               self.lemmatization, self.char_level, self.stopwords))
-        for doc in pool.imap_unordered(func=_preprocess_func, iterable=texts,
-                                       chunksize=self.batch_size):
+        if keep_order:
+            it = pool.imap(func=_preprocess_func, iterable=texts,
+                           chunksize=self.batch_size)
+        else:
+            it = pool.imap_unordered(func=_preprocess_func, iterable=texts,
+                                     chunksize=self.batch_size)
+        for doc in it:
             nb_docs += 1
             if vocabulary is not None:
                 doc = [token for token in doc if token in vocabulary]
@@ -533,7 +538,7 @@ class Tokenizer(object):
         # ====== start processing ====== #
         prog = Progbar(target=1208)
         start_time = timeit.default_timer()
-        for nb_docs, doc in processor(texts, vocabulary):
+        for nb_docs, doc in processor(texts, vocabulary, keep_order=False):
             total_docs_tokens = 0
             seen_words = {}
             # update words->count
@@ -548,12 +553,14 @@ class Tokenizer(object):
             if total_docs_tokens > self.__longest_document[-1]:
                 self.__longest_document = [doc, total_docs_tokens]
             # print progress
-            prog.title = '[Training]#Doc:%d #Tok:%d' % (nb_docs, len(word_counts))
-            prog.add(1)
-            if prog.seen_so_far >= 0.8 * prog.target:
-                prog.target = 1.2 * prog.target
+            if self.print_progress:
+                prog.title = '[Training]#Doc:%d #Tok:%d' % (nb_docs, len(word_counts))
+                prog.add(1)
+                if prog.seen_so_far >= 0.8 * prog.target:
+                    prog.target = 1.2 * prog.target
         # ====== print summary of the process ====== #
-        prog.target = nb_docs; prog.update(nb_docs)
+        if self.print_progress:
+            prog.target = nb_docs; prog.update(nb_docs)
         processing_time = timeit.default_timer() - start_time
         print('Processed %d-docs, %d-tokens in %f second.' %
             (nb_docs, len(word_counts), processing_time))
@@ -618,14 +625,15 @@ class Tokenizer(object):
             target_len = 1208
             auto_adjust_len = True
         prog = Progbar(target=target_len)
-        for nb_docs, doc in processor(texts, vocabulary=None):
+        for nb_docs, doc in processor(texts, vocabulary=None, keep_order=True):
             # found the word in dictionary
             vec = []
             for x in doc:
                 idx = dictionary.get(x, -1)
-                if x >= 0: vec.append(idx)
+                if idx >= 0: vec.append(idx)
                 # not found the token in dictionary
-                elif token_not_found == 'ignore': pass
+                elif token_not_found == 'ignore':
+                    continue
                 elif token_not_found == 'raise':
                     raise RuntimeError('Cannot find token: "%s" in dictionary' % x)
                 elif isinstance(token_not_found, int):
@@ -636,12 +644,13 @@ class Tokenizer(object):
             # add the final results
             results.append(vec)
             # print progress
-            prog.title = "[Transforming] %d docs" % nb_docs
-            prog.add(1)
-            if auto_adjust_len and prog.seen_so_far >= 0.8 * prog.target:
-                prog.target = 1.2 * prog.target
+            if self.print_progress:
+                prog.title = "[Transforming] %d docs" % nb_docs
+                prog.add(1)
+                if auto_adjust_len and prog.seen_so_far >= 0.8 * prog.target:
+                    prog.target = 1.2 * prog.target
         # end the process
-        if auto_adjust_len:
+        if self.print_progress and auto_adjust_len:
             prog.target = nb_docs; prog.update(nb_docs)
         # ====== pad the sequence ====== #
         if mode == 'seq':

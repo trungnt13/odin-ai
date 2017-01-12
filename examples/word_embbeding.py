@@ -39,10 +39,14 @@ MODEL_PATH = get_modelpath(name='word_embedding_test.ai',
 # ===========================================================================
 embedding = F.load_glove(ndim=embedding_dims)
 newsgroup = F.load_20newsgroup()
-labels = newsgroup.keys()
-nb_labels = len(labels)
+labels = []
+texts = []
 for i, j in newsgroup.iteritems():
+    labels += [i] * len(j)
+    texts += j
     print(i, ':', len(j))
+labels_set = list(set(labels))
+nb_labels = len(labels_set)
 
 tokenizer_path = get_modelpath('tokenizer', override=False)
 if OVERRIDE and os.path.exists(tokenizer_path):
@@ -53,16 +57,13 @@ if os.path.exists(tokenizer_path):
 else:
     print('\nRebuild tokenizer ...')
     tk = Tokenizer(nb_words=MAX_NB_WORDS, char_level=False,
-                   stopwords=False, lemmatization=True,
+                   stopwords=True, lemmatization=True,
                    preprocessors=[TransPreprocessor(),
-                                  CasePreprocessor(lower=True, keep_name=True, split=' ')],
-                   filters=[TYPEfilter(is_alpha=True, is_digit=True),
-                            POSfilter(NOUN=True, PROPN=True,
-                                      ADJ=True, VERB=True, ADV=True)],
+                                  CasePreprocessor(lower=True, keep_name=False, split=' ')],
                    nb_threads=None, batch_size=1024 * 3,
                    order='word', engine='odin'
     )
-    tk.fit(chain(*newsgroup.values()), vocabulary=embedding)
+    tk.fit(texts, vocabulary=None)
     cPickle.dump(tk, open(tokenizer_path, 'w'), protocol=cPickle.HIGHEST_PROTOCOL)
 print('========== Summary ==========')
 for i, j in tk.summary.iteritems():
@@ -71,41 +72,39 @@ for i, j in tk.summary.iteritems():
 # ===========================================================================
 # Build dataset
 # ===========================================================================
-X = tk.transform(chain(*newsgroup.values()), maxlen=MAX_SEQ_LEN, end_document=None,
-                 token_not_found='raise')
-y = []
-for i in newsgroup.keys():
-    y += [labels.index(i)] * len(newsgroup[i])
+X = tk.transform(texts, mode='seq', maxlen=MAX_SEQ_LEN,
+                 end_document=None, token_not_found='ignore')
+
+y = [labels_set.index(i) for i in labels]
 y = one_hot(np.array(y, dtype='int32'), n_classes=nb_labels)
 
 n = X.shape[0]
+np.random.seed(1208)
 idx = np.random.permutation(n)
 X = X[idx]
 y = y[idx]
 
-X_train = X[:int(0.6 * n)]
-y_train = y[:int(0.6 * n)]
-
-X_valid = X[int(0.6 * n):int(0.8 * n)]
-y_valid = y[int(0.6 * n):int(0.8 * n)]
-
-X_test = X[int(0.8 * n):]
-y_test = y[int(0.8 * n):]
+X_train = X[:int(0.8 * n)]
+y_train = y[:int(0.8 * n)]
+X_valid = X[int(0.8 * n):]
+y_valid = y[int(0.8 * n):]
 
 print('X:', X.shape, 'y:', y.shape)
 print('X_train:', X_train.shape, 'y_train:', y_train.shape)
 print('X_valid:', X_valid.shape, 'y_valid:', y_valid.shape)
-print('X_test:', X_test.shape, 'y_test:', y_test.shape)
 
+E = tk.embed(embedding)
+# these numbers must be the same for all time
+print('Tokenizer:', np.sum(E), np.sum(X_train), np.sum(y_train),
+      np.sum(X_valid), np.sum(y_valid))
 # ===========================================================================
 # Building model
 # ===========================================================================
-X_in = K.placeholder(shape=(None, MAX_SEQ_LEN), dtype='int32', name='X_in')
-y_in = K.placeholder(shape=(None, nb_labels), dtype='float32', name='y_in')
+X = K.placeholder(shape=(None, MAX_SEQ_LEN), dtype='int32', name='X')
+y = K.placeholder(shape=(None, nb_labels), dtype='float32', name='y')
 
 f = N.Sequence([
-    N.Embedding(tk.nb_words, embedding_dims,
-                W_init=tk.embed(embedding, token_not_found='raise')),
+    N.Embedding(tk.nb_words, embedding_dims, W_init=E),
     N.Dimshuffle(pattern=(0, 1, 'x', 2)),
 
     N.Conv(num_filters=128, filter_size=(5, 1), strides=1, pad='valid',
@@ -125,46 +124,27 @@ f = N.Sequence([
     N.Dense(num_units=nb_labels, activation=K.softmax)
 ], debug=True)
 
-y_out = f(X_in)
+y_pred = f(X)
 params = [p for p in f.parameters if not has_roles(p, EMBEDDING)]
-print('Parameters:', [p.name for p in params])
+print('Params:', [p.name for p in params])
 
-cost_train = K.mean(K.categorical_crossentropy(y_out, y_in))
-cost_score = K.mean(K.categorical_accuracy(y_out, y_in))
+cost_train = K.mean(K.categorical_crossentropy(y_pred, y))
+cost_score = K.mean(K.categorical_accuracy(y_pred, y))
 
-optimizer = K.optimizers.RMSProp(lr=args['lr'])
-updates = optimizer.get_updates(cost_train, params)
+opt = K.optimizers.RMSProp()
+updates = opt.get_updates(cost_train, params)
 
 print('Build training function ...')
-f_train = K.function([X_in, y_in], cost_train, updates)
+f_train = K.function([X, y], cost_train, updates)
 print('Build scoring function ...')
-f_score = K.function([X_in, y_in], cost_score)
+f_score = K.function([X, y], cost_score)
 
-# ===========================================================================
-# Create trainer
-# ===========================================================================
-print('Start training ...')
-task = training.MainLoop(batch_size=128, seed=1208, shuffle_level=2)
-task.set_save(MODEL_PATH, f)
-task.set_task(f_train, (X_train, y_train), epoch=args['epoch'], name='train')
-task.set_subtask(f_score, (X_valid, y_valid), freq=0.6, name='valid')
-task.set_subtask(f_score, (X_test, y_test), when=-1, name='test')
-task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: {:.4f}'),
-    training.ProgressMonitor(name='valid', format='Results: {:.4f}'),
-    training.ProgressMonitor(name='test', format='Results: {:.4f}'),
-    training.History(),
-    training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
-    training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
+trainer = training.MainLoop(batch_size=128, seed=1208, shuffle_level=2)
+trainer.set_task(f_train, (X_train, y_train), epoch=2, name='train')
+trainer.set_subtask(f_score, (X_valid, y_valid), freq=1., name='valid')
+trainer.set_callback([
+    training.ProgressMonitor('train', format='Train:{:.4f}'),
+    training.ProgressMonitor('valid', format='Test:{:.4f}'),
+    training.History()
 ])
-task.run()
-
-# ====== plot the training process ====== #
-task['History'].print_info()
-task['History'].print_batch('train')
-task['History'].print_batch('valid')
-task['History'].print_epoch('test')
-print('Benchmark TRAIN-batch:', task['History'].benchmark('train', 'batch_end').mean)
-print('Benchmark TRAIN-epoch:', task['History'].benchmark('train', 'epoch_end').mean)
-print('Benchmark PRED-batch:', task['History'].benchmark('valid', 'batch_end').mean)
-print('Benchmark PRED-epoch:', task['History'].benchmark('valid', 'epoch_end').mean)
+trainer.run()
