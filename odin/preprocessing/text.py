@@ -350,6 +350,7 @@ class Tokenizer(object):
         self._word_docs = defaultdict(int)
         # actual dictionary used for embedding
         self._word_dictionary = OrderedDict()
+        self._word_dictionary_info = OrderedDict()
 
         self.stopwords = stopwords
         self.lemmatization = lemmatization
@@ -376,14 +377,18 @@ class Tokenizer(object):
         word_counts.sort(key=lambda x: (x[1], x[0]), reverse=True)
         # create the ordered dictionary
         word_dictionary = OrderedDict()
+        word_dictionary_info = OrderedDict()
         word_dictionary[u''] = 0
+        word_dictionary_info[0] = (0, 0) # word_index => (count, docs)
         # ====== add all tokens in order ====== #
         n = self.nb_words
         for i, (w, _) in enumerate(word_counts):
             if i + 1 >= n:
                 break
             word_dictionary[w] = i + 1
+            word_dictionary_info[i + 1] = (_, self._word_docs[w])
         self._word_dictionary = word_dictionary
+        self._word_dictionary_info = word_dictionary_info
         return word_dictionary
 
     def _validate_texts(self, texts):
@@ -653,33 +658,35 @@ class Tokenizer(object):
         if self.print_progress and auto_adjust_len:
             prog.target = nb_docs; prog.update(nb_docs)
         # ====== pad the sequence ====== #
+        # just transform into sequence of tokens
         if mode == 'seq':
             maxlen = self.longest_document_length if maxlen is None \
                 else int(maxlen)
             results = pad_sequences(results, maxlen=maxlen, dtype=dtype,
                                     padding=padding, truncating=truncating,
                                     value=value)
+        # transform into one-hot matrix
         else:
             X = np.zeros(shape=(len(results), self.nb_words))
-            for i, j in enumerate(results):
+            for i, seq in enumerate(results):
                 if mode == 'binary':
-                    X[i, j] = 1
+                    X[i, seq] = 1
                 elif mode == 'freq':
-                    length = len(j)
-                    count = freqcount(j)
-                    for a, b in count.iteritems():
-                        X[i, a] = b / float(length)
+                    length = len(seq)
+                    count = freqcount(seq)
+                    for tok, n in count.iteritems():
+                        X[i, tok] = n / float(length)
                 elif mode == 'count':
-                    count = freqcount(j)
-                    for a, b in count.iteritems():
-                        X[i, a] = b
+                    count = freqcount(seq)
+                    for tok, n in count.iteritems():
+                        X[i, tok] = n
                 elif mode == 'tfidf':
-                    count = freqcount(j)
-                    for a, b in count.iteritems():
-                        tf = 1 + np.log(b)
-                        idf = np.log(1 + self.nb_docs /
-                                     (1 + self._word_docs.get(j, 0)))
-                        X[i][j] = tf * idf
+                    count = freqcount(seq)
+                    for tok, n in count.iteritems():
+                        tf = 1 + np.log(n)
+                        docs_freq = self._word_dictionary_info.get(tok, (0, 0))[-1]
+                        idf = np.log(1 + self.nb_docs / (1 + docs_freq))
+                        X[i, tok] = tf * idf
             results = X
         return results
 

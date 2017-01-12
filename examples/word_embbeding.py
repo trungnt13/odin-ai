@@ -140,7 +140,7 @@ print('Build scoring function ...')
 f_score = K.function([X, y], cost_score)
 
 trainer = training.MainLoop(batch_size=128, seed=1208, shuffle_level=2)
-trainer.set_task(f_train, (X_train, y_train), epoch=2, name='train')
+trainer.set_task(f_train, (X_train, y_train), epoch=args['epoch'], name='train')
 trainer.set_subtask(f_score, (X_valid, y_valid), freq=1., name='valid')
 trainer.set_callback([
     training.ProgressMonitor('train', format='Train:{:.4f}'),
