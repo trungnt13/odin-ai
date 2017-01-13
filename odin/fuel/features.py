@@ -138,7 +138,7 @@ class FeatureProcessor(object):
 
     def __init__(self, output_path, datatype='memmap',
                  save_stats=True, substitute_nan=None,
-                 ncpu=1):
+                 ncache=0.12, ncpu=1):
         super(FeatureProcessor, self).__init__()
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
@@ -150,6 +150,7 @@ class FeatureProcessor(object):
         self.save_stats = bool(save_stats)
         self.substitute_nan = substitute_nan
         self.ncpu = ncpu
+        self.ncache = ncache
 
     # ==================== Abstract properties ==================== #
     @abstractproperty
@@ -181,7 +182,10 @@ class FeatureProcessor(object):
         sum2 = defaultdict(int)
         # all data are cached for periodically flushed
         cache = defaultdict(list)
-        cache_limit = max(2, int(0.12 * len(self.jobs)))
+        if self.ncache <= 1:
+            cache_limit = max(2, int(0.12 * len(self.jobs)))
+        else:
+            cache_limit = int(self.ncache)
         ref_vars = {'start': 0, 'processed_count': 0}
 
         # ====== helper ====== #
@@ -317,6 +321,10 @@ class SpeechProcessor(FeatureProcessor):
         [pitch_freq + pitch_freq_delta + pitch_mag + pitch_mag_delta]
     robust : bool
         run in robust mode, auto ignore error files
+    ncache: float or int
+        number of samples are kept until flush to the disk.
+    ncpu: int
+        number of CPU used for this task.
 
     Return
     ------
@@ -341,10 +349,10 @@ class SpeechProcessor(FeatureProcessor):
                  get_spec=False, get_mspec=True, get_mfcc=False,
                  get_pitch=False, get_vad=True,
                  save_stats=True, substitute_nan=None,
-                 dtype='float32', datatype='memmap', ncpu=1):
+                 dtype='float32', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, save_stats=save_stats,
-            substitute_nan=substitute_nan, ncpu=ncpu)
+            substitute_nan=substitute_nan, ncache=ncache, ncpu=ncpu)
         audio_ext = as_tuple('' if audio_ext is None else audio_ext,
                              t=(str, unicode))
         # ====== load jobs ====== #
