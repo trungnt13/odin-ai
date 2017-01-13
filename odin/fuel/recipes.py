@@ -606,8 +606,6 @@ class CreateBatch(FeederRecipe):
     """ Batching
     Parameters
     ----------
-    return_name: boolean
-        if True, return the name (in the indices file) with the batch
     batch_filter: callable
         must be a function has take a list of np.ndarray as first arguments
         ([X]) or ([X, y]), you can return None to ignore given batch

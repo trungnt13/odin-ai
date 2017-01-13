@@ -220,8 +220,8 @@ class MPI(SelfIterator):
         process.
     maximum_queue_size: int (default: 66)
         maximum number of batch will be cached in Queue before main process
-        get it and feed to the GPU (if the too many results in Queue, all
-        subprocess will be paused)
+        get it and feed to the GPU (if there are too many results in Queue, a
+        deadlock will happen)
 
 
     Notes

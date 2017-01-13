@@ -103,14 +103,17 @@ class Feeder(MutableData):
     buffer_size: int
         the amount of data each process keep before return to main
         process.
+    maximum_queue_size: int (default: 66)
+        maximum number of batch will be cached in Queue before main process
+        get it and feed to the GPU (if there are too many results in Queue, a
+        deadlock will happen)
 
     Example
     -------
     >>> ds = F.Dataset(os.path.join(temppath, 'ds'), read_only=True)
-    >>> feeder = F.Feeder(indices=ds['indices.csv'],
+    >>> feeder = F.Feeder(ds['X'], indices=ds['indices.csv'],
     >>>                   ncpu=2, buffer_size=2, maximum_queue_size=12)
     >>> feeder.set_recipes([
-    >>>     F.recipes.DataLoader(ds['X']),
     >>>     F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
     >>>     F.recipes.CreateBatch()
     >>> ])
@@ -132,7 +135,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, dtype=None,
-                 ncpu=1, buffer_size=12, maximum_queue_size=20):
+                 ncpu=1, buffer_size=8, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         if isinstance(indices, str) and os.path.isfile(indices):
