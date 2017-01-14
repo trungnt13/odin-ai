@@ -1,7 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12082518'
+os.environ['ODIN'] = 'float32,gpu,theano,seed=12082518'
 
 import numpy as np
 
@@ -12,9 +12,9 @@ from odin import fuel as F, nnet as N, backend as K, training, utils
 # ===========================================================================
 ds = F.load_cifar10()
 print(ds)
-X_learn = ds['X_train']
+X_learn = ds['X_train'][:].astype('float32') / 255.
 y_learn = ds['y_train']
-X_test = ds['X_test']
+X_test = ds['X_test'][:].astype('float32') / 255.
 y_test = ds['y_test']
 
 # ===========================================================================
@@ -24,7 +24,6 @@ X = K.placeholder(shape=(None,) + X_learn.shape[1:], name='X')
 y_true = K.placeholder(shape=(None,), name='y_true', dtype='int32')
 
 f = N.Sequence([
-    lambda x: K.div(x, 255),
     N.Dimshuffle(pattern=(0, 2, 3, 1)),
     N.Conv(32, (3, 3), pad='same', stride=(1, 1), activation=K.relu),
     N.Conv(32, (3, 3), pad='same', stride=(1, 1), activation=K.relu),
@@ -48,8 +47,9 @@ cost_train = K.mean(K.categorical_crossentropy(y_train, y_true))
 cost_pred = K.mean(K.categorical_accuracy(y_pred, y_true))
 cost_eval = K.mean(K.categorical_crossentropy(y_pred, y_true))
 parameters = f.parameters
+print('Parameters:', [p.name for p in parameters])
 
-optz = K.optimizers.RMSProp(lr=0.001)
+optz = K.optimizers.RMSProp()
 updates = optz.get_updates(cost_train, parameters)
 
 print("Build training function ...")

@@ -6,6 +6,7 @@
 #  Benchmark TRAIN-epoch: 5.98400415693 (s)
 #  Benchmark PRED-batch: 0.183033730263 (s)
 #  Benchmark PRED-epoch: 3.5595933524 (s)
+# NOTE: the performance of float16 and float32 dataset are identical
 # ===========================================================================
 from __future__ import print_function, absolute_import, division
 
@@ -20,7 +21,7 @@ args = ArgController(
 ).add('-cnn', 'enable CNN or not', True
 # for trainign
 ).add('-lr', 'learning rate', 0.0001
-).add('-epoch', 'number of epoch', 8
+).add('-epoch', 'number of epoch', 5
 ).add('-bs', 'batch size', 8
 ).parse()
 
@@ -146,7 +147,7 @@ f_pred = K.function(X, y_score)
 # ===========================================================================
 print('Start training ...')
 task = training.MainLoop(batch_size=args['bs'], seed=1208, shuffle_level=2)
-task.set_save(get_modelpath(name='digit_audio_%s.ai' % NAME, override=True), f)
+task.set_save(get_modelpath(name='digit_audio.ai', override=True), f)
 task.set_task(f_train, train_feeder, epoch=args['epoch'], name='train')
 task.set_subtask(f_test, valid_feeder, freq=0.6, name='valid')
 task.set_subtask(f_test, test_feeder, when=-1, name='test')

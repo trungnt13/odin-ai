@@ -390,6 +390,9 @@ class SpeechProcessor(FeatureProcessor):
         for segment, file, start, end, channel in file_list:
             self.jobs[file].append((segment, float(start), float(end), int(channel)))
         self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
+        # check empty jobs
+        if len(self.jobs) == 0:
+            raise Exception('NO jobs found for processing.')
         # ====== which features to get ====== #
         if not get_spec and not get_mspec \
             and not get_mfcc and not get_pitch:
