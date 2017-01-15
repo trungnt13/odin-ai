@@ -638,7 +638,9 @@ class EarlyStopGeneralizationLoss(EarlyStop):
     ----
     The early stop checking will be performed at the end of an epoch.
     By default, the return value from epoch mean the loss value, i.e lower
-    is better
+    is better.
+    By default, the `get_value` function will only take the first returned
+    value for evaluation.
     """
 
     def earlystop(self, history):
