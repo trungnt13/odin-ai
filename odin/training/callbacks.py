@@ -30,6 +30,7 @@ from odin.utils.decorators import functionable
 __all__ = [
     'Callback',
     'CallbackList',
+    'Checkpoint',
     'History',
     'NaNDetector',
     'EarlyStop',
@@ -277,6 +278,26 @@ class CallbackList(Callback):
 # ===========================================================================
 # History
 # ===========================================================================
+class Checkpoint(Callback):
+
+    """ Checkpoint
+    Return SIG_TRAIN_SAVE whenever the epoch_end is called with
+    given event_name
+    """
+
+    def __init__(self, event_name):
+        super(Checkpoint, self).__init__()
+        self._name = event_name
+
+    @property
+    def _saveable_variables(self):
+        return {'_name': self._name}
+
+    def epoch_end(self):
+        if self.event_name == self._name:
+            return SIG_TRAIN_SAVE
+
+
 class History(Callback):
     """ History
     [time, event_name, event_type, nb_samples, nb_iter, nb_epoch, results]

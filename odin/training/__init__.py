@@ -396,6 +396,7 @@ class MainLoop(object):
             if self._save_hist is not None and 'History' in self._callback:
                 cPickle.dump(self._callback['History'], open(self._save_hist, 'w'),
                              protocol=cPickle.HIGHEST_PROTOCOL)
+            print("\nCreated checkpoint at path:", self._save_path)
 
     def _rollback(self):
         if self._save_path is not None and os.path.exists(self._save_path):

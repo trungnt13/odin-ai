@@ -544,7 +544,35 @@ def categorical_accuracy(y_pred, y_true, top_k=1):
         return any(eq(top, y_true), axis=-1)
 
 
-def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., softmax_input=False):
+def to_llr(x):
+    ''' Convert a matrix of probabilities into log-likelihood ratio
+    :math:`LLR = log(\\frac{prob(data|target)}{prob(data|non-target)})`
+    '''
+    if isinstance(x, np.ndarray):
+        x /= np.sum(x, axis=-1, keepdims=True)
+        x = np.clip(x, 10e-8, 1. - 10e-8)
+        return np.log(x / (cast(1., x.dtype) - x))
+    else:
+        x /= sum(x, axis=-1, keepdims=True)
+        x = clip(x, 10e-8, 1. - 10e-8)
+        return log(x / (cast(1., x.dtype) - x))
+
+
+def to_llh(x):
+    ''' Convert a matrix of probabilities into log-likelihood
+    :math:`LLH = log(prob(data|target))`
+    '''
+    if isinstance(x, np.ndarray):
+        x /= np.sum(x, axis=-1, keepdims=True)
+        x = np.clip(x, 10e-8, 1. - 10e-8)
+        return np.log(x)
+    else:
+        x /= sum(x, axis=-1, keepdims=True)
+        x = clip(x, 10e-8, 1. - 10e-8)
+        return log(x)
+
+
+def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., probability_input=False):
     ''' Fast calculation of Cavg (for only 1 clusters)
 
     Parameters
@@ -558,20 +586,23 @@ def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., softmax_input=False):
         llr transform for `y_llr`
 
     '''
-    if softmax_input:
+    if probability_input:
         y_llr = log(y_llr / (1 - y_llr))
 
     thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
-    n = y_llr.shape[1]
+    nb_classes = get_shape(y_llr)[1]
 
     if isinstance(y_true, (list, tuple)):
         y_true = np.asarray(y_true)
     if ndim(y_true) == 1:
-        y_true = one_hot(y_true, n)
-
-    y_false = switch(y_true, 0, 1) # invert of y_true, False Negative mask
-    y_positive = switch(ge(y_llr, thresh), 1, 0)
-    y_negative = switch(lt(y_llr, thresh), 1, 0) # inver of y_positive
+        y_true = one_hot(y_true, nb_classes)
+    y_true = cast(y_true, y_llr.dtype)
+    # ====== statistics ====== #
+    # invert of y_true, False Negative mask
+    y_false = 1. - y_true
+    y_positive = cast(ge(y_llr, thresh), y_llr.dtype)
+    # invert of y_positive
+    y_negative = cast(lt(y_llr, thresh), y_llr.dtype)
     distribution = clip(sum(y_true, axis=0), 10e-8, 10e8) # no zero values
     # ====== Pmiss ====== #
     miss = sum(y_true * y_negative, axis=0)
@@ -579,12 +610,12 @@ def Cavg_gpu(y_llr, y_true, Ptar=0.5, Cfa=1., Cmiss=1., softmax_input=False):
     # ====== Pfa ====== # This calculation give different results
     fa = sum(y_false * y_positive, axis=0)
     Pfa = 100 * (Cfa * (1 - Ptar) * fa) / distribution
-    Cavg = mean(Pmiss) + mean(Pfa) / (n - 1)
+    Cavg = mean(Pmiss) + mean(Pfa) / (nb_classes - 1)
     return Cavg
 
 
 def Cavg_cpu(log_llh, y_true, cluster_idx=None,
-             Ptar=0.5, Cfa=1, Cmiss=1, softmax_input=False):
+             Ptar=0.5, Cfa=1, Cmiss=1, probability_input=False):
     """Compute cluster-wise and total LRE'15 percentage costs.
 
     Parameters
@@ -624,9 +655,9 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
         An average percentage cost over all clusters.
 
     """
-    if softmax_input:
-        log_llh = np.clip(log_llh, 10e-8, 1 - 10e-8)
-        log_llh = np.log(log_llh / (1 - log_llh))
+    if probability_input:
+        log_llh = np.clip(log_llh, 10e-8, 1. - 10e-8)
+        log_llh = np.log(log_llh / (1. - log_llh))
 
     if cluster_idx is None:
         cluster_idx = [list(range(0, log_llh.shape[-1]))]
@@ -737,9 +768,10 @@ def poolGlobal(x, pool_function=mean):
     Note
     ----
     output_shape = input_shape[:2]
+    for example, input_shape = (12, 8, 25, 18) -> output_shape = (12, 8)
     """
     input_shape = get_shape(x)
-    x = pool_function(T.flatten(x, 3), axis=2)
+    x = pool_function(flatten(x, 3), axis=2)
     add_shape(x, input_shape[:2])
     return x
 

@@ -177,6 +177,8 @@ def zeros_like(x, dtype=None):
 def cast(x, dtype):
     if 'tensorflow.' in str(x.__class__):
         return tf.cast(x, dtype)
+    if hasattr(dtype, 'as_numpy_dtype'):
+        dtype = dtype.as_numpy_dtype()
     return np.cast[dtype](x)
 
 

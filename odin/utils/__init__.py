@@ -100,6 +100,7 @@ def stdio(path=None, suppress=False, stderr=True):
     ----------
     path: None, str
         if str, specified path for saving all stdout (and stderr)
+        if None, reset stdout and stderr back to normal
     suppress: boolean
         totally turn-off all stdout (and stdeer)
     stderr:
@@ -123,7 +124,7 @@ def stdio(path=None, suppress=False, stderr=True):
             sys.stderr.close()
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
-    else:
+    else: # redirect to file
         sys.stdout = f
         if stderr:
             sys.stderr = f

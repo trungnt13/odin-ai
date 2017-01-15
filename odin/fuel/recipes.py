@@ -424,7 +424,7 @@ class Name2Trans(FeederRecipe):
         super(Name2Trans, self).__init__()
         if not callable(converter_func):
             raise ValueError('"converter_func" must be callable.')
-        self.converter_func = converter_func
+        self.converter_func = functionable(converter_func)
 
     def process(self, name, X, *args):
         # X: is a list of ndarray
@@ -553,7 +553,7 @@ class Sequencing(FeederRecipe):
         self.hop_length = hop_length
         self.end = end
         self.endvalue = endvalue
-        self.transcription_transform = transcription_transform
+        self.__transcription_transform = functionable(transcription_transform)
 
     def process(self, name, X, *args):
         # not enough data points for sequencing
@@ -567,7 +567,8 @@ class Sequencing(FeederRecipe):
              for x in X]
         # ====== transforming the transcription ====== #
         _ = []
-        if self.transcription_transform is not None:
+        trans_transform = self.__transcription_transform
+        if trans_transform is not None:
             for a in args:
                 original_dtype = a.dtype
                 a = segment_axis(np.asarray(a, dtype='str'),
@@ -575,9 +576,9 @@ class Sequencing(FeederRecipe):
                                 axis=0, end=self.end,
                                 endvalue='__end__')
                 # need to remove padded value
-                a = np.asarray([
-                    self.transcription_transform(
-                        [j for j in i if j != '__end__']) for i in a],
+                a = np.asarray(
+                    [trans_transform([j for j in i if j != '__end__'])
+                     for i in a],
                     dtype=original_dtype
                 )
                 _.append(a)
@@ -633,7 +634,7 @@ class CreateBatch(FeederRecipe):
         elif not callable(batch_filter):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')
-        self.batch_filter = batch_filter
+        self.__batch_filter = functionable(batch_filter)
 
     def prepare(self, **kwargs):
         shuffle_level = kwargs.get('shuffle_level', 0)
@@ -661,7 +662,7 @@ class CreateBatch(FeederRecipe):
         else:
             rng = self.rng
             batch_size = self.batch_size
-            batch_filter = self.batch_filter
+            batch_filter = self.__batch_filter
             indices = [list(range((b[1][0].shape[0] - 1) // batch_size + 1))
                        for b in batch]
             # shuffle if possible
