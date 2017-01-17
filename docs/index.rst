@@ -1,8 +1,9 @@
 O.D.I.N' documentation is here!
 =================================
 
-O.D.I.N is a framework for building "Origanized Digital Intelligent Networks", it use Tensorflow or Theano to create and manage computational graph.
-Its end-to-end design aims for a versatile input-to-output frametwork, that minimized the burden of repeative work in machine learning pipeline, and allows researchers to conduct experiments in a fasters and more flexible way.
+O.D.I.N is a framework for building "Organized Digital Intelligent Networks", it uses Tensorflow or Theano to create and manage computational graph.
+
+Its end-to-end design aims for a versatile input-to-output framework, that minimized the burden of repetitive work in machine learning pipeline, and allows researchers to conduct experiments in a faster and more flexible way.
 
 Start by :doc:`installing <setup>` O.D.I.N and having a look at the :ref:`quickstart <quickstart>` further down this page.
 Once you're hooked, try your hand at the :ref:`tutorials <tutorials>`.
