@@ -1,27 +1,21 @@
-Welcome to ODIN' documentation!
+O.D.I.N' documentation is here!
 =================================
-ODIN is a framework for building "Origanized Digital Intelligent Networks", it use
-Tensorflow or Theano to create and manage computational graph. Its end-to-end design
-aims for a versatile input-to-output frametwork, that minimized the burden of repeative
-work in machine learning pipeline, and allows researchs to conduct experiments in a fasters
-and more flexible way.
 
-Start by :doc:`installing <setup>` Blocks and having a look at the :ref:`quickstart <quickstart>` further down this page. Once you're
-hooked, try your hand at the :ref:`tutorials <tutorials>` and the
-examples_.
+O.D.I.N is a framework for building "Origanized Digital Intelligent Networks", it use Tensorflow or Theano to create and manage computational graph.
+Its end-to-end design aims for a versatile input-to-output frametwork, that minimized the burden of repeative work in machine learning pipeline, and allows researchers to conduct experiments in a fasters and more flexible way.
 
-Blocks is developed in parallel with Fuel_, a dataset processing framework.
+Start by :doc:`installing <setup>` O.D.I.N and having a look at the :ref:`quickstart <quickstart>` further down this page.
+Once you're hooked, try your hand at the :ref:`tutorials <tutorials>`.
 
 .. warning::
-   Blocks is a new project which is still under development. As such, certain
+   O.D.I.N is a new project which is still under development. As such, certain
    (all) parts of the framework are subject to change. The last stable (and
    thus likely an outdated) version can be found in the ``stable`` branch.
 
 .. tip::
 
-   That said, if you are interested in using Blocks and run into any problems,
-   feel free to ask your question on the `mailing list`_. Also, don't hesitate
-   to file bug reports and feature requests by `making a GitHub issue`_.
+   That said, if you are interested in using O.D.I.N and run into any problems,
+   feel free to ask your question by sending email to ``admin[at]imito[dot]ai``. Also, don't hesitate to file bug reports and feature requests by `making a GitHub issue`_.
 
 .. _making a GitHub issue: https://github.com/imito/odin/issues/new
 
@@ -37,126 +31,170 @@ Tutorials
    setup
    principle
 
-.. toctree::
-   :maxdepth: 2
-
-   examples
-
-.. ======================== In-depth ========================
-API
---------
-.. toctree::
-   :maxdepth: 2
-
-   modules
-
-
 .. ======================== Quick start ========================
 .. _quickstart:
 
 Quickstart
 ==========
 
-.. doctest::
-   :hide:
+The source code is here: `mnist.py <https://github.com/imito/odin/blob/master/examples/mnist.py>`_
 
-   >>> from theano import tensor
-   >>> from blocks.algorithms import GradientDescent, Scale
-   >>> from blocks.bricks import MLP, Tanh, Softmax
-   >>> from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
-   >>> from blocks.graph import ComputationGraph
-   >>> from blocks.initialization import IsotropicGaussian, Constant
-   >>> from fuel.streams import DataStream
-   >>> from fuel.transformers import Flatten
-   >>> from fuel.datasets import MNIST
-   >>> from fuel.schemes import SequentialScheme
-   >>> from blocks.extensions import FinishAfter, Printing
-   >>> from blocks.extensions.monitoring import DataStreamMonitoring
-   >>> from blocks.main_loop import MainLoop
+O.D.I.N is straightforward, all the configuration can be controlled within the script.
+The configuration is designed given a fixed set of keywords to limit human mistakes at the beginning.
 
-Construct your model.
+.. code-block:: python
 
->>> mlp = MLP(activations=[Tanh(), Softmax()], dims=[784, 100, 10],
-...           weights_init=IsotropicGaussian(0.01), biases_init=Constant(0))
->>> mlp.initialize()
+    import os
+    os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12'
+    from odin import backend as K
+    from odin import nnet as N
+    from odin import fuel, training
 
-Calculate your loss function.
+Loading experimental dataset with only *one* line of code:
 
->>> x = tensor.matrix('features')
->>> y = tensor.lmatrix('targets')
->>> y_hat = mlp.apply(x)
->>> cost = CategoricalCrossEntropy().apply(y.flatten(), y_hat)
->>> error_rate = MisclassificationRate().apply(y.flatten(), y_hat)
+.. code-block:: python
 
-Load your training data using Fuel.
+    ds = fuel.load_mnist()
 
->>> mnist_train = MNIST(("train",))
->>> train_stream = Flatten(
-...     DataStream.default_stream(
-...         dataset=mnist_train,
-...         iteration_scheme=SequentialScheme(mnist_train.num_examples, 128)),
-...     which_sources=('features',))
->>> mnist_test = MNIST(("test",))
->>> test_stream = Flatten(
-...     DataStream.default_stream(
-...         dataset=mnist_test,
-...         iteration_scheme=SequentialScheme(mnist_test.num_examples, 1024)),
-...     which_sources=('features',))
+Creating input and output variables:
 
-And train!
+.. code-block:: python
 
->>> from blocks.model import Model
->>> main_loop = MainLoop(
-...     model=Model(cost), data_stream=train_stream,
-...     algorithm=GradientDescent(
-...         cost=cost, parameters=ComputationGraph(cost).parameters,
-...         step_rule=Scale(learning_rate=0.1)),
-...     extensions=[FinishAfter(after_n_epochs=5),
-...                 DataStreamMonitoring(
-...                     variables=[cost, error_rate],
-...                     data_stream=test_stream,
-...                     prefix="test"),
-...                 Printing()])
->>> main_loop.run() # doctest: +ELLIPSIS
-<BLANKLINE>
-...
+    X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X')
+    y = K.placeholder(shape=(None,), name='y', dtype='int32')
 
-For a runnable version of this code, please see the MNIST demo
-in our repository with examples_.
+Creating model is intuitive, no *input shapes* are required at the beginning, everything is automatically inferred based on *input variables*.
+
+.. code-block:: python
+
+    ops = N.Sequence([
+        N.Dimshuffle((0, 1, 2, 'x')) if USE_MNIST_DATA else None,
+        N.BatchNorm(axes='auto'),
+        N.Conv(32, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
+        N.Pool(pool_size=(2, 2), strides=None),
+        N.Conv(64, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
+        N.Pool(pool_size=(2, 2), strides=None),
+        N.Flatten(outdim=2),
+        N.Dense(256, activation=K.relu),
+        N.Dense(10, activation=K.softmax)
+    ], debug=True)
+
+O.D.I.N is a functional API, all neural network operators are functions, they can be applied
+on different variables and configuration to get different outputs (i.e. creating different model sharing the same set of parameters).
+
+.. code-block:: python
+
+    K.set_training(True); y_pred_train = ops(X)
+    K.set_training(False); y_pred_score = ops(X)
+
+O.D.I.N provides identical interface for both Theano and tensorflow, hence, the following functions are operate the same in both backends:
+
+.. code-block:: python
+
+    cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
+    cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
+    cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
+    cost_test_3 = K.confusion_matrix(y_pred_score, y, labels=range(10))
+
+We also provides a set of optimization algorithms to train your network, all the optimizers are implemented in `optimizers.py <https://github.com/imito/odin/blob/master/odin/backend/optimizers.py>`_
+
+.. code-block:: python
+
+    parameters = ops.parameters
+    optimizer = K.optimizers.SGD(lr=0.01) # R
+    updates = optimizer(cost_train, parameters)
+    print('Building training functions ...')
+    f_train = K.function([X, y], [cost_train, optimizer.norm],
+                         updates=updates)
+    print('Building testing functions ...')
+    f_test = K.function([X, y], [cost_test_1, cost_test_2, cost_test_3])
+    print('Building predicting functions ...')
+    f_pred = K.function(X, y_pred_score)
+
+In O.D.I.N, we implement a generic process of optimizing any network. The training script is independent from all other parts of the framework, and can be extended by inheriting :class:`Callback` in `<https://github.com/imito/odin/blob/master/odin/training/callbacks.py>`_.
+
+.. code-block:: python
+
+    task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
+    task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
+    task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=arg['epoch'], name='train')
+    task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
+    task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
+    task.set_callback([
+        training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
+        training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
+                                 tracking={2: lambda x: sum(x)}),
+        training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
+        training.History(),
+        training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
+        training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
+    ])
+    task.run()
+
+You can directly visualize the training progress in your terminal, using the *bashplotlib* API
+
+.. code-block:: python
+
+    # ====== plot the training process ====== #
+    task['History'].print_info()
+    task['History'].print_batch('train')
+    task['History'].print_batch('valid')
+    task['History'].print_epoch('test')
+
+The code will print out something like this in your terminal
+
+.. code-block:: text
+
+             0.993|
+             0.992|                  oo
+             0.990|                  ooo
+             0.989|             o    ooo
+             0.988|          oo o    ooo
+             0.986|          ooooo o ooo
+             0.985|      o  oooooooo ooo
+             0.983|     oooooooooooo ooo
+             0.982|     oooooooooooooooo
+             0.981|     oooooooooooooooo
+             0.979|  o  oooooooooooooooo
+             0.978|  o  oooooooooooooooo
+             0.977|  o  oooooooooooooooo
+             0.975| oo ooooooooooooooooo
+             0.974| oo ooooooooooooooooo
+             0.973| oo ooooooooooooooooo
+             0.971| oo ooooooooooooooooo
+             0.970| oo ooooooooooooooooo
+             0.969| oo ooooooooooooooooo
+             0.967| oo ooooooooooooooooo
+             0.966| oooooooooooooooooooo
+                   --------------------
+
+    ------------------------------
+    |          Summary           |
+    ------------------------------
+    |     observations: 785      |
+    |    min value: 0.890625     |
+    |      mean : 0.984614       |
+    |       sd : 0.019188        |
+    |    max value: 1.000000     |
+    ------------------------------
 
 Features
 --------
 
-Currently Blocks supports and provides:
+Currently O.D.I.N supports and provides:
 
-* Constructing parametrized Theano operations, called "bricks"
-* Pattern matching to select variables and bricks in large models
-* Algorithms to optimize your model
-* Saving and resuming of training
-* Monitoring and analyzing values during training progress (on the training set
-  as well as on test sets)
-* Application of graph transformations, such as dropout (*limited support*)
+* End-to-end framework, provides a ``full-stack`` support from features preprocessing to inference.
+* Fast, reliable and efficient class for handle **big** dataset, O.D.I.N can load terabytes of data at once, re-organize the features using multiple processes, and training the network on new features at the same time.
+* Constructing computational and parametrized neural network operations.
+* Pattern matching to select variables and bricks in large models.
+* Algorithms to optimize your model.
+* All the parametrized operations are pickle-able.
+* Generic progress for optimization, many algorithms to prevent overfiting, detecting early failure, monitoring and analyzing values during training progress (on the training set as well as on test sets).
 
 In the future we also hope to support:
 
-* Dimension, type and axes-checking
-
-.. image:: https://img.shields.io/coveralls/mila-udem/blocks.svg
-   :target: https://coveralls.io/r/mila-udem/blocks
-
-.. image:: https://travis-ci.org/mila-udem/blocks.svg?branch=master
-   :target: https://travis-ci.org/mila-udem/blocks
-
-.. image:: https://readthedocs.org/projects/blocks/badge/?version=latest
-   :target: https://blocks.readthedocs.org/
-
-.. image:: https://img.shields.io/scrutinizer/g/mila-udem/blocks.svg
-   :target: https://scrutinizer-ci.com/g/mila-udem/blocks/
-
-.. image:: https://img.shields.io/badge/license-MIT-blue.svg
-   :target: https://github.com/mila-udem/blocks/blob/master/LICENSE
-
-|
+* Multiple-GPUs training
+* Distributing parametrized models among multiple GPUs
 
 Indices and tables
 ==================

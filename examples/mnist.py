@@ -54,6 +54,7 @@ ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
 
 K.set_training(True); y_pred_train = ops(X)
 K.set_training(False); y_pred_score = ops(X)
+
 cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
 cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
 cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))

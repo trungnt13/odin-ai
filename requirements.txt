@@ -1,8 +1,5 @@
 numpy>=1.10.4
-pyyaml>=3.11
 six>=1.10.0
-
-sidekit>=1.0
 
 --allow-external theano
 --allow-unverified theano
