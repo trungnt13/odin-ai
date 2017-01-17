@@ -55,4 +55,12 @@ O.D.I.N grew out of a need to combine the flexibility of Theano with the availab
 Machine Learning pipeline
 -------------------------
 
-pass
+We enhance the modularity of traditional machine learning pipeline in order to parallelized and speed up the process as much as possible, the following figure illustrate overall O.D.I.N' design for machine learning problem.
+
+.. image:: ./_imgs/odin_scheme.jpg
+    :align: center
+    :alt: O.D.I.N scheme for machine learning
+
+The main difference is that we divide data preprocessing and feature extraction into many steps, and leveraging python ``multiprocessing`` to significantly speed up the process.
+
+This scheme is also more storage efficient, since there is cached data after each step, the step can reuse preprocessed data without re-processing.
