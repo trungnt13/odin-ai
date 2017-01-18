@@ -383,7 +383,7 @@ class abstractstatic(staticmethod):
 # ===========================================================================
 _primitives = (bool, int, float, str,
                tuple, list, dict, type, types.ModuleType, types.FunctionType,
-               type(None), types.TypeType)
+               type(None), type(type))
 
 
 def _serialize_function_sandbox(function, source):
