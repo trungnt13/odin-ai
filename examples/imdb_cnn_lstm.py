@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'float32,cpu,tensorflow,seed=12082518'
-import cPickle
+from six.moves import cPickle
 from itertools import chain
 
 import numpy as np

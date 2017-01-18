@@ -12,9 +12,8 @@ from collections import OrderedDict, defaultdict
 from collections import MutableMapping
 from functools import wraps, partial
 import inspect
-from six.moves import zip, zip_longest
+from six.moves import zip, zip_longest, cPickle
 import types
-import cPickle
 
 import numpy as np
 

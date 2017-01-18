@@ -20,7 +20,7 @@ os.environ['ODIN'] = 'float32,gpu,%s,seed=12' % arg['backend']
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
-import cPickle
+from six.moves import cPickle
 
 
 # ===========================================================================

@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import mmap
 import os
-import cPickle
+from six.moves import cPickle
 import marshal
 
 

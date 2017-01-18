@@ -4,7 +4,7 @@ import os
 import inspect
 import warnings
 import tempfile
-import cPickle
+from six.moves import cPickle
 from itertools import chain
 from numbers import Number
 from abc import ABCMeta, abstractmethod

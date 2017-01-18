@@ -8,12 +8,11 @@ import sys
 import os
 import types
 import warnings
-import cPickle
 import shutil
 from numbers import Number
 from multiprocessing import Pool, cpu_count, Process, Queue
 from six import add_metaclass
-from six.moves import zip, zip_longest, range
+from six.moves import zip, zip_longest, range, cPickle
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from collections import defaultdict

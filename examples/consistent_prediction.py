@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'theano,float32,cpu,seed=12082518'
-import cPickle
+from six.moves import cPickle
 
 import numpy as np
 

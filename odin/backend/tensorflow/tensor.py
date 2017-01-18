@@ -5,7 +5,7 @@ import os
 import copy
 import math
 import numbers
-import cPickle
+from six.moves import cPickle
 from collections import OrderedDict
 
 import numpy as np

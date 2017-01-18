@@ -2,10 +2,10 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-import cPickle
+from six.moves import cPickle
 from types import StringType
 from collections import OrderedDict
-from six.moves import zip, range
+from six.moves import zip, range, cPickle
 
 import numpy as np
 

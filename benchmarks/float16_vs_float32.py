@@ -26,7 +26,7 @@ from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
 from odin.utils import get_modelpath, ArgController, stdio, get_logpath
-import cPickle
+from six.moves import cPickle
 
 stdio(get_logpath('tmp.log'))
 

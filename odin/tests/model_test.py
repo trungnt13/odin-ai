@@ -5,8 +5,7 @@ from __future__ import print_function, division
 
 import os
 import unittest
-import cPickle
-from six.moves import zip, range
+from six.moves import zip, range, cPickle
 
 import numpy as np
 

@@ -13,7 +13,7 @@ args = ArgController(
 
 import os
 os.environ['ODIN'] = 'float32,%s,%s' % (args['dev'], args['bk'])
-import cPickle
+from six.moves import cPickle
 from itertools import chain
 
 import numpy as np

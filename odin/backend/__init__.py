@@ -1,7 +1,7 @@
 # from __future__ import print_function, division, absolute_import
 
 import os
-import cPickle
+from six.moves import cPickle
 
 from odin.basic import (add_role, add_updates, add_auxiliary_variable,
                         add_shape, get_shape)

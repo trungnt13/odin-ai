@@ -11,7 +11,7 @@ import re
 import sys
 import time
 import timeit
-import cPickle
+from six.moves import cPickle
 import warnings
 from numbers import Number
 from datetime import datetime

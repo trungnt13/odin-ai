@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'float32,tensorflow,gpu'
-import cPickle
+from six.moves import cPickle
 
 import numpy as np
 

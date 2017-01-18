@@ -4,10 +4,9 @@
 from __future__ import print_function, division
 
 import os
-import cPickle
 import unittest
 import timeit
-from six.moves import zip, range
+from six.moves import zip, range, cPickle
 
 import numpy as np
 

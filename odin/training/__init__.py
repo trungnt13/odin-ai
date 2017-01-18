@@ -1,8 +1,7 @@
 from __future__ import division, absolute_import, print_function
 
 import os
-import cPickle
-from six.moves import range, zip
+from six.moves import range, zip, cPickle
 
 import numpy as np
 

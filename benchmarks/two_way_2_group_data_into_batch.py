@@ -5,8 +5,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'theano,cpu,float32'
-import cPickle
-from six.moves import zip_longest
+from six.moves import zip_longest, cPickle
 
 import numpy as np
 from odin import backend as K, nnet as N, fuel as F
