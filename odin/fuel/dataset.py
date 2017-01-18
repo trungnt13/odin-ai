@@ -2,7 +2,6 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-from six.types import StringType
 from collections import OrderedDict
 from six.moves import zip, range, cPickle
 
@@ -11,7 +10,7 @@ import numpy as np
 from .data import MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset, MAX_OPEN_MMAP, Data
 from .utils import MmapDict
 
-from odin.utils import get_file, Progbar
+from odin.utils import get_file, Progbar, is_string
 from odin.utils.decorators import singleton
 
 
@@ -255,12 +254,12 @@ class Dataset(object):
         return key in self._data_map
 
     def __getitem__(self, key):
-        if isinstance(key, StringType):
+        if is_string(key):
             if key not in self._data_map:
                 raise KeyError('%s not found in this dataset' % key)
             dtype, shape, data = self._data_map[key]
             # return type is just a descriptor, create MmapData for it
-            if isinstance(data, StringType) and \
+            if is_string(data) and \
             dtype is not 'unknown' and shape is not 'unknown':
                 data = MmapData(data, read_only=self.read_only)
                 self._data_map[key] = (data.dtype, data.shape, data)
@@ -276,7 +275,7 @@ class Dataset(object):
             if tuple is specified, it contain the key and the datatype
             which must be "memmap", "hdf5"
         """
-        if not isinstance(key, StringType) and not isinstance(key, (tuple, list)):
+        if not is_string(key) and not isinstance(key, (tuple, list)):
             raise ValueError('"key" is the name for Data and must be String or '
                              'tuple specified the name and datatype (memmap, hdf5).')
         # ====== check datatype ====== #

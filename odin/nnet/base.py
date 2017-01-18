@@ -225,7 +225,7 @@ class NNConfig(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-_primitive_types = (tuple, list, dict, types.StringType, types.BooleanType,
+_primitive_types = (tuple, list, dict, str, unicode, types.BooleanType,
                     types.FunctionType, numbers.Number, type(None),
                     K.init.constant, NNConfig)
 _cached_placeholder = {}
