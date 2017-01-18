@@ -17,5 +17,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
 feat.run()
 shutil.copy(os.path.join(datapath, 'README.md'),
             os.path.join(output_path, 'README.md'))
+# ====== check the preprocessed dataset ====== #
 ds = F.Dataset(output_path, read_only=True)
+print('Output path:', output_path)
 print(ds)

@@ -430,6 +430,12 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None):
     return - 1 / nb_classes * sum(loss / prob_distribution, axis=1)
 
 
+def bayes_binary_crossentropy(y_pred, y_true):
+    y_pred = concatenate([1 - y_pred, y_pred])
+    y_true = one_hot(cast(y_true, 'int32'), nb_class=2)
+    return bayes_crossentropy(y_pred, y_true, nb_classes=2)
+
+
 def categorical_crossentropy(output, target):
     """ NOTE: the crossentropy is different between tensorflow and theano
     If the `output` and `target` are mistaken the position, the gradients of
@@ -460,6 +466,89 @@ def binary_crossentropy(output, target):
     x = backend_ops_binary_crossentropy(output, target)
     add_shape(x, input_shape[0])
     return x
+
+
+def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
+                      binary=True):
+    """Computes the binary hinge loss between predictions and targets.
+    .. math:: L_i = \\max(0, \\delta - t_i p_i)
+    Parameters
+    ----------
+    predictions : Theano tensor
+        Predictions in (0, 1), such as sigmoidal output of a neural network
+        (or log-odds of predictions depending on `log_odds`).
+    targets : Theano tensor
+        Targets in {0, 1} (or in {-1, 1} depending on `binary`), such as
+        ground truth labels.
+    delta : scalar, default 1
+        The hinge loss margin
+    log_odds : bool, default None
+        ``False`` if predictions are sigmoid outputs in (0, 1), ``True`` if
+        predictions are sigmoid inputs, or log-odds. If ``None``, will assume
+        ``True``, but warn that the default will change to ``False``.
+    binary : bool, default True
+        ``True`` if targets are in {0, 1}, ``False`` if they are in {-1, 1}
+    Returns
+    -------
+    Theano tensor
+        An expression for the element-wise binary hinge loss
+    Notes
+    -----
+    This is an alternative to the binary cross-entropy loss for binary
+    classification problems.
+    Note that it is a drop-in replacement only when giving ``log_odds=False``.
+    Otherwise, it requires log-odds rather than sigmoid outputs. Be aware that
+    depending on the Theano version, ``log_odds=False`` with a sigmoid
+    output layer may be less stable than ``log_odds=True`` with a linear layer.
+    """
+    if log_odds is None:  # pragma: no cover
+        raise FutureWarning(
+            "The `log_odds` argument to `binary_hinge_loss` will change "
+            "its default to `False` in a future version. Explicitly give "
+            "`log_odds=True` to retain current behavior in your code, "
+            "but also check the documentation if this is what you want.")
+        log_odds = True
+    if not log_odds:
+        predictions = theano.tensor.log(predictions / (1 - predictions))
+    if binary:
+        targets = 2 * targets - 1
+    predictions, targets = align_targets(predictions, targets)
+    return theano.tensor.nnet.relu(delta - predictions * targets)
+
+
+def multiclass_hinge_loss(predictions, targets, delta=1):
+    """Computes the multi-class hinge loss between predictions and targets.
+    .. math:: L_i = \\max_{j \\not = p_i} (0, t_j - t_{p_i} + \\delta)
+    Parameters
+    ----------
+    predictions : Theano 2D tensor
+        Predictions in (0, 1), such as softmax output of a neural network,
+        with data points in rows and class probabilities in columns.
+    targets : Theano 2D tensor or 1D tensor
+        Either a vector of int giving the correct class index per data point
+        or a 2D tensor of one-hot encoding of the correct class in the same
+        layout as predictions (non-binary targets in [0, 1] do not work!)
+    delta : scalar, default 1
+        The hinge loss margin
+    Returns
+    -------
+    Theano 1D tensor
+        An expression for the item-wise multi-class hinge loss
+    Notes
+    -----
+    This is an alternative to the categorical cross-entropy loss for
+    multi-class classification problems
+    """
+    num_cls = predictions.shape[1]
+    if targets.ndim == predictions.ndim - 1:
+        targets = theano.tensor.extra_ops.to_one_hot(targets, num_cls)
+    elif targets.ndim != predictions.ndim:
+        raise TypeError('rank mismatch between targets and predictions')
+    corrects = predictions[targets.nonzero()]
+    rest = theano.tensor.reshape(predictions[(1-targets).nonzero()],
+                                 (-1, num_cls-1))
+    rest = theano.tensor.max(rest, axis=1)
+    return theano.tensor.nnet.relu(rest - corrects + delta)
 
 
 # ===========================================================================

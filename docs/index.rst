@@ -69,7 +69,7 @@ Creating model is intuitive, no *input shapes* are required at the beginning, ev
 .. code-block:: python
 
     ops = N.Sequence([
-        N.Dimshuffle((0, 1, 2, 'x')) if USE_MNIST_DATA else None,
+        N.Dimshuffle((0, 1, 2, 'x')),
         N.BatchNorm(axes='auto'),
         N.Conv(32, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
         N.Pool(pool_size=(2, 2), strides=None),

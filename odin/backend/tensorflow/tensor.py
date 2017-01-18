@@ -375,7 +375,7 @@ def mul(x, y):
 
 
 def div(x, y):
-    return tf.div(x, y)
+    return tf.divide(x, y)
 
 
 def mod(x, y):
