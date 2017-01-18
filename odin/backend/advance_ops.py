@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import inspect
 import warnings
-import __builtin__
+from six.moves import builtins
 from functools import wraps
 from numbers import Number
 
@@ -118,7 +118,7 @@ def rnn_decorator(*args, **kwargs):
                         'the parameters in **kwargs.\n')
     sequences = to_list(kwargs.pop('sequences', []))
     states = to_list(kwargs.pop('states', []))
-    if __builtin__.any(not isinstance(i, str) for i in sequences + states):
+    if builtins.any(not isinstance(i, str) for i in sequences + states):
         raise Exception('"sequences", "contexts", and "states" must be '
                         'string, which specify the name of variable in '
                         'the container or in arguments of step_function.')
@@ -171,7 +171,7 @@ def rnn_decorator(*args, **kwargs):
             states_given = [find_arg(i, 'states', container, step_args)
                             for i in states]
             # check all is variables
-            if __builtin__.any(not is_variable(i) and i is not None
+            if builtins.any(not is_variable(i) and i is not None
                    for i in sequences_given + states_given):
                 raise ValueError('All variables provided to sequences, '
                                  'contexts, or states must be Variables.'
@@ -379,7 +379,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
         x = relu(x, (upper + lower) / 2.0)
     else: # Training mode
         shape = list(input_shape)
-        if __builtin__.any(s is None for s in shape):
+        if builtins.any(s is None for s in shape):
             shape = list(x.shape)
         for ax in shared_axes:
             shape[ax] = 1

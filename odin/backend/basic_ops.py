@@ -1,6 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
-import __builtin__
+from six.moves import builtins
 import platform
 
 from odin.config import auto_config
@@ -53,7 +53,7 @@ def cudnn_available():
             else:
                 x = commands.getstatusoutput('ldconfig -p')
                 x = x[-1].split('=>')
-            if __builtin__.any('libcudnn' in i for i in x):
+            if builtins.any('libcudnn' in i for i in x):
                 return True
             else:
                 return False
@@ -177,7 +177,7 @@ def diag(x):
     input_shape = get_shape(x)
     x = backend_ops_diag(x)
     if isinstance(input_shape, (tuple, list)):
-        add_shape(x, (__builtin__.min(input_shape),))
+        add_shape(x, (builtins.min(input_shape),))
     return x
 
 

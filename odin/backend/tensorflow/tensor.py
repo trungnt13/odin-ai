@@ -1,5 +1,5 @@
 from __future__ import division, absolute_import, print_function
-from __builtin__ import min as min_
+from six.moves.builtins import min as min_
 
 import os
 import copy

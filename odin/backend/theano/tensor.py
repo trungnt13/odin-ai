@@ -11,7 +11,7 @@ import os
 import math
 import numbers
 from collections import OrderedDict
-from __builtin__ import (any as _any, sum as _sum)
+from six.moves.builtins import (any as _any, sum as _sum)
 
 import numpy as np
 

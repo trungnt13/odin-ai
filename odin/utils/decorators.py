@@ -6,7 +6,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import sys
-import __builtin__
+from six.moves import builtins
 
 from collections import OrderedDict, defaultdict
 from collections import MutableMapping
@@ -68,7 +68,7 @@ def cache(func, *attrs):
         attrs = (func,) + attrs
         func = None
 
-    if __builtin__.any(not isinstance(i, str) for i in attrs):
+    if builtins.any(not isinstance(i, str) for i in attrs):
         raise ValueError('Tracking attribute must be string represented name of'
                          ' attribute, but given attributes have types: {}'
                          ''.format(tuple(map(type, attrs))))
