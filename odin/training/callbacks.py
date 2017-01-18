@@ -11,13 +11,13 @@ import re
 import sys
 import time
 import timeit
-from six.moves import cPickle
 import warnings
 from numbers import Number
 from datetime import datetime
 from collections import defaultdict
 from abc import ABCMeta, abstractproperty, abstractmethod
-from six import add_metaclass
+from six import add_metaclass, string_types
+from six.moves import cPickle
 
 import numpy as np
 import scipy as sp
@@ -457,7 +457,7 @@ class NaNDetector(Callback):
 
     def __init__(self, name, patience=-1, rollback=True):
         super(NaNDetector, self).__init__()
-        self.name = as_tuple(name, t=(str, unicode))
+        self.name = as_tuple(name, t=string_types)
         self.patience = patience
         self.rollback = rollback
         self._current_patience = patience

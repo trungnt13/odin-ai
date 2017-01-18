@@ -11,7 +11,7 @@ import warnings
 import shutil
 from numbers import Number
 from multiprocessing import Pool, cpu_count, Process, Queue
-from six import add_metaclass
+from six import add_metaclass, string_types
 from six.moves import zip, zip_longest, range, cPickle
 from abc import ABCMeta, abstractmethod, abstractproperty
 
@@ -353,7 +353,7 @@ class SpeechProcessor(FeatureProcessor):
             datatype=datatype, save_stats=save_stats,
             substitute_nan=substitute_nan, ncache=ncache, ncpu=ncpu)
         audio_ext = as_tuple('' if audio_ext is None else audio_ext,
-                             t=(str, unicode))
+                             t=string_types)
         # ====== load jobs ====== #
         # NOT loaded segments
         if isinstance(segments, str):
@@ -514,7 +514,7 @@ class ImageFeatures(FeederRecipe):
                  transpose=None, resample_mode=2):
         super(ImageFeatures, self).__init__()
         self.image_ext = ('',) if image_ext is None else as_tuple(image_ext,
-                                                                  t=(str, unicode))
+                                                                  t=string_types)
         self.crop = crop if crop is None else as_tuple(crop, 4, int)
         self.grayscale = bool(grayscale)
         self.target_size = target_size

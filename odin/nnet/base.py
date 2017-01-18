@@ -6,7 +6,7 @@ import warnings
 from itertools import chain
 from collections import OrderedDict
 from abc import ABCMeta, abstractmethod
-from six import add_metaclass, types
+from six import add_metaclass, types, string_types
 from six.moves import zip, range, cPickle
 
 import numpy as np
@@ -225,7 +225,7 @@ class NNConfig(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-_primitive_types = (tuple, list, dict, str, unicode, types.BooleanType,
+_primitive_types = (tuple, list, dict, string_types, types.BooleanType,
                     types.FunctionType, numbers.Number, type(None),
                     K.init.constant, NNConfig)
 _cached_placeholder = {}

@@ -11,7 +11,7 @@ import string
 from numbers import Number
 from collections import OrderedDict, Iterator, Iterable, defaultdict
 from abc import abstractmethod, ABCMeta
-from six import add_metaclass
+from six import add_metaclass, string_types
 
 import numpy as np
 
@@ -39,7 +39,7 @@ def language(lang='en'):
 
 
 def add_stopword(words):
-    words = as_tuple(words, t=unicode)
+    words = as_tuple(words, t=string_types)
     for w in words:
         _stopword_list.append(w)
 
@@ -262,7 +262,7 @@ def _preprocess_func(doc):
     for p in preprocessors:
         doc = p(doc)
     # auto split if the doc haven't been splitted
-    if isinstance(doc, (str, unicode)):
+    if isinstance(doc, string_types):
         doc = doc.split(' ')
     # ====== start processing ====== #
     for token in doc:

@@ -18,6 +18,7 @@ from multiprocessing import cpu_count, Value, Lock, current_process
 from collections import OrderedDict, deque, Iterable, Iterator
 from itertools import islice, tee, chain
 
+from six import string_types
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
 import tarfile
@@ -51,7 +52,7 @@ def is_path(path):
 
 
 def is_string(s):
-    if isinstance(s, (unicode, str)):
+    if isinstance(s, string_types):
         return True
     False
 
