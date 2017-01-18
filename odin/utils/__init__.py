@@ -336,7 +336,7 @@ class ArgController(object):
         try:
             args = {i: self._parse_input(i, j)
                     for i, j in args._get_kwargs()}
-        except Exception, e:
+        except Exception as e:
             print('Error parsing given arguments: "%s"' % str(e))
             self.parser.print_help()
             exit()
