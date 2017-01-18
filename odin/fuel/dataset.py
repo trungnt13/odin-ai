@@ -2,8 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-from six.moves import cPickle
-from types import StringType
+from six.types import StringType
 from collections import OrderedDict
 from six.moves import zip, range, cPickle
 

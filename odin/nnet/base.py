@@ -2,12 +2,11 @@ from __future__ import division, absolute_import, print_function
 
 import inspect
 import numbers
-import types
 import warnings
 from itertools import chain
 from collections import OrderedDict
 from abc import ABCMeta, abstractmethod
-from six import add_metaclass
+from six import add_metaclass, types
 from six.moves import zip, range, cPickle
 
 import numpy as np
