@@ -325,7 +325,7 @@ class ArgController(object):
                 exit_now = True
             else:
                 args = self.parser.parse_args()
-        except Exception, e:
+        except Exception as e:
             # if specfy version or help, don't need to print anything else
             if all(i not in ['-h', '--help', '-v', '--version']
                    for i in sys.argv):

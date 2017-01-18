@@ -23,7 +23,7 @@ class FuelTest(unittest.TestCase):
     def test_speech_processor(self):
         try:
             datapath = F.load_digit_wav()
-        except Exception, e:
+        except Exception as e:
             print('Error (skip this test):', str(e))
             return
         output_path = utils.get_datasetpath(name='digit', override=True)

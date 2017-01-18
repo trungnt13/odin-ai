@@ -157,7 +157,7 @@ class Dataset(object):
                 progbar.update(i + 1)
             # ====== finally set path ====== #
             self._set_path(extract_path)
-        except IOError, e:
+        except IOError as e:
             raise IOError('Error loading archived dataset, path:{}, error:{}'
                           '.'.format(path, e))
         return None

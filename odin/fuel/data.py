@@ -800,7 +800,7 @@ class MmapData(Data):
         try:
             size = int(f.read(8))
             dtype, shape = marshal.loads(f.read(size))
-        except Exception, e:
+        except Exception as e:
             raise Exception('Error reading memmap data file: %s' % str(e))
         f.close()
         return dtype, shape

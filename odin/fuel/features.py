@@ -467,7 +467,7 @@ class SpeechProcessor(FeatureProcessor):
                     warnings.warn(msg)
             # return the results
             return (i for i in ret)
-        except Exception, e:
+        except Exception as e:
             msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             import traceback; traceback.print_exc()
             raise e

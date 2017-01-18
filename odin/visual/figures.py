@@ -802,5 +802,5 @@ def plot_save(path, figs=None, dpi=300, tight_plot=False, format='pdf'):
             fig.savefig(pp, format=format)
         pp.close()
         sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
-    except Exception, e:
+    except Exception as e:
         sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
