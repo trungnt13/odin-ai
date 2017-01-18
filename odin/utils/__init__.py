@@ -16,7 +16,7 @@ import platform
 import argparse
 from multiprocessing import cpu_count, Value, Lock, current_process
 from collections import OrderedDict, deque, Iterable, Iterator
-from itertools import islice, tee
+from itertools import islice, tee, chain
 
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
@@ -129,9 +129,9 @@ def stdio(path=None, suppress=False, stderr=True):
         if stderr:
             sys.stderr = f
 
-_uuid_chars = (map(chr, range(65, 91)) + # ABCD
-               map(chr, range(97, 123)) + # abcd
-               map(chr, range(48, 57))) # 0123
+_uuid_chars = list(chain(map(chr, range(65, 91)),  # ABCD
+                         map(chr, range(97, 123)),  # abcd
+                         map(chr, range(48, 57)))) # 0123
 _uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
 
 
