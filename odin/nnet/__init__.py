@@ -7,4 +7,4 @@ from .normalization import *
 from .embedding import *
 from .helper import *
 from .rnn import *
-import shortcuts
+from . import shortcuts
