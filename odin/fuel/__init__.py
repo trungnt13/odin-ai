@@ -27,3 +27,10 @@ def load_20newsgroup():
     link = 'https://s3.amazonaws.com/ai-datasets/news20'
     dataset = get_file('news20', link)
     return MmapDict(dataset, read_only=True)
+
+
+def load_word2vec():
+    """ Loading google pretrained word2vec from:
+    https://code.google.com/archive/p/word2vec/
+    """
+    pass

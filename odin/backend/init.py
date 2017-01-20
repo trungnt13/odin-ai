@@ -157,7 +157,7 @@ def rnn(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
         bidirectional=False, one_vector=False,
         return_variable=True, name=None):
-    """ Fast initalize all Standard RNN weights (without peephole connection)
+    """ Fast initalize all Standard RNN weights
 
     Parameters
     ----------
@@ -226,6 +226,7 @@ def lstm(input_dim, hidden_dim,
     if name is None: name = uuid()
 
     def init():
+        # input to hidden
         W_i = W_init((input_dim, hidden_dim))
         b_wi = b_init((hidden_dim))
         W_f = W_init((input_dim, hidden_dim))
@@ -234,6 +235,7 @@ def lstm(input_dim, hidden_dim,
         b_wc = b_init((hidden_dim))
         W_o = W_init((input_dim, hidden_dim))
         b_wo = b_init((hidden_dim))
+        # hidden to hidden
         R_i = W_init((hidden_dim, hidden_dim))
         b_ri = b_init((hidden_dim))
         R_f = W_init((hidden_dim, hidden_dim))
