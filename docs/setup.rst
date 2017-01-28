@@ -47,6 +47,7 @@ We develop using the bleeding-edge version of Theano_, and latest stable version
 External requirements for signal processing:
 
 * SIDEKIT_, is an open source package for speech processing, especially for Speaker and Language recognition.
+* resampy_, resampling library for signal processing
 * imageio_, is a Python library that provides an easy interface to read and write a wide range of image and video data.
 * PIL_, adds image processing capabilities to your Python interpreter.
 * spacy_, is an industrial-strength natural language processing engine.
@@ -57,6 +58,7 @@ External requirements for signal processing:
     All of these packages are **not** required for running neural network API in O.D.I.N, they are only involved in the data preprocessing pipeline. The computational backend is developed independently from data preprocessing API which makes O.D.I.N flexible but versatile.
 
 .. _Theano: https://GitHub.com/Theano/Theano
+.. _resampy: https://github.com/bmcfee/resampy
 .. _tensorflow: https://GitHub.com/tensorflow/tensorflow
 .. _numpy: http://www.numpy.org/
 .. _scipy: https://www.scipy.org/

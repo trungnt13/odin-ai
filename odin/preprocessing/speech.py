@@ -136,6 +136,19 @@ def read(f, pcm=False, remove_dc_offset=True):
     return s, fs
 
 
+def pre_emphasis(s, coeff=0.97):
+    """Pre-emphasis of an audio signal.
+    Parameters
+    ----------
+    s: the input vector of signal to pre emphasize
+    coeff: coefficience that defines the pre-emphasis filter.
+    """
+    if s.ndim == 1:
+        return np.append(s[0], s[1:] - coeff * s[:-1])
+    else:
+        return s - np.c_[s[:, :1], s[:, :-1]] * coeff
+
+
 def est_audio_length(fpath, fs=8000, bitdepth=16):
     """ Estimate audio length in second """
     if not os.path.exists(fpath):
@@ -143,18 +156,16 @@ def est_audio_length(fpath, fs=8000, bitdepth=16):
     return os.path.getsize(fpath) / (bitdepth / 8) / 8000
 
 
-def resample(s, fs, fs_new, algorithm='sinc_best'):
+def resample(s, fs_orig, fs_new, axis=0, best_algorithm=True):
     '''
-    sinc_medium : Band limited sinc interpolation, medium quality, 121dB SNR, 90% BW.
-    linear : Linear interpolator, very fast, poor quality.
-    sinc_fastest : Band limited sinc interpolation, fastest, 97dB SNR, 80% BW.
-    zero_order_hold : Zero order hold interpolator, very fast, poor quality.
-    sinc_best : Band limited sinc interpolation, best quality, 145dB SNR, 96% BW.
     '''
-    from scikits.samplerate import resample
-    if fs_new == fs:
-        return s
-    return resample(s, fs_new / fs, 'sinc_best')
+    fs_orig = int(fs_orig)
+    fs_new = int(fs_new)
+    if fs_orig != fs_new:
+        import resampy
+        s = resampy.resample(s, sr_orig=fs_orig, sr_new=fs_new, axis=axis,
+                             filter='kaiser_best' if best_algorithm else 'kaiser_fast')
+    return s
 
 
 def save(f, s, fs, subtype=None):

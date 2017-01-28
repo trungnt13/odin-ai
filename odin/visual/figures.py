@@ -789,7 +789,7 @@ def plot_close():
     plt.close('all')
 
 
-def plot_save(path, figs=None, dpi=300, tight_plot=False, format='pdf'):
+def plot_save(path, figs=None, dpi=300, tight_plot=False):
     try:
         from matplotlib.backends.backend_pdf import PdfPages
         import matplotlib.pyplot as plt
@@ -799,7 +799,7 @@ def plot_save(path, figs=None, dpi=300, tight_plot=False, format='pdf'):
         if figs is None:
             figs = [plt.figure(n) for n in plt.get_fignums()]
         for fig in figs:
-            fig.savefig(pp, format=format)
+            fig.savefig(pp, format='pdf')
         pp.close()
         sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
     except Exception as e:

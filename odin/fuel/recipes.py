@@ -609,7 +609,8 @@ class CreateBatch(FeederRecipe):
     ----------
     batch_filter: callable
         must be a function has take a list of np.ndarray as first arguments
-        ([X]) or ([X, y]), you can return None to ignore given batch
+        ([X]) or ([X, y]), you can return None to ignore given batch, return the
+        data for accepting the batch
     batch_sequencing: bool
         if True, all data from different files will be processed one-by-one,
         instead of picking data from each files and return small batches from
@@ -717,5 +718,5 @@ class CreateFile(FeederRecipe):
             ret = X + Y
             # ====== return name ====== #
             if self.return_name:
-                ret = [name] + ret
+                ret = [name] + list(ret)
             yield tuple(ret)

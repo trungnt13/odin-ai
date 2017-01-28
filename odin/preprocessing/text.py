@@ -3,6 +3,8 @@
 #  utf-8
 #  ISO-8859-1
 #  ascii
+# encode: string -> string of bytes
+# decode: string of bytes -> string
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 
@@ -320,7 +322,7 @@ class Tokenizer(object):
 
     def __init__(self, nb_words=None,
                  char_level=False,
-                 preprocessors=None,
+                 preprocessors=[TransPreprocessor(), CasePreprocessor(lower=True)],
                  filters=None,
                  stopwords=False,
                  lemmatization=True,
@@ -361,10 +363,7 @@ class Tokenizer(object):
         # ====== filter and preprocessor ====== #
         self.filters = filters if filters is None else as_tuple(filters)
         if preprocessors is None:
-            if engine == 'spacy':
-                preprocessors = [TransPreprocessor()]
-            elif engine == 'odin':
-                preprocessors = [TransPreprocessor(), CasePreprocessor(lower=True)]
+            preprocessors = []
         elif not isinstance(preprocessors, (tuple, list)):
             preprocessors = [preprocessors]
         self.preprocessors = preprocessors
@@ -448,8 +447,9 @@ class Tokenizer(object):
         top = []
         count = self._word_counts if self.__order == 'word' else self._word_docs
         for i, w in enumerate(self.dictionary.iterkeys()):
+            if i == 0:continue
             top.append((w, count[w]))
-            if i >= n: break
+            if i >= n + 1: break
         return top
 
     # ==================== methods ==================== #

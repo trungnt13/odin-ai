@@ -755,14 +755,16 @@ class ProgressMonitor(Callback):
         format for the results, using the new python style
         (e.g. {0}, {1}, {:.4f}), ... and not %s, %d ...)
     tracking: list
-        list of [(index, postprocessing_func)], tracking information at given
-        index of the return value during batch_end, then, postprocess and print
-        it in epoch_end.
+        list of [(index, postprocessing_func)] or a dictionary,
+        tracking information at given index of the return value
+        during batch_end, then, postprocess and print it in epoch_end.
 
     Example
     -------
     >>> t = training.Task(dataset=ds, batch_size=512)
-    >>> t.set_callback(training.ProgressMonitor(title='Result: {:.2f}'))
+    >>> t.set_callback(training.ProgressMonitor(name='Test',
+    ...                                         format='Result: {:.4f}',
+    ...                                         tracking={1: lambda x: sum(x)}))
     >>> t.run()
     # Result: 52751.29 98/98 [=======================================] - 0s
 
