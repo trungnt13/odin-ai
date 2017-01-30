@@ -10,6 +10,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import six
 import math
+import copy
 from collections import OrderedDict
 import warnings
 
@@ -140,8 +141,10 @@ def pre_emphasis(s, coeff=0.97):
     """Pre-emphasis of an audio signal.
     Parameters
     ----------
-    s: the input vector of signal to pre emphasize
-    coeff: coefficience that defines the pre-emphasis filter.
+    s: np.ndarray
+        the input vector of signal to pre emphasize
+    coeff: float (0, 1)
+        coefficience that defines the pre-emphasis filter.
     """
     if s.ndim == 1:
         return np.append(s[0], s[1:] - coeff * s[:-1])
@@ -181,6 +184,46 @@ def save(f, s, fs, subtype=None):
 # ===========================================================================
 # Spectrogram manipulation
 # ===========================================================================
+def vad_energy(log_energy,
+               distrib_nb=3,
+               nb_train_it=8,
+               flooring=0.0001, ceiling=1.0,
+               alpha=2):
+    from sidekit.mixture import Mixture
+    # center and normalize the energy
+    log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
+
+    # Initialize a Mixture with 2 or 3 distributions
+    world = Mixture()
+    # set the covariance of each component to 1.0 and the mean to mu + meanIncrement
+    world.cst = np.ones(distrib_nb) / (np.pi / 2.0)
+    world.det = np.ones(distrib_nb)
+    world.mu = -2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1)
+    world.mu = world.mu[:, np.newaxis]
+    world.invcov = np.ones((distrib_nb, 1))
+    # set equal weights for each component
+    world.w = np.ones(distrib_nb) / distrib_nb
+    world.cov_var_ctl = copy.deepcopy(world.invcov)
+
+    # Initialize the accumulator
+    accum = copy.deepcopy(world)
+
+    # Perform nbTrainIt iterations of EM
+    for it in range(nb_train_it):
+        accum._reset()
+        # E-step
+        world._expectation(accum, log_energy)
+        # M-step
+        world._maximization(accum, ceiling, flooring)
+
+    # Compute threshold
+    threshold = world.mu.max() - alpha * np.sqrt(1.0 / world.invcov[world.mu.argmax(), 0])
+
+    # Apply frame selection with the current threshold
+    label = log_energy > threshold
+    return label, threshold
+
+
 def istft(stft_matrix, hop_length=None, win_length=None, window=None,
           center=True, dtype=np.float32):
     """
@@ -361,7 +404,138 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
             idx = [slice(None)] * delta_x.ndim
             idx[axis] = slice(- half_length - data.shape[axis], - half_length)
             delta_x = delta_x[idx]
-            _.append(delta_x)
+            _.append(delta_x.astype('float32'))
         all_deltas = _
 
     return all_deltas
+
+
+def speech_features(s, sr, win, shift,
+                    nb_melfilters, nb_ceps, nb_delta,
+                    get_spec, get_mspec, get_mfcc, get_pitch, get_vad, get_energy,
+                    pitch_threshold=0.8, fmin=64, fmax=None,
+                    sr_new=None, preemphasis=0.97):
+    """ Automatically extract multiple acoustic representation of
+    speech features
+
+    Parameters
+    ----------
+    s: np.ndarray
+        raw signal
+    sr: int
+        sample rate
+    win: float
+        window length in millisecond
+    shift: float
+        hop length between windows, in millisecond
+    nb_filters:
+    nb_ceps:
+    nb_delta:
+    get_spec:
+    get_mspec:
+    get_mfcc:
+    get_pitch:
+    get_vad:
+    pitch_threshold:
+    fmin: int
+    fmax: int or None
+    sr_new: int or None
+        new sample rate
+    preemphasis:
+
+    return spec(X, sum, sum2),
+               mspec(X, sum, sum2),
+               mfcc(X, sum, sum2),
+               vad_idx
+    """
+    if np.prod(s.shape) == np.max(s.shape):
+        s = s.ravel()
+    elif s.ndim >= 2:
+        raise Exception('Speech Feature Extraction only accept 1-D signal')
+    import librosa
+    # ====== resample if necessary ====== #
+    if sr_new is not None and int(sr_new) != int(sr):
+        s = resample(s, sr, sr_new, axis=0, best_algorithm=False)
+        sr = sr_new
+    if fmax is None:
+        fmax = sr // 2
+    if fmin is None or fmin < 0 or fmin >= fmax:
+        fmin = 0
+    n_fft = int(win * sr)
+    hop_length = int(shift * sr)
+    # preemphais
+    s = pre_emphasis(s, coeff=preemphasis)
+    # ====== 0: extract VAD and energy ====== #
+    if get_energy or get_vad:
+        frames = librosa.util.frame(s, frame_length=n_fft, hop_length=hop_length)
+        log_energy = np.log((frames**2).sum(axis=0)).astype('float32')[None, :]
+        if get_vad:
+            distribNb, nbTrainIt = 8, 12
+            if isinstance(get_vad, (tuple, list)):
+                distribNb, nbTrainIt = get_vad
+            # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
+            # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
+            vad = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
+                             nb_train_it=nbTrainIt)[0].astype('int8')
+    if not get_energy:
+        log_energy = None
+    if not get_vad:
+        vad = None
+    # ====== 1: extract STFT and Spectrogram ====== #
+    stft = librosa.stft(s, n_fft=n_fft, hop_length=hop_length,
+                        center=False) # no padding for center
+    S, D = librosa.magphase(stft)
+    # ====== 2: extract pitch features ====== #
+    if get_pitch:
+        # we don't care about pitch magnitude
+        pitch_freq, _ = librosa.piptrack(
+            y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
+            fmin=fmin, fmax=fmax, threshold=pitch_threshold)
+        pitch_freq = pitch_freq.astype('float32')
+    else:
+        pitch_freq = None
+    # ====== 3: extract power spectrogram ====== #
+    S = S**2
+    if get_spec:
+        powerspectrogram = librosa.logamplitude(
+            S, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
+    else:
+        powerspectrogram = None
+    # ====== 4: extract log-mel filter bank ====== #
+    if get_mspec or get_mfcc:
+        melspectrogram = librosa.feature.melspectrogram(
+            y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
+            n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
+        melspectrogram = librosa.logamplitude(
+            melspectrogram, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
+        if get_mfcc:
+            mfcc = librosa.feature.mfcc(
+                y=None, sr=sr, S=melspectrogram, n_mfcc=nb_ceps).astype('float32')
+    if not get_mspec:
+        melspectrogram = None
+    if not get_mfcc:
+        mfcc = None
+    # ====== 5: compute delta ====== #
+    if nb_delta and nb_delta > 0:
+        if pitch_freq is not None:
+            pitch_freq = np.concatenate(
+                [pitch_freq] + compute_delta(pitch_freq, order=nb_delta),
+                axis=0)
+        if powerspectrogram is not None:
+            powerspectrogram = np.concatenate(
+                [powerspectrogram] + compute_delta(powerspectrogram, order=nb_delta),
+                axis=0)
+        if melspectrogram is not None:
+            melspectrogram = np.concatenate(
+                [melspectrogram] + compute_delta(melspectrogram, order=nb_delta),
+                axis=0)
+        if mfcc is not None:
+            mfcc = np.concatenate(
+                [mfcc] + compute_delta(mfcc, order=nb_delta),
+                axis=0)
+        if log_energy is not None:
+            log_energy = np.concatenate(
+                [log_energy] + compute_delta(log_energy, order=nb_delta),
+                axis=0)
+    return {'spec': powerspectrogram.T, 'mspec': melspectrogram.T, 'mfcc': mfcc.T,
+            'vad': vad, 'pitch': pitch_freq.T, 'energy': log_energy.T}
