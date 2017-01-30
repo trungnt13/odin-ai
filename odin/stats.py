@@ -40,3 +40,24 @@ def split_train_test(X, seed, split=0.7):
         split.append(X.shape[0])
     ret = tuple([X[start:end] for start, end in zip(split[:-1], split[1:])])
     return ret
+
+
+def summary(x, axis=None):
+    mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)
+    median = np.median(x, axis=axis)
+    qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
+    min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
+    samples = ', '.join(["%.8f" % i
+               for i in np.random.choice(x.ravel(), size=8, replace=False).tolist()])
+    s = ""
+    s += "***** Summary *****\n"
+    s += "    Min : %.8f\n" % min_
+    s += "1st Qu. : %.8f\n" % qu1
+    s += " Median : %.8f\n" % median
+    s += "   Mean : %.8f\n" % mean
+    s += "3rd Qu. : %.8f\n" % qu3
+    s += "    Max : %.8f\n" % max_
+    s += "-------------------\n"
+    s += "    Std : %.8f\n" % std
+    s += "Samples : %s\n" % samples
+    return s

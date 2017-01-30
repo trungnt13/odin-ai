@@ -184,6 +184,42 @@ def save(f, s, fs, subtype=None):
 # ===========================================================================
 # Spectrogram manipulation
 # ===========================================================================
+def smooth(x, window_len=11, window='hanning'):
+    """
+    Paramaters
+    ----------
+    x: 1-D vector
+        input signal.
+    windown_len: int
+        length of window for smoothing, the longer the window, the more details
+        are reduced for smoothing.
+    window: 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
+        window function, 'flat' for moving average.
+
+    Return
+    ------
+    y: smoothed vector
+
+    Example
+    -------
+    """
+    if window_len < 3:
+        return x
+    if window not in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
+        raise ValueError("Window is on of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
+    s = np.concatenate([2 * x[0] - x[window_len - 1::-1],
+                        x,
+                        2 * x[-1] - x[-1:-window_len:-1]], axis=0)
+    # moving average
+    if window == 'flat':
+        w = np.ones(window_len, 'd')
+    # windowing
+    else:
+        w = eval('np.' + window + '(window_len)')
+    y = np.convolve(w / w.sum(), s, mode='same')
+    return y[window_len:-window_len + 1]
+
+
 def vad_energy(log_energy,
                distrib_nb=3,
                nb_train_it=8,
@@ -410,10 +446,10 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     return all_deltas
 
 
-def speech_features(s, sr, win, shift,
-                    nb_melfilters, nb_ceps, nb_delta,
-                    get_spec, get_mspec, get_mfcc, get_pitch, get_vad, get_energy,
-                    pitch_threshold=0.8, fmin=64, fmax=None,
+def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
+                    get_spec=True, get_mspec=False, get_mfcc=False, get_pitch=False,
+                    get_vad=True, get_energy=False,
+                    get_delta=False, pitch_threshold=0.8, fmin=64, fmax=None,
                     sr_new=None, preemphasis=0.97):
     """ Automatically extract multiple acoustic representation of
     speech features
@@ -461,28 +497,31 @@ def speech_features(s, sr, win, shift,
         fmax = sr // 2
     if fmin is None or fmin < 0 or fmin >= fmax:
         fmin = 0
-    n_fft = int(win * sr)
+    win_length = int(win * sr)
+    n_fft = 2 ** int(np.ceil(np.log2(win_length)))
     hop_length = int(shift * sr)
     # preemphais
     s = pre_emphasis(s, coeff=preemphasis)
+    # centering by padding
+    s = np.pad(s, int(n_fft // 2), mode='reflect')
     # ====== 0: extract VAD and energy ====== #
     if get_energy or get_vad:
         frames = librosa.util.frame(s, frame_length=n_fft, hop_length=hop_length)
-        log_energy = np.log((frames**2).sum(axis=0)).astype('float32')[None, :]
+        energy = (frames**2).sum(axis=0)
+        energy = np.where(energy == 0., np.finfo(float).eps, energy)
+        log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
             distribNb, nbTrainIt = 8, 12
             if isinstance(get_vad, (tuple, list)):
-                distribNb, nbTrainIt = get_vad
-            # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
-            # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
+                distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
             vad = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
-                             nb_train_it=nbTrainIt)[0].astype('int8')
+                             nb_train_it=nbTrainIt)[0].astype('uint8')
     if not get_energy:
         log_energy = None
     if not get_vad:
         vad = None
     # ====== 1: extract STFT and Spectrogram ====== #
-    stft = librosa.stft(s, n_fft=n_fft, hop_length=hop_length,
+    stft = librosa.stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
                         center=False) # no padding for center
     S, D = librosa.magphase(stft)
     # ====== 2: extract pitch features ====== #
@@ -516,26 +555,33 @@ def speech_features(s, sr, win, shift,
     if not get_mfcc:
         mfcc = None
     # ====== 5: compute delta ====== #
-    if nb_delta and nb_delta > 0:
+    if get_delta and get_delta > 0:
+        get_delta = int(get_delta)
         if pitch_freq is not None:
             pitch_freq = np.concatenate(
-                [pitch_freq] + compute_delta(pitch_freq, order=nb_delta),
+                [pitch_freq] + compute_delta(pitch_freq, order=get_delta),
                 axis=0)
         if powerspectrogram is not None:
             powerspectrogram = np.concatenate(
-                [powerspectrogram] + compute_delta(powerspectrogram, order=nb_delta),
+                [powerspectrogram] + compute_delta(powerspectrogram, order=get_delta),
                 axis=0)
         if melspectrogram is not None:
             melspectrogram = np.concatenate(
-                [melspectrogram] + compute_delta(melspectrogram, order=nb_delta),
+                [melspectrogram] + compute_delta(melspectrogram, order=get_delta),
                 axis=0)
         if mfcc is not None:
             mfcc = np.concatenate(
-                [mfcc] + compute_delta(mfcc, order=nb_delta),
+                [mfcc] + compute_delta(mfcc, order=get_delta),
                 axis=0)
         if log_energy is not None:
             log_energy = np.concatenate(
-                [log_energy] + compute_delta(log_energy, order=nb_delta),
+                [log_energy] + compute_delta(log_energy, order=get_delta),
                 axis=0)
-    return {'spec': powerspectrogram.T, 'mspec': melspectrogram.T, 'mfcc': mfcc.T,
-            'vad': vad, 'pitch': pitch_freq.T, 'energy': log_energy.T}
+    return OrderedDict([
+        ('mfcc', None if mfcc is None else mfcc.T),
+        ('energy', None if log_energy is None else log_energy.T),
+        ('spec', None if powerspectrogram is None else powerspectrogram.T),
+        ('mspec', None if melspectrogram is None else melspectrogram.T),
+        ('pitch', None if pitch_freq is None else pitch_freq.T),
+        ('vad', vad)
+    ])
