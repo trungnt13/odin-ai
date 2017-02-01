@@ -26,13 +26,7 @@ from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
 
-try:
-    import sidekit
-except:
-    warnings.warn('You need "sidekit" for audio signal processing.')
-
 __all__ = [
-    'speech_features_extraction',
     'SpeechProcessor'
 ]
 
@@ -55,66 +49,66 @@ def _append_energy_and_deltas(s, energy, delta_order):
     return s
 
 
-def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
-                               delta_order, energy, pitch_threshold,
-                               get_spec, get_mspec, get_mfcc, get_pitch, get_vad):
-    """ return spec(X, sum, sum2),
-               mspec(X, sum, sum2),
-               mfcc(X, sum, sum2),
-               vad_idx """
-    if s.ndim >= 2:
-        raise Exception('Speech Feature Extraction only accept 1-D signal')
-    # speech features, shape: [Time, Dimension]
-    mfcc, logEnergy, spec, mspec = sidekit.frontend.mfcc(
-        s, fs=fs, lowfreq=64, maxfreq=fs // 2, nlogfilt=n_filters,
-        nwin=win, shift=shift, nceps=n_ceps,
-        get_spec=True, get_mspec=get_mspec, prefac=0.97)
-    # geting pitch if required (using librosa)
-    pitch = None
-    if get_pitch:
-        import librosa
-        pitch_freq, pitch_mag = librosa.piptrack(S=spec.T, sr=fs,
-            n_fft=2 ** int(np.ceil(np.log2(int(round(win * fs))))),
-            hop_length=shift * fs,
-            fmin=150, fmax=fs / 2,
-            threshold=pitch_threshold)
-        # no append log energy or delta for pitch features
-        pitch = np.hstack([pitch_freq.T, pitch_mag.T])
-    # reset spec to true value
-    spec = None if not get_spec else spec
-    # any nan value in MFCC ignore the whole file
-    if np.any(np.isnan(mfcc)):
-        return None
-    mfcc = mfcc if get_mfcc else None
-    # VAD
-    vad_idx = None
-    if get_vad:
-        distribNb, nbTrainIt = 8, 12
-        if isinstance(get_vad, (tuple, list)):
-            distribNb, nbTrainIt = get_vad
-        # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
-        # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
-        vad_idx = sidekit.frontend.vad.vad_energy(logEnergy,
-            distrib_nb=distribNb, nb_train_it=nbTrainIt)[0].astype('int8')
-    # Energy
-    logEnergy = logEnergy if energy else None
-    # everything is (T, D)
-    mfcc = (_append_energy_and_deltas(mfcc, logEnergy, delta_order)
-            if mfcc is not None else None)
-    mspec = (_append_energy_and_deltas(mspec, logEnergy, delta_order)
-            if mspec is not None else None)
-    # we don't calculate deltas for spectrogram features
-    spec = (_append_energy_and_deltas(spec, logEnergy, 0)
-            if spec is not None else None)
+# def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
+#                                delta_order, energy, pitch_threshold,
+#                                get_spec, get_mspec, get_mfcc, get_pitch, get_vad):
+#     """ return spec(X, sum, sum2),
+#                mspec(X, sum, sum2),
+#                mfcc(X, sum, sum2),
+#                vad_idx """
+#     if s.ndim >= 2:
+#         raise Exception('Speech Feature Extraction only accept 1-D signal')
+#     # speech features, shape: [Time, Dimension]
+#     mfcc, logEnergy, spec, mspec = sidekit.frontend.mfcc(
+#         s, fs=fs, lowfreq=64, maxfreq=fs // 2, nlogfilt=n_filters,
+#         nwin=win, shift=shift, nceps=n_ceps,
+#         get_spec=True, get_mspec=get_mspec, prefac=0.97)
+#     # geting pitch if required (using librosa)
+#     pitch = None
+#     if get_pitch:
+#         import librosa
+#         pitch_freq, pitch_mag = librosa.piptrack(S=spec.T, sr=fs,
+#             n_fft=2 ** int(np.ceil(np.log2(int(round(win * fs))))),
+#             hop_length=shift * fs,
+#             fmin=150, fmax=fs / 2,
+#             threshold=pitch_threshold)
+#         # no append log energy or delta for pitch features
+#         pitch = np.hstack([pitch_freq.T, pitch_mag.T])
+#     # reset spec to true value
+#     spec = None if not get_spec else spec
+#     # any nan value in MFCC ignore the whole file
+#     if np.any(np.isnan(mfcc)):
+#         return None
+#     mfcc = mfcc if get_mfcc else None
+#     # VAD
+#     vad_idx = None
+#     if get_vad:
+#         distribNb, nbTrainIt = 8, 12
+#         if isinstance(get_vad, (tuple, list)):
+#             distribNb, nbTrainIt = get_vad
+#         # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
+#         # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
+#         vad_idx = sidekit.frontend.vad.vad_energy(logEnergy,
+#             distrib_nb=distribNb, nb_train_it=nbTrainIt)[0].astype('int8')
+#     # Energy
+#     logEnergy = logEnergy if energy else None
+#     # everything is (T, D)
+#     mfcc = (_append_energy_and_deltas(mfcc, logEnergy, delta_order)
+#             if mfcc is not None else None)
+#     mspec = (_append_energy_and_deltas(mspec, logEnergy, delta_order)
+#             if mspec is not None else None)
+#     # we don't calculate deltas for spectrogram features
+#     spec = (_append_energy_and_deltas(spec, logEnergy, 0)
+#             if spec is not None else None)
 
-    # for future normalization
-    ret = []
-    if spec is not None: ret.append(spec)
-    if mspec is not None: ret.append(mspec)
-    if mfcc is not None: ret.append(mfcc)
-    if pitch is not None: ret.append(pitch)
-    if vad_idx is not None: ret.append(vad_idx)
-    return tuple(ret)
+#     # for future normalization
+#     ret = []
+#     if spec is not None: ret.append(spec)
+#     if mspec is not None: ret.append(mspec)
+#     if mfcc is not None: ret.append(mfcc)
+#     if pitch is not None: ret.append(pitch)
+#     if vad_idx is not None: ret.append(vad_idx)
+#     return tuple(ret)
 
 
 # ==================== general ==================== #
@@ -287,39 +281,52 @@ class SpeechProcessor(FeatureProcessor):
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
         sw02001-B_001980-002131 | /path/to/sw02001.sph | 0.0 | -1 | 1
-    win : float
-        frame or window length in second
-    shift : float
-        frame or window, or hop length in second
-    n_filters : int
-        number of log-mel filter banks
-    n_ceps : int
-        number of cepstrum for MFCC
-    delta_order : int
-        compute deltas featues (e.g 2 means delta1 and delta2)
-    energy : bool
-        if True, append log energy to features
-    vad : bool, tuple or list
-        save Voice Activities Detection mask
-        if tuple or list provodied, it must represents (distribNb, nbTrainIt)
-        where distribNb is number of distribution, nbTrainIt is number of iteration
-        (default: distribNb=8, nbTrainIt=12)
-    get_spec : bool
-        return spectrogram
-    get_mspec : bool
-        return log-mel filterbank
-    get_mfcc : bool
-        return mfcc features
-    get_pitch : bool
-        return pitch frequencies, and pitch energy (which is
-        horizontal-stacked) into big features matrix (i.e. expected
-        double number of features of spectrogram).
-    pitch_threshold : float (0.0,1.0)
+    sr: int
+        sample rate
+    win: float
+        window length in millisecond
+    shift: float
+        hop length between windows, in millisecond
+    nb_melfilters: int
+        number of Mel bands to generate
+    nb_ceps: int
+        number of MFCCs to return
+    get_spec: bool
+        if True, include the log-power spectrogram
+    get_mspec: bool
+        if True, include the log-power mel-spectrogram
+    get_mfcc: bool
+        if True, include the MFCCs features
+    get_pitch:
+        if True, include the Pitch frequency (F0)
+    get_vad: bool
+        if True, include the indicators of voice activities detection
+    get_energy: bool
+        if True, include the log energy of each frames
+    get_delta: bool or int
+        if True and > 0, for each features append the delta with given order-th
+        (e.g. delta=2 will include: delta1 and delta2)
+    pitch_threshold: float in `(0, 1)`
         A bin in spectrum X is considered a pitch when it is greater than
-        `threshold*X.max()`. If delta is added, the order will be
-        [pitch_freq + pitch_freq_delta + pitch_mag + pitch_mag_delta]
-    robust : bool
-        run in robust mode, auto ignore error files
+        `threshold*X.max()`
+    fmin : float > 0 [scalar]
+        lower frequency cutoff.
+    fmax : float > 0 [scalar]
+        upper frequency cutoff.
+    sr_new: int or None
+        new sample rate
+    preemphasis: float `(0, 1)`
+        pre-emphasis coefficience
+    save_stats: bool
+        same the first order and second order statistics, standard deviation
+        of all features
+    substitute_nan: bool
+        if the statistics contain NaN, replace them with zero of given
+        value
+    dtype: 'float16', 'float32', 'float64'
+        the dtype of saved features
+    datatype: 'memmap', 'hdf5'
+        store processed features in memmap or hdf5
     ncache: float or int
         number of samples are kept until flush to the disk.
     ncpu: int
@@ -341,14 +348,14 @@ class SpeechProcessor(FeatureProcessor):
     >>> feat.run()
     '''
 
-    def __init__(self, segments, output_path,
-                 audio_ext=None, fs=8000,
-                 win=0.025, shift=0.01, n_filters=40, n_ceps=13,
-                 delta_order=2, energy=True, pitch_threshold=0.5,
-                 get_spec=False, get_mspec=True, get_mfcc=False,
-                 get_pitch=False, get_vad=True,
-                 save_stats=True, substitute_nan=None,
-                 dtype='float32', datatype='memmap', ncache=0.12, ncpu=1):
+    def __init__(self, segments, output_path, sr=None,
+                win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
+                get_spec=True, get_mspec=False, get_mfcc=False, get_pitch=False,
+                get_vad=True, get_energy=False, get_delta=False,
+                pitch_threshold=0.8, fmin=64, fmax=None,
+                sr_new=None, preemphasis=0.97, audio_ext=None,
+                save_stats=True, substitute_nan=None, dtype='float16',
+                datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, save_stats=save_stats,
             substitute_nan=substitute_nan, ncache=ncache, ncpu=ncpu)
@@ -393,14 +400,15 @@ class SpeechProcessor(FeatureProcessor):
         if len(self.jobs) == 0:
             raise Exception('NO jobs found for processing.')
         # ====== which features to get ====== #
-        if not get_spec and not get_mspec \
-            and not get_mfcc and not get_pitch:
+        if not get_spec and not get_mspec and not get_mfcc \
+        and not get_pitch and not get_energy and not get_vad:
             raise Exception('You must specify which features you want: '
                             'spectrogram, filter-banks, MFCC, or pitch.')
         features_properties = []
+        if get_mfcc: features_properties.append(('mfcc', dtype, True))
+        if get_energy: features_properties.append(('energy', dtype, True))
         if get_spec: features_properties.append(('spec', dtype, True))
         if get_mspec: features_properties.append(('mspec', dtype, True))
-        if get_mfcc: features_properties.append(('mfcc', dtype, True))
         if get_pitch: features_properties.append(('pitch', dtype, True))
         if get_vad: features_properties.append(('vad', 'uint8', False))
         self.__features_properties = features_properties
@@ -410,16 +418,20 @@ class SpeechProcessor(FeatureProcessor):
         self.get_mfcc = get_mfcc
         self.get_pitch = get_pitch
         self.get_vad = get_vad
-        # ====== feature infor ====== #
-        self.fs = fs
+        self.get_energy = get_energy
+        self.get_delta = int(get_delta)
+        # ====== feature information ====== #
+        self.sr = sr
         self.win = win
         self.shift = shift
-        self.n_filters = n_filters
-        self.n_ceps = n_ceps
-        self.delta_order = int(delta_order)
-        self.energy = energy
+        self.nb_melfilters = nb_melfilters
+        self.nb_ceps = nb_ceps
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
+        self.fmin = fmin
+        self.fmax = fmax
+        self.sr_new = sr_new
+        self.preemphasis = preemphasis
 
     # ==================== Abstract properties ==================== #
     @property
@@ -435,37 +447,34 @@ class SpeechProcessor(FeatureProcessor):
         '''
 
         audio_path, segments = job[0] if len(job) == 1 else job
-        fs = self.fs
         try:
             # load audio data
-            s, orig_fs = speech.read(audio_path)
-            orig_fs = fs if orig_fs is None else orig_fs
-            # check frequency for downsampling (if necessary)
-            if fs is None:
-                fs = orig_fs
-            elif fs != orig_fs: # downsample or upsample
-                import resampy
-                s = resampy.resample(s, sr_orig=orig_fs, sr_new=fs, axis=0, filter='kaiser_best')
+            s, sr_orig = speech.read(audio_path)
+            if sr_orig is None:
+                sr_orig = self.sr
             N = len(s)
             # processing all segments
             ret = []
             for name, start, end, channel in segments:
-                start = int(float(start) * fs)
-                end = int(N if end < 0 else end * fs)
+                start = int(float(start) * sr_orig)
+                end = int(N if end < 0 else end * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                features = speech_features_extraction(data.ravel(), fs=fs,
-                    n_filters=self.n_filters, n_ceps=self.n_ceps,
-                    win=self.win, shift=self.shift, delta_order=self.delta_order,
-                    energy=self.energy, pitch_threshold=self.pitch_threshold,
+                features = speech.speech_features(data.ravel(), sr=sr_orig,
+                    win=self.win, shift=self.shift,
+                    nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
                     get_mfcc=self.get_mfcc, get_pitch=self.get_pitch,
-                    get_vad=self.get_vad)
+                    get_vad=self.get_vad, get_energy=self.get_energy,
+                    get_delta=self.get_delta, pitch_threshold=self.pitch_threshold,
+                    fmin=self.fmin, fmax=self.fmax,
+                    sr_new=self.sr_new, preemphasis=self.preemphasis)
                 if features is not None:
-                    ret.append((name, features))
+                    ret.append((name, [features[i[0]]
+                                       for i in self.__features_properties]))
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)
-            # return the results
+            # return the results as a generator
             return (i for i in ret)
         except Exception as e:
             msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))

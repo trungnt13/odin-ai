@@ -448,8 +448,8 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
 
 def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     get_spec=True, get_mspec=False, get_mfcc=False, get_pitch=False,
-                    get_vad=True, get_energy=False,
-                    get_delta=False, pitch_threshold=0.8, fmin=64, fmax=None,
+                    get_vad=True, get_energy=False, get_delta=False,
+                    pitch_threshold=0.8, fmin=64, fmax=None,
                     sr_new=None, preemphasis=0.97):
     """ Automatically extract multiple acoustic representation of
     speech features
@@ -464,25 +464,48 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         window length in millisecond
     shift: float
         hop length between windows, in millisecond
-    nb_filters:
-    nb_ceps:
-    nb_delta:
-    get_spec:
-    get_mspec:
-    get_mfcc:
+    nb_melfilters: int
+        number of Mel bands to generate
+    nb_ceps: int
+        number of MFCCs to return
+    get_spec: bool
+        if True, include the log-power spectrogram
+    get_mspec: bool
+        if True, include the log-power mel-spectrogram
+    get_mfcc: bool
+        if True, include the MFCCs features
     get_pitch:
-    get_vad:
-    pitch_threshold:
-    fmin: int
-    fmax: int or None
+        if True, include the Pitch frequency (F0)
+    get_vad: bool
+        if True, include the indicators of voice activities detection
+    get_energy: bool
+        if True, include the log energy of each frames
+    get_delta: bool or int
+        if True and > 0, for each features append the delta with given order-th
+        (e.g. delta=2 will include: delta1 and delta2)
+    pitch_threshold: float in `(0, 1)`
+        A bin in spectrum X is considered a pitch when it is greater than
+        `threshold*X.max()`
+    fmin : float > 0 [scalar]
+        lower frequency cutoff.
+    fmax : float > 0 [scalar]
+        upper frequency cutoff.
     sr_new: int or None
         new sample rate
-    preemphasis:
+    preemphasis: float `(0, 1)`
+        pre-emphasis coefficience
 
-    return spec(X, sum, sum2),
-               mspec(X, sum, sum2),
-               mfcc(X, sum, sum2),
-               vad_idx
+    Return
+    ------
+    y = {
+        'mfcc': np.ndarray (txd),
+        'energy': np.ndarray (txd),
+        'spec': np.ndarray (txd),
+        'mspec': np.ndarray (txd),
+        'pitch': np.ndarray (txd),
+        'vad': np.ndarray (t,)
+    }
+    (txd): time x features
     """
     if np.prod(s.shape) == np.max(s.shape):
         s = s.ravel()
@@ -524,6 +547,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     stft = librosa.stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
                         center=False) # no padding for center
     S, D = librosa.magphase(stft)
+    if np.any(np.isnan(S)):
+        return None
     # ====== 2: extract pitch features ====== #
     if get_pitch:
         # we don't care about pitch magnitude
