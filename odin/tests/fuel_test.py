@@ -47,16 +47,16 @@ class FuelTest(unittest.TestCase):
                     n += 1
             return n >= max(len(x1), len(x2)) // 2
         # these numbers are highly numerical instable
-        self.assertTrue(is_equal(ds['mfcc'].sum(axis=None), -224662.796875))
-        self.assertTrue(is_equal(ds['mspec'].sum(axis=None), -9484961.0))
-        self.assertTrue(is_equal(ds['spec'].sum(axis=None), 265804.65625))
-        self.assertTrue(is_equal(ds['mfcc_mean'].sum(axis=None), -8.937535285949707))
-        self.assertTrue(is_equal(ds['mspec_mean'].sum(axis=None), -377.3306579589844))
-        self.assertTrue(is_equal(ds['spec_mean'].sum(axis=None), 10.574236869812012))
-        self.assertTrue(is_equal(ds['mfcc_std'].sum(axis=None), 45.329566955566406))
-        self.assertTrue(is_equal(ds['mspec_std'].sum(axis=None), 146.80599975585938))
-        self.assertTrue(is_equal(ds['spec_std'].sum(axis=None), 67.6201171875))
-        self.assertTrue(is_equal(ds['vad'].sum(axis=None), 9174.0))
+        self.assertTrue(is_equal(ds['mfcc'].sum(axis=None), -6687784.5))
+        self.assertTrue(is_equal(ds['mspec'].sum(axis=None), -42703896.0))
+        self.assertTrue(is_equal(ds['spec'].sum(axis=None), -99036088.0))
+        self.assertTrue(is_equal(ds['mfcc_mean'].sum(axis=None), -255.85469581024714))
+        self.assertTrue(is_equal(ds['mspec_mean'].sum(axis=None), -1633.7230511666444))
+        self.assertTrue(is_equal(ds['spec_mean'].sum(axis=None), -3788.824078019485))
+        self.assertTrue(is_equal(ds['mfcc_std'].sum(axis=None), 256.90104429356546))
+        self.assertTrue(is_equal(ds['mspec_std'].sum(axis=None), 633.2005779840433))
+        self.assertTrue(is_equal(ds['spec_std'].sum(axis=None), 2110.3262373507873))
+        self.assertTrue(is_equal(ds['vad'].sum(axis=None), 9365))
 
     def test_feeders(self):
         with utils.TemporaryDirectory() as temppath:

@@ -1,5 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
+import numpy as np
 import shutil
 import os
 from odin import fuel as F, utils

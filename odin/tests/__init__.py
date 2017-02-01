@@ -3,7 +3,7 @@ import unittest
 # python -c "from odin.tests import run; run('tensorflow')"
 
 
-def run(backend='theano', device='gpu'):
+def run(backend='tensorflow', device='gpu'):
     tests = [
         'fuel_test',
         'backend_test',
