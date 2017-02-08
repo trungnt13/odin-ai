@@ -358,7 +358,8 @@ class SpeechProcessor(FeatureProcessor):
             features_properties.append(('qspec', dtype, True))
             if get_mspec: features_properties.append(('qmspec', dtype, True))
             if get_mfcc: features_properties.append(('qmfcc', dtype, True))
-        if get_phase: features_properties.append(('phase', np.complex64, False))
+            if get_phase: features_properties.append(('qphase', dtype, True))
+        if get_phase: features_properties.append(('phase', dtype, True))
         if get_pitch: features_properties.append(('pitch', dtype, True))
         if get_vad: features_properties.append(('vad', 'uint8', False))
         self.__features_properties = features_properties

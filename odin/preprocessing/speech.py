@@ -490,7 +490,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         if True and > 0, for each features append the delta with given order-th
         (e.g. delta=2 will include: delta1 and delta2)
     fmin : float > 0 [scalar]
-        lower frequency cutoff.
+        lower frequency cutoff (if you work with other voice than human speech,
+        set `fmin` to 20Hz).
     fmax : float > 0 [scalar]
         upper frequency cutoff.
     sr_new: int or None
@@ -521,7 +522,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         'qmspec': np.ndarray (txd) - float32,
         'qmfcc': np.ndarray (txd) - float32,
 
-        'phase': np.ndarray (txd) - complex64,
+        'phase': np.ndarray (txd) - float32,
         'pitch': np.ndarray (txd) - float32,
         'vad': np.ndarray (t,) - uint8
     }
@@ -549,6 +550,10 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     # preemphais
     s = pre_emphasis(s, coeff=preemphasis)
     # ====== 0: extract Constant Q-transform ====== #
+    q_melspectrogram = None
+    q_mfcc = None
+    qspec = None
+    qphase = None
     if get_qspec:
         # auto adjust bins_per_octave to get maximum range of frequency
         bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin))
@@ -564,27 +569,32 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                                      fmin=fmin, tuning=0.0,
                                      filter_scale=filter_scale, norm=1, sparsity=0.01)
         # get log power Q-spectrogram
-        qS, qD = librosa.magphase(qspec)
+        qS = np.abs(qspec)
         qS = qS**2
         if np.any(np.isnan(qS)):
             return None
-        qspec = librosa.logamplitude(qS, ref_power=1.0, amin=1e-10,
-            top_db=80.0).astype('float32')
+        # phase of Q-transform
+        if get_phase:
+            # GD: derivative along frequency axis
+            qphase = compute_delta(np.angle(qspec),
+                width=9, axis=0, order=1)[-1].astype('float32')
+        # power spectrum of Q-transform
+        qspec = librosa.logamplitude(qS, amin=1e-10, top_db=80.0).astype('float32')
         # perfom cepstral analysis for Q-transform
         if get_mspec or get_mfcc:
             q_melspectrogram = librosa.feature.melspectrogram(
                 y=None, sr=sr, S=qS, n_fft=n_fft, hop_length=hop_length,
                 n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
-            q_melspectrogram = librosa.logamplitude(
-                q_melspectrogram, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
+            q_melspectrogram = librosa.logamplitude(q_melspectrogram,
+                amin=1e-10, top_db=80.0).astype('float32')
             if get_mfcc:
                 q_mfcc = librosa.feature.mfcc(
                     y=None, sr=sr, S=q_melspectrogram, n_mfcc=nb_ceps).astype('float32')
-    else:
-        qspec = None
     # ====== 1: extract VAD and energy ====== #
     # centering the raw signal by padding
     s = np.pad(s, int(n_fft // 2), mode='reflect')
+    log_energy = None
+    vad = None
     if get_energy or get_vad:
         frames = librosa.util.frame(s, frame_length=n_fft, hop_length=hop_length)
         energy = (frames**2).sum(axis=0)
@@ -596,49 +606,45 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
             vad = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                              nb_train_it=nbTrainIt)[0].astype('uint8')
-    if not get_energy:
-        log_energy = None
-    if not get_vad:
-        vad = None
     # ====== 2: extract STFT and Spectrogram ====== #
     stft = librosa.stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
                         center=False) # no padding for center
-    S, D = librosa.magphase(stft)
+    S = np.abs(stft)
     if np.any(np.isnan(S)):
         return None
-    # ====== 3: extract pitch features ====== #
+    # ====== 3: extract phase features ====== #
+    phase = None
+    if get_phase:
+        # GD: derivative along frequency axis
+        phase = compute_delta(np.angle(stft),
+            width=9, axis=0, order=1)[-1].astype('float32')
+    # ====== 4: extract pitch features ====== #
+    pitch_freq = None
     if get_pitch:
         # we don't care about pitch magnitude
         pitch_freq, _ = librosa.piptrack(
             y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
             fmin=fmin, fmax=fmax, threshold=pitch_threshold)
         pitch_freq = pitch_freq.astype('float32')
-    else:
-        pitch_freq = None
-    # ====== 4: extract power spectrogram ====== #
+    # ====== 5: extract power spectrogram ====== #
     S = S**2
+    powerspectrogram = None
     if get_spec:
-        powerspectrogram = librosa.logamplitude(
-            S, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
-    else:
-        powerspectrogram = None
-    # ====== 5: extract log-mel filter bank ====== #
+        powerspectrogram = librosa.logamplitude(S,
+            amin=1e-10, top_db=80.0).astype('float32')
+    # ====== 6: extract log-mel filter bank ====== #
+    melspectrogram = None
+    mfcc = None
     if get_mspec or get_mfcc:
         melspectrogram = librosa.feature.melspectrogram(
             y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
             n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
-        melspectrogram = librosa.logamplitude(
-            melspectrogram, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
+        melspectrogram = librosa.logamplitude(melspectrogram,
+            amin=1e-10, top_db=80.0).astype('float32')
         if get_mfcc:
             mfcc = librosa.feature.mfcc(
                 y=None, sr=sr, S=melspectrogram, n_mfcc=nb_ceps).astype('float32')
-    if not get_mspec:
-        melspectrogram = None
-        q_melspectrogram = None
-    if not get_mfcc:
-        mfcc = None
-        q_mfcc = None
-    # ====== 6: compute delta ====== #
+    # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
         if pitch_freq is not None:
@@ -677,7 +683,9 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         ('qmspec', None if q_melspectrogram is None else q_melspectrogram.T),
         ('qmfcc', None if q_mfcc is None else q_mfcc.T),
 
-        ('phase', D.T),
+        ('phase', phase.T if get_phase else None),
+        ('qphase', qphase.T if get_phase and get_qspec else None),
+
         ('pitch', None if pitch_freq is None else pitch_freq.T),
         ('vad', vad)
     ])

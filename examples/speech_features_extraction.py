@@ -1,3 +1,10 @@
+# ===========================================================================
+# ncpu=1:  16s
+# ncpu=2:  9.82
+# ncpu=4:  5.9s
+# ncpu=8:  4.3
+# ncpu=12: 4.0
+# ===========================================================================
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
@@ -15,8 +22,9 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
                          pitch_threshold=0.8, cqt_bins=96, cqt_scale=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=0.12, ncpu=4)
-feat.run()
+                         ncache=0.12, ncpu=8)
+with utils.UnitTimer():
+    feat.run()
 shutil.copy(os.path.join(datapath, 'README.md'),
             os.path.join(output_path, 'README.md'))
 # ====== check the preprocessed dataset ====== #
