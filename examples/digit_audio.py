@@ -16,7 +16,7 @@ from odin.utils import ArgController
 args = ArgController(
 ).add('-bk', 'backend: tensorflow or theano', 'tensorflow'
 ).add('-dev', 'gpu or cpu', 'gpu'
-).add('-dt', 'dtype: float32 or float16', 'float32'
+).add('-dt', 'dtype: float32 or float16', 'float16'
 ).add('-feat', 'feature type: mfcc, mspec, or spec', 'mspec'
 ).add('-cnn', 'enable CNN or not', True
 # for trainign
@@ -33,7 +33,7 @@ import numpy as np
 np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
-from odin.utils import get_modelpath, stdio, get_logpath
+from odin.utils import get_modelpath, stdio, get_logpath, get_datasetpath
 from odin.basic import has_roles, BIAS, WEIGHT
 from odin import training
 
@@ -41,9 +41,20 @@ from odin import training
 stdio(path=get_logpath('digit_audio.log', override=True))
 
 # ===========================================================================
-# Load dataset and some consts
+# Get wav and process new dataset configuration
 # ===========================================================================
-ds = F.load_digit_audio(dtype=args['dt'])
+datapath = F.load_digit_wav()
+output_path = get_datasetpath(name='digit', override=True)
+feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
+                         win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                         get_delta=2, get_energy=True, pitch_threshold=0.8,
+                         get_spec=True, get_mspec=True, get_mfcc=True,
+                         get_pitch=True, get_vad=True,
+                         save_stats=True, substitute_nan=None,
+                         dtype=args['dt'], datatype='memmap',
+                         ncache=0.12, ncpu=6)
+feat.run()
+ds = F.Dataset(output_path, read_only=True)
 print(ds)
 nb_classes = 10 # 10 digits (0-9)
 

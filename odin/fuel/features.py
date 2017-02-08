@@ -49,68 +49,6 @@ def _append_energy_and_deltas(s, energy, delta_order):
     return s
 
 
-# def speech_features_extraction(s, fs, n_filters, n_ceps, win, shift,
-#                                delta_order, energy, pitch_threshold,
-#                                get_spec, get_mspec, get_mfcc, get_pitch, get_vad):
-#     """ return spec(X, sum, sum2),
-#                mspec(X, sum, sum2),
-#                mfcc(X, sum, sum2),
-#                vad_idx """
-#     if s.ndim >= 2:
-#         raise Exception('Speech Feature Extraction only accept 1-D signal')
-#     # speech features, shape: [Time, Dimension]
-#     mfcc, logEnergy, spec, mspec = sidekit.frontend.mfcc(
-#         s, fs=fs, lowfreq=64, maxfreq=fs // 2, nlogfilt=n_filters,
-#         nwin=win, shift=shift, nceps=n_ceps,
-#         get_spec=True, get_mspec=get_mspec, prefac=0.97)
-#     # geting pitch if required (using librosa)
-#     pitch = None
-#     if get_pitch:
-#         import librosa
-#         pitch_freq, pitch_mag = librosa.piptrack(S=spec.T, sr=fs,
-#             n_fft=2 ** int(np.ceil(np.log2(int(round(win * fs))))),
-#             hop_length=shift * fs,
-#             fmin=150, fmax=fs / 2,
-#             threshold=pitch_threshold)
-#         # no append log energy or delta for pitch features
-#         pitch = np.hstack([pitch_freq.T, pitch_mag.T])
-#     # reset spec to true value
-#     spec = None if not get_spec else spec
-#     # any nan value in MFCC ignore the whole file
-#     if np.any(np.isnan(mfcc)):
-#         return None
-#     mfcc = mfcc if get_mfcc else None
-#     # VAD
-#     vad_idx = None
-#     if get_vad:
-#         distribNb, nbTrainIt = 8, 12
-#         if isinstance(get_vad, (tuple, list)):
-#             distribNb, nbTrainIt = get_vad
-#         # vad_idx = sidekit.frontend.vad.vad_snr(s, threshold,
-#         # fs=fs, shift=shift, nwin=int(fs * win)).astype('int8')
-#         vad_idx = sidekit.frontend.vad.vad_energy(logEnergy,
-#             distrib_nb=distribNb, nb_train_it=nbTrainIt)[0].astype('int8')
-#     # Energy
-#     logEnergy = logEnergy if energy else None
-#     # everything is (T, D)
-#     mfcc = (_append_energy_and_deltas(mfcc, logEnergy, delta_order)
-#             if mfcc is not None else None)
-#     mspec = (_append_energy_and_deltas(mspec, logEnergy, delta_order)
-#             if mspec is not None else None)
-#     # we don't calculate deltas for spectrogram features
-#     spec = (_append_energy_and_deltas(spec, logEnergy, 0)
-#             if spec is not None else None)
-
-#     # for future normalization
-#     ret = []
-#     if spec is not None: ret.append(spec)
-#     if mspec is not None: ret.append(mspec)
-#     if mfcc is not None: ret.append(mfcc)
-#     if pitch is not None: ret.append(pitch)
-#     if vad_idx is not None: ret.append(vad_idx)
-#     return tuple(ret)
-
-
 # ==================== general ==================== #
 @add_metaclass(ABCMeta)
 class FeatureProcessor(object):
@@ -245,8 +183,8 @@ class FeatureProcessor(object):
                 mean = np.where(np.isnan(mean), self.substitute_nan, mean)
                 std = np.where(np.isnan(std), self.substitute_nan, std)
             else:
-                assert not np.any(np.isnan(mean)), 'Mean contains NaN'
-                assert not np.any(np.isnan(std)), 'Std contains NaN'
+                assert not np.any(np.isnan(mean)), 'Mean contains NaN, %s' % name
+                assert not np.any(np.isnan(std)), 'Std contains NaN, %s' % name
             dataset[name + '_sum1'] = sum1
             dataset[name + '_sum2'] = sum2
             dataset[name + '_mean'] = mean
@@ -297,6 +235,10 @@ class SpeechProcessor(FeatureProcessor):
         if True, include the log-power mel-spectrogram
     get_mfcc: bool
         if True, include the MFCCs features
+    get_qspec: bool
+        if True, return Q-transform coefficients
+    get_phase: bool
+        if True, return phase components of STFT
     get_pitch:
         if True, include the Pitch frequency (F0)
     get_vad: bool
@@ -306,9 +248,6 @@ class SpeechProcessor(FeatureProcessor):
     get_delta: bool or int
         if True and > 0, for each features append the delta with given order-th
         (e.g. delta=2 will include: delta1 and delta2)
-    pitch_threshold: float in `(0, 1)`
-        A bin in spectrum X is considered a pitch when it is greater than
-        `threshold*X.max()`
     fmin : float > 0 [scalar]
         lower frequency cutoff.
     fmax : float > 0 [scalar]
@@ -317,6 +256,11 @@ class SpeechProcessor(FeatureProcessor):
         new sample rate
     preemphasis: float `(0, 1)`
         pre-emphasis coefficience
+    pitch_threshold: float in `(0, 1)`
+        A bin in spectrum X is considered a pitch when it is greater than
+        `threshold*X.max()`
+    cqt_bins : int > 0
+        Number of frequency bins for constant Q-transform, starting at `fmin`
     save_stats: bool
         same the first order and second order statistics, standard deviation
         of all features
@@ -350,12 +294,13 @@ class SpeechProcessor(FeatureProcessor):
 
     def __init__(self, segments, output_path, sr=None,
                 win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
-                get_spec=True, get_mspec=False, get_mfcc=False, get_pitch=False,
+                get_spec=True, get_mspec=False, get_mfcc=False,
+                get_qspec=False, get_phase=False, get_pitch=False,
                 get_vad=True, get_energy=False, get_delta=False,
-                pitch_threshold=0.8, fmin=64, fmax=None,
-                sr_new=None, preemphasis=0.97, audio_ext=None,
-                save_stats=True, substitute_nan=None, dtype='float16',
-                datatype='memmap', ncache=0.12, ncpu=1):
+                fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
+                pitch_threshold=0.8, cqt_bins=84, cqt_scale=False,
+                audio_ext=None, save_stats=True, substitute_nan=None,
+                dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, save_stats=save_stats,
             substitute_nan=substitute_nan, ncache=ncache, ncpu=ncpu)
@@ -409,6 +354,11 @@ class SpeechProcessor(FeatureProcessor):
         if get_energy: features_properties.append(('energy', dtype, True))
         if get_spec: features_properties.append(('spec', dtype, True))
         if get_mspec: features_properties.append(('mspec', dtype, True))
+        if get_qspec:
+            features_properties.append(('qspec', dtype, True))
+            if get_mspec: features_properties.append(('qmspec', dtype, True))
+            if get_mfcc: features_properties.append(('qmfcc', dtype, True))
+        if get_phase: features_properties.append(('phase', np.complex64, False))
         if get_pitch: features_properties.append(('pitch', dtype, True))
         if get_vad: features_properties.append(('vad', 'uint8', False))
         self.__features_properties = features_properties
@@ -417,6 +367,8 @@ class SpeechProcessor(FeatureProcessor):
         self.get_mspec = get_mspec
         self.get_mfcc = get_mfcc
         self.get_pitch = get_pitch
+        self.get_qspec = get_qspec
+        self.get_phase = get_phase
         self.get_vad = get_vad
         self.get_energy = get_energy
         self.get_delta = int(get_delta)
@@ -428,6 +380,8 @@ class SpeechProcessor(FeatureProcessor):
         self.nb_ceps = nb_ceps
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
+        self.cqt_bins = cqt_bins
+        self.cqt_scale = cqt_scale
         self.fmin = fmin
         self.fmax = fmax
         self.sr_new = sr_new
@@ -463,9 +417,12 @@ class SpeechProcessor(FeatureProcessor):
                     win=self.win, shift=self.shift,
                     nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
                     get_spec=self.get_spec, get_mspec=self.get_mspec,
-                    get_mfcc=self.get_mfcc, get_pitch=self.get_pitch,
+                    get_mfcc=self.get_mfcc, get_qspec=self.get_qspec,
+                    get_phase=self.get_phase, get_pitch=self.get_pitch,
                     get_vad=self.get_vad, get_energy=self.get_energy,
-                    get_delta=self.get_delta, pitch_threshold=self.pitch_threshold,
+                    get_delta=self.get_delta,
+                    pitch_threshold=self.pitch_threshold,
+                    cqt_bins=self.cqt_bins, cqt_scale=self.cqt_scale,
                     fmin=self.fmin, fmax=self.fmax,
                     sr_new=self.sr_new, preemphasis=self.preemphasis)
                 if features is not None:
@@ -789,8 +746,8 @@ class VideoFeature(FeederRecipe):
         # ====== helper ====== #
         mean = sum1 / n
         std = np.sqrt(sum2 / n - mean**2)
-        assert not np.any(np.isnan(mean)), 'Mean contains NaN'
-        assert not np.any(np.isnan(std)), 'Std contains NaN'
+        assert not np.any(np.isnan(mean)), 'Mean contains NaN, name:' % os.path.basename(path)
+        assert not np.any(np.isnan(std)), 'Std contains NaN, name:' % os.path.basename(path)
         dataset[name + '_mean'] = mean
         dataset[name + '_std'] = std
         # ====== clean up and release cv2 ====== #

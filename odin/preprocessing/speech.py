@@ -11,6 +11,7 @@ import os
 import six
 import math
 import copy
+import warnings
 from collections import OrderedDict
 import warnings
 
@@ -447,10 +448,11 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
 
 
 def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
-                    get_spec=True, get_mspec=False, get_mfcc=False, get_pitch=False,
+                    get_spec=True, get_mspec=False, get_mfcc=False,
+                    get_qspec=False, get_phase=False, get_pitch=False,
                     get_vad=True, get_energy=False, get_delta=False,
-                    pitch_threshold=0.8, fmin=64, fmax=None,
-                    sr_new=None, preemphasis=0.97):
+                    fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
+                    pitch_threshold=0.8, cqt_bins=84, cqt_scale=False):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -474,6 +476,10 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         if True, include the log-power mel-spectrogram
     get_mfcc: bool
         if True, include the MFCCs features
+    get_qspec: bool
+        if True, return Q-transform coefficients
+    get_phase: bool
+        if True, return phase components of STFT
     get_pitch:
         if True, include the Pitch frequency (F0)
     get_vad: bool
@@ -483,9 +489,6 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     get_delta: bool or int
         if True and > 0, for each features append the delta with given order-th
         (e.g. delta=2 will include: delta1 and delta2)
-    pitch_threshold: float in `(0, 1)`
-        A bin in spectrum X is considered a pitch when it is greater than
-        `threshold*X.max()`
     fmin : float > 0 [scalar]
         lower frequency cutoff.
     fmax : float > 0 [scalar]
@@ -494,16 +497,33 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         new sample rate
     preemphasis: float `(0, 1)`
         pre-emphasis coefficience
+    pitch_threshold: float in `(0, 1)`
+        A bin in spectrum X is considered a pitch when it is greater than
+        `threshold*X.max()`
+    cqt_bins : int > 0
+        Number of frequency bins for constant Q-transform, starting at `fmin`
+    cqt_scale : bool
+        if True, the `filter_scale` of CQT is set to 1.8, and `bins_per_octave` is
+        decreased by 1. Hence, the Q-transform contains more detail in higher
+        frequency, but may lose some precise detail in other regions.
+        If you want more precise details than additional details in higher
+        frequency region (closed to Nyquist), set `cqt_scale` to False.
 
     Return
     ------
     y = {
-        'mfcc': np.ndarray (txd),
-        'energy': np.ndarray (txd),
-        'spec': np.ndarray (txd),
-        'mspec': np.ndarray (txd),
-        'pitch': np.ndarray (txd),
-        'vad': np.ndarray (t,)
+        'mfcc': np.ndarray (txd) - float32,
+        'energy': np.ndarray (txd) - float32,
+        'spec': np.ndarray (txd) - float32,
+        'mspec': np.ndarray (txd) - float32,
+
+        'qspec': np.ndarray (txd) - float32,
+        'qmspec': np.ndarray (txd) - float32,
+        'qmfcc': np.ndarray (txd) - float32,
+
+        'phase': np.ndarray (txd) - complex64,
+        'pitch': np.ndarray (txd) - float32,
+        'vad': np.ndarray (t,) - uint8
     }
     (txd): time x features
     """
@@ -521,13 +541,50 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     if fmin is None or fmin < 0 or fmin >= fmax:
         fmin = 0
     win_length = int(win * sr)
+    # n_fft must be 2^x
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
-    hop_length = int(shift * sr)
+    shift_length = shift * sr
+    # hop_length must be 2^x
+    hop_length = 2 ** int(np.floor(np.log2(shift_length)))
     # preemphais
     s = pre_emphasis(s, coeff=preemphasis)
-    # centering by padding
+    # ====== 0: extract Constant Q-transform ====== #
+    if get_qspec:
+        # auto adjust bins_per_octave to get maximum range of frequency
+        bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin))
+        if cqt_scale:
+            filter_scale = 1.8
+        else:
+            filter_scale = 1.
+            bins_per_octave += 1
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            qspec = librosa.core.cqt(s, sr=sr, hop_length=hop_length, n_bins=cqt_bins,
+                                     bins_per_octave=int(bins_per_octave),
+                                     fmin=fmin, tuning=0.0,
+                                     filter_scale=filter_scale, norm=1, sparsity=0.01)
+        # get log power Q-spectrogram
+        qS, qD = librosa.magphase(qspec)
+        qS = qS**2
+        if np.any(np.isnan(qS)):
+            return None
+        qspec = librosa.logamplitude(qS, ref_power=1.0, amin=1e-10,
+            top_db=80.0).astype('float32')
+        # perfom cepstral analysis for Q-transform
+        if get_mspec or get_mfcc:
+            q_melspectrogram = librosa.feature.melspectrogram(
+                y=None, sr=sr, S=qS, n_fft=n_fft, hop_length=hop_length,
+                n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
+            q_melspectrogram = librosa.logamplitude(
+                q_melspectrogram, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
+            if get_mfcc:
+                q_mfcc = librosa.feature.mfcc(
+                    y=None, sr=sr, S=q_melspectrogram, n_mfcc=nb_ceps).astype('float32')
+    else:
+        qspec = None
+    # ====== 1: extract VAD and energy ====== #
+    # centering the raw signal by padding
     s = np.pad(s, int(n_fft // 2), mode='reflect')
-    # ====== 0: extract VAD and energy ====== #
     if get_energy or get_vad:
         frames = librosa.util.frame(s, frame_length=n_fft, hop_length=hop_length)
         energy = (frames**2).sum(axis=0)
@@ -543,13 +600,13 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         log_energy = None
     if not get_vad:
         vad = None
-    # ====== 1: extract STFT and Spectrogram ====== #
+    # ====== 2: extract STFT and Spectrogram ====== #
     stft = librosa.stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
                         center=False) # no padding for center
     S, D = librosa.magphase(stft)
     if np.any(np.isnan(S)):
         return None
-    # ====== 2: extract pitch features ====== #
+    # ====== 3: extract pitch features ====== #
     if get_pitch:
         # we don't care about pitch magnitude
         pitch_freq, _ = librosa.piptrack(
@@ -558,14 +615,14 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         pitch_freq = pitch_freq.astype('float32')
     else:
         pitch_freq = None
-    # ====== 3: extract power spectrogram ====== #
+    # ====== 4: extract power spectrogram ====== #
     S = S**2
     if get_spec:
         powerspectrogram = librosa.logamplitude(
             S, ref_power=1.0, amin=1e-10, top_db=80.0).astype('float32')
     else:
         powerspectrogram = None
-    # ====== 4: extract log-mel filter bank ====== #
+    # ====== 5: extract log-mel filter bank ====== #
     if get_mspec or get_mfcc:
         melspectrogram = librosa.feature.melspectrogram(
             y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
@@ -577,19 +634,22 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 y=None, sr=sr, S=melspectrogram, n_mfcc=nb_ceps).astype('float32')
     if not get_mspec:
         melspectrogram = None
+        q_melspectrogram = None
     if not get_mfcc:
         mfcc = None
-    # ====== 5: compute delta ====== #
+        q_mfcc = None
+    # ====== 6: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
         if pitch_freq is not None:
             pitch_freq = np.concatenate(
                 [pitch_freq] + compute_delta(pitch_freq, order=get_delta),
                 axis=0)
-        if powerspectrogram is not None:
-            powerspectrogram = np.concatenate(
-                [powerspectrogram] + compute_delta(powerspectrogram, order=get_delta),
+        if log_energy is not None:
+            log_energy = np.concatenate(
+                [log_energy] + compute_delta(log_energy, order=get_delta),
                 axis=0)
+        # STFT
         if melspectrogram is not None:
             melspectrogram = np.concatenate(
                 [melspectrogram] + compute_delta(melspectrogram, order=get_delta),
@@ -598,15 +658,26 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
             mfcc = np.concatenate(
                 [mfcc] + compute_delta(mfcc, order=get_delta),
                 axis=0)
-        if log_energy is not None:
-            log_energy = np.concatenate(
-                [log_energy] + compute_delta(log_energy, order=get_delta),
+        # Q-transform
+        if q_melspectrogram is not None:
+            q_melspectrogram = np.concatenate(
+                [q_melspectrogram] + compute_delta(q_melspectrogram, order=get_delta),
+                axis=0)
+        if q_mfcc is not None:
+            q_mfcc = np.concatenate(
+                [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
                 axis=0)
     return OrderedDict([
         ('mfcc', None if mfcc is None else mfcc.T),
         ('energy', None if log_energy is None else log_energy.T),
         ('spec', None if powerspectrogram is None else powerspectrogram.T),
         ('mspec', None if melspectrogram is None else melspectrogram.T),
+
+        ('qspec', None if qspec is None else qspec.T),
+        ('qmspec', None if q_melspectrogram is None else q_melspectrogram.T),
+        ('qmfcc', None if q_mfcc is None else q_mfcc.T),
+
+        ('phase', D.T),
         ('pitch', None if pitch_freq is None else pitch_freq.T),
         ('vad', vad)
     ])
