@@ -48,15 +48,14 @@ def _parse_data_descriptor(path, name, read_only):
             return [(str(i.name), (str(i.dtype), i.shape, i)) for i in data]
         except:
             pass
-    # ====== check if a file is Dict ====== #
-    f = open(path, 'rb')
+    # ====== try to load pickle file if possible ====== #
     try:
-        data = cPickle.load(f)
-        if isinstance(data, dict):
-            return [(name, ('dict', len(data), data))]
+        with open(path, 'rb') as f:
+            data = cPickle.load(f)
+            return [(name,
+            (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data))]
     except:
         pass
-    f.close()
     # ====== load memmap dict ====== #
     try:
         data = MmapDict(path)
@@ -80,18 +79,23 @@ class Dataset(object):
     readme included with the dataset should contain license information
     """
 
-    def __init__(self, path, read_only=False):
+    def __init__(self, path, read_only=False, override=False):
         path = os.path.abspath(path)
         self.read_only = read_only
         self._readme_info = ['README:', '-------', ' No information!']
         self._readme_path = None
         # parse all data from path
         if path is not None:
+            if override and os.path.exists(path) and os.path.isdir(path):
+                shutil.rmtree(path)
+                print('Overrided old dataset at path:', path)
             if os.path.isfile(path) and '.zip' in os.path.basename(path):
                 self._load_archive(path,
                                    extract_path=path.replace(os.path.basename(path), ''))
             else:
                 self._set_path(path)
+        else:
+            raise ValueError('Invalid path for Dataset: %s' % path)
 
     def _set_path(self, path):
         # all files are opened with default_mode=r+
@@ -334,10 +338,10 @@ class Dataset(object):
             shape = data.shape if hasattr(data, 'shape') else shape
             longest_name = max(len(name), longest_name)
             longest_shape = max(len(str(shape)), longest_shape)
-            if isinstance(data, dict):
-                data = '<dictionary>'
-            elif hasattr(data, 'path'):
-                data = data.path
+            if hasattr(data, 'path'):
+                data = str(data.path)
+            else:
+                data = str(data)[:12]
             longest_file = max(len(str(data)), longest_file)
             print_info.append([name, dtype, shape, data])
         # ====== return print string ====== #

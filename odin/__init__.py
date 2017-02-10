@@ -9,3 +9,5 @@ SIG_TERMINATE_ITERATOR = '__signal_terminate_iterator__'
 SIG_TRAIN_SAVE = '__signal_train_save__'
 SIG_TRAIN_ROLLBACK = '__signal_train_rollback__'
 SIG_TRAIN_STOP = '__signal_train_stop__'
+
+PICKLE_EXT = 'pkl'
