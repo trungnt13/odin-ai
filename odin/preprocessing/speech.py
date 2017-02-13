@@ -564,22 +564,22 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
             bins_per_octave += 1
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=DeprecationWarning)
-            qspec = librosa.core.cqt(s, sr=sr, hop_length=hop_length, n_bins=cqt_bins,
+            qtrans = librosa.core.cqt(s, sr=sr, hop_length=hop_length, n_bins=cqt_bins,
                                      bins_per_octave=int(bins_per_octave),
-                                     fmin=fmin, tuning=0.0,
-                                     filter_scale=filter_scale, norm=1, sparsity=0.01)
+                                     fmin=fmin, tuning=0.0, real=False, norm=1,
+                                     filter_scale=filter_scale, sparsity=0.01).astype('complex64')
         # get log power Q-spectrogram
-        qS = np.abs(qspec)
+        qS = np.abs(qtrans)
         qS = qS**2
         if np.any(np.isnan(qS)):
             return None
+        # power spectrum of Q-transform
+        qspec = librosa.logamplitude(qS, amin=1e-10, top_db=80.0).astype('float32')
         # phase of Q-transform
         if get_phase:
             # GD: derivative along frequency axis
-            qphase = compute_delta(np.angle(qspec),
+            qphase = compute_delta(np.angle(qtrans),
                 width=9, axis=0, order=1)[-1].astype('float32')
-        # power spectrum of Q-transform
-        qspec = librosa.logamplitude(qS, amin=1e-10, top_db=80.0).astype('float32')
         # perfom cepstral analysis for Q-transform
         if get_mspec or get_mfcc:
             q_melspectrogram = librosa.feature.melspectrogram(
