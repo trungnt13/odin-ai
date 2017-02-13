@@ -21,17 +21,17 @@ __all__ = [
     'load_cifar100',
     'load_mspec_test',
     'load_imdb',
+    'load_iris',
     'load_digit_wav',
-    'load_digit_audio'
+    'load_digit_audio',
 ]
 
 
 # ===========================================================================
 # dataset
 # ===========================================================================
-def _parse_data_descriptor(path, name, read_only):
-    """ Return mapping: path/name -> (dtype, shape, Data) """
-    path = os.path.join(path, name)
+def _parse_data_descriptor(path, read_only):
+    """ Return mapping: name -> (dtype, shape, Data, path) """
     if not os.path.isfile(path):
         return None
 
@@ -39,30 +39,31 @@ def _parse_data_descriptor(path, name, read_only):
     try:
         dtype, shape = MmapData.read_header(path)
         # shape[1:], because first dimension can be resize afterward
-        return [(os.path.basename(path), (dtype, shape, path))]
+        return [(os.path.basename(path), (dtype, shape, None, path))]
     except: # cannot read the header of MmapData, maybe Hdf5
         try:
             f = open_hdf5(path, read_only=read_only)
             ds = get_all_hdf_dataset(f)
             data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
-            return [(str(i.name), (str(i.dtype), i.shape, i)) for i in data]
+            return [(str(i.name), (str(i.dtype), i.shape, i, i.path)) for i in data]
         except:
             pass
     # ====== try to load pickle file if possible ====== #
+    name = os.path.basename(path)
     try:
         with open(path, 'rb') as f:
             data = cPickle.load(f)
             return [(name,
-            (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data))]
+            (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
     except:
         pass
     # ====== load memmap dict ====== #
     try:
         data = MmapDict(path)
-        return [(name, ('memdict', len(data), data))]
+        return [(name, ('memdict', len(data), data, path))]
     except:
         pass
-    return [(name, ('unknown', 'unknown', path))]
+    return [(name, ('unknown', 'unknown', None, path))]
 
 
 @singleton
@@ -82,7 +83,7 @@ class Dataset(object):
     def __init__(self, path, read_only=False, override=False):
         path = os.path.abspath(path)
         self.read_only = read_only
-        self._readme_info = ['README:', '-------', ' No information!']
+        self._readme_info = ['README:', '------', ' No information!']
         self._readme_path = None
         # parse all data from path
         if path is not None:
@@ -111,18 +112,18 @@ class Dataset(object):
 
         # ====== load all Data ====== #
         files = os.listdir(path)
-        for f in files:
+        for fname in files:
             # found README
-            if 'readme' == f[:6].lower():
-                readme_path = os.path.join(path, f)
+            if 'readme' == fname[:6].lower():
+                readme_path = os.path.join(path, fname)
                 with open(readme_path, 'r') as readme_file:
                     readme = readme_file.readlines()[:3]
                     readme = [' ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
                     readme.append(' For more information: ' + readme_path)
-                    self._readme_info = ['README:', '-------'] + readme
+                    self._readme_info = ['README:', '------'] + readme
                     self._readme_path = readme_path
             # parse data
-            data = _parse_data_descriptor(path, f, self.read_only)
+            data = _parse_data_descriptor(os.path.join(path, fname), self.read_only)
             if data is None: continue
             for key, d in data:
                 if key in self._data_map:
@@ -181,11 +182,11 @@ class Dataset(object):
     def size(self):
         """ return size in MegaByte"""
         size_bytes = 0
-        for name, (dtype, shape, data) in self._data_map.iteritems():
-            size = np.dtype(dtype).itemsize
-            shape = data.shape if hasattr(data, 'shape') else shape
-            n = np.prod(shape)
-            size_bytes += size * n
+        for name, (dtype, shape, data, path) in self._data_map.iteritems():
+            try:
+                size_bytes += os.path.getsize(path) # in bytes
+            except:
+                pass
         return size_bytes / 1024. / 1024.
 
     def keys(self):
@@ -200,7 +201,7 @@ class Dataset(object):
         """
         Return
         ------
-        (dtype, shape, data) of Data
+        (dtype, shape, data, path) of Data
         """
         return self._data_map.values()
 
@@ -209,10 +210,7 @@ class Dataset(object):
         path = self.archive_path
         zfile = ZipFile(path, mode='w', compression=ZIP_DEFLATED)
 
-        files = []
-        for name, (dtype, shape, data) in self._data_map.iteritems():
-            files.append(data.path if hasattr(data, 'path') else data)
-        files = set(files)
+        files = set([_[-1] for _ in self._data_map.itervalues()])
 
         progbar = Progbar(len(files), title='Archiving:')
         maxlen = max([len(os.path.basename(i)) for i in files])
@@ -224,21 +222,24 @@ class Dataset(object):
         return path
 
     def flush(self):
-        for v in self._data_map.values():
-            if isinstance(v, Data):
-                v.flush()
+        for dtype, shape, data, path in self._data_map.itervalues():
+            if hasattr(data, 'flush'):
+                data.flush()
+            elif data is not None:
+                with open(path, 'wb') as f:
+                    cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
     def close(self, name=None):
         if name is None: # close all files
-            for name, (dtype, shape, data) in self._data_map.items():
-                if isinstance(data, Data):
+            for name, (dtype, shape, data, path) in self._data_map.items():
+                if hasattr(data, 'close'):
                     data.close()
                 del data
                 del self._data_map[name]
             self.dispose() # Singleton class to dispose an instance
         elif name in self._data_map: # close a particular file
-            (dtype, shape, data) = self._data_map[name]
-            if isinstance(data, Data):
+            (dtype, shape, data, path) = self._data_map[name]
+            if hasattr(data, 'close'):
                 data.close()
             del data
             del self._data_map[name]
@@ -247,11 +248,10 @@ class Dataset(object):
     def _validate_memmap_max_open(self, name):
         # ====== check if MmapData excess limit, close 1 files ====== #
         if MmapData.COUNT > MAX_OPEN_MMAP:
-            for i, (_dtype, _shape, _data) in self._data_map.iteritems():
-                path = _data.path
+            for i, (_dtype, _shape, _data, _path) in self._data_map.iteritems():
                 if isinstance(_data, MmapData) and i != name:
                     self.close(name=i)
-                    self._data_map[i] = (_dtype, _shape, path)
+                    self._data_map[i] = (_dtype, _shape, _path)
                     break
 
     def __contains__(self, key):
@@ -261,12 +261,12 @@ class Dataset(object):
         if is_string(key):
             if key not in self._data_map:
                 raise KeyError('%s not found in this dataset' % key)
-            dtype, shape, data = self._data_map[key]
+            dtype, shape, data, path = self._data_map[key]
             # return type is just a descriptor, create MmapData for it
-            if is_string(data) and \
+            if data is None and \
             dtype is not 'unknown' and shape is not 'unknown':
-                data = MmapData(data, read_only=self.read_only)
-                self._data_map[key] = (data.dtype, data.shape, data)
+                data = MmapData(path, read_only=self.read_only)
+                self._data_map[key] = (data.dtype, data.shape, data, path)
                 self._validate_memmap_max_open(key)
             return data
         raise ValueError('Only accept key type is string.')
@@ -278,15 +278,17 @@ class Dataset(object):
         key : str or tuple
             if tuple is specified, it contain the key and the datatype
             which must be "memmap", "hdf5"
+            for example: ds[('X', 'hdf5')] = numpy.ones((8, 12))
         """
         if not is_string(key) and not isinstance(key, (tuple, list)):
             raise ValueError('"key" is the name for Data and must be String or '
                              'tuple specified the name and datatype (memmap, hdf5).')
         # ====== check datatype ====== #
-        datatype = 'memmap'
+        datatype = 'memmap' # default datatype
         if isinstance(key, (tuple, list)):
             key, datatype = key
-            if datatype != 'memmap' and datatype != 'hdf5':
+            datatype = datatype.lower()
+            if datatype not in ('memmap', 'hdf5'):
                 raise ValueError('datatype can only be "memmap" or "hdf5", but '
                                  'the given data type is "%s"' % datatype)
         # ====== do nothing ====== #
@@ -294,7 +296,7 @@ class Dataset(object):
             return
         # ====== dict ====== #
         path = os.path.join(self.path, key)
-        if isinstance(value, dict) or isinstance(value, MmapDict):
+        if isinstance(value, dict):
             if os.path.exists(path):
                 raise Exception('File with path=%s already exist.' % path)
             d = MmapDict(path)
@@ -302,20 +304,31 @@ class Dataset(object):
                 d[i] = j
             d.flush()
             # store new dict
-            self._data_map[key] = ('memdict', len(d), d)
+            self._data_map[key] = (type(d).__name__, len(d), d, path)
         # ====== ndarray ====== #
-        else:
+        elif isinstance(value, np.ndarray):
             dtype, shape = value.dtype, value.shape
             if datatype == 'memmap':
                 data = MmapData(path, dtype=dtype, shape=shape)
             else:
-                f = open_hdf5(os.path.join(self.path, self._default_hdf5))
+                path = os.path.join(self.path, self._default_hdf5)
+                f = open_hdf5(path)
                 data = Hdf5Data(key, hdf=f, dtype=dtype, shape=shape)
             # store new key
-            self._data_map[key] = (data.dtype, data.shape, data)
+            self._data_map[key] = (data.dtype, data.shape, data, path)
             data.prepend(value)
             # check maximum opened memmap
             self._validate_memmap_max_open(key)
+        # ====== other types ====== #
+        else:
+            if os.path.exists(path):
+                raise Exception('File with path=%s already exist.' % path)
+            with open(path, 'wb') as f:
+                cPickle.dump(value, f, protocol=cPickle.HIGHEST_PROTOCOL)
+            # store new dict
+            self._data_map[key] = (type(value).__name__,
+                                   len(value) if hasattr(value, '__len__') else 0,
+                                   value, path)
 
     def __iter__(self):
         for name, (dtype, shape, data) in self._data_map.iteritems():
@@ -328,25 +341,23 @@ class Dataset(object):
         s = ['==========  Dataset:%s Total:%d  ==========' %
              (self.path, len(self._data_map))]
         s += self._readme_info
-        s += ['Data:', '-------']
+        s += ['Data:', '----']
         # ====== Find longest string ====== #
         longest_name = 0
         longest_shape = 0
+        longest_dtype = 0
         longest_file = 0
         print_info = []
-        for name, (dtype, shape, data) in self._data_map.iteritems():
+        for name, (dtype, shape, data, path) in self._data_map.iteritems():
             shape = data.shape if hasattr(data, 'shape') else shape
             longest_name = max(len(name), longest_name)
+            longest_dtype = max(len(str(dtype)), longest_dtype)
             longest_shape = max(len(str(shape)), longest_shape)
-            if hasattr(data, 'path'):
-                data = str(data.path)
-            else:
-                data = str(data)[:12]
-            longest_file = max(len(str(data)), longest_file)
-            print_info.append([name, dtype, shape, data])
+            longest_file = max(len(str(path)), longest_file)
+            print_info.append([name, dtype, shape, path])
         # ====== return print string ====== #
         format_str = (' Name:%-' + str(longest_name) + 's  '
-                      'dtype:%-7s  '
+                      'dtype:%-' + str(longest_dtype) + 's '
                       'shape:%-' + str(longest_shape) + 's  '
                       'file:%-' + str(longest_file) + 's')
         for name, dtype, shape, path in print_info:
@@ -489,6 +500,12 @@ def load_digit_wav():
         os.remove(datapath)
         import traceback; traceback.print_exc()
     return outpath
+
+
+def load_iris():
+    path = "https://s3.amazonaws.com/ai-datasets/iris.zip"
+    datapath = get_file('iris', path)
+    return _load_data_from_path(datapath)
 
 
 def load_digit_audio(dtype='float32'):

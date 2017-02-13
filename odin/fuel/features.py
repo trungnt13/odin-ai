@@ -68,6 +68,7 @@ class FeatureProcessor(object):
     """
 
     def __init__(self, output_path, datatype='memmap',
+                 pca=True, pca_whiten=False,
                  save_stats=True, substitute_nan=None,
                  ncache=0.12, ncpu=1):
         super(FeatureProcessor, self).__init__()
@@ -78,6 +79,10 @@ class FeatureProcessor(object):
             warnings.warn('Remove exist dataset at path: "%s"' % output_path)
             shutil.rmtree(output_path)
         self.dataset = Dataset(output_path)
+        # PCA
+        self.pca = bool(pca)
+        self.pca_whiten = bool(pca_whiten)
+        # STATS
         self.save_stats = bool(save_stats)
         self.substitute_nan = substitute_nan
         self.ncpu = ncpu
@@ -96,6 +101,8 @@ class FeatureProcessor(object):
         pass
 
     def run(self):
+        if self.pca:
+            from odin.ml import MiniBatchPCA
         if not hasattr(self, 'jobs'):
             raise Exception('the Processor must has "jobs" attribute, which is '
                             'the list of all jobs.')
@@ -109,8 +116,12 @@ class FeatureProcessor(object):
         # ====== indices ====== #
         indices = []
         # ====== statistic ====== #
+        statistic_able = {i[0]: i[-1] for i in self.features_properties}
         sum1 = defaultdict(int)
         sum2 = defaultdict(int)
+        pca = defaultdict(lambda *args, **kwargs:
+            MiniBatchPCA(n_components=None, whiten=self.pca_whiten,
+                         copy=True, batch_size=None) if self.pca else None)
         # all data are cached for periodically flushed
         cache = defaultdict(list)
         if self.ncache <= 1:
@@ -123,6 +134,12 @@ class FeatureProcessor(object):
         def flush_feature(name, cache_data):
             if len(cache_data) > 0:
                 cache_data = np.concatenate(cache_data, 0)
+                # NOTE: if nb_samples < nb_features, fitting PCA
+                # will course error
+                if self.pca and statistic_able[name] and \
+                cache_data.shape[0] > cache_data.shape[-1]:
+                    pca[name].partial_fit(cache_data)
+                # flush data
                 if name in dataset:
                     dataset[name].append(cache_data)
                 else:
@@ -140,7 +157,7 @@ class FeatureProcessor(object):
                 length.append(len(d))
                 n, t, s = prop # name, dtype, stats
                 cache[n].append(d.astype(t))
-                if s: # save stats
+                if self.save_stats and s: # save stats
                     sum1[n] += np.sum(d, axis=0, dtype='float64')
                     sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
                 del d
@@ -175,7 +192,7 @@ class FeatureProcessor(object):
                 f.write('%s %d %d\n' % (name, start, end))
 
         # ====== save mean and std ====== #
-        def save_mean_std(sum1, sum2, name, dataset):
+        def save_mean_std(sum1, sum2, pca, name, dataset):
             N = dataset[name].shape[0]
             mean = sum1 / N
             std = np.sqrt(sum2 / N - mean**2)
@@ -189,14 +206,15 @@ class FeatureProcessor(object):
             dataset[name + '_sum2'] = sum2
             dataset[name + '_mean'] = mean
             dataset[name + '_std'] = std
+            dataset[name + '_pca'] = pca
         # save all stats
         if self.save_stats:
             print('Saving statistics of each data ...')
             for n, d, s in self.features_properties:
                 if s: # save stats
                     print(' * Name:', n)
-                    s1, s2 = sum1[n], sum2[n]
-                    save_mean_std(s1, s2, n, dataset)
+                    s1, s2, pca_ = sum1[n], sum2[n], pca[n]
+                    save_mean_std(s1, s2, pca_, n, dataset)
         # ====== final flush() ====== #
         dataset.flush()
         dataset.close()
@@ -261,6 +279,16 @@ class SpeechProcessor(FeatureProcessor):
         `threshold*X.max()`
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
+    pca: bool
+        save trained PCA for each features
+    pca_whiten : bool
+        When True (False by default) the ``components_`` vectors are divided
+        by ``n_samples`` times ``components_`` to ensure uncorrelated outputs
+        with unit component-wise variances.
+        Whitening will remove some information from the transformed signal
+        (the relative variance scales of the components) but can sometimes
+        improve the predictive accuracy of the downstream estimators by
+        making data respect some hard-wired assumptions.
     save_stats: bool
         same the first order and second order statistics, standard deviation
         of all features
@@ -299,11 +327,13 @@ class SpeechProcessor(FeatureProcessor):
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                 pitch_threshold=0.8, cqt_bins=84, cqt_scale=False,
-                audio_ext=None, save_stats=True, substitute_nan=None,
+                audio_ext=None, pca=True, pca_whiten=False,
+                save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
-            datatype=datatype, save_stats=save_stats,
-            substitute_nan=substitute_nan, ncache=ncache, ncpu=ncpu)
+            datatype=datatype, pca=pca, pca_whiten=pca_whiten,
+            save_stats=save_stats, substitute_nan=substitute_nan,
+            ncache=ncache, ncpu=ncpu)
         audio_ext = as_tuple('' if audio_ext is None else audio_ext,
                              t=string_types)
         # ====== load jobs ====== #

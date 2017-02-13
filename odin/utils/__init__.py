@@ -14,7 +14,7 @@ import tempfile
 import contextlib
 import platform
 import argparse
-from multiprocessing import cpu_count, Value, Lock, current_process
+from multiprocessing import cpu_count, Lock, current_process
 from collections import OrderedDict, deque, Iterable, Iterator
 from itertools import islice, tee, chain
 
@@ -58,7 +58,9 @@ def is_string(s):
 
 
 def iter_chunk(it, n):
-    """ Chunking an iterator into small chunk of size `n` """
+    """ Chunking an iterator into small chunk of size `n`
+    Note: this can be used to slice data into mini batches
+    """
     if not isinstance(it, Iterator):
         it = iter(it)
     obj = list(islice(it, n))

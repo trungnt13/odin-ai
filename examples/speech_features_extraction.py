@@ -6,11 +6,14 @@
 # ncpu=12: 4.0
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
+import matplotlib
+matplotlib.use('Agg')
 
 import numpy as np
 import shutil
 import os
 from odin import fuel as F, utils
+from collections import defaultdict
 
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit', override=True)
@@ -20,6 +23,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
                          get_spec=True, get_mspec=True, get_mfcc=True,
                          get_pitch=True, get_vad=True, get_qspec=True,
                          pitch_threshold=0.8, cqt_bins=96, cqt_scale=False,
+                         pca=True, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
                          ncache=0.12, ncpu=8)
@@ -31,3 +35,15 @@ shutil.copy(os.path.join(datapath, 'README.md'),
 ds = F.Dataset(output_path, read_only=True)
 print('Output path:', output_path)
 print(ds)
+
+for n in ds.keys():
+    if '_pca' in n:
+        pca = ds[n]
+        if pca.components_ is None:
+            print(n, 'is None !')
+        elif np.any(np.isnan(pca.components_)):
+            print(n, 'contains NaN !')
+        else:
+            print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
+                for i, j in zip(pca.explained_variance_ratio_[:8],
+                                pca.explained_variance_[:8])]))
