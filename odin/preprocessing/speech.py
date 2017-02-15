@@ -185,13 +185,13 @@ def save(f, s, fs, subtype=None):
 # ===========================================================================
 # Spectrogram manipulation
 # ===========================================================================
-def smooth(x, window_len=11, window='hanning'):
+def smooth(x, win=11, window='hanning'):
     """
     Paramaters
     ----------
     x: 1-D vector
         input signal.
-    windown_len: int
+    win: int
         length of window for smoothing, the longer the window, the more details
         are reduced for smoothing.
     window: 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
@@ -204,21 +204,21 @@ def smooth(x, window_len=11, window='hanning'):
     Example
     -------
     """
-    if window_len < 3:
+    if win < 3:
         return x
     if window not in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
         raise ValueError("Window is on of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
-    s = np.concatenate([2 * x[0] - x[window_len - 1::-1],
+    s = np.concatenate([2 * x[0] - x[win - 1::-1],
                         x,
-                        2 * x[-1] - x[-1:-window_len:-1]], axis=0)
+                        2 * x[-1] - x[-1:-win:-1]], axis=0)
     # moving average
     if window == 'flat':
-        w = np.ones(window_len, 'd')
+        w = np.ones(win, 'd')
     # windowing
     else:
-        w = eval('np.' + window + '(window_len)')
+        w = eval('np.' + window + '(win)')
     y = np.convolve(w / w.sum(), s, mode='same')
-    return y[window_len:-window_len + 1]
+    return y[win:-win + 1]
 
 
 def vad_energy(log_energy,
@@ -452,7 +452,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     get_qspec=False, get_phase=False, get_pitch=False,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                    pitch_threshold=0.8, cqt_bins=84, cqt_scale=False):
+                    pitch_threshold=0.8, smooth_vad=0,
+                    cqt_bins=84, cqt_scale=False):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -501,6 +502,9 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     pitch_threshold: float in `(0, 1)`
         A bin in spectrum X is considered a pitch when it is greater than
         `threshold*X.max()`
+    smooth_vad: int, bool
+        window length to smooth the vad indices.
+        If True default window length is 3.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
     cqt_scale : bool
@@ -549,6 +553,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     hop_length = 2 ** int(np.floor(np.log2(shift_length)))
     # preemphais
     s = pre_emphasis(s, coeff=preemphasis)
+    nb_ceps += 1 # increase one so we can ignore the first MFCC
     # ====== 0: extract Constant Q-transform ====== #
     q_melspectrogram = None
     q_mfcc = None
@@ -590,6 +595,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
             if get_mfcc:
                 q_mfcc = librosa.feature.mfcc(
                     y=None, sr=sr, S=q_melspectrogram, n_mfcc=nb_ceps).astype('float32')
+                q_mfcc = q_mfcc[1:] # ignore the first coefficient
     # ====== 1: extract VAD and energy ====== #
     # centering the raw signal by padding
     s = np.pad(s, int(n_fft // 2), mode='reflect')
@@ -606,6 +612,11 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
             vad = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                              nb_train_it=nbTrainIt)[0].astype('uint8')
+            if smooth_vad:
+                smooth_vad = 3 if int(smooth_vad) == 1 else smooth_vad
+                # at least 2 voice frames
+                vad = (smooth(vad, win=smooth_vad, window='flat') >= 2. / smooth_vad
+                    ).astype('uint8')
     # ====== 2: extract STFT and Spectrogram ====== #
     stft = librosa.stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
                         center=False) # no padding for center
@@ -644,6 +655,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         if get_mfcc:
             mfcc = librosa.feature.mfcc(
                 y=None, sr=sr, S=melspectrogram, n_mfcc=nb_ceps).astype('float32')
+            mfcc = mfcc[1:] # ignore the first coefficient
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
@@ -675,7 +687,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 axis=0)
     return OrderedDict([
         ('mfcc', None if mfcc is None else mfcc.T),
-        ('energy', None if log_energy is None else log_energy.T),
+        ('energy', log_energy.T if get_energy else None),
         ('spec', None if powerspectrogram is None else powerspectrogram.T),
         ('mspec', None if melspectrogram is None else melspectrogram.T),
 

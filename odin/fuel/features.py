@@ -277,8 +277,17 @@ class SpeechProcessor(FeatureProcessor):
     pitch_threshold: float in `(0, 1)`
         A bin in spectrum X is considered a pitch when it is greater than
         `threshold*X.max()`
+    smooth_vad: int, bool
+        window length to smooth the vad indices.
+        If True default window length is 3.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
+    cqt_scale : bool
+        if True, the `filter_scale` of CQT is set to 1.8, and `bins_per_octave` is
+        decreased by 1. Hence, the Q-transform contains more detail in higher
+        frequency, but may lose some precise detail in other regions.
+        If you want more precise details than additional details in higher
+        frequency region (closed to Nyquist), set `cqt_scale` to False.
     pca: bool
         save trained PCA for each features
     pca_whiten : bool
@@ -326,7 +335,8 @@ class SpeechProcessor(FeatureProcessor):
                 get_qspec=False, get_phase=False, get_pitch=False,
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                pitch_threshold=0.8, cqt_bins=84, cqt_scale=False,
+                pitch_threshold=0.8, smooth_vad=0,
+                cqt_bins=84, cqt_scale=False,
                 audio_ext=None, pca=True, pca_whiten=False,
                 save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
@@ -411,6 +421,7 @@ class SpeechProcessor(FeatureProcessor):
         self.nb_ceps = nb_ceps
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
+        self.smooth_vad = smooth_vad
         self.cqt_bins = cqt_bins
         self.cqt_scale = cqt_scale
         self.fmin = fmin
@@ -453,6 +464,7 @@ class SpeechProcessor(FeatureProcessor):
                     get_vad=self.get_vad, get_energy=self.get_energy,
                     get_delta=self.get_delta,
                     pitch_threshold=self.pitch_threshold,
+                    smooth_vad=self.smooth_vad,
                     cqt_bins=self.cqt_bins, cqt_scale=self.cqt_scale,
                     fmin=self.fmin, fmax=self.fmax,
                     sr_new=self.sr_new, preemphasis=self.preemphasis)
