@@ -20,6 +20,7 @@ import scipy.fftpack as fft
 import scipy.signal
 
 from odin.utils import pad_center
+from odin.utils.decorators import cache
 
 MAX_MEM_BLOCK = 2**8 * 2**10
 SMALL_FLOAT = 1e-20
@@ -447,13 +448,19 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     return all_deltas
 
 
+@cache
+def max_fft_bins(sr, n_fft, fmax):
+    return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
+                                        endpoint=True)) if j >= fmax][0]
+
+
 def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     get_spec=True, get_mspec=False, get_mfcc=False,
                     get_qspec=False, get_phase=False, get_pitch=False,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                    pitch_threshold=0.8, smooth_vad=0,
-                    cqt_bins=84, cqt_scale=False):
+                    pitch_threshold=0.8, pitch_fmax=1200,
+                    smooth_vad=3, cqt_bins=96, cqt_scale=False):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -545,6 +552,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         fmax = sr // 2
     if fmin is None or fmin < 0 or fmin >= fmax:
         fmin = 0
+    if pitch_fmax is None:
+        pitch_fmax = fmax
     win_length = int(win * sr)
     # n_fft must be 2^x
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
@@ -635,8 +644,12 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         # we don't care about pitch magnitude
         pitch_freq, _ = librosa.piptrack(
             y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
-            fmin=fmin, fmax=fmax, threshold=pitch_threshold)
-        pitch_freq = pitch_freq.astype('float32')
+            fmin=fmin, fmax=pitch_fmax, threshold=pitch_threshold)
+        pitch_freq = pitch_freq.astype('float32')[:max_fft_bins(sr, n_fft, pitch_fmax)]
+        # normalize to 0-1
+        _ = np.min(pitch_freq)
+        pitch_freq = (pitch_freq - _) / (np.max(pitch_freq) - _)
+        pitch_freq = compute_delta(pitch_freq, width=9, order=1, axis=-1)[-1]
     # ====== 5: extract power spectrogram ====== #
     S = S**2
     powerspectrogram = None
@@ -659,10 +672,6 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
-        if pitch_freq is not None:
-            pitch_freq = np.concatenate(
-                [pitch_freq] + compute_delta(pitch_freq, order=get_delta),
-                axis=0)
         if log_energy is not None:
             log_energy = np.concatenate(
                 [log_energy] + compute_delta(log_energy, order=get_delta),
@@ -699,5 +708,5 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         ('qphase', qphase.T if get_phase and get_qspec else None),
 
         ('pitch', None if pitch_freq is None else pitch_freq.T),
-        ('vad', vad)
+        ('vad', vad),
     ])
