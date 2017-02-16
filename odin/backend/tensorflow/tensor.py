@@ -63,7 +63,7 @@ def backend_ops_relu(x, alpha=0.):
 def backend_ops_elu(x, alpha):
     res = tf.nn.elu(x)
     if alpha != 1:
-        res = tf.select(x > 0, res, alpha * res)
+        res = tf.where(x > 0, res, alpha * res)
     return res
 
 
@@ -127,7 +127,7 @@ def switch(condition, then_expression, else_expression):
         cond_shape = tf.shape(condition)
         condition = tf.reshape(condition,
             [cond_shape[i] for i in range(cond_ndims - 1)])
-    x = tf.select(condition, then_expression, else_expression)
+    x = tf.where(condition, then_expression, else_expression)
     x.set_shape(x_shape)
     return x
 
@@ -238,7 +238,7 @@ def batched_dot(x, y):
         outshapeY = (shapeY[-1],)
     # calculate dot product and desire shape
     output_shape = shapeX[:-1] + outshapeY
-    output = tf.reshape(tf.batch_matmul(x, y, adj_x=None, adj_y=None),
+    output = tf.reshape(tf.matmul(x, y),
                         [i if i is not None else -1 for i in output_shape])
     return output
 
@@ -367,11 +367,11 @@ def add(x, y):
 
 
 def sub(x, y):
-    return tf.sub(x, y)
+    return tf.subtract(x, y)
 
 
 def mul(x, y):
-    return tf.mul(x, y)
+    return tf.multiply(x, y)
 
 
 def div(x, y):
@@ -399,13 +399,13 @@ def reverse(x, axes=-1):
         axes = (axes,)
     ndim = x.get_shape().ndims
     axes = _normalize_axis(axes, ndim)
-    dims = [True if i in axes else False for i in range(ndim)]
+    dims = [i for i in range(ndim) if i in axes]
     return tf.reverse(x, dims)
 
 
 def concatenate(tensors, axis=-1):
     axis = _normalize_axis(axis, tensors[0].get_shape().ndims)
-    return tf.concat(axis, tensors)
+    return tf.concat(tensors, axis=axis)
 
 
 def tile(x, n):
@@ -416,7 +416,7 @@ def tile(x, n):
 
 def stack(tensors):
     """ (5, 2) and (5, 2) => (2, 5, 2) """
-    return tf.pack(tensors)
+    return tf.stack(tensors)
 
 
 def expand_dims(x, dim=-1):
@@ -741,9 +741,9 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX):
 def random_binomial(shape, p, dtype=FLOATX, seed=None):
     if hasattr(dtype, 'base_dtype'):
         dtype = dtype.base_dtype
-    return tf.select(tf.random_uniform(shape, dtype=dtype, seed=_RNG.randint(10e6)) <= p,
-                     tf.ones(shape, dtype=dtype),
-                     tf.zeros(shape, dtype=dtype))
+    return tf.where(tf.random_uniform(shape, dtype=dtype, seed=_RNG.randint(10e6)) <= p,
+                    tf.ones(shape, dtype=dtype),
+                    tf.zeros(shape, dtype=dtype))
 
 
 # ===========================================================================

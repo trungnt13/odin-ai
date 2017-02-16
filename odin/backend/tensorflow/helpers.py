@@ -88,7 +88,7 @@ def is_trainable_variable(variable):
 
     """
     return (isinstance(variable, tf.Variable) and
-            variable.op.node_def.op == "Variable")
+            variable.op.node_def.op == "VariableV2")
 
 
 def is_variable(variable):
@@ -291,7 +291,7 @@ class ComputationGraph(object):
                     _travelled_op = [] # reset the tracking list
                     if is_placeholder(v):
                         inputs.append(v)
-                    elif v.op.node_def.op == "Variable" and v.name in trainable_collections:
+                    elif v.op.node_def.op[:8] == "Variable" and v.name in trainable_collections:
                         v = trainable_collections[v.name]
                         trainable_variables.append(v)
                     if is_tensor(v):
