@@ -268,7 +268,7 @@ class Dataset(object):
                 data = MmapData(path, read_only=self.read_only)
                 self._data_map[key] = (data.dtype, data.shape, data, path)
                 self._validate_memmap_max_open(key)
-            return data
+            return path if data is None else data
         raise ValueError('Only accept key type is string.')
 
     def __setitem__(self, key, value):

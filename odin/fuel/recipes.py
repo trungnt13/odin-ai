@@ -18,7 +18,6 @@ from odin.utils.decorators import functionable
 
 from .data import Data, MutableData
 from .utils import MmapDict
-from memory_profiler import profile
 
 
 # ===========================================================================
