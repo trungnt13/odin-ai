@@ -5,10 +5,10 @@ import unittest
 
 def run(backend='tensorflow', device='gpu'):
     tests = [
-        # 'fuel_test',
+        'fuel_test',
         'backend_test',
-        # 'nnet_test',
-        # 'rnn_test',
+        'nnet_test',
+        'rnn_test',
         # 'compare_test',
         # 'model_test'
     ]

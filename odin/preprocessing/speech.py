@@ -509,6 +509,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     pitch_threshold: float in `(0, 1)`
         A bin in spectrum X is considered a pitch when it is greater than
         `threshold*X.max()`
+    pitch_fmax: float
+        maximum frequency of pitch
     smooth_vad: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.

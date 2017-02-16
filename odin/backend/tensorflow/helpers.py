@@ -88,7 +88,7 @@ def is_trainable_variable(variable):
 
     """
     return (isinstance(variable, tf.Variable) and
-            variable.op.node_def.op == "VariableV2")
+            variable.op.node_def.op[:8] == "Variable")
 
 
 def is_variable(variable):
