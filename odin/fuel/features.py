@@ -284,12 +284,6 @@ class SpeechProcessor(FeatureProcessor):
         If True default window length is 3.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
-    cqt_scale : bool
-        if True, the `filter_scale` of CQT is set to 1.8, and `bins_per_octave` is
-        decreased by 1. Hence, the Q-transform contains more detail in higher
-        frequency, but may lose some precise detail in other regions.
-        If you want more precise details than additional details in higher
-        frequency region (closed to Nyquist), set `cqt_scale` to False.
     pca: bool
         save trained PCA for each features
     pca_whiten : bool
@@ -300,6 +294,10 @@ class SpeechProcessor(FeatureProcessor):
         (the relative variance scales of the components) but can sometimes
         improve the predictive accuracy of the downstream estimators by
         making data respect some hard-wired assumptions.
+    center : bool
+        If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     save_stats: bool
         same the first order and second order statistics, standard deviation
         of all features
@@ -338,9 +336,8 @@ class SpeechProcessor(FeatureProcessor):
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                 pitch_threshold=0.8, pitch_fmax=1200,
-                smooth_vad=0, cqt_bins=84, cqt_scale=False,
-                audio_ext=None, pca=True, pca_whiten=False,
-                save_stats=True, substitute_nan=None,
+                smooth_vad=0, cqt_bins=96, pca=True, pca_whiten=False,
+                center=True, audio_ext=None, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
@@ -426,11 +423,11 @@ class SpeechProcessor(FeatureProcessor):
         self.pitch_fmax = pitch_fmax
         self.smooth_vad = smooth_vad
         self.cqt_bins = cqt_bins
-        self.cqt_scale = cqt_scale
         self.fmin = fmin
         self.fmax = fmax
         self.sr_new = sr_new
         self.preemphasis = preemphasis
+        self.center = center
 
     # ==================== Abstract properties ==================== #
     @property
@@ -449,6 +446,11 @@ class SpeechProcessor(FeatureProcessor):
         try:
             # load audio data
             s, sr_orig = speech.read(audio_path)
+            if sr_orig is not None and self.sr is not None and \
+            sr_orig != self.sr:
+                raise Exception('Given sample rate (%d Hz) is different from '
+                                'audio file sample rate (%d Hz).' %
+                                (self.sr, sr_orig))
             if sr_orig is None:
                 sr_orig = self.sr
             N = len(s)
@@ -467,11 +469,10 @@ class SpeechProcessor(FeatureProcessor):
                     get_vad=self.get_vad, get_energy=self.get_energy,
                     get_delta=self.get_delta,
                     pitch_threshold=self.pitch_threshold,
-                    pitch_fmax=self.pitch_fmax,
-                    smooth_vad=self.smooth_vad,
-                    cqt_bins=self.cqt_bins, cqt_scale=self.cqt_scale,
-                    fmin=self.fmin, fmax=self.fmax,
-                    sr_new=self.sr_new, preemphasis=self.preemphasis)
+                    pitch_fmax=self.pitch_fmax, smooth_vad=self.smooth_vad,
+                    cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
+                    sr_new=self.sr_new, preemphasis=self.preemphasis,
+                    center=self.center)
                 if features is not None:
                     ret.append((name, [features[i[0]]
                                        for i in self.__features_properties]))

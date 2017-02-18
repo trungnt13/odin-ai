@@ -454,13 +454,24 @@ def max_fft_bins(sr, n_fft, fmax):
                                         endpoint=True)) if j >= fmax][0]
 
 
+def __num_two_factors(x):
+    """return number of times x is divideable for 2"""
+    if x <= 0:
+        return 0
+    num_twos = 0
+    while x % 2 == 0:
+        num_twos += 1
+        x //= 2
+    return num_twos
+
+
 def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     get_spec=True, get_mspec=False, get_mfcc=False,
                     get_qspec=False, get_phase=False, get_pitch=False,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                     pitch_threshold=0.8, pitch_fmax=1200,
-                    smooth_vad=3, cqt_bins=96, cqt_scale=False):
+                    smooth_vad=3, cqt_bins=96, center=True):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -516,12 +527,11 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         If True default window length is 3.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
-    cqt_scale : bool
-        if True, the `filter_scale` of CQT is set to 1.8, and `bins_per_octave` is
-        decreased by 1. Hence, the Q-transform contains more detail in higher
-        frequency, but may lose some precise detail in other regions.
-        If you want more precise details than additional details in higher
-        frequency region (closed to Nyquist), set `cqt_scale` to False.
+    center : bool
+        If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+
 
     Return
     ------
@@ -561,7 +571,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
     shift_length = shift * sr
     # hop_length must be 2^x
-    hop_length = 2 ** int(np.floor(np.log2(shift_length)))
+    hop_length = int(shift_length)
     # preemphais
     s = pre_emphasis(s, coeff=preemphasis)
     nb_ceps += 1 # increase one so we can ignore the first MFCC
@@ -572,18 +582,17 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     qphase = None
     if get_qspec:
         # auto adjust bins_per_octave to get maximum range of frequency
-        bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin))
-        if cqt_scale:
-            filter_scale = 1.8
-        else:
-            filter_scale = 1.
-            bins_per_octave += 1
+        bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin)) + 1
+        # adjust the bins_per_octave to make acceptable hop_length
+        # i.e. 2_factors(hop_length) < [ceil(cqt_bins / bins_per_octave) - 1]
+        if __num_two_factors(hop_length) < np.ceil(cqt_bins / bins_per_octave) - 1:
+            bins_per_octave = np.ceil(cqt_bins / (__num_two_factors(hop_length) + 1))
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=DeprecationWarning)
             qtrans = librosa.core.cqt(s, sr=sr, hop_length=hop_length, n_bins=cqt_bins,
                                      bins_per_octave=int(bins_per_octave),
                                      fmin=fmin, tuning=0.0, real=False, norm=1,
-                                     filter_scale=filter_scale, sparsity=0.01).astype('complex64')
+                                     filter_scale=1., sparsity=0.01).astype('complex64')
         # get log power Q-spectrogram
         qS = np.abs(qtrans)
         qS = qS**2
@@ -609,7 +618,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 q_mfcc = q_mfcc[1:] # ignore the first coefficient
     # ====== 1: extract VAD and energy ====== #
     # centering the raw signal by padding
-    s = np.pad(s, int(n_fft // 2), mode='reflect')
+    if center:
+        s = np.pad(s, int(n_fft // 2), mode='reflect')
     log_energy = None
     vad = None
     if get_energy or get_vad:

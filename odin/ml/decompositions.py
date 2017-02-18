@@ -10,6 +10,7 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils import Progbar
+from odin.fuel import Data
 
 
 class MiniBatchPCA(IncrementalPCA):
@@ -176,6 +177,8 @@ class MiniBatchPCA(IncrementalPCA):
         self: object
             Returns the instance itself.
         """
+        if isinstance(X, Data):
+            X = X[:]
         X = check_array(X, copy=self.copy, dtype=[np.float64, np.float32])
         n_samples, n_features = X.shape
 
@@ -208,6 +211,8 @@ class MiniBatchPCA(IncrementalPCA):
             Returns the instance itself.
         """
         # ====== check the samples and cahces ====== #
+        if isinstance(X, Data):
+            X = X[:]
         if check_input:
             X = check_array(X, copy=self.copy, dtype=[np.float64, np.float32])
         n_samples, n_features = X.shape
@@ -280,3 +285,13 @@ class MiniBatchPCA(IncrementalPCA):
         else:
             self.noise_variance_ = 0.
         return self
+
+    def transform(self, X, y=None):
+        if isinstance(X, Data):
+            X = X[:]
+        return super(MiniBatchPCA, self).transform(X=X, y=y)
+
+    def invert_transform(self, X, y=None):
+        if isinstance(X, Data):
+            X = X[:]
+        return super(MiniBatchPCA, self).inverse_transform(X=X, y=y)

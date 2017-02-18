@@ -9,6 +9,17 @@ import recipes
 from odin.utils import get_file
 
 
+def load_swb1_aligment(nb_senones=2304):
+    support_nb_senones = (2304,)
+    if nb_senones not in support_nb_senones:
+        raise ValueError('We only support following number of senones: %s'
+                        % support_nb_senones)
+    fname = "swb1_%d" % nb_senones
+    url = "https://s3.amazonaws.com/ai-datasets/" + fname
+    alignment = get_file(fname, url)
+    return MmapDict(alignment, read_only=True)
+
+
 def load_glove(ndim=100):
     """ Automaticall load a MmapDict which contains the mapping
         (word -> [vector])

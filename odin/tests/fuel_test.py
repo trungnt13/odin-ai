@@ -11,6 +11,69 @@ import numpy as np
 
 from odin import fuel as F, utils
 
+test_speech_features = {
+"mfcc_std": 182.59453,
+"phase_sum2": 178783.16,
+"qmfcc_std": 207.53845,
+"energy": -91121.508,
+"qmfcc_pca": 19.485082005965275,
+"spec_sum1": -1.2290379e+08,
+"energy_std": 2.7323465,
+"qphase_sum2": 216875.97,
+"mfcc_sum2": 1.1214674e+08,
+"qphase_pca": 19.662871222598081,
+"qmfcc_sum2": 2.1506418e+08,
+"mfcc_sum1": 106488.96,
+"qmspec": -45861200.0,
+"mspec_std": 623.85437,
+"qmspec_sum2": 1.9336586e+09,
+"energy_pca": 2.9886061735628831,
+"qmspec_sum1": -45861192.0,
+"mspec_mean": -1632.179,
+"qphase": 1751.0167,
+"qmspec_pca": -6.6926648354591727,
+"mspec_pca": 4.5802233044162932,
+"pitch_sum2": 261.27863,
+"phase_std": 25.289757,
+"qspec_mean": -1766.666,
+"spec_sum2": 4.5609349e+09,
+"qspec_sum1": -57625108.0,
+"mfcc": 106491.7,
+"qspec_std": 1138.7697,
+"phase": -1061.4377,
+"qmfcc_mean": -94.225319,
+"mspec": -53238400.0,
+"phase_sum1": -1061.4102,
+"mfcc_mean": 3.2647274,
+"energy_mean": -2.7935946,
+"pitch_sum1": 12.862646,
+"qmfcc_sum1": -3073441.2,
+"energy_sum1": -91121.461,
+"mfcc_pca": 30.924762713486047,
+"qmspec_mean": -1406.0087,
+"mspec_sum2": 2.4402621e+09,
+"pitch_mean": 0.00039434194,
+"spec_mean": -3767.9749,
+"phase_mean": -0.032540679,
+"qphase_sum1": 1750.8629,
+"pitch_std": 0.4675571,
+"qphase_std": 23.571823,
+"spec_pca": 13.403272873193941,
+"qspec": -57625136.0,
+"spec_std": 1837.2585,
+"pitch_pca": 23.899668727039654,
+"spec": -1.2290374e+08,
+"qspec_pca": 8.3138976790867538,
+"qmspec_std": 559.00739,
+"mspec_sum1": -53238408.0,
+"qmfcc": -3073441.2,
+"qspec_sum2": 1.9416402e+09,
+"energy_sum2": 444549.72,
+"phase_pca": 26.387505780161359,
+"qphase_mean": 0.05367782,
+"pitch": 12.863468,
+}
+
 
 class FuelTest(unittest.TestCase):
 
@@ -47,16 +110,23 @@ class FuelTest(unittest.TestCase):
                     n += 1
             return n >= max(len(x1), len(x2)) // 2
         # these numbers are highly numerical instable
-        self.assertTrue(is_equal(ds['mfcc'].sum(axis=None), -6687784.5))
-        self.assertTrue(is_equal(ds['mspec'].sum(axis=None), -42703896.0))
-        self.assertTrue(is_equal(ds['spec'].sum(axis=None), -99036088.0))
-        self.assertTrue(is_equal(ds['mfcc_mean'].sum(axis=None), -255.85469581024714))
-        self.assertTrue(is_equal(ds['mspec_mean'].sum(axis=None), -1633.7230511666444))
-        self.assertTrue(is_equal(ds['spec_mean'].sum(axis=None), -3788.824078019485))
-        self.assertTrue(is_equal(ds['mfcc_std'].sum(axis=None), 256.90104429356546))
-        self.assertTrue(is_equal(ds['mspec_std'].sum(axis=None), 633.2005779840433))
-        self.assertTrue(is_equal(ds['spec_std'].sum(axis=None), 2110.3262373507873))
-        self.assertTrue(is_equal(ds['vad'].sum(axis=None), 9365))
+        for i in ds.keys():
+            if i == 'indices.csv':
+                self.assertTrue(isinstance(ds[i], str))
+            elif '_' not in i:
+                pca = i + '_pca'
+                if pca in ds:
+                    self.assertTrue(
+                        is_equal(np.sum(ds[i][:], dtype='float32'),
+                        test_speech_features[i]))
+            elif '_pca' not in i:
+                self.assertTrue(
+                    is_equal(np.sum(ds[i][:], dtype='float32'),
+                     test_speech_features[i]))
+            else:
+                self.assertTrue(
+                    is_equal(np.sum(ds[i].components_),
+                     test_speech_features[i]))
 
     def test_feeders(self):
         with utils.TemporaryDirectory() as temppath:
