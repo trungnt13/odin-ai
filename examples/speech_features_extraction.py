@@ -1,9 +1,10 @@
 # ===========================================================================
-# ncpu=1:  16s
-# ncpu=2:  9.82
-# ncpu=4:  5.9s
-# ncpu=8:  4.3
-# ncpu=12: 4.0
+# Without PCA:
+#   ncpu=1:  16s
+#   ncpu=2:  9.82
+#   ncpu=4:  5.9s
+#   ncpu=8:  4.3
+#   ncpu=12: 4.0
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 import matplotlib

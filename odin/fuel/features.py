@@ -441,7 +441,6 @@ class SpeechProcessor(FeatureProcessor):
         ------
         [(name, spec, mspec, mfcc, pitch, vad), ...]
         '''
-
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
             # load audio data
@@ -460,19 +459,21 @@ class SpeechProcessor(FeatureProcessor):
                 start = int(float(start) * sr_orig)
                 end = int(N if end < 0 else end * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                features = speech.speech_features(data.ravel(), sr=sr_orig,
-                    win=self.win, shift=self.shift,
-                    nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
-                    get_spec=self.get_spec, get_mspec=self.get_mspec,
-                    get_mfcc=self.get_mfcc, get_qspec=self.get_qspec,
-                    get_phase=self.get_phase, get_pitch=self.get_pitch,
-                    get_vad=self.get_vad, get_energy=self.get_energy,
-                    get_delta=self.get_delta,
-                    pitch_threshold=self.pitch_threshold,
-                    pitch_fmax=self.pitch_fmax, smooth_vad=self.smooth_vad,
-                    cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
-                    sr_new=self.sr_new, preemphasis=self.preemphasis,
-                    center=self.center)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    features = speech.speech_features(data.ravel(), sr=sr_orig,
+                        win=self.win, shift=self.shift,
+                        nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
+                        get_spec=self.get_spec, get_mspec=self.get_mspec,
+                        get_mfcc=self.get_mfcc, get_qspec=self.get_qspec,
+                        get_phase=self.get_phase, get_pitch=self.get_pitch,
+                        get_vad=self.get_vad, get_energy=self.get_energy,
+                        get_delta=self.get_delta,
+                        pitch_threshold=self.pitch_threshold,
+                        pitch_fmax=self.pitch_fmax, smooth_vad=self.smooth_vad,
+                        cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
+                        sr_new=self.sr_new, preemphasis=self.preemphasis,
+                        center=self.center)
                 if features is not None:
                     ret.append((name, [features[i[0]]
                                        for i in self.__features_properties]))

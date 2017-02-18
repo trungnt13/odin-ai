@@ -499,7 +499,6 @@ def pad_center(data, size, axis=-1, **kwargs):
     --------
     numpy.pad
     '''
-
     kwargs.setdefault('mode', 'constant')
 
     n = data.shape[axis]
@@ -515,6 +514,73 @@ def pad_center(data, size, axis=-1, **kwargs):
                                                                n))
 
     return numpy.pad(data, lengths, **kwargs)
+
+
+def framing(y, frame_length=2048, hop_length=512):
+    '''Slice a time series into overlapping frames.
+
+    This implementation uses low-level stride manipulation to avoid
+    redundant copies of the time series data.
+
+    Parameters
+    ----------
+    y : np.ndarray [shape=(n,)]
+        Time series to frame. Must be one-dimensional and contiguous
+        in memory.
+
+    frame_length : int > 0 [scalar]
+        Length of the frame in samples
+
+    hop_length : int > 0 [scalar]
+        Number of samples to hop between frames
+
+    Returns
+    -------
+    y_frames : np.ndarray [shape=(frame_length, N_FRAMES)]
+        An array of frames sampled from `y`:
+        `y_frames[i, j] == y[j * hop_length + i]`
+
+    Raises
+    ------
+    ParameterError
+        If `y` is not contiguous in memory, framing is invalid.
+        See `np.ascontiguous()` for details.
+
+        If `hop_length < 1`, frames cannot advance.
+
+    Examples
+    --------
+    Extract 2048-sample frames from `y` with a hop of 64 samples per frame
+
+    >>> y, sr = librosa.load(librosa.util.example_audio_file())
+    >>> librosa.util.frame(y, frame_length=2048, hop_length=64)
+    array([[ -9.216e-06,   7.710e-06, ...,  -2.117e-06,  -4.362e-07],
+           [  2.518e-06,  -6.294e-06, ...,  -1.775e-05,  -6.365e-06],
+           ...,
+           [ -7.429e-04,   5.173e-03, ...,   1.105e-05,  -5.074e-06],
+           [  2.169e-03,   4.867e-03, ...,   3.666e-06,  -5.571e-06]], dtype=float32)
+
+    '''
+
+    if len(y) < frame_length:
+        raise ValueError('Buffer is too short (n={:d})'
+                         ' for frame_length={:d}'.format(len(y), frame_length))
+
+    if hop_length < 1:
+        raise ValueError('Invalid hop_length: {:d}'.format(hop_length))
+
+    if not y.flags['C_CONTIGUOUS']:
+        raise ParameterError('Input buffer must be contiguous.')
+
+    # Compute the number of frames that will fit. The end may get truncated.
+    n_frames = 1 + int((len(y) - frame_length) / hop_length)
+
+    # Vertical stride is one sample
+    # Horizontal stride is `hop_length` samples
+    y_frames = numpy.lib.stride_tricks.as_strided(y,
+        shape=(frame_length, n_frames),
+        strides=(y.itemsize, hop_length * y.itemsize))
+    return y_frames
 
 
 def segment_axis(a, frame_length=2048, hop_length=512,
