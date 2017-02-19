@@ -21,17 +21,13 @@ from odin.utils import as_tuple, Progbar, pad_sequences, is_string
 from odin.stats import freqcount
 from multiprocessing import Pool, cpu_count
 
-try:
-    import spacy
-except Exception as e:
-    raise Exception('This module require "spaCy" for natural language processing.')
-
 _nlp = {}
 _stopword_list = []
 
 
 def language(lang='en'):
     """Support language: 'en', 'de' """
+    import spacy
     lang = lang.lower()
     if lang not in ('en', 'de'):
         raise ValueError('We only support languages: en-English, de-German.')

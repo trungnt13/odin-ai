@@ -22,8 +22,8 @@ import scipy.signal
 from odin.utils import pad_center, framing
 from odin.utils.decorators import cache
 
-# Constrain STFT block sizes to 256 KB
-MAX_MEM_BLOCK = 2**8 * 2**10
+# Constrain STFT block sizes to 512 KB
+MAX_MEM_BLOCK = 2**8 * 2**11
 SMALL_FLOAT = 1e-20
 
 # ===========================================================================
@@ -267,43 +267,27 @@ def smooth(x, win=11, window='hanning'):
     return y[win:-win + 1]
 
 
-def vad_energy(log_energy,
-               distrib_nb=3,
-               nb_train_it=8,
-               flooring=0.0001, ceiling=1.0,
-               alpha=2):
-    from sidekit.mixture import Mixture
+def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
+               alpha=1.8):
+    from sklearn.mixture import GaussianMixture
     # center and normalize the energy
     log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
-
-    # Initialize a Mixture with 2 or 3 distributions
-    world = Mixture()
-    # set the covariance of each component to 1.0 and the mean to mu + meanIncrement
-    world.cst = np.ones(distrib_nb) / (np.pi / 2.0)
-    world.det = np.ones(distrib_nb)
-    world.mu = -2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1)
-    world.mu = world.mu[:, np.newaxis]
-    world.invcov = np.ones((distrib_nb, 1))
-    # set equal weights for each component
-    world.w = np.ones(distrib_nb) / distrib_nb
-    world.cov_var_ctl = copy.deepcopy(world.invcov)
-
-    # Initialize the accumulator
-    accum = copy.deepcopy(world)
-
-    # Perform nbTrainIt iterations of EM
-    for it in range(nb_train_it):
-        accum._reset()
-        # E-step
-        world._expectation(accum, log_energy)
-        # M-step
-        world._maximization(accum, ceiling, flooring)
-
+    log_energy = log_energy[:, np.newaxis]
+    # create mixture model: diag, spherical
+    world = GaussianMixture(
+        n_components=distrib_nb, covariance_type='diag',
+        tol=1e-3, reg_covar=1e-6,
+        max_iter=nb_train_it,
+        weights_init=np.ones(distrib_nb) / distrib_nb,
+        means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
+        precisions_init=np.ones((distrib_nb, 1)),
+    )
+    world.fit(log_energy)
     # Compute threshold
-    threshold = world.mu.max() - alpha * np.sqrt(1.0 / world.invcov[world.mu.argmax(), 0])
-
+    threshold = world.means_.max() - \
+        alpha * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
     # Apply frame selection with the current threshold
-    label = log_energy > threshold
+    label = log_energy.ravel() > threshold
     return label, threshold
 
 
@@ -385,8 +369,8 @@ def stft(y, n_fft=2048, hop_length=None, win_length=None, window='hann'):
     for bl_s in range(0, stft_matrix.shape[1], n_columns):
         bl_t = min(bl_s + n_columns, stft_matrix.shape[1])
         # RFFT and Conjugate here to match phase from DPWE code
-        stft_matrix[:, bl_s:bl_t] = fft.fft(fft_window *
-                                            y_frames[:, bl_s:bl_t],
+        stft_matrix[:, bl_s:bl_t] = fft.fft(fft_window * y_frames[:, bl_s:bl_t],
+                                            n=n_fft,
                                             axis=0)[:stft_matrix.shape[0]].conj()
     return stft_matrix
 
@@ -736,11 +720,12 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         energy = np.where(energy == 0., np.finfo(float).eps, energy)
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
-            distribNb, nbTrainIt = 8, 12
+            distribNb, nbTrainIt = 8, 24
             if isinstance(get_vad, (tuple, list)):
                 distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
-            vad = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
-                             nb_train_it=nbTrainIt)[0].astype('uint8')
+            vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
+                                            nb_train_it=nbTrainIt)
+            vad = vad.astype('uint8')
             if smooth_vad:
                 smooth_vad = 3 if int(smooth_vad) == 1 else smooth_vad
                 # at least 2 voice frames

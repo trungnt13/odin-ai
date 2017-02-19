@@ -87,6 +87,9 @@ class FeatureProcessor(object):
         self.substitute_nan = substitute_nan
         self.ncpu = ncpu
         self.ncache = ncache
+        # defaults
+        self.jobs = []
+        self.njobs = 0
 
     # ==================== Abstract properties ==================== #
     @abstractproperty
@@ -106,11 +109,12 @@ class FeatureProcessor(object):
         if not hasattr(self, 'jobs'):
             raise Exception('the Processor must has "jobs" attribute, which is '
                             'the list of all jobs.')
-        prog = Progbar(target=len(self.jobs))
+        njobs = len(self.jobs) if self.njobs == 0 else self.njobs
+        prog = Progbar(target=njobs)
         dataset = self.dataset
         datatype = self.datatype
         if self.ncpu is None: # auto select number of CPU
-            ncpu = min(len(self.jobs), int(1.2 * cpu_count()))
+            ncpu = min(njobs, int(1.2 * cpu_count()))
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
@@ -125,7 +129,7 @@ class FeatureProcessor(object):
         # all data are cached for periodically flushed
         cache = defaultdict(list)
         if self.ncache <= 1:
-            cache_limit = max(2, int(0.12 * len(self.jobs)))
+            cache_limit = max(2, int(0.12 * njobs))
         else:
             cache_limit = int(self.ncache)
         ref_vars = {'start': 0, 'processed_count': 0}
@@ -372,9 +376,10 @@ class SpeechProcessor(FeatureProcessor):
                                     '[name] [path] [start] [end]')
                 file_list = segments
         # filter using support audio extension
-        file_list = [f for f in file_list if any(ext == f[1][-len(ext):] for ext in audio_ext)]
+        file_list = [f for f in file_list if any(ext in f[1][-len(ext):] for ext in audio_ext)]
         # if no channel is provided, append the channel
         file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
+        self.njobs = len(file_list)
         # convert into: audio_path -> segment(name, start, end, channel)
         self.jobs = defaultdict(list)
         for segment, file, start, end, channel in file_list:
@@ -457,7 +462,7 @@ class SpeechProcessor(FeatureProcessor):
             ret = []
             for name, start, end, channel in segments:
                 start = int(float(start) * sr_orig)
-                end = int(N if end < 0 else end * sr_orig)
+                end = int(N if end <= 0 else float(end) * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
