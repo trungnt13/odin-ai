@@ -244,6 +244,7 @@ def __to_separated_indices(idx, min_distance=1, min_length=8):
     min_length: int
         pass
     """
+    if len(idx) == 0: return idx
     segments = []
     start = idx[0]
     for i, j in zip(idx, idx[1:]):
@@ -308,7 +309,10 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
         means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
         precisions_init=np.ones((distrib_nb, 1)),
     )
-    world.fit(log_energy)
+    try:
+        world.fit(log_energy)
+    except:
+        return np.zeros(shape=(log_energy.shape[0],)), 0
     # Compute threshold
     threshold = world.means_.max() - \
         alpha * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
@@ -752,7 +756,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         energy = np.where(energy == 0., np.finfo(float).eps, energy)
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
-            distribNb, nbTrainIt = 8, 24
+            distribNb, nbTrainIt = 4, 24
             if isinstance(get_vad, (tuple, list)):
                 distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
