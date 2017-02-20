@@ -418,7 +418,7 @@ class SpeechProcessor(FeatureProcessor):
         if get_pitch: features_properties.append(('pitch', dtype, True))
         if get_vad:
             features_properties.append(('vad', 'uint8', False))
-            features_properties.append(('vadids', 'uint8', False))
+            features_properties.append(('vadids', 'int32', False))
         self.__features_properties = features_properties
 
         self.get_spec = get_spec

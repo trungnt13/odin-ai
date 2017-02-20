@@ -17,7 +17,7 @@ args = ArgController(
 ).add('-bk', 'backend: tensorflow or theano', 'tensorflow'
 ).add('-dev', 'gpu or cpu', 'gpu'
 ).add('-dt', 'dtype: float32 or float16', 'float16'
-).add('-feat', 'feature type: mfcc, mspec, or spec', 'mspec'
+).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
 ).add('-cnn', 'enable CNN or not', True
 # for trainign
 ).add('-lr', 'learning rate', 0.0001
@@ -46,13 +46,17 @@ stdio(path=get_logpath('digit_audio.log', override=True))
 datapath = F.load_digit_wav()
 output_path = get_datasetpath(name='digit', override=True)
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                         win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=13,
-                         get_delta=2, get_energy=True, pitch_threshold=0.8,
-                         get_spec=True, get_mspec=True, get_mfcc=True,
-                         get_pitch=True, get_vad=True,
-                         save_stats=True, substitute_nan=None,
-                         dtype=args['dt'], datatype='memmap',
-                         ncache=0.12, ncpu=6)
+                win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                get_spec=True, get_mspec=True, get_mfcc=True,
+                get_qspec=True, get_phase=True, get_pitch=True,
+                get_vad=True, get_energy=True, get_delta=2,
+                fmin=64, fmax=None, preemphasis=0.97,
+                pitch_threshold=0.8, pitch_fmax=800,
+                vad_smooth=8, vad_minlen=0.1,
+                cqt_bins=96, pca=True, pca_whiten=False, center=True,
+                save_stats=True, substitute_nan=None,
+                dtype='float16', datatype='memmap',
+                ncache=0.12, ncpu=12)
 feat.run()
 ds = F.Dataset(output_path, read_only=True)
 print(ds)
