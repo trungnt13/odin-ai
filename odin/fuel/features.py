@@ -54,17 +54,19 @@ def _append_energy_and_deltas(s, energy, delta_order):
 class FeatureProcessor(object):
 
     """ FeatureProcessor
-
-    Example
-    -------
-    >>> feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
-    >>>                          win=0.025, shift=0.01, n_filters=40, n_ceps=13,
-    >>>                          delta_order=2, energy=True, pitch_threshold=0.5,
-    >>>                          get_spec=True, get_mspec=True, get_mfcc=True,
-    >>>                          get_pitch=False, get_vad=True,
-    >>>                          save_stats=True, substitute_nan=None,
-    >>>                          dtype='float32', datatype='memmap', ncpu=4)
-    >>> feat.run()
+    Following attribtues must be set for overriding this class:
+    jobs: list
+        list of all jobs for processing
+    njobs: int
+        number of jobs, if njobs is 0, then njobs = len(jobs)
+    features_properties: tuple, list
+        list of (name-str, dtype-dtype, save_statistics-bool),
+        this list determines which features will be processed and saved.
+    primary_indices: tuple, list
+        list of string contains the name of data that will be treated as
+        primary indices (i.e. indices of this data will only be named
+        as `indices.csv`), for other data, the indices will be
+        `indices_[name].csv`.
     """
 
     def __init__(self, output_path, datatype='memmap',
@@ -90,6 +92,7 @@ class FeatureProcessor(object):
         # defaults
         self.jobs = []
         self.njobs = 0
+        self.primary_indices = []
 
     # ==================== Abstract properties ==================== #
     @abstractproperty
@@ -118,7 +121,7 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        indices = []
+        indices = defaultdict(list)
         # ====== statistic ====== #
         statistic_able = {i[0]: i[-1] for i in self.features_properties}
         sum1 = defaultdict(int)
@@ -132,7 +135,7 @@ class FeatureProcessor(object):
             cache_limit = max(2, int(0.12 * njobs))
         else:
             cache_limit = int(self.ncache)
-        ref_vars = {'start': 0, 'processed_count': 0}
+        ref_vars = {'start': defaultdict(int), 'processed_count': 0}
 
         # ====== helper ====== #
         def flush_feature(name, cache_data):
@@ -155,27 +158,28 @@ class FeatureProcessor(object):
             # check data
             if not isinstance(data, (tuple, list)):
                 data = (data,)
-            length = [] # store length of all data for validation
+            length = -1 # store length of all data for validation
             # processing
             for prop, d in zip(self.features_properties, data):
-                length.append(len(d))
                 n, t, s = prop # name, dtype, stats
-                cache[n].append(d.astype(t))
-                if self.save_stats and s: # save stats
-                    sum1[n] += np.sum(d, axis=0, dtype='float64')
-                    sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
+                # append new indices
+                if len(d) != length:
+                    length = len(d)
+                    indices[n].append([name, ref_vars['start'][n],
+                                       ref_vars['start'][n] + length])
+                    ref_vars['start'][n] += length
+                # cache data, only if we have more than 0 sample
+                if len(d) > 0:
+                    cache[n].append(d.astype(t))
+                    if self.save_stats and s: # save stats
+                        sum1[n] += np.sum(d, axis=0, dtype='float64')
+                        sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
                 del d
-            # check if lengths are matched
-            if len(set(length)) != 1:
-                raise Exception('length mismatch between all data: %s' % str(length))
             # ====== flush cache ====== #
             if ref_vars['processed_count'] % cache_limit == 0: # 12 + 8
                 for i, j in cache.iteritems():
                     flush_feature(i, j)
                 cache.clear()
-            # index
-            indices.append([name, ref_vars['start'], ref_vars['start'] + length[0]])
-            ref_vars['start'] += length[0]
             # ====== update progress ====== #
             return name
 
@@ -191,9 +195,12 @@ class FeatureProcessor(object):
         cache = None
         dataset.flush()
         # ====== saving indices ====== #
-        with open(os.path.join(dataset.path, 'indices.csv'), 'w') as f:
-            for name, start, end in indices:
-                f.write('%s %d %d\n' % (name, start, end))
+        for n, ids in indices.iteritems():
+            outpath = os.path.join(dataset.path,
+                'indices.csv' if n in self.primary_indices else 'indices_%s.csv' % n)
+            with open(outpath, 'w') as f:
+                for name, start, end in ids:
+                    f.write('%s %d %d\n' % (name, start, end))
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):
@@ -283,9 +290,12 @@ class SpeechProcessor(FeatureProcessor):
         `threshold*X.max()`
     pitch_fmax: float
         maximum frequency of pitch
-    smooth_vad: int, bool
+    vad_smooth: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.
+    vad_minlen: float (in second)
+        the minimum length of audio segments that can be considered
+        speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
     pca: bool
@@ -339,8 +349,9 @@ class SpeechProcessor(FeatureProcessor):
                 get_qspec=False, get_phase=False, get_pitch=False,
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                pitch_threshold=0.8, pitch_fmax=1200,
-                smooth_vad=0, cqt_bins=96, pca=True, pca_whiten=False,
+                pitch_threshold=0.8, pitch_fmax=800,
+                vad_smooth=3, vad_minlen=0.1,
+                cqt_bins=96, pca=True, pca_whiten=False,
                 center=True, audio_ext=None, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
@@ -405,7 +416,9 @@ class SpeechProcessor(FeatureProcessor):
             if get_phase: features_properties.append(('qphase', dtype, True))
         if get_phase: features_properties.append(('phase', dtype, True))
         if get_pitch: features_properties.append(('pitch', dtype, True))
-        if get_vad: features_properties.append(('vad', 'uint8', False))
+        if get_vad:
+            features_properties.append(('vad', 'uint8', False))
+            features_properties.append(('vadids', 'uint8', False))
         self.__features_properties = features_properties
 
         self.get_spec = get_spec
@@ -417,6 +430,7 @@ class SpeechProcessor(FeatureProcessor):
         self.get_vad = get_vad
         self.get_energy = get_energy
         self.get_delta = int(get_delta)
+        self.primary_indices = ['mfcc']
         # ====== feature information ====== #
         self.sr = sr
         self.win = win
@@ -426,7 +440,8 @@ class SpeechProcessor(FeatureProcessor):
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
         self.pitch_fmax = pitch_fmax
-        self.smooth_vad = smooth_vad
+        self.vad_smooth = vad_smooth
+        self.vad_minlen = vad_minlen
         self.cqt_bins = cqt_bins
         self.fmin = fmin
         self.fmax = fmax
@@ -474,8 +489,8 @@ class SpeechProcessor(FeatureProcessor):
                         get_phase=self.get_phase, get_pitch=self.get_pitch,
                         get_vad=self.get_vad, get_energy=self.get_energy,
                         get_delta=self.get_delta,
-                        pitch_threshold=self.pitch_threshold,
-                        pitch_fmax=self.pitch_fmax, smooth_vad=self.smooth_vad,
+                        pitch_threshold=self.pitch_threshold, pitch_fmax=self.pitch_fmax,
+                        vad_smooth=self.vad_smooth, vad_minlen=self.vad_minlen,
                         cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
                         sr_new=self.sr_new, preemphasis=self.preemphasis,
                         center=self.center)

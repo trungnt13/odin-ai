@@ -231,6 +231,32 @@ def __max_fft_bins(sr, n_fft, fmax):
                                         endpoint=True)) if j >= fmax][0]
 
 
+def __to_separated_indices(idx, min_distance=1, min_length=8):
+    """ For example:
+    [1,2,3,4,
+     8,9,10,
+     15,16,17,18] => [(1,5), (8, 11), (15, 19)]
+
+    Paramaters
+    ----------
+    min_distance: int
+        pass
+    min_length: int
+        pass
+    """
+    segments = []
+    start = idx[0]
+    for i, j in zip(idx, idx[1:]):
+        # new segments
+        if j - i > min_distance:
+            if i + 1 - start >= min_length:
+                segments.append((start, i + 1))
+            start = j
+    if idx[-1] - start > min_length:
+        segments.append((start, idx[-1]))
+    return segments
+
+
 def smooth(x, win=11, window='hanning'):
     """
     Paramaters
@@ -562,7 +588,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                     pitch_threshold=0.8, pitch_fmax=1200,
-                    smooth_vad=3, cqt_bins=96, center=True):
+                    vad_smooth=3, vad_minlen=0.1,
+                    cqt_bins=96, center=True):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -613,9 +640,12 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         `threshold*X.max()`
     pitch_fmax: float
         maximum frequency of pitch
-    smooth_vad: int, bool
+    vad_smooth: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.
+    vad_minlen: float (in second)
+        the minimum length of audio segments that can be considered
+        speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
     center : bool
@@ -638,6 +668,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         'phase': np.ndarray (txd) - float32,
         'pitch': np.ndarray (txd) - float32,
         'vad': np.ndarray (t,) - uint8
+        'vadids': np.ndarray [(start, end), ...] - uint8
     }
     (txd): time x features
     """
@@ -714,6 +745,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         s = np.pad(s, int(win_length // 2), mode='reflect')
     log_energy = None
     vad = None
+    vad_ids = None
     if get_energy or get_vad:
         frames = framing(s, frame_length=win_length, hop_length=hop_length)
         energy = (frames**2).sum(axis=0)
@@ -726,11 +758,15 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                                             nb_train_it=nbTrainIt)
             vad = vad.astype('uint8')
-            if smooth_vad:
-                smooth_vad = 3 if int(smooth_vad) == 1 else smooth_vad
+            if vad_smooth:
+                vad_smooth = 3 if int(vad_smooth) == 1 else vad_smooth
                 # at least 2 voice frames
-                vad = (smooth(vad, win=smooth_vad, window='flat') >= 2. / smooth_vad
+                vad = (smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
                     ).astype('uint8')
+            vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
+                                                      min_distance=1,
+                                                      min_length=int(vad_minlen / win)),
+                               dtype='int32')
     # ====== 2: extract STFT and Spectrogram ====== #
     # no padding for center
     stft_ = stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length)
@@ -823,5 +859,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         ('qphase', qphase.T if get_phase and get_qspec else None),
 
         ('pitch', None if pitch_freq is None else pitch_freq.T),
+
         ('vad', vad),
+        ('vadids', vad_ids),
     ])
