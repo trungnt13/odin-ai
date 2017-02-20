@@ -158,16 +158,16 @@ class FeatureProcessor(object):
             # check data
             if not isinstance(data, (tuple, list)):
                 data = (data,)
-            length = -1 # store length of all data for validation
+            length = [] # store length of all data for validation
             # processing
             for prop, d in zip(self.features_properties, data):
                 n, t, s = prop # name, dtype, stats
                 # append new indices
-                if len(d) != length:
-                    length = len(d)
+                if len(d) not in length:
+                    length.append(len(d))
                     indices[n].append([name, ref_vars['start'][n],
-                                       ref_vars['start'][n] + length])
-                    ref_vars['start'][n] += length
+                                       ref_vars['start'][n] + len(d)])
+                    ref_vars['start'][n] += len(d)
                 # cache data, only if we have more than 0 sample
                 if len(d) > 0:
                     cache[n].append(d.astype(t))
