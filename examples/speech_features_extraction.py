@@ -49,3 +49,5 @@ for n in ds.keys():
             print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
+x = ds['vadids'][:, 1] - ds['vadids'][:, 0]
+print("Check vadids:", np.all(x > 0))
