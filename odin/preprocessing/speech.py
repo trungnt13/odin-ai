@@ -178,7 +178,7 @@ def save(f, s, fs, subtype=None):
     '''
     Return
     ------
-        waveform (ndarray), sample rate (int)
+    waveform (ndarray), sample rate (int)
     '''
     from soundfile import write
     return write(f, s, fs, subtype=subtype)

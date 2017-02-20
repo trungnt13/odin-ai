@@ -212,9 +212,10 @@ class MPI(SelfIterator):
     jobs: str
         pass
     map_func: callable
-        take input as a single job (i.e. map_func(job))
+        take a list of jobs as input (i.e. map_func([job1, job2, ...])),
+        the length of this list is determined by `buffer_size`
     reduce_func: callable
-        take input as a non-None returned object from map_func
+        take returned non-None object from `map_func` as input.
     buffer_size: int
         the amount of data each process keep before return to main
         process.

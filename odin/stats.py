@@ -43,6 +43,8 @@ def split_train_test(X, seed, split=0.7):
 
 
 def summary(x, axis=None):
+    if isinstance(x, (tuple, list)):
+        x = np.array(x)
     mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)
     median = np.median(x, axis=axis)
     qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
