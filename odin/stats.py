@@ -1,6 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
-from collections import defaultdict
+from collections import defaultdict, Iterator
 
 import numpy as np
 
@@ -43,6 +43,8 @@ def split_train_test(X, seed, split=0.7):
 
 
 def summary(x, axis=None):
+    if isinstance(x, Iterator):
+        x = list(x)
     if isinstance(x, (tuple, list)):
         x = np.array(x)
     mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)

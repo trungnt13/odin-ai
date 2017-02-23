@@ -7,6 +7,7 @@
 # ===========================================================================
 from __future__ import print_function, absolute_import, division
 
+import os
 import sys
 import copy
 import numpy as np
@@ -775,7 +776,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
 # ===========================================================================
 def plot_show(block=False, tight_layout=False):
     from matplotlib import pyplot as plt
-    # plt.ioff()
     if tight_layout:
         plt.tight_layout()
     plt.show(block=block)
@@ -789,12 +789,21 @@ def plot_close():
     plt.close('all')
 
 
-def plot_save(path, figs=None, dpi=300, tight_plot=False):
+def plot_save(path, figs=None, dpi=240, tight_plot=False, clear_all=True):
+    """
+    Parameters
+    ----------
+    clear_all: bool
+        if True, remove all saved figures from current figure list
+        in matplotlib
+    """
     try:
         from matplotlib.backends.backend_pdf import PdfPages
         import matplotlib.pyplot as plt
         if tight_plot:
             plt.tight_layout()
+        if os.path.exists(path) and os.path.isfile(path):
+            os.remove(path)
         pp = PdfPages(path)
         if figs is None:
             figs = [plt.figure(n) for n in plt.get_fignums()]
@@ -802,5 +811,7 @@ def plot_save(path, figs=None, dpi=300, tight_plot=False):
             fig.savefig(pp, format='pdf')
         pp.close()
         sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
+        if clear_all:
+            plt.close('all')
     except Exception as e:
         sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))

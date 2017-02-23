@@ -12,8 +12,8 @@ import six
 import math
 import copy
 import warnings
+from number import Number
 from collections import OrderedDict
-import warnings
 
 import numpy as np
 import scipy.fftpack as fft
@@ -299,7 +299,8 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
     from sklearn.mixture import GaussianMixture
     # center and normalize the energy
     log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
-    log_energy = log_energy[:, np.newaxis]
+    if log_energy.ndim == 1:
+        log_energy = log_energy[:, np.newaxis]
     # create mixture model: diag, spherical
     world = GaussianMixture(
         n_components=distrib_nb, covariance_type='diag',
@@ -311,7 +312,10 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
     )
     try:
         world.fit(log_energy)
-    except:
+    except ValueError:
+        if distrib_nb - 1 >= 2:
+            return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
+                              nb_train_it=nb_train_it, alpha=alpha)
         return np.zeros(shape=(log_energy.shape[0],)), 0
     # Compute threshold
     threshold = world.means_.max() - \
@@ -319,6 +323,175 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
     # Apply frame selection with the current threshold
     label = log_energy.ravel() > threshold
     return label, threshold
+
+
+def speech_enhancement(X, Gain, NN=2):
+    """This program is only to process the single file seperated by the silence
+    section if the silence section is detected, then a counter to number of
+    buffer is set and pre-processing is required.
+
+    Usage: SpeechENhance(wavefilename, Gain, Noise_floor)
+
+    :param X: input audio signal
+    :param Gain: default value is 0.9, suggestion range 0.6 to 1.4,
+            higher value means more subtraction or noise redcution
+    :param NN:
+
+    :return: a 1-dimensional array of boolean that
+        is True for high energy frames.
+
+    Note
+    ----
+    I move this function here, so we don't have to import `sidekit`.
+    You can check original version from `sidekit.frontend.vad`.
+    Copyright 2014 Sun Han Wu and Anthony Larcher
+    """
+    if X.shape[0] < 512:  # creer une exception
+        return X
+
+    num1 = 40  # dsiable buffer number
+    Alpha = 0.75  # original value is 0.9
+    FrameSize = 32 * 2  # 256*2
+    FrameShift = int(FrameSize / NN)  # FrameSize/2=128
+    nfft = FrameSize  # = FrameSize
+    Fmax = int(np.floor(nfft / 2) + 1)  # 128+1 = 129
+    # arising hamming windows
+    Hamm = 1.08 * (0.54 - 0.46 * np.cos(2 * np.pi * np.arange(FrameSize) / (FrameSize - 1)))
+    y0 = np.zeros(FrameSize - FrameShift)  # 128 zeros
+
+    Eabsn = np.zeros(Fmax)
+    Eta1 = Eabsn
+
+    ###################################################################
+    # initial parameter for noise min
+    mb = np.ones((1 + FrameSize // 2, 4)) * FrameSize / 2  # 129x4  set four buffer * FrameSize/2
+    im = 0
+    Beta1 = 0.9024  # seems that small value is better;
+    pxn = np.zeros(1 + FrameSize // 2)  # 1+FrameSize/2=129 zeros vector
+
+    ###################################################################
+    old_absx = Eabsn
+    x = np.zeros(FrameSize)
+    x[FrameSize - FrameShift:FrameSize] = X[
+        np.arange(np.min((int(FrameShift), X.shape[0])))]  # fread(ifp, FrameSize, 'short')% read  FrameSize samples
+
+    if x.shape[0] < FrameSize:
+        EOF = 1
+        return X
+
+    EOF = 0
+    Frame = 0
+
+    ###################################################################
+    # add the pre-noise estimates
+    for i in range(200):
+        Frame += 1
+        fftn = fft.fft(x * Hamm)  # get its spectrum
+        absn = np.abs(fftn[0:Fmax])  # get its amplitude
+
+        # add the following part from noise estimation algorithm
+        pxn = Beta1 * pxn + (1 - Beta1) * absn  # Beta=0.9231 recursive pxn
+        im = (im + 1) % 40  # noise_memory=47;  im=0 (init) for noise level estimation
+
+        if im:
+            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
+        else:
+            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
+            mb[:, 0] = pxn
+            #  0-2  vector shifted to 1 to 3
+
+        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
+        # over_sub_noise= oversubtraction factor
+
+        # end of noise detection algotihm
+        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
+        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
+        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
+
+        if In_data.shape[0] < FrameShift:  # to check file is out
+            EOF = 1
+            break
+        else:
+            x[FrameSize - FrameShift:FrameSize] = In_data  # shift new 128 to position 129 to FrameSize location
+            # end of for loop for noise estimation
+
+    # end of prenoise estimation ************************
+    x = np.zeros(FrameSize)
+    x[FrameSize - FrameShift:FrameSize] = X[np.arange(np.min((int(FrameShift), X.shape[0])))]
+
+    if x.shape[0] < FrameSize:
+        EOF = 1
+        return X
+
+    EOF = 0
+    Frame = 0
+
+    X1 = np.zeros(X.shape)
+    Frame = 0
+
+    while EOF == 0:
+        Frame += 1
+        xwin = x * Hamm
+
+        fftx = fft.fft(xwin, nfft)  # FrameSize FFT
+        absx = np.abs(fftx[0:Fmax])  # Fmax=129,get amplitude of x
+        argx = fftx[:Fmax] / (absx + np.spacing(1))  # normalize x spectrum phase
+
+        absn = absx
+
+        # add the following part from rainer algorithm
+        pxn = Beta1 * pxn + (1 - Beta1) * absn  # s Beta=0.9231   recursive pxn
+
+        im = int((im + 1) % (num1 * NN / 2))  # original =40 noise_memory=47;  im=0 (init) for noise level estimation
+
+        if im:
+            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
+        else:
+            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
+            mb[:, 0] = pxn
+
+        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
+
+        Eabsn = pn
+        Gaina = Gain
+
+        temp1 = Eabsn * Gaina
+
+        Eta1 = Alpha * old_absx + (1 - Alpha) * np.maximum(absx - temp1, 0)
+        new_absx = (absx * Eta1) / (Eta1 + temp1)  # wiener filter
+        old_absx = new_absx
+
+        ffty = new_absx * argx  # multiply amplitude with its normalized spectrum
+
+        y = np.real(np.fft.fftpack.ifft(np.concatenate((ffty, np.conj(ffty[np.arange(Fmax - 2, 0, -1)])))))
+
+        y[:FrameSize - FrameShift] = y[:FrameSize - FrameShift] + y0
+        y0 = y[FrameShift:FrameSize]  # keep 129 to FrameSize point samples
+        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
+
+        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
+        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
+
+        z = 2 / NN * y[:FrameShift]  # left channel is the original signal
+        z /= 1.15
+        z = np.minimum(z, 32767)
+        z = np.maximum(z, -32768)
+        index0 = np.arange(FrameShift * (Frame - 1), FrameShift * Frame)
+        if not all(index0 < X1.shape[0]):
+            idx = 0
+            while (index0[idx] < X1.shape[0]) & (idx < index0.shape[0]):
+                X1[index0[idx]] = z[idx]
+                idx += 1
+        else:
+            X1[index0] = z
+
+        if In_data.shape[0] == 0:
+            EOF = 1
+        else:
+            x[np.arange(FrameSize - FrameShift, FrameSize + In_data.shape[0] - FrameShift)] = In_data
+
+    X1 = X1[X1.shape[0] - X.shape[0]:]
+    return X1
 
 
 def stft(y, n_fft=2048, hop_length=None, win_length=None, window='hann'):
@@ -623,8 +796,9 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         if True, return phase components of STFT
     get_pitch:
         if True, include the Pitch frequency (F0)
-    get_vad: bool
+    get_vad: int, bool
         if True, include the indicators of voice activities detection
+        if int, `get_vad` is the number of Gaussian mixture components for VAD
     get_energy: bool
         if True, include the log energy of each frames
     get_delta: bool or int
@@ -756,9 +930,9 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         energy = np.where(energy == 0., np.finfo(float).eps, energy)
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
-            distribNb, nbTrainIt = 4, 24
-            if isinstance(get_vad, (tuple, list)):
-                distribNb, nbTrainIt = int(get_vad[0]), int(get_vad[1])
+            distribNb, nbTrainIt = 6, 24
+            if isinstance(get_vad, Number):
+                distribNb = int(get_vad)
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                                             nb_train_it=nbTrainIt)
             vad = vad.astype('uint8')

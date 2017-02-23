@@ -11,7 +11,7 @@ from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, segment_axis, one_hot,
+from odin.utils import (segment_list, segment_axis, one_hot, is_string,
                         Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.decorators import functionable
@@ -431,6 +431,73 @@ class Name2Trans(FeederRecipe):
         labels = [label] * X[0].shape[0]
         transcription = np.array(labels)
         return name, X, transcription
+
+
+class SADindex(FeederRecipe):
+    """ Speech activity indexing (i.e. only select frames
+    indicated by SAD from the )
+
+    Parameters
+    ----------
+    vad: dict, callable, list of (indices, data)
+        anything take file name and return a list of SAD indices
+    frame_length: int
+        pass
+    padding: int, None
+        if padding is None, use previous frames for padding.
+    """
+
+    def __init__(self, vad, frame_length=256, padding=0):
+        super(SADindex, self).__init__()
+        if hasattr(vad, '__getitem__'):
+            vad = lambda x: vad[x]
+        elif isinstance(vad, (list, tuple)):
+            indices, data = vad
+            if is_string(indices) and os.path.exists(indices):
+                indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+            indices = {name: (int(start), int(end))
+                       for name, start, end in indices}
+            vad = lambda x: data[indices[x][0]:indices[x][1]]
+        self.vad = vad
+        self.frame_length = frame_length
+        self.padding = padding
+
+    def _stacking(self, x):
+        # x is ndarray
+        idx = list(range(0, x.shape[0], self.shift))
+        _ = [x[i:i + self.n].ravel() for i in idx
+             if (i + self.n) <= x.shape[0]]
+        x = np.asarray(_) if len(_) > 1 else _[0]
+        return x
+
+    def _middle_label(self, trans):
+        idx = list(range(0, len(trans), self.shift))
+        # only take the middle labelobject
+        trans = np.asarray(
+            [trans[i + self.left_context + 1]
+             for i in idx if (i + self.n) <= len(trans)])
+        return trans
+
+    def process(self, name, X, *args):
+        if X[0].shape[0] < self.n: # not enough data points for stacking
+            warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
+                          'into %d features.' % (name, X[0].shape[0], self.n))
+            return None
+        X = [self._stacking(x) for x in X]
+        # ====== stacking the transcription ====== #
+        args = [self._middle_label(a) for a in args]
+        return (name, tuple(X)) + tuple(args)
+
+    def shape_transform(self, shapes):
+        # ====== do the shape infer ====== #
+        _ = []
+        for shape in shapes:
+            if len(shape) > 2:
+                raise Exception('Stacking only support 2D array.')
+            n_features = shape[-1] * self.n if len(shape) == 2 else self.n
+            n = (shape[0] // self.shift)
+            _.append((n, n_features))
+        return tuple(_)
 
 
 # ===========================================================================

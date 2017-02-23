@@ -25,6 +25,7 @@ DEALINGS IN THE SOFTWARE.
 from __future__ import print_function, division, absolute_import
 
 import os
+import shutil
 from abc import ABCMeta
 from collections import Counter
 from six import add_metaclass
@@ -279,26 +280,15 @@ class Feeder(MutableData):
         self.__running_iter.append(it)
         return it
 
-    def save_cache(self, path, name, dtype='float32',
-                   datatype='memmap', print_progress=True):
+    def save_cache(self, path, datatype='memmap', print_progress=True):
         """ Save all preprocessed data to a Dataset """
         if not isinstance(path, str) or os.path.isfile(path):
             raise ValueError('path must be string path to a folder.')
-        if not isinstance(name, (tuple, list, np.ndarray)):
-            name = (name,)
-        if not isinstance(dtype, (tuple, list, np.ndarray)):
-            dtype = (dtype,)
-
-        if len(dtype) < len(name):
-            dtype = (dtype[0],) * len(name)
-        elif len(dtype) > len(name):
-            dtype = dtype[:len(name)]
+        if os.path.exists(path):
+            print('Remove old dataset at path:', path)
+            shutil.rmtree(path)
 
         ds = Dataset(path)
-        for i in name:
-            if i in ds:
-                raise ValueError('Data with name:"%s" already existed in '
-                                 'the dataset' % i)
         # ====== start caching ====== #
         if print_progress:
             prog = Progbar(target=self.shape[0], title='Caching:')
@@ -306,12 +296,14 @@ class Feeder(MutableData):
             if not isinstance(X, (tuple, list)):
                 X = (X,)
             # saving preprocessed data
-            for x, nam, typ in zip(X, name, dtype):
-                if nam in ds: ds[nam].append(x)
-                else: ds[(nam, datatype)] = x
+            for i, x in enumerate(X):
+                name = 'data%d' % i
+                if name in ds: ds[name].append(x)
+                else: ds[(name, datatype)] = x
             # print progress
             if print_progress:
                 prog.add(X[0].shape[0])
+        prog.target = prog.seen_so_far; prog.add(0)
         ds.flush()
         ds.close()
         # end

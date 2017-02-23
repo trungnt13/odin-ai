@@ -624,7 +624,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
         a = numpy.ravel(a) # may copy
         axis = 0
 
-    l = a.shape[axis]
+    length = a.shape[axis]
     overlap = frame_length - hop_length
 
     if overlap >= frame_length:
@@ -633,14 +633,14 @@ def segment_axis(a, frame_length=2048, hop_length=512,
         raise ValueError("overlap must be nonnegative and length must" +
                          "be positive")
 
-    if l < frame_length or (l - frame_length) % (frame_length - overlap):
-        if l > frame_length:
-            roundup = frame_length + (1 + (l - frame_length) // (frame_length - overlap)) * (frame_length - overlap)
-            rounddown = frame_length + ((l - frame_length) // (frame_length - overlap)) * (frame_length - overlap)
+    if length < frame_length or (length - frame_length) % (frame_length - overlap):
+        if length > frame_length:
+            roundup = frame_length + (1 + (length - frame_length) // (frame_length - overlap)) * (frame_length - overlap)
+            rounddown = frame_length + ((length - frame_length) // (frame_length - overlap)) * (frame_length - overlap)
         else:
             roundup = frame_length
             rounddown = 0
-        assert rounddown < l < roundup
+        assert rounddown < length < roundup
         assert roundup == rounddown + (frame_length - overlap) \
         or (roundup == frame_length and rounddown == 0)
         a = a.swapaxes(-1, axis)
@@ -651,21 +651,21 @@ def segment_axis(a, frame_length=2048, hop_length=512,
             s = list(a.shape)
             s[-1] = roundup
             b = numpy.empty(s, dtype=a.dtype)
-            b[..., :l] = a
+            b[..., :length] = a
             if end == 'pad':
-                b[..., l:] = endvalue
+                b[..., length:] = endvalue
             elif end == 'wrap':
-                b[..., l:] = a[..., :roundup - l]
+                b[..., length:] = a[..., :roundup - length]
             a = b
         a = a.swapaxes(-1, axis)
-        l = a.shape[0] # update l
+        length = a.shape[0] # update l
 
-    if l == 0:
+    if length == 0:
         raise ValueError("Not enough data points to segment array " +
                 "in 'cut' mode; try 'pad' or 'wrap'")
-    assert l >= frame_length
-    assert (l - frame_length) % (frame_length - overlap) == 0
-    n = 1 + (l - frame_length) // (frame_length - overlap)
+    assert length >= frame_length
+    assert (length - frame_length) % (frame_length - overlap) == 0
+    n = 1 + (length - frame_length) // (frame_length - overlap)
     s = a.strides[axis]
     newshape = a.shape[:axis] + (n, frame_length) + a.shape[axis + 1:]
     newstrides = a.strides[:axis] + ((frame_length - overlap) * s, s) + a.strides[axis + 1:]
@@ -679,7 +679,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
         newstrides = a.strides[:axis] + ((frame_length - overlap) * s, s) \
         + a.strides[axis + 1:]
         return numpy.ndarray.__new__(numpy.ndarray, strides=newstrides,
-                                  shape=newshape, buffer=a, dtype=a.dtype)
+                                     shape=newshape, buffer=a, dtype=a.dtype)
 
 
 def as_shape_tuple(shape):
@@ -1387,7 +1387,7 @@ def play_audio(data, fs, volumn=1, speed=1):
     import soundfile as sf
     import os
 
-    data = numpy.asarray(data)
+    data = numpy.asarray(data, dtype=numpy.int16)
     if data.ndim == 1:
         channels = 1
     else:
