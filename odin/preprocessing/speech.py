@@ -12,7 +12,7 @@ import six
 import math
 import copy
 import warnings
-from number import Number
+from numbers import Number
 from collections import OrderedDict
 
 import numpy as np
