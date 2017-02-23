@@ -931,7 +931,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
             distribNb, nbTrainIt = 6, 24
-            if isinstance(get_vad, Number):
+            if isinstance(get_vad, Number) and int(get_vad) >= 2:
                 distribNb = int(get_vad)
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                                             nb_train_it=nbTrainIt)
