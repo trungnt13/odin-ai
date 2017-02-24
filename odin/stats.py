@@ -42,7 +42,7 @@ def split_train_test(X, seed, split=0.7):
     return ret
 
 
-def summary(x, axis=None):
+def summary(x, axis=None, shorten=False):
     if isinstance(x, Iterator):
         x = list(x)
     if isinstance(x, (tuple, list)):
@@ -51,17 +51,22 @@ def summary(x, axis=None):
     median = np.median(x, axis=axis)
     qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
     min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
-    samples = ', '.join(["%.8f" % i
+    samples = ', '.join([str(i)
                for i in np.random.choice(x.ravel(), size=8, replace=False).tolist()])
     s = ""
-    s += "***** Summary *****\n"
-    s += "    Min : %.8f\n" % min_
-    s += "1st Qu. : %.8f\n" % qu1
-    s += " Median : %.8f\n" % median
-    s += "   Mean : %.8f\n" % mean
-    s += "3rd Qu. : %.8f\n" % qu3
-    s += "    Max : %.8f\n" % max_
-    s += "-------------------\n"
-    s += "    Std : %.8f\n" % std
-    s += "Samples : %s\n" % samples
+    if not shorten:
+        s += "***** Summary *****\n"
+        s += "    Min : %s\n" % str(min_)
+        s += "1st Qu. : %s\n" % str(qu1)
+        s += " Median : %s\n" % str(median)
+        s += "   Mean : %.8f\n" % mean
+        s += "3rd Qu. : %s\n" % str(qu3)
+        s += "    Max : %s\n" % str(max_)
+        s += "-------------------\n"
+        s += "    Std : %.8f\n" % std
+        s += "#Samples : %d\n" % len(x)
+        s += "Samples : %s\n" % samples
+    else:
+        s += "{#:%d|min:%s|qu1:%s|med:%s|mea:%.8f|qu3:%s|max:%s|std:%.8f}" %\
+        (len(x), str(min_), str(qu1), str(median), mean, str(qu3), str(max_), std)
     return s

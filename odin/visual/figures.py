@@ -10,9 +10,12 @@ from __future__ import print_function, absolute_import, division
 import os
 import sys
 import copy
-import numpy as np
-from six.moves import zip, range
 import warnings
+from six import string_types
+from six.moves import zip, range
+
+import numpy as np
+
 # try:
 #     import seaborn # import seaborn for pretty plot
 # except:
@@ -359,6 +362,73 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
         if i: ax.axvline(x=j, ymin=ymin, ymax=ymax,
                          color='r', linewidth=1, alpha=alpha)
     return ax
+
+
+def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
+               get_qspec=False, get_vad=True, fmin=64, fmax=None,
+               sr_new=None, preemphasis=0.97,
+               pitch_threshold=0.8, pitch_fmax=1200,
+               vad_smooth=3, vad_minlen=0.1,
+               cqt_bins=96, center=True, title=""):
+    from matplotlib import pyplot as plt
+    from odin.preprocessing import speech
+
+    # ====== helper ====== #
+    def spectrogram(spec, vad, title):
+        nb_samples = len(spec)
+        n1, n2, n3 = nb_samples // 4, nb_samples // 2, 3 * nb_samples // 4
+
+        plt.figure()
+        plt.subplot2grid((3, 4), (0, 0), rowspan=1, colspan=4)
+        plot_spectrogram(spec.T, vad=vad)
+        plt.subplot2grid((3, 4), (1, 0), rowspan=1, colspan=2)
+        plot_spectrogram(spec[:n1].T, vad=vad[:n1])
+        plt.subplot2grid((3, 4), (1, 2), rowspan=1, colspan=2)
+        plot_spectrogram(spec[n1:n2].T, vad=vad[n1:n2])
+        plt.subplot2grid((3, 4), (2, 0), rowspan=1, colspan=2)
+        plot_spectrogram(spec[n2:n3].T, vad=vad[n2:n3])
+        plt.subplot2grid((3, 4), (2, 2), rowspan=1, colspan=2)
+        plot_spectrogram(spec[n3:].T, vad=vad[n3:])
+        plt.suptitle(str(title))
+        plt.tight_layout()
+    # ====== load signal ====== #
+    if isinstance(s, string_types):
+        name = os.path.basename(s)
+        s, _ = speech.read(s)
+        if sr is None:
+            sr = _
+    else:
+        name = "-".join([str(s.shape), str(sr)])
+    title = str(title) + ":" + name
+    # ====== processing ====== #
+    get_vad = True if not get_vad else get_vad
+    y = speech.speech_features(s, sr, win=win, shift=shift,
+            nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
+            get_spec=True, get_mspec=True, get_mfcc=True,
+            get_qspec=get_qspec, get_phase=False, get_pitch=False,
+            get_vad=get_vad, get_energy=True, get_delta=False,
+            fmin=fmin, fmax=fmax, sr_new=sr_new, preemphasis=preemphasis,
+            pitch_threshold=pitch_threshold, pitch_fmax=pitch_fmax,
+            vad_smooth=vad_smooth, vad_minlen=vad_minlen,
+            cqt_bins=cqt_bins, center=center)
+    # ====== plot raw signals ====== #
+    if sr > 16000:
+        s = speech.resample(s, sr, 16000)
+        sr = 16000
+    plt.figure()
+    plt.subplot(2, 1, 1)
+    plt.plot(s)
+    plt.subplot(2, 1, 2)
+    plt.plot(y['energy'].ravel())
+    plt.tight_layout()
+    plt.suptitle(title)
+    # ====== plot spectrogram ====== #
+    spectrogram(y['spec'], y['vad'], title='STFT power spectrum')
+    if get_qspec:
+        spectrogram(y['qspec'], y['vad'], title='CQT power spectrum')
+    return y
+
+plot_speech = plot_audio
 
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
