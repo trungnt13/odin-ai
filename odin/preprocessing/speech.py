@@ -304,15 +304,14 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
     # create mixture model: diag, spherical
     world = GaussianMixture(
         n_components=distrib_nb, covariance_type='diag',
-        tol=1e-3, reg_covar=1e-6,
-        max_iter=nb_train_it,
+        init_params='kmeans', max_iter=nb_train_it,
         weights_init=np.ones(distrib_nb) / distrib_nb,
         means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
         precisions_init=np.ones((distrib_nb, 1)),
     )
     try:
         world.fit(log_energy)
-    except ValueError:
+    except (ValueError, IndexError): # index error because of float32 cumsum
         if distrib_nb - 1 >= 2:
             return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
                               nb_train_it=nb_train_it, alpha=alpha)
