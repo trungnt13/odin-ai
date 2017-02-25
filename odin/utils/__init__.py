@@ -52,9 +52,7 @@ def is_path(path):
 
 
 def is_string(s):
-    if isinstance(s, string_types):
-        return True
-    False
+    return isinstance(s, string_types)
 
 
 def iter_chunk(it, n):
@@ -67,6 +65,11 @@ def iter_chunk(it, n):
     while obj:
         yield obj
         obj = list(islice(it, n))
+
+
+def batching(n, batch_size):
+    return [(i, min(i + batch_size, n))
+            for i in range(0, n + batch_size, batch_size) if i < n]
 
 
 # ===========================================================================

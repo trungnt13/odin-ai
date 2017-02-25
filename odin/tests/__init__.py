@@ -5,6 +5,7 @@ import unittest
 
 def run(backend='tensorflow', device='gpu'):
     tests = [
+        'utils_test',
         'fuel_test',
         'backend_test',
         'nnet_test',
