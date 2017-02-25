@@ -11,6 +11,7 @@ import os
 import sys
 import copy
 import warnings
+import colorsys
 from six import string_types
 from six.moves import zip, range
 
@@ -24,6 +25,43 @@ import numpy as np
 # import matplotlib
 # for name, hex in matplotlib.colors.cnames.iteritems():
 #     print(name, hex)
+
+marker_styles = [
+    ".",
+    ",",
+    "o",
+    "v",
+    "^",
+    "<",
+    ">",
+    "1",
+    "2",
+    "3",
+    "4",
+    "8",
+    "s",
+    "p",
+    "*",
+    "h",
+    "H",
+    "+",
+    "x",
+    "D",
+    "d",
+    "|",
+    "_",
+]
+
+
+def generate_random_colors(n):
+    colors = []
+    for i in range(n):
+        h = 0.05 + i / n # we want maximizing hue
+        l = 0.4 + np.random.rand(1)[0] / 3  # lightness
+        s = 0.5 + np.random.rand(1)[0] / 10 # saturation
+        rgb = colorsys.hls_to_rgb(h, l, s)
+        colors.append(rgb)
+    return colors
 
 
 # ===========================================================================
@@ -314,17 +352,44 @@ def plot_histogram(x, bins=12, ax=None):
     return ax
 
 
-def plot_scatter(x, y, color=None, size=4.0, ax=None):
+def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None):
     '''Plot the amplitude envelope of a waveform.
+    Parameters
+    ----------
+    color: list
+        list of colors for each class, check `generate_random_colors`
+    marker: list
+        different marker for each color
+    legend: dict
+        mapping from color to each legend
     '''
     from matplotlib import pyplot as plt
+    # color is given create legend and different marker
+    if color is not None:
+        if isinstance(color, np.ndarray):
+            color = color.tolist()
+        nb_labels = len(set(color))
+        if legend is None:
+            legend = {c: "p%.2d" % i for i, c in enumerate(set(color))}
+        if marker is None and nb_labels <= len(marker_styles):
+            marker = np.random.choice(marker_styles, size=nb_labels,
+                                      replace=False)
 
     ax = ax if ax is not None else plt.gca()
     if color is None:
         ax.scatter(x, y, s=size)
     else:
-        ax.scatter(x, y, color=color, s=size)
-
+        axes = []
+        legend_ = []
+        for c, m in zip(set(color), marker):
+            x_ = [i for i, j in zip(x, color) if j == c]
+            y_ = [i for i, j in zip(y, color) if j == c]
+            legend_.append(legend[c])
+            _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+            axes.append(_)
+        if legend is not None:
+            ax.legend(axes, legend_, scatterpoints=1, loc='upper right',
+                      ncol=3, fontsize=8)
     return ax
 
 

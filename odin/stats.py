@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
 
 from collections import defaultdict, Iterator
@@ -70,3 +71,23 @@ def summary(x, axis=None, shorten=False):
         s += "{#:%d|min:%s|qu1:%s|med:%s|mea:%.8f|qu3:%s|max:%s|std:%.8f}" %\
         (len(x), str(min_), str(qu1), str(median), mean, str(qu3), str(max_), std)
     return s
+
+
+def KLdivergence(P, Q):
+    """ KL(P||Q) = ∑_i • p_i • log(p_i/q_i)
+    The smaller this number, the better P match Q distribution
+    """
+    if isinstance(P, dict) and isinstance(Q, dict):
+        keys = sorted(P.keys())
+        P = [P[k] for k in keys]
+        Q = [Q[k] for k in keys]
+    # ====== normalize to probability 0-1 ====== #
+    P = np.array(P)
+    P = P / np.sum(P, axis=-1)
+    Q = np.array(Q)
+    Q = Q / np.sum(Q, axis=-1)
+    # ====== calcuate the KL-div ====== #
+    D = 0
+    for pi, qi in zip(P, Q):
+        D += pi * np.log(pi / qi)
+    return D

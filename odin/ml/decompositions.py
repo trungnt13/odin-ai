@@ -10,7 +10,12 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils import Progbar
+from odin.utils.mpi import MPI
 from odin.fuel import Data
+
+__all__ = [
+    "MiniBatchPCA"
+]
 
 
 class MiniBatchPCA(IncrementalPCA):
@@ -286,12 +291,66 @@ class MiniBatchPCA(IncrementalPCA):
             self.noise_variance_ = 0.
         return self
 
-    def transform(self, X, y=None):
-        if isinstance(X, Data):
-            X = X[:]
-        return super(MiniBatchPCA, self).transform(X=X, y=y)
+    def transform(self, X, y=None, n_components=None,
+                  print_progress=False):
+        n = X.shape[0]
+        if self.batch_size is None:
+            batch_size = 12 * len(self.mean_)
+        else:
+            batch_size = self.batch_size
+        batch_list = [(i, min(i + batch_size, n))
+            for i in range(0, n + batch_size, batch_size) if i < n]
+        if print_progress:
+            prog = Progbar(target=n)
+        # ====== start transforming ====== #
+        X_transformed = []
+        for start, end in batch_list:
+            x = super(MiniBatchPCA, self).transform(X=X[start:end], y=y)
+            if n_components is not None:
+                x = x[:, :n_components]
+            X_transformed.append(x)
+            if print_progress:
+                prog.add(x.shape[0])
+        return np.concatenate(X_transformed, axis=0)
 
     def invert_transform(self, X, y=None):
         if isinstance(X, Data):
             X = X[:]
         return super(MiniBatchPCA, self).inverse_transform(X=X, y=y)
+
+    def transform_mpi(self, X, y=None, keep_order=True, ncpu=4,
+                      n_components=None, print_progress=False):
+        """ Sample as transform but using multiprocessing """
+        n = X.shape[0]
+        if self.batch_size is None:
+            batch_size = 12 * len(self.mean_)
+        else:
+            batch_size = self.batch_size
+        batch_list = [(i, min(i + batch_size, n))
+            for i in range(0, n + batch_size, batch_size) if i < n]
+        if print_progress:
+            prog = Progbar(target=n)
+
+        # ====== run MPI jobs ====== #
+        def map_func(batch):
+            for start, end in batch:
+                start, end = batch[0]
+                x = super(MiniBatchPCA, self).transform(X=X[start:end], y=y)
+                # doing dim reduction here save a lot of memory for
+                # inter-processors transfer
+                if n_components is not None:
+                    x = x[:, :n_components]
+                # just need to return the start for ordering
+                yield start, x
+        mpi = MPI(batch_list, map_func=map_func,
+            ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 12)
+        # ====== process the return ====== #
+        X_transformed = []
+        for start, x in mpi:
+            X_transformed.append((start, x))
+            if print_progress:
+                prog.add(x.shape[0])
+        if keep_order:
+            X_transformed = sorted(X_transformed, key=lambda x: x[0])
+        X_transformed = np.concatenate([x[-1] for x in X_transformed], axis=0)
+        return X_transformed
