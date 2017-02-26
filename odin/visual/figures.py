@@ -369,9 +369,14 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None):
         if isinstance(color, np.ndarray):
             color = color.tolist()
         nb_labels = len(set(color))
+        # set legend
         if legend is None:
             legend = {c: "p%.2d" % i for i, c in enumerate(set(color))}
-        if marker is None and nb_labels <= len(marker_styles):
+        # set marker
+        if marker is None:
+            marker = [None] * nb_labels
+        elif not isinstance(marker, (tuple, list)) and \
+        nb_labels <= len(marker_styles):
             marker = np.random.choice(marker_styles, size=nb_labels,
                                       replace=False)
 
@@ -385,7 +390,8 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None):
             x_ = [i for i, j in zip(x, color) if j == c]
             y_ = [i for i, j in zip(y, color) if j == c]
             legend_.append(legend[c])
-            _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+            if m is None: _ = ax.scatter(x_, y_, color=c, s=size)
+            else: _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
             axes.append(_)
         if legend is not None:
             ax.legend(axes, legend_, scatterpoints=1, loc='upper right',

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
@@ -132,6 +133,24 @@ class MiniBatchPCA(IncrementalPCA):
 
     For `multiprocessing`, you can do parallelized `partial_fit` or `transform`
     but you cannot do `partial_fit` in one process and `transform` in the others.
+
+    Application
+    -----------
+    In detail, in order for PCA to work well, informally we require that
+    (i) The features have approximately zero mean, and
+    (ii) The different features have similar variances to each other.
+    With natural images, (ii) is already satisfied even without variance
+    normalization, and so we won’t perform any variance normalization.
+    (If you are training on audio data—say, on spectrograms—or on text data—say,
+    bag-of-word vectors—we will usually not perform variance normalization
+    either.)
+
+    By using PCA, we aim for:
+    (i) the features are less correlated with each other, and
+    (ii) the features all have the same variance.
+
+
+    Original link: http://ufldl.stanford.edu/tutorial/unsupervised/PCAWhitening/
 
     References
     ----------

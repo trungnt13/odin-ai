@@ -25,6 +25,7 @@ from odin.utils.decorators import autoinit
 from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
+from .utils import MmapDict
 
 __all__ = [
     'SpeechProcessor'
@@ -197,10 +198,12 @@ class FeatureProcessor(object):
         # ====== saving indices ====== #
         for n, ids in indices.iteritems():
             outpath = os.path.join(dataset.path,
-                'indices.csv' if n in self.primary_indices else 'indices_%s.csv' % n)
-            with open(outpath, 'w') as f:
-                for name, start, end in ids:
-                    f.write('%s %d %d\n' % (name, start, end))
+                'indices' if n in self.primary_indices else 'indices_%s' % n)
+            _ = MmapDict(outpath)
+            for name, start, end in ids:
+                _[name] = (int(start), int(end))
+            _.flush()
+            _.close()
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):

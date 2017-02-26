@@ -51,3 +51,11 @@ for n in ds.keys():
                                 pca.explained_variance_[:8])]))
 x = ds['vadids'][:, 1] - ds['vadids'][:, 0]
 print("Check vadids:", np.all(x > 0))
+
+for name, (start, end) in ds['indices'].iteritems():
+    vad_start, vad_end = ds['indices_vadids'][name]
+    vadids = ds['vadids'][vad_start:vad_end]
+    assert vad_end > vad_start
+    assert np.all((vadids[:, 1] - vadids[:, 0]) > 0)
+    assert not np.any(
+        np.isnan(ds['spec_pca'].transform(ds['spec'][start:end], n_components=2)))

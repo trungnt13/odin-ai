@@ -1,23 +1,42 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
 
-from collections import defaultdict, Iterator
+from numbers import Number
+from collections import defaultdict, Iterator, OrderedDict
 
 import numpy as np
 
 from odin.utils import as_tuple
 
 
-def freqcount(x):
+def freqcount(x, key=None, count=1):
     """ x: list, iterable
+
+    Parameters
+    ----------
+    key: callable
+        extract the key from each item in the list
+    count: callable, int
+        extract the count from each item in the list
+
     Return
     ------
     dict: x(obj) -> freq(int)
     """
     freq = defaultdict(int)
+    if key is None:
+        key = lambda x: x
+    if count is None:
+        count = 1
+    if isinstance(count, Number):
+        _ = int(count)
+        count = lambda x: _
     for i in x:
-        freq[i] += 1
-    return dict(freq)
+        c = count(i)
+        i = key(i)
+        freq[i] += c
+    # always return the same order
+    return OrderedDict([(k, freq[k]) for k in sorted(freq.keys())])
 
 
 def split_train_test(X, seed, split=0.7):
