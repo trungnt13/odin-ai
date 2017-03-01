@@ -83,6 +83,24 @@ class FuelTest(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_feeder_recipes_shape(self):
+        X = np.arange(0, 3600).reshape(-1, 3)
+        indices = [("name" + str(i), j, j + 10) for i, j in enumerate(range(0, X.shape[0], 10))]
+        vadids = [("name" + str(i), [(2, 7), (8, 10)]) for i in range(len(indices))]
+
+        feeder = F.Feeder(X, indices, dtype='float32', ncpu=1,
+                          buffer_size=2, maximum_queue_size=12)
+        feeder.set_batch(batch_size=12, seed=None, shuffle_level=2)
+        feeder.set_recipes([
+            F.recipes.VADindex(vadids, frame_length=2, padding=None),
+            F.recipes.Sequencing(frame_length=3, hop_length=2, end='cut'),
+            F.recipes.Slice([slice(0, 3), 0, slice(10, 12)], axis=-1),
+            F.recipes.Slice(0, axis=0),
+            F.recipes.CreateFile()
+        ])
+        X = np.concatenate([x for x in feeder], axis=0)
+        self.assertEqual(feeder.shape, X.shape)
+
     def test_speech_processor(self):
         try:
             datapath = F.load_digit_wav()

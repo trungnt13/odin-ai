@@ -508,18 +508,12 @@ def load_iris():
     return _load_data_from_path(datapath)
 
 
-def load_digit_audio(dtype='float32'):
+def load_digit_audio():
     """
     path : str
         local path or url to hdf5 datafile
     """
-    if dtype.lower() == 'float32':
-        path = 'https://s3.amazonaws.com/ai-datasets/digit32.zip'
-        name = 'digit32'
-    elif dtype.lower() == 'float16':
-        path = 'https://s3.amazonaws.com/ai-datasets/digit16.zip'
-        name = 'digit16'
-    else:
-        raise ValueError('Unsupport dtype=%s, only float32 or float16' % str(dtype))
+    path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
+    name = 'digit'
     datapath = get_file(name, path)
     return _load_data_from_path(datapath)

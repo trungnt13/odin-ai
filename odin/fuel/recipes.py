@@ -752,11 +752,14 @@ class Sequencing(FeederRecipe):
         n = 0
         indices_new = {}
         for name, nb_samples in indices.iteritems():
-            if self.end != 'cut':
-                nb_samples = np.ceil((nb_samples - self.frame_length) / self.hop_length)
+            if nb_samples < self.frame_length:
+                nb_samples = 0 if self.end == 'cut' else 1
             else:
-                nb_samples = np.floor((nb_samples - self.frame_length) / self.hop_length)
-            nb_samples = int(nb_samples) + 1
+                if self.end != 'cut':
+                    nb_samples = np.ceil((nb_samples - self.frame_length) / self.hop_length)
+                else:
+                    nb_samples = np.floor((nb_samples - self.frame_length) / self.hop_length)
+                nb_samples = int(nb_samples) + 1
             indices_new[name] = nb_samples
             n += nb_samples
         # ====== shape inference ====== #

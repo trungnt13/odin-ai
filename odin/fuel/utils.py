@@ -1,9 +1,11 @@
 from __future__ import print_function, division, absolute_import
 
-import mmap
 import os
-from six.moves import cPickle
+import mmap
 import marshal
+from six.moves import cPickle
+
+import numpy as np
 
 
 class MmapDict(dict):
@@ -162,24 +164,35 @@ class MmapDict(dict):
         else:
             return cmp(self._dict, dict)
 
-    def keys(self):
-        return self._dict.keys()
+    def keys(self, shuffle=False):
+        k = self._dict.keys()
+        if shuffle: np.random.shuffle(k)
+        return k
 
-    def iterkeys(self):
+    def iterkeys(self, shuffle=False):
+        if shuffle:
+            return (k for k in self.keys(shuffle))
         return self._dict.iterkeys()
 
-    def values(self):
-        return list(self.itervalues())
+    def values(self, shuffle=False):
+        return list(self.itervalues(shuffle))
 
-    def itervalues(self):
-        for k in self._dict.iterkeys():
+    def itervalues(self, shuffle=False):
+        for k in self._dict.iterkeys(shuffle):
             yield self[k]
 
-    def items(self):
-        return list(self.iteritems())
+    def items(self, shuffle=False):
+        return list(self.iteritems(shuffle))
 
-    def iteritems(self):
-        for key, (start, size) in self._dict.iteritems():
+    def iteritems(self, shuffle=False):
+        # ====== shuffling if required ====== #
+        if shuffle:
+            it = self._dict.items()
+            np.random.shuffle(it)
+        else:
+            it = self._dict.iteritems()
+        # ====== iter over items ====== #
+        for key, (start, size) in it:
             if key in self._new_dict:
                 value = self._new_dict[key]
             else:

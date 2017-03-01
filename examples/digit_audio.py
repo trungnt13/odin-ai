@@ -19,6 +19,7 @@ args = ArgController(
 ).add('-dt', 'dtype: float32 or float16', 'float16'
 ).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
 ).add('-cnn', 'enable CNN or not', True
+).add('-vad', 'number of GMM component for VAD', 3
 # for trainign
 ).add('-lr', 'learning rate', 0.0001
 ).add('-epoch', 'number of epoch', 5
@@ -49,7 +50,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
                 win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
                 get_spec=True, get_mspec=True, get_mfcc=True,
                 get_qspec=True, get_phase=True, get_pitch=True,
-                get_vad=True, get_energy=True, get_delta=2,
+                get_vad=args['vad'], get_energy=True, get_delta=2,
                 fmin=64, fmax=None, preemphasis=0.97,
                 pitch_threshold=0.8, pitch_fmax=800,
                 vad_smooth=8, vad_minlen=0.1,
@@ -65,16 +66,16 @@ nb_classes = 10 # 10 digits (0-9)
 # ===========================================================================
 # Create feeder
 # ===========================================================================
-indices = np.genfromtxt(ds['indices.csv'], dtype='str', delimiter=' ')
+indices = [(name, start, end) for name, (start, end) in ds['indices'].iteritems(True)]
 longest_utterances = max(int(end) - int(start) - 1 for i, start, end in indices)
 np.random.shuffle(indices)
-n = indices.shape[0]
+n = len(indices)
 train = indices[:int(0.6 * n)]
 valid = indices[int(0.6 * n):int(0.8 * n)]
 test = indices[int(0.8 * n):]
-print('Nb train:', train.shape, stats.freqcount([int(i[0][0]) for i in train]))
-print('Nb valid:', valid.shape, stats.freqcount([int(i[0][0]) for i in valid]))
-print('Nb test:', test.shape, stats.freqcount([int(i[0][0]) for i in test]))
+print('Nb train:', len(train), stats.freqcount([int(i[0][0]) for i in train]))
+print('Nb valid:', len(valid), stats.freqcount([int(i[0][0]) for i in valid]))
+print('Nb test:', len(test), stats.freqcount([int(i[0][0]) for i in test]))
 
 # One titan X:
 # Benchmark TRAIN-batch: 0.11614914765
@@ -98,6 +99,7 @@ recipes = [
                          transcription_transform=lambda x: x[-1]),
     F.CreateBatch()
 ]
+
 train_feeder.set_recipes(recipes)
 test_feeder.set_recipes(recipes)
 valid_feeder.set_recipes(recipes)
