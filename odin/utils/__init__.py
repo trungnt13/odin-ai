@@ -55,6 +55,10 @@ def is_string(s):
     return isinstance(s, string_types)
 
 
+def is_number(i):
+    return isinstance(i, numbers.Number)
+
+
 def iter_chunk(it, n):
     """ Chunking an iterator into small chunk of size `n`
     Note: this can be used to slice data into mini batches
@@ -661,7 +665,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
                 b[..., length:] = a[..., :roundup - length]
             a = b
         a = a.swapaxes(-1, axis)
-        length = a.shape[0] # update l
+        length = a.shape[0] # update length
 
     if length == 0:
         raise ValueError("Not enough data points to segment array " +
@@ -686,7 +690,7 @@ def segment_axis(a, frame_length=2048, hop_length=512,
 
 
 def as_shape_tuple(shape):
-    if isinstance(shape, numbers.Number):
+    if is_number(shape):
         shape = (int(shape),)
     if not isinstance(shape, (tuple, list)):
         raise ValueError('We only accept shape in tuple or list form.')
@@ -734,7 +738,7 @@ def as_tuple(x, N=None, t=None):
         else:
             x = (x,)
     # ====== check length ====== #
-    if isinstance(N, numbers.Number):
+    if is_number(N):
         N = int(N)
         if len(x) == 1:
             x = x * N

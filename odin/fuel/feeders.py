@@ -140,13 +140,14 @@ class Feeder(MutableData):
                  ncpu=1, buffer_size=8, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
+        # indices always sorted in [(name, start, end), ...]
         if isinstance(indices, str) and os.path.isfile(indices):
             self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
         elif isinstance(indices, (tuple, list)):
             self._indices = np.asarray(indices)
         elif isinstance(indices, np.ndarray):
             self._indices = indices
-        elif isinstance(indices, dict):
+        elif isinstance(indices, dict): # name -> (start, end)
             self._indices = np.asarray([as_tuple(i) + as_tuple(j)
                                         for i, j in indices.iteritems()])
         else:
@@ -160,13 +161,14 @@ class Feeder(MutableData):
             raise ValueError('All Data must have the same length '
                              '(i.e. shape[0]).')
         self._data = data
+        # ====== cache shape information ====== #
         # store first dimension
-        self._initial_shape = np.sum(self._indices[:, -1].astype('int32') -
-                                     self._indices[:, -2].astype('int32'))
+        self.__cache_indices_id = id(self._indices)
+        self.__cache_shape = None
         # ====== desire dtype ====== #
         self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
         # ====== Set default recipes ====== #
-        self.recipes = FeederList(CreateBatch())
+        self.__recipes = FeederList(CreateBatch())
         # never use all available CPU
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         self.__running_iter = []
@@ -184,7 +186,7 @@ class Feeder(MutableData):
         # filter out None value
         recipes = [i for i in as_tuple(recipes) if i is not None]
         if len(recipes) > 0:
-            self.recipes = FeederList(*recipes)
+            self.__recipes = FeederList(*recipes)
         return self
 
     def stop_all(self):
@@ -201,11 +203,20 @@ class Feeder(MutableData):
         """ This is just an "UPPER" estimation, some data points might be lost
         during preprocessing each indices by recipes.
         """
-        shape = [d.shape for d in self._data]
-        shape = [(self._initial_shape,) + s[1:] for s in shape]
-        shape = self.recipes.shape_transform(shape)
-        if len(shape) == 1:
-            shape = shape[0]
+        # ====== first time calculate the shape ====== #
+        if self.__cache_shape is None or id(self._indices) != self.__cache_indices_id:
+            indices = {name: int(end) - int(start)
+                       for name, start, end in self._indices}
+            n = sum(indices.itervalues())
+            shape = [(n,) + d.shape[1:] for d in self._data]
+            shape, indices = self.__recipes.shape_transform(shape, indices)
+            if len(shape) == 1:
+                shape = shape[0]
+            self.__cache_indices_id = id(self._indices)
+            self.__cache_shape = shape
+        # ====== get the cached shape ====== #
+        else:
+            shape = self.__cache_shape
         return tuple(shape)
 
     def __str__(self):
@@ -221,7 +232,7 @@ class Feeder(MutableData):
     # ==================== Strings ==================== #
     def __iter__(self):
         # ====== check ====== #
-        if self.recipes is None:
+        if self.__recipes is None:
             raise ValueError('You must "set_recipes" first')
         # ====== get start and end for indices ====== #
         n = self._indices.shape[0]
@@ -237,9 +248,9 @@ class Feeder(MutableData):
             # reset the seed
             self._seed = None
         # ====== create iter and its identity ====== #
-        process_func = self.recipes.process
-        group_func = self.recipes.group
-        self.recipes.prepare(
+        process_func = self.__recipes.process
+        group_func = self.__recipes.group
+        self.__recipes.prepare(
             batch_size=self._batch_size,
             seed=rng.randint(10e6) if rng is not None else None,
             shuffle_level=self._shuffle_level,
