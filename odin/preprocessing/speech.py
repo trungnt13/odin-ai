@@ -942,7 +942,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                     ).astype('uint8')
             vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
                                                       min_distance=1,
-                                                      min_length=int(vad_minlen / win)),
+                                                      min_length=int(vad_minlen / shift)),
                                dtype='int32')
     # ====== 2: extract STFT and Spectrogram ====== #
     # no padding for center

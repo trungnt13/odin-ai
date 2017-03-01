@@ -9,7 +9,11 @@ import numpy as np
 from odin.utils import as_tuple
 
 
-def freqcount(x, key=None, count=1):
+def stratified_sampling(x):
+    pass
+
+
+def freqcount(x, key=None, count=1, normalize=False, sort=False):
     """ x: list, iterable
 
     Parameters
@@ -18,6 +22,11 @@ def freqcount(x, key=None, count=1):
         extract the key from each item in the list
     count: callable, int
         extract the count from each item in the list
+    normalize: bool
+        if normalize, all the values are normalized from 0. to 1. (
+        which sum up to 1. in total).
+    sort: boolean
+        if True, the list will be sorted in ascent order.
 
     Return
     ------
@@ -36,7 +45,12 @@ def freqcount(x, key=None, count=1):
         i = key(i)
         freq[i] += c
     # always return the same order
-    return OrderedDict([(k, freq[k]) for k in sorted(freq.keys())])
+    s = float(sum(v for v in freq.values()))
+    freq = OrderedDict([(k, freq[k] / s if normalize else freq[k])
+                        for k in sorted(freq.keys())])
+    if sort:
+        freq = OrderedDict(sorted(freq.items(), key=lambda x: x[1]))
+    return freq
 
 
 def split_train_test(X, seed, split=0.7):

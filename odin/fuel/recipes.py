@@ -29,10 +29,10 @@ class FeederRecipe(object):
     preprocess_indices(indices): return new_indices
     init(ntasks, batch_size, seed): right before create the iter
 
-    [multi-process]process(*x): x->(name, data)
-                            return (if iterator, it will be iterated to
-                                    get a list of results)
-    [multi-process]group(x): x->(object from group(x))
+    [multi-process] process(*x): x->(name, data)
+                                 return (if iterator, it will be iterated to
+                                         get a list of results)
+    [multi-process] group(x): x->(object from group(x))
                               return iterator
 
     Note
@@ -44,8 +44,8 @@ class FeederRecipe(object):
     def prepare(self, **kwargs):
         pass
 
-    def shape_transform(self, shape):
-        return shape
+    def shape_transform(self, shapes):
+        return shapes
 
     def process(self, *args):
         return args
@@ -433,71 +433,114 @@ class Name2Trans(FeederRecipe):
         return name, X, transcription
 
 
-class SADindex(FeederRecipe):
-    """ Speech activity indexing (i.e. only select frames
+class VADindex(FeederRecipe):
+    """ Voice activity indexing (i.e. only select frames
     indicated by SAD from the )
 
     Parameters
     ----------
-    vad: dict, callable, list of (indices, data)
+    vad: dict, list of (indices, data)
         anything take file name and return a list of SAD indices
     frame_length: int
-        pass
+        if `frame_length`=1, simply concatenate all VAD frames.
     padding: int, None
         if padding is None, use previous frames for padding.
     """
 
-    def __init__(self, vad, frame_length=256, padding=0):
-        super(SADindex, self).__init__()
-        if hasattr(vad, '__getitem__'):
-            vad = lambda x: vad[x]
-        elif isinstance(vad, (list, tuple)):
-            indices, data = vad
-            if is_string(indices) and os.path.exists(indices):
-                indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
-            indices = {name: (int(start), int(end))
+    def __init__(self, vad, frame_length=256, padding=None):
+        super(VADindex, self).__init__()
+        if isinstance(vad, (list, tuple)):
+            if len(vad) == 2:
+                indices, data = vad
+                if is_string(indices) and os.path.exists(indices):
+                    indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
+                vad = {name: data[int(start): int(end)]
                        for name, start, end in indices}
-            vad = lambda x: data[indices[x][0]:indices[x][1]]
+            else: # a list contain all information is given
+                vad = {name: segments for name, segments in vad}
+        elif not isinstance(vad, dict):
+            raise ValueError('Unsupport "vad" type: %s' % type(vad).__name__)
         self.vad = vad
         self.frame_length = frame_length
         self.padding = padding
 
-    def _stacking(self, x):
-        # x is ndarray
-        idx = list(range(0, x.shape[0], self.shift))
-        _ = [x[i:i + self.n].ravel() for i in idx
-             if (i + self.n) <= x.shape[0]]
-        x = np.asarray(_) if len(_) > 1 else _[0]
-        return x
+    def _vad_indexing_1(self, X, indices):
+        return np.concatenate([X[start:end] for start, end in indices], axis=0)
 
-    def _middle_label(self, trans):
-        idx = list(range(0, len(trans), self.shift))
-        # only take the middle labelobject
-        trans = np.asarray(
-            [trans[i + self.left_context + 1]
-             for i in idx if (i + self.n) <= len(trans)])
-        return trans
+    def _vad_indexing(self, X, indices, n):
+        # ====== create placeholder array ====== #
+        shape = (n, self.frame_length,) + X.shape[1:]
+        if self.padding is None:
+            Y = np.empty(shape=shape, dtype=X.dtype)
+        else:
+            Y = np.full(shape=shape, fill_value=self.padding, dtype=X.dtype)
+        # ====== start processing ====== #
+        p = 0
+        for start, end in indices:
+            n = end - start
+            if n <= self.frame_length:
+                diff = self.frame_length - (end - start)
+                if self.padding is None:
+                    x = X[end - self.frame_length:end] if diff <= start else None
+                else:
+                    x = X[start:end]
+                if x is not None:
+                    Y[p, -x.shape[0]:] = x
+                    p += 1
+            elif n > self.frame_length:
+                i = n // self.frame_length
+                x = X[(end - i * self.frame_length):end]
+                # remains (now the number of remain always smaller than
+                # frame_length) do the same for `n <= self.frame_length`
+                j = n - i * self.frame_length
+                if j > 0:
+                    diff = self.frame_length - j
+                    if self.padding is None and diff <= start:
+                        Y[p] = X[start - diff:start + j]
+                        p += 1
+                    else:
+                        Y[p, -j:] = X[start:start + j]
+                        p += 1
+                # assign the main part
+                Y[p:p + i] = np.reshape(x,
+                    newshape=(i, self.frame_length,) + x.shape[1:])
+                p += i
+        return Y
+
+    def _estimate_number_of_sample(self, start, end):
+        if end - start < self.frame_length:
+            diff = self.frame_length - (end - start)
+            if self.padding is None and diff > start:
+                return 0 # not enough previous segments for padding
+        elif end - start > self.frame_length:
+            return int(np.ceil((end - start) / self.frame_length))
+        return 1
 
     def process(self, name, X, *args):
-        if X[0].shape[0] < self.n: # not enough data points for stacking
-            warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
-                          'into %d features.' % (name, X[0].shape[0], self.n))
+        # ====== return None, ignore the file ====== #
+        if name not in self.vad:
             return None
-        X = [self._stacking(x) for x in X]
-        # ====== stacking the transcription ====== #
-        args = [self._middle_label(a) for a in args]
+        # ====== found the VAD, process it ====== #
+        indices = self.vad[name]
+        if self.frame_length == 1:
+            X = [self._vad_indexing_1(x, indices) for x in X]
+        else:
+            n = sum(self._estimate_number_of_sample(start, end)
+                    for start, end in indices)
+            if n > 0:
+                X = [self._vad_indexing(x, indices, n) for x in X]
         return (name, tuple(X)) + tuple(args)
 
     def shape_transform(self, shapes):
-        # ====== do the shape infer ====== #
-        _ = []
-        for shape in shapes:
-            if len(shape) > 2:
-                raise Exception('Stacking only support 2D array.')
-            n_features = shape[-1] * self.n if len(shape) == 2 else self.n
-            n = (shape[0] // self.shift)
-            _.append((n, n_features))
-        return tuple(_)
+        if self.frame_length == 1:
+            N = sum(end - start
+                    for i in self.vad.itervalues() for start, end in i)
+            return tuple([(N,) + s[1:] for s in shapes])
+        else:
+            N = sum(self._estimate_number_of_sample(start, end)
+                    for i in self.vad.itervalues() for start, end in i)
+            return tuple([(N, self.frame_length) + s[1:] for s in shapes])
+        return shapes
 
 
 # ===========================================================================
@@ -677,10 +720,6 @@ class CreateBatch(FeederRecipe):
         must be a function has take a list of np.ndarray as first arguments
         ([X]) or ([X, y]), you can return None to ignore given batch, return the
         data for accepting the batch
-    batch_sequencing: bool
-        if True, all data from different files will be processed one-by-one,
-        instead of picking data from each files and return small batches from
-        them
 
     Example
     -------
@@ -692,7 +731,7 @@ class CreateBatch(FeederRecipe):
 
     """
 
-    def __init__(self, batch_filter=None, batch_sequencing=False):
+    def __init__(self, batch_filter=None):
         super(CreateBatch, self).__init__()
         self.rng = None
         self.batch_size = 256
@@ -781,7 +820,7 @@ class CreateFile(FeederRecipe):
         for b in batch:
             name, X = b[0], b[1]
             Y = b[2:]
-            ret = X + Y
+            ret = list(X) + list(Y)
             # ====== return name ====== #
             if self.return_name:
                 ret = [name] + list(ret)

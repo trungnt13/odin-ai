@@ -49,13 +49,9 @@ for n in ds.keys():
             print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
-x = ds['vadids'][:, 1] - ds['vadids'][:, 0]
-print("Check vadids:", np.all(x > 0))
 
 for name, (start, end) in ds['indices'].iteritems():
-    vad_start, vad_end = ds['indices_vadids'][name]
-    vadids = ds['vadids'][vad_start:vad_end]
-    assert vad_end > vad_start
-    assert np.all((vadids[:, 1] - vadids[:, 0]) > 0)
-    assert not np.any(
-        np.isnan(ds['spec_pca'].transform(ds['spec'][start:end], n_components=2)))
+    for vad_start, vad_end in ds['vadids'][name]:
+        assert vad_end > vad_start
+        assert not np.any(
+            np.isnan(ds['spec_pca'].transform(ds['spec'][vad_start:vad_end], n_components=2)))

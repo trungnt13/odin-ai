@@ -102,8 +102,9 @@ class Feeder(MutableData):
         indices represent following information: [name, start_id, end_id]
         if indices is dictionary, it must in the form: {name: (start, end)}
     buffer_size: int
-        the amount of data each process keep before return to main
-        process.
+        A process will perform processing on a group of `buffer_size` number of
+        data points, then, a list of results are returned to the main process.
+        The higher this number the more powerful batch shuffling.
     maximum_queue_size: int (default: 66)
         maximum number of batch will be cached in Queue before main process
         get it and feed to the GPU (if there are too many results in Queue, a

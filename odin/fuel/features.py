@@ -123,6 +123,11 @@ class FeatureProcessor(object):
             ncpu = self.ncpu
         # ====== indices ====== #
         indices = defaultdict(list)
+        # ====== MmapDict ====== #
+        dicts = {}
+        for name, dtype, stats in self.features_properties:
+            if 'dict' in str(dtype).lower():
+                dicts[name] = MmapDict(os.path.join(dataset.path, name))
         # ====== statistic ====== #
         statistic_able = {i[0]: i[-1] for i in self.features_properties}
         sum1 = defaultdict(int)
@@ -162,8 +167,12 @@ class FeatureProcessor(object):
             length = [] # store length of all data for validation
             # processing
             for prop, d in zip(self.features_properties, data):
-                n, t, s = prop # name, dtype, stats
-                # append new indices
+                n, t, s = prop # data-type-name, dtype, stats
+                # mmapdict type:
+                if 'dict' in str(t).lower():
+                    dicts[n][name] = d.tolist() if isinstance(d, np.ndarray) else d
+                    del d; continue
+                # auto-create new indices
                 if len(d) not in length:
                     length.append(len(d))
                     indices[n].append([name, ref_vars['start'][n],
@@ -229,9 +238,11 @@ class FeatureProcessor(object):
                     print(' * Name:', n)
                     s1, s2, pca_ = sum1[n], sum2[n], pca[n]
                     save_mean_std(s1, s2, pca_, n, dataset)
-        # ====== final flush() ====== #
-        dataset.flush()
-        dataset.close()
+        # ====== dataset flush() ====== #
+        dataset.flush(); dataset.close()
+        # ====== all MmapDict flush() ====== #
+        for d in dicts.itervalues():
+            d.flush(); d.close()
 
 
 # ===========================================================================
@@ -421,7 +432,7 @@ class SpeechProcessor(FeatureProcessor):
         if get_pitch: features_properties.append(('pitch', dtype, True))
         if get_vad:
             features_properties.append(('vad', 'uint8', False))
-            features_properties.append(('vadids', 'int32', False))
+            features_properties.append(('vadids', 'dict', False))
         self.__features_properties = features_properties
 
         self.get_spec = get_spec
