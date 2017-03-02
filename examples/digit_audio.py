@@ -19,7 +19,7 @@ args = ArgController(
 ).add('-dt', 'dtype: float32 or float16', 'float16'
 ).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
 ).add('-cnn', 'enable CNN or not', True
-).add('-vad', 'number of GMM component for VAD', 3
+).add('-vad', 'number of GMM component for VAD', 2
 # for trainign
 ).add('-lr', 'learning rate', 0.0001
 ).add('-epoch', 'number of epoch', 5
@@ -55,7 +55,7 @@ if False:
                     get_vad=args['vad'], get_energy=True, get_delta=2,
                     fmin=64, fmax=None, preemphasis=0.97,
                     pitch_threshold=0.8, pitch_fmax=800,
-                    vad_smooth=8, vad_minlen=0.1,
+                    vad_smooth=3, vad_minlen=0.1,
                     cqt_bins=96, pca=True, pca_whiten=False, center=True,
                     save_stats=True, substitute_nan=None,
                     dtype='float16', datatype='memmap',
@@ -106,12 +106,13 @@ recipes = [
         std=ds[args['feat'] + '_std'],
         local_normalize=False
     ),
-    # F.recipes.VADindex(ds['vadids'],
-    #     frame_length=longest_vad, padding=0),
-    F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
-                         end='pad', endvalue=0,
-                         transcription_transform=lambda x: x[-1]),
-    F.CreateBatch()
+    F.recipes.VADindex(ds['vadids'],
+         frame_length=longest_vad, padding=None),
+    # F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
+    #                      end='pad', endvalue=0, endmode='post',
+    #                      transcription_transform=lambda x: x[-1]),
+    # F.recipes.CreateBatch(),
+    F.recipes.CreateFile()
 ]
 
 train_feeder.set_recipes(recipes)
@@ -122,7 +123,9 @@ feat_shape = (None,) + train_feeder.shape[1:]
 
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
-
+for X, y in train_feeder:
+    pass
+exit()
 # ===========================================================================
 # Create network
 # ===========================================================================

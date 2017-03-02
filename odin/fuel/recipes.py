@@ -722,7 +722,7 @@ class Sequencing(FeederRecipe):
         return x[-1]
 
     def __init__(self, frame_length=256, hop_length=128,
-                 end='cut', endvalue=0.,
+                 end='cut', endvalue=0., endmode='post',
                  transcription_transform=lambda x: x[-1]):
         super(Sequencing, self).__init__()
         if hop_length > frame_length:
@@ -732,6 +732,7 @@ class Sequencing(FeederRecipe):
         self.hop_length = hop_length
         self.end = end
         self.endvalue = endvalue
+        self.endmode = endmode
         self.__transcription_transform = functionable(transcription_transform)
 
     def process(self, name, X, *args):
@@ -741,8 +742,8 @@ class Sequencing(FeederRecipe):
                           'into %d features.' % (name, X[0].shape[0], self.frame_length))
             return None
 
-        X = [segment_axis(x, self.frame_length, self.hop_length,
-                          axis=0, end=self.end, endvalue=self.endvalue)
+        X = [segment_axis(x, self.frame_length, self.hop_length, axis=0,
+                    end=self.end, endvalue=self.endvalue, endmode=self.endmode)
              for x in X]
         # ====== transforming the transcription ====== #
         _ = []
@@ -753,7 +754,7 @@ class Sequencing(FeederRecipe):
                 a = segment_axis(np.asarray(a, dtype='str'),
                                 self.frame_length, self.hop_length,
                                 axis=0, end=self.end,
-                                endvalue='__end__')
+                                endvalue='__end__', endmode=self.endmode)
                 # need to remove padded value
                 a = np.asarray(
                     [trans_transform([j for j in i if j != '__end__'])
