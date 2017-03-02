@@ -12,19 +12,24 @@ import six
 import math
 import copy
 import warnings
-from numbers import Number
 from collections import OrderedDict
 
 import numpy as np
 import scipy.fftpack as fft
 import scipy.signal
 
-from odin.utils import pad_center, framing
+from odin.utils import pad_center, framing, is_number
 from odin.utils.decorators import cache
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
 SMALL_FLOAT = 1e-20
+
+VAD_MODE_STRICT = 1.2
+VAD_MODE_STANDARD = 1.8
+VAD_MODE_SENSITIVE = 2.
+__current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
+
 
 # ===========================================================================
 # Predefined variables of speech datasets
@@ -294,8 +299,13 @@ def smooth(x, win=11, window='hanning'):
     return y[win:-win + 1]
 
 
-def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
-               alpha=1.8):
+def set_vad_mode(mode):
+    if is_number(mode):
+        global __current_vad_mode
+        __current_vad_mode = float(mode)
+
+
+def vad_energy(log_energy, distrib_nb=2, nb_train_it=24):
     from sklearn.mixture import GaussianMixture
     # center and normalize the energy
     log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
@@ -313,14 +323,15 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24,
         world.fit(log_energy)
     except (ValueError, IndexError): # index error because of float32 cumsum
         if distrib_nb - 1 >= 2:
-            return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
-                              nb_train_it=nb_train_it, alpha=alpha)
+            return vad_energy(log_energy,
+                distrib_nb=distrib_nb - 1, nb_train_it=nb_train_it)
         return np.zeros(shape=(log_energy.shape[0],)), 0
     # Compute threshold
     threshold = world.means_.max() - \
-        alpha * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
+        __current_vad_mode * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
     # Apply frame selection with the current threshold
     label = log_energy.ravel() > threshold
+    print(label.astype('uint8').tolist(), np.sum(label), threshold)
     return label, threshold
 
 
@@ -930,7 +941,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
             distribNb, nbTrainIt = 6, 24
-            if isinstance(get_vad, Number) and int(get_vad) >= 2:
+            if is_number(get_vad) and get_vad >= 2:
                 distribNb = int(get_vad)
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
                                             nb_train_it=nbTrainIt)

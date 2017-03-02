@@ -499,8 +499,6 @@ def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
         spectrogram(y['qspec'], y['vad'], title='CQT power spectrum')
     return y
 
-plot_speech = plot_audio
-
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
                      linewidth=0.5):

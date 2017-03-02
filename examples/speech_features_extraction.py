@@ -18,17 +18,18 @@ from collections import defaultdict
 
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit', override=True)
-feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
+files = utils.get_all_files(datapath, filter_func=lambda x: '7_jackson_3' in x or '7_jackson_20' in x)
+feat = F.SpeechProcessor(files, output_path, audio_ext='wav', sr_new=16000,
                          win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
                          get_delta=2, get_energy=True, get_phase=True,
                          get_spec=True, get_mspec=True, get_mfcc=True,
-                         get_pitch=True, get_vad=3, get_qspec=True,
+                         get_pitch=True, get_vad=4, get_qspec=True,
                          pitch_threshold=0.8, cqt_bins=96,
-                         vad_smooth=8, vad_minlen=0.1,
+                         vad_smooth=3, vad_minlen=0.1,
                          pca=True, pca_whiten=False, center=True,
                          save_stats=True, substitute_nan=None,
                          dtype='float16', datatype='memmap',
-                         ncache=0.12, ncpu=8)
+                         ncache=0.12, ncpu=1)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath, 'README.md'),
@@ -49,6 +50,10 @@ for n in ds.keys():
             print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
+
+for name, segs in ds['vadids'].iteritems():
+    if len(segs) == 0:
+        print("NO vadids for", name)
 
 for name, (start, end) in ds['indices'].iteritems():
     for vad_start, vad_end in ds['vadids'][name]:
