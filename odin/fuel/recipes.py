@@ -513,6 +513,7 @@ class VADindex(FeederRecipe):
         p = 0
         for start, end in indices:
             n = end - start
+            # not enough frames
             if n <= self.frame_length:
                 diff = self.frame_length - (end - start)
                 if self.padding is None:
@@ -522,6 +523,7 @@ class VADindex(FeederRecipe):
                 if x is not None:
                     Y[p, -x.shape[0]:] = x
                     p += 1
+            # more frames thant the length
             elif n > self.frame_length:
                 i = n // self.frame_length
                 x = X[(end - i * self.frame_length):end]
@@ -564,6 +566,8 @@ class VADindex(FeederRecipe):
                     for start, end in indices)
             if n > 0:
                 X = [self._vad_indexing(x, indices, n) for x in X]
+            else:
+                return None
         return (name, tuple(X)) + tuple(args)
 
     def shape_transform(self, shapes, indices):
@@ -575,16 +579,19 @@ class VADindex(FeederRecipe):
             n_func = lambda start, end: self._estimate_number_of_sample(start, end)
             shape_func = lambda n, shape: (n, self.frame_length) + shape[1:]
         # ====== processing ====== #
-        indices = {}
+        indices_new = {}
         n = 0
         for name, segments in self.vad.iteritems():
+            # not found find in original indices
+            if name not in indices: continue
+            # found the name, and update its indices
             n_file = 0
             for start, end in segments:
                 n_file += n_func(start, end)
-            indices[name] = n_file
+            indices_new[name] = n_file
             n += n_file
         shapes = tuple([shape_func(n, s) for s in shapes])
-        return shapes, indices
+        return shapes, indices_new
 
 
 # ===========================================================================

@@ -44,22 +44,28 @@ stdio(path=get_logpath('digit_audio.log', override=True))
 # ===========================================================================
 # Get wav and process new dataset configuration
 # ===========================================================================
-datapath = F.load_digit_wav()
-output_path = get_datasetpath(name='digit', override=True)
-feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
-                get_spec=True, get_mspec=True, get_mfcc=True,
-                get_qspec=True, get_phase=True, get_pitch=True,
-                get_vad=args['vad'], get_energy=True, get_delta=2,
-                fmin=64, fmax=None, preemphasis=0.97,
-                pitch_threshold=0.8, pitch_fmax=800,
-                vad_smooth=8, vad_minlen=0.1,
-                cqt_bins=96, pca=True, pca_whiten=False, center=True,
-                save_stats=True, substitute_nan=None,
-                dtype='float16', datatype='memmap',
-                ncache=0.12, ncpu=12)
-feat.run()
-ds = F.Dataset(output_path, read_only=True)
+# ====== process new features ====== #
+if False:
+    datapath = F.load_digit_wav()
+    output_path = get_datasetpath(name='digit', override=True)
+    feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
+                    win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                    get_spec=True, get_mspec=True, get_mfcc=True,
+                    get_qspec=True, get_phase=True, get_pitch=True,
+                    get_vad=args['vad'], get_energy=True, get_delta=2,
+                    fmin=64, fmax=None, preemphasis=0.97,
+                    pitch_threshold=0.8, pitch_fmax=800,
+                    vad_smooth=8, vad_minlen=0.1,
+                    cqt_bins=96, pca=True, pca_whiten=False, center=True,
+                    save_stats=True, substitute_nan=None,
+                    dtype='float16', datatype='memmap',
+                    ncache=0.12, ncpu=12)
+    feat.run()
+    ds = F.Dataset(output_path, read_only=True)
+# ====== use online features ====== #
+else:
+    ds = F.load_digit_audio()
+
 print(ds)
 nb_classes = 10 # 10 digits (0-9)
 
@@ -67,7 +73,13 @@ nb_classes = 10 # 10 digits (0-9)
 # Create feeder
 # ===========================================================================
 indices = [(name, start, end) for name, (start, end) in ds['indices'].iteritems(True)]
-longest_utterances = max(int(end) - int(start) - 1 for i, start, end in indices)
+longest_utterances = max(int(end) - int(start) - 1
+                         for i, start, end in indices)
+longest_vad = max(end - start
+                  for name, vad in ds['vadids'] for (start, end) in vad)
+print("Longest Utterance:", longest_utterances)
+print("Longest Vad:", longest_vad)
+
 np.random.shuffle(indices)
 n = len(indices)
 train = indices[:int(0.6 * n)]
@@ -88,15 +100,17 @@ test_feeder = F.Feeder(ds[args['feat']], test, ncpu=2)
 valid_feeder = F.Feeder(ds[args['feat']], valid, ncpu=2)
 
 recipes = [
-    F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
+    # F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
     F.recipes.Normalization(
         mean=ds[args['feat'] + '_mean'],
         std=ds[args['feat'] + '_std'],
         local_normalize=False
     ),
-    F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
-                         end='pad', endvalue=0,
-                         transcription_transform=lambda x: x[-1]),
+    F.recipes.VADindex(ds['vadids'],
+        frame_length=longest_vad, padding=0),
+    # F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
+    #                      end='pad', endvalue=0,
+    #                      transcription_transform=lambda x: x[-1]),
     F.CreateBatch()
 ]
 
@@ -108,6 +122,9 @@ feat_shape = (None,) + train_feeder.shape[1:]
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
 
+print(sum(len(segs) for name, segs in ds['vadids'] for start, end in segs))
+print(np.concatenate([_ for _ in train_feeder], 0).shape)
+exit()
 # ===========================================================================
 # Create network
 # ===========================================================================

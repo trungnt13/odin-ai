@@ -509,10 +509,6 @@ def load_iris():
 
 
 def load_digit_audio():
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
     path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
     name = 'digit'
     datapath = get_file(name, path)
