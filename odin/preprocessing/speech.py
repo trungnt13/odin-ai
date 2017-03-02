@@ -300,8 +300,16 @@ def smooth(x, win=11, window='hanning'):
 
 
 def set_vad_mode(mode):
+    """
+    Paramters
+    ---------
+    mode: float
+        a number from 1.0 to 2.4, the higher the number, the more
+        sensitive it is to any high-energy segments.
+    """
     if is_number(mode):
         global __current_vad_mode
+        mode = min(max(mode, 1.), 2.4)
         __current_vad_mode = float(mode)
 
 
