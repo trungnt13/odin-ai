@@ -590,8 +590,8 @@ def framing(y, frame_length=2048, hop_length=512):
     return y_frames
 
 
-def segment_axis(a, frame_length=2048, hop_length=512,
-    axis=None, end='cut', endvalue=0):
+def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
+                 end='cut', endvalue=0, endmode='post'):
     """Generate a new array that chops the given array along the given axis
     into overlapping frames.
 
@@ -605,19 +605,31 @@ def segment_axis(a, frame_length=2048, hop_length=512,
              [4, 5, 6, 7],
              [6, 7, 8, 9]])
 
-    :param a: the array to segment
-    :param length: the length of each frame
-    :param overlap: the number of array elements by which the frames should overlap
-    :param axis: the axis to operate on; if None, act on the flattened array
-    :param end: what to do with the last frame, if the array is not evenly
+    Parameters
+    ----------
+    a: numpy.ndarray
+        the array to segment
+    frame_length: int
+        the length of each frame
+    hop_length: int
+        the number of array elements by which the frames should overlap
+    axis: int, None
+        the axis to operate on; if None, act on the flattened array
+    end: 'cut', 'wrap', 'pad'
+        what to do with the last frame, if the array is not evenly
             divisible into pieces. Options are:
             - 'cut'   Simply discard the extra values
             - 'wrap'  Copy values from the beginning of the array
             - 'pad'   Pad with a constant value
+    endvalue: int
+        the value to use for end='pad'
+    endmode: 'pre', 'post'
+        if "pre", padding or wrapping at the beginning of the array.
+        if "post", padding or wrapping at the ending of the array.
 
-    :param endvalue: the value to use for end='pad'
-
-    :return: a ndarray
+    Return
+    ------
+    a ndarray
 
     The array is not copied unless necessary (either because it is unevenly
     strided and being flattened or because end is set to 'pad' or 'wrap').
@@ -658,11 +670,20 @@ def segment_axis(a, frame_length=2048, hop_length=512,
             s = list(a.shape)
             s[-1] = roundup
             b = numpy.empty(s, dtype=a.dtype)
-            b[..., :length] = a
-            if end == 'pad':
-                b[..., length:] = endvalue
-            elif end == 'wrap':
-                b[..., length:] = a[..., :roundup - length]
+            # pre-padding
+            if endmode == 'pre':
+                b[..., :length] = a
+                if end == 'pad':
+                    b[..., length:] = endvalue
+                elif end == 'wrap':
+                    b[..., length:] = a[..., :roundup - length]
+            # post-padding
+            elif endmode == 'post':
+                b[..., -length:] = a
+                if end == 'pad':
+                    b[..., :(roundup - length)] = endvalue
+                elif end == 'wrap':
+                    b[..., :(roundup - length)] = a[..., :roundup - length]
             a = b
         a = a.swapaxes(-1, axis)
         length = a.shape[0] # update length

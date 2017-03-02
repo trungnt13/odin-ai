@@ -106,11 +106,11 @@ recipes = [
         std=ds[args['feat'] + '_std'],
         local_normalize=False
     ),
-    F.recipes.VADindex(ds['vadids'],
-        frame_length=longest_vad, padding=0),
-    # F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
-    #                      end='pad', endvalue=0,
-    #                      transcription_transform=lambda x: x[-1]),
+    # F.recipes.VADindex(ds['vadids'],
+    #     frame_length=longest_vad, padding=0),
+    F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
+                         end='pad', endvalue=0,
+                         transcription_transform=lambda x: x[-1]),
     F.CreateBatch()
 ]
 
@@ -119,6 +119,7 @@ test_feeder.set_recipes(recipes)
 valid_feeder.set_recipes(recipes)
 print('Feature shape:', train_feeder.shape)
 feat_shape = (None,) + train_feeder.shape[1:]
+
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
 
