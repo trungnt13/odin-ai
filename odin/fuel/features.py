@@ -132,6 +132,7 @@ class FeatureProcessor(object):
         statistic_able = {i[0]: i[-1] for i in self.features_properties}
         sum1 = defaultdict(int)
         sum2 = defaultdict(int)
+        # init PCA
         pca = defaultdict(lambda *args, **kwargs:
             MiniBatchPCA(n_components=None, whiten=self.pca_whiten,
                          copy=True, batch_size=None) if self.pca else None)
@@ -149,8 +150,7 @@ class FeatureProcessor(object):
                 cache_data = np.concatenate(cache_data, 0)
                 # NOTE: if nb_samples < nb_features, fitting PCA
                 # will course error
-                if self.pca and statistic_able[name] and \
-                cache_data.shape[0] > cache_data.shape[-1]:
+                if self.pca and statistic_able[name]:
                     pca[name].partial_fit(cache_data)
                 # flush data
                 if name in dataset:
@@ -199,7 +199,7 @@ class FeatureProcessor(object):
         for name in mpi:
             prog.title = '%-20s' % name
             prog.add(1)
-        # ====== end, flush the mean and std ====== #
+        # ====== end, flush the last time ====== #
         for i, j in cache.iteritems():
             flush_feature(i, j)
         cache = None

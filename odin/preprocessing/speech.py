@@ -238,6 +238,7 @@ def __max_fft_bins(sr, n_fft, fmax):
 
 def __to_separated_indices(idx, min_distance=1, min_length=8):
     """ For example:
+    min_distance = 1
     [1,2,3,4,
      8,9,10,
      15,16,17,18] => [(1,5), (8, 11), (15, 19)]
@@ -250,17 +251,16 @@ def __to_separated_indices(idx, min_distance=1, min_length=8):
         pass
     """
     if len(idx) == 0: return idx
-    segments = []
-    start = idx[0]
+    segments = [[]]
+    n = 0
     for i, j in zip(idx, idx[1:]):
+        segments[n].append(i)
         # new segments
         if j - i > min_distance:
-            if i + 1 - start >= min_length:
-                segments.append((start, i + 1))
-            start = j
-    if idx[-1] - start > min_length:
-        segments.append((start, idx[-1]))
-    return segments
+            segments.append([])
+            n += 1
+    segments[-1].append(idx[-1])
+    return [(s[0], s[-1] + 1) for s in segments if len(s) >= min_length]
 
 
 def smooth(x, win=11, window='hanning'):
@@ -339,7 +339,6 @@ def vad_energy(log_energy, distrib_nb=2, nb_train_it=24):
         __current_vad_mode * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
     # Apply frame selection with the current threshold
     label = log_energy.ravel() > threshold
-    print(label.astype('uint8').tolist(), np.sum(label), threshold)
     return label, threshold
 
 
@@ -948,7 +947,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         energy = np.where(energy == 0., np.finfo(float).eps, energy)
         log_energy = np.log(energy).astype('float32')[None, :]
         if get_vad:
-            distribNb, nbTrainIt = 6, 24
+            distribNb, nbTrainIt = 2, 24
             if is_number(get_vad) and get_vad >= 2:
                 distribNb = int(get_vad)
             vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
@@ -957,8 +956,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
             if vad_smooth:
                 vad_smooth = 3 if int(vad_smooth) == 1 else vad_smooth
                 # at least 2 voice frames
-                vad = (smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
-                    ).astype('uint8')
+                vad = smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
+                vad = vad.astype('uint8')
             vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
                                                       min_distance=1,
                                                       min_length=int(vad_minlen / shift)),
