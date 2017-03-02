@@ -100,7 +100,7 @@ test_feeder = F.Feeder(ds[args['feat']], test, ncpu=2)
 valid_feeder = F.Feeder(ds[args['feat']], valid, ncpu=2)
 
 recipes = [
-    # F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
+    F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
     F.recipes.Normalization(
         mean=ds[args['feat'] + '_mean'],
         std=ds[args['feat'] + '_std'],
@@ -122,9 +122,6 @@ feat_shape = (None,) + train_feeder.shape[1:]
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
 
-print(sum(len(segs) for name, segs in ds['vadids'] for start, end in segs))
-print(np.concatenate([_ for _ in train_feeder], 0).shape)
-exit()
 # ===========================================================================
 # Create network
 # ===========================================================================

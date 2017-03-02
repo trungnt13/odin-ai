@@ -480,9 +480,12 @@ class VADindex(FeederRecipe):
         if `frame_length`=1, simply concatenate all VAD frames.
     padding: int, None
         if padding is None, use previous frames for padding.
+    transcription_transform: callable
+        a function transform a sequence of transcription value into
+        desire value for 1 sample.
     """
 
-    def __init__(self, vad, frame_length=256, padding=None):
+    def __init__(self, vad, frame_length, padding=None):
         super(VADindex, self).__init__()
         if isinstance(vad, (list, tuple)):
             if len(vad) == 2:
@@ -496,8 +499,8 @@ class VADindex(FeederRecipe):
         elif not isinstance(vad, dict):
             raise ValueError('Unsupport "vad" type: %s' % type(vad).__name__)
         self.vad = vad
-        self.frame_length = frame_length
         self.padding = padding
+        self.frame_length = frame_length
 
     def _vad_indexing_1(self, X, indices):
         return np.concatenate([X[start:end] for start, end in indices], axis=0)
@@ -553,6 +556,10 @@ class VADindex(FeederRecipe):
             return int(np.ceil((end - start) / self.frame_length))
         return 1
 
+    def _slice_last_axis(self, x):
+        s = [slice(None) for i in range(x.ndim - 1)] + [-1]
+        return x[s]
+
     def process(self, name, X, *args):
         # ====== return None, ignore the file ====== #
         if name not in self.vad:
@@ -561,11 +568,14 @@ class VADindex(FeederRecipe):
         indices = self.vad[name]
         if self.frame_length == 1:
             X = [self._vad_indexing_1(x, indices) for x in X]
+            args = [self._vad_indexing_1(a, indices) for a in args]
         else:
             n = sum(self._estimate_number_of_sample(start, end)
                     for start, end in indices)
             if n > 0:
                 X = [self._vad_indexing(x, indices, n) for x in X]
+                args = [self._slice_last_axis(self._vad_indexing(a, indices, n))
+                        for a in args]
             else:
                 return None
         return (name, tuple(X)) + tuple(args)

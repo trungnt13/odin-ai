@@ -930,7 +930,7 @@ def plot_close():
     plt.close('all')
 
 
-def plot_save(path, figs=None, dpi=240, tight_plot=False, clear_all=True):
+def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True):
     """
     Parameters
     ----------
