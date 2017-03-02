@@ -446,20 +446,22 @@ def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
 
     # ====== helper ====== #
     def spectrogram(spec, vad, title):
-        nb_samples = len(spec)
-        n1, n2, n3 = nb_samples // 4, nb_samples // 2, 3 * nb_samples // 4
-
         plt.figure()
-        plt.subplot2grid((3, 4), (0, 0), rowspan=1, colspan=4)
-        plot_spectrogram(spec.T, vad=vad)
-        plt.subplot2grid((3, 4), (1, 0), rowspan=1, colspan=2)
-        plot_spectrogram(spec[:n1].T, vad=vad[:n1])
-        plt.subplot2grid((3, 4), (1, 2), rowspan=1, colspan=2)
-        plot_spectrogram(spec[n1:n2].T, vad=vad[n1:n2])
-        plt.subplot2grid((3, 4), (2, 0), rowspan=1, colspan=2)
-        plot_spectrogram(spec[n2:n3].T, vad=vad[n2:n3])
-        plt.subplot2grid((3, 4), (2, 2), rowspan=1, colspan=2)
-        plot_spectrogram(spec[n3:].T, vad=vad[n3:])
+        if spec.shape[0] / spec.shape[1] >= 8.:
+            nb_samples = len(spec)
+            n1, n2, n3 = nb_samples // 4, nb_samples // 2, 3 * nb_samples // 4
+            plt.subplot2grid((3, 4), (0, 0), rowspan=1, colspan=4)
+            plot_spectrogram(spec.T, vad=vad)
+            plt.subplot2grid((3, 4), (1, 0), rowspan=1, colspan=2)
+            plot_spectrogram(spec[:n1].T, vad=vad[:n1])
+            plt.subplot2grid((3, 4), (1, 2), rowspan=1, colspan=2)
+            plot_spectrogram(spec[n1:n2].T, vad=vad[n1:n2])
+            plt.subplot2grid((3, 4), (2, 0), rowspan=1, colspan=2)
+            plot_spectrogram(spec[n2:n3].T, vad=vad[n2:n3])
+            plt.subplot2grid((3, 4), (2, 2), rowspan=1, colspan=2)
+            plot_spectrogram(spec[n3:].T, vad=vad[n3:])
+        else:
+            plot_spectrogram(spec.T, vad=vad)
         plt.suptitle(str(title))
         plt.tight_layout()
     # ====== load signal ====== #
