@@ -4,8 +4,11 @@ import os
 import mmap
 import marshal
 from six.moves import cPickle
+from collections import OrderedDict
 
 import numpy as np
+
+from odin.config import RNG_GENERATOR
 
 
 class MmapDict(dict):
@@ -45,7 +48,7 @@ class MmapDict(dict):
             if read_only:
                 raise Exception('File at path:"%s" does not exist '
                                 '(read-only mode).' % path)
-            self._dict = {}
+            self._dict = OrderedDict()
             # max position is header, include start and length of indices dict
             self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2
             file = open(str(path), mode='w+')
@@ -166,7 +169,8 @@ class MmapDict(dict):
 
     def keys(self, shuffle=False):
         k = self._dict.keys()
-        if shuffle: np.random.shuffle(k)
+        if shuffle:
+            RNG_GENERATOR.shuffle(k)
         return k
 
     def iterkeys(self, shuffle=False):
@@ -188,7 +192,7 @@ class MmapDict(dict):
         # ====== shuffling if required ====== #
         if shuffle:
             it = self._dict.items()
-            np.random.shuffle(it)
+            RNG_GENERATOR.shuffle(it)
         else:
             it = self._dict.iteritems()
         # ====== iter over items ====== #

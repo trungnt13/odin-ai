@@ -9,7 +9,7 @@ from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel.dataset import Dataset
-from odin.utils import struct
+from odin.utils import struct, as_tuple, is_number
 
 from .callbacks import *
 
@@ -19,6 +19,96 @@ from .callbacks import *
 # ===========================================================================
 _SAVE_TASK = struct()
 _SAVE_TASK.name = "save"
+
+
+def standard_trainer(train_data, valid_data, test_data, batch_size,
+                     X, y_train, y_score, y_target, parameters,
+                     cost_train=None, cost_score=None, optimizer=None,
+                     confusion_matrix=False, gradient_norm=True,
+                     save_path=None, save_obj=None,
+                     nb_epoch=3, seed=1208, shuffle_level=2):
+    """
+    Parameters
+    ----------
+    cost_train: list of callable
+        each function will be apply to a pair y_train and y_target
+
+    Return
+    ------
+    MainLoop, and History
+
+    Note
+    ----
+
+    """
+    # ====== create function ====== #
+    from odin import backend as K
+    # check optimizer
+    if optimizer is None:
+        optimizer = K.optimizers.SGD(lr=0.0001, momentum=0.9, nesterov=True)
+    elif not isinstance(optimizer, K.optimizers.Optimizer) and \
+    not hasattr(optimizer, "get_updates"):
+        raise ValueError("Invalid optimizer, the optimizer must be instance of "
+                         "backend.optimizers.Optimizer or having function "
+                         "get_updates(self, loss_or_grads, params).")
+    # check input X, y, parameters
+    X = as_tuple(X)
+    y_train = as_tuple(y_train)
+    y_score = as_tuple(y_score)
+    y_target = as_tuple(y_target)
+    parameters = as_tuple(parameters)
+    if len(X) == 0 or len(y_train) == 0 or len(y_score) == 0 or \
+    len(y_target) == 0 or len(parameters) == 0:
+        raise ValueError("X(len=%d), y_train(len=%d), y_score(len=%d), y_target(len=%d),"
+                         "and parameters(len=%d) must be list or tuple with length > 0."
+                         % (len(X), len(y_train), len(y_score), len(y_target),
+                            len(parameters)))
+    #  check the cost functions
+    if cost_train is None:
+        cost_train = K.categorical_crossentropy
+    if cost_score is None:
+        cost_score = K.categorical_crossentropy
+    cost_train = as_tuple(cost_train)
+    cost_score = as_tuple(cost_score)
+    # get all cost
+    cost_train = [K.mean(f_cost(y_, y), axis=0)
+                  for f_cost, y_, y in zip(cost_train, y_train, y_target)]
+    cost_score = [K.mean(f_cost(y_, y), axis=0)
+                  for f_cost, y_, y in zip(cost_score, y_score, y_target)]
+    # add confusion matrix
+    if confusion_matrix:
+        if not is_number(confusion_matrix) and \
+        not isinstance(confusion_matrix, (tuple, list, np.ndarray)):
+            raise ValueError("confusion_matrix must be an integer, or list, tuple"
+                             " specifies number of classes, or list of all classes.")
+        if is_number(confusion_matrix):
+            confusion_matrix = list(range(int(confusion_matrix)))
+        for y_, y in zip(y_score, y_target):
+            cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y,
+                labels=confusion_matrix))
+    # get the update
+    print(cost_train)
+    print(parameters)
+    updates = optimizer.get_updates(cost_train[0], parameters)
+    exit()
+    # ====== Create trainer ====== #
+    history = training.History()
+    task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
+    if save_path is not None and save_obj is not None:
+        task.set_save(save_path, save_obj, save_hist=True)
+    task.set_task(f_train, train_feeder, epoch=args['epoch'], name='train')
+    task.set_subtask(f_test, valid_feeder, freq=0.6, name='valid')
+    task.set_subtask(f_test, test_feeder, when=-1, name='test')
+    task.set_callback([
+        training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
+        training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
+                                 tracking={2: lambda x: sum(x)}),
+        training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
+        history,
+        training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
+        training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
+    ])
+    return task, history
 
 
 # ===========================================================================

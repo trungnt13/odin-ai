@@ -59,6 +59,10 @@ def is_number(i):
     return isinstance(i, numbers.Number)
 
 
+def is_bool(b):
+    return isinstance(b, type(True))
+
+
 def iter_chunk(it, n):
     """ Chunking an iterator into small chunk of size `n`
     Note: this can be used to slice data into mini batches

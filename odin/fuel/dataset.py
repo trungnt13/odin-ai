@@ -22,7 +22,6 @@ __all__ = [
     'load_mspec_test',
     'load_imdb',
     'load_iris',
-    'load_digit_wav',
     'load_digit_audio',
 ]
 
@@ -483,23 +482,6 @@ def load_imdb(nb_words=None, maxlen=None):
         ds['y_test'] = y_test
         ds.flush()
     return ds
-
-
-def load_digit_wav():
-    from zipfile import ZipFile, ZIP_DEFLATED
-    path = 'https://s3.amazonaws.com/ai-datasets/digit_wav.zip'
-    datapath = get_file('digit_wav.zip', path)
-    try:
-        outpath = datapath.replace('.zip', '')
-        if os.path.exists(outpath):
-            shutil.rmtree(outpath)
-        zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
-        zf.extractall(path=outpath + '/../'); zf.close()
-    except:
-        # remove downloaded zip files
-        os.remove(datapath)
-        import traceback; traceback.print_exc()
-    return outpath
 
 
 def load_iris():

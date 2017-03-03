@@ -5,6 +5,7 @@ from .features import *
 from .feeders import *
 
 import recipes
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from odin.utils import get_file
 
@@ -45,3 +46,35 @@ def load_word2vec():
     https://code.google.com/archive/p/word2vec/
     """
     pass
+
+
+def load_digit_wav():
+    path = 'https://s3.amazonaws.com/ai-datasets/digit_wav.zip'
+    datapath = get_file('digit_wav.zip', path)
+    try:
+        outpath = datapath.replace('.zip', '')
+        if os.path.exists(outpath):
+            shutil.rmtree(outpath)
+        zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
+        zf.extractall(path=outpath + '/../'); zf.close()
+    except:
+        # remove downloaded zip files
+        os.remove(datapath)
+        import traceback; traceback.print_exc()
+    return outpath
+
+
+def load_commands_wav():
+    path = 'https://s3.amazonaws.com/ai-datasets/commands_wav.zip'
+    datapath = get_file('commands_wav.zip', path)
+    try:
+        outpath = datapath.replace('.zip', '')
+        if os.path.exists(outpath):
+            shutil.rmtree(outpath)
+        zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
+        zf.extractall(path=outpath + '/../'); zf.close()
+    except:
+        # remove downloaded zip files
+        os.remove(datapath)
+        import traceback; traceback.print_exc()
+    return outpath
