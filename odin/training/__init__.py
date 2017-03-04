@@ -109,6 +109,31 @@ def standard_trainer(train_data, valid_data,
     f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
     f_score = K.function(inputs=X + y_target, outputs=cost_score)
+
+    # ====== evaluation ====== #
+    def evaluation():
+        if test_data is not None:
+            test = as_data(test_data)
+            test.set_batch(batch_size=batch_size, seed=None)
+            test = [f_score(*t if isinstance(t, (tuple, list)) else t)
+                    for t in test]
+            # just 1 result returned
+            if not isinstance(test[0], (tuple, list)):
+                test = np.mean(test)
+            elif confusion_matrix:
+                cm = sum(i[-1] for i in test)
+                test = [np.mean([j[i] for j in test])
+                        for i in range(len(test[0]) - 1)]
+                test.append(cm)
+            else:
+                test = [np.mean([j[i] for j in test])
+                        for i in range(len(test[0]))]
+            history.record('test', 'epoch_end', nb_iter=1, nb_epoch=1,
+                nb_samples=test_data.shape[0], results=test)
+            print("[Evaluaton] scores:", test[:-1] if confusion_matrix else test)
+            if confusion_matrix:
+                print("[Evaluaton] confustion matrix:")
+                print(test[-1])
     # ====== Create trainer ====== #
     task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
     if save_path is not None and save_obj is not None:
@@ -116,6 +141,7 @@ def standard_trainer(train_data, valid_data,
     # set task
     task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
     task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
+    task.set_signal_handlers(end=evaluation)
     if test_data is not None:
         task.set_subtask(f_score, test_data, when=-1, epoch=1, name='test')
     # format for score
@@ -136,25 +162,6 @@ def standard_trainer(train_data, valid_data,
         ),
         NaNDetector(('train', 'valid'), patience=patience, rollback=True)
     ])
-    # ====== evaluation ====== #
-    test_data = as_data(test_data)
-    test_data.set_batch(batch_size=batch_size, seed=None)
-    test_data = [f_score(*t if isinstance(t, (tuple, list)) else t)
-                 for t in test_data]
-    test_confusion = None
-    # just 1 result returned
-    if not isinstance(test_data[0], (tuple, list)):
-        test_data = np.mean(test_data)
-    elif confusion_matrix:
-        test_confusion = sum(i[-1] for i in test_data)
-        test_data = [np.mean([j[i] for j in test_data])
-                     for i in range(len(test_data[0]) - 1)]
-    else:
-        test_data = [np.mean([j[i] for j in test_data])
-                     for i in range(len(test_data[0]))]
-    print(test_data)
-    print(test_confusion)
-    exit()
     # ====== create report ====== #
     if report_path is not None:
         pass
@@ -361,10 +368,25 @@ class MainLoop(object):
         self._save_hist = None
         self._save_obj = None
 
+        self._save_func = None
+        self._rollback_func = None
+        self._end_func = None
+
     # ==================== Signal handling ==================== #
-    def _signal_handlers(self, sig, frames):
-        # do something here
-        pass
+    def set_signal_handlers(self, save=None, rollback=None, end=None):
+        """
+        Parameters
+        ----------
+        save: callable
+            a function will be execeuted when saving checkpoint.
+        rollback: callable
+            a function will be called when rollback the saved object
+        end: callable
+            a function will be called when finish running the `MainLoop`
+        """
+        self._save_func = save if callable(save) else None
+        self._rollback_func = rollback if callable(rollback) else None
+        self._end_func = end if callable(end) else None
 
     # ==================== pickling ==================== #
     def __setstate__(self, value):
@@ -528,6 +550,10 @@ class MainLoop(object):
 
     # ==================== logic ==================== #
     def _save(self):
+        if self._save_func is not None:
+            self._save_func()
+            return
+        # default save procedure
         if self._save_path is not None and self._save_obj is not None:
             cPickle.dump(self._save_obj, open(self._save_path, 'w'),
                          protocol=cPickle.HIGHEST_PROTOCOL)
@@ -538,13 +564,22 @@ class MainLoop(object):
             print("\nCreated checkpoint at path:", self._save_path)
 
     def _rollback(self):
+        if self._rollback_func is not None:
+            self._rollback_func()
+            return
+        # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
             f = open(self._save_path, 'r')
             # the loading process will automatically reload shared variable
             cPickle.load(f)
             f.close()
 
-    def __run(self):
+    def _end(self):
+        self._rollback()
+        if self._end_func is not None:
+            self._end_func()
+
+    def run(self):
         if self._task is None:
             raise ValueError('You must call set_task and set the main task first.')
         callback = self._callback
@@ -632,6 +667,5 @@ class MainLoop(object):
             t.stop_all()
         for t in self._crosstask.keys():
             t.stop_all()
-
-    def run(self):
-        self.__run()
+        # everything finished
+        self._end()

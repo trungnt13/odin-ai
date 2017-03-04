@@ -138,7 +138,7 @@ trainer, hist = training.standard_trainer(
     confusion_matrix=len(all_labels),
     gradient_norm=True,
     batch_size=len(all_labels),
-    nb_epoch=12, valid_freq=1., earlystop=5,
+    nb_epoch=8, valid_freq=1., earlystop=5,
     # stop_callback= lambda: print("\nSTOP !!!!!!"),
     # save_callback= lambda: print("\n!!!!!! SAVE"),
     save_path=get_modelpath("commands.ai", override=True),
