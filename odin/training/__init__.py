@@ -8,7 +8,7 @@ import numpy as np
 from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import RNG_GENERATOR
 from odin import fuel
-from odin.fuel.dataset import Dataset
+from odin.fuel import Dataset, as_data
 from odin.utils import struct, as_tuple, is_number
 
 from .callbacks import *
@@ -30,10 +30,10 @@ def standard_trainer(train_data, valid_data,
                      X, y_train, y_score, y_target, parameters,
                      test_data=None, cost_train=None, cost_score=None,
                      optimizer=None, confusion_matrix=False, gradient_norm=True,
-                     save_path=None, save_obj=None,
                      batch_size=64, nb_epoch=3, valid_freq=0.6,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
-                     report_path=None):
+                     stop_callback=None, save_callback=None,
+                     save_path=None, save_obj=None, report_path=None):
     """
     Parameters
     ----------
@@ -127,17 +127,37 @@ def standard_trainer(train_data, valid_data,
         ProgressMonitor(name='train',
             format='Results:' + __format_string(len(cost_train))),
         ProgressMonitor(name='valid', format=score_format, tracking=score_tracking),
-        (ProgressMonitor(name='test', format=score_format, tracking=score_tracking)
-            if test_data is not None else None),
         history,
         EarlyStopGeneralizationLoss('valid', threshold=earlystop, patience=patience,
                  get_value=lambda x: np.mean([i[0] for i in x]
                                              if isinstance(x[0], (tuple, list))
-                                             else x)
-
+                                             else x),
+                 stop_callback=stop_callback, save_callback=save_callback
         ),
         NaNDetector(('train', 'valid'), patience=patience, rollback=True)
     ])
+    # ====== evaluation ====== #
+    test_data = as_data(test_data)
+    test_data.set_batch(batch_size=batch_size, seed=None)
+    test_data = [f_score(*t if isinstance(t, (tuple, list)) else t)
+                 for t in test_data]
+    test_confusion = None
+    # just 1 result returned
+    if not isinstance(test_data[0], (tuple, list)):
+        test_data = np.mean(test_data)
+    elif confusion_matrix:
+        test_confusion = sum(i[-1] for i in test_data)
+        test_data = [np.mean([j[i] for j in test_data])
+                     for i in range(len(test_data[0]) - 1)]
+    else:
+        test_data = [np.mean([j[i] for j in test_data])
+                     for i in range(len(test_data[0]))]
+    print(test_data)
+    print(test_confusion)
+    exit()
+    # ====== create report ====== #
+    if report_path is not None:
+        pass
     return task, history
 
 

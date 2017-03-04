@@ -6,7 +6,7 @@ os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=1208251813'
 import numpy as np
 
 from odin import fuel as F, nnet as N, backend as K, training
-from odin.utils import get_all_files, get_datasetpath
+from odin.utils import get_all_files, get_datasetpath, get_modelpath
 from odin.stats import freqcount
 from odin.basic import has_roles, WEIGHT, BIAS
 
@@ -138,7 +138,10 @@ trainer, hist = training.standard_trainer(
     confusion_matrix=len(all_labels),
     gradient_norm=True,
     batch_size=len(all_labels),
-    nb_epoch=12,
-    valid_freq=1.
+    nb_epoch=12, valid_freq=1., earlystop=5,
+    # stop_callback= lambda: print("\nSTOP !!!!!!"),
+    # save_callback= lambda: print("\n!!!!!! SAVE"),
+    save_path=get_modelpath("commands.ai", override=True),
+    save_obj=f
 )
 trainer.run()

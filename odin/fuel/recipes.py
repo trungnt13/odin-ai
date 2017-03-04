@@ -873,7 +873,7 @@ class CreateBatch(FeederRecipe):
                     permutation = rng.permutation(ret[0].shape[0])
                     ret = [r[permutation] for r in ret]
                 # return the batches
-                for i in range((ret[0].shape[0] - 1) // batch_size + 1):
+                for i in range(0, (ret[0].shape[0] - 1) // batch_size + 1):
                     start = i * batch_size
                     end = start + batch_size
                     _ = batch_filter([x[start:end] for x in ret])
@@ -926,8 +926,12 @@ class CreateFile(FeederRecipe):
             self.rng.shuffle(results)
         # ====== return batch ====== #
         if self.batch_size == 1:
-            for r in results: yield r
-        for i in range(0, len(results) + 1, self.batch_size):
-            r = results[i: i + self.batch_size]
-            yield [self._to_numpy_array([x[i] for x in results])
-                   for i in range(n)]
+            for r in results:
+                yield r
+        else:
+            # validated, all the batches are length > 0,
+            # and equal to original data
+            for i in range(0, len(results), self.batch_size):
+                r = results[i: i + self.batch_size]
+                yield [self._to_numpy_array([x[i] for x in r])
+                       for i in range(n)]
