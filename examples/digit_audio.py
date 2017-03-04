@@ -111,8 +111,8 @@ recipes = [
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
                          transcription_transform=lambda x: x[-1]),
-    F.recipes.CreateBatch(),
-    # F.recipes.CreateFile()
+    # F.recipes.CreateBatch(),
+    F.recipes.CreateFile()
 ]
 
 train_feeder.set_recipes(recipes)
@@ -164,6 +164,25 @@ cost_test_3 = K.confusion_matrix(y_score, y, labels=range(10))
 # ====== create optimizer ====== #
 parameters = [p for p in f.parameters if has_roles(p, [WEIGHT, BIAS])]
 optimizer = K.optimizers.RMSProp(lr=args['lr'])
+# ===========================================================================
+# Standard trainer
+# ===========================================================================
+if False:
+    trainer, hist = training.standard_trainer(
+        train_data=train_feeder, valid_data=valid_feeder, test_data=test_feeder,
+        X=X, y_train=y_train, y_score=y_score, y_target=y, parameters=parameters,
+        cost_score=[K.categorical_crossentropy, K.categorical_accuracy],
+        cost_train=[K.categorical_crossentropy],
+        optimizer=optimizer,
+        confusion_matrix=range(10),
+        gradient_norm=True,
+        batch_size=8
+    )
+    trainer.run()
+    exit()
+# ===========================================================================
+# Continue create your own training process
+# ===========================================================================
 updates = optimizer.get_updates(cost_train, parameters)
 
 # ====== create function ====== #

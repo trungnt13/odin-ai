@@ -896,12 +896,38 @@ class CreateFile(FeederRecipe):
         super(CreateFile, self).__init__()
         self.return_name = return_name
 
+    def prepare(self, **kwargs):
+        shuffle_level = kwargs.get('shuffle_level', 0)
+        seed = kwargs.get('seed', None)
+        self.rng = None
+        if seed is not None and shuffle_level >= 1:
+            self.rng = np.random.RandomState(seed=seed)
+        self.batch_size = kwargs.get('batch_size', 1)
+
+    def _to_numpy_array(self, x):
+        if not is_string(x[0]) and len(set(i.shape[1:] for i in x)) == 1:
+            return np.concatenate(x, axis=0)
+        return np.array(x)
+
     def group(self, batch):
+        results = []
         for b in batch:
             name, X = b[0], b[1]
             Y = b[2:]
             ret = list(X) + list(Y)
-            # ====== return name ====== #
+            # return name
             if self.return_name:
                 ret = [name] + list(ret)
-            yield tuple(ret)
+            results.append(tuple(ret))
+        # number of different result
+        n = len(ret)
+        # ====== shuffle ====== #
+        if self.rng is not None:
+            self.rng.shuffle(results)
+        # ====== return batch ====== #
+        if self.batch_size == 1:
+            for r in results: yield r
+        for i in range(0, len(results) + 1, self.batch_size):
+            r = results[i: i + self.batch_size]
+            yield [self._to_numpy_array([x[i] for x in results])
+                   for i in range(n)]

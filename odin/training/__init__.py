@@ -21,12 +21,19 @@ _SAVE_TASK = struct()
 _SAVE_TASK.name = "save"
 
 
-def standard_trainer(train_data, valid_data, test_data, batch_size,
+def __format_string(nb_of_float):
+    x = ["{:.4f}"] * int(nb_of_float)
+    return ";".join(x)
+
+
+def standard_trainer(train_data, valid_data,
                      X, y_train, y_score, y_target, parameters,
-                     cost_train=None, cost_score=None, optimizer=None,
-                     confusion_matrix=False, gradient_norm=True,
+                     test_data=None, cost_train=None, cost_score=None,
+                     optimizer=None, confusion_matrix=False, gradient_norm=True,
                      save_path=None, save_obj=None,
-                     nb_epoch=3, seed=1208, shuffle_level=2):
+                     batch_size=64, nb_epoch=3, valid_freq=0.6,
+                     seed=1208, shuffle_level=2, patience=3, earlystop=5,
+                     report_path=None):
     """
     Parameters
     ----------
@@ -41,8 +48,8 @@ def standard_trainer(train_data, valid_data, test_data, batch_size,
     ----
 
     """
-    # ====== create function ====== #
     from odin import backend as K
+    # ====== prepare variables and cost ====== #
     # check optimizer
     if optimizer is None:
         optimizer = K.optimizers.SGD(lr=0.0001, momentum=0.9, nesterov=True)
@@ -51,6 +58,13 @@ def standard_trainer(train_data, valid_data, test_data, batch_size,
         raise ValueError("Invalid optimizer, the optimizer must be instance of "
                          "backend.optimizers.Optimizer or having function "
                          "get_updates(self, loss_or_grads, params).")
+    #  check the cost functions
+    if cost_train is None:
+        cost_train = K.categorical_crossentropy
+    if cost_score is None:
+        cost_score = K.categorical_crossentropy
+    cost_train = as_tuple(cost_train)
+    cost_score = as_tuple(cost_score)
     # check input X, y, parameters
     X = as_tuple(X)
     y_train = as_tuple(y_train)
@@ -63,18 +77,17 @@ def standard_trainer(train_data, valid_data, test_data, batch_size,
                          "and parameters(len=%d) must be list or tuple with length > 0."
                          % (len(X), len(y_train), len(y_score), len(y_target),
                             len(parameters)))
-    #  check the cost functions
-    if cost_train is None:
-        cost_train = K.categorical_crossentropy
-    if cost_score is None:
-        cost_score = K.categorical_crossentropy
-    cost_train = as_tuple(cost_train)
-    cost_score = as_tuple(cost_score)
     # get all cost
+    if len(y_train) == 1:
+        y_train = y_train * len(cost_train)
+    if len(y_score) == 1:
+        y_score = y_score * len(cost_score)
     cost_train = [K.mean(f_cost(y_, y), axis=0)
-                  for f_cost, y_, y in zip(cost_train, y_train, y_target)]
+                  for f_cost, y_, y in zip(cost_train, y_train,
+                    y_target * len(cost_train) if len(y_target) == 1 else y_target)]
     cost_score = [K.mean(f_cost(y_, y), axis=0)
-                  for f_cost, y_, y in zip(cost_score, y_score, y_target)]
+                  for f_cost, y_, y in zip(cost_score, y_score,
+                    y_target * len(cost_score) if len(y_target) == 1 else y_target)]
     # add confusion matrix
     if confusion_matrix:
         if not is_number(confusion_matrix) and \
@@ -87,26 +100,43 @@ def standard_trainer(train_data, valid_data, test_data, batch_size,
             cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y,
                 labels=confusion_matrix))
     # get the update
-    print(cost_train)
-    print(parameters)
     updates = optimizer.get_updates(cost_train[0], parameters)
-    exit()
+    # ====== create function ====== #
+    grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
+        [optimizer.norm]
+    cost_train = cost_train + grad_norm
+    print('Building training functions ...')
+    f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
+    print('Building scoring functions ...')
+    f_score = K.function(inputs=X + y_target, outputs=cost_score)
     # ====== Create trainer ====== #
-    history = training.History()
     task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
     if save_path is not None and save_obj is not None:
         task.set_save(save_path, save_obj, save_hist=True)
-    task.set_task(f_train, train_feeder, epoch=args['epoch'], name='train')
-    task.set_subtask(f_test, valid_feeder, freq=0.6, name='valid')
-    task.set_subtask(f_test, test_feeder, when=-1, name='test')
+    # set task
+    task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
+    task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
+    if test_data is not None:
+        task.set_subtask(f_score, test_data, when=-1, epoch=1, name='test')
+    # format for score
+    score_format = 'Results:' + __format_string(len(cost_score) - (1 if confusion_matrix else 0))
+    score_tracking = {(len(cost_score) - 1): lambda x: sum(x)} if confusion_matrix else []
+    # set the callback
+    history = History()
     task.set_callback([
-        training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
-        training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
-                                 tracking={2: lambda x: sum(x)}),
-        training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
+        ProgressMonitor(name='train',
+            format='Results:' + __format_string(len(cost_train))),
+        ProgressMonitor(name='valid', format=score_format, tracking=score_tracking),
+        (ProgressMonitor(name='test', format=score_format, tracking=score_tracking)
+            if test_data is not None else None),
         history,
-        training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
-        training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
+        EarlyStopGeneralizationLoss('valid', threshold=earlystop, patience=patience,
+                 get_value=lambda x: np.mean([i[0] for i in x]
+                                             if isinstance(x[0], (tuple, list))
+                                             else x)
+
+        ),
+        NaNDetector(('train', 'valid'), patience=patience, rollback=True)
     ])
     return task, history
 
@@ -419,7 +449,7 @@ class MainLoop(object):
         else:
             if not isinstance(callback, (tuple, list)):
                 callback = [callback]
-            self._callback = CallbackList(*callback)
+            self._callback = CallbackList(*[c for c in callback if c is not None])
         return self
 
     def __getitem__(self, key):

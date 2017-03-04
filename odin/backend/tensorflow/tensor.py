@@ -568,6 +568,10 @@ def gradients(loss, variables, consider_constant=None):
     >>>     print(g.eval())
     >>> # a_grad=0. b_grad=0. y_grad=6.614
     """
+    if isinstance(variables, tuple):
+        variables = list(variables)
+    elif isinstance(variables, np.ndarray):
+        variables = variables.tolist()
     return tf.gradients(loss, variables, colocate_gradients_with_ops=True)
 
 
