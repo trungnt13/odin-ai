@@ -205,23 +205,26 @@ def standard_trainer(train_data, valid_data,
         for name, x in train_results.iteritems():
             x = np.array([np.mean(i) for i in x]).ravel()
             x = (x - x.min()) / (x.max() - x.min())
+            nb_train_epoch = len(x)
             legends.append(
-                (plt.plot(range(1, len(x) + 1), x, '-', linewidth=1.2)[0],
+                (plt.plot(range(1, nb_train_epoch + 1), x, '-', linewidth=1.2)[0],
                  "[train]" + name))
             recent_color = legends[-1][0].get_color()
             if name in valid_results:
                 y = np.array([np.mean(i) for i in valid_results[name]]).ravel()
                 y = (y - y.min()) / (y.max() - y.min())
+                x = np.linspace(1, nb_train_epoch, num=len(y))
                 legends.append(
-                    (plt.plot(range(1, len(y) + 1), y, '--', linewidth=1.5, color=recent_color)[0],
+                    (plt.plot(x, y, '--', linewidth=1.5, color=recent_color)[0],
                      "[valid]" + name))
                 plotted_valid.append(name)
         for name, y in valid_results.iteritems(): # plot the remain valid
             if name not in plotted_valid:
                 y = np.array([np.mean(i) for i in y]).ravel()
                 y = (y - y.min()) / (y.max() - y.min())
+                x = np.linspace(1, nb_train_epoch, num=len(y))
                 legends.append(
-                    (plt.plot(range(1, len(y) + 1), y, '--', linewidth=1.5)[0],
+                    (plt.plot(x, y, '--', linewidth=1.5)[0],
                      "[valid]" + name))
         plt.ylim([-0.05, 1.05])
         plt.xlabel("Epoch"); plt.ylabel("Normalized cost")
