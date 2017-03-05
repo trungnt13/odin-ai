@@ -1,12 +1,15 @@
 from __future__ import print_function, division, absolute_import
 
+import matplotlib
+matplotlib.use("Agg")
+
 import os
 os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=1208251813'
 
 import numpy as np
 
 from odin import fuel as F, nnet as N, backend as K, training
-from odin.utils import get_all_files, get_datasetpath, get_modelpath
+from odin.utils import get_all_files, get_datasetpath, get_modelpath, get_logpath
 from odin.stats import freqcount
 from odin.basic import has_roles, WEIGHT, BIAS
 
@@ -142,6 +145,9 @@ trainer, hist = training.standard_trainer(
     # stop_callback= lambda: print("\nSTOP !!!!!!"),
     # save_callback= lambda: print("\n!!!!!! SAVE"),
     save_path=get_modelpath("commands.ai", override=True),
-    save_obj=f
+    save_obj=f,
+    report_path=get_logpath("commands.pdf", override=True),
 )
 trainer.run()
+hist.print_info()
+print(len(hist.get_epoch('valid')))

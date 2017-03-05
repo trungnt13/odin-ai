@@ -25,6 +25,7 @@ import numpy as np
 # import matplotlib
 # for name, hex in matplotlib.colors.cnames.iteritems():
 #     print(name, hex)
+line_styles = ['-', '--', '-.', ':']
 
 marker_styles = [
     ".",
@@ -337,6 +338,20 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
         ax.set_ylabel(ylabel)
 
 
+def plot_figure(nrow, ncol, dpi=180):
+    inches_for_box = 2.4
+    from matplotlib import pyplot as plt
+    if nrow != ncol:
+        nrow = inches_for_box * ncol
+        ncol = inches_for_box * nrow
+    else:
+        nrow = inches_for_box * nrow
+        ncol = inches_for_box * ncol
+    nrow += 1.2 # for the title
+    fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
+    return fig
+
+
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
     from matplotlib import pyplot as plt
     ax = ax if ax is not None else plt.gca()
@@ -352,7 +367,8 @@ def plot_histogram(x, bins=12, ax=None):
     return ax
 
 
-def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None):
+def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
+                fontsize=8):
     '''Plot the amplitude envelope of a waveform.
     Parameters
     ----------
@@ -395,7 +411,7 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None):
             axes.append(_)
         if legend is not None:
             ax.legend(axes, legend_, scatterpoints=1, loc='upper right',
-                      ncol=3, fontsize=8)
+                      ncol=3, fontsize=fontsize)
     return ax
 
 
@@ -666,10 +682,9 @@ def plot_images_old(x, fig=None, titles=None, show=False):
         return fig
 
 
-def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False):
+def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
+    title=None):
     from matplotlib import pyplot as plt
-
-    title = 'Confusion matrix'
     cmap = plt.cm.Blues
 
     # column normalize
@@ -681,7 +696,8 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False):
         axis = plt.gca()
 
     im = axis.imshow(cm_normalized, interpolation='nearest', cmap=cmap)
-    axis.set_title(title)
+    if title is not None:
+        axis.set_title(title)
     # axis.get_figure().colorbar(im)
 
     tick_marks = np.arange(len(labels))
@@ -689,8 +705,8 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False):
     axis.set_yticks(tick_marks)
     axis.set_xticklabels(labels, rotation=90, fontsize=fontsize)
     axis.set_yticklabels(labels, fontsize=fontsize)
-    axis.set_ylabel('True label')
-    axis.set_xlabel('Predicted label')
+    axis.set_ylabel('True label', fontsize=fontsize)
+    axis.set_xlabel('Predicted label', fontsize=fontsize)
     # Turns off grid on the left Axis.
     axis.grid(False)
 

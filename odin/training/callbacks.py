@@ -344,8 +344,19 @@ class History(Callback):
         event_name = '' if event_name is None else str(event_name)
         event_type = '' if event_type is None else str(event_type)
         # return the results
-        return [i[-1] for i in self._history
-                if event_name in i[1] and event_type in i[2]]
+        return [res for t, name, typ, _, _, _, res in self._history
+                if event_name == name and event_type == typ]
+
+    def get_epoch(self, event_name):
+        """Get all batch results of each epoch from given event_name"""
+        events = []
+        for t, name, typ, _, _, _, res in self._history:
+            if name == event_name:
+                if typ == "epoch_start":
+                    events.append([])
+                elif typ == "batch_end":
+                    events[-1].append(res)
+        return events
 
     def benchmark(self, event_name, event_type):
         '''

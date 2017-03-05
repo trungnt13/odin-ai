@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import, print_function
 
 import os
+from collections import defaultdict
 from six.moves import range, zip, cPickle
 
 import numpy as np
@@ -24,6 +25,33 @@ _SAVE_TASK.name = "save"
 def __format_string(nb_of_float):
     x = ["{:.4f}"] * int(nb_of_float)
     return ";".join(x)
+
+
+def _plot_each_epoch(name, results, nb_epoch, task_type):
+    """ results list of each epoch results
+    [(epoch1_r1, epoch1_r2, ...),
+     (epoch2_r1, epoch2_r2, ...), ...]
+    """
+    from matplotlib import pyplot as plt
+    ncol = 3; nrow = int(np.ceil(nb_epoch / ncol))
+    max_ = np.max(results); min_ = np.min(results)
+    # ====== plot an overall view of all epoch ====== #
+    plt.figure()
+    line = plt.plot(range(1, len(results) + 1),
+             [np.mean(epoch) for epoch in results])[0]
+    plt.setp(line, linewidth=2, color='r')
+    plt.ylim([min_, max_])
+    plt.xlabel("#Epoch")
+    plt.ylabel(name)
+    plt.suptitle(task_type + name, fontsize=20)
+    # ====== plot each epoch ====== #
+    plt.figure()
+    for i, x in enumerate(results):
+        ax = plt.subplot(nrow, ncol, i + 1)
+        ax.plot(x); ax.set_ylim([min_, max_])
+        ax.tick_params(labelsize=8)
+        plt.xlabel("[Epoch%d]Iteration" % (i + 1), fontsize=8)
+    plt.tight_layout()
 
 
 def standard_trainer(train_data, valid_data,
@@ -64,7 +92,9 @@ def standard_trainer(train_data, valid_data,
     if cost_score is None:
         cost_score = K.categorical_crossentropy
     cost_train = as_tuple(cost_train)
+    cost_train_name = [i.__name__ for i in cost_train]
     cost_score = as_tuple(cost_score)
+    cost_score_name = [i.__name__ for i in cost_score]
     # check input X, y, parameters
     X = as_tuple(X)
     y_train = as_tuple(y_train)
@@ -104,6 +134,8 @@ def standard_trainer(train_data, valid_data,
     # ====== create function ====== #
     grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
         [optimizer.norm]
+    if len(grad_norm) > 0:
+        cost_train_name.append('gradient_norm')
     cost_train = cost_train + grad_norm
     print('Building training functions ...')
     f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
@@ -128,12 +160,80 @@ def standard_trainer(train_data, valid_data,
             else:
                 test = [np.mean([j[i] for j in test])
                         for i in range(len(test[0]))]
+            # record the result to history
             history.record('test', 'epoch_end', nb_iter=1, nb_epoch=1,
                 nb_samples=test_data.shape[0], results=test)
             print("[Evaluaton] scores:", test[:-1] if confusion_matrix else test)
             if confusion_matrix:
-                print("[Evaluaton] confustion matrix:")
+                print("[Evaluaton] confusion matrix:")
                 print(test[-1])
+        # ====== create report ====== #
+        if report_path is None:
+            return
+        from odin import visual
+        from matplotlib import pyplot as plt
+        # get train results
+        train_epochs = history.get_epoch('train')
+        train_results = defaultdict(list)
+        for i, name in enumerate(cost_train_name):
+            for epoch in train_epochs:
+                train_results[name].append([r[i] for r in epoch])
+        # get valid results
+        valid_epochs = history.get_epoch('valid')
+        valid_results = defaultdict(list)
+        for i, name in enumerate(cost_score_name):
+            for epoch in valid_epochs:
+                valid_results[name].append([r[i] for r in epoch])
+        # visualize the trianing process
+        plt.figure()
+        legends = []
+        plotted_valid = []
+        for name, x in train_results.iteritems():
+            x = np.array([np.mean(i) for i in x]).ravel()
+            x = (x - x.min()) / (x.max() - x.min())
+            legends.append(
+                (plt.plot(range(1, len(x) + 1), x, '-', linewidth=1.2)[0],
+                 "[train]" + name))
+            recent_color = legends[-1][0].get_color()
+            if name in valid_results:
+                y = np.array([np.mean(i) for i in valid_results[name]]).ravel()
+                y = (y - y.min()) / (y.max() - y.min())
+                legends.append(
+                    (plt.plot(range(1, len(y) + 1), y, '--', linewidth=1.5, color=recent_color)[0],
+                     "[valid]" + name))
+                plotted_valid.append(name)
+        for name, y in valid_results.iteritems(): # plot the remain valid
+            if name not in plotted_valid:
+                y = np.array([np.mean(i) for i in y]).ravel()
+                y = (y - y.min()) / (y.max() - y.min())
+                legends.append(
+                    (plt.plot(range(1, len(y) + 1), y, '--', linewidth=1.5)[0],
+                     "[valid]" + name))
+        plt.ylim([-0.05, 1.05])
+        plt.xlabel("Epoch"); plt.ylabel("Normalized cost")
+        plt.legend([i[0] for i in legends], [i[1] for i in legends],
+                   loc='upper right', ncol=2, fontsize=8)
+        # visualize each training epoch
+        for name, X in train_results.iteritems():
+            _plot_each_epoch(name, X, nb_epoch, "[Train]")
+        for name, X in valid_results.iteritems():
+            _plot_each_epoch(name, X, nb_epoch, "[Valid]")
+        # visualize the confusion matrix
+        if confusion_matrix:
+            confusion = [sum(i[-1] for i in epoch)
+                         for epoch in valid_epochs]
+            labels = [str(i) for i in confusion_matrix]
+            ncol = 3; nrow = int(np.ceil(len(confusion) / ncol))
+            visual.plot_figure(nrow=nrow, ncol=ncol, dpi=180)
+            for i, cm in enumerate(confusion):
+                ax = plt.subplot(nrow, ncol, i + 1)
+                visual.plot_confusion_matrix(cm, labels,
+                    axis=ax, fontsize=10, colorbar=False)
+                ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
+            plt.suptitle("[Valid] Confustion matrices", fontsize=12)
+            plt.tight_layout()
+        # save all the plot
+        visual.plot_save(path=report_path, dpi=180, clear_all=True)
     # ====== Create trainer ====== #
     task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
     if save_path is not None and save_obj is not None:
@@ -142,8 +242,6 @@ def standard_trainer(train_data, valid_data,
     task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
     task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
     task.set_signal_handlers(end=evaluation)
-    if test_data is not None:
-        task.set_subtask(f_score, test_data, when=-1, epoch=1, name='test')
     # format for score
     score_format = 'Results:' + __format_string(len(cost_score) - (1 if confusion_matrix else 0))
     score_tracking = {(len(cost_score) - 1): lambda x: sum(x)} if confusion_matrix else []
@@ -162,9 +260,6 @@ def standard_trainer(train_data, valid_data,
         ),
         NaNDetector(('train', 'valid'), patience=patience, rollback=True)
     ])
-    # ====== create report ====== #
-    if report_path is not None:
-        pass
     return task, history
 
 
