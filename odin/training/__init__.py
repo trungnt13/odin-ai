@@ -27,12 +27,13 @@ def __format_string(nb_of_float):
     return ";".join(x)
 
 
-def _plot_each_epoch(name, results, nb_epoch, task_type):
+def _plot_each_epoch(name, results, task_type):
     """ results list of each epoch results
     [(epoch1_r1, epoch1_r2, ...),
      (epoch2_r1, epoch2_r2, ...), ...]
     """
     from matplotlib import pyplot as plt
+    nb_epoch = len(results)
     ncol = 3; nrow = int(np.ceil(nb_epoch / ncol))
     max_ = np.max(results); min_ = np.min(results)
     # ====== plot an overall view of all epoch ====== #
@@ -228,9 +229,9 @@ def standard_trainer(train_data, valid_data,
                    loc='upper right', ncol=2, fontsize=8)
         # visualize each training epoch
         for name, X in train_results.iteritems():
-            _plot_each_epoch(name, X, nb_epoch, "[Train]")
+            _plot_each_epoch(name, X, "[Train]")
         for name, X in valid_results.iteritems():
-            _plot_each_epoch(name, X, nb_epoch, "[Valid]")
+            _plot_each_epoch(name, X, "[Valid]")
         # visualize the confusion matrix
         if confusion_matrix:
             # First the validation confusion matrix
@@ -278,7 +279,7 @@ def standard_trainer(train_data, valid_data,
                                              if isinstance(x[0], (tuple, list))
                                              else x),
                  stop_callback=stop_callback, save_callback=save_callback
-        ),
+        ) if earlystop is not None else None,
         NaNDetector(('train', 'valid'), patience=patience, rollback=True)
     ])
     return task, history
