@@ -130,6 +130,7 @@ def standard_trainer(train_data, valid_data,
         not isinstance(confusion_matrix, (tuple, list, np.ndarray)):
             raise ValueError("confusion_matrix must be an integer, or list, tuple"
                              " specifies number of classes, or list of all classes.")
+        labels = confusion_matrix
         if is_number(confusion_matrix):
             confusion_matrix = list(range(int(confusion_matrix)))
             labels = confusion_matrix

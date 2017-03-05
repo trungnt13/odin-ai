@@ -10,6 +10,9 @@
 # ===========================================================================
 from __future__ import print_function, absolute_import, division
 
+import matplotlib
+matplotlib.use("Agg")
+
 from odin.utils import ArgController
 
 # ====== parse arguments ====== #
@@ -176,7 +179,11 @@ if True:
         optimizer=optimizer,
         confusion_matrix=range(10),
         gradient_norm=True,
-        batch_size=8
+        nb_epoch=args['epoch'],
+        batch_size=8,
+        save_path=get_modelpath(name='digit_audio.ai', override=True),
+        save_obj=f,
+        report_path=get_logpath(name="digit_audio.pdf", override=True),
     )
     trainer.run()
     exit()
