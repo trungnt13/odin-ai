@@ -114,8 +114,8 @@ f = N.Sequence([
     N.Flatten(outdim=3),
 
     # ====== RNN ====== #
-    N.AutoRNN(64, rnn_mode='lstm', num_layers=1,
-              direction_mode='unidirectional', prefer_cudnn=True),
+    N.AutoRNN(64, input_mode='linear', rnn_mode='lstm', num_layers=1,
+              direction_mode='unidirectional', prefer_cudnn=False),
 
     # ====== Dense ====== #
     N.Flatten(outdim=2),

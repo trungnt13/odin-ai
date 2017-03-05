@@ -984,7 +984,7 @@ def AutoRNN(num_units, W_init=K.init.glorot_uniform, b_init=K.init.constant(0.),
         See cudnn documentation for ``cudnnRNNMode_t``.
     num_layers : int
         the number of layers for the RNN model.
-    input_mode : {'linear', 'skip'}
+    input_mode : {'linear', 'skip', 'norm'}
         linear: input will be multiplied by a biased matrix
         skip: No operation is performed on the input.  The size must
         match the hidden size.
