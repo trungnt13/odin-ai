@@ -138,16 +138,13 @@ trainer, hist = training.standard_trainer(
     optimizer=K.optimizers.RMSProp(lr=0.0001),
     cost_train=K.categorical_crossentropy,
     cost_score=[K.categorical_crossentropy, K.categorical_accuracy],
-    confusion_matrix=len(all_labels),
+    confusion_matrix=all_labels,
     gradient_norm=True,
     batch_size=len(all_labels),
     nb_epoch=8, valid_freq=1., earlystop=5,
-    # stop_callback= lambda: print("\nSTOP !!!!!!"),
-    # save_callback= lambda: print("\n!!!!!! SAVE"),
     save_path=get_modelpath("commands.ai", override=True),
     save_obj=f,
     report_path=get_logpath("commands.pdf", override=True),
 )
 trainer.run()
 hist.print_info()
-print(len(hist.get_epoch('valid')))

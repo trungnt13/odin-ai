@@ -10,7 +10,7 @@ from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import RNG_GENERATOR
 from odin import fuel
 from odin.fuel import Dataset, as_data
-from odin.utils import struct, as_tuple, is_number
+from odin.utils import struct, as_tuple, is_number, Progbar
 
 from .callbacks import *
 
@@ -67,6 +67,12 @@ def standard_trainer(train_data, valid_data,
     ----------
     cost_train: list of callable
         each function will be apply to a pair y_train and y_target
+    confusion_matrix: int, list or tuple
+        If int is given, it is the number of different classes.
+        If a list or tuple is given, it contains all the labels.
+    gradient_norm: bool
+        if True, record the L2-norm of gradients from all parameters for
+        each iteration.
 
     Return
     ------
@@ -126,9 +132,11 @@ def standard_trainer(train_data, valid_data,
                              " specifies number of classes, or list of all classes.")
         if is_number(confusion_matrix):
             confusion_matrix = list(range(int(confusion_matrix)))
+            labels = confusion_matrix
+        elif not is_number(confusion_matrix[0]): # given list of label
+            labels = list(range(len(confusion_matrix)))
         for y_, y in zip(y_score, y_target):
-            cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y,
-                labels=confusion_matrix))
+            cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y, labels=labels))
     # get the update
     updates = optimizer.get_updates(cost_train[0], parameters)
     # ====== create function ====== #
@@ -147,17 +155,21 @@ def standard_trainer(train_data, valid_data,
         if test_data is not None:
             test = as_data(test_data)
             test.set_batch(batch_size=batch_size, seed=None)
-            test = [f_score(*t if isinstance(t, (tuple, list)) else t)
-                    for t in test]
+            prog = Progbar(target=test.shape[0], title="Evaluating:"); _ = []
+            for t in test:
+                _.append(f_score(*t if isinstance(t, (tuple, list)) else t))
+                prog.add(len(t[0]))
+            test = _
             # just 1 result returned
             if not isinstance(test[0], (tuple, list)):
                 test = np.mean(test)
             elif confusion_matrix:
-                cm = sum(i[-1] for i in test)
+                test_cm = sum(i[-1] for i in test)
                 test = [np.mean([j[i] for j in test])
                         for i in range(len(test[0]) - 1)]
-                test.append(cm)
+                test.append(test_cm)
             else:
+                test_cm = None
                 test = [np.mean([j[i] for j in test])
                         for i in range(len(test[0]))]
             # record the result to history
@@ -220,6 +232,7 @@ def standard_trainer(train_data, valid_data,
             _plot_each_epoch(name, X, nb_epoch, "[Valid]")
         # visualize the confusion matrix
         if confusion_matrix:
+            # First the validation confusion matrix
             confusion = [sum(i[-1] for i in epoch)
                          for epoch in valid_epochs]
             labels = [str(i) for i in confusion_matrix]
@@ -232,6 +245,13 @@ def standard_trainer(train_data, valid_data,
                 ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
             plt.suptitle("[Valid] Confustion matrices", fontsize=12)
             plt.tight_layout()
+            # The the test confusion matrix
+            if test_data is not None and test_cm is not None:
+                plt.figure(figsize=(8, 9), dpi=180)
+                visual.plot_confusion_matrix(test_cm, labels,
+                    axis=None, fontsize=18, colorbar=False)
+                plt.suptitle("[Eval] Confustion matrices", fontsize=20)
+                plt.tight_layout()
         # save all the plot
         visual.plot_save(path=report_path, dpi=180, clear_all=True)
     # ====== Create trainer ====== #

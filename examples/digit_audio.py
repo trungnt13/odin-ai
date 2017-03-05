@@ -167,7 +167,7 @@ optimizer = K.optimizers.RMSProp(lr=args['lr'])
 # ===========================================================================
 # Standard trainer
 # ===========================================================================
-if False:
+if True:
     trainer, hist = training.standard_trainer(
         train_data=train_feeder, valid_data=valid_feeder, test_data=test_feeder,
         X=X, y_train=y_train, y_score=y_score, y_target=y, parameters=parameters,
