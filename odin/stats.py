@@ -7,10 +7,30 @@ from collections import defaultdict, Iterator, OrderedDict
 import numpy as np
 
 from odin.utils import as_tuple
+from odin.config import RNG_GENERATOR
 
 
 def stratified_sampling(x):
     pass
+
+
+def train_valid_test_split(x, train=0.6, seed=None):
+    # ====== check input ====== #
+    if isinstance(x, dict):
+        x = x.items()
+    # ====== shuffle input ====== #
+    if seed is not None:
+        np.random.seed(seed)
+        np.random.shuffle(x)
+    else:
+        RNG_GENERATOR.shuffle(x)
+    # ====== split ====== #
+    N = len(x)
+    train = int(float(train) * N)
+    if train >= N:
+        raise ValueError("train proportion must larger than 0 and smaller than 1.")
+    valid = (N - train) // 2
+    return x[:train], x[train:train + valid], x[train + valid:]
 
 
 def freqcount(x, key=None, count=1, normalize=False, sort=False):

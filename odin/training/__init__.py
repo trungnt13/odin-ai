@@ -226,7 +226,7 @@ def standard_trainer(train_data, valid_data,
                 legends.append(
                     (plt.plot(x, y, '--', linewidth=1.5)[0],
                      "[valid]" + name))
-        plt.ylim([-0.05, 1.05])
+        plt.ylim([-0.05, 1.2])
         plt.xlabel("Epoch"); plt.ylabel("Normalized cost")
         plt.legend([i[0] for i in legends], [i[1] for i in legends],
                    loc='upper right', ncol=2, fontsize=8)

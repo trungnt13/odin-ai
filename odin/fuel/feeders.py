@@ -49,37 +49,6 @@ from .recipes import FeederList, CreateBatch
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 
 
-def split_feeder(data, indices_path, transcription,
-                 partitions=[0.6, 0.2, 0.2], seed=1208251813,
-                 ncpu=1, buffer_size=12, maximum_queue_size=66):
-    """ Fast utilities to split single indices into multiple
-    Feeder parts
-    """
-    partitions = np.cumsum(partitions).tolist()
-    if partitions[-1] > 1:
-        raise Exception("The sum of all partitions must be smaller than 1.0")
-    # ====== load indices ====== #
-    if isinstance(indices_path, str):
-        if os.path.isdir(indices_path):
-            p = [p for p in os.listdir(indices_path)
-                 if 'indices' in p][0]
-            indices_path = os.path.join(indices_path, p)
-        indices = np.genfromtxt(indices_path, dtype=str, delimiter=' ')
-    else:
-        indices = np.array(indices_path)
-    # ====== shuffle the indices ====== #
-    np.random.seed(seed)
-    idx = np.random.permutation(indices.shape[0])
-    indices = indices[idx]
-    # ====== partitions ====== #
-    partitions = (np.array([0] + partitions) * indices.shape[0]).astype(int)
-    partitions = [indices[i:j] for i, j in zip(partitions, partitions[1:])]
-    return [Feeder(data, p, transcription,
-                   ncpu=ncpu, buffer_size=buffer_size,
-                   maximum_queue_size=maximum_queue_size)
-            for p in partitions]
-
-
 class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
@@ -144,6 +113,8 @@ class Feeder(MutableData):
         if isinstance(indices, str) and os.path.isfile(indices):
             self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
         elif isinstance(indices, (tuple, list)):
+            if len(indices[0]) == 2: # form: (name, (start, end))
+                indices = [(name, start, end) for name, (start, end) in indices]
             self._indices = np.asarray(indices)
         elif isinstance(indices, np.ndarray):
             self._indices = indices

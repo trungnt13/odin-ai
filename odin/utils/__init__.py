@@ -366,7 +366,8 @@ class ArgController(object):
             for i, j in args.iteritems():
                 print(max_len % i, ': ', j)
             print('**********************************\n')
-        return args
+        # convert it to struct
+        return struct(args)
 
 
 # ===========================================================================
@@ -784,12 +785,25 @@ def as_list(x, N=None, t=None):
 # ===========================================================================
 # Python
 # ===========================================================================
-class struct(object):
+class struct(dict):
 
     '''Flexible object can be assigned any attribtues'''
 
-    def __getitem__(self, x):
-        return getattr(self, str(x))
+    def __init__(self, *args, **kwargs):
+        super(struct, self).__init__(*args, **kwargs)
+        # copy all dict to attr
+        for i, j in self.iteritems():
+            if is_string(i) and not hasattr(self, i):
+                super(struct, self).__setattr__(i, j)
+
+    def __setattr__(self, name, val):
+        super(struct, self).__setattr__(name, val)
+        super(struct, self).__setitem__(name, val)
+
+    def __setitem__(self, x, y):
+        super(struct, self).__setitem__(x, y)
+        if is_string(x):
+            super(struct, self).__setattr__(x, y)
 
 
 class bidict(dict):
