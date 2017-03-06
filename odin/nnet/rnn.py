@@ -805,11 +805,12 @@ class CudnnRNN(NNOps):
     num_layers : int
         the number of layers for the RNN model.
     input_mode : {'linear', 'skip', 'norm'}
-        linear: input will be multiplied by a biased matrix
+        linear: input will be multiplied by a biased matrix.
         norm: same as linear, but batch norm will be added for input connection
         skip: No operation is performed on the input.  The size must
-        match the hidden size.
-        (CuDNN docs: cudnnRNNInputMode_t)
+        match the hidden size. (CuDNN docs: cudnnRNNInputMode_t)
+        norm: applying batch normalization on input-to-hidden connection, this
+        approach require the `input_dims` equal to `num_units`.
     direction_mode : {'unidirectional', 'bidirectional'}
         unidirectional: The network operates recurrently from the
                         first input to the last.

@@ -24,7 +24,7 @@ _pow = pow
 _abs = abs
 
 from .basic_ops import (is_variable, is_placeholder, gradients, get_shape,
-                        switch, get_value, variable, cast, constant,
+                        switch, set_value, get_value, variable, cast, constant,
                         square, sum, sqrt, maximum, abs, clip)
 
 __all__ = [
@@ -317,6 +317,18 @@ class Optimizer(object):
         if self.clipvalue is not None and self.clipvalue > 0:
             grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
         return grads
+
+    def get_lr_callback(self, decay=2.):
+        """ Return: a lambda function, everytime you call this function
+        the learning rate is decayed by given factor.
+        :math:`lr_{new} = lr_{old} / decay`
+        """
+        def lr_decay():
+            lr = get_value(self.lr)
+            lr = lr / decay
+            set_value(self.lr, lr)
+
+        return lr_decay
 
 
 class SGD(Optimizer):

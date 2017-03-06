@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import, print_function
 
 import os
+from itertools import chain
 from collections import defaultdict
 from six.moves import range, zip, cPickle
 
@@ -35,7 +36,8 @@ def _plot_each_epoch(name, results, task_type):
     from matplotlib import pyplot as plt
     nb_epoch = len(results)
     ncol = 3; nrow = int(np.ceil(nb_epoch / ncol))
-    max_ = np.max(results); min_ = np.min(results)
+    _ = list(chain(*results))
+    max_ = np.max(_); min_ = np.min(_)
     # ====== plot an overall view of all epoch ====== #
     plt.figure()
     line = plt.plot(range(1, len(results) + 1),
@@ -62,8 +64,8 @@ def standard_trainer(train_data, valid_data,
                      optimizer=None, confusion_matrix=False, gradient_norm=True,
                      batch_size=64, nb_epoch=3, valid_freq=1.,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
-                     stop_callback=None, save_callback=None,
-                     save_path=None, save_obj=None, report_path=None):
+                     save_path=None, save_obj=None, report_path=None,
+                     stop_callback=None, save_callback=None):
     """
     Parameters
     ----------
