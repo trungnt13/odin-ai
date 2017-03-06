@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from odin.config import RNG_GENERATOR, CONFIG
+from odin.config import get_rng, CONFIG
 from odin.utils import uuid
 from .basic_ops import variable
 
@@ -14,14 +14,14 @@ FLOATX = CONFIG.floatX
 # ===========================================================================
 def normal(shape, mean=0., std=1.):
     return np.cast[FLOATX](
-        RNG_GENERATOR.normal(mean, std, size=shape))
+        get_rng().normal(mean, std, size=shape))
 
 
 def uniform(shape, range=0.05):
     if isinstance(range, (int, float, long)):
         range = (-abs(range), abs(range))
     return np.cast[FLOATX](
-        RNG_GENERATOR.uniform(low=range[0], high=range[1], size=shape))
+        get_rng().uniform(low=range[0], high=range[1], size=shape))
 
 
 class constant(object):
@@ -45,7 +45,7 @@ def symmetric_uniform(shape, range=0.01, std=None, mean=0.0):
         except TypeError:
             a, b = -range, range  # range is a number
     return np.cast[FLOATX](
-        RNG_GENERATOR.uniform(low=a, high=b, size=shape))
+        get_rng().uniform(low=a, high=b, size=shape))
 
 
 def glorot_uniform(shape, gain=1.0, c01b=False):
@@ -66,7 +66,7 @@ def glorot_uniform(shape, gain=1.0, c01b=False):
     a = 0.0 - np.sqrt(3) * std
     b = 0.0 + np.sqrt(3) * std
     return np.cast[FLOATX](
-        RNG_GENERATOR.uniform(low=a, high=b, size=orig_shape))
+        get_rng().uniform(low=a, high=b, size=orig_shape))
 
 
 def glorot_normal(shape, gain=1.0, c01b=False):
@@ -85,7 +85,7 @@ def glorot_normal(shape, gain=1.0, c01b=False):
 
     std = gain * np.sqrt(2.0 / ((n1 + n2) * receptive_field_size))
     return np.cast[FLOATX](
-        RNG_GENERATOR.normal(0.0, std, size=orig_shape))
+        get_rng().normal(0.0, std, size=orig_shape))
 
 
 def he_normal(shape, gain=1.0, c01b=False):
@@ -105,7 +105,7 @@ def he_normal(shape, gain=1.0, c01b=False):
 
     std = gain * np.sqrt(1.0 / fan_in)
     return np.cast[FLOATX](
-        RNG_GENERATOR.normal(0.0, std, size=shape))
+        get_rng().normal(0.0, std, size=shape))
 
 
 def he_uniform(shape, gain=1.0, c01b=False):
@@ -127,7 +127,7 @@ def he_uniform(shape, gain=1.0, c01b=False):
     a = 0.0 - np.sqrt(3) * std
     b = 0.0 + np.sqrt(3) * std
     return np.cast[FLOATX](
-        RNG_GENERATOR.uniform(low=a, high=b, size=shape))
+        get_rng().uniform(low=a, high=b, size=shape))
 
 
 def orthogonal(shape, gain=1.0):
@@ -139,7 +139,7 @@ def orthogonal(shape, gain=1.0):
                            "given shape:%s" % str(shape))
 
     flat_shape = (shape[0], np.prod(shape[1:]))
-    a = RNG_GENERATOR.normal(0.0, 1.0, flat_shape)
+    a = get_rng().normal(0.0, 1.0, flat_shape)
     u, _, v = np.linalg.svd(a, full_matrices=False)
     # pick the one with the correct shape
     q = u if u.shape == flat_shape else v

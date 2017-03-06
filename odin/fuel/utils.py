@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from odin.config import RNG_GENERATOR
+from odin.config import get_rng
 
 
 class MmapDict(dict):
@@ -170,7 +170,7 @@ class MmapDict(dict):
     def keys(self, shuffle=False):
         k = self._dict.keys()
         if shuffle:
-            RNG_GENERATOR.shuffle(k)
+            get_rng().shuffle(k)
         return k
 
     def iterkeys(self, shuffle=False):
@@ -192,7 +192,7 @@ class MmapDict(dict):
         # ====== shuffling if required ====== #
         if shuffle:
             it = self._dict.items()
-            RNG_GENERATOR.shuffle(it)
+            get_rng().shuffle(it)
         else:
             it = self._dict.iteritems()
         # ====== iter over items ====== #

@@ -7,7 +7,7 @@ from collections import defaultdict, Iterator, OrderedDict
 import numpy as np
 
 from odin.utils import as_tuple
-from odin.config import RNG_GENERATOR
+from odin.config import get_rng
 
 
 def stratified_sampling(x):
@@ -23,7 +23,7 @@ def train_valid_test_split(x, train=0.6, seed=None):
         np.random.seed(seed)
         np.random.shuffle(x)
     else:
-        RNG_GENERATOR.shuffle(x)
+        get_rng().shuffle(x)
     # ====== split ====== #
     N = len(x)
     train = int(float(train) * N)

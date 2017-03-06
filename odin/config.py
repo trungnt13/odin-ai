@@ -77,7 +77,6 @@ def _query_gpu_info():
 # ===========================================================================
 # Auto config
 # ===========================================================================
-RNG_GENERATOR = numpy.random.RandomState()
 CONFIG = None
 
 
@@ -237,8 +236,8 @@ def auto_config(config=None):
                    'multigpu': multigpu, 'optimizer': optimizer,
                    'cnmem': cnmem, 'backend': backend,
                    'seed': seed})
-    global RNG_GENERATOR
-    RNG_GENERATOR = numpy.random.RandomState(seed=seed)
+    global _RNG_GENERATOR
+    _RNG_GENERATOR = numpy.random.RandomState(seed=seed)
     return CONFIG
 
 
@@ -248,6 +247,11 @@ def auto_config(config=None):
 def __validate_config():
     if CONFIG is None:
         raise Exception("auto_config has not been called.")
+
+
+def get_rng():
+    """return the numpy random state as a Randomness Generator"""
+    return _RNG_GENERATOR
 
 
 def get_device():

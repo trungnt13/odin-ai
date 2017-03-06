@@ -12,7 +12,7 @@ import numpy as np
 
 import tensorflow as tf
 
-from odin.config import CONFIG, RNG_GENERATOR
+from odin.config import CONFIG, get_rng
 from odin.utils import as_tuple, as_shape_tuple, dict_union, uuid
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
@@ -24,7 +24,7 @@ from .helpers import (get_session, as_tensor_variable, ComputationGraph,
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 NPROCESSORS = CONFIG['device_info']['n']
-_RNG = np.random.RandomState(seed=RNG_GENERATOR.randint(10e8))
+_RNG = np.random.RandomState(seed=get_rng().randint(10e8))
 
 
 def _normalize_axis(axis, ndim):

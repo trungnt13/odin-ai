@@ -154,7 +154,7 @@ def variable(value, dtype=FLOATX, name=None, target=None):
             raise Exception('Found pre-defined variable with shape="%s" but new'
                             ' value has shape="%s"' % (get_shape(variable), value.shape))
         else:
-            print("[WARNING] Load new to old variable:", full_name)
+            print("[WARNING] Load new value to old variable:", full_name)
         set_value(variable, value)
         return variable
     #### create totally new variable

@@ -254,6 +254,39 @@ class Normalization(FeederRecipe):
         return (name, X) + args
 
 
+class PCAtransform(FeederRecipe):
+    """ FeatureScaling
+    Scaling data into range [0, 1]
+    """
+
+    def __init__(self, pca, nb_components=0.9, whiten=False):
+        super(PCAtransform, self).__init__()
+        self._pca = pca
+        self.whiten = whiten
+        # specified percentage of explained variance
+        if nb_components < 1.:
+            _ = np.cumsum(pca.explained_variance_ratio_)
+            nb_components = (_ > nb_components).nonzero()[0][0] + 1
+        # specified the number of components
+        else:
+            nb_components = int(nb_components)
+        self.nb_components = nb_components
+
+    def process(self, name, X, *args):
+        # update the whiten
+        pca_whiten = self._pca.whiten
+        self._pca.whiten = self.whiten
+        X = [self._pca.transform(x, n_components=self.nb_components)
+             for x in X]
+        # reset the white value
+        self._pca.whiten = pca_whiten
+        return (name, X) + args
+
+    def shape_transform(self, shapes, indices):
+        shapes = [s[:-1] + (self.nb_components,) for s in shapes]
+        return shapes, indices
+
+
 class FeatureScaling(FeederRecipe):
     """ FeatureScaling
     Scaling data into range [0, 1]

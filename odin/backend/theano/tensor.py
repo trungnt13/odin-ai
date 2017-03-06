@@ -24,7 +24,7 @@ from theano.tensor.nnet.nnet import softsign as T_softsign
 if theano.gpuarray.pygpu is not None and theano.gpuarray.pygpu_activated:
     from theano.gpuarray import dnn
 
-from odin.config import CONFIG, RNG_GENERATOR
+from odin.config import CONFIG, get_rng
 from odin.utils import as_tuple, as_shape_tuple, dict_union, package_installed, uuid
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)

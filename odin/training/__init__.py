@@ -7,7 +7,7 @@ from six.moves import range, zip, cPickle
 import numpy as np
 
 from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
-from odin.config import RNG_GENERATOR
+from odin.config import get_rng
 from odin import fuel
 from odin.fuel import Dataset, as_data
 from odin.utils import struct, as_tuple, is_number, Progbar
@@ -57,9 +57,10 @@ def _plot_each_epoch(name, results, task_type):
 
 def standard_trainer(train_data, valid_data,
                      X, y_train, y_score, y_target, parameters,
-                     test_data=None, cost_train=None, cost_score=None,
+                     test_data=None,
+                     cost_train=None, cost_score=None, cost_regu=0,
                      optimizer=None, confusion_matrix=False, gradient_norm=True,
-                     batch_size=64, nb_epoch=3, valid_freq=0.6,
+                     batch_size=64, nb_epoch=3, valid_freq=1.,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
                      stop_callback=None, save_callback=None,
                      save_path=None, save_obj=None, report_path=None):
@@ -68,6 +69,10 @@ def standard_trainer(train_data, valid_data,
     ----------
     cost_train: list of callable
         each function will be apply to a pair y_train and y_target
+    cost_score: list of callable
+        ...
+    cost_regu: list of TensorVariable
+        list of all additional cost (for regularization) to add to `cost_train`.
     confusion_matrix: int, list or tuple
         If int is given, it is the number of different classes.
         If a list or tuple is given, it contains all the labels.
@@ -87,6 +92,8 @@ def standard_trainer(train_data, valid_data,
     # ====== prepare variables and cost ====== #
     # check optimizer
     if optimizer is None:
+        print("[WARNING] No optimizer is given, use default SGD with "
+              "Nesterov momentum (lr=0.00001, momentum=0.9).")
         optimizer = K.optimizers.SGD(lr=0.0001, momentum=0.9, nesterov=True)
     elif not isinstance(optimizer, K.optimizers.Optimizer) and \
     not hasattr(optimizer, "get_updates"):
@@ -102,6 +109,7 @@ def standard_trainer(train_data, valid_data,
     cost_train_name = [i.__name__ for i in cost_train]
     cost_score = as_tuple(cost_score)
     cost_score_name = [i.__name__ for i in cost_score]
+    cost_regu = as_tuple(cost_regu)
     # check input X, y, parameters
     X = as_tuple(X)
     y_train = as_tuple(y_train)
@@ -140,13 +148,14 @@ def standard_trainer(train_data, valid_data,
         for y_, y in zip(y_score, y_target):
             cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y, labels=labels))
     # get the update
-    updates = optimizer.get_updates(cost_train[0], parameters)
+    training_cost = cost_train[0] + sum(c for c in cost_regu)
+    updates = optimizer.get_updates(training_cost, parameters)
     # ====== create function ====== #
     grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
         [optimizer.norm]
     if len(grad_norm) > 0:
         cost_train_name.append('gradient_norm')
-    cost_train = cost_train + grad_norm
+    cost_train = [training_cost] + cost_train[1:] + grad_norm
     print('Building training functions ...')
     f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
@@ -342,7 +351,7 @@ class Task(object):
             else:
                 self._rng = struct()
                 self._rng.randint = lambda x: None
-                self._rng.rand = RNG_GENERATOR.rand
+                self._rng.rand = get_rng().rand
         if shuffle_level is not None:
             self._shuffle_level = min(max(int(shuffle_level), 0), 2)
         return self

@@ -8,7 +8,7 @@ from numbers import Number
 
 import numpy as np
 
-from odin.config import CONFIG, RNG_GENERATOR
+from odin.config import CONFIG, get_rng
 from odin.utils import as_tuple
 from odin.basic import add_updates, get_shape, add_shape, add_role, ACTIVATION_PARAMETER
 
