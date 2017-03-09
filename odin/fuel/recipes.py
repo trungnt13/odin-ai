@@ -513,12 +513,11 @@ class VADindex(FeederRecipe):
         if `frame_length`=1, simply concatenate all VAD frames.
     padding: int, None
         if padding is None, use previous frames for padding.
-    transcription_transform: callable
-        a function transform a sequence of transcription value into
-        desire value for 1 sample.
+    filter_vad: callable
+        a function take arguments: start, end
     """
 
-    def __init__(self, vad, frame_length, padding=None):
+    def __init__(self, vad, frame_length, padding=None, filter_vad=None):
         super(VADindex, self).__init__()
         if isinstance(vad, (list, tuple)):
             if len(vad) == 2:
@@ -534,6 +533,17 @@ class VADindex(FeederRecipe):
         self.vad = vad
         self.padding = padding
         self.frame_length = frame_length
+        # ====== check filter vad ====== #
+        if filter_vad is None:
+            filter_vad = lambda start, end: True
+        elif callable(filter_vad):
+            if len(inspect.getargspec(filter_vad).args) != 2:
+                raise ValueError("filter_vad must be callable that accepts 2 "
+                                 "arguments: start, end")
+        else:
+            raise ValueError("filter_vad must be a function accept 2 arguments: "
+                             "(start, end) of the VAD segment.")
+        self.filter_vad = functionable(filter_vad)
 
     def _vad_indexing_1(self, X, indices):
         return np.concatenate([X[start:end] for start, end in indices], axis=0)
@@ -599,6 +609,8 @@ class VADindex(FeederRecipe):
             return None
         # ====== found the VAD, process it ====== #
         indices = self.vad[name]
+        indices = [(start, end) for start, end in indices
+                   if self.filter_vad(start, end)]
         if self.frame_length == 1:
             X = [self._vad_indexing_1(x, indices) for x in X]
             args = [self._vad_indexing_1(a, indices) for a in args]
@@ -630,7 +642,8 @@ class VADindex(FeederRecipe):
             # found the name, and update its indices
             n_file = 0
             for start, end in segments:
-                n_file += n_func(start, end)
+                if self.filter_vad(start, end):
+                    n_file += n_func(start, end)
             indices_new[name] = n_file
             n += n_file
         shapes = tuple([shape_func(n, s) for s in shapes])

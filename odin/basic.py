@@ -234,7 +234,11 @@ def get_shape(x, not_none=False, native=False):
             return x.shape
         elif get_backend() == 'tensorflow':
             from tensorflow import shape
-            return shape(x)
+            native_shape = shape(x)
+            int_shape = x.shape.as_list()
+            # return a mix of native tensor variable shape, and int shape
+            return tuple([native_shape[i] if j is None or j < 0 else j
+                          for i, j in enumerate(int_shape)])
         else:
             raise Exception("No support for native shape of backend: " + get_backend())
     # ====== get default shape ====== #
