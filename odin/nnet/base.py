@@ -15,8 +15,8 @@ from odin import backend as K
 from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
-from odin.utils import as_tuple, uuid
-from odin.utils.decorators import autoinit, cache
+from odin.utils import as_tuple, uuid, cache_memory
+from odin.utils.decorators import autoinit
 
 
 # ===========================================================================
@@ -551,7 +551,7 @@ class VariationalDense(NNOps):
         self.activation = K.linear if activation is None else activation
 
     # ==================== helper ==================== #
-    @cache # same x will return the same mean and logsigma
+    @cache_memory # same x will return the same mean and logsigma
     def get_mean_logsigma(self, x):
         b_mean = 0. if not hasattr(self, 'b_mean') else self.b_mean
         b_logsigma = 0. if not hasattr(self, 'b_logsigma') else self.b_logsigma

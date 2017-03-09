@@ -13,8 +13,8 @@ from six.moves import range, zip, zip_longest
 
 import numpy as np
 
-from odin.utils.decorators import autoattr, cache
-from odin.utils import queue, struct, as_tuple
+from odin.utils.decorators import autoattr
+from odin.utils import queue, struct, as_tuple, cache_memory
 
 __all__ = [
     'as_data',
@@ -145,7 +145,7 @@ class Data(object):
     ''' BigData instance store large dataset that need to be iterate over to
     perform any operators.
     '''
-    @cache('_status')
+    @cache_memory('_status')
     def _iterating_operator(self, ops, axis, merge_func=sum, init_val=0.):
         '''Execute a list of ops on X given the axis or axes'''
         # ====== validate arguments ====== #
@@ -868,39 +868,39 @@ class MmapData(Data):
         (self.name, self.shape, self.dtype)
 
     # ==================== High-level operator ==================== #
-    @cache('_status')
+    @cache_memory('_status')
     def sum(self, axis=0):
         return self._data.sum(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def cumsum(self, axis=None):
         return self._data.cumsum(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def sum2(self, axis=0):
         return self._data.__pow__(2).sum(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def pow(self, y):
         return self._data.__pow__(y)
 
-    @cache('_status')
+    @cache_memory('_status')
     def min(self, axis=None):
         return self._data.min(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def argmin(self, axis=None):
         return self._data.argmin(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def max(self, axis=None):
         return self._data.max(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def argmax(self, axis=None):
         return self._data.argmax(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def mean(self, axis=0):
         sum1 = self.sum(axis)
         if not isinstance(axis, (tuple, list)):
@@ -908,7 +908,7 @@ class MmapData(Data):
         n = np.prod([self._data.shape[i] for i in axis])
         return sum1 / n
 
-    @cache('_status')
+    @cache_memory('_status')
     def var(self, axis=0):
         sum1 = self.sum(axis)
         sum2 = self.sum2(axis)
@@ -917,7 +917,7 @@ class MmapData(Data):
         n = np.prod([self._data.shape[i] for i in axis])
         return (sum2 - np.power(sum1, 2) / n) / n
 
-    @cache('_status')
+    @cache_memory('_status')
     def std(self, axis=0):
         return np.sqrt(self.var(axis))
 
@@ -1151,47 +1151,47 @@ class Hdf5Data(Data):
         return self._hdf
 
     # ==================== High-level operator ==================== #
-    @cache('_status')
+    @cache_memory('_status')
     def sum(self, axis=0):
         ops = lambda x, axis: np.sum(x, axis=axis)
         return self._iterating_operator(ops, axis)[0]
 
-    @cache('_status')
+    @cache_memory('_status')
     def cumsum(self, axis=None):
         return self._data[:].cumsum(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def sum2(self, axis=0):
         ops = lambda x, axis: np.sum(np.power(x, 2), axis=axis)
         return self._iterating_operator(ops, axis)[0]
 
-    @cache('_status')
+    @cache_memory('_status')
     def pow(self, y):
         return self._data[:].__pow__(y)
 
-    @cache('_status')
+    @cache_memory('_status')
     def min(self, axis=None):
         ops = lambda x, axis: np.min(x, axis=axis)
         return self._iterating_operator(ops, axis,
             merge_func=lambda x: np.where(x[0] < x[1], x[0], x[1]),
             init_val=float('inf'))[0]
 
-    @cache('_status')
+    @cache_memory('_status')
     def argmin(self, axis=None):
         return self._data[:].argmin(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def max(self, axis=None):
         ops = lambda x, axis: np.max(x, axis=axis)
         return self._iterating_operator(ops, axis,
             merge_func=lambda x: np.where(x[0] > x[1], x[0], x[1]),
             init_val=float('-inf'))[0]
 
-    @cache('_status')
+    @cache_memory('_status')
     def argmax(self, axis=None):
         return self._data[:].argmax(axis)
 
-    @cache('_status')
+    @cache_memory('_status')
     def mean(self, axis=0):
         sum1 = self.sum(axis)
 
@@ -1199,7 +1199,7 @@ class Hdf5Data(Data):
         n = np.prod([self._data.shape[i] for i in axis])
         return sum1 / n
 
-    @cache('_status')
+    @cache_memory('_status')
     def var(self, axis=0):
         sum1 = self.sum(axis)
         sum2 = self.sum2(axis)
@@ -1208,7 +1208,7 @@ class Hdf5Data(Data):
         n = np.prod([self._data.shape[i] for i in axis])
         return (sum2 - np.power(sum1, 2) / n) / n
 
-    @cache('_status')
+    @cache_memory('_status')
     def std(self, axis=0):
         return np.sqrt(self.var(axis))
 

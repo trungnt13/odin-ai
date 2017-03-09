@@ -923,6 +923,12 @@ class CreateFile(FeederRecipe):
     ----------
     return_name: bool
         whether return the name specifed in the indices
+
+    Note
+    ----
+    set_batch(batch_size=1) to return each file separately, otherwise
+    all files will be mixed into mini batches.
+
     """
 
     def __init__(self, return_name=False):

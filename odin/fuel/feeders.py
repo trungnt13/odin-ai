@@ -40,7 +40,7 @@ from odin.utils.mpi import MPI
 
 from .data import Data, MutableData, as_data
 from .dataset import Dataset
-from .recipes import FeederList, CreateBatch
+from .recipes import FeederList, CreateBatch, CreateFile
 
 
 # ===========================================================================
@@ -157,6 +157,10 @@ class Feeder(MutableData):
         # filter out None value
         recipes = [i for i in as_tuple(recipes) if i is not None]
         if len(recipes) > 0:
+            if not any(isinstance(r, (CreateFile, CreateBatch)) for r in recipes):
+                raise ValueError("The recipe CreateFile or CreateBatch must be in "
+                                 "the recipes list, so the data can be grouped "
+                                 "and returned from the Feeder.")
             self.__recipes = FeederList(*recipes)
         return self
 

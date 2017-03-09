@@ -18,8 +18,7 @@ import numpy as np
 import scipy.fftpack as fft
 import scipy.signal
 
-from odin.utils import pad_center, framing, is_number
-from odin.utils.decorators import cache
+from odin.utils import pad_center, framing, is_number, cache_memory
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
@@ -192,7 +191,7 @@ def save(f, s, fs, subtype=None):
 # ===========================================================================
 # Spectrogram manipulation
 # ===========================================================================
-@cache
+@cache_memory
 def __get_window(window, Nx, fftbins=True):
     ''' Cached version of scipy.signal.get_window '''
     if six.callable(window):
@@ -209,7 +208,7 @@ def __get_window(window, Nx, fftbins=True):
         raise ValueError('Invalid window specification: {}'.format(window))
 
 
-@cache
+@cache_memory
 def __num_two_factors(x):
     """return number of times x is divideable for 2"""
     if x <= 0:
@@ -221,7 +220,7 @@ def __num_two_factors(x):
     return num_twos
 
 
-@cache
+@cache_memory
 def __cqt_response_override(win_length):
     '''Compute the filter response with a target STFT hop.'''
     # Compute the STFT matrix and filter response energy
@@ -230,7 +229,7 @@ def __cqt_response_override(win_length):
             win_length=win_length, hop_length=hop_length, window=np.ones))
 
 
-@cache
+@cache_memory
 def __max_fft_bins(sr, n_fft, fmax):
     return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
                                         endpoint=True)) if j >= fmax][0]

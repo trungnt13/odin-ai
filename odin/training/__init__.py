@@ -147,6 +147,8 @@ def standard_trainer(train_data, valid_data,
             labels = confusion_matrix
         elif not is_number(confusion_matrix[0]): # given list of label
             labels = list(range(len(confusion_matrix)))
+        if len(labels) == 1:
+            raise ValueError("you have to specify the number of labels in 'confusion_matrix'")
         for y_, y in zip(y_score, y_target):
             cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y, labels=labels))
     # get the update
@@ -270,6 +272,8 @@ def standard_trainer(train_data, valid_data,
                 plt.tight_layout()
         # save all the plot
         visual.plot_save(path=report_path, dpi=180, clear_all=True)
+        if save_path is not None:
+            print("Model save at:", save_path)
     # ====== Create trainer ====== #
     task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
     if save_path is not None and save_obj is not None:

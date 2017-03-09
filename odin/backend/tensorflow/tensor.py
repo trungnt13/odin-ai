@@ -95,8 +95,7 @@ backend_ops_diag = tf.diag_part
 
 # backend_ops_categorical_crossentropy = tf.nn.softmax_cross_entropy_with_logits
 backend_ops_categorical_crossentropy = \
-    lambda x, y: - tf.reduce_sum(y * tf.log(x),
-                                 reduction_indices=x.get_shape().ndims - 1)
+    lambda x, y: - tf.reduce_sum(y * tf.log(x), axis=x.get_shape().ndims - 1)
 backend_ops_binary_crossentropy = \
     lambda x, y: tf.nn.sigmoid_cross_entropy_with_logits(tf.log(x / (1. - x)), y)
 
@@ -268,11 +267,9 @@ def gather(reference, indices):
 def var(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     x = tf.cast(x, FLOATX)
-    m = tf.reduce_mean(x, reduction_indices=axis, keep_dims=True)
+    m = tf.reduce_mean(x, axis=axis, keep_dims=True)
     devs_squared = tf.square(x - m)
-    return tf.reduce_mean(devs_squared,
-                          reduction_indices=axis,
-                          keep_dims=keepdims)
+    return tf.reduce_mean(devs_squared, axis=axis, keep_dims=keepdims)
 
 
 def mean(x, axis=None, keepdims=False):
@@ -280,7 +277,7 @@ def mean(x, axis=None, keepdims=False):
     dtype = x.dtype.base_dtype
     if 'int' in str(dtype) or 'bool' in str(dtype):
         x = tf.cast(x, FLOATX)
-    return tf.reduce_mean(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.reduce_mean(x, axis=axis, keep_dims=keepdims)
 
 
 def std(x, axis=None, keepdims=False):
@@ -289,26 +286,26 @@ def std(x, axis=None, keepdims=False):
 
 def max(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_max(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.reduce_max(x, axis=axis, keep_dims=keepdims)
 
 
 def min(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_min(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.reduce_min(x, axis=axis, keep_dims=keepdims)
 
 
 def sum(x, axis=None, keepdims=False):
     """Sum of the values in a tensor, alongside the specified axis.
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_sum(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.reduce_sum(x, axis=axis, keep_dims=keepdims)
 
 
 def prod(x, axis=None, keepdims=False):
     """Multiply the values in a tensor, alongside the specified axis.
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_prod(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.reduce_prod(x, axis=axis, keep_dims=keepdims)
 
 
 def any(x, axis=None, keepdims=False):
@@ -317,7 +314,7 @@ def any(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     original_dtype = x.dtype
     x = tf.cast(x, tf.bool)
-    x = tf.reduce_any(x, reduction_indices=axis, keep_dims=keepdims)
+    x = tf.reduce_any(x, axis=axis, keep_dims=keepdims)
     return tf.cast(x, original_dtype)
 
 
