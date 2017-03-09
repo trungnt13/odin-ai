@@ -9,9 +9,14 @@ from decorator import FunctionMaker
 
 from collections import defaultdict, OrderedDict
 
-from odin.config import get_cache_dir
-
-__memory = Memory(cachedir=get_cache_dir(),
+# to set the cache dir, set the environment CACHE_DIR
+__cache_dir = os.environ.get("CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
+# check cache_dir
+if not os.path.exists(__cache_dir):
+    os.mkdir(__cache_dir)
+elif os.path.isfile(__cache_dir):
+    raise ValueError("Invalid cache directory at path:" + __cache_dir)
+__memory = Memory(cachedir=__cache_dir,
                  mmap_mode="c", compress=False, verbose=0)
 
 

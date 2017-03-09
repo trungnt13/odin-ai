@@ -105,7 +105,7 @@ def auto_config(config=None):
     # ====== specific pattern ====== #
     valid_cnmem_name = re.compile('(cnmem)[=]?[10]?\.\d*')
     valid_seed = re.compile('seed\D?(\d*)')
-    valid_cache_dir = re.compile("cache([=\s\.])([~\/\.a-zA-Z][~\/\.\w]*)")
+    # valid_cache_dir = re.compile("cache([=\s\.])([~\/\.a-zA-Z][~\/\.\w]*)")
 
     floatX = 'float32'
     backend = 'tensorflow'
@@ -115,24 +115,23 @@ def auto_config(config=None):
     cnmem = 0.
     seed = 1208251813
     multigpu = False
-    cache_dir = os.path.join(os.path.expanduser('~'), '.odin_cache')
     if config is None: # load config from flags
         ODIN_FLAGS = os.getenv("ODIN", "")
         s = ODIN_FLAGS.split(',')
         # ====== processing each tag ====== #
         for i in s:
             i = i.lower().strip()
-            # ====== cache-dir ====== #
-            if 'cache' in i:
-                match = valid_cache_dir.match(i)
-                if match is None:
-                    raise ValueError("Specifying cache_dir must follows pattern: "
-                                     "cache[=. ][path/to/cache/dir]")
-                cache_dir = str(match.group(2))
-                if "~" == cache_dir[0]:
-                    cache_dir = os.path.expanduser("~") + cache_dir[1:]
+            # # ====== cache-dir ====== #
+            # if 'cache' in i:
+            #     match = valid_cache_dir.match(i)
+            #     if match is None:
+            #         raise ValueError("Specifying cache_dir must follows pattern: "
+            #                          "cache[=. ][path/to/cache/dir]")
+            #     cache_dir = str(match.group(2))
+            #     if "~" == cache_dir[0]:
+            #         cache_dir = os.path.expanduser("~") + cache_dir[1:]
             # ====== Data type ====== #
-            elif 'float' in i or 'int' in i:
+            if 'float' in i or 'int' in i:
                 floatX = i
             # ====== Backend ====== #
             elif 'theano' in i:
@@ -173,7 +172,6 @@ def auto_config(config=None):
         device = config['device']
         cnmem = config['cnmem']
         seed = config['seed']
-        cache_dir = config['cache_dir']
     # adject epsilon
     if floatX == 'float16':
         epsilon = 10e-5
@@ -181,11 +179,6 @@ def auto_config(config=None):
         epsilon = 10e-8
     elif floatX == 'float64':
         epsilon = 10e-12
-    # check cache_dir
-    if not os.path.exists(cache_dir):
-        os.mkdir(cache_dir)
-    elif os.path.isfile(cache_dir):
-        raise ValueError("Invalid cache directory at path:" + cache_dir)
     # ====== Log the configuration ====== #
     sys.stderr.write('[Auto-Config] Device : %s\n' % device)
     sys.stderr.write('[Auto-Config] Multi-GPU : %s\n' % multigpu)
@@ -195,7 +188,6 @@ def auto_config(config=None):
     sys.stderr.write('[Auto-Config] Epsilon: %s\n' % epsilon)
     sys.stderr.write('[Auto-Config] CNMEM  : %s\n' % cnmem)
     sys.stderr.write('[Auto-Config] SEED  : %s\n' % seed)
-    sys.stderr.write('[Auto-Config] Cache-dir: %s\n' % cache_dir)
     if device == 'gpu':
         dev = _query_gpu_info()
         if not multigpu:
@@ -253,8 +245,7 @@ def auto_config(config=None):
                    'device_info': dev,
                    'floatX': floatX, 'epsilon': epsilon,
                    'multigpu': multigpu, 'optimizer': optimizer,
-                   'cnmem': cnmem, 'backend': backend,
-                   'seed': seed, 'cache_dir': cache_dir})
+                   'cnmem': cnmem, 'backend': backend, 'seed': seed})
     global _RNG_GENERATOR
     _RNG_GENERATOR = numpy.random.RandomState(seed=seed)
     return CONFIG
@@ -332,8 +323,3 @@ def get_backend():
 def get_seed():
     __validate_config()
     return CONFIG['seed']
-
-
-def get_cache_dir():
-    __validate_config()
-    return CONFIG['cache_dir']
