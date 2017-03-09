@@ -525,13 +525,7 @@ class GRU(BaseRNN):
 # ===========================================================================
 class LSTM(BaseRNN):
 
-    """
-            raise Exception('Skip input mode, input trailing_dimension=%d '
-                            '(the final dim) must equal to the number of hidden '
-                            'units (tied input connection), or 4-th the number '
-                            'of hidden units (1 for W_input, 1 for W_forget, '
-                            '1 for W_hidden, and 1 for W_output), which is: %d' %
-                            (input_shape[-1], self.num_units * 4))
+    """ Long short-term memory network
 
     Parameters
     ----------

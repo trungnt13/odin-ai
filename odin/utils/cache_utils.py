@@ -16,8 +16,9 @@ if not os.path.exists(__cache_dir):
     os.mkdir(__cache_dir)
 elif os.path.isfile(__cache_dir):
     raise ValueError("Invalid cache directory at path:" + __cache_dir)
+# Don't use memmap anymore, carefull when cache big numpy ndarray results
 __memory = Memory(cachedir=__cache_dir,
-                 mmap_mode="c", compress=False, verbose=0)
+                 mmap_mode=None, compress=False, verbose=0)
 
 
 def cache_disk(function):
