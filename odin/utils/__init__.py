@@ -64,6 +64,11 @@ def is_bool(b):
     return isinstance(b, type(True))
 
 
+def is_lambda(v):
+  LAMBDA = lambda:0
+  return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
+
+
 def iter_chunk(it, n):
     """ Chunking an iterator into small chunk of size `n`
     Note: this can be used to slice data into mini batches

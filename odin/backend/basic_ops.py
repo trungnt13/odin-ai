@@ -79,10 +79,13 @@ def ndim(x):
         return x.get_shape().ndims
 
 
-def get_dtype(x):
+def get_dtype(x, numpy=False, string=False):
     dtype = x.dtype
-    if hasattr(dtype, 'base_dtype'):
-        dtype = dtype.base_dtype
+    if numpy:
+        if hasattr(dtype, 'as_numpy_dtype'):
+            dtype = dtype.as_numpy_dtype
+    if string:
+        dtype = dtype.name if hasattr(dtype, 'name') else str(dtype)
     return dtype
 
 
