@@ -228,7 +228,6 @@ class NNConfig(object):
 _primitive_types = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
                     K.init.constant, NNConfig)
-_cached_placeholder = {}
 
 
 @add_metaclass(ABCMeta)
@@ -276,6 +275,7 @@ class NNOps(object):
 
         self._configuration = None
         self._transpose_ops = None
+        self._input_desc = []
 
     # ==================== properties ==================== #
     @property
@@ -307,18 +307,11 @@ class NNOps(object):
         return self._configuration
 
     @property
-    def inputs(self):
+    def placeholder(self):
         """ Create list of placeholder based on footprint(shape) from previous
         inputs of this Operator
         """
-        if self._configuration is None:
-            raise Exception("This operators haven't initialized.")
-        if id(self) in _cached_placeholder:
-            return _cached_placeholder[id(self)]
-        inputs = [K.placeholder(shape=j, name='%s_input%d' % (self.name, i))
-                  for i, j in enumerate(self._footprint)]
-        _cached_placeholder[id(self)] = inputs
-        return inputs
+        return [i.placeholder for i in self._input_desc]
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later

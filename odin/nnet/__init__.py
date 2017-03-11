@@ -18,25 +18,13 @@ from .rnn import *
 from . import shortcuts
 
 from odin import backend as K
-from odin.utils import is_lambda, is_number, get_module_from_path
+from odin.utils import is_lambda, is_number, get_module_from_path, is_string
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
-def __decorator_apply(dec, func):
-    """Decorate a function by preserving the signature even if dec
-    is not a signature-preserving decorator.
-    This recipe is derived from
-    http://micheles.googlecode.com/hg/decorator/documentation.html#id14
-    """
-    from decorator import FunctionMaker
-    return FunctionMaker.create(
-        func, 'return decorated(%(signature)s)',
-        dict(decorated=dec(func)), __wrapped__=func)
-
-
-def __check_shape(s):
+def _check_shape(s):
     if is_number(s) or s is None:
         s = (s,)
     if isinstance(s, np.ndarray):
@@ -44,8 +32,6 @@ def __check_shape(s):
     if isinstance(s, (tuple, list)):
         if all(is_number(i) or i is None for i in s):
             return True
-    elif K.is_tensor(s):
-        return True
     return False
 
 
@@ -60,33 +46,88 @@ def _shape_compare(shape1, shape2):
 
 
 # ===========================================================================
-# Model descriptor
+# Input descriptor
 # ===========================================================================
 class InputDescriptor(object):
+    """ InputDescriptor
+    Store all the necessary information to create placeholder as input
+    to any ComputationalGraph.
+
+    Note
+    ----
+    This object is pickle-able and comparable
+    """
 
     def __init__(self, shape, dtype='float32', name=None):
         super(InputDescriptor, self).__init__()
-        self.shape = tuple(shape)
-        self.dtype = dtype
-        self.name = name
+        # ====== check shape ====== #
+        _check_shape(shape)
+        if isinstance(shape, np.ndarray):
+            shape = shape.tolist()
+        self._shape = tuple(shape)
+        # ====== check dtype ====== #
+        if isinstance(dtype, np.dtype):
+            dtype = str(dtype)
+        elif is_string(dtype):
+            pass
+        else:
+            dtype = K.get_dtype(i, string=True)
+        self._dtype = str(dtype)
+        # ====== check name ====== #
+        self._name = name if name is None else str(name)
+        # ====== placeholder ====== #
+        self.__placeholder = None
 
+    # ==================== pickle ==================== #
+    def __getstate__(self):
+        return [self._shape, self._dtype, self._name]
+
+    def __setstate__(self, states):
+        self._shape, self._dtype, self._name = states
+        self.__placeholder = None
+
+    # ==================== properties ==================== #
+    @property
+    def placeholder(self):
+        if self.__placeholder is None:
+            self.__placeholder = K.placeholder(
+                shape=self._shape, dtype=self._dtype, name=self._name)
+        return self.__placeholder
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    # ==================== override ==================== #
     def __str__(self):
-        return "<name:%s shape:%s dtype:%s>" % \
-        (str(self.name), str(self.shape), str(self.dtype))
+        return "<[InputDescriptor] name:%s shape:%s dtype:%s init:%s>" % \
+        (str(self._name), str(self._shape), str(self._dtype),
+         False if self.__placeholder is None else True)
 
     def __repr__(self):
         return self.__str__()
 
     def __cmp__(self, other):
         if isinstance(other, InputDescriptor):
-            if _shape_compare(self.shape, other.shape) and\
-            str(self.dtype) == str(other.dtype):
+            if _shape_compare(self._shape, other._shape) \
+            and self._dtype == other._dtype:
                 return 0
         elif isinstance(other, (tuple, list)):
             return 0 if _shape_compare(self.shape, other) else 1
         return 1
 
 
+# ===========================================================================
+# Model descriptor
+# ===========================================================================
 class ModelDescriptor(object):
     """ ModelDescriptor
     This class allow you to define extremely complex computational graph
@@ -131,7 +172,6 @@ class ModelDescriptor(object):
         self.input_desc = None
         self._save_states = None
         # ====== cached tensor variables ====== #
-        self._inputs = []
         self._last_outputs = {'train': None, 'score': None}
         self._f_train = None
         self._f_pred = None
@@ -144,7 +184,6 @@ class ModelDescriptor(object):
     def __setstate__(self, states):
         self._func, self.input_desc, self._save_states = states
         self._func = self._func.function
-        self._inputs = []
         self._last_outputs = {'train': None, 'score': None}
         self._f_train = None
         self._f_pred = None
@@ -177,16 +216,9 @@ class ModelDescriptor(object):
         return params
 
     @property
-    def inputs(self):
+    def placeholder(self):
         self._check_init_shape()
-        # ====== automatic create inputs if necessary ====== #
-        if len(self._inputs) == 0:
-            name = self.__name__
-            self._inputs = [K.placeholder(shape=desc.shape, dtype=desc.dtype,
-                                          name='%s%s' % (name, str(i) if desc.name is None
-                                                         else str(desc.name)))
-                            for i, desc in enumerate(self.input_desc)]
-        return self._inputs
+        return [i.placeholder for i in self.input_desc]
 
     @property
     def y_train(self):
@@ -245,9 +277,8 @@ class ModelDescriptor(object):
             for i in inputs:
                 if K.is_tensor(i): # TensorVariable
                     shape = K.get_shape(i)
-                    dtype = K.get_dtype(i, string=True)
                     input_desc.append(
-                        InputDescriptor(shape=shape, dtype=dtype, name=i.name))
+                        InputDescriptor(shape=shape, dtype=i.dtype, name=i.name))
                 elif isinstance(i, (tuple, list)): # Shape tuple
                     shape = tuple(i)
                     input_desc.append(
@@ -272,10 +303,15 @@ class ModelDescriptor(object):
             elif any(i is None for i in input_desc):
                 raise ValueError("For the first time setting the input description, "
                                  "None value is not accepted.")
+            # finally assign the input description
             else:
-                self.input_desc = input_desc
+                self.input_desc = []
+                for i, j in enumerate(input_desc):
+                    if j.name is None:
+                        j._name = '%s%.2d' % (self.name, i)
+                    self.input_desc.append(j)
         # ====== get inputs variable====== #
-        model_inputs = list(self.inputs)
+        model_inputs = list(self.placeholder)
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):
