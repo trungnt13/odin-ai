@@ -122,7 +122,6 @@ class ModelDescriptor(object):
         self._save_states = None
         # ====== cached tensor variables ====== #
         self._inputs = []
-        self._last_inputs = {'train': [], 'score': []}
         self._last_outputs = {'train': None, 'score': None}
         self._f_pred = None
 
@@ -135,7 +134,6 @@ class ModelDescriptor(object):
         self._func, self.input_desc, self._save_states = states
         self._func = self._func.function
         self._inputs = []
-        self._last_inputs = {'train': [], 'score': []}
         self._last_outputs = {'train': None, 'score': None}
         self._f_pred = None
 
@@ -185,9 +183,7 @@ class ModelDescriptor(object):
                                  "InputDescriptor first.")
             outputs = self.y_score
             # get number of actual inputs need for prediction
-            nb_inputs = len(K.ComputationGraph(outputs).inputs)
-            self._f_pred = K.function(self._last_inputs['score'][:nb_inputs],
-                                      outputs)
+            self._f_pred = K.function(K.ComputationGraph(outputs).inputs, outputs)
         return self._f_pred
 
     @property
@@ -264,10 +260,8 @@ class ModelDescriptor(object):
         outputs = outputs[0]
         if K.is_training():
             self._last_outputs['train'] = outputs
-            self._last_inputs['train'] = model_inputs[:-1]
         else:
             self._last_outputs['score'] = outputs
-            self._last_inputs['score'] = model_inputs[:-1]
             self._f_pred = None # reset prediciton function
         return outputs
 
