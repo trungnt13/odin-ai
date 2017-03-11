@@ -165,6 +165,18 @@ class ModelDescriptor(object):
         return self._func.__name__
 
     @property
+    def parameters(self):
+        params = []
+        if self._save_states is not None:
+            states = self._save_states
+            if not isinstance(states, (tuple, list)):
+                states = (states,)
+            for s in states:
+                if hasattr(s, 'parameters'):
+                    params += s.parameters
+        return params
+
+    @property
     def inputs(self):
         self._check_init_shape()
         # ====== automatic create inputs if necessary ====== #
@@ -223,7 +235,10 @@ class ModelDescriptor(object):
     def __call__(self, inputs=None, **kwargs):
         # ====== check inputs ====== #
         if inputs is not None:
-            if not isinstance(inputs, (tuple, list)) or is_number(inputs[0]):
+            if is_number(inputs):
+                inputs = (inputs,)
+            if not isinstance(inputs, (tuple, list)) or \
+            any(is_number(i) for i in inputs):
                 inputs = [inputs]
             # get the input shape
             input_desc = []

@@ -129,10 +129,10 @@ def standard_trainer(train_data, valid_data,
         y_train = y_train * len(cost_train)
     if len(y_score) == 1:
         y_score = y_score * len(cost_score)
-    cost_train = [K.mean(f_cost(y_, y), axis=0)
+    cost_train = [K.mean(f_cost(y_, y))
                   for f_cost, y_, y in zip(cost_train, y_train,
                     y_target * len(cost_train) if len(y_target) == 1 else y_target)]
-    cost_score = [K.mean(f_cost(y_, y), axis=0)
+    cost_score = [K.mean(f_cost(y_, y))
                   for f_cost, y_, y in zip(cost_score, y_score,
                     y_target * len(cost_score) if len(y_target) == 1 else y_target)]
     # add confusion matrix
@@ -151,7 +151,7 @@ def standard_trainer(train_data, valid_data,
             raise ValueError("you have to specify the number of labels in 'confusion_matrix'")
         for y_, y in zip(y_score, y_target):
             cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y, labels=labels))
-    # get the update
+    # get the updates
     training_cost = cost_train[0] + sum(c for c in cost_regu)
     updates = optimizer.get_updates(training_cost, parameters)
     # ====== create function ====== #
@@ -172,7 +172,8 @@ def standard_trainer(train_data, valid_data,
             test.set_batch(batch_size=batch_size, seed=None)
             prog = Progbar(target=test.shape[0], title="Evaluating:"); _ = []
             for t in test:
-                _.append(f_score(*t if isinstance(t, (tuple, list)) else t))
+                if not isinstance(t, (tuple, list)): t = (t,)
+                _.append(f_score(*t))
                 prog.add(len(t[0]))
             test = _
             # just 1 result returned
