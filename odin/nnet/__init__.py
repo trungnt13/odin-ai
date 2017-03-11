@@ -89,9 +89,17 @@ class InputDescriptor(object):
 
 class ModelDescriptor(object):
     """ ModelDescriptor
+    This class allow you to define extremely complex computational graph
+    by lumping many nnet operators into once function, but still keeping
+    it simple (i.e. just like calling a function).
+
+    The ModelDescriptor will automatically save all states of the function,
+    keeps track its relevant inputs, and performing inference is
+    straightforward also.
 
     Example
     -------
+    >>> import numpy as np
     >>> from odin import nnet
     >>> @nnet.ModelDescriptor
     >>> def feedforward_vae(X, X1, f):
@@ -104,12 +112,14 @@ class ModelDescriptor(object):
     ...     return f(X), f
     >>> # First time initialize the input description
     >>> K.set_training(True)
-    >>> y_train = f([N.InputDescriptor(shape=(8, 8)),
-    ...              N.InputDescriptor(shape=(12, 12))])
-    >>> K.set_training(False); y_score = f()
+    >>> y_train = feedforward_vae([N.InputDescriptor(shape=(8, 8)),
+    ...                            N.InputDescriptor(shape=(12, 12))])
+    >>> K.set_training(False); y_score = feedforward_vae()
     >>> # Overide default Placeholder
     >>> X = K.placeholder(shape=(12, 12), name='X')
-    >>> K.set_training(True); y_train = f([None, X])
+    >>> K.set_training(True); y_train = feedforward_vae([None, X])
+    >>> # performing inference
+    >>> feedforward_vae.f_pred(np.random.rand(8, 8), np.random.rand(12, 12))
     """
 
     def __init__(self, func):
@@ -123,6 +133,7 @@ class ModelDescriptor(object):
         # ====== cached tensor variables ====== #
         self._inputs = []
         self._last_outputs = {'train': None, 'score': None}
+        self._f_train = None
         self._f_pred = None
 
     # ==================== pickle ==================== #
@@ -135,6 +146,7 @@ class ModelDescriptor(object):
         self._func = self._func.function
         self._inputs = []
         self._last_outputs = {'train': None, 'score': None}
+        self._f_train = None
         self._f_pred = None
 
     # ==================== properties ==================== #
@@ -147,6 +159,10 @@ class ModelDescriptor(object):
     @property
     def function(self):
         return self._func
+
+    @property
+    def name(self):
+        return self._func.__name__
 
     @property
     def inputs(self):
@@ -175,10 +191,23 @@ class ModelDescriptor(object):
         return self._last_outputs['score']
 
     @property
+    def f_train(self):
+        """ Note: This only return the train output, no updates is performed """
+        if self._f_train is None:
+            if self._last_outputs['train'] is None and len(self.input_desc) == 0:
+                raise ValueError("No cache value of outputs with training mode ENABLED "
+                                 "found, you must call this Descriptor with "
+                                 "InputDescriptor first.")
+            outputs = self.y_train
+            # get number of actual inputs need for prediction
+            self._f_train = K.function(K.ComputationGraph(outputs).inputs, outputs)
+        return self._f_train
+
+    @property
     def f_pred(self):
         if self._f_pred is None:
             if self._last_outputs['score'] is None and len(self.input_desc) == 0:
-                raise ValueError("No cache value of outputs with training disabled "
+                raise ValueError("No cache value of outputs with training mode DISABLE "
                                  "found, you must call this Descriptor with "
                                  "InputDescriptor first.")
             outputs = self.y_score
@@ -260,6 +289,7 @@ class ModelDescriptor(object):
         outputs = outputs[0]
         if K.is_training():
             self._last_outputs['train'] = outputs
+            self._f_train = None # reset train function
         else:
             self._last_outputs['score'] = outputs
             self._f_pred = None # reset prediciton function
