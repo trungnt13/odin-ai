@@ -17,6 +17,7 @@ from .helper import *
 from .rnn import *
 from . import shortcuts
 
+from odin.config import get_floatX
 from odin import backend as K
 from odin.utils import is_lambda, is_number, get_module_from_path, is_string
 
@@ -53,25 +54,40 @@ class InputDescriptor(object):
     Store all the necessary information to create placeholder as input
     to any ComputationalGraph.
 
+    Parameters
+    ----------
+    shape: tuple, list, TensorVariable
+        if TensorVariable is given, shape and dtype will be taken from
+        given variable
+    dtype: dtype
+        dtype of input variable
+    name: str, None
+        specific name for the variable
+
     Note
     ----
     This object is pickle-able and comparable
     """
 
-    def __init__(self, shape, dtype='float32', name=None):
+    def __init__(self, shape, dtype=None, name=None):
         super(InputDescriptor, self).__init__()
+        if K.is_tensor(shape):
+            if dtype is None: dtype = K.get_dtype(shape, string=True)
+            shape = K.get_shape(shape)
         # ====== check shape ====== #
         _check_shape(shape)
         if isinstance(shape, np.ndarray):
             shape = shape.tolist()
         self._shape = tuple(shape)
         # ====== check dtype ====== #
+        if dtype is None:
+            dtype = get_floatX()
         if isinstance(dtype, np.dtype):
             dtype = str(dtype)
         elif is_string(dtype):
             pass
         else:
-            dtype = K.get_dtype(i, string=True)
+            dtype = K.get_dtype(dtype, string=True)
         self._dtype = str(dtype)
         # ====== check name ====== #
         self._name = name if name is None else str(name)

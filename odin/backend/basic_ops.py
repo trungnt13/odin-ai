@@ -81,11 +81,10 @@ def ndim(x):
 
 def get_dtype(x, numpy=False, string=False):
     dtype = x.dtype
-    if numpy:
-        if hasattr(dtype, 'as_numpy_dtype'):
-            dtype = dtype.as_numpy_dtype
-    if string:
-        dtype = dtype.name if hasattr(dtype, 'name') else str(dtype)
+    if (numpy or string) and hasattr(dtype, 'as_numpy_dtype'):
+        dtype = dtype.as_numpy_dtype
+    # ====== convert to normalized string ====== #
+    if string: dtype = np.dtype(dtype).name
     return dtype
 
 
