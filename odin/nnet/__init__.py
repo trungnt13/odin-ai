@@ -88,7 +88,29 @@ class InputDescriptor(object):
 
 
 class ModelDescriptor(object):
-    """ ModelDescriptor """
+    """ ModelDescriptor
+
+    Example
+    -------
+    >>> from odin import nnet
+    >>> @nnet.ModelDescriptor
+    >>> def feedforward_vae(X, X1, f):
+    ...     if f is None:
+    ...         f = N.Sequence([
+    ...             N.Dense(num_units=10, activation=K.softmax),
+    ...             N.Dropout(level=0.5)
+    ...         ])
+    ...     # f is return for automatically saved
+    ...     return f(X), f
+    >>> # First time initialize the input description
+    >>> K.set_training(True)
+    >>> y_train = f([N.InputDescriptor(shape=(8, 8)),
+    ...              N.InputDescriptor(shape=(12, 12))])
+    >>> K.set_training(False); y_score = f()
+    >>> # Overide default Placeholder
+    >>> X = K.placeholder(shape=(12, 12), name='X')
+    >>> K.set_training(True); y_train = f([None, X])
+    """
 
     def __init__(self, func):
         super(ModelDescriptor, self).__init__()
