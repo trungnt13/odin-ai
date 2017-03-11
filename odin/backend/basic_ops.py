@@ -130,8 +130,8 @@ def tanh(x):
 def clip(x, min_value, max_value):
     if max_value < min_value:
         max_value = min_value
-    min_value = as_tensor_variable(min_value, dtype=get_dtype(x))
-    max_value = as_tensor_variable(max_value, dtype=get_dtype(x))
+    min_value = as_tensor_variable(min_value, dtype=get_dtype(x, numpy=True))
+    max_value = as_tensor_variable(max_value, dtype=get_dtype(x, numpy=True))
     return _copy_shape(x, backend_ops_clip, min_value, max_value)
 
 

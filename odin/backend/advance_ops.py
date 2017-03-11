@@ -179,7 +179,7 @@ def rnn_decorator(*args, **kwargs):
                                  (str(sequences_given), str(states_given)))
             # ====== configuraiton for iterations ====== #
             # Assumes time dimension is the second dimension
-            shape = get_shape(sequences_given[0], not_none=True)
+            shape = get_shape(sequences_given[0], native=True)
             if n_steps is None:
                 n_steps = shape[1]
             if batch_size is None:

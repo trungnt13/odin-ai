@@ -211,7 +211,7 @@ def add_shape(var, shape):
     return var
 
 
-def get_shape(x, not_none=False, native=False):
+def get_shape(x, native=False):
     """Return the shape of a tensor, this function search for predefined shape
     of `x` first, otherwise, return the theano shape
 
@@ -229,21 +229,17 @@ def get_shape(x, not_none=False, native=False):
         if True, return the native shape information returned by backend (i.e.
         object shape not int shape)
     """
-    if native:
-        if get_backend() == 'theano':
-            return x.shape
-        elif get_backend() == 'tensorflow':
-            from tensorflow import shape
-            native_shape = shape(x)
-            int_shape = x.shape.as_list()
-            # return a mix of native tensor variable shape, and int shape
-            return tuple([native_shape[i] if j is None or j < 0 else j
-                          for i, j in enumerate(int_shape)])
-        else:
-            raise Exception("No support for native shape of backend: " + get_backend())
     # ====== get default shape ====== #
     if hasattr(x, 'tag') and hasattr(x.tag, 'shape'):
         shape = x.tag.shape
+        # just ensure the tagged shape equal to actual tensorflow shape
+        if get_backend() == 'tensorflow':
+            tensorflow_shape = x.get_shape().as_list()
+            if len(shape) != len(tensorflow_shape) or \
+            any(i != j for i, j in zip(shape, tensorflow_shape)
+                    if i is not None and j is not None):
+                raise ValueError("The tagged shape is %s, but the system shape is "
+                                "%s." % (shape, x.get_shape().as_list()))
     elif hasattr(x, 'get_shape'):
         shape = tuple(x.get_shape().as_list())
     elif hasattr(x, 'shape'):
@@ -251,14 +247,15 @@ def get_shape(x, not_none=False, native=False):
     else:
         raise ValueError('Cannot get shape of variable: ' + str(x))
     # ====== check tag shape ====== #
-    if not_none and isinstance(shape, (tuple, list)):
+    if native and isinstance(shape, (tuple, list)):
         if get_backend() == 'theano':
-            x_shape = x.shape
+            native_shape = x.shape
         else:
             import tensorflow as tf
-            x_shape = tf.shape(x)
-        shape = tuple([x_shape[i] if s is None else s
-                       for i, s in enumerate(shape)])
+            native_shape = tf.shape(x)
+        # return a mix of native tensor variable shape, and int shape
+        return tuple([native_shape[i] if j is None or j < 0 else j
+                      for i, j in enumerate(shape)])
     return shape
 
 

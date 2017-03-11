@@ -87,11 +87,20 @@ class NNConfig(object):
         super(NNConfig, self).__init__()
         # name -> variables
         self._variables = OrderedDict()
+        self._input_desc = []
 
     @property
     def variables(self):
         """ Return the list of all TensorVariables attached to this Config"""
         return self._variables.values()
+
+    @property
+    def placeholder(self):
+        """ Return the list of all TensorVariables attached to this Config"""
+        return [i.placeholder for i in self._input_desc]
+
+    def set_input_desc(self, input_desc):
+        return self
 
     def __getattr__(self, name):
         if name in self._arguments:
@@ -211,15 +220,16 @@ class NNConfig(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return self._arguments, [(name, K.pickling_variable(var))
-                                 for name, var in self._variables.iteritems()]
+        return self._input_desc, self._arguments, [(name, K.pickling_variable(var))
+                                                   for name, var in self._variables.iteritems()]
 
     def __setstate__(self, states):
-        self._arguments = states[0]
+        self._input_desc = states[0]
+        self._arguments = states[1]
         for i, j in self._arguments.iteritems():
             setattr(self, i, j)
         self._variables = OrderedDict([(name, K.pickling_variable(var))
-                           for name, var in states[1]])
+                           for name, var in states[2]])
 
 
 # ===========================================================================
@@ -275,7 +285,6 @@ class NNOps(object):
 
         self._configuration = None
         self._transpose_ops = None
-        self._input_desc = []
 
     # ==================== properties ==================== #
     @property
@@ -311,7 +320,7 @@ class NNOps(object):
         """ Create list of placeholder based on footprint(shape) from previous
         inputs of this Operator
         """
-        return [i.placeholder for i in self._input_desc]
+        return self._configuration.placeholder
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
@@ -339,6 +348,8 @@ class NNOps(object):
     # ==================== interaction method ==================== #
     def apply(self, x, **kwargs):
         return_list = True
+        # if x is a list, then apply on each input separately and return
+        # a list
         if not isinstance(x, (tuple, list)):
             x = [x]
             return_list = False

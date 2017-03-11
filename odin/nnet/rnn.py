@@ -297,7 +297,7 @@ class RNN(BaseRNN):
         out = self._rnn(X, h0=h0, mask=mask,
                         **self.get_recurrent_info(kwargs))
         for i in out:
-            K.add_shape(i, shape=tuple(input_shape[:-1]) + (self.num_units,))
+            K.add_shape(i, shape=input_shape[:-1] + (self.num_units,))
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
@@ -487,7 +487,7 @@ class GRU(BaseRNN):
         out = self._rnn(X, h0=h0, mask=mask,
                         **self.get_recurrent_info(kwargs))
         for i in out:
-            K.add_shape(i, shape=input_shape)
+            K.add_shape(i, shape=input_shape[:-1] + (self.num_units,))
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
