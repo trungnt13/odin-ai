@@ -680,7 +680,7 @@ class LSTM(BaseRNN):
         # only care about the first state
         return out[0] if len(out) == 1 else out
 
-    def _initialize(self, X):
+    def _initialize(self):
         input_shape = self.input_shape
         # ====== check input ====== #
         _init_input2hidden(self, rnn_mode='lstm', input_mode=self.input_mode,

@@ -522,7 +522,8 @@ class Dense(NNOps):
         # calculate projection
         activation = K.dot(X, self.W)
         # add the bias
-        if self.b_init: activation = activation + self.b
+        if self.b_init is not None:
+            activation = activation + self.b
         # set shape for output
         K.add_shape(activation, input_shape[:-1] + (self.num_units,))
         # Nonlinearity might change the shape of activation
@@ -535,7 +536,7 @@ class TransposeDense(NNTransposeOps):
     def _initialize(self):
         super(TransposeDense, self)._initialize()
         self.num_units = self.T.input_shape[-1]
-        if self.T.b_init:
+        if self.T.b_init is not None:
             self.config.create_params(self.T.b_init,
                 shape=(self.num_units,), name='b', roles=BIAS)
 
@@ -543,7 +544,8 @@ class TransposeDense(NNTransposeOps):
         input_shape = K.get_shape(X)
         # calculate projection
         activation = K.dot(X, K.transpose(self.T.W))
-        if self.T.b_init: activation = activation + self.b
+        if self.T.b_init is not None:
+            activation = activation + self.b
         # set shape for output
         K.add_shape(activation, input_shape[:-1] + (self.num_units,))
         # Nonlinearity might change the shape of activation

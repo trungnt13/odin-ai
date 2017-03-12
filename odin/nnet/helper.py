@@ -72,6 +72,7 @@ class Merge(HelperOps):
 
     def _apply(self, X, **kwargs):
         X = as_tuple(X, N=len(self.ops))
+        # ====== iteratively appply all ops ====== #
         results = [op(x, **_shrink_kwargs(op, kwargs))
                    for x, op in zip(X, self.ops)]
         if callable(self.merge_function):
