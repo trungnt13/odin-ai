@@ -1,6 +1,6 @@
 from __future__ import division, absolute_import
 
-from .base import NNOps, NNConfig
+from .base import NNOps, NNConfig, NNTransposeOps
 
 from odin import backend as K
 
@@ -38,11 +38,8 @@ class Dropout(NNOps):
         self.noise_type = noise_type
         self.rescale = rescale
 
-    def _initialize(self, x):
-        return NNConfig()
-
-    def _apply(self, x):
-        return K.apply_dropout(x, level=self.level,
+    def _apply(self, X):
+        return K.apply_dropout(X, level=self.level,
                                noise_dims=self.noise_dims,
                                noise_type=self.noise_type,
                                rescale=self.rescale)
@@ -75,11 +72,8 @@ class Noise(NNOps):
         self.noise_dims = noise_dims
         self.noise_type = noise_type
 
-    def _initialize(self, x):
-        return NNConfig()
-
-    def _apply(self, x):
-        return K.apply_noise(x, level=self.level,
+    def _apply(self, X):
+        return K.apply_noise(X, level=self.level,
                              noise_dims=self.noise_dims,
                              noise_type=self.noise_type)
 

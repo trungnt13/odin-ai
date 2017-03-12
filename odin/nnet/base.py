@@ -278,16 +278,10 @@ class NNOps(object):
     def T(self):
         """ Return new ops which is transpose of this ops """
         if self._transpose_ops is None:
-            try:
-                self._transpose_ops = self._transpose()
-            except NotImplementedError:
-                raise RuntimeError("There is NO implementation for transposed Ops "
-                                   "of %s." % (type(self.__name__)))
-            if not isinstance(self, NNTransposeOps) and \
-            not isinstance(self._transpose_ops, NNTransposeOps):
-                raise ValueError("The NNOps return by _transposed method must "
-                                 "be instance of NNTransposeOps, but the returned "
-                                 "object has type=%s" %
+            self._transpose_ops = self._transpose()
+            if not isinstance(self._transpose_ops, NNOps):
+                raise ValueError("The _transposed method must return NNOps."
+                                 "but the returned object has type=%s" %
                                  str(type(self._transpose_ops)))
         return self._transpose_ops
 
@@ -472,7 +466,6 @@ class NNTransposeOps(NNOps):
             raise ValueError("NNTransposeOps can only be applied for instance of "
                              "odin.nnet.NNOps, but was given type=%s" % str(type(ops)))
         self._transpose_ops = ops
-        print(self._save_states)
 
     def _transpose(self):
         # return original Ops to prevent infinite useless loop of transpose

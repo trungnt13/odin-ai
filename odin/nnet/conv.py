@@ -1,14 +1,12 @@
 from __future__ import division, absolute_import
 
-from abc import abstractmethod
-
 import numpy as np
 
 from odin import backend as K
 from odin.basic import PARAMETER, WEIGHT, BIAS
 from odin.utils import as_tuple
 from odin.utils.shape_calculation import get_conv_output_shape
-from .base import NNOps, NNConfig, NNTransposeOps
+from .base import NNOps, NNTransposeOps
 
 
 class Conv(NNOps):
