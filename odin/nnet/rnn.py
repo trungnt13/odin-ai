@@ -37,7 +37,7 @@ def _check_rnn_hidden_states(h0, ops, input_shape, name):
         h0 = K.init.constant(0.) if h0 is None else h0
         # only store trainable variable or constant
         if callable(h0) or K.is_trainable_variable(h0) or isinstance(h0, np.ndarray):
-            h0 = ops.configuration.create_params(h0,
+            h0 = ops.config.create_params(h0,
                 shape=(1,) + input_shape[2:-1] + (ops.num_units,),
                 name=name, nnops=ops, roles=INITIAL_STATE)
         else: # still store the states so it can be re-used on other inputs
@@ -765,7 +765,7 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
         if callable(s0) or K.is_trainable_variable(s0) or isinstance(s0, np.ndarray):
             _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
                 else K.get_shape(s0)
-            s0 = nnops.configuration.create_params(s0, shape=_, name=name,
+            s0 = nnops.config.create_params(s0, shape=_, name=name,
                                                    nnops=nnops,
                                                    roles=INITIAL_STATE)
         # ====== check s0 shape ====== #

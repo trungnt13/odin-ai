@@ -200,7 +200,7 @@ class TransposeConv(NNOps):
         and kwargs
         """
         # check if original Ops is initialized
-        if self.conv.configuration is None:
+        if self.conv.config is None:
             raise Exception('Convolution ops:"%s" have not initialized.' % str(self.conv))
         output_shape = self.conv.input_shape
         config = NNConfig(output_shape=output_shape)

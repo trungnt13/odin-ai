@@ -15,8 +15,9 @@ from odin import backend as K
 from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS,
                         VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
-from odin.utils import as_tuple, uuid, cache_memory
-from odin.utils.decorators import autoinit
+from odin.utils import as_tuple, uuid, cache_memory, is_number
+
+from .model import InputDescriptor
 
 
 # ===========================================================================
@@ -82,12 +83,14 @@ def _recurrsive_extract_shape(x):
 
 class NNConfig(object):
 
-    @autoinit
-    def __init__(self, **kwargs):
+    def __init__(self, nnops):
         super(NNConfig, self).__init__()
         # name -> variables
-        self._variables = OrderedDict()
+        if not isinstance(nnops, NNOps):
+            raise ValueError("nnops must be instance of odin.nnet.NNOps")
+        self._nnops = nnops
         self._input_desc = []
+        self._variables = OrderedDict()
 
     @property
     def variables(self):
@@ -97,21 +100,46 @@ class NNConfig(object):
     @property
     def placeholder(self):
         """ Return the list of all TensorVariables attached to this Config"""
-        return [i.placeholder for i in self._input_desc]
+        inputs = [i.placeholder for i in self._input_desc]
+        return inputs[0] if len(inputs) == 1 else inputs
 
-    def set_input_desc(self, input_desc):
-        return self
+    @property
+    def input_shape(self):
+        shape = [i.shape for i in self._input_desc]
+        return shape[0] if len(shape) == 1 else shape
+
+    def check_input_desc(self, input_desc):
+        input_desc = as_tuple(input_desc)
+        # make shape tuple, become list of shape tuple
+        if any(is_number(i) or i is None for i in input_desc):
+            input_desc = (input_desc,)
+        # have not initialized the input description
+        if len(self._input_desc) == 0:
+            self._input_desc = [i if isinstance(i, InputDescriptor)
+                                else InputDescriptor(i)
+                                for i in input_desc]
+        # mismatch input desctiption
+        elif len(input_desc) != len(self._input_desc):
+            raise Exception("This Config required %d inputs, but given "
+                            "%d inputs." % (len(self._input_desc), len(input_desc)))
+        for i, j in zip(input_desc, self._input_desc):
+            if i != j:
+                raise Exception("The config require input with %s, "
+                                "but given other input with %s." %
+                                (str(j), str(i)))
+        # automatic fetch placeholder to replace raw description
+        return [i if K.is_tensor(i) else j.placeholder
+                for i, j in zip(input_desc, self._input_desc)]
 
     def __getattr__(self, name):
-        if name in self._arguments:
-            return self._arguments[name]
         if name in self._variables:
             return self._variables[name]
-        raise AttributeError('Cannot find attribute={} in arguments and parameters'
-                             '.'.format(name))
+        elif name not in self.__dict__:
+            raise AttributeError('Cannot find attribute with name="%s", for NNOps '
+                                 'with name="%s"' % (name, self._nnops.name))
+        return super(NNConfig, self).__getattr__(name)
 
-    def create_params(self, spec, shape, name, nnops, roles=[],
-                      nb_params=1):
+    def create_params(self, spec, shape, name, roles=[], nb_params=1):
         """
         Parameters
         ----------
@@ -133,9 +161,7 @@ class NNConfig(object):
         """
         if not isinstance(roles, (tuple, list)):
             roles = [roles]
-        if not isinstance(nnops, NNOps):
-            raise Exception('nnops must be instance of odin.nnet.base.NNOps')
-
+        nnops = self._nnops
         shape = tuple(shape)  # convert to tuple if needed
         if any(d <= 0 for d in shape):
             raise ValueError((
@@ -179,57 +205,25 @@ class NNConfig(object):
         # return actual variable or expression
         # override other parameters with same name
         self._variables[name] = spec
-        # set parameter attribute for NNOps
-        setattr(nnops, name, spec)
         return spec
 
-    def inflate(self, obj):
-        """ Infate configuration into given object  """
-        for i, j in self._arguments.iteritems():
-            setattr(obj, i, j)
-        for name, var in self._variables.iteritems():
-            # name = i.name.split('/')[-1].split(':')[0]
-            setattr(obj, name, var)
-
-    def reset(self, obj):
-        """  """
-        for i in self._arguments.keys():
-            setattr(obj, i, None)
-        for name in self._variables.keys():
-            setattr(obj, name, None)
-
-    def __eq__(self, other):
-        if hasattr(other, '_arguments'):
-            other = other._arguments
-        return self._arguments.__eq__(other)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-    def copy(self):
-        config = NNConfig(**self._arguments)
-        config._variables = self._variables
-        return config
-
     def __str__(self):
-        s = 'Arguments:\n'
-        for i, j in self._arguments.iteritems():
-            s += ' - ' + str(i) + ':' + str(j) + '\n'
+        s = ""
+        for i in self._input_desc:
+            s += str(i) + "\n"
         s += ' - Parameters: ' + ', '.join([str(i) for i in self._variables.values()])
         return s
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return self._input_desc, self._arguments, [(name, K.pickling_variable(var))
-                                                   for name, var in self._variables.iteritems()]
+        return self._nnops, self._input_desc, \
+        [(name, K.pickling_variable(var)) for name, var in self._variables.iteritems()]
 
     def __setstate__(self, states):
-        self._input_desc = states[0]
-        self._arguments = states[1]
-        for i, j in self._arguments.iteritems():
-            setattr(self, i, j)
+        self._nnops = states[0]
+        self._input_desc = states[1]
         self._variables = OrderedDict([(name, K.pickling_variable(var))
-                           for name, var in states[2]])
+                           for name, var in states[3]])
 
 
 # ===========================================================================
@@ -277,21 +271,32 @@ class NNOps(object):
 
     def __init__(self, name=None, **kwargs):
         super(NNOps, self).__init__()
-        self._arguments = {}
+        self._save_states = {}
 
         self.name = name
         if name is None:
             self.name = "%s_%s" % (self.__class__.__name__, uuid())
 
-        self._configuration = None
+        self._configuration = NNConfig(self)
         self._transpose_ops = None
+        self._is_initialized = False
 
     # ==================== properties ==================== #
     @property
     def T(self):
         """ Return new ops which is transpose of this ops """
         if self._transpose_ops is None:
-            self._transpose_ops = self._transpose()
+            try:
+                self._transpose_ops = self._transpose()
+            except NotImplementedError:
+                raise RuntimeError("There is NO implementation for transposed Ops "
+                                   "of %s." % (type(self.__name__)))
+            if not isinstance(self, TransposeOps) and \
+            not isinstance(self._transpose_ops, TransposeOps):
+                raise ValueError("The NNOps return by _transposed method must "
+                                 "be instance of TransposeOps, but the returned "
+                                 "object has type=%s" %
+                                 str(type(self._transpose_ops)))
         return self._transpose_ops
 
     @property
@@ -312,8 +317,12 @@ class NNOps(object):
                 if K.is_trainable_variable(i)]
 
     @property
-    def configuration(self):
+    def config(self):
         return self._configuration
+
+    @property
+    def is_initialized(self):
+        return self._is_initialized
 
     @property
     def placeholder(self):
@@ -322,71 +331,65 @@ class NNOps(object):
         """
         return self._configuration.placeholder
 
+    @property
+    def input_shape(self):
+        return self._configuration.input_shape
+
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
-        if hasattr(self, '_arguments') and name != '_arguments':
+        # check hasattr to prevent recursive loop at the beginning before
+        # __init__ is called
+        if hasattr(self, '_save_states') and name != '_save_states':
             # otherwise, only save primitive types
             if isinstance(value, _primitive_types):
-                self._arguments[name] = value
-        super(NNOps, self).__setattr__(name, value)
+                self._save_states[name] = value
+        return super(NNOps, self).__setattr__(name, value)
+
+    def __getattr__(self, name):
+        # merge the attributes of ops wit its configuration
+        if name in self.__dict__:
+            return self.__dict__[name]
+        return getattr(self._configuration, name)
+        # try:
+        #     return super(NNOps, self).__getattr__(name)
+        # except AttributeError:
+        #     return self._configuration.__getattr__(name)
 
     # ==================== abstract method ==================== #
-    @abstractmethod
-    def _initialize(self, x, **kwargs):
-        """ This function return NNConfig for given configuration from arg
-        and kwargs
+    def _initialize(self, **kwargs):
+        """ This function is only called once, for the first time you
+        apply this Ops
         """
-        raise NotImplementedError
+        return None
 
     @abstractmethod
-    def _apply(self, x, **kwargs):
+    def _apply(self, X, **kwargs):
         raise NotImplementedError
 
     def _transpose(self):
         raise NotImplementedError
 
     # ==================== interaction method ==================== #
-    def apply(self, x, **kwargs):
-        return_list = True
-        # if x is a list, then apply on each input separately and return
-        # a list
-        if not isinstance(x, (tuple, list)):
-            x = [x]
-            return_list = False
+    def apply(self, X, **kwargs):
         # ====== initialize first ====== #
         # only select necessary arguments
         argspec = inspect.getargspec(self._initialize)
         keywords = {}
         # kwargs must be specified in args, or the _initialize
-        # must accept **kwargs
+        # must accept **kwaobject, class_or_type_or_tuplergs
         for i, j in kwargs.iteritems():
             if argspec.keywords is not None or i in argspec.args:
                 keywords[i] = j
         # initialize the operator (call the initilazation process)
-        if self._configuration is None:
-            config = self._initialize(x if len(x) > 1 else x[0],
-                                      **keywords)
-            if not isinstance(config, NNConfig):
-                raise Exception('Returned value from _initialize function must '
-                                'be instance of NNConfig.')
-            config.inflate(self)
-            self._configuration = config
-        # check footprint for  warning
-        footprint = _recurrsive_extract_shape(x)
-        if not hasattr(self, '_footprint'):
-            self._footprint = footprint
-        elif any(i != j for i, j in zip(self._footprint, footprint)):
-            warnings.warn('The initialized footprint is "{}" which '
-                          'is different from the given footprint: "{}"'
-                          '.'.format(self._footprint, footprint))
+        X = self._configuration.check_input_desc(X)
+        if not self._is_initialized:
+            self._initialize(**keywords)
+            self._is_initialized = True
         # ====== calculate and return outputs ====== #
-        out = [self._apply(i, **kwargs) for i in x]
-        if return_list:
-            return out
-        return out[0]
+        return self._apply(X[0] if len(X) == 1 else X, **kwargs)
 
-    def __call__(self, x, **kwargs):
-        return self.apply(x, **kwargs)
+    def __call__(self, X, **kwargs):
+        return self.apply(X, **kwargs)
 
     def __str__(self):
         ops_format = '<ops: %s, name: %s, init: %s>'
@@ -399,16 +402,13 @@ class NNOps(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
-        return self._arguments
+        return self._save_states
 
     def __setstate__(self, states):
-        attrs = states
+        self._save_states = states
         self._transpose_ops = None # reset the transpose ops
-        for i, j in attrs.iteritems():
+        for i, j in self._save_states.iteritems():
             setattr(self, i, j)
-        self._arguments = attrs
-        if self._configuration is not None:
-            self._configuration.inflate(self)
 
 
 # ===========================================================================
@@ -421,22 +421,17 @@ class NNSliceOps(NNOps):
             raise ValueError('ops must be instance of NNOps, but given argument '
                              'has %s' % str(type(ops)))
         super(NNSliceOps, self).__init__()
-        self.ops = ops
+        self._ops = ops
         if not isinstance(slice, (tuple, list)):
             slice = [slice]
         self.slice = slice
 
-    def _initialize(self, x):
-        return NNConfig()
-
     @property
     def variables(self):
-        if hasattr(self.ops, 'variables'):
-            return self.ops.variables
-        return []
+        return self._ops.variables
 
-    def _apply(self, x, **kwargs):
-        y = self.ops.apply(x, **kwargs)
+    def _apply(self, X, **kwargs):
+        y = self._ops.apply(X, **kwargs)
         return_list = True
         if not isinstance(y, (tuple, list)):
             return_list = False
@@ -471,9 +466,36 @@ class NNSliceOps(NNOps):
 
     def __str__(self):
         ops_format = '<ops: %s, name: %s, init: %s, slice: %s>'
-        return ops_format % (self.ops.__class__.__name__, self.ops.name,
-                             self.ops._configuration is not None,
-                             str(self.slice))
+        return ops_format % (self._ops.__class__.__name__, self._ops.name,
+                             self._ops.is_initialized, str(self.slice))
+
+
+class TransposeOps(NNOps):
+    """ TransposeOps
+    Create a transposed view of origin NNOps
+    """
+
+    def __init__(self, ops):
+        super(TransposeOps, self).__init__()
+        if not isinstance(ops, NNOps):
+            raise ValueError("TransposeOps can only be applied for instance of "
+                             "odin.nnet.NNOps, but given type=%s" % str(type(ops)))
+        self._ops = ops
+
+    def _transpose(self):
+        # return original Ops to prevent infinite useless loop of transpose
+        return self._ops
+
+    def _initialize(self):
+        pass
+
+    def _apply(self, X, **kwargs):
+        pass
+
+    def __str__(self):
+        ops_format = '<ops: %s, name: %s, init: %s, (Transposed)>'
+        return ops_format % (self._ops.__class__.__name__, self._ops.name,
+                             self._ops.is_initialized)
 
 
 # ===========================================================================
@@ -481,7 +503,6 @@ class NNSliceOps(NNOps):
 # ===========================================================================
 class Dense(NNOps):
 
-    @autoinit
     def __init__(self, num_units,
                  W_init=K.init.glorot_uniform,
                  b_init=K.init.constant(0),
@@ -489,14 +510,13 @@ class Dense(NNOps):
                  **kwargs):
         super(Dense, self).__init__(**kwargs)
         self.activation = (K.linear if activation is None else activation)
-        # hack to prevent infinite useless loop of transpose
-        self._original_dense = None
+        self.W_init = W_init
+        self.b_init = b_init
+        self.num_units = num_units
 
     # ==================== abstract methods ==================== #
     def _transpose(self):
-        if self._original_dense is not None:
-            return self._original_dense
-
+        return TransposeOps(self)
         # flip the input and hidden
         num_inputs = self.num_units
         num_units = self.num_inputs
@@ -505,29 +525,20 @@ class Dense(NNOps):
                           W_init=self.W_init, b_init=self.b_init,
                           activation=self.activation,
                           name=self.name + '_transpose')
-        transpose._original_dense = self
+        transpose.config.create_params(K.transpose(self.W),
+            shape=(num_inputs, num_units), roles=WEIGHT, name='W')
         #create the config
-        config = NNConfig(num_inputs=num_inputs)
-        config.create_params(K.transpose(self.W), shape=(num_inputs, num_units),
-                             name='W', nnops=transpose)
         if self.b_init is not None:
-            config.create_params(self.b_init, shape=(num_units,), name='b',
-                                 nnops=transpose, roles=BIAS)
-        # modify the config
-        transpose._configuration = config
-        config.inflate(transpose)
+            transpose.config.create_params(self.b_init,
+                shape=(num_units,), name='b', roles=BIAS)
         return transpose
 
-    def _initialize(self, x):
-        input_shape = K.get_shape(x)
-
-        config = NNConfig(num_inputs=input_shape[-1])
+    def _initialize(self):
+        input_shape = self.input_shape
         shape = (input_shape[-1], self.num_units)
-        config.create_params(self.W_init, shape, 'W', nnops=self, roles=WEIGHT)
+        self.config.create_params(self.W_init, shape, 'W', roles=WEIGHT)
         if self.b_init is not None:
-            config.create_params(self.b_init, (self.num_units,), 'b',
-                                 nnops=self, roles=BIAS)
-        return config
+            self.config.create_params(self.b_init, (self.num_units,), 'b', roles=BIAS)
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -544,7 +555,6 @@ class Dense(NNOps):
 
 class VariationalDense(NNOps):
 
-    @autoinit
     def __init__(self, num_units,
                  W_init=K.init.symmetric_uniform,
                  b_init=K.init.constant(0),
@@ -650,7 +660,6 @@ class ParametricRectifier(NNOps):
     (3, 28)
     """
 
-    @autoinit
     def __init__(self, alpha_init=K.init.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)
