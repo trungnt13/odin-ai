@@ -53,9 +53,6 @@ class HelperOps(NNOps):
                                 if hasattr(i, 'variables')])
         return list(all_variables)
 
-    def _initialize(self, *args, **kwargs):
-        return NNConfig()
-
 
 class Merge(HelperOps):
     """
