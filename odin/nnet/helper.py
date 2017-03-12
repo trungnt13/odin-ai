@@ -12,7 +12,7 @@ from odin.utils import as_tuple
 from odin.utils.decorators import functionable
 
 
-from .base import NNOps, NNConfig
+from .base import NNOps
 
 
 def _shrink_kwargs(op, kwargs):

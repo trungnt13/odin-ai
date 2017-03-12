@@ -317,6 +317,10 @@ class NNOps(object):
         return self._configuration.input
 
     @property
+    def nb_input(self):
+        return len(self._configuration._input_desc)
+
+    @property
     def input_shape(self):
         return self._configuration.input_shape
 
