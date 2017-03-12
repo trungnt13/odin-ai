@@ -13,8 +13,7 @@ import numpy as np
 
 from odin import backend as K
 from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
-                        WEIGHT, BIAS,
-                        VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
+                        WEIGHT, BIAS, VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
 from odin.utils import as_tuple, uuid, cache_memory, is_number
 
 from .model import InputDescriptor
@@ -284,10 +283,10 @@ class NNOps(object):
             except NotImplementedError:
                 raise RuntimeError("There is NO implementation for transposed Ops "
                                    "of %s." % (type(self.__name__)))
-            if not isinstance(self, TransposeOps) and \
-            not isinstance(self._transpose_ops, TransposeOps):
+            if not isinstance(self, NNTransposeOps) and \
+            not isinstance(self._transpose_ops, NNTransposeOps):
                 raise ValueError("The NNOps return by _transposed method must "
-                                 "be instance of TransposeOps, but the returned "
+                                 "be instance of NNTransposeOps, but the returned "
                                  "object has type=%s" %
                                  str(type(self._transpose_ops)))
         return self._transpose_ops
@@ -462,15 +461,15 @@ class NNSliceOps(NNOps):
                              self._ops.is_initialized, str(self.slice))
 
 
-class TransposeOps(NNOps):
+class NNTransposeOps(NNOps):
     """ TransposeOps
-    Create a transposed view of origin NNOps
+    Create a transposed view of the origin NNOps
     """
 
     def __init__(self, ops):
-        super(TransposeOps, self).__init__()
+        super(NNTransposeOps, self).__init__(name=ops.name + '_transpose')
         if not isinstance(ops, NNOps):
-            raise ValueError("TransposeOps can only be applied for instance of "
+            raise ValueError("NNTransposeOps can only be applied for instance of "
                              "odin.nnet.NNOps, but was given type=%s" % str(type(ops)))
         self._transpose_ops = ops
         print(self._save_states)
@@ -486,10 +485,10 @@ class TransposeOps(NNOps):
                                "first." % self._ops)
 
     def __str__(self):
-        ops_format = '<(Transposed)ops: %s, name: %s, init: %s>'
+        ops_format = '<original_ops: %s, name: %s, init: %s>'
         return ops_format % (self._transpose_ops.__class__.__name__,
-                             self._transpose_ops.name,
-                             self._transpose_ops.is_initialized)
+                             self.name, self._transpose_ops.is_initialized and
+                             self.is_initialized)
 
 
 # ===========================================================================
@@ -534,7 +533,7 @@ class Dense(NNOps):
         return activation
 
 
-class TransposeDense(TransposeOps):
+class TransposeDense(NNTransposeOps):
 
     def _initialize(self):
         super(TransposeDense, self)._initialize()

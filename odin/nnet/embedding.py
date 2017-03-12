@@ -35,18 +35,14 @@ class Embedding(NNOps):
         """ Return the estimated embedding matrix shape """
         return (self.input_size, self.output_size)
 
-    def _initialize(self, x):
-        config = NNConfig(input_size=self.input_size,
-                          output_size=self.output_size)
-        config.create_params(self.W_init,
+    def _initialize(self):
+        self.config.create_params(self.W_init,
                              shape=(self.input_size, self.output_size),
-                             name='W', nnops=self, roles=EMBEDDING,
-                             nb_params=1)
-        return config
+                             name='W', roles=EMBEDDING, nb_params=1)
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
-        output_shape = input_shape + (self.output_size, )
+        output_shape = input_shape + (self.output_size,)
         x = K.gather(self.W, K.cast(x, 'int32'))
         K.add_shape(x, output_shape)
         return x
