@@ -1,12 +1,8 @@
 from __future__ import division, absolute_import
 
-
-import numpy as np
-
 from odin import backend as K
-from odin.utils.decorators import autoinit
 
-from .base import NNOps, NNConfig
+from .base import NNOps, NNTransposeOps
 
 
 def _validate_input_shape(input_shape):
@@ -17,18 +13,26 @@ def _validate_input_shape(input_shape):
                         % str(input_shape))
 
 
+class InvertReshape(NNTransposeOps):
+    """This Ops invert any shape changing operator"""
+
+    def _apply(self, X):
+        output_shape = self.T.input_shape
+        shape = tuple([-1 if i is None else i for i in output_shape])
+        return K.reshape(X, shape)
+
+
+# ===========================================================================
+# Flatten
+# ===========================================================================
 class FlattenLeft(NNOps):
     """ Flatten the array from the left.
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(3584, 28)
     """
 
-    @autoinit
     def __init__(self, outdim=2, **kwargs):
         super(FlattenLeft, self).__init__(**kwargs)
-
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x))
-        return config
+        self.outdim = outdim
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -39,8 +43,7 @@ class FlattenLeft(NNOps):
         return K.reshape(x, (-1,) + other_shape)
 
     def _transpose(self):
-        shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape, name=self.name + '_transpose')
+        return InvertReshape(self)
 
 
 class Flatten(NNOps):
@@ -48,13 +51,9 @@ class Flatten(NNOps):
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
     """
 
-    @autoinit
     def __init__(self, outdim=2, **kwargs):
         super(Flatten, self).__init__(**kwargs)
-
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x))
-        return config
+        self.outdim = outdim
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -62,19 +61,17 @@ class Flatten(NNOps):
         return K.flatten(x, outdim=self.outdim)
 
     def _transpose(self):
-        shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape, name=self.name + '_transpose')
+        return InvertReshape(self)
 
 
+# ===========================================================================
+# REshape
+# ===========================================================================
 class Reshape(NNOps):
 
     def __init__(self, shape, **kwargs):
         super(Reshape, self).__init__(**kwargs)
         self.shape = shape
-
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x))
-        return config
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -82,8 +79,7 @@ class Reshape(NNOps):
         return K.reshape(x, shape=self.shape)
 
     def _transpose(self):
-        shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape, name=self.name + '_transpose')
+        return InvertReshape(self)
 
 
 class Dimshuffle(NNOps):
@@ -92,16 +88,11 @@ class Dimshuffle(NNOps):
         super(Dimshuffle, self).__init__(**kwargs)
         self.pattern = pattern
 
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x))
-        return config
-
     def _apply(self, x):
         return K.dimshuffle(x, pattern=self.pattern)
 
     def _transpose(self):
-        shape = tuple([-1 if i is None else i for i in self.input_shape])
-        return Reshape(shape, name=self.name + '_transpose')
+        return InvertReshape(self)
 
 
 class Squeeze(NNOps):
@@ -109,10 +100,6 @@ class Squeeze(NNOps):
     def __init__(self, axis, **kwargs):
         super(Squeeze, self).__init__(**kwargs)
         self.axis = axis
-
-    def _initialize(self, x):
-        config = NNConfig(input_shape=K.get_shape(x))
-        return config
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -122,9 +109,15 @@ class Squeeze(NNOps):
         return K.squeeze(x, axis=self.axis)
 
     def _transpose(self):
-        ndim = len(self.input_shape)
-        axis = self.axis % ndim
+        return InvertSqueeze(self)
+
+
+class InvertSqueeze(NNTransposeOps):
+
+    def _apply(self, X):
+        ndim = len(self.T.input_shape)
+        axis = self.T.axis % ndim
         pattern = ['x' if i == axis
                    else (i - 1 if i > axis else i)
                    for i in range(ndim)]
-        return Dimshuffle(pattern=pattern, name=self.name + '_transpose')
+        return K.dimshuffle(X, pattern)

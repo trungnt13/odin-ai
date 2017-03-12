@@ -1,6 +1,6 @@
 from __future__ import division, absolute_import
 
-from .base import NNOps, NNConfig, NNTransposeOps
+from .base import NNOps
 
 from odin import backend as K
 

@@ -1,12 +1,9 @@
 from __future__ import division, absolute_import
 
-
-import numpy as np
-
 from odin import backend as K
 from odin.utils.decorators import autoinit
 
-from .base import NNOps, NNConfig
+from .base import NNOps
 
 
 class Pool(NNOps):
@@ -43,11 +40,7 @@ class Pool(NNOps):
                  pool_func='auto', **kwargs):
         super(Pool, self).__init__(**kwargs)
 
-    def _initialize(self, x):
-        config = NNConfig(ndim=K.ndim(x))
-        return config
-
-    def _apply(self, x):
+    def _apply(self, X):
         if self.pool_func == 'auto':
             if self.ndim == 4:
                 pool_func = K.pool2d
@@ -55,7 +48,7 @@ class Pool(NNOps):
                 pool_func = K.pool3d
         else: # user sepecifed pool_func
             pool_func = self.pool_func
-        return pool_func(x, pool_size=self.pool_size, strides=self.strides,
+        return pool_func(X, pool_size=self.pool_size, strides=self.strides,
                          border_mode=self.pad, ignore_border=self.ignore_border,
                          mode=self.mode)
 

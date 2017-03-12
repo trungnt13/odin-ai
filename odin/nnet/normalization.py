@@ -1,11 +1,8 @@
 from __future__ import print_function, division, absolute_import
 
-import numpy as np
-
-from .base import NNOps, NNConfig
+from .base import NNOps
 
 from odin import backend as K
-from odin.utils.decorators import autoinit
 from odin.basic import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
                         BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_INVSTD,
                         add_updates)
@@ -123,7 +120,6 @@ class BatchNorm(NNOps):
            Internal Covariate Shift. http://arxiv.org/abs/1502.03167.
     """
 
-    @autoinit
     def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
                  beta_init=K.init.constant(0),
                  gamma_init=K.init.constant(1),
@@ -131,50 +127,51 @@ class BatchNorm(NNOps):
                  inv_std_init=K.init.constant(1),
                  activation=K.linear, **kwargs):
         super(BatchNorm, self).__init__(**kwargs)
+        self.axes = axes
+        self.epsilon = epsilon
+        self.alpha = alpha
+        self.beta_init = beta_init
+        self.gamma_init = gamma_init
+        self.mean_init = mean_init
+        self.inv_std_init = inv_std_init
         self.activation = K.linear if activation is None else activation
 
     # ==================== abstract method ==================== #
-    def _initialize(self, x):
-        """ This function return NNConfig for given configuration from arg
-        and kwargs
-        """
-        input_shape = K.get_shape(x)
-        config = NNConfig(input_shape=input_shape)
+    def _initialize(self):
         if self.axes == 'auto':
             # default: normalize over all but the second axis
-            self.axes = tuple(range(0, len(input_shape) - 1))
+            self.axes = tuple(range(0, len(self.input_shape) - 1))
         elif isinstance(self.axes, int):
             self.axes = (self.axes,)
         # create parameters, ignoring all dimensions in axes
-        shape = [size for axis, size in enumerate(input_shape)
+        shape = [size for axis, size in enumerate(self.input_shape)
                  if axis not in self.axes]
         if any(size is None for size in shape):
             raise ValueError("BatchNorm needs specified input sizes for "
                              "all axes not normalized over.")
         # init parameters
         if self.beta_init is not None:
-            config.create_params(self.beta_init, shape=shape, name='beta',
-                                 nnops=self, roles=BATCH_NORM_SHIFT_PARAMETER)
+            self.config.create_params(
+                self.beta_init, shape=shape, name='beta', roles=BATCH_NORM_SHIFT_PARAMETER)
         if self.gamma_init is not None:
-            config.create_params(self.gamma_init, shape=shape, name='gamma',
-                                 nnops=self, roles=BATCH_NORM_SCALE_PARAMETER)
-        config.create_params(self.mean_init, shape=shape, name='mean',
-                             nnops=self, roles=BATCH_NORM_POPULATION_MEAN)
-        config.create_params(self.inv_std_init, shape=shape, name='inv_std',
-                             nnops=self, roles=BATCH_NORM_POPULATION_INVSTD)
-        return config
+            self.config.create_params(
+                self.gamma_init, shape=shape, name='gamma', roles=BATCH_NORM_SCALE_PARAMETER)
+        self.config.create_params(
+            self.mean_init, shape=shape, name='mean', roles=BATCH_NORM_POPULATION_MEAN)
+        self.config.create_params(
+            self.inv_std_init, shape=shape, name='inv_std', roles=BATCH_NORM_POPULATION_INVSTD)
 
-    def _apply(self, x):
-        input_shape = K.get_shape(x)
+    def _apply(self, X):
+        input_shape = K.get_shape(X)
+        ndim = K.ndim(X)
         is_training = K.is_training()
-        ndim = K.ndim(x)
         # if is training, normalize input by its own mean and std
         if not is_training:
             mean = self.mean
             inv_std = self.inv_std
         else:
-            mean = K.mean(x, self.axes)
-            inv_std = K.inv(K.sqrt(K.var(x, self.axes) + self.epsilon))
+            mean = K.mean(X, self.axes)
+            inv_std = K.inv(K.sqrt(K.var(X, self.axes) + self.epsilon))
             # set a default update for them:
             running_mean = ((1 - self.alpha) * self.mean +
                             self.alpha * mean)
@@ -189,7 +186,7 @@ class BatchNorm(NNOps):
         beta = 0 if not hasattr(self, 'beta') else K.dimshuffle(self.beta, pattern)
         gamma = 1 if not hasattr(self, 'gamma') else K.dimshuffle(self.gamma, pattern)
         # normalize
-        normalized = (x - K.dimshuffle(mean, pattern)) * \
+        normalized = (X - K.dimshuffle(mean, pattern)) * \
             (gamma * K.dimshuffle(inv_std, pattern)) + beta
         # set shape for output
         K.add_shape(normalized, input_shape)
