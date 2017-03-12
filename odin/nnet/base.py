@@ -563,8 +563,12 @@ class VariationalDense(NNOps):
                  activation=K.linear,
                  seed=None, **kwargs):
         super(VariationalDense, self).__init__(**kwargs)
+        self.num_units = num_units
+        self.W_init = W_init
+        self.b_init = b_init
         # hack to prevent infinite useless loop of transpose
         self.activation = K.linear if activation is None else activation
+        self.seed = seed
 
     # ==================== helper ==================== #
     @cache_memory # same x will return the same mean and logsigma
@@ -590,21 +594,15 @@ class VariationalDense(NNOps):
     def _transpose(self):
         raise NotImplementedError
 
-    def _initialize(self, x):
-        input_shape = K.get_shape(x)
-        config = NNConfig(num_inputs=input_shape[-1])
-        shape = (input_shape[-1], self.num_units)
-
-        config.create_params(self.W_init, shape, 'W_mean',
-                             nnops=self, roles=WEIGHT)
-        config.create_params(self.W_init, shape, 'W_logsigma',
-                             nnops=self, roles=WEIGHT)
+    def _initialize(self):
+        shape = (self.input_shape[-1], self.num_units)
+        self.config.create_params(self.W_init, shape, 'W_mean', roles=WEIGHT)
+        self.config.create_params(self.W_init, shape, 'W_logsigma', roles=WEIGHT)
         if self.b_init is not None:
-            config.create_params(self.b_init, (self.num_units,), 'b_mean',
-                                 nnops=self, roles=BIAS)
-            config.create_params(self.b_init, (self.num_units,), 'b_logsigma',
-                                 nnops=self, roles=BIAS)
-        return config
+            self.config.create_params(
+                self.b_init, (self.num_units,), 'b_mean', roles=BIAS)
+            self.config.create_params(
+                self.b_init, (self.num_units,), 'b_logsigma', roles=BIAS)
 
     def _apply(self, x):
         input_shape = K.get_shape(x)
@@ -665,27 +663,25 @@ class ParametricRectifier(NNOps):
     def __init__(self, alpha_init=K.init.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)
+        self.alpha_init = alpha_init
+        self.shared_axes = shared_axes
 
     # ==================== abstract methods ==================== #
-    def _initialize(self, x):
-        input_shape = K.get_shape(x)
-        config = NNConfig(input_shape=x)
-
+    def _initialize(self):
         if self.shared_axes == 'auto':
-            self.shared_axes = (0,) + tuple(range(2, len(input_shape)))
+            self.shared_axes = (0,) + tuple(range(2, len(self.input_shape)))
         elif self.shared_axes == 'all':
-            self.shared_axes = tuple(range(len(input_shape)))
+            self.shared_axes = tuple(range(len(self.input_shape)))
         elif isinstance(self.shared_axes, int):
             self.shared_axes = (self.shared_axes,)
 
-        shape = [size for axis, size in enumerate(input_shape)
+        shape = [size for axis, size in enumerate(self.input_shape)
                  if axis not in self.shared_axes]
         if any(size is None for size in shape):
             raise ValueError("ParametricRectifierLayer needs input sizes for "
                              "all axes that alpha's are not shared over.")
-        self.alpha = config.create_params(self.alpha_init, shape, name="alpha",
-                                         nnops=self, roles=PARAMETER)
-        return config
+        self.alpha = self.config.create_params(
+            self.alpha_init, shape, name="alpha", roles=PARAMETER)
 
     def _apply(self, x):
         axes = iter(range(K.ndim(self.alpha)))
