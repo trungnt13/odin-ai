@@ -98,7 +98,7 @@ class NNConfig(object):
         return self._variables.values()
 
     @property
-    def placeholder(self):
+    def input(self):
         """ Return the list of all TensorVariables attached to this Config"""
         inputs = [i.placeholder for i in self._input_desc]
         return inputs[0] if len(inputs) == 1 else inputs
@@ -116,17 +116,15 @@ class NNConfig(object):
         # have not initialized the input description
         if len(self._input_desc) == 0:
             self._input_desc = [i if isinstance(i, InputDescriptor)
-                                else InputDescriptor(i)
-                                for i in input_desc]
+                                else InputDescriptor(i) for i in input_desc]
         # mismatch input desctiption
         elif len(input_desc) != len(self._input_desc):
-            raise Exception("This Config required %d inputs, but given "
+            raise Exception("This Config required %d inputs, but was given "
                             "%d inputs." % (len(self._input_desc), len(input_desc)))
         for i, j in zip(input_desc, self._input_desc):
             if i != j:
-                raise Exception("The config require input with %s, "
-                                "but given other input with %s." %
-                                (str(j), str(i)))
+                raise Exception("The config require input with %s, but was given "
+                                "other input with %s." % (str(j), str(i)))
         # automatic fetch placeholder to replace raw description
         return [i if K.is_tensor(i) else j.placeholder
                 for i, j in zip(input_desc, self._input_desc)]
@@ -223,17 +221,12 @@ class NNConfig(object):
         self._nnops = states[0]
         self._input_desc = states[1]
         self._variables = OrderedDict([(name, K.pickling_variable(var))
-                           for name, var in states[3]])
+                           for name, var in states[2]])
 
 
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-_primitive_types = (tuple, list, dict, string_types, type(True),
-                    types.FunctionType, numbers.Number, type(None),
-                    K.init.constant, NNConfig)
-
-
 @add_metaclass(ABCMeta)
 class NNOps(object):
     """ Basics of all Neural Network operators
@@ -301,7 +294,7 @@ class NNOps(object):
 
     @property
     def variables(self):
-        if self._configuration is None:
+        if not self._is_initialized:
             raise Exception("This operators haven't initialized.")
         return self._configuration.variables
 
@@ -325,11 +318,10 @@ class NNOps(object):
         return self._is_initialized
 
     @property
-    def placeholder(self):
-        """ Create list of placeholder based on footprint(shape) from previous
-        inputs of this Operator
+    def input(self):
+        """ Create list of placeholder to represent inputs of this NNOps
         """
-        return self._configuration.placeholder
+        return self._configuration.input
 
     @property
     def input_shape(self):
@@ -341,7 +333,7 @@ class NNOps(object):
         # __init__ is called
         if hasattr(self, '_save_states') and name != '_save_states':
             # otherwise, only save primitive types
-            if isinstance(value, _primitive_types):
+            if isinstance(value, _PRIMITIVE_TYPES):
                 self._save_states[name] = value
         return super(NNOps, self).__setattr__(name, value)
 
@@ -350,10 +342,6 @@ class NNOps(object):
         if name in self.__dict__:
             return self.__dict__[name]
         return getattr(self._configuration, name)
-        # try:
-        #     return super(NNOps, self).__getattr__(name)
-        # except AttributeError:
-        #     return self._configuration.__getattr__(name)
 
     # ==================== abstract method ==================== #
     def _initialize(self, **kwargs):
@@ -394,7 +382,7 @@ class NNOps(object):
     def __str__(self):
         ops_format = '<ops: %s, name: %s, init: %s>'
         return ops_format % (self.__class__.__name__, self.name,
-                             self._configuration is not None)
+                             self._is_initialized)
 
     # ==================== Slicing ==================== #
     def __getitem__(self, key):
@@ -406,9 +394,13 @@ class NNOps(object):
 
     def __setstate__(self, states):
         self._save_states = states
-        self._transpose_ops = None # reset the transpose ops
         for i, j in self._save_states.iteritems():
             setattr(self, i, j)
+
+
+_PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
+                    types.FunctionType, numbers.Number, type(None),
+                    K.init.constant, NNConfig, NNOps)
 
 
 # ===========================================================================
@@ -418,7 +410,7 @@ class NNSliceOps(NNOps):
 
     def __init__(self, ops, slice):
         if not isinstance(ops, NNOps):
-            raise ValueError('ops must be instance of NNOps, but given argument '
+            raise ValueError('ops must be instance of NNOps, but was given argument '
                              'has %s' % str(type(ops)))
         super(NNSliceOps, self).__init__()
         self._ops = ops
@@ -479,23 +471,25 @@ class TransposeOps(NNOps):
         super(TransposeOps, self).__init__()
         if not isinstance(ops, NNOps):
             raise ValueError("TransposeOps can only be applied for instance of "
-                             "odin.nnet.NNOps, but given type=%s" % str(type(ops)))
-        self._ops = ops
+                             "odin.nnet.NNOps, but was given type=%s" % str(type(ops)))
+        self._transpose_ops = ops
+        print(self._save_states)
 
     def _transpose(self):
         # return original Ops to prevent infinite useless loop of transpose
-        return self._ops
+        return self._transpose_ops
 
-    def _initialize(self):
-        pass
-
-    def _apply(self, X, **kwargs):
-        pass
+    def _initialize(self, **kwargs):
+        if not self._transpose_ops.is_initialized:
+            raise RuntimeError("The original NNOps with name:%s have not been "
+                               "initialized, you must call the original NNOps "
+                               "first." % self._ops)
 
     def __str__(self):
-        ops_format = '<ops: %s, name: %s, init: %s, (Transposed)>'
-        return ops_format % (self._ops.__class__.__name__, self._ops.name,
-                             self._ops.is_initialized)
+        ops_format = '<(Transposed)ops: %s, name: %s, init: %s>'
+        return ops_format % (self._transpose_ops.__class__.__name__,
+                             self._transpose_ops.name,
+                             self._transpose_ops.is_initialized)
 
 
 # ===========================================================================
@@ -516,40 +510,48 @@ class Dense(NNOps):
 
     # ==================== abstract methods ==================== #
     def _transpose(self):
-        return TransposeOps(self)
-        # flip the input and hidden
-        num_inputs = self.num_units
-        num_units = self.num_inputs
         # create the new dense
-        transpose = Dense(num_units=num_units,
-                          W_init=self.W_init, b_init=self.b_init,
-                          activation=self.activation,
-                          name=self.name + '_transpose')
-        transpose.config.create_params(K.transpose(self.W),
-            shape=(num_inputs, num_units), roles=WEIGHT, name='W')
-        #create the config
-        if self.b_init is not None:
-            transpose.config.create_params(self.b_init,
-                shape=(num_units,), name='b', roles=BIAS)
-        return transpose
+        return TransposeDense(self)
 
     def _initialize(self):
         input_shape = self.input_shape
         shape = (input_shape[-1], self.num_units)
         self.config.create_params(self.W_init, shape, 'W', roles=WEIGHT)
         if self.b_init is not None:
-            self.config.create_params(self.b_init, (self.num_units,), 'b', roles=BIAS)
+            self.config.create_params(self.b_init,
+                shape=(self.num_units,), name='b', roles=BIAS)
 
-    def _apply(self, x):
-        input_shape = K.get_shape(x)
+    def _apply(self, X):
+        input_shape = K.get_shape(X)
         # calculate projection
-        activation = K.dot(x, self.W)
-        if hasattr(self, 'b') and self.b is not None:
-            activation = activation + self.b
+        activation = K.dot(X, self.W)
+        # add the bias
+        if self.b_init: activation = activation + self.b
         # set shape for output
         K.add_shape(activation, input_shape[:-1] + (self.num_units,))
         # Nonlinearity might change the shape of activation
         activation = self.activation(activation)
+        return activation
+
+
+class TransposeDense(TransposeOps):
+
+    def _initialize(self):
+        super(TransposeDense, self)._initialize()
+        self.num_units = self.T.input_shape[-1]
+        if self.T.b_init:
+            self.config.create_params(self.T.b_init,
+                shape=(self.num_units,), name='b', roles=BIAS)
+
+    def _apply(self, X):
+        input_shape = K.get_shape(X)
+        # calculate projection
+        activation = K.dot(X, K.transpose(self.T.W))
+        if self.T.b_init: activation = activation + self.b
+        # set shape for output
+        K.add_shape(activation, input_shape[:-1] + (self.num_units,))
+        # Nonlinearity might change the shape of activation
+        activation = self.T.activation(activation)
         return activation
 
 
@@ -634,7 +636,7 @@ class ParametricRectifier(NNOps):
         Initial value, expression or initializer for the alpha values. The
         shape must match the incoming shape, skipping those axes the alpha
         values are shared over (see the example below).
-        See :func:`lasagne.utils.create_param` for more information.
+        See :func:`lasagne.utils.create_params` for more information.
     shared_axes : 'auto', 'all', int or tuple of int
         The axes along which the parameters of the rectifier units are
         going to be shared. If ``'auto'`` (the default), share over all axes
