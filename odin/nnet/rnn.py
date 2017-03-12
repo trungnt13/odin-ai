@@ -38,7 +38,7 @@ def _check_rnn_hidden_states(h0, ops, input_shape, name):
         if callable(h0) or K.is_trainable_variable(h0) or isinstance(h0, np.ndarray):
             h0 = ops.config.create_params(h0,
                 shape=(1,) + input_shape[2:-1] + (ops.num_units,),
-                name=name, nnops=ops, roles=INITIAL_STATE)
+                name=name, roles=INITIAL_STATE)
         else: # still store the states so it can be re-used on other inputs
             ops.h0 = h0
     return h0
@@ -693,8 +693,7 @@ class LSTM(BaseRNN):
         # W_input, W_forget, W_output (peepholes is diagonal matrix)
         if self.W_peepholes is not None:
             self.config.create_params(self.W_peepholes, shape=(self.num_units,),
-                                 name='peepholes', nnops=self, roles=WEIGHT,
-                                 nb_params=3)
+                                 name='peepholes', roles=WEIGHT, nb_params=3)
         # bias
         if self.b_init is not None:
             self.config.create_params(self.b_init, shape=(self.num_units,),
@@ -713,9 +712,8 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
         if callable(s0) or K.is_trainable_variable(s0) or isinstance(s0, np.ndarray):
             _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
                 else K.get_shape(s0)
-            s0 = nnops.config.create_params(s0, shape=_, name=name,
-                                            nnops=nnops,
-                                            roles=INITIAL_STATE)
+            s0 = nnops.config.create_params(
+                s0, shape=_, name=name, roles=INITIAL_STATE)
         # ====== check s0 shape ====== #
         init_shape = K.get_shape(s0)
         if K.ndim(s0) == 2:
