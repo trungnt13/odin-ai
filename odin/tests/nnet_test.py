@@ -303,20 +303,20 @@ class NNetTest(unittest.TestCase):
                                            dilation=dilation)
                                 fT = f.T
                                 y = f(X)
-                                assert feval(X, y).shape[1:] == K.get_shape(y)[1:]
+                                self.assertEqual(feval(X, y).shape[1:], K.get_shape(y)[1:])
                                 yT = fT(y)
-                                assert feval(X, yT).shape[1:] == K.get_shape(yT)[1:]
-                                assert K.get_shape(X) == K.get_shape(yT)
+                                self.assertEqual(feval(X, yT).shape[1:], K.get_shape(yT)[1:])
+                                self.assertEqual(K.get_shape(X), K.get_shape(yT))
                                 # ====== test Transpose ====== #
                                 f = N.TransposeConv(num_filters=num_filters, filter_size=filter_size,
                                     pad=pad, strides=strides, activation=K.relu,
                                     dilation=dilation)
                                 fT = f.T
                                 y = f(X)
-                                assert feval(X, y).shape[1:] == K.get_shape(y)[1:]
+                                self.assertEqual(feval(X, y).shape[1:], K.get_shape(y)[1:])
                                 yT = fT(y)
-                                assert feval(X, yT).shape[1:] == K.get_shape(yT)[1:]
-                                assert K.get_shape(X) == K.get_shape(yT)
+                                self.assertEqual(feval(X, yT).shape[1:], K.get_shape(yT)[1:])
+                                self.assertEqual(K.get_shape(X), K.get_shape(yT))
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')
