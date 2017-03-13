@@ -5,7 +5,7 @@ import numpy as np
 from odin import backend as K
 from odin.basic import PARAMETER, WEIGHT, BIAS
 from odin.utils import as_tuple
-from odin.utils.shape_calculation import get_conv_output_shape
+from odin.utils.shape_calculation import get_conv_output_shape, get_deconv_output_shape
 from .base import NNOps, NNTransposeOps
 
 
@@ -82,9 +82,6 @@ class Conv(NNOps):
         :math:`x` corresponds to :math:`x - 1` zeros inserted between
         adjacent filter elements.
 
-    deconvol : bool
-        if True, enable deconvolution (Transposed convolution) mode
-
     **kwargs
         Any additional keyword arguments are passed to the `NNOps` superclass.
 
@@ -98,15 +95,13 @@ class Conv(NNOps):
 
     Note
     ----
-    This Ops can be used for both 2D and 3D images (videos)
+    This Ops can be used for both 2D (images) and 3D (videos)
     """
 
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
-                 W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant(0),
-                 untie_biases=False,
-                 activation=K.linear,
-                 dilation=1, deconvol=False, **kwargs):
+                 W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
+                 untie_biases=False, activation=K.linear,
+                 dilation=1, **kwargs):
         super(Conv, self).__init__(**kwargs)
         self.num_filters = int(num_filters)
         self.filter_size = filter_size
@@ -116,12 +111,22 @@ class Conv(NNOps):
         self.b_init = b_init
         self.untie_biases = bool(untie_biases)
         self.dilation = dilation
-        self.deconvol = bool(deconvol)
         self.activation = K.linear if activation is None else activation
 
     # ==================== abstract methods ==================== #
+    @property
+    def kernel_shape(self):
+        # TF kernel shape: (kernel_dim1, kernel_dim2, ..., input_depth, out_depth)
+        return self.filter_size + (self.input_shape[-1], self.num_filters)
+
+    @property
+    def output_shape(self):
+        return get_conv_output_shape(self.input_shape, self.kernel_shape,
+                border_mode=self.pad, subsample=self.strides,
+                filter_dilation=self.dilation)
+
     def _transpose(self):
-        return TransposeConv(self)
+        return DeConv(self)
 
     def _initialize(self):
         # ====== validate init arguments ====== #
@@ -144,33 +149,35 @@ class Conv(NNOps):
         # filter size
         self.filter_size = as_tuple(self.filter_size, ndim, int)
         # ====== create config ====== #
-        # TF kernel shape: (kernel_dim1, kernel_dim2, ..., input_depth, out_depth)
-        kernel_shape = self.filter_size + (self.input_shape[-1], self.num_filters)
         # weights
         self.config.create_params(
-            self.W_init, shape=kernel_shape, name='W', roles=WEIGHT)
+            self.W_init, shape=self.kernel_shape, name='W', roles=WEIGHT)
         if self.b_init is not None:
             if self.untie_biases:
-                output_shape = get_conv_output_shape(self.input_shape, kernel_shape,
-                        border_mode=self.pad, subsample=self.strides,
-                        filter_dilation=self.dilation)
-                biases_shape = output_shape[1:]
+                biases_shape = self.output_shape[1:]
             else:
                 biases_shape = (self.num_filters,)
             self.config.create_params(
                 self.b_init, shape=biases_shape, name='b', roles=BIAS)
 
     def _apply(self, X):
-        # store last input for deconvolution ops
+        # ====== apply convolution ====== #
         self._last_input = X
         conved = self.convolve(X)
         output_shape = K.get_shape(conved)
-        if not hasattr(self, 'b'):
-            conved = conved
-        elif self.untie_biases:
-            conved += K.expand_dims(self.b, 0)
-        else:
-            conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
+        # ====== check output_shape match the estimated output_shape ====== #
+        if len(output_shape) != len(self.output_shape) or \
+        any(i != j for i, j in zip(output_shape, self.output_shape)
+                if i is not None and j is not None):
+            raise RuntimeError("The actual output_shape of this Convolution Ops "
+                               "is %s, but the pre-estimated output_shape is: %s "
+                               % (str(output_shape), str(self.output_shape)))
+        # ====== apply bias ====== #
+        if hasattr(self, 'b'):
+            if self.untie_biases:
+                conved += K.expand_dims(self.b, 0)
+            else:
+                conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
         activated = self.activation(conved)
         K.add_shape(activated, output_shape)
         # set shape for output
@@ -190,56 +197,106 @@ class Conv(NNOps):
         return conved
 
 
-class TransposeConv(NNTransposeOps):
+# ===========================================================================
+# TransposeConv
+# ===========================================================================
+class TransposeConv(Conv):
+
+    def __init__(self, num_filters, filter_size, strides=1, pad='valid',
+                 W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
+                 untie_biases=False, activation=K.linear,
+                 dilation=1, output_shape=None, **kwargs):
+        super(TransposeConv, self).__init__(num_filters=num_filters,
+                 filter_size=filter_size, strides=strides, pad=pad,
+                 W_init=W_init, b_init=b_init,
+                 untie_biases=untie_biases, activation=activation,
+                 dilation=dilation, **kwargs)
+        # explicit output shape
+        self._output_shape = output_shape
+
+    def _transpose(self):
+        return DeConv(self)
+
+    @property
+    def kernel_shape(self):
+        # TF kernel shape: (kernel_dim1, kernel_dim2, ..., input_depth, out_depth)
+        # revert the output_channel in input_channel to keep the same kernel
+        # shape as original Convolution ops
+        return self.filter_size + (self.num_filters, self.input_shape[-1])
+
+    @property
+    def output_shape(self):
+        if self._output_shape is None:
+            return get_deconv_output_shape(self.input_shape, self.kernel_shape,
+                    border_mode=self.pad, subsample=self.strides,
+                    filter_dilation=self.dilation)
+        return self._output_shape
+
+    def convolve(self, X):
+        if self.ndim == 2:
+            deconv_func = K.deconv2d
+        elif self.ndim == 3:
+            deconv_func = K.deconv3d
+        else:
+            raise Exception('No support for %d-D input.' % self.ndim)
+        # ====== prepare the deconvolution ====== #
+        # theano require batch_dims is Constant or None, but tensorflow
+        # require batch_dims is a native TensorVariable
+        # output_shape = K.get_shape(self.T._last_input,
+        #     native=True if K.backend() == 'tensorflow' else False)
+        output_shape = self.output_shape
+        deconved = deconv_func(X, kernel=self.W,
+                               output_shape=output_shape,
+                               strides=self.strides,
+                               border_mode=self.pad,
+                               filter_dilation=self.dilation)
+
+        return deconved
+
+
+# ===========================================================================
+# Deconvolution
+# ===========================================================================
+class DeConv(NNTransposeOps):
+
+    def __init__(self, ops):
+        super(DeConv, self).__init__(ops)
+        self._deconv = None
+
+    @property
+    def variables(self):
+        v = super(DeConv, self).variables + self._deconv.variables
+        v = list(set(v))
+        return v
+
+    @property
+    def kernel_shape(self):
+        return self.T.kernel_shape
+
+    @property
+    def output_shape(self):
+        return self.T.input_shape
 
     # ==================== abstract method ==================== #
     def _initialize(self):
-        """ This function return NNConfig for given configuration from arg
-        and kwargs
-        """
-        super(TransposeConv, self)._initialize()
-        output_shape = self.T.input_shape
-        # initialize parameters
-        b_init = self.T.b_init
-        if b_init is not None:
-            if self.T.untie_biases:
-                biases_shape = output_shape[1:]
-            else:
-                biases_shape = (output_shape[-1],)
-            self.config.create_params(
-                b_init, shape=biases_shape, name='b', roles=BIAS)
-
-    def _apply(self, x):
-        if K.ndim(x) != self.T.ndim + 2:
-            raise ValueError('Input has %d dimensions, but this Ops require %d-D '
-                             'tensor.' % (K.ndim(x), self.T.ndim + 2))
-        # ====== prepare the deconvolution ====== #
-        stride = self.T.strides
-        border_mode = self.T.pad
-        W = self.T.W
-        dilation = self.T.dilation
-        # if Dilated Convolution, must transpose the Weights
-        if self.T.ndim == 2:
-            deconv_func = K.deconv2d
-        elif self.T.ndim == 3:
-            deconv_func = K.deconv3d
+        super(DeConv, self)._initialize()
+        ops = self.T
+        if isinstance(ops, TransposeConv):
+            self._deconv = Conv(num_filters=ops.input_shape[-1],
+                    filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
+                    W_init=ops.W, b_init=ops.b_init,
+                    untie_biases=ops.untie_biases, activation=ops.activation,
+                    dilation=ops.dilation, name=self.name + '_deconv')
+        elif isinstance(ops, Conv):
+            self._deconv = TransposeConv(num_filters=ops.input_shape[-1],
+                    filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
+                    W_init=ops.W, b_init=ops.b_init,
+                    untie_biases=ops.untie_biases, activation=ops.activation,
+                    dilation=ops.dilation, output_shape=ops.input_shape,
+                    name=self.name + '_deconv')
         else:
-            raise Exception('No support for %d-D input in TransposedConv' %
-                            self.T.ndim)
-        # theano require batch_dims is Constant or None, but tensorflow
-        # require batch_dims is a native TensorVariable
-        output_shape = K.get_shape(self.T._last_input,
-            native=True if K.backend() == 'tensorflow' else False)
-        conved = deconv_func(x, kernel=W,
-                output_shape=output_shape,
-                strides=stride,
-                border_mode=border_mode,
-                filter_dilation=dilation)
-        if hasattr(self, 'b'):
-            if self.T.untie_biases:
-                conved += K.expand_dims(self.b, 0)
-            else:
-                conved += K.dimshuffle(self.b, ('x',) * (self.T.ndim + 1) + (0,))
-        activated = self.T.activation(conved)
-        K.add_shape(activated, self.T.input_shape)
-        return activated
+            raise ValueError("Unsupport deconvolution for NNOps with type=%s"
+                             % str(type(self.T)))
+
+    def _apply(self, X):
+        return self._deconv(X)

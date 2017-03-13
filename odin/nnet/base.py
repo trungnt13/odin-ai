@@ -37,8 +37,8 @@ def _initialize_param(name, spec, shape):
         if shape is None:
             shape = spec_shape
         elif tuple(shape) != tuple(spec_shape):
-            raise Exception('Given variable has different shape from requirement'
-                            ', %s != %s' % (str(spec_shape), str(shape)))
+            raise Exception('Require variable with shape=%s, but was given different '
+                            'shape=%s.' % (str(shape), str(spec_shape)))
     #####################################
     # 2. expression, we can only check number of dimension.
     elif K.is_variable(spec):

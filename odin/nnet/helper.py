@@ -49,9 +49,11 @@ class HelperOps(NNOps):
 
     @property
     def variables(self):
-        all_variables = chain(*[i.variables for i in as_tuple(self.ops)
-                                if hasattr(i, 'variables')])
-        return list(all_variables)
+        all_variables = []
+        for i in as_tuple(self.ops):
+            if hasattr(i, 'variables'):
+                all_variables += i.variables
+        return list(set(all_variables))
 
 
 class Merge(HelperOps):

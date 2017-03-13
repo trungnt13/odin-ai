@@ -167,3 +167,93 @@ def get_conv_output_shape(image_shape, kernel_shape,
             subsample[i], filter_dilation[i]) for i in range(len(subsample)))
     # ====== convert theano to tensorflow shape ====== #
     return (bsize, ) + out_shp + (nkern,)
+
+
+# ===========================================================================
+# Transpose convolution shape
+# ===========================================================================
+def __get_deconv_shape_1axis(n, kernel_shape, border_mode,
+                             subsample, dilation=1):
+    if None in [n, kernel_shape, border_mode,
+                subsample, dilation]:
+        return None
+    dil_kernel_shape = (kernel_shape - 1) * dilation + 1
+    if isinstance(border_mode, str):
+        border_mode = border_mode.lower()
+    if border_mode == "half" or border_mode == "same":
+        pad = dil_kernel_shape // 2
+    elif border_mode == "full":
+        pad = dil_kernel_shape - 1
+    elif border_mode == "valid":
+        pad = 0
+    else:
+        pad = border_mode
+        if pad < 0:
+            raise ValueError("border_mode must be >= 0")
+    # ====== get exact same border_mode for theano ====== #
+    if (border_mode == 'half' or border_mode == 'same') and \
+        kernel_shape % 2 == 0:
+        n = (n * subsample) + 1 - subsample
+    n = n - 1
+    if subsample != 1:
+        n = n * subsample
+
+    # In case of symbolic shape, we want to build the smallest graph
+    # (image_shape + 2 * pad - dil_kernel_shape) // subsample + 1
+    if pad == 0:
+        n = n + dil_kernel_shape
+    else:
+        n = n + dil_kernel_shape - 2 * pad
+
+    return n
+
+
+def get_deconv_output_shape(image_shape, kernel_shape,
+                            border_mode, subsample,
+                            filter_dilation=None):
+    """ Invert the process of calculating output shape for convolution
+    (Deconvolution, or TransposedConvolution)
+
+    Parameters
+    ----------
+    image_shape: tuple of int (symbolic or numeric) corresponding to the input
+        order: (samples, conv_dim1, conv_dim2, conv_dim3, ..., input_depth)
+        (i.e tensorflow-NHWC format)
+    kernel_shape: tuple of int (symbolic or numeric) corresponding to the
+        order: (kernel_dim1, kernel_dim2, kernel_dim3, ..., input_depth, out_depth)
+        (i.e tensorflow-NHWC format)
+    border_mode: string, int (symbolic or numeric) or tuple of int (symbolic
+        or numeric). If it is a string, it must be 'valid', 'half' or 'full'.
+        If it is a tuple, its two (or three) elements respectively correspond
+        to the padding on height and width (and possibly depth) axis.
+    subsample: tuple of int (symbolic or numeric). Its or three elements
+        espectively correspond to the subsampling on height and width (and
+        possibly depth) axis.
+    filter_dilation: tuple of int (symbolic or numeric). Its two elements
+        correspond respectively to the dilation on height and width axis.
+
+    Returns
+    -------
+    output_shape: tuple of int corresponding to the output image shape. Its
+        four element must correspond respectively to: batch size, number of
+        output channels, height and width of the image. None where undefined.
+
+    """
+    # ======  convert tensorflow shape to theano shape ====== #
+    image_shape = (image_shape[0], image_shape[-1]) + tuple(image_shape[1:-1])
+    kernel_shape = (kernel_shape[-1], kernel_shape[-2]) + tuple(kernel_shape[:-2])
+    # ====== infer shape ====== #
+    bsize, imshp = image_shape[0], image_shape[2:]
+    outkern, kshp = kernel_shape[1], kernel_shape[2:]
+    if filter_dilation is None:
+        filter_dilation = np.ones(len(subsample), dtype='int')
+    if isinstance(border_mode, tuple):
+        out_shp = tuple(__get_deconv_shape_1axis(
+            imshp[i], kshp[i], border_mode[i],
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    else:
+        out_shp = tuple(__get_deconv_shape_1axis(
+            imshp[i], kshp[i], border_mode,
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    # ====== convert theano to tensorflow shape ====== #
+    return (bsize, ) + out_shp + (outkern,)

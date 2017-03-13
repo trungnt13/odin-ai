@@ -1,3 +1,8 @@
+# class Child(Parent1, Parent2):
+#     def __init__(self):
+#         Parent1.__init__(self)
+#         Parent2.__init__(self)
+
 from __future__ import print_function, division, absolute_import
 
 
