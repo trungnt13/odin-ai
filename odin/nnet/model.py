@@ -62,7 +62,7 @@ class InputDescriptor(object):
 
     def __init__(self, shape, dtype=None, name=None):
         super(InputDescriptor, self).__init__()
-        if K.is_tensor(shape):
+        if K.is_variable(shape):
             if dtype is None: dtype = K.get_dtype(shape, string=True)
             shape = K.get_shape(shape)
         # input the InputDescriptor directly
@@ -129,7 +129,7 @@ class InputDescriptor(object):
 
     def __cmp__(self, other):
         # ====== compare to a TensorVariable ====== #
-        if K.is_tensor(other):
+        if K.is_variable(other):
             other = InputDescriptor(
                 shape=K.get_shape(other), dtype=K.get_dtype(other, string=True))
         # ====== compare to a InputDesriptor ====== #
@@ -293,7 +293,7 @@ class ModelDescriptor(object):
             # get the input shape
             input_desc = []
             for i in inputs:
-                if K.is_tensor(i): # TensorVariable
+                if K.is_variable(i): # TensorVariable
                     shape = K.get_shape(i)
                     input_desc.append(
                         InputDescriptor(shape=shape, dtype=i.dtype, name=i.name))
@@ -333,7 +333,7 @@ class ModelDescriptor(object):
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):
-                if K.is_tensor(j):
+                if K.is_variable(j):
                     model_inputs[i] = j
         # ====== call the function ====== #
         argspecs = inspect.getargspec(self._func)

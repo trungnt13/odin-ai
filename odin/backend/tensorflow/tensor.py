@@ -492,8 +492,7 @@ def squeeze(x, axis):
     x = tf.squeeze(x, [axis])
     output_shape = tuple([j if i is None else i
         for i, j in zip(get_shape(x), input_shape)])
-    add_shape(x, output_shape)
-    return x
+    return add_shape(x, output_shape)
 
 
 def pad(x, axes=1, padding=1):

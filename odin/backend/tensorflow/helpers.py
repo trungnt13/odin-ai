@@ -9,7 +9,8 @@ from collections import OrderedDict
 import numpy as np
 
 import tensorflow as tf
-from tensorflow.contrib.framework import is_tensor
+from tensorflow.contrib.framework import is_tensor as _is_tensor
+from tensorflow.contrib.distributions.python.ops.distribution import Distribution as _Distribution
 from tensorflow import variable_scope
 
 from odin.basic import (add_role, has_roles,
@@ -95,7 +96,7 @@ def is_variable(variable):
     """ a variable is any tensor variable in (e.g. placeholder,
     trainable_variable, intermediate tensor, ...)
     """
-    return is_tensor(variable)
+    return _is_tensor(variable) or isinstance(variable, _Distribution)
 
 
 # ===========================================================================
@@ -293,7 +294,7 @@ class ComputationGraph(object):
                     elif v.op.node_def.op[:8] == "Variable" and v.name in trainable_collections:
                         v = trainable_collections[v.name]
                         trainable_variables.append(v)
-                    if is_tensor(v):
+                    if _is_tensor(v):
                         variables.append(v)
             inputs = list(set(inputs))
             variables = list(set(variables + usual_outputs))

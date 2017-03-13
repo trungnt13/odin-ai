@@ -139,6 +139,10 @@ class Sequence(HelperOps):
 
     def __init__(self, ops, strict_transpose=False, debug=False, **kwargs):
         super(Sequence, self).__init__(ops, **kwargs)
+        # modify the name of variables haven't been initizalized
+        for i in self.ops:
+            if not i.is_initialized:
+                i.name = self.name + '_' + i.name
         self.strict_transpose = bool(strict_transpose)
         self.debug = debug
 

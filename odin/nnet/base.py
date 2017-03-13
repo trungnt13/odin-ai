@@ -125,7 +125,7 @@ class NNConfig(object):
                 raise Exception("The config require input with %s, but was given "
                                 "other input with %s." % (str(j), str(i)))
         # automatic fetch placeholder to replace raw description
-        return [i if K.is_tensor(i) else j.placeholder
+        return [i if K.is_variable(i) else j.placeholder
                 for i, j in zip(input_desc, self._input_desc)]
 
     def __getattr__(self, name):

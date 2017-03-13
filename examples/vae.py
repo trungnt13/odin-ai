@@ -9,6 +9,7 @@ import cPickle
 
 import numpy as np
 from odin import nnet as N, backend as K, fuel as F, training
+import edward as ed
 
 # ====== load dataset ====== #
 ds = F.load_mnist()
@@ -18,11 +19,17 @@ print("Input shape:", input_shape)
 
 # ====== get model ====== #
 model = N.get_model_descriptor('convolutional_vae')
-K.set_training(True); y_train = model(input_shape)
-K.set_training(False); y_score = model()
+K.set_training(True); (z, qz, x) = model(input_shape)
+# K.set_training(False); y_score = model()
 parameters = model.parameters
 print("Parameters:", [p.name for p in parameters])
-
+print(z, qz, x, model.placeholder)
+exit()
+# Bind p(x, z) and q(z | x) to the same placeholder for x.
+inference = ed.KLqp({z: qz}, {x: model.placeholder})
+optimizer = tf.train.AdamOptimizer(0.01, epsilon=1.0)
+inference.initialize(optimizer=optimizer)
+exit()
 # ====== create trainer ====== #
 opt = K.optimizers.RMSProp(lr=0.0001)
 trainer, hist = training.standard_trainer(
