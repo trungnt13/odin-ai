@@ -10,7 +10,8 @@ import numpy as np
 
 from odin import backend as K
 from odin.config import get_floatX
-from odin.utils import is_lambda, is_number, get_module_from_path, is_string
+from odin.utils import (is_lambda, is_number, get_module_from_path, is_string,
+                        as_tuple)
 
 
 # ===========================================================================
@@ -236,7 +237,8 @@ class ModelDescriptor(object):
     @property
     def placeholder(self):
         self._check_init_shape()
-        return [i.placeholder for i in self.input_desc]
+        X = [i.placeholder for i in self.input_desc]
+        return X[0] if len(X) == 1 else X
 
     @property
     def y_train(self):
@@ -329,7 +331,7 @@ class ModelDescriptor(object):
                         j._name = '%s%.2d' % (self.name, i)
                     self.input_desc.append(j)
         # ====== get inputs variable====== #
-        model_inputs = list(self.placeholder)
+        model_inputs = list(as_tuple(self.placeholder))
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):

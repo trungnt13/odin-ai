@@ -8,9 +8,12 @@ os.environ['ODIN'] = 'float32,gpu,tensorflow'
 import cPickle
 
 import numpy as np
+import tensorflow as tf
+
 from odin import nnet as N, backend as K, fuel as F, training
 import edward as ed
-
+print(tf.get_default_session(), K.get_session())
+exit()
 # ====== load dataset ====== #
 ds = F.load_mnist()
 print(ds)
@@ -21,14 +24,20 @@ print("Input shape:", input_shape)
 model = N.get_model_descriptor('convolutional_vae')
 K.set_training(True); (z, qz, x) = model(input_shape)
 # K.set_training(False); y_score = model()
+X = model.placeholder
 parameters = model.parameters
 print("Parameters:", [p.name for p in parameters])
-print(z, qz, x, model.placeholder)
-exit()
 # Bind p(x, z) and q(z | x) to the same placeholder for x.
 inference = ed.KLqp({z: qz}, {x: model.placeholder})
 optimizer = tf.train.AdamOptimizer(0.01, epsilon=1.0)
 inference.initialize(optimizer=optimizer)
+
+init = tf.global_variables_initializer()
+init.run()
+
+for i in range(0, ds['X_train'].shape[0], 256):
+    cost = inference.update(feed_dict={X: ds['X_train'][i:i + 256]})
+    print(cost)
 exit()
 # ====== create trainer ====== #
 opt = K.optimizers.RMSProp(lr=0.0001)

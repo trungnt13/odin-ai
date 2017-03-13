@@ -44,7 +44,7 @@ if CONFIG['device'] == 'gpu':
     else:
         __session_args['gpu_options'] = tf.GPUOptions(
             allow_growth=True)
-_SESSION = tf.Session(config=tf.ConfigProto(**__session_args))
+_SESSION = tf.InteractiveSession(config=tf.ConfigProto(**__session_args))
 
 
 def set_session(session):

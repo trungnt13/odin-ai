@@ -54,7 +54,7 @@ def convolutional_vae(X, saved_states, **kwargs):
     z = Normal(mu=K.zeros(shape=K.get_shape(mu, native=True)),
                sigma=K.ones(shape=K.get_shape(sigma, native=True)))
     logits = f_generative(z)
-    x = Bernoulli(logits=logits)
+    x = K.add_shape(Bernoulli(logits=logits), K.get_shape(logits))
     return [z, qz, x], (f_inference, f_generative)
 
 
