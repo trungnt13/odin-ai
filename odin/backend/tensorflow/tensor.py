@@ -487,7 +487,13 @@ def squeeze(x, axis):
     """Remove a 1-dimension from the tensor at index "axis".
     """
     axis = axis % x.get_shape().ndims
-    return tf.squeeze(x, [axis])
+    input_shape = [j for i, j in enumerate(get_shape(x))
+                   if i != axis]
+    x = tf.squeeze(x, [axis])
+    output_shape = tuple([j if i is None else i
+        for i, j in zip(get_shape(x), input_shape)])
+    add_shape(x, output_shape)
+    return x
 
 
 def pad(x, axes=1, padding=1):
