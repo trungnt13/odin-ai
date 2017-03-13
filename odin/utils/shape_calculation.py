@@ -177,34 +177,24 @@ def __get_deconv_shape_1axis(n, kernel_shape, border_mode,
     if None in [n, kernel_shape, border_mode,
                 subsample, dilation]:
         return None
-    dil_kernel_shape = (kernel_shape - 1) * dilation + 1
+    if dilation != 1:
+        raise ValueError("Deconvolution with dilation != 1 is not supported.")
+    # ====== upsample ====== #
+    if subsample != 1:
+        n = n * subsample
+    # ====== padding ====== #
     if isinstance(border_mode, str):
         border_mode = border_mode.lower()
     if border_mode == "half" or border_mode == "same":
-        pad = dil_kernel_shape // 2
-    elif border_mode == "full":
-        pad = dil_kernel_shape - 1
-    elif border_mode == "valid":
-        pad = 0
+        n = n
+    elif border_mode == "full": # M + N - 1
+        n += 1 - kernel_shape
+    elif border_mode == "valid": # M - N + 1
+        n += max(kernel_shape - subsample, 0)
+    elif border_mode >= 0:
+        n += max(kernel_shape - subsample, 0) - border_mode
     else:
-        pad = border_mode
-        if pad < 0:
-            raise ValueError("border_mode must be >= 0")
-    # ====== get exact same border_mode for theano ====== #
-    if (border_mode == 'half' or border_mode == 'same') and \
-        kernel_shape % 2 == 0:
-        n = (n * subsample) + 1 - subsample
-    n = n - 1
-    if subsample != 1:
-        n = n * subsample
-
-    # In case of symbolic shape, we want to build the smallest graph
-    # (image_shape + 2 * pad - dil_kernel_shape) // subsample + 1
-    if pad == 0:
-        n = n + dil_kernel_shape
-    else:
-        n = n + dil_kernel_shape - 2 * pad
-
+        raise ValueError("border_mode must be >= 0")
     return n
 
 

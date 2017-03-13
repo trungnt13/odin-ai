@@ -25,7 +25,8 @@ if theano.gpuarray.pygpu is not None and theano.gpuarray.pygpu_activated:
     from theano.gpuarray import dnn
 
 from odin.config import CONFIG, get_rng
-from odin.utils import as_tuple, as_shape_tuple, dict_union, package_installed, uuid
+from odin.utils import (as_tuple, as_shape_tuple, dict_union, package_installed,
+                        uuid, is_number)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
@@ -920,7 +921,7 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
         filter_dilation=filter_dilation)
     # back to tf-shape
     x = __img_tensorflow_format(x)
-    add_shape(x, output_shape)
+    add_shape(x, tuple([i if is_number(i) else None for i in output_shape]))
     return x
 
 

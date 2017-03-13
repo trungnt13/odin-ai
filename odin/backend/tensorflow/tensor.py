@@ -13,7 +13,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin.config import CONFIG, get_rng
-from odin.utils import as_tuple, as_shape_tuple, dict_union, uuid
+from odin.utils import as_tuple, as_shape_tuple, dict_union, uuid, is_number
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
@@ -833,9 +833,10 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
     """
     strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
         strides, border_mode, filter_dilation, ndim=2)
-    x = tf.nn.conv2d_transpose(x, kernel, output_shape, (1,) + strides + (1,),
+    x = tf.nn.conv2d_transpose(x, filter=kernel, output_shape=output_shape,
+                               strides=(1,) + strides + (1,),
                                padding=border_mode)
-    add_shape(x, output_shape)
+    add_shape(x, tuple([i if is_number(i) else None for i in output_shape]))
     return x
 
 
@@ -885,7 +886,13 @@ def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
         TH kernel shape: (out_depth, input_depth, kernel_dim1, kernel_dim2, kernel_dim3)
         TF kernel shape: (kernel_dim1, kernel_dim2, kernel_dim3, input_depth, out_depth)
     """
-    raise Exception('tensorflow has not supported deconv3d.')
+    strides, border_mode, filter_dilation = __validate_strides_padding_dilation(
+        strides, border_mode, filter_dilation, ndim=3)
+    x = tf.nn.conv3d_transpose(x, filter=kernel, output_shape=output_shape,
+                               strides=(1,) + strides + (1,),
+                               padding=border_mode)
+    add_shape(x, tuple([i if is_number(i) else None for i in output_shape]))
+    return x
 
 
 # ===========================================================================

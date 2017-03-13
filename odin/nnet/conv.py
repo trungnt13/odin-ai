@@ -242,9 +242,10 @@ class TransposeConv(Conv):
         # ====== prepare the deconvolution ====== #
         # theano require batch_dims is Constant or None, but tensorflow
         # require batch_dims is a native TensorVariable
-        # output_shape = K.get_shape(self.T._last_input,
-        #     native=True if K.backend() == 'tensorflow' else False)
         output_shape = self.output_shape
+        native_shape = K.get_shape(X, native=True)
+        output_shape = [native_shape[i] if j is None else j
+                        for i, j in enumerate(output_shape)]
         deconved = deconv_func(X, kernel=self.W,
                                output_shape=output_shape,
                                strides=self.strides,

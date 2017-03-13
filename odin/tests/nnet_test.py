@@ -11,6 +11,7 @@ import numpy as np
 
 from odin import backend as K
 from odin import nnet as N
+from odin.utils import Progbar
 
 
 class NNetTest(unittest.TestCase):
@@ -277,6 +278,45 @@ class NNetTest(unittest.TestCase):
         self.assertEqual(len(f.variables), 10)
         self.assertEqual(len(f.parameters), 7)
         self.assertEqual(len(f.trainable_variables), 9)
+
+    def test_conv_deconv_transpose(self):
+        def feval(X, y):
+            f = K.function(X, y)
+            shape = (np.random.randint(8, 18),) + K.get_shape(X)[1:]
+            x = np.random.rand(*shape)
+            return f(x)
+        prog = Progbar(target=2 * 3 * 3 * 2 * 2)
+        for X in (K.placeholder(shape=(None, 13, 12, 25)),
+                  K.placeholder(shape=(None, 13, 12, 8, 25))):
+            for strides in (1, 2, 3):
+                for filter_size in (3, 4, 5):
+                    for num_filters in (8, 25):
+                        for pad in ("same", "valid"):
+                            for dilation in (1,):
+                                # ====== progress ====== #
+                                prog.title = "#Dim:%d;Stride:%d;Filter:%d;Channel:%d;Pad:%s" % \
+                                    (K.ndim(X), strides, filter_size, num_filters, pad)
+                                prog.add(1)
+                                # ====== test Conv ====== #
+                                f = N.Conv(num_filters=num_filters, filter_size=filter_size,
+                                           pad=pad, strides=strides, activation=K.relu,
+                                           dilation=dilation)
+                                fT = f.T
+                                y = f(X)
+                                assert feval(X, y).shape[1:] == K.get_shape(y)[1:]
+                                yT = fT(y)
+                                assert feval(X, yT).shape[1:] == K.get_shape(yT)[1:]
+                                assert K.get_shape(X) == K.get_shape(yT)
+                                # ====== test Transpose ====== #
+                                f = N.TransposeConv(num_filters=num_filters, filter_size=filter_size,
+                                    pad=pad, strides=strides, activation=K.relu,
+                                    dilation=dilation)
+                                fT = f.T
+                                y = f(X)
+                                assert feval(X, y).shape[1:] == K.get_shape(y)[1:]
+                                yT = fT(y)
+                                assert feval(X, yT).shape[1:] == K.get_shape(yT)[1:]
+                                assert K.get_shape(X) == K.get_shape(yT)
 
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')
