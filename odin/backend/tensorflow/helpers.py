@@ -26,11 +26,6 @@ NPROCESSORS = CONFIG['device_info']['n']
 # ===========================================================================
 # Initialize session
 # ===========================================================================
-# with tf.Session() as sess:
-#   with tf.device("/gpu:1"):
-#     matrix1 = tf.constant([[3., 3.]])
-#     matrix2 = tf.constant([[2.],[2.]])
-#     product = tf.matmul(matrix1, matrix2
 __session_args = {
     'intra_op_parallelism_threads': NPROCESSORS,
     'allow_soft_placement': True,

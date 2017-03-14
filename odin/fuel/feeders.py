@@ -242,9 +242,10 @@ class Feeder(MutableData):
                     x = [np.array(d[start:end], dtype=t) for d, t in zip(self._data, outtype)]
                 else:
                     x = [np.array(d[start:end]) for d in self._data]
-                x = process_func(name, x)
+                x = process_func(name, x, [])
                 if x is not None:
-                    batch.append(x)
+                    # not care about return kwargs (only: name, X, y)
+                    batch.append(x[:3])
             return group_func(batch)
 
         def reduce_func(results):

@@ -999,10 +999,7 @@ class Progbar(object):
 
         sys.stdout.write(info)
         if current >= self.target:
-            if "Linux" in platform.platform():
-                sys.stdout.write("\n\n")
-            else:
-                sys.stdout.write("\n")
+            sys.stdout.write("\n")
         sys.stdout.flush()
 
     def add(self, n, values=[]):

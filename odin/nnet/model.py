@@ -157,6 +157,9 @@ class ModelDescriptor(object):
     keeps track its relevant inputs, and performing inference is
     straightforward also.
 
+    In short, this descriptor not only store the model itself, but also
+    store the way how the model is created.
+
     Example
     -------
     >>> import numpy as np

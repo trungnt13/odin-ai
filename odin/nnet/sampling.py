@@ -42,9 +42,9 @@ class Pool(NNOps):
 
     def _apply(self, X):
         if self.pool_func == 'auto':
-            if self.ndim == 4:
+            if K.ndim(X) == 4:
                 pool_func = K.pool2d
-            elif self.ndim == 5:
+            elif K.ndim(X) == 5:
                 pool_func = K.pool3d
         else: # user sepecifed pool_func
             pool_func = self.pool_func

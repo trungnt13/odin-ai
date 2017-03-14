@@ -24,6 +24,9 @@ class ModelTest(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_model_description(self):
+        pass
+
     def test_transform_then_prediction(self):
         with TemporaryDirectory() as temp:
             from sklearn.pipeline import Pipeline

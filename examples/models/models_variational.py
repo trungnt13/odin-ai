@@ -16,17 +16,19 @@ def convolutional_vae(X, saved_states, **kwargs):
     ------
     [f_inference (encoder), f_generative (decoder)]
     """
-    n = kwargs.get('n', 256)
+    n = kwargs.get('n', 10)
     # ====== init ====== #
     if saved_states is None:
         # encoder
         f_inference = N.Sequence([
             N.Dimshuffle(pattern=(0, 1, 2, 'x')),
             N.Conv(num_filters=32, filter_size=5, strides=2, pad='same',
-                   activation=K.relu),
-            N.Conv(num_filters=64, filter_size=5, strides=2, pad='valid',
-                   activation=K.relu),
-            N.Dropout(level=0.9),
+                   activation=K.elu),
+            N.Conv(num_filters=64, filter_size=5, strides=2, pad='same',
+                   activation=K.elu),
+            N.Conv(num_filters=128, filter_size=5, strides=1, pad='valid',
+                   activation=K.elu),
+            N.Dropout(level=0.1),
             N.Flatten(outdim=2),
             # *2 for mu and sigma
             N.Dense(num_units=n * 2, activation=K.linear)
@@ -34,12 +36,14 @@ def convolutional_vae(X, saved_states, **kwargs):
 
         f_generative = N.Sequence([
             N.Dimshuffle(pattern=(0, 'x', 'x', 1)),
-            N.TransposeConv(num_filters=128, filter_size=5,
-                strides=2, pad='valid', activation=K.relu),
+            N.TransposeConv(num_filters=128, filter_size=3,
+                strides=1, pad='valid', activation=K.elu),
             N.TransposeConv(num_filters=64, filter_size=5,
-                strides=2, pad='valid', activation=K.relu),
-            N.TransposeConv(num_filters=1, filter_size=4,
-                strides=2, pad='valid', activation=K.relu),
+                strides=1, pad='valid', activation=K.elu),
+            N.TransposeConv(num_filters=32, filter_size=5,
+                strides=2, pad='same', activation=K.elu),
+            N.TransposeConv(num_filters=1, filter_size=5,
+                strides=2, pad='same', activation=K.linear),
             N.Squeeze(axis=-1)
         ], debug=True, name="Decoder")
     else:
