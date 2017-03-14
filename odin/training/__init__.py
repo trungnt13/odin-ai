@@ -170,9 +170,11 @@ def standard_trainer(train_data, valid_data,
         if test_data is not None:
             test = as_data(test_data)
             test.set_batch(batch_size=batch_size, seed=None)
-            prog = Progbar(target=test.shape[0], title="Evaluating:"); _ = []
+            prog = Progbar(target=len(test), title="Evaluating:")
+            _ = []
             for t in test:
-                if not isinstance(t, (tuple, list)): t = (t,)
+                if not isinstance(t, (tuple, list)):
+                    t = (t,)
                 _.append(f_score(*t))
                 prog.add(len(t[0]))
             test = _

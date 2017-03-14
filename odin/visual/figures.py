@@ -377,41 +377,58 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
     marker: list
         different marker for each color
     legend: dict
-        mapping from color to each legend
+        mapping {[color][marker] -> name, ...}
+        for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
     '''
     from matplotlib import pyplot as plt
+    default_color = 'b'
+    default_marker = '.'
+    is_marker_none = False
+    is_color_none = False
     # color is given create legend and different marker
-    if color is not None:
-        if isinstance(color, np.ndarray):
-            color = color.tolist()
-        nb_labels = len(set(color))
-        # set legend
-        if legend is None:
-            legend = {c: "p%.2d" % i for i, c in enumerate(set(color))}
-        # set marker
-        if marker is None:
-            marker = [None] * nb_labels
-        elif not isinstance(marker, (tuple, list)) and \
-        nb_labels <= len(marker_styles):
-            marker = np.random.choice(marker_styles, size=nb_labels,
-                                      replace=False)
-
-    ax = ax if ax is not None else plt.gca()
     if color is None:
-        ax.scatter(x, y, s=size)
+        color = [default_color] * len(x)
+        is_color_none = True
+    elif len(color) != len(x):
+        raise ValueError("There are %d colors, but %d data points" %
+                         len(color), len(x))
+    # ====== check marker ====== #
+    if marker is None:
+        marker = [default_marker] * len(x)
+        is_marker_none = True
+    elif len(marker) != len(x):
+        raise ValueError("There are %d markers, but %d data points" %
+                         len(marker), len(x))
+    # ====== check legend ====== #
+    if legend is None:
+        legend = {str(c) + str(m): "%s_%s" % (c, m)
+                  for c in set(color) for m in set(marker)}
+    elif is_marker_none:
+        legend = {i + default_marker: j for i, j in legend.iteritems()}
+    elif is_color_none:
+        legend = {default_color + i: j for i, j in legend.iteritems()}
+    elif not all(c + m in legend for c in set(color) for m in set(marker)):
+        raise ValueError("Legend must contains following keys: %s, but the given "
+                        "legend only contains: %s"
+                         % (str([c + m for c in set(color) for m in set(marker)]),
+                            str(legend.keys())))
+    # ====== plotting ====== #
+    ax = ax if ax is not None else plt.gca()
+    if is_marker_none and is_color_none:
+        ax.scatter(x, y, s=size, marker=marker)
     else:
         axes = []
         legend_ = []
-        for c, m in zip(set(color), marker):
-            x_ = [i for i, j in zip(x, color) if j == c]
-            y_ = [i for i, j in zip(y, color) if j == c]
-            legend_.append(legend[c])
-            if m is None: _ = ax.scatter(x_, y_, color=c, s=size)
-            else: _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+        for code, name in legend.iteritems():
+            c, m = list(code)
+            x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
+            y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
+            legend_.append(name)
+            _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
             axes.append(_)
-        if legend is not None:
-            ax.legend(axes, legend_, scatterpoints=1, loc='upper right',
-                      ncol=3, fontsize=fontsize)
+        # add all the legend
+        ax.legend(axes, legend_, scatterpoints=1, loc='upper center',
+                  bbox_to_anchor=(0.5, -0.1), ncol=3, fontsize=fontsize)
     return ax
 
 
@@ -965,7 +982,7 @@ def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True):
         if figs is None:
             figs = [plt.figure(n) for n in plt.get_fignums()]
         for fig in figs:
-            fig.savefig(pp, format='pdf')
+            fig.savefig(pp, format='pdf', bbox_inches="tight")
         pp.close()
         sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
         if clear_all:
