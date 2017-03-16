@@ -19,32 +19,47 @@ def convolutional_vae(X, saved_states, **kwargs):
     n = kwargs.get('n', 10)
     # ====== init ====== #
     if saved_states is None:
-        # encoder
+        # Encoder
         f_inference = N.Sequence([
+            N.Reshape(shape=(-1, 28, 28)),
             N.Dimshuffle(pattern=(0, 1, 2, 'x')),
             N.Conv(num_filters=32, filter_size=5, strides=2, pad='same',
-                   activation=K.elu),
+                   b_init=None, activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.Conv(num_filters=64, filter_size=5, strides=2, pad='same',
-                   activation=K.elu),
+                   b_init=None, activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.Conv(num_filters=128, filter_size=5, strides=1, pad='valid',
-                   activation=K.elu),
+                   b_init=None, activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.Dropout(level=0.1),
             N.Flatten(outdim=2),
-            # *2 for mu and sigma
-            N.Dense(num_units=n * 2, activation=K.linear)
+            N.Dense(num_units=d * 2, b_init=None, activation=K.linear), # *2 for mu and sigma
+            N.BatchNorm(axes=0)
         ], debug=True, name="Encoder")
-
+        # Decoder
         f_generative = N.Sequence([
             N.Dimshuffle(pattern=(0, 'x', 'x', 1)),
             N.TransposeConv(num_filters=128, filter_size=3,
-                strides=1, pad='valid', activation=K.elu),
+                b_init=None, strides=1, pad='valid', activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.TransposeConv(num_filters=64, filter_size=5,
-                strides=1, pad='valid', activation=K.elu),
+                b_init=None, strides=1, pad='valid', activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.TransposeConv(num_filters=32, filter_size=5,
-                strides=2, pad='same', activation=K.elu),
+                b_init=None, strides=2, pad='same', activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.elu),
+
             N.TransposeConv(num_filters=1, filter_size=5,
-                strides=2, pad='same', activation=K.linear),
-            N.Squeeze(axis=-1)
+                b_init=None, strides=2, pad='same', activation=K.linear),
+            N.BatchNorm(axes='auto', activation=K.linear),
+
+            N.Flatten(outdim=2)
         ], debug=True, name="Decoder")
     else:
         f_inference, f_generative = saved_states

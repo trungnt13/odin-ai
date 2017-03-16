@@ -32,29 +32,27 @@ print("Parameters:", [p.name for p in parameters])
 # Bind p(x, z) and q(z | x) to the same placeholder for x.
 inference = ed.KLqp(latent_vars={z: qz}, data={x: model.placeholder})
 optimizer = tf.train.AdamOptimizer(0.01, epsilon=1.0)
-inference.initialize(optimizer=optimizer, var_list=parameters)
+inference.initialize()
+print(inference.loss)
 
 # ====== initialize everything ====== #
 print("Initialize all necessary variables")
 init = tf.global_variables_initializer()
 init.run()
-print(inference.train)
-print(inference.loss)
-print()
-exit()
+
 # ====== Training ====== #
-X_train = (ds['X_train'][:] == 0).astype("int32")
-for nb_epoch in range(12):
-    x_train = X_train[get_rng().permutation(X_train.shape[0])]
-    prog = Progbar(target=x_train.shape[0])
-    cost_train = []
-    for i in range(0, x_train.shape[0], 256):
-        x = x_train[i:i + 256]
-        cost = inference.update(feed_dict={X: x})
-        prog.title = cost['loss']
-        prog.add(x.shape[0])
-        cost_train.append(cost['loss'])
-    print("Epoch %d:" % (nb_epoch + 1), np.mean(cost_train))
+# X_train = (ds['X_train'][:] == 0).astype("int32")
+# for nb_epoch in range(12):
+#     x_train = X_train[get_rng().permutation(X_train.shape[0])]
+#     prog = Progbar(target=x_train.shape[0])
+#     cost_train = []
+#     for i in range(0, x_train.shape[0], 256):
+#         x = x_train[i:i + 256]
+#         cost = inference.update(feed_dict={X: x})
+#         prog.title = cost['loss']
+#         prog.add(x.shape[0])
+#         cost_train.append(cost['loss'])
+#     print("Epoch %d:" % (nb_epoch + 1), np.mean(cost_train))
 
 
 # # ====== create trainer ====== #
