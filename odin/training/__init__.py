@@ -69,10 +69,12 @@ def standard_trainer(train_data, valid_data,
     """
     Parameters
     ----------
-    cost_train: list of callable
-        each function will be apply to a pair y_train and y_target
-    cost_score: list of callable
-        ...
+    cost_train: list of callable, or TensorVariable
+        if a function is given, each function will be apply to pair of
+        `y_train` and `y_target` (i.e. `zip(y_train, y_target)`)
+    cost_score: list of callable, or TensorVariable
+        if a function is given, each function will be apply to pair of
+        `y_score` and `y_target` (i.e. `zip(y_score, y_target)`)
     cost_regu: list of TensorVariable
         list of all additional cost (for regularization) to add to `cost_train`.
     confusion_matrix: int, list or tuple
@@ -125,16 +127,12 @@ def standard_trainer(train_data, valid_data,
                          % (len(X), len(y_train), len(y_score), len(y_target),
                             len(parameters)))
     # get all cost
-    if len(y_train) == 1:
-        y_train = y_train * len(cost_train)
-    if len(y_score) == 1:
-        y_score = y_score * len(cost_score)
-    cost_train = [K.mean(f_cost(y_, y))
-                  for f_cost, y_, y in zip(cost_train, y_train,
-                    y_target * len(cost_train) if len(y_target) == 1 else y_target)]
-    cost_score = [K.mean(f_cost(y_, y))
-                  for f_cost, y_, y in zip(cost_score, y_score,
-                    y_target * len(cost_score) if len(y_target) == 1 else y_target)]
+    cost_train = [f_cost if K.is_variable(f_cost) else K.mean(f_cost(y_, y))
+                  for y_, y in zip(y_train, y_target)
+                  for f_cost in cost_train]
+    cost_score = [f_cost if K.is_variable(f_cost) else K.mean(f_cost(y_, y))
+                  for y_, y in zip(y_score, y_target)
+                  for f_cost in cost_score]
     # add confusion matrix
     if confusion_matrix:
         if not is_number(confusion_matrix) and \
@@ -154,12 +152,13 @@ def standard_trainer(train_data, valid_data,
     # get the updates
     training_cost = cost_train[0] + sum(c for c in cost_regu)
     updates = optimizer.get_updates(training_cost, parameters)
-    # ====== create function ====== #
+    # ====== add gradient norm ====== #
     grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
         [optimizer.norm]
     if len(grad_norm) > 0:
         cost_train_name.append('gradient_norm')
     cost_train = [training_cost] + cost_train[1:] + grad_norm
+    # ====== create function ====== #
     print('Building training functions ...')
     f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
