@@ -1,7 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-os.environ['ODIN'] = 'float32,gpu,theano,seed=12082518'
+os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12082518'
 
 import numpy as np
 
@@ -72,7 +72,7 @@ trainer.set_callback([
     # early stop based on crossentropy on test (not a right procedure,
     # but only for testing)
     training.EarlyStopGeneralizationLoss(name='Valid', threshold=5, patience=3,
-                                         get_value=lambda x: np.mean([j for i, j in x])),
+            get_value=lambda x: np.mean([entropy for acc, entropy in x])),
     training.History()
 ])
 trainer.run()
@@ -80,5 +80,5 @@ trainer.run()
 # ===========================================================================
 # Evaluation and visualization
 # ===========================================================================
-trainer['History'].print_epoch('Train')
-trainer['History'].print_epoch('Valid')
+# trainer['History'].print_epoch('Train')
+# trainer['History'].print_epoch('Valid')

@@ -98,7 +98,8 @@ backend_ops_diag = tf.diag_part
 backend_ops_categorical_crossentropy = \
     lambda x, y: - tf.reduce_sum(y * tf.log(x), axis=x.get_shape().ndims - 1)
 backend_ops_binary_crossentropy = \
-    lambda x, y: tf.nn.sigmoid_cross_entropy_with_logits(tf.log(x / (1. - x)), y)
+    lambda x, y: tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=tf.log(x / (1. - x)), labels=y)
 
 
 def backend_ops_eye(n, m, dtype):

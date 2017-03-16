@@ -90,7 +90,7 @@ trainer = training.MainLoop(batch_size=batch_size,
                             seed=12082518, shuffle_level=1)
 trainer.set_save(utils.get_modelpath(name='imdb.ai', override=True), f)
 trainer.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=nb_epoch, name='Train')
-trainer.set_subtask(f_score, (ds['X_test'], ds['y_test']), freq=0.5, name='Valid')
+trainer.set_subtask(f_score, (ds['X_test'], ds['y_test']), freq=1., name='Valid')
 trainer.set_callback([
     training.History(),
     training.ProgressMonitor('Train', format='Results: {:.4f}'),

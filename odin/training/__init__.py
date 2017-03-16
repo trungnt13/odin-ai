@@ -110,9 +110,11 @@ def standard_trainer(train_data, valid_data,
     if cost_score is None:
         cost_score = K.categorical_crossentropy
     cost_train = as_tuple(cost_train)
-    cost_train_name = [i.__name__ for i in cost_train]
+    cost_train_name = [i.name if K.is_variable(i) else i.__name__
+                       for i in cost_train]
     cost_score = as_tuple(cost_score)
-    cost_score_name = [i.__name__ for i in cost_score]
+    cost_score_name = [i.name if K.is_variable(i) else i.__name__
+                       for i in cost_score]
     cost_regu = as_tuple(cost_regu)
     # check input X, y, parameters
     X = as_tuple(X)
