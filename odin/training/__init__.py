@@ -286,8 +286,10 @@ def standard_trainer(train_data, valid_data,
     task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
     task.set_signal_handlers(end=evaluation)
     # format for score
-    score_format = 'Results:' + __format_string(len(cost_score) - (1 if confusion_matrix else 0))
-    score_tracking = {(len(cost_score) - 1): lambda x: sum(x)} if confusion_matrix else []
+    score_format = 'Results:' + \
+        __format_string(len(cost_score) - (len(y_score) if confusion_matrix else 0))
+    score_tracking = {(len(cost_score) - i - 1): (lambda x: sum(x))
+        for i in range(len(y_score))} if confusion_matrix else []
     # set the callback
     history = History()
     task.set_callback([
