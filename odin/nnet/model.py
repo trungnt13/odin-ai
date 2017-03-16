@@ -193,6 +193,7 @@ class ModelDescriptor(object):
         self._func = func
         self.input_desc = None
         self._save_states = None
+        self._save_kwargs = {}
         # ====== cached tensor variables ====== #
         self._last_outputs = {'train': None, 'score': None}
         self._f_train = None
@@ -201,25 +202,62 @@ class ModelDescriptor(object):
     # ==================== pickle ==================== #
     def __getstate__(self):
         from odin.utils.decorators import functionable
-        return [functionable(self._func), self.input_desc, self._save_states]
+        return [functionable(self._func), self.input_desc,
+                self._save_states, self._save_kwargs]
 
     def __setstate__(self, states):
-        self._func, self.input_desc, self._save_states = states
+        (self._func, self.input_desc,
+            self._save_states, self._save_kwargs) = states
         self._func = self._func.function
         self._last_outputs = {'train': None, 'score': None}
         self._f_train = None
         self._f_pred = None
 
-    # ==================== properties ==================== #
     def _check_init_shape(self):
         if self.input_desc is None:
             raise ValueError("You must set 'inputs' when calling the ModelDescriptor "
                              ", the inputs can be TensorVariables, shape tuple, "
                              "or InputDescriptor.")
 
+    def check_data(self, X, learn_factor=12.):
+        """
+        Parameters
+        ----------
+        learn_factor: float
+            your assumption about how many data points a parameter can learn.
+        """
+        if isinstance(X, (tuple, list)):
+            X = X[0]
+        if not hasattr(X, 'shape'):
+            raise ValueError("The input data must have attribute shape, so we can "
+                             "calculate the number of features and samples, but "
+                             "given data has type: %s" % str(type(X)))
+        shape = X.shape
+        if not is_number(shape[0]):
+            nb_points = sum(np.prod(s) for s in shape)
+            shape = shape[0]
+        else:
+            nb_points = np.prod(shape)
+        nb_samples = shape[0]
+        nb_params = self.nb_parameters
+        # ====== hard constraint ====== #
+        if nb_points / learn_factor < nb_params:
+            raise RuntimeError("The number of parameters is: %d, which is "
+                               "significant greater than the number of data points "
+                               "(only %d data points). It is not recommended to "
+                               "train a deep network for this datasets." %
+                               (nb_params, nb_points // learn_factor))
+        # ====== soft constraint ====== #
+
+    # ==================== properties ==================== #
     @property
     def function(self):
         return self._func
+
+    @property
+    def kwargs(self):
+        """ Return the most recent kwargs used for the function """
+        return self._save_states
 
     @property
     def name(self):
@@ -236,6 +274,14 @@ class ModelDescriptor(object):
                 if hasattr(s, 'parameters'):
                     params += s.parameters
         return params
+
+    @property
+    def nb_parameters(self):
+        n = 0
+        for p in self.parameters:
+            if K.is_trainable_variable(p):
+                n += np.prod(K.get_shape(p)).astype('int32')
+        return n
 
     @property
     def placeholder(self):
@@ -351,6 +397,10 @@ class ModelDescriptor(object):
                              len(argspecs.args), str(argspecs.args)))
         if argspecs.keywords is None:
             kwargs = {}
+        elif len(kwargs) > 0: # override saved kwargs
+            self._save_kwargs = kwargs
+        else: # get the saved kwargs
+            kwargs = self._save_kwargs
         model_inputs.append(self._save_states)
         outputs = self._func(*model_inputs, **kwargs)
         # ====== check outputs values ====== #

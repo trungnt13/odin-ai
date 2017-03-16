@@ -182,7 +182,7 @@ class MmapDict(dict):
         return list(self.itervalues(shuffle))
 
     def itervalues(self, shuffle=False):
-        for k in self._dict.iterkeys(shuffle):
+        for k in self.iterkeys(shuffle):
             yield self[k]
 
     def items(self, shuffle=False):

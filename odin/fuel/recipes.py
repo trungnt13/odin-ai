@@ -557,7 +557,7 @@ class VADindex(FeederRecipe):
             raise ValueError('Unsupport "vad" type: %s' % type(vad).__name__)
         self.vad = vad
         self.padding = padding
-        self.frame_length = frame_length
+        self.frame_length = int(frame_length)
         # ====== check filter vad ====== #
         if filter_vad is None:
             filter_vad = lambda start, end: True

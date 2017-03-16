@@ -1,7 +1,7 @@
 from __future__ import division, absolute_import
 
 from odin import backend as K
-from odin.utils.decorators import autoinit
+from odin.utils.decorators import functionable
 
 from .base import NNOps
 
@@ -34,11 +34,17 @@ class Pool(NNOps):
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
 
-    @autoinit
     def __init__(self, pool_size=2, strides=None, pad='valid',
                  ignore_border=True, mode='max',
                  pool_func='auto', **kwargs):
         super(Pool, self).__init__(**kwargs)
+        self.pool_size = pool_size
+        self.strides = strides
+        self.pad = pad
+        self.ignore_border = ignore_border
+        self.mode = mode
+        self.pool_func = functionable(pool_func) if callable(pool_func) \
+            else pool_func
 
     def _apply(self, X):
         if self.pool_func == 'auto':

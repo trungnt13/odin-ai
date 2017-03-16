@@ -788,6 +788,39 @@ def as_list(x, N=None, t=None):
     return list(as_tuple(x, N, t))
 
 
+def flatten_list(x, level=1):
+    """
+    Parameters
+    ----------
+    level: int, or None
+        how deep the function go into element of x to search for list and
+        flatten it.
+
+    Example
+    -------
+    >>> l = [1, 2, 3, [4], [[5], [6]], [[7], [[8], [9]]]]
+    >>> print(flatten_list(l, level=1))
+    >>> # [1, 2, 3, 4, [5], [6], [7], [[8], [9]]]
+    >>> print(flatten_list(l, level=2))
+    >>> # [1, 2, 3, 4, 5, 6, 7, [8], [9]]
+    >>> print(flatten_list(l, level=None))
+    >>> # [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    """
+    if level is None:
+        level = 10e8
+    if not isinstance(x, (tuple, list)):
+        return [x]
+    if any(isinstance(i, (tuple, list)) for i in x):
+        _ = []
+        for i in x:
+            if isinstance(i, (tuple, list)) and level > 0:
+                _ += flatten_list(i, level - 1)
+            else:
+                _.append(i)
+        return _
+    return x
+
+
 # ===========================================================================
 # Python
 # ===========================================================================

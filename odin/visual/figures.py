@@ -379,6 +379,7 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
     legend: dict
         mapping {[color][marker] -> name, ...}
         for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
+        you can control the order of legend by using OrderDict
     '''
     from matplotlib import pyplot as plt
     default_color = 'b'

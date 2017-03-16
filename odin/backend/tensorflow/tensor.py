@@ -13,7 +13,8 @@ import numpy as np
 import tensorflow as tf
 
 from odin.config import CONFIG, get_rng
-from odin.utils import as_tuple, as_shape_tuple, dict_union, uuid, is_number
+from odin.utils import (as_tuple, as_shape_tuple, dict_union, uuid, is_number,
+                        flatten_list)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
@@ -602,15 +603,15 @@ class Function(object):
             inputs = inputs.values()
         elif not isinstance(inputs, (tuple, list)):
             inputs = [inputs]
-        self.inputs = inputs
+        self.inputs = flatten_list(inputs, level=None)
         if not hasattr(self, 'inputs_name'):
-            self.inputs_name = [i.name for i in self.inputs]
+            self.inputs_name = [i.name.split(':')[0] for i in self.inputs]
         # ====== validate outputs ====== #
         return_list = True
         if not isinstance(outputs, (tuple, list)):
             outputs = (outputs,)
             return_list = False
-        self.outputs = list(outputs)
+        self.outputs = flatten_list(list(outputs), level=None)
         self.return_list = return_list
         # ====== validate updates ====== #
         if isinstance(updates, dict):
