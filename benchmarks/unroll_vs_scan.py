@@ -83,8 +83,7 @@ def Scan2(fn,
     elif not isinstance(sequences, (tuple, list)):
         sequences = [sequences]
     if backwards:
-        sequences = [tf.reverse(seq, [True] + [False] * (seq.get_shape().ndims - 1))
-                     for seq in sequences]
+        sequences = [tf.reverse(seq, axis=(0,)) for seq in sequences]
     if n_steps:
         sequences = [seq[:n_steps] for seq in sequences]
     # ====== check output info ====== #

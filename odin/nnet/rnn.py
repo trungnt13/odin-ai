@@ -188,9 +188,9 @@ class BidirectionalRNN(HelperOps):
             return_list = True
         results = list(zip(as_tuple(forward), as_tuple(backward)))
         # post processing the outputs:
-        results = [self.mode(r[0], r[1]) if self.mode in (K.add, K.sub, K.mul, K.div, K.mod)
-                   else self.mode(r)
-                   for r in results]
+        results = [self.mode(r[0], r[1])
+                   if self.mode in (K.add, K.sub, K.mul, K.div, K.mod)
+                   else self.mode(r) for r in results]
         if not return_list:
             results = results[0]
         return results

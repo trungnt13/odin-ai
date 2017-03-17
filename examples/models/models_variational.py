@@ -16,7 +16,7 @@ def convolutional_vae(X, saved_states, **kwargs):
     ------
     [f_inference (encoder), f_generative (decoder)]
     """
-    n = kwargs.get('n', 10)
+    d = kwargs.get('n', 10)
     # ====== init ====== #
     if saved_states is None:
         # Encoder

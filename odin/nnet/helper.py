@@ -141,7 +141,7 @@ class Sequence(HelperOps):
         super(Sequence, self).__init__(ops, **kwargs)
         # modify the name of variables haven't been initizalized
         for i in self.ops:
-            if not i.is_initialized:
+            if isinstance(i, NNOps) and not i.is_initialized:
                 i.name = self.name + '_' + i.name
         self.strict_transpose = bool(strict_transpose)
         self.debug = debug

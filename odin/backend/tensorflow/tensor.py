@@ -459,7 +459,7 @@ def dimshuffle(x, pattern):
 def flatten(x, outdim=1):
     if outdim == 1:
         return tf.reshape(x, [-1])
-    input_shape = x.get_shape().as_list()
+    input_shape = get_shape(x, native=True)
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
     n = np.prod(input_shape[(outdim - 1):])
     output_shape = [-1 if i is None else i

@@ -144,6 +144,7 @@ def total_norm_constraint(tensor_vars, max_norm, epsilon=1e-8,
     norm = sqrt(_sum([sum(square(tensor)) for tensor in tensor_vars]))
     add_role(norm, AUXILIARY)
     tensor_vars = [switch(norm >= max_norm, g * max_norm / norm, g)
+                   if g is not None else None
                    for g in tensor_vars]
     # ====== return norm if necessary ====== #
     if return_norm:
@@ -305,17 +306,25 @@ class Optimizer(object):
         return updates
 
     def get_gradients(self, loss_or_grads, params):
+        """
+        Note
+        ----
+        The returned gradients may contain None value
+        """
         grads = get_or_compute_grads(loss_or_grads, params)
         # ====== clipnorm ====== #
         if self.clipnorm is not None and self.clipnorm > 0:
             grads, self._norm = total_norm_constraint(grads, self.clipnorm,
                                                       return_norm=True)
         else:
-            self._norm = sqrt(_sum([sum(square(g)) for g in grads]))
+            self._norm = sqrt(_sum([sum(square(g)) for g in grads
+                                    if g is not None]))
             add_role(self._norm, AUXILIARY)
         # ====== clipvalue ====== #
         if self.clipvalue is not None and self.clipvalue > 0:
-            grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
+            grads = [clip(g, -self.clipvalue, self.clipvalue)
+                     if g is not None else g
+                     for g in grads]
         return grads
 
     def get_lr_callback(self, decay=2.):
@@ -383,6 +392,7 @@ class SGD(Optimizer):
             moments = [None] * len(params)
         # ====== main updates ====== #
         for p, g, m in zip(params, grads, moments):
+            if g is None: continue
             update_gradient = lr * g
             # ====== applying momentum ====== #
             if self.momentum is not None:
@@ -460,6 +470,7 @@ class RMSProp(Optimizer):
         updates = []
 
         for p, g, a in zip(params, grads, accumulators):
+            if g is None: continue
             # update accumulator
             new_a = self.rho * a + (1. - self.rho) * square(g)
             updates.append((a, new_a))
@@ -541,6 +552,7 @@ class Adadelta(Optimizer):
         updates = []
 
         for p, g, a, d_a in zip(params, grads, accumulators, delta_accumulators):
+            if g is None: continue
             # update accumulator
             new_a = self.rho * a + (1. - self.rho) * square(g)
             updates.append((a, new_a))
@@ -616,6 +628,7 @@ class Adam(Optimizer):
         vs = [variable(np.zeros(shape)) for shape in shapes]
 
         for p, g, m, v in zip(params, grads, ms, vs):
+            if g is None: continue
             m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
             v_t = (self.beta_2 * v) + (1. - self.beta_2) * square(g)
             p_t = p - lr_t * m_t / (sqrt(v_t) + self.epsilon)
@@ -685,6 +698,7 @@ class Adamax(Optimizer):
         # zero init of exponentially weighted infinity norm
         us = [variable(np.zeros(shape)) for shape in shapes]
         for p, g, m, u in zip(params, grads, ms, us):
+            if g is None: continue
             m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
             u_t = maximum(self.beta_2 * u, abs(g))
             p_t = p - lr_t * m_t / (u_t + self.epsilon)
@@ -766,6 +780,7 @@ class Nadam(Optimizer):
         vs = [variable(np.zeros(shape)) for shape in shapes]
 
         for p, g, m, v in zip(params, grads, ms, vs):
+            if g is None: continue
             # the following equations given in [1]
             g_prime = g / (1. - m_schedule_new)
             m_t = self.beta_1 * m + (1. - self.beta_1) * g
@@ -841,6 +856,7 @@ class Adagrad(Optimizer):
         accumulators = [variable(np.zeros(shape)) for shape in shapes]
 
         for p, g, a in zip(params, grads, accumulators):
+            if g is None: continue
             # update accumulator
             new_a = a + square(g)
             updates.append((a, new_a))

@@ -264,6 +264,18 @@ class ModelDescriptor(object):
         return self._func.__name__
 
     @property
+    def variables(self):
+        v = []
+        if self._save_states is not None:
+            states = self._save_states
+            if not isinstance(states, (tuple, list)):
+                states = (states,)
+            for s in states:
+                if hasattr(s, 'variables'):
+                    v += s.variables
+        return v
+
+    @property
     def parameters(self):
         params = []
         if self._save_states is not None:

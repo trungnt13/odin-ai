@@ -49,6 +49,14 @@ from .recipes import FeederList, CreateBatch, CreateFile
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 
 
+def _dump_data_info(data):
+    raise NotImplementedError
+
+
+def _load_data_info(info):
+    raise NotImplementedError
+
+
 class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
@@ -132,16 +140,28 @@ class Feeder(MutableData):
             raise ValueError('All Data must have the same length '
                              '(i.e. shape[0]).')
         self._data = data
+        # ====== desire dtype ====== #
+        self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
+        # ====== Set default recipes ====== #
+        self._recipes = FeederList(CreateBatch())
+        self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         # ====== cache shape information ====== #
         # store first dimension
         self.__cache_indices_id = id(self._indices)
         self.__cache_shape = None
-        # ====== desire dtype ====== #
-        self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
-        # ====== Set default recipes ====== #
-        self.__recipes = FeederList(CreateBatch())
-        # never use all available CPU
-        self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
+        self.__running_iter = []
+
+    def __getstate__(self):
+        return (_dump_data_info(self._data), self._indices, self._outtype,
+                self._recipes, self.ncpu, self.buffer_size,
+                self.maximum_queue_size)
+
+    def __setstate__(self, states):
+        (_load_data_info(self._data), self._indices, self._outtype,
+         self._recipes, self.ncpu, self.buffer_size,
+         self.maximum_queue_size) = states
+        self.__cache_indices_id = id(self._indices)
+        self.__cache_shape = None
         self.__running_iter = []
 
     def set_multiprocessing(self, ncpu=None, buffer_size=None, maximum_queue_size=None):
@@ -161,7 +181,7 @@ class Feeder(MutableData):
                 raise ValueError("The recipe CreateFile or CreateBatch must be in "
                                  "the recipes list, so the data can be grouped "
                                  "and returned from the Feeder.")
-            self.__recipes = FeederList(*recipes)
+            self._recipes = FeederList(*recipes)
         return self
 
     def stop_all(self):
@@ -184,7 +204,7 @@ class Feeder(MutableData):
                        for name, start, end in self._indices}
             n = sum(indices.itervalues())
             shape = [(n,) + d.shape[1:] for d in self._data]
-            shape, indices = self.__recipes.shape_transform(shape, indices)
+            shape, indices = self._recipes.shape_transform(shape, indices)
             if len(shape) == 1:
                 shape = shape[0]
             self.__cache_indices_id = id(self._indices)
@@ -207,7 +227,7 @@ class Feeder(MutableData):
     # ==================== Strings ==================== #
     def __iter__(self):
         # ====== check ====== #
-        if self.__recipes is None:
+        if self._recipes is None:
             raise ValueError('You must "set_recipes" first')
         # ====== get start and end for indices ====== #
         n = self._indices.shape[0]
@@ -223,9 +243,9 @@ class Feeder(MutableData):
             # reset the seed
             self._seed = None
         # ====== create iter and its identity ====== #
-        process_func = self.__recipes.process
-        group_func = self.__recipes.group
-        self.__recipes.prepare(
+        process_func = self._recipes.process
+        group_func = self._recipes.group
+        self._recipes.prepare(
             batch_size=self._batch_size,
             seed=rng.randint(10e6) if rng is not None else None,
             shuffle_level=self._shuffle_level,

@@ -9,7 +9,7 @@ from numbers import Number
 import numpy as np
 
 from odin.config import CONFIG, get_rng
-from odin.utils import as_tuple
+from odin.utils import as_tuple, is_number
 from odin.basic import add_updates, get_shape, add_shape, add_role, ACTIVATION_PARAMETER
 
 from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
@@ -19,7 +19,8 @@ from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
                         is_trainable_variable, is_training, addbroadcast,
                         random_uniform, random_normal, random_binomial,
                         backend_ops_categorical_crossentropy,
-                        backend_ops_binary_crossentropy)
+                        backend_ops_binary_crossentropy,
+                        as_tensor_variable, get_dtype)
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 
@@ -1076,6 +1077,13 @@ def kl_gaussian(mu, logsigma,
     https://github.com/Philip-Bachman/ICML-2015/blob/master/LogPDFs.py
     Copyright (c) Philip Bachman
     """
+    if is_number(prior_mu):
+        prior_mu = as_tensor_variable(prior_mu, name='prior_mu',
+            dtype=get_dtype(mu, numpy=True))
+    if is_number(prior_logsigma):
+        prior_logsigma = as_tensor_variable(
+            prior_logsigma, name='prior_logsigma',
+            dtype=get_dtype(logsigma, numpy=True))
     gauss_klds = 0.5 * (2 * (prior_logsigma - logsigma) +
             (exp(2 * logsigma) / exp(2 * prior_logsigma)) +
             (pow((mu - prior_mu), 2.0) / exp(2 * prior_logsigma)) - 1.0)
