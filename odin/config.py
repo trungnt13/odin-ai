@@ -76,6 +76,17 @@ def _query_gpu_info():
     return dev
 
 
+class AttributeDict(dict):
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+
+    def __setstate__(self, states):
+        for i, j in states:
+            self[i] = j
+
+    def __getstate__(self):
+        return self.items()
+
 # ===========================================================================
 # Auto config
 # ===========================================================================
@@ -236,9 +247,6 @@ def auto_config(config=None):
         raise ValueError('Unsupport backend: ' + backend)
 
     # ====== Return global objects ====== #
-    class AttributeDict(dict):
-        __getattr__ = dict.__getitem__
-        __setattr__ = dict.__setitem__
     global CONFIG
     CONFIG = AttributeDict()
     CONFIG.update({'device': device,

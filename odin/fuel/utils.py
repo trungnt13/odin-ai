@@ -68,6 +68,14 @@ class MmapDict(dict):
         self._write_value = ''
         self._new_dict = {}# store all the (key, value) recently added
 
+    # ==================== pickling ==================== #
+    def __setstate__(self, states):
+        path, read_only = states
+        self.__init(path, read_only)
+
+    def __getstate__(self):
+        return self._path, self.read_only
+
     # ==================== I/O methods ==================== #
     @property
     def path(self):
@@ -215,13 +223,6 @@ class MmapDict(dict):
 
     def update(*args, **kwargs):
         raise NotImplementedError
-
-    # ==================== pickling ==================== #
-    def __setstate__(self, states):
-        self.__init(states)
-
-    def __getstate__(self):
-        return self._path
 
 
 class MmapList(object):

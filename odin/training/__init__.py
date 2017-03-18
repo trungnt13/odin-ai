@@ -19,10 +19,6 @@ from .callbacks import *
 # ===========================================================================
 # Helper
 # ===========================================================================
-_SAVE_TASK = struct()
-_SAVE_TASK.name = "save"
-
-
 def __format_string(nb_of_float):
     x = ["{:.4f}"] * int(nb_of_float)
     return ";".join(x)
@@ -696,7 +692,7 @@ class MainLoop(object):
             return
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
-            cPickle.dump(self._save_obj, open(self._save_path, 'w'),
+            cPickle.dump(self._save_obj, open(self._save_path, 'wb'),
                          protocol=cPickle.HIGHEST_PROTOCOL)
             # ====== save history if possible ====== #
             if self._save_hist is not None and 'History' in self._callback:
@@ -710,7 +706,7 @@ class MainLoop(object):
             return
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
-            f = open(self._save_path, 'r')
+            f = open(self._save_path, 'rb')
             # the loading process will automatically reload shared variable
             cPickle.load(f)
             f.close()

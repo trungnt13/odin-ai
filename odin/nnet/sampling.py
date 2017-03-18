@@ -52,6 +52,8 @@ class Pool(NNOps):
                 pool_func = K.pool2d
             elif K.ndim(X) == 5:
                 pool_func = K.pool3d
+            else:
+                raise RuntimeError("Pooling unsupport for %d-D input." % K.ndim(X))
         else: # user sepecifed pool_func
             pool_func = self.pool_func
         return pool_func(X, pool_size=self.pool_size, strides=self.strides,

@@ -34,13 +34,6 @@ __current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
 # Predefined variables of speech datasets
 # ===========================================================================
 # ==================== Predefined datasets information ==================== #
-languages = OrderedDict([
-    ("Kautokeino", "Norwegian"),
-    ("Karasjoki", "Norwegian"),
-    ("Ivalo", "Finnish"),
-    ("Utsjoki", "Finnish"),
-    ("Inari", "Finnish"),
-])
 nist15_cluster_lang = OrderedDict([
     ['ara', ['ara-arz', 'ara-acm', 'ara-apc', 'ara-ary', 'ara-arb']],
     ['zho', ['zho-yue', 'zho-cmn', 'zho-cdo', 'zho-wuu']],

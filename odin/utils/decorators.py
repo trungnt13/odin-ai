@@ -309,6 +309,7 @@ def _serialize_function_sandbox(function, source):
     dictionary : cPickle dumps-able dictionary to store as text
     '''
     import re
+    import sys
     import marshal
     from array import array
 
@@ -316,7 +317,6 @@ def _serialize_function_sandbox(function, source):
 
     environment = function.func_globals
     func_module = function.__module__
-
     sandbox = OrderedDict()
 
     def func_to_str(func):
@@ -346,6 +346,9 @@ def _serialize_function_sandbox(function, source):
             elif val is None: # for some reason, pickle cannot serialize None type
                 val = None
                 typ = 'None'
+            elif isinstance(val, dict) and 'MmapDict' in typ.__name__:
+                val = cPickle.dumps(val)
+                typ = 'MmapDict'
             elif inspect.isfunction(val): # special case: function
                 # imported function
                 _ = '_main' if function == val else ''
@@ -389,6 +392,8 @@ def _deserialize_function_sandbox(sandbox):
         if is_string(typ):
             if typ == 'None':
                 val = None
+            elif typ == 'MmapDict':
+                val = cPickle.loads(val)
             elif typ == 'ndarray':
                 val = np.fromstring(val[0], dtype=val[1])
             elif typ == 'module':
