@@ -18,7 +18,7 @@ import types
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
-from odin.utils import is_path
+from odin.utils import is_path, is_string
 
 
 __all__ = [
@@ -294,7 +294,7 @@ class abstractstatic(staticmethod):
 # ===========================================================================
 _primitives = (bool, int, float, str,
                tuple, list, dict, type, types.ModuleType, types.FunctionType,
-               type(None), type(type))
+               type(None), type(type), np.ndarray)
 
 
 def _serialize_function_sandbox(function, source):
@@ -331,12 +331,16 @@ def _serialize_function_sandbox(function, source):
         if sys_module.match(name) is not None:
             continue
         # primitive type
-        if type(val) in _primitives:
+        if any(isinstance(val, i) for i in _primitives):
             # function might nested, so cannot find it in globals()
-            if val == function: seen_function = True
+            if isinstance(val, types.FunctionType) and val == function:
+                seen_function = True
             # print(k, v.__module__ if hasattr(v, '__module__') else v.__name__, func_module)
             typ = type(val)
-            if isinstance(val, types.ModuleType): # special case: import module
+            if isinstance(val, np.ndarray):
+                val = (val.tostring(), val.dtype)
+                typ = 'ndarray'
+            elif isinstance(val, types.ModuleType): # special case: import module
                 val = val.__name__
                 typ = 'module'
             elif val is None: # for some reason, pickle cannot serialize None type
@@ -353,6 +357,7 @@ def _serialize_function_sandbox(function, source):
                     typ = 'defined_function'
                     val = (val.func_name, func_to_str(val))
                 typ += _
+        # finally add to sandbox valid type
         if typ is not None:
             sandbox[name] = (typ, val)
     # ====== not seen the main function ====== #
@@ -381,19 +386,22 @@ def _deserialize_function_sandbox(sandbox):
     main_func = None
     # first pass we deserialize all type except function type
     for name, (typ, val) in sandbox.iteritems():
-        if typ == 'None':
-            val = None
-        elif typ == 'module':
-            val = importlib.import_module(val)
-        elif typ in _primitives or typ == 'object':
+        if is_string(typ):
+            if typ == 'None':
+                val = None
+            elif typ == 'ndarray':
+                val = np.fromstring(val[0], dtype=val[1])
+            elif typ == 'module':
+                val = importlib.import_module(val)
+            elif 'imported_function' == typ:
+                val = getattr(importlib.import_module(val[1]), val[0])
+                if '_main' in typ: main_func = val
+            elif 'defined_function' in typ:
+                val = str_to_func(val[1], globals(), name=val[0])
+                if '_main' in typ: main_func = val
+                defined_function.append(name)
+        elif any(isinstance(typ, i) for i in _primitives):
             pass
-        elif 'imported_function' in typ:
-            val = getattr(importlib.import_module(val[1]), val[0])
-            if '_main' in typ: main_func = val
-        elif 'defined_function' in typ:
-            val = str_to_func(val[1], globals(), name=val[0])
-            if '_main' in typ: main_func = val
-            defined_function.append(name)
         else:
             raise ValueError('Unsupport deserializing type: {}, '
                              'value: {}'.format(typ, val))

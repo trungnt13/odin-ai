@@ -157,9 +157,10 @@ class Feeder(MutableData):
                 self.maximum_queue_size)
 
     def __setstate__(self, states):
-        (_load_data_info(self._data), self._indices, self._outtype,
+        (data, self._indices, self._outtype,
          self._recipes, self.ncpu, self.buffer_size,
          self.maximum_queue_size) = states
+        self._data = _load_data_info(data)
         self.__cache_indices_id = id(self._indices)
         self.__cache_shape = None
         self.__running_iter = []
