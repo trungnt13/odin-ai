@@ -763,7 +763,8 @@ def Cavg_cpu(log_llh, y_true, cluster_idx=None,
         fa = 0
         fr = 0
         for lang_i in cluster:
-            N = np.sum(y_true == lang_i) + .0 # number of samples for lang_i
+            N = np.sum(y_true == lang_i, dtype='float32') # number of samples for lang_i
+            N = max(N, 1.) # prevent divide by 0, which give NaN return
             for lang_j in cluster:
                 if lang_i == lang_j:
                     err = np.sum(log_llh[y_true == lang_i, lang_i] < thresh) / N

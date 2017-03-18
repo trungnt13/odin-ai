@@ -273,7 +273,7 @@ def standard_trainer(train_data, valid_data,
         # save all the plot
         visual.plot_save(path=report_path, dpi=180, clear_all=True)
         if save_path is not None:
-            print("Model save at:", save_path)
+            print("Best checkpoint saved at:", save_path)
     # ====== Create trainer ====== #
     task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
     if save_path is not None and save_obj is not None:

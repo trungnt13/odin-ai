@@ -478,6 +478,5 @@ def get_model_descriptor(name, path=None, prefix='model'):
         model_func = [f for f in model_func if isinstance(f, ModelDescriptor)]
     if len(model_func) == 0:
         raise ValueError("Cannot find any model creator function with name=%s "
-                         "at paths=%s." % (name, str(path)))
-
+                         "at paths=%s." % (name, ', '.join(path)))
     return model_func[0]

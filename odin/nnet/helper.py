@@ -125,24 +125,28 @@ class Sequence(HelperOps):
 
     Parameters
     ----------
-    strict_transpose : bool
+    strict_transpose: bool
         if True, only operators with transposed implemented are added
         to tranpose operator
-    debug : bool
+    debug: bool
         if True, print Ops name and its output shape after applying
         each operator in the sequence.
+    all_layers: bool
+        if True, return the output from all layers instead of only the last
+        layer.
 
     Example
     -------
-
     """
 
-    def __init__(self, ops, strict_transpose=False, debug=False, **kwargs):
+    def __init__(self, ops, all_layers=False,
+                 strict_transpose=False, debug=False, **kwargs):
         super(Sequence, self).__init__(ops, **kwargs)
         # modify the name of variables haven't been initizalized
         for i in self.ops:
             if isinstance(i, NNOps) and not i.is_initialized:
                 i.name = self.name + '_' + i.name
+        self.all_layers = all_layers
         self.strict_transpose = bool(strict_transpose)
         self.debug = debug
 
@@ -151,8 +155,10 @@ class Sequence(HelperOps):
             print('**************** Sequences: %s ****************' % self.name)
             print('Is training:', K.is_training())
             print('First input:', K.get_shape(x))
+        all_outputs = []
         for op in self.ops:
             x = op(x, **_shrink_kwargs(op, kwargs))
+            all_outputs.append(x)
             # print after finnish the op
             if self.debug:
                 print(' ', str(op), '->', [K.get_shape(i) for i in x]
@@ -160,7 +166,7 @@ class Sequence(HelperOps):
         # end debug
         if self.debug:
             print()
-        return x
+        return all_outputs if self.all_layers else x
 
     def _transpose(self):
         transpose_ops = []
