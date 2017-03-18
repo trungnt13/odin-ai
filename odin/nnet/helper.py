@@ -161,8 +161,9 @@ class Sequence(HelperOps):
             all_outputs.append(x)
             # print after finnish the op
             if self.debug:
-                print(' ', str(op), '->', [K.get_shape(i) for i in x]
-                      if isinstance(x, (tuple, list)) else K.get_shape(x))
+                print(' ', op.name if isinstance(op, functionable) else str(op), '->',
+                    [K.get_shape(i) for i in x]
+                    if isinstance(x, (tuple, list)) else K.get_shape(x))
         # end debug
         if self.debug:
             print()

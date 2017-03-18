@@ -38,11 +38,17 @@ class Dropout(NNOps):
         self.noise_type = noise_type
         self.rescale = rescale
 
-    def _apply(self, X):
-        return K.apply_dropout(X, level=self.level,
-                               noise_dims=self.noise_dims,
-                               noise_type=self.noise_type,
-                               rescale=self.rescale)
+    def _apply(self, X, dropout=0):
+        if dropout >= 0:
+            training = K.is_training()
+            if dropout > 0:
+                K.set_training(True)
+            X = K.apply_dropout(X, level=self.level,
+                                noise_dims=self.noise_dims,
+                                noise_type=self.noise_type,
+                                rescale=self.rescale)
+            K.set_training(training)
+        return X
 
     def _transpose(self):
         return self
@@ -72,10 +78,17 @@ class Noise(NNOps):
         self.noise_dims = noise_dims
         self.noise_type = noise_type
 
-    def _apply(self, X):
-        return K.apply_noise(X, level=self.level,
-                             noise_dims=self.noise_dims,
-                             noise_type=self.noise_type)
+    def _apply(self, X, noise=0):
+        # possible mechanism to hard override the noise-state
+        if noise >= 0:
+            training = K.is_training()
+            if noise > 0:
+                K.set_training(True)
+            X = K.apply_noise(X, level=self.level,
+                              noise_dims=self.noise_dims,
+                              noise_type=self.noise_type)
+            K.set_training(training)
+        return X
 
     def _transpose(self):
         return self

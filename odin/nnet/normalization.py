@@ -49,12 +49,12 @@ class BatchNorm(NNOps):
         Coefficient for the exponential moving average of batch-wise means and
         standard deviations computed during training; the closer to one, the
         more it will depend on the last batches seen
-    beta : Theano shared variable, expression, numpy array, callable or None
+    beta : trainable variable, expression, numpy array, callable or None
         Initial value, expression or initializer for :math:`\\beta`. Must match
         the incoming shape, skipping all axes in `axes`. Set to ``None`` to fix
         it to 0.0 instead of learning it.
         See :func:`lasagne.utils.create_param` for more information.
-    gamma : Theano shared variable, expression, numpy array, callable or None
+    gamma : trainable variable, expression, numpy array, callable or None
         Initial value, expression or initializer for :math:`\\gamma`. Must
         match the incoming shape, skipping all axes in `axes`. Set to ``None``
         to fix it to 1.0 instead of learning it.
@@ -68,6 +68,13 @@ class BatchNorm(NNOps):
         \\sigma^2 + \\epsilon}`. Must match the incoming shape, skipping all
         axes in `axes`.
         See :func:`lasagne.utils.create_param` for more information.
+    noise_level : None, float or tensor scalar
+        if `noise_level` is not None, it specify standard deviation of
+        added Gaussian noise. The noise will be applied before adding `beta`.
+    noise_dims: int, list(int), or 'auto'
+        these dimensions will be setted to 1 in noise_shape, and
+        used to broadcast the dropout mask.
+        If `noise_dims` is "auto", it will be the same as `axes`
     **kwargs
         Any additional keyword arguments are passed to the :class:`Layer`
         superclass.
@@ -121,11 +128,9 @@ class BatchNorm(NNOps):
     """
 
     def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
-                 beta_init=K.init.constant(0),
-                 gamma_init=K.init.constant(1),
-                 mean_init=K.init.constant(0),
-                 inv_std_init=K.init.constant(1),
-                 activation=K.linear, **kwargs):
+                 beta_init=K.init.constant(0), gamma_init=K.init.constant(1),
+                 mean_init=K.init.constant(0), inv_std_init=K.init.constant(1),
+                 noise_level=None, noise_dims='auto', activation=K.linear, **kwargs):
         super(BatchNorm, self).__init__(**kwargs)
         self.axes = axes
         self.epsilon = epsilon
@@ -134,6 +139,9 @@ class BatchNorm(NNOps):
         self.gamma_init = gamma_init
         self.mean_init = mean_init
         self.inv_std_init = inv_std_init
+        # ====== noise ====== #
+        self.noise_level = noise_level
+        self.noise_dims = noise_dims
         self.activation = K.linear if activation is None else activation
 
     # ==================== abstract method ==================== #
@@ -143,6 +151,9 @@ class BatchNorm(NNOps):
             self.axes = tuple(range(0, len(self.input_shape) - 1))
         elif isinstance(self.axes, int):
             self.axes = (self.axes,)
+        # check noise_dims
+        if self.noise_dims == 'auto':
+            self.noise_dims = self.axes
         # create parameters, ignoring all dimensions in axes
         shape = [size for axis, size in enumerate(self.input_shape)
                  if axis not in self.axes]
@@ -161,7 +172,7 @@ class BatchNorm(NNOps):
         self.config.create_params(
             self.inv_std_init, shape=shape, name='inv_std', roles=BATCH_NORM_POPULATION_INVSTD)
 
-    def _apply(self, X):
+    def _apply(self, X, noise=0):
         input_shape = K.get_shape(X)
         ndim = K.ndim(X)
         is_training = K.is_training()
@@ -185,9 +196,18 @@ class BatchNorm(NNOps):
         # apply dimshuffle pattern to all parameters
         beta = 0 if not hasattr(self, 'beta') else K.dimshuffle(self.beta, pattern)
         gamma = 1 if not hasattr(self, 'gamma') else K.dimshuffle(self.gamma, pattern)
-        # normalize
+        # ====== normalizing the input ====== #
         normalized = (X - K.dimshuffle(mean, pattern)) * \
-            (gamma * K.dimshuffle(inv_std, pattern)) + beta
+            (gamma * K.dimshuffle(inv_std, pattern))
+        # applying noise if required
+        if self.noise_level is not None:
+            if noise >= 0:
+                training = K.is_training()
+                if noise > 0: K.set_training(True)
+                normalized = K.apply_noise(normalized, level=self.noise_level,
+                             noise_dims=self.noise_dims, noise_type='gaussian')
+                K.set_training(training)
+        normalized = normalized + beta
         # set shape for output
         K.add_shape(normalized, input_shape)
         # activated output

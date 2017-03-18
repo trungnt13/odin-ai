@@ -433,9 +433,10 @@ class ModelDescriptor(object):
 
     def __getattr__(self, name):
         # merge the attributes of function to the descriptor
-        if not hasattr(self, name) and hasattr(self._func, name):
+        try:
+            return super(ModelDescriptor, self).__getattr__(name)
+        except AttributeError:
             return getattr(self._func, name)
-        return super(ModelDescriptor, self).__getattr__(name)
 
     def __repr__(self):
         return self._func.__repr__()
