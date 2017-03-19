@@ -65,8 +65,8 @@ def is_bool(b):
 
 
 def is_lambda(v):
-  LAMBDA = lambda:0
-  return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
+    LAMBDA = lambda: 0
+    return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
 
 
 def iter_chunk(it, n):
@@ -386,9 +386,9 @@ def one_hot(y, n_classes=None):
     y = numpy.asarray(y, dtype='int32')
     if not n_classes:
         n_classes = numpy.max(y) + 1
-    Y = numpy.zeros((len(y), n_classes))
+    Y = numpy.zeros((len(y), n_classes), dtype='int32')
     for i in range(len(y)):
-        Y[i, y[i]] = 1.
+        Y[i, y[i]] = 1
     return Y
 
 

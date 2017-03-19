@@ -26,9 +26,6 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-from abc import ABCMeta
-from collections import Counter
-from six import add_metaclass
 from six.moves import zip, zip_longest, range
 
 import numpy as np
@@ -38,7 +35,7 @@ from odin.utils import (segment_list, one_hot,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.mpi import MPI
 
-from .data import Data, MutableData, as_data
+from .data import MutableData, as_data
 from .dataset import Dataset
 from .recipes import FeederList, CreateBatch, CreateFile
 
@@ -194,6 +191,10 @@ class Feeder(MutableData):
         self.__running_iter = []
 
     # ==================== override from Data ==================== #
+    @property
+    def nb_files(self):
+        return len(self._indices)
+
     @property
     def shape(self):
         """ This is just an "UPPER" estimation, some data points might be lost

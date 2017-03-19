@@ -269,7 +269,11 @@ class Normalization(FeederRecipe):
         self.mean = mean
         self.std = std
         self.local_normalize = str(local_normalize).lower()
-        self.data_idx = as_tuple(data_idx)
+        if self.local_normalize not in ('none', 'false', 'tanh', 'sigmoid', 'normal'):
+            raise ValueError("Not support for local_normalize=%s, you must specify "
+                            "one of the following mode: none, false, tanh, sigmoid, "
+                            "normal." % self.local_normalize)
+        self.data_idx = as_tuple(data_idx, t=int)
 
     def process(self, name, X, y):
         X_normlized = []
@@ -486,19 +490,19 @@ class Merge(FeederRecipe):
 # ===========================================================================
 class LabelOneHot(FeederRecipe):
 
-    def __init__(self, n_classes):
+    def __init__(self, nb_classes, label_idx=0):
         super(LabelOneHot, self).__init__()
-        self._n_classes = int(n_classes)
+        self._nb_classes = int(nb_classes)
+        self.label_idx = as_tuple(label_idx, t=int)
 
-    def process(self, name, X, y):
+    def process(self, name, X, Y):
         _ = []
-        for transcription in y:
-            if isinstance(transcription, str):
-                transcription = [i for i in transcription.split(' ')
-                                 if len(i) > 0]
-            transcription = [int(i) for i in transcription]
-            transcription = one_hot(transcription, n_classes=self._n_classes)
-            _.append(transcription)
+        for i, y in enumerate(Y):
+            # transform into one-label y
+            if i in self.label_idx:
+                y = np.array([int(i) for i in y])
+                y = one_hot(y, n_classes=self._nb_classes)
+            _.append(y)
         return name, X, _
 
 
@@ -842,7 +846,7 @@ class Sequencing(FeederRecipe):
                                 endvalue='__end__', endmode=self.endmode)
                 # need to remove padded value
                 a = np.asarray(
-                    [trans_transform([j for j in i if j != '__end__'])
+                    [trans_transform([j for j in i if '__end__' not in j])
                      for i in a],
                     dtype=original_dtype
                 )
