@@ -382,13 +382,19 @@ class ArgController(object):
 def one_hot(y, n_classes=None):
     '''Convert class vector (integers from 0 to nb_classes)
     to binary class matrix, for use with categorical_crossentropy
+
+    Note
+    ----
+    if any class index in y is smaller than 0, then all of its one-hot
+    values is 0.
     '''
     y = numpy.asarray(y, dtype='int32')
     if not n_classes:
         n_classes = numpy.max(y) + 1
     Y = numpy.zeros((len(y), n_classes), dtype='int32')
-    for i in range(len(y)):
-        Y[i, y[i]] = 1
+    for i, j in enumerate(y):
+        if j >= 0:
+            Y[i, j] = 1
     return Y
 
 

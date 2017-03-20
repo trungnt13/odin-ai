@@ -42,6 +42,12 @@ class VariableRole(object):
                       self.__class__.__name__[:-4]).upper()
 
 
+class AuxiliaryRole(VariableRole):
+    pass
+#: Variables added to the graph as annotations
+AUXILIARY = AuxiliaryRole()
+
+
 # ==================== Variational ==================== #
 class VariationalRole(VariableRole):
     pass
@@ -76,12 +82,6 @@ class ActivationParameterRole(ParameterRole):
     pass
 #: A parameter of the model
 ACTIVATION_PARAMETER = ActivationParameterRole()
-
-
-class AuxiliaryRole(VariableRole):
-    pass
-#: Variables added to the graph as annotations
-AUXILIARY = AuxiliaryRole()
 
 
 class WeightRole(ParameterRole):

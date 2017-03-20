@@ -61,7 +61,7 @@ def standard_trainer(train_data, valid_data,
                      batch_size=64, nb_epoch=3, valid_freq=1.,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
                      save_path=None, save_obj=None, report_path=None,
-                     stop_callback=None, save_callback=None):
+                     enable_rollback=True, stop_callback=None, save_callback=None):
     """
     Parameters
     ----------
@@ -275,7 +275,8 @@ def standard_trainer(train_data, valid_data,
         if save_path is not None:
             print("Best checkpoint saved at:", save_path)
     # ====== Create trainer ====== #
-    task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level)
+    task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level,
+        rollback=enable_rollback)
     if save_path is not None and save_obj is not None:
         task.set_save(save_path, save_obj, save_hist=True)
     # set task
@@ -483,14 +484,18 @@ class MainLoop(object):
         0: only shuffle the order of each batch
         1: shuffle the order of batches and inside each batch as well.
         2: includes level 0 and 1, and custom shuffling (strongest form)
+    rollback: bool
+        if True, rollback to the best checkpoint whenever the validation
+        performance is degraded.
 
     """
 
-    def __init__(self, batch_size=256, seed=-1, shuffle_level=0):
+    def __init__(self, batch_size=256, seed=-1, shuffle_level=0, rollback=True):
         super(MainLoop, self).__init__()
         self._task = None
         self._subtask = {} # run 1 epoch after given frequence
         self._crosstask = {} # randomly run 1 iter given probability
+        self._allow_rollback = bool(rollback)
 
         # create default RNG (no randomization)
         self._rng = struct()
@@ -509,6 +514,22 @@ class MainLoop(object):
         self._rollback_func = None
         self._end_func = None
 
+    # ==================== pickling ==================== #
+    def __setstate__(self, value):
+        self.set_batch(batch_size=value[0], shuffle_level=value[2])
+        self._rng = value[1]
+
+        self._callback = value[3]
+        self._allow_rollback = value[4]
+
+        self._task = None
+        self._subtask = {} # run 1 epoch after given frequence
+        self._crosstask = {} # randomly run 1 iter given probability
+
+    def __getstate__(self):
+        return (self._batch_size, self._rng, self._shuffle_level,
+                self._callback, self._allow_rollback)
+
     # ==================== Signal handling ==================== #
     def set_signal_handlers(self, save=None, rollback=None, end=None):
         """
@@ -524,21 +545,6 @@ class MainLoop(object):
         self._save_func = save if callable(save) else None
         self._rollback_func = rollback if callable(rollback) else None
         self._end_func = end if callable(end) else None
-
-    # ==================== pickling ==================== #
-    def __setstate__(self, value):
-        self.set_batch(batch_size=value[0], shuffle_level=value[2])
-        self._rng = value[1]
-
-        self._callback = value[-1]
-
-        self._task = None
-        self._subtask = {} # run 1 epoch after given frequence
-        self._crosstask = {} # randomly run 1 iter given probability
-
-    def __getstate__(self):
-        return (self._batch_size, self._rng, self._shuffle_level,
-                self._callback)
 
     def set_save(self, path, obj, save_hist=True):
         """
@@ -769,7 +775,8 @@ class MainLoop(object):
                                                 samples_size=subtask.samples_per_epoch)
                             # process callback msg for subtasks
                             if SIG_TRAIN_SAVE in msg: self._save()
-                            if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+                            if SIG_TRAIN_ROLLBACK in msg and self._allow_rollback:
+                                self._rollback()
                             if SIG_TRAIN_STOP in msg: break
                 # ====== run crosstask ====== #
                 callback.mode = 'crosstask'
@@ -796,7 +803,8 @@ class MainLoop(object):
             # ====== process callback msg for main task ====== #
             # (this is important order)
             if SIG_TRAIN_SAVE in msg: self._save()
-            if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+            if SIG_TRAIN_ROLLBACK in msg and self._allow_rollback:
+                self._rollback()
             if SIG_TRAIN_STOP in msg: break
         # ====== end main task ====== #
         self._task.stop_all()
