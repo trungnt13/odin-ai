@@ -148,6 +148,9 @@ class BatchNorm(NNOps):
     def _initialize(self):
         if self.axes == 'auto':
             # default: normalize over all but the second axis
+            # for so-called "global normalization", used with convolutional
+            # filters with shape [batch, height, width, depth],
+            # pass axes=[0, 1, 2]
             self.axes = tuple(range(0, len(self.input_shape) - 1))
         elif isinstance(self.axes, int):
             self.axes = (self.axes,)
@@ -160,34 +163,42 @@ class BatchNorm(NNOps):
         if any(size is None for size in shape):
             raise ValueError("BatchNorm needs specified input sizes for "
                              "all axes not normalized over.")
-        # init parameters
+        # init learnable parameters
         if self.beta_init is not None:
             self.config.create_params(
-                self.beta_init, shape=shape, name='beta', roles=BATCH_NORM_SHIFT_PARAMETER)
+                self.beta_init, shape=shape, name='beta',
+                roles=BATCH_NORM_SHIFT_PARAMETER)
         if self.gamma_init is not None:
             self.config.create_params(
-                self.gamma_init, shape=shape, name='gamma', roles=BATCH_NORM_SCALE_PARAMETER)
-        self.config.create_params(
-            self.mean_init, shape=shape, name='mean', roles=BATCH_NORM_POPULATION_MEAN)
-        self.config.create_params(
-            self.inv_std_init, shape=shape, name='inv_std', roles=BATCH_NORM_POPULATION_INVSTD)
+                self.gamma_init, shape=shape, name='gamma',
+                roles=BATCH_NORM_SCALE_PARAMETER)
+        # running mean and invert std
+        if self.mean_init is not None:
+            self.config.create_params(
+                self.mean_init, shape=shape, name='mean',
+                roles=BATCH_NORM_POPULATION_MEAN)
+        if self.inv_std_init is not None:
+            self.config.create_params(
+                self.inv_std_init, shape=shape, name='inv_std',
+                roles=BATCH_NORM_POPULATION_INVSTD)
 
     def _apply(self, X, noise=0):
         input_shape = K.get_shape(X)
         ndim = K.ndim(X)
         is_training = K.is_training()
         # if is training, normalize input by its own mean and std
-        if not is_training:
-            mean = self.mean
-            inv_std = self.inv_std
-        else:
-            mean = K.mean(X, self.axes)
-            inv_std = K.inv(K.sqrt(K.var(X, self.axes) + self.epsilon))
-            # set a default update for them:
-            running_mean = ((1 - self.alpha) * self.mean +
-                            self.alpha * mean)
-            running_inv_std = ((1 - self.alpha) * self.inv_std +
-                               self.alpha * inv_std)
+        mean = (K.mean(X, self.axes)
+            if is_training or not hasattr(self, 'mean') else self.mean)
+        inv_std = (K.inv(K.sqrt(K.var(X, self.axes) + self.epsilon))
+            if is_training or not hasattr(self, 'inv_std') else self.inv_std)
+        # set a default update for them:
+        if is_training:
+            if hasattr(self, 'mean'):
+                running_mean = ((1 - self.alpha) * self.mean +
+                                self.alpha * mean)
+            if hasattr(self, 'inv_std'):
+                running_inv_std = ((1 - self.alpha) * self.inv_std +
+                                   self.alpha * inv_std)
         # prepare dimshuffle pattern inserting broadcastable axes as needed
         param_axes = iter(range(ndim - len(self.axes)))
         pattern = ['x' if input_axis in self.axes
@@ -214,6 +225,8 @@ class BatchNorm(NNOps):
         output = self.activation(normalized)
         # add updates for final output
         if is_training:
-            add_updates(output, self.mean, running_mean)
-            add_updates(output, self.inv_std, running_inv_std)
+            if hasattr(self, 'mean'):
+                add_updates(output, self.mean, running_mean)
+            if hasattr(self, 'inv_std'):
+                add_updates(output, self.inv_std, running_inv_std)
         return output
