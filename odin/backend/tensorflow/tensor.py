@@ -91,6 +91,8 @@ backend_ops_log = tf.log
 backend_ops_round = tf.round
 backend_ops_pow = tf.pow
 backend_ops_clip = tf.clip_by_value
+backend_ops_ceil = tf.ceil
+backend_ops_floor = tf.floor
 
 backend_ops_diag = tf.diag_part
 
@@ -263,6 +265,10 @@ def gather(reference, indices):
     return tf.gather(reference, indices)
 
 
+def scatter():
+    pass
+
+
 # ===========================================================================
 # ELEMENT-WISE OPERATIONS
 # ===========================================================================
@@ -407,12 +413,6 @@ def concatenate(tensors, axis=-1):
     return tf.concat(tensors, axis=axis)
 
 
-def tile(x, n):
-    # TODO: error here
-    ndim = x.get_shape().ndims
-    return tf.tile(x, [1 for i in range(ndim - 1)] + [n])
-
-
 def stack(tensors):
     """ (5, 2) and (5, 2) => (2, 5, 2) """
     return tf.stack(tensors)
@@ -479,10 +479,11 @@ def repeat(x, n, axes=None):
             axes = (axes,)
         axes = _normalize_axis(axes, ndim)
         n = as_tuple(n, len(axes))
-        return tf.tile(x, [n[axes.index(i)] if i in axes else 1
-                           for i in range(ndim)])
+        return tf.tile(x, multiples=[n[axes.index(i)] if i in axes else 1
+                                     for i in range(ndim)])
     else:
-        return tile(x, n)
+        n = int(n)
+        return tf.tile(x, multiples=[n for i in range(ndim)])
 
 
 def squeeze(x, axis):
@@ -497,31 +498,35 @@ def squeeze(x, axis):
     return add_shape(x, output_shape)
 
 
-def pad(x, axes=1, padding=1):
+def pad(x, paddings, mode='constant'):
     """Pad the all dimension given in axes` of a N-D tensor
     with "padding" zeros left and right.
 
+    Parameters
+    ----------
+    paddings: shape [n, 2]
+        paddings is an integer tensor with shape `[n, 2]`, where `n` is
+        the rank of tensor. For each dimension D of input, paddings[D, 0]
+        indicates how many values to add `before` the contents of tensor in
+        that dimension, and paddings[D, 1] indicates how many values to
+        add `after` the contents of tensor in that dimension
+    mode: str
+        One of "constant", "reflect", or "symmetric"
     Example
     -------
     >>> X = [[1, 1, 1],
-             [1, 1, 1]]
+    ...      [1, 1, 1]]
     >>> Y1 = pad(X, axes=1, padding=1)
     >>> Y1 = [[0, 1, 1, 1, 0],
-              [0, 1, 1, 1, 0]]
+    ...       [0, 1, 1, 1, 0]]
     >>> Y2 = pad(X, axes=(0, 1), padding=1)
     >>> Y2 = [[0, 0, 0, 0, 0],
-              [0, 1, 1, 1, 0],
-              [0, 1, 1, 1, 0],
-              [0, 0, 0, 0, 0]]
+    ...       [0, 1, 1, 1, 0],
+    ...       [0, 1, 1, 1, 0],
+    ...       [0, 0, 0, 0, 0]]
     """
-    ndim = x.get_shape().ndims
-    if not isinstance(axes, (tuple, list)):
-        axes = (axes,)
-    axes = tuple([i % ndim for i in axes])
-    padding = as_tuple(padding, len(axes), int)
-    return tf.pad(x, [[padding[axes.index(i)], padding[axes.index(i)]] if i in axes
-                      else [0, 0]
-                      for i in range(ndim)])
+    mode = mode.upper()
+    return tf.pad(x, paddings=paddings, mode=mode)
 
 
 # ===========================================================================

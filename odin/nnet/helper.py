@@ -8,7 +8,7 @@ import numpy as np
 
 from odin import backend as K
 from odin.basic import has_roles, PARAMETER
-from odin.utils import as_tuple
+from odin.utils import as_tuple, is_number
 from odin.utils.decorators import functionable
 
 
@@ -135,6 +135,13 @@ class Sequence(HelperOps):
         if True, return the output from all layers instead of only the last
         layer.
 
+    Note
+    ----
+    You can specify kwargs for a specific NNOps using `params` keywords,
+    for example: `params={1: {'noise': 1}}` will applying noise=1 to the
+    1st NNOps, or `params={(1, 2, 3): {'noise': 1}}` to specify keywords
+    for the 1st, 2nd, 3rd Ops.
+
     Example
     -------
     """
@@ -151,13 +158,29 @@ class Sequence(HelperOps):
         self.debug = debug
 
     def _apply(self, x, **kwargs):
+        # ====== get specific Ops kwargs ====== #
+        params = {}
+        for k, v in kwargs.get('params', {}).iteritems():
+            # check valid keywords
+            if isinstance(v, (tuple, list)):
+                try: v = dict(v)
+                except Exception: pass
+            if not isinstance(v, dict): continue
+            # check valid keywords
+            for i in as_tuple(k):
+                params[self.ops[i] if is_number(i) else i] = v
+        # ====== print debug ====== #
         if self.debug:
             print('**************** Sequences: %s ****************' % self.name)
             print('Is training:', K.is_training())
             print('First input:', K.get_shape(x))
+        # ====== applying ====== #
         all_outputs = []
         for op in self.ops:
-            x = op(x, **_shrink_kwargs(op, kwargs))
+            keywords = _shrink_kwargs(op, kwargs)
+            if op in params:
+                keywords.update(params[op])
+            x = op(x, **keywords)
             all_outputs.append(x)
             # print after finnish the op
             if self.debug:

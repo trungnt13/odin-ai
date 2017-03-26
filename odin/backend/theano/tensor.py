@@ -420,12 +420,6 @@ def concatenate(tensors, axis=-1):
     return x
 
 
-def tile(x, n):
-    y = T.tile(x, n)
-    add_shape(y, auto_infer_shape(T.tile, x, reps=n))
-    return y
-
-
 def stack(tensors):
     """ (5, 2) and (5, 2) => (2, 5, 2) """
     y = T.stack(*tensors)

@@ -19,8 +19,8 @@ from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
                         is_trainable_variable, is_training, addbroadcast,
                         random_uniform, random_normal, random_binomial,
                         backend_ops_categorical_crossentropy,
-                        backend_ops_binary_crossentropy,
-                        as_tensor_variable, get_dtype)
+                        backend_ops_binary_crossentropy, as_tensor_variable,
+                        get_dtype, transpose, ceil, floor, pad, arange)
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 
@@ -546,8 +546,8 @@ def multiclass_hinge_loss(predictions, targets, delta=1):
     elif targets.ndim != predictions.ndim:
         raise TypeError('rank mismatch between targets and predictions')
     corrects = predictions[targets.nonzero()]
-    rest = theano.tensor.reshape(predictions[(1-targets).nonzero()],
-                                 (-1, num_cls-1))
+    rest = theano.tensor.reshape(predictions[(1 - targets).nonzero()],
+                                 (-1, num_cls - 1))
     rest = theano.tensor.max(rest, axis=1)
     return theano.tensor.nnet.relu(rest - corrects + delta)
 
@@ -837,8 +837,8 @@ def poolWTA(x, pool_size=(2, 2), axis=1):
     input_reshaped = reshape(x, pool_shape)
     max_indices = argmax(input_reshaped, axis=axis + 1, keepdims=True)
 
-    arange = T.arange(pool_size).dimshuffle(*arange_shuffle_pattern)
-    mask = reshape(T.eq(max_indices, arange), input_shape)
+    arange_ = dimshuffle(arange(pool_size), pattern=arange_shuffle_pattern)
+    mask = reshape(eq(max_indices, arange_), input_shape)
     output = x * mask
     add_shape(output, input_shape)
     return output
@@ -864,6 +864,73 @@ def poolGlobal(x, pool_function=mean):
     input_shape = get_shape(x)
     x = pool_function(flatten(x, 3), axis=2)
     add_shape(x, input_shape[:2])
+    return x
+
+
+def upsample(x, scale, axes, method='nn'):
+    """
+    Parameters
+    ----------
+    axes: int, list of int
+        axes is [1, 2] the width and height of an `channel last` image.
+    method: str, int
+        'nn' for nearest neighbor (e.g. [1, 2] => [1, 1, 2, 2]),
+        'pad' for padding within the tensor. 'pad_margin' do padding
+        in the margin of the tensor. 'repeat' simple algorithm for
+        repeating the element (e.g. [1, 2] => [1, 2, 1, 2])
+    """
+    method = method.lower()
+    input_shape = get_shape(x, native=True)
+    ndims = ndim(x)
+    # normalize all negative axes
+    if axes is None:
+        raise ValueError("axes cannot be None.")
+    axes = [1, 2] if axes is None else \
+        [i % ndims for i in as_tuple(axes)]
+    sorted(axes)
+    # create final output_shape
+    output_shape = [input_shape[i] * scale if i in axes
+                    else input_shape[i]
+                    for i in range(ndims)]
+    # ====== Nearest neighbor method ====== #
+    if method == 'nn':
+        # tensorflow only support for tile <= 6-D tensor
+        if ndims >= 6:
+            raise ValueError('upsample with NN mode does not support rank >= 6 tensor.')
+        elif ndims + len(axes) > 6:
+            for a in axes:
+                x = upsample(x, scale, axes=a, method='nn')
+        else:
+            # repeat the tensor
+            x = dimshuffle(x, pattern=list(range(ndims)) + ['x'] * len(axes))
+            x = repeat(x, scale, axes=[i for i in range(ndims, ndims + len(axes))])
+            # transpose it back to the right shape
+            axes_map = {i: j for i, j in zip(axes, range(ndims, ndims + len(axes)))}
+            new_axes = []
+            for i in range(ndims):
+                if i not in axes_map:
+                    new_axes.append(i)
+                else:
+                    new_axes += [i, axes_map[i]]
+            x = transpose(x, axes=new_axes)
+            x = reshape(x, output_shape)
+    # ====== pading_margin ====== #
+    elif method.lower() == 'pad_margin':
+        paddings = [[0, 0] if i not in axes else
+                    [cast(ceil(input_shape[i] / scale), 'int32'),
+                     cast(floor(input_shape[i] / scale), 'int32')]
+                    for i in range(ndims)]
+        x = pad(x, paddings=paddings, mode='constant')
+    # ====== pading ====== #
+    elif method == 'pad':
+        raise NotImplementedError
+        # x = tf.scatter_nd(indices, x, shape=output_shape)
+    # ====== repeat ====== #
+    elif method == 'repeat':
+        x = repeat(x, n=scale, axes=axes)
+    # ====== no support ====== #
+    else:
+        raise ValueError("No support for method='%s'" % method)
     return x
 
 

@@ -1,11 +1,12 @@
 from __future__ import print_function, division, absolute_import
 
-from six.moves import builtins
+import math
 import platform
+from six.moves import builtins
 
 from odin.config import auto_config
 from odin.basic import set_training, is_training
-from odin.utils import package_installed, exec_commands
+from odin.utils import package_installed, exec_commands, is_number
 
 config = auto_config()
 
@@ -172,6 +173,16 @@ def pow(x, a):
 
 def sign(x):
     return _copy_shape(x, backend_ops_sign)
+
+
+def ceil(x):
+    if is_number(x): return math.ceil(x)
+    return _copy_shape(x, backend_ops_ceil)
+
+
+def floor(x):
+    if is_number(x): return math.floor(x)
+    return _copy_shape(x, backend_ops_floor)
 
 
 # ==================== others ==================== #

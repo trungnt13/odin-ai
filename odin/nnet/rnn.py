@@ -278,7 +278,7 @@ class RNN(BaseRNN):
         X = K.dot(X, self.W_in) if self.input_mode != 'skip' else X
         if self.input_mode == 'norm':
             # normalize all axes except the time dimension
-            bn = BatchNorm(axes=(0, -1), activation=K.linear,
+            bn = BatchNorm(axes=(0, 1), activation=K.linear,
                            gamma_init=self.gamma, beta_init=self.beta,
                            mean_init=self.mean, inv_std_init=self.inv_std)
             X = bn(X)
@@ -452,7 +452,7 @@ class GRU(BaseRNN):
             X = K.dot(X, self.W_in)
             if self.input_mode == 'norm':
                 # normalize all axes except the time dimension
-                bn = BatchNorm(axes=(0, -1), activation=K.linear,
+                bn = BatchNorm(axes=(0, 1), activation=K.linear,
                                gamma_init=self.gamma, beta_init=self.beta,
                                mean_init=self.mean, inv_std_init=self.inv_std)
                 X = bn(X)
@@ -663,7 +663,7 @@ class LSTM(BaseRNN):
             X = K.dot(X, self.W_in)
             if self.input_mode == 'norm':
                 # normalize all axes except the time dimension
-                bn = BatchNorm(axes=(0, -1), activation=K.linear,
+                bn = BatchNorm(axes=(0, 1), activation=K.linear,
                                gamma_init=self.gamma, beta_init=self.beta,
                                mean_init=self.mean, inv_std_init=self.inv_std)
                 X = bn(X)
@@ -861,7 +861,7 @@ class CudnnRNN(NNOps):
         if self.input_mode == 'norm':
             X = K.dot(X, self.W_in)
             # normalize all axes except the time dimension
-            bn = BatchNorm(axes=(0, -1), activation=K.linear,
+            bn = BatchNorm(axes=(0, 1), activation=K.linear,
                            gamma_init=self.gamma, beta_init=self.beta,
                            mean_init=self.mean, inv_std_init=self.inv_std)
             X = bn(X)

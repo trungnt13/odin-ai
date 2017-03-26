@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import
 
 from odin import backend as K
+from odin.utils import is_number
 from odin.utils.decorators import functionable
 
 from .base import NNOps
@@ -59,6 +60,34 @@ class Pool(NNOps):
         return pool_func(X, pool_size=self.pool_size, strides=self.strides,
                          border_mode=self.pad, ignore_border=self.ignore_border,
                          mode=self.mode)
+
+    def _transpose(self):
+        return Upsampling(size=2)
+
+
+class Upsampling(NNOps):
+    """ Upsampling
+
+    Parameters
+    ----------
+    size: int
+        upsampling size (new_size = input_size * size)
+    axes: 'auto', int, list of int
+        pass
+    mode: str, int
+        `repeat` is
+
+    """
+
+    def __init__(self, size=2, axes='auto', mode='repeat'):
+        super(Upsampling, self).__init__()
+        self.size = size
+        self.axes = axes
+        self.mode = mode
+        self.padding_value = 0.
+
+    def _apply(self, X):
+        pass
 
     def _transpose(self):
         raise NotImplementedError
