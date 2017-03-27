@@ -2,9 +2,10 @@ from __future__ import print_function, division, absolute_import
 
 import inspect
 import warnings
-from six.moves import builtins
-from functools import wraps
 from numbers import Number
+from functools import wraps
+from six.moves import builtins
+from collections import defaultdict
 
 import numpy as np
 
@@ -858,12 +859,14 @@ def poolGlobal(x, pool_function=mean):
 
     Note
     ----
-    output_shape = input_shape[:2]
-    for example, input_shape = (12, 8, 25, 18) -> output_shape = (12, 8)
+    output_shape = (input_shape[0], input_shape[-1])
+    for example, input_shape = (12, 25, 18, 8) -> output_shape = (12, 8)
     """
     input_shape = get_shape(x)
+    ndims = ndim(x)
+    x = dimshuffle(x, pattern=[0, ndims - 1] + range(1, ndims - 1))
     x = pool_function(flatten(x, 3), axis=2)
-    add_shape(x, input_shape[:2])
+    add_shape(x, (input_shape[0], input_shape[-1]))
     return x
 
 
@@ -888,10 +891,13 @@ def upsample(x, scale, axes, method='nn'):
     axes = [1, 2] if axes is None else \
         [i % ndims for i in as_tuple(axes)]
     sorted(axes)
+    # make scale a tuple
+    scale = as_tuple(scale, N=len(axes), t=int)
+    # mapping from axis -> scale
+    scale_map = defaultdict(lambda: 1)
+    scale_map.update([(i, j) for i, j in zip(axes, scale)])
     # create final output_shape
-    output_shape = [input_shape[i] * scale if i in axes
-                    else input_shape[i]
-                    for i in range(ndims)]
+    output_shape = [input_shape[i] * scale_map[i] for i in range(ndims)]
     # ====== Nearest neighbor method ====== #
     if method == 'nn':
         # tensorflow only support for tile <= 6-D tensor
@@ -899,7 +905,7 @@ def upsample(x, scale, axes, method='nn'):
             raise ValueError('upsample with NN mode does not support rank >= 6 tensor.')
         elif ndims + len(axes) > 6:
             for a in axes:
-                x = upsample(x, scale, axes=a, method='nn')
+                x = upsample(x, scale_map[a], axes=a, method='nn')
         else:
             # repeat the tensor
             x = dimshuffle(x, pattern=list(range(ndims)) + ['x'] * len(axes))
@@ -917,8 +923,8 @@ def upsample(x, scale, axes, method='nn'):
     # ====== pading_margin ====== #
     elif method.lower() == 'pad_margin':
         paddings = [[0, 0] if i not in axes else
-                    [cast(ceil(input_shape[i] / scale), 'int32'),
-                     cast(floor(input_shape[i] / scale), 'int32')]
+                    [cast(ceil(input_shape[i] / scale_map[i]), 'int32'),
+                     cast(floor(input_shape[i] / scale_map[i]), 'int32')]
                     for i in range(ndims)]
         x = pad(x, paddings=paddings, mode='constant')
     # ====== pading ====== #
@@ -931,6 +937,9 @@ def upsample(x, scale, axes, method='nn'):
     # ====== no support ====== #
     else:
         raise ValueError("No support for method='%s'" % method)
+    # ====== add_shape ====== #
+    add_shape(x, shape=[i if is_number(i) else None
+                        for i in output_shape])
     return x
 
 

@@ -370,5 +370,16 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(all(i == j for i, j in zip(shape1, shape2)
                                 if i is not None))
 
+    def test_upsample(self):
+        X = K.variable(np.arange(1, 24 + 1).reshape(2, 2, 3, 2))
+        self.assertEqual(K.eval(K.sum(X)), 300.)
+        self.assertEqual(K.eval(K.upsample(X, 2, axes=(1, 2), method='nn')).sum(),
+                         1200.)
+        self.assertEqual(K.eval(K.upsample(X, 2, axes=(1, 2), method='pad_margin')).sum(),
+                         300.)
+        self.assertEqual(K.eval(K.upsample(X, 2, axes=(1, 2), method='repeat')).sum(),
+                         1200.)
+        # print(K.eval(K.upsample(X, 2, axes=(1, 2), method='pad')).sum())
+
 if __name__ == '__main__':
     print(' odin.tests.run() to run these tests ')

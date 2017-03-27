@@ -194,7 +194,8 @@ def add_shape(var, shape):
     # check shape tuple
     try:
         shape = as_shape_tuple(shape)
-    except:
+    except Exception as e:
+        print("Cannot process shape=%s, exception:%s" % (str(shape), str(e)))
         return var
     # check ndim
     ndim = var.ndim if hasattr(var, 'ndim') else var.get_shape().ndims
@@ -245,7 +246,7 @@ def get_shape(x, native=False):
     elif hasattr(x, 'shape'):
         shape = x.shape
     else:
-        raise ValueError('Cannot get shape of variable: ' + str(x))
+        raise ValueError('Cannot get_shape of variable: ' + str(x))
     # ====== check tag shape ====== #
     if native and isinstance(shape, (tuple, list)):
         if get_backend() == 'theano':

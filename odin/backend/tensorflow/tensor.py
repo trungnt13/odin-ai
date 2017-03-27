@@ -489,12 +489,14 @@ def repeat(x, n, axes=None):
 def squeeze(x, axis):
     """Remove a 1-dimension from the tensor at index "axis".
     """
-    axis = axis % x.get_shape().ndims
-    input_shape = [j for i, j in enumerate(get_shape(x))
-                   if i != axis]
-    x = tf.squeeze(x, [axis])
-    output_shape = tuple([j if i is None else i
-        for i, j in zip(get_shape(x), input_shape)])
+    if axis is not None:
+        axis = [a % x.get_shape().ndims
+                for a in as_tuple(axis, t=int)]
+        output_shape = tuple([i for i in get_shape(x)
+                              if i not in axis])
+    else:
+        output_shape = tuple([i for i in get_shape(x) if i != 1])
+    x = tf.squeeze(x, axis)
     return add_shape(x, output_shape)
 
 

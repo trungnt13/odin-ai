@@ -127,7 +127,7 @@ _CREATED_VARIABLE = {}
 _VAR_ID = 0
 
 
-def variable(value, dtype=FLOATX, name=None, target=None):
+def variable(value, dtype=FLOATX, name=None):
     '''Instantiates a tensor.
 
     # Arguments

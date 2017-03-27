@@ -193,7 +193,7 @@ def _check_target(target):
     return target
 
 
-def variable(value, dtype=FLOATX, name=None, target=None):
+def variable(value, dtype=FLOATX, name=None):
     """Instantiate a tensor variable.
     """
     # ensure unique name
