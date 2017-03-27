@@ -923,8 +923,8 @@ def upsample(x, scale, axes, method='nn'):
     # ====== pading_margin ====== #
     elif method.lower() == 'pad_margin':
         paddings = [[0, 0] if i not in axes else
-                    [cast(ceil(input_shape[i] / scale_map[i]), 'int32'),
-                     cast(floor(input_shape[i] / scale_map[i]), 'int32')]
+                    [cast(ceil(input_shape[i] * (scale_map[i] - 1) / 2), 'int32'),
+                     cast(floor(input_shape[i] * (scale_map[i] - 1) / 2), 'int32')]
                     for i in range(ndims)]
         x = pad(x, paddings=paddings, mode='constant')
     # ====== pading ====== #

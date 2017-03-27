@@ -938,8 +938,7 @@ def __validate_pool_stride_border(pool_size, strides, border_mode, mode, ndim):
     return pool_size, strides, border_mode, mode
 
 
-def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid',
-           ignore_border=True, mode='max'):
+def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid', mode='max'):
     """
     Parameters
     ----------
@@ -952,9 +951,6 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid',
         Stride size, which is the number of shifts over rows/cols to get the
         next pool region. If st is None, it is considered equal to ds
         (no overlap on pooling regions).
-    ignore_border : bool (default None, will print a warning and set to False)
-        When True, (5,5) input with ds=(2,2) will generate a (2,2) output.
-        (3,3) otherwise.
     padding : tuple of two ints
         (pad_h, pad_w), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
@@ -980,13 +976,12 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid',
                            strides=(1,) * ndim + strides + (1,),
                            padding=border_mode)
     output_shape = get_pool_output_shape(input_shape, pool_size,
-        ignore_border=ignore_border, strides=strides, pad=border_mode)
+        strides=strides, pad=border_mode)
     add_shape(x, tuple(output_shape))
     return x
 
 
-def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
-           ignore_border=True, mode='max'):
+def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0), mode='max'):
     """
     Parameters
     ----------
@@ -999,9 +994,6 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
         Stride size, which is the number of shifts over rows/cols to get the
         next pool region. If st is None, it is considered equal to ds
         (no overlap on pooling regions).
-    ignore_border : bool (default None, will print a warning and set to False)
-        When True, (5,5,5) input with ds=(2,2,2) will generate a (2,2,2) output.
-        (3,3,3) otherwise.
     padding : tuple of 3 ints
         (pad_h, pad_w, pad_l), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
@@ -1027,7 +1019,7 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
                              strides=(1,) * ndim + pool_size + (1,),
                              padding=border_mode)
     output_shape = get_pool_output_shape(input_shape, pool_size,
-        ignore_border=ignore_border, strides=strides, pad=border_mode)
+        strides=strides, pad=border_mode)
     add_shape(x, tuple(output_shape))
     return x
 

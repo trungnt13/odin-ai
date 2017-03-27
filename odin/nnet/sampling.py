@@ -23,9 +23,6 @@ class Pool(NNOps):
         (pad_h, pad_w), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
         pad_w is the size of the left and right margins.
-    ignore_border : bool (default None, will print a warning and set to False)
-        When True, (5,5) input with pool_size=(2,2) will generate a (2,2) output.
-        (3,3) otherwise.
     mode : {'max', 'avg'}
         Operation executed on each window. `max` or `average`
     pool_func : 'auto' or callable
@@ -41,13 +38,11 @@ class Pool(NNOps):
     """
 
     def __init__(self, pool_size=2, strides=None, pad='valid',
-                 ignore_border=True, mode='max', pool_func='auto',
-                 transpose_mode='nn', **kwargs):
+                 mode='max', pool_func='auto', transpose_mode='nn', **kwargs):
         super(Pool, self).__init__(**kwargs)
         self.pool_size = pool_size
         self.strides = strides
         self.pad = pad
-        self.ignore_border = ignore_border
         self.mode = mode
         self.transpose_mode = transpose_mode
         self.pool_func = functionable(pool_func) if callable(pool_func) \
@@ -64,8 +59,7 @@ class Pool(NNOps):
         else: # user sepecifed pool_func
             pool_func = self.pool_func
         return pool_func(X, pool_size=self.pool_size, strides=self.strides,
-                         border_mode=self.pad, ignore_border=self.ignore_border,
-                         mode=self.mode)
+                         border_mode=self.pad, mode=self.mode)
 
     def _transpose(self):
         ops = Upsample(size=self.pool_size, axes='auto',
@@ -140,7 +134,7 @@ class Upsample(NNOps):
                                "axes=%s, the only support value is 'auto'."
                                % self.axes)
         ops = Pool(pool_size=self.size, strides=None, pad='valid',
-            ignore_border=True, mode=self.transpose_mode,
-            transpose_mode=self.mode, name=self.name + '_transpose')
+            mode=self.transpose_mode, transpose_mode=self.mode,
+            name=self.name + '_transpose')
         ops._transpose_ops = self
         return ops

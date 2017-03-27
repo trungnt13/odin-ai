@@ -1049,8 +1049,7 @@ def __validate_pool_stride_border(x, pool_size, strides, border_mode, mode, ndim
     return x, pool_size, strides, border_mode, mode
 
 
-def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
-           ignore_border=True, mode='max'):
+def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0), mode='max'):
     """
     Parameters
     ----------
@@ -1067,9 +1066,6 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
         (pad_h, pad_w), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
         pad_w is the size of the left and right margins.
-    ignore_border : bool (default None, will print a warning and set to False)
-        When True, (5,5) input with ws=(2,2) will generate a (2,2) output.
-        (3,3) otherwise.
     mode : {'max', 'avg'}
         Operation executed on each window. `max` or `average`
 
@@ -1084,20 +1080,18 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0),
         x, pool_size, strides, border_mode, mode, ndim=2)
     x = __img_theano_format(x)
     # ====== On GPU: use CuDNN ====== #
-    pool_out = pool.pool_2d(x, ws=pool_size, stride=strides,
-                            ignore_border=ignore_border,
+    pool_out = pool.pool_2d(x, ws=pool_size, stride=strides, ignore_border=True,
                             pad=(0, 0) if isinstance(border_mode, str) else border_mode,
                             mode=mode)
     # ====== Estimate output shape ====== #
     pool_out = __img_tensorflow_format(pool_out)
     output_shape = get_pool_output_shape(input_shape, pool_size,
-        ignore_border=ignore_border, strides=strides, pad=border_mode)
+        strides=strides, pad=border_mode)
     add_shape(pool_out, tuple(output_shape))
     return pool_out
 
 
-def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
-           ignore_border=True, mode='max'):
+def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0), mode='max'):
     """
     Parameters
     ----------
@@ -1110,9 +1104,6 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
         Stride size, which is the number of shifts over rows/cols to get the
         next pool region. If st is None, it is considered equal to ds
         (no overlap on pooling regions).
-    ignore_border : bool (default None, will print a warning and set to False)
-        When True, (5,5,5) input with ds=(2,2,2) will generate a (2,2,2) output.
-        (3,3,3) otherwise.
     padding : tuple of 3 ints
         (pad_h, pad_w, pad_l), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
@@ -1132,13 +1123,13 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0, 0),
     x = __img_theano_format(x)
     # ====== On GPU: use CuDNN ====== #
     pool_out = pool.pool_3d(x, ws=pool_size, stride=strides,
-                            ignore_border=ignore_border,
+                            ignore_border=True,
                             pad=(0, 0, 0) if isinstance(border_mode, str) else border_mode,
                             mode=mode)
     # ====== Estimate output shape ====== #
     pool_out = __img_tensorflow_format(pool_out)
     output_shape = get_pool_output_shape(input_shape, pool_size,
-        ignore_border=ignore_border, strides=strides, pad=border_mode)
+        strides=strides, pad=border_mode)
     add_shape(pool_out, tuple(output_shape))
     return pool_out
 

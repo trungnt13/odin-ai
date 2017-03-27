@@ -9,8 +9,7 @@ import numpy as np
 # Contain code from theano: theano/tensor/signal/pool.py
 # Copyright (c) 2008--2016, Theano Development Team
 # ===========================================================================
-def get_pool_output_shape(imgshape, ws, ignore_border=False,
-                          strides=None, pad=None):
+def get_pool_output_shape(imgshape, ws, strides=None, pad=None):
     """
     Parameters
     ----------
@@ -20,9 +19,6 @@ def get_pool_output_shape(imgshape, ws, ignore_border=False,
     ws : list or tuple of N ints
         Downsample factor over rows and column.
         ws indicates the pool region size.
-    ignore_border : bool
-        If ws doesn't divide imgshape, do we include an extra row/col/slice
-        of partial downsampling (False) or ignore it (True).
     strides : list or tuple of N ints or None
         Stride size, which is the number of shifts over rows/cols/slices to get the
         next pool region. If stride is None, it is considered equal to ws
@@ -47,17 +43,11 @@ def get_pool_output_shape(imgshape, ws, ignore_border=False,
             return (imgshape[0],) + imgshape[2:-ndim] + out_shape + (imgshape[1],)
 
     def compute_out(v, downsample, stride):
-        if ignore_border:
-            if downsample == stride:
-                return v // stride
-            else:
-                out = (v - downsample) // stride + 1
-                return np.maximum(out, 0)
+        if downsample == stride:
+            return v // stride
         else:
-            if stride >= downsample:
-                return (v - 1) // stride + 1
-            else:
-                return max(0, (v - 1 - downsample + stride) // stride) + 1
+            out = (v - downsample) // stride + 1
+            return np.maximum(out, 0)
     # ====== check input arguments ====== #
     if len(imgshape) < ndim:
         raise TypeError('imgshape must have at least {} dimensions'.format(ndim))
