@@ -331,7 +331,7 @@ def _serialize_function_sandbox(function, source):
         if sys_module.match(name) is not None:
             continue
         # primitive type
-        if any(isinstance(val, i) for i in _primitives):
+        if builtins.any(isinstance(val, i) for i in _primitives):
             # function might nested, so cannot find it in globals()
             if isinstance(val, types.FunctionType) and val == function:
                 seen_function = True
@@ -405,7 +405,7 @@ def _deserialize_function_sandbox(sandbox):
                 val = str_to_func(val[1], globals(), name=val[0])
                 if '_main' in typ: main_func = val
                 defined_function.append(name)
-        elif any(isinstance(typ, i) for i in _primitives):
+        elif builtins.any(isinstance(typ, i) for i in _primitives):
             pass
         else:
             raise ValueError('Unsupport deserializing type: {}, '

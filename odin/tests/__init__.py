@@ -8,6 +8,7 @@ def run(backend='tensorflow', device='gpu'):
         'utils_test',
         'fuel_test',
         'backend_test',
+        'save_test',
         'nnet_test',
         'rnn_test',
         # 'compare_test',

@@ -178,8 +178,8 @@ class Conv(NNOps):
                 conved += K.expand_dims(self.b, 0)
             else:
                 conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
+        K.add_shape(conved, output_shape)
         activated = self.activation(conved)
-        K.add_shape(activated, output_shape)
         # set shape for output
         return activated
 
