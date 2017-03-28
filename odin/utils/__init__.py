@@ -40,20 +40,18 @@ from . import shape_calculation
 # ===========================================================================
 # Basics
 # ===========================================================================
-def is_path(path):
-    if isinstance(path, str):
-        path = os.path.abspath(path)
-        if os.path.exists(path):
-            #the file is there
-            return True
-        elif os.access(os.path.dirname(path), os.W_OK):
-            #the file does not exists but write privileges are given
-            return True
-    return False
-
-
 def is_string(s):
     return isinstance(s, string_types)
+
+
+def is_path(path):
+    if is_string(path):
+        try:
+            os.path.exists(path)
+            return True
+        except Exception as e:
+            return False
+    return False
 
 
 def is_number(i):

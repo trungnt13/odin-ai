@@ -210,11 +210,10 @@ class BackendTest(unittest.TestCase):
 
         test_func(x, K.reverse, 0)
         test_func(x, K.reverse, -1)
-        test_func(x, K.tile, 2)
         test_func(x, K.repeat, 2, -1)
         test_func(x, K.dimshuffle, (2, 0, 1))
         test_func(x, K.expand_dims, 1)
-        test_func(x, K.pad, -1, 2)
+        test_func(x, K.pad, [[0, 0], [2, 1], [3, 0]], 'constant')
         test_func(x, K.reshape, (-1, 12))
 
         test_func(y, K.antirectify)

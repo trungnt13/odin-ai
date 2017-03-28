@@ -1,8 +1,9 @@
-# from __future__ import print_function, division, absolute_import
+from __future__ import print_function, division, absolute_import
 
 import os
 from six.moves import cPickle
 
+from odin.utils import is_string, is_path
 from odin.basic import (add_role, add_updates, add_auxiliary_variable,
                         add_shape, get_shape)
 
@@ -13,7 +14,7 @@ from . import init
 from . import optimizers
 
 
-def pickling_variable(v, target=None):
+def pickling_variable(v):
     """ This function only apply for trainable parameters
     Warning
     -------
@@ -21,14 +22,16 @@ def pickling_variable(v, target=None):
     tag of variables
     """
     # load variable
-    if isinstance(v, str):
+    if is_string(v):
+        # check if is a path
         try:
-            if os.path.exists(v):
+            if is_path(v) and os.path.exists(v):
                 v = open(v, 'r')
-        except:
-            pass
+        except Exception, e:
+            print('[Error]pickling_variable:', e)
+        # otherwise load directly
         name, value, dtype, roles = cPickle.loads(v)
-        v = variable(value, dtype=dtype, name=name, target=target)
+        v = variable(value, dtype=dtype, name=name)
         for i in roles:
             add_role(v, i)
         return v

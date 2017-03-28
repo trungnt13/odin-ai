@@ -5,6 +5,7 @@ import os
 import copy
 import math
 import numbers
+import inspect
 from six.moves import cPickle
 from collections import OrderedDict
 
@@ -14,7 +15,7 @@ import tensorflow as tf
 
 from odin.config import CONFIG, get_rng
 from odin.utils import (as_tuple, as_shape_tuple, dict_union, uuid, is_number,
-                        flatten_list)
+                        is_string, flatten_list)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
@@ -41,7 +42,12 @@ def eval(x, feed_dict=None):
     '''Evaluates the value of a tensor.
     Returns a Numpy array.
     '''
-    return x.eval(session=get_session(), feed_dict=feed_dict)
+    if hasattr(x, 'eval') and inspect.ismethod(x.eval):
+        if 'feed_dict' in inspect.getargspec(x.eval).args:
+            return x.eval(session=get_session(), feed_dict=feed_dict)
+        else:
+            return x.eval(session=get_session())
+    raise ValueError("Type %s don't have the eval function." % str(x))
 
 
 # ===========================================================================
@@ -527,6 +533,8 @@ def pad(x, paddings, mode='constant'):
     ...       [0, 1, 1, 1, 0],
     ...       [0, 0, 0, 0, 0]]
     """
+    if not is_string(mode):
+        raise ValueError("Only support string type for 'mode' argument.")
     mode = mode.upper()
     return tf.pad(x, paddings=paddings, mode=mode)
 
