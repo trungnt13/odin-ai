@@ -37,11 +37,11 @@ def _normalize_axis(axis, ndim):
     return axis % ndim
 
 
-def eval(x):
+def eval(x, feed_dict=None):
     '''Evaluates the value of a tensor.
     Returns a Numpy array.
     '''
-    return x.eval(session=get_session())
+    return x.eval(session=get_session(), feed_dict=feed_dict)
 
 
 # ===========================================================================
@@ -965,18 +965,17 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid', mode='max'):
     input_shape = get_shape(x)
     pool_size, strides, border_mode, mode = __validate_pool_stride_border(
         pool_size, strides, border_mode, mode, ndim=2)
-    ndim = len(input_shape) - 3
     # ====== pooling ====== #
+    pool_size = (1,) + pool_size + (1,)
+    strides = (1,) + strides + (1,)
     if mode == 'max':
-        x = tf.nn.max_pool(x, ksize=(1,) * ndim + pool_size + (1,),
-                           strides=(1,) * ndim + strides + (1,),
+        x = tf.nn.max_pool(x, ksize=pool_size, strides=strides,
                            padding=border_mode)
     elif mode == 'avg':
-        x = tf.nn.avg_pool(x, ksize=(1,) * ndim + pool_size + (1,),
-                           strides=(1,) * ndim + strides + (1,),
+        x = tf.nn.avg_pool(x, ksize=pool_size, strides=strides,
                            padding=border_mode)
-    output_shape = get_pool_output_shape(input_shape, pool_size,
-        strides=strides, pad=border_mode)
+    output_shape = get_pool_output_shape(input_shape, pool_size[1:-1],
+        strides=strides[1:-1], pad=border_mode)
     add_shape(x, tuple(output_shape))
     return x
 
@@ -1008,18 +1007,17 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0), mode='max'):
     input_shape = get_shape(x)
     pool_size, strides, border_mode, mode = __validate_pool_stride_border(
         pool_size, strides, border_mode, mode, ndim=3)
-    ndim = len(input_shape) - 4
     # ====== pooling ====== #
+    pool_size = (1,) + pool_size + (1,)
+    strides = (1,) + strides + (1,)
     if mode == 'max':
-        x = tf.nn.max_pool3d(x, ksize=(1,) * ndim + strides + (1,),
-                             strides=(1,) * ndim + pool_size + (1,),
-                             padding=border_mode)
+        x = tf.nn.max_pool3d(x, ksize=pool_size, strides=strides,
+            padding=border_mode)
     elif mode == 'avg':
-        x = tf.nn.avg_pool3d(x, ksize=(1,) * ndim + strides + (1,),
-                             strides=(1,) * ndim + pool_size + (1,),
-                             padding=border_mode)
-    output_shape = get_pool_output_shape(input_shape, pool_size,
-        strides=strides, pad=border_mode)
+        x = tf.nn.avg_pool3d(x, ksize=pool_size, strides=strides,
+            padding=border_mode)
+    output_shape = get_pool_output_shape(input_shape, pool_size[1:-1],
+        strides=strides[1:-1], pad=border_mode)
     add_shape(x, tuple(output_shape))
     return x
 

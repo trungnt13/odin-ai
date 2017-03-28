@@ -117,11 +117,11 @@ class Upsample(NNOps):
             if np.sum(paddings) > 0:
                 X = K.pad(X, paddings=paddings, mode='constant')
             # do slice if necessary
-            slices = [slice(K.cast(K.ceil((i - o) / 2), 'int32'),
-                            K.cast(- K.floor((i - o) / 2), 'int32'), None)
+            slices = [slice(K.cast(K.floor((i - o) / 2), 'int32'),
+                            K.cast(-K.ceil((i - o) / 2), 'int32'), None)
                       if i > o else slice(None)
                       for i, o in zip(K.get_shape(X), output_shape)]
-            if any(s != slice(None) for s in slices):
+            if any(s is not slice(None) for s in slices):
                 X = X[slices]
             # add shape
             K.add_shape(X, tuple([i if is_number(i) else None

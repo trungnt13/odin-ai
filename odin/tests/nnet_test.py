@@ -37,6 +37,40 @@ class NNetTest(unittest.TestCase):
         self.assertEquals(x.shape, (12, 10))
         self.assertEquals(K.get_shape(y), (None, 10))
 
+    def test_pool_depool(self):
+        X1 = K.placeholder(shape=(None, 12, 8, 25), name='X1')
+        X2 = K.placeholder(shape=(None, 12, 8, 25, 18), name='X2')
+        x1 = np.random.rand(13, 12, 8, 25)
+        x2 = np.random.rand(13, 12, 8, 25, 18)
+        prog = Progbar(target=2 * 2 * 2 * 3)
+
+        def check_shape(s1, s2):
+            self.assertEqual(s1, s2, msg="%s != %s" % (str(s1), str(s2)))
+        for pool_size in (2, 3):
+            for strides in (2, 3):
+                for pad in ('valid', 'same'):
+                    for transpose_mode in ('nn', 'pad_margin', 'repeat'):
+                        # ====== print prog ====== #
+                        prog.title = "Size:%d,Stride:%d,Pad:%s,T:%s" % \
+                            (pool_size, strides, pad, transpose_mode)
+                        prog.add(1)
+                        # ====== check ops 4D ====== #
+                        down = N.Pool(pool_size=pool_size, strides=strides,
+                                      pad=pad, mode='max', transpose_mode=transpose_mode)
+                        up = down.T
+                        y1 = down(X1)
+                        check_shape(K.eval(y1, {X1: x1}).shape[1:], K.get_shape(y1)[1:])
+                        y2 = up(y1)
+                        check_shape(K.eval(y2, {X1: x1}).shape, x1.shape)
+                        # ====== check ops 5D ====== #
+                        down = N.Pool(pool_size=pool_size, strides=strides,
+                                      pad=pad, mode='max', transpose_mode=transpose_mode)
+                        up = down.T
+                        y1 = down(X2)
+                        check_shape(K.eval(y1, {X2: x2}).shape[1:], K.get_shape(y1)[1:])
+                        y2 = up(y1)
+                        check_shape(K.eval(y2, {X2: x2}).shape, x2.shape)
+
     def test_conv2D(self):
         x = K.placeholder((None, 28, 28, 3))
         f1 = N.Conv(16, (3, 3), strides=(2, 2), pad='same')

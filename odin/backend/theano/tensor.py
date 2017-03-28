@@ -85,8 +85,9 @@ def switch(condition, then_expression, else_expression):
 # ===========================================================================
 # INTERNAL UTILS
 # ===========================================================================
-def eval(x):
+def eval(x, feed_dict=None):
     """ Run a graph. """
+    # TODO: update feed_dict
     return x.eval()
 
 
