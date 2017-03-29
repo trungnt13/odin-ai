@@ -1182,6 +1182,25 @@ def get_all_files(path, filter_func=None):
     return file_list
 
 
+def get_all_ext(path):
+    ''' Recurrsively get all extension of files in the given path '''
+    file_list = []
+    if os.access(path, os.R_OK):
+        for p in os.listdir(path):
+            p = os.path.join(path, p)
+            if os.path.isdir(p):
+                file_list += get_all_ext(p)
+            else:
+                # remove dump files of Mac
+                if '.DS_Store' in p or '.DS_STORE' in p or \
+                    '._' == os.path.basename(p)[:2]:
+                    continue
+                ext = p.split('.')
+                if len(ext) > 1:
+                    file_list.append(ext[-1])
+    return list(set(file_list))
+
+
 def package_installed(name, version=None):
     import pip
     for i in pip.get_installed_distributions():
@@ -1398,7 +1417,7 @@ def get_logpath(name=None, override=False, root='~'):
 # ===========================================================================
 # Misc
 # ===========================================================================
-def exec_commands(cmds):
+def exec_commands(cmds, print_progress=True):
     ''' Execute a command or list of commands in parallel with multiple process
     (as much as we have CPU)
 
@@ -1415,6 +1434,8 @@ def exec_commands(cmds):
     if not cmds: return [] # empty list
     if not isinstance(cmds, (list, tuple)):
         cmds = [cmds]
+    else:
+        cmds = list(cmds)
 
     def done(p):
         return p.poll() is not None
@@ -1426,12 +1447,17 @@ def exec_commands(cmds):
     processes = []
     processes_map = {}
     failed = []
+    if print_progress:
+        prog = Progbar(target=len(cmds), title="Execute command:")
     while True:
         while cmds and len(processes) < max_task:
             task = cmds.pop()
             p = subprocess.Popen(task, shell=True)
             processes.append(p)
             processes_map[p] = task
+            # print process
+            if print_progress:
+                prog.add(1)
 
         for p in processes:
             if done(p):

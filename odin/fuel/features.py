@@ -28,7 +28,8 @@ from .recipes import FeederRecipe
 from .utils import MmapDict
 
 __all__ = [
-    'SpeechProcessor'
+    'WaveProcesor',
+    'SpeechProcessor',
 ]
 
 
@@ -99,7 +100,7 @@ class FeatureProcessor(object):
     @abstractproperty
     def features_properties(self):
         """ Return list of features' properties
-        (name, dtype, statistic-able)
+        [(name, dtype, statistic-able), ...]
         """
         pass
 
@@ -248,6 +249,120 @@ class FeatureProcessor(object):
 # ===========================================================================
 # Speech features
 # ===========================================================================
+def _segments_preprocessing(segments, audio_ext):
+    """ Filter segments into map of jobs
+    Return
+    ------
+    jobs: dict
+        file_name -> [segments, ...]
+    nb_jobs: int
+        total number of segment found
+    """
+
+    audio_ext = as_tuple('' if audio_ext is None else audio_ext,
+                         t=string_types)
+    # ====== load jobs ====== #
+    # NOT loaded segments
+    if isinstance(segments, str):
+        if not os.path.exists(segments):
+            raise ValueError('Path to segments must exists, however, '
+                             'exist(segments)={}'.format(os.path.exists(segments)))
+        # given a directory
+        if os.path.isdir(segments):
+            file_list = get_all_files(segments)
+            file_list = [(os.path.basename(i), i, 0.0, -1.0)
+                         for i in file_list] # segment, path, start, end
+        # given csv file
+        else:
+            file_list = np.genfromtxt(segments, dtype=str, delimiter=' ')
+    # LOADED segments
+    elif isinstance(segments, (tuple, list, np.ndarray)):
+        # just a list of path to file
+        if isinstance(segments[0], str):
+            file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
+                         for i in segments]
+        # list of all information
+        elif isinstance(segments[0], (tuple, list)):
+            if len(segments[0]) != 4 and len(segments[0]) != 5:
+                raise Exception('segments must contain information in following for:'
+                                '[name] [path] [start] [end]')
+            file_list = segments
+    # WAVE dataset
+    elif isinstance(segments, Dataset):
+        pass
+    # filter using support audio extension
+    file_list = [f for f in file_list if any(ext in f[1][-len(ext):] for ext in audio_ext)]
+    # if no channel is provided, append the channel
+    file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
+    nb_jobs = len(file_list)
+    # convert into: audio_path -> segment(name, start, end, channel)
+    jobs = defaultdict(list)
+    for segment, file, start, end, channel in file_list:
+        jobs[file].append((segment, float(start), float(end), int(channel)))
+    jobs = sorted(jobs.items(), key=lambda x: x[0])
+    # check empty jobs
+    if len(jobs) == 0:
+        raise Exception('NO jobs found for processing.')
+    return jobs, nb_jobs
+
+
+class WaveProcesor(FeatureProcessor):
+    """ Concatenate all Waveform data into single memmap (or HDF5) file
+    with its meta-data information included in the indices
+    """
+
+    def __init__(self, segments, output_path, sr=None, sr_new=None,
+                audio_ext=None, dtype='float16',
+                datatype='memmap', ncache=0.12, ncpu=1):
+        super(WaveProcesor, self).__init__(output_path=output_path,
+            datatype=datatype, pca=False, pca_whiten=False,
+            save_stats=False, substitute_nan=False,
+            ncache=ncache, ncpu=ncpu)
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
+        self.sr = sr
+        self.sr_new = sr_new
+        self.dtype = dtype
+        self.primary_indices = ['raw']
+
+    @property
+    def features_properties(self):
+        """ Return list of features' properties
+        (name, dtype, statistic-able)
+        """
+        return [('raw', self.dtype, False)]
+
+    def map(self, job):
+        audio_path, segments = job[0] if len(job) == 1 else job
+        try:
+            # load audio data
+            s, sr_orig = speech.read(audio_path)
+            if sr_orig is not None and self.sr is not None and \
+            sr_orig != self.sr:
+                raise Exception('Given sample rate (%d Hz) is different from '
+                                'audio file sample rate (%d Hz).' %
+                                (self.sr, sr_orig))
+            if sr_orig is None:
+                sr_orig = self.sr
+            # downsampling
+            if self.sr_new is not None:
+                s = speech.resample(s, sr_orig, self.sr_new, best_algorithm=True)
+                sr_orig = self.sr_new
+            N = len(s)
+            # processing all segments
+            ret = []
+            for name, start, end, channel in segments:
+                start = int(float(start) * sr_orig)
+                end = int(N if end <= 0 else float(end) * sr_orig)
+                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+                ret.append((name, data))
+            # return result
+            return (i for i in ret)
+        except Exception as e:
+            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
+            import traceback; traceback.print_exc()
+            raise e
+
+
 class SpeechProcessor(FeatureProcessor):
 
     ''' Extract speech features from all audio files in given directory or
@@ -372,47 +487,7 @@ class SpeechProcessor(FeatureProcessor):
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
             save_stats=save_stats, substitute_nan=substitute_nan,
             ncache=ncache, ncpu=ncpu)
-        audio_ext = as_tuple('' if audio_ext is None else audio_ext,
-                             t=string_types)
-        # ====== load jobs ====== #
-        # NOT loaded segments
-        if isinstance(segments, str):
-            if not os.path.exists(segments):
-                raise ValueError('Path to segments must exists, however, '
-                                 'exist(segments)={}'.format(os.path.exists(segments)))
-            # given a directory
-            if os.path.isdir(segments):
-                file_list = get_all_files(segments)
-                file_list = [(os.path.basename(i), i, 0.0, -1.0)
-                             for i in file_list] # segment, path, start, end
-            # given csv file
-            else:
-                file_list = np.genfromtxt(segments, dtype=str, delimiter=' ')
-        # LOADED segments
-        elif isinstance(segments, (tuple, list)):
-            # just a list of path to file
-            if isinstance(segments[0], str):
-                file_list = [(os.path.basename(i), os.path.abspath(i), 0.0, -1.0)
-                             for i in segments]
-            # list of all information
-            elif isinstance(segments[0], (tuple, list)):
-                if len(segments[0]) != 4 and len(segments[0]) != 5:
-                    raise Exception('segments must contain information in following for:'
-                                    '[name] [path] [start] [end]')
-                file_list = segments
-        # filter using support audio extension
-        file_list = [f for f in file_list if any(ext in f[1][-len(ext):] for ext in audio_ext)]
-        # if no channel is provided, append the channel
-        file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
-        self.njobs = len(file_list)
-        # convert into: audio_path -> segment(name, start, end, channel)
-        self.jobs = defaultdict(list)
-        for segment, file, start, end, channel in file_list:
-            self.jobs[file].append((segment, float(start), float(end), int(channel)))
-        self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
-        # check empty jobs
-        if len(self.jobs) == 0:
-            raise Exception('NO jobs found for processing.')
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         # ====== which features to get ====== #
         if not get_spec and not get_mspec and not get_mfcc \
         and not get_pitch and not get_energy and not get_vad:
