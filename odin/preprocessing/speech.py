@@ -866,10 +866,14 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     }
     (txd): time x features
     """
+    from odin.fuel import Data
+    if isinstance(s, Data):
+        s = s[:]
     if np.prod(s.shape) == np.max(s.shape):
         s = s.ravel()
     elif s.ndim >= 2:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
+    s = s.astype('float32')
     import librosa
     from librosa.core import constantq
     # ====== resample if necessary ====== #

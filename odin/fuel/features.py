@@ -20,7 +20,7 @@ import numpy as np
 
 from odin.preprocessing import speech, video, image
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
-                        get_all_files, get_tempdir)
+                        get_all_files, get_tempdir, is_string)
 from odin.utils.decorators import autoinit
 from odin.utils.mpi import MPI
 from .dataset import Dataset
@@ -80,7 +80,7 @@ class FeatureProcessor(object):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
         if os.path.exists(output_path):
-            warnings.warn('Remove exist dataset at path: "%s"' % output_path)
+            print('[WARNING] Remove exist dataset at path:', output_path)
             shutil.rmtree(output_path)
         self.dataset = Dataset(output_path)
         # PCA
@@ -262,8 +262,19 @@ def _segments_preprocessing(segments, audio_ext):
     audio_ext = as_tuple('' if audio_ext is None else audio_ext,
                          t=string_types)
     # ====== load jobs ====== #
+    # WAVE dataset
+    if isinstance(segments, Dataset):
+        if ('indices' not in segments or
+            'raw' not in segments or
+                'sr' not in segments):
+            raise RuntimeError("The given Dataset must contains 'indices', 'raw' "
+                               "and 'sr' Data.")
+        jobs = [(segments, ((name, start, end, 0),))
+                for name, (start, end) in segments['indices'].iteritems()]
+        nb_jobs = len(jobs)
+        return jobs, nb_jobs
     # NOT loaded segments
-    if isinstance(segments, str):
+    elif isinstance(segments, str):
         if not os.path.exists(segments):
             raise ValueError('Path to segments must exists, however, '
                              'exist(segments)={}'.format(os.path.exists(segments)))
@@ -287,11 +298,9 @@ def _segments_preprocessing(segments, audio_ext):
                 raise Exception('segments must contain information in following for:'
                                 '[name] [path] [start] [end]')
             file_list = segments
-    # WAVE dataset
-    elif isinstance(segments, Dataset):
-        pass
     # filter using support audio extension
-    file_list = [f for f in file_list if any(ext in f[1][-len(ext):] for ext in audio_ext)]
+    file_list = [f for f in file_list if any(ext in f[1][-len(ext):]
+                 for ext in audio_ext)]
     # if no channel is provided, append the channel
     file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
     nb_jobs = len(file_list)
@@ -309,6 +318,11 @@ def _segments_preprocessing(segments, audio_ext):
 class WaveProcesor(FeatureProcessor):
     """ Concatenate all Waveform data into single memmap (or HDF5) file
     with its meta-data information included in the indices
+
+    The saved Dataset contains 3 Data:
+     * "indices": MmapDict contain the mapping from file name to (start, end).
+     * "raw": the big memmap contains all concatenated raw waveform.
+     * "sr": MmapDict contains the mapping from file name to its sample rate.
     """
 
     def __init__(self, segments, output_path, sr=None, sr_new=None,
@@ -318,6 +332,8 @@ class WaveProcesor(FeatureProcessor):
             datatype=datatype, pca=False, pca_whiten=False,
             save_stats=False, substitute_nan=False,
             ncache=ncache, ncpu=ncpu)
+        if isinstance(segments, Dataset):
+            raise ValueError("WaveProcesor does not support segments as a Dataset.")
         self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         self.sr = sr
         self.sr_new = sr_new
@@ -329,13 +345,14 @@ class WaveProcesor(FeatureProcessor):
         """ Return list of features' properties
         (name, dtype, statistic-able)
         """
-        return [('raw', self.dtype, False)]
+        return [('raw', self.dtype, False), ('sr', 'dict', False)]
 
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
             # load audio data
             s, sr_orig = speech.read(audio_path)
+            # check original sample rate
             if sr_orig is not None and self.sr is not None and \
             sr_orig != self.sr:
                 raise Exception('Given sample rate (%d Hz) is different from '
@@ -343,6 +360,10 @@ class WaveProcesor(FeatureProcessor):
                                 (self.sr, sr_orig))
             if sr_orig is None:
                 sr_orig = self.sr
+            if sr_orig is None:
+                raise RuntimeError("Cannot acquire original sample rate from "
+                                   "loaded utterance, or from given arguments "
+                                   "of this Processor.")
             # downsampling
             if self.sr_new is not None:
                 s = speech.resample(s, sr_orig, self.sr_new, best_algorithm=True)
@@ -354,7 +375,7 @@ class WaveProcesor(FeatureProcessor):
                 start = int(float(start) * sr_orig)
                 end = int(N if end <= 0 else float(end) * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                ret.append((name, data))
+                ret.append((name, [data, int(sr_orig)]))
             # return result
             return (i for i in ret)
         except Exception as e:
@@ -544,6 +565,34 @@ class SpeechProcessor(FeatureProcessor):
         """ Returnn all name of given features"""
         return self.__features_properties
 
+    def _load_audio(self, audio_path, segments):
+        """ Return iterator of (name, data, sr) """
+        # iterate over a Dataset
+        if isinstance(audio_path, Dataset):
+            for name, start, end, channel in segments:
+                yield (name, audio_path['raw'][start: end][:], audio_path['sr'][name])
+        # iterate over file path
+        else:
+            s, sr_orig = speech.read(audio_path)
+            # check original sample rate
+            if sr_orig is not None and self.sr is not None and \
+            sr_orig != self.sr:
+                raise Exception('Given sample rate (%d Hz) is different from '
+                                'audio file sample rate (%d Hz).' %
+                                (self.sr, sr_orig))
+            if sr_orig is None:
+                sr_orig = self.sr
+            if sr_orig is None:
+                raise RuntimeError("Cannot acquire original sample rate from "
+                                   "loaded utterance, or from given arguments "
+                                   "of this Processor.")
+            N = len(s)
+            for name, start, end, channel in segments:
+                start = int(float(start) * sr_orig)
+                end = int(N if end <= 0 else float(end) * sr_orig)
+                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+                yield (name, data, sr_orig)
+
     def map(self, job):
         '''
         Return
@@ -552,22 +601,8 @@ class SpeechProcessor(FeatureProcessor):
         '''
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
-            # load audio data
-            s, sr_orig = speech.read(audio_path)
-            if sr_orig is not None and self.sr is not None and \
-            sr_orig != self.sr:
-                raise Exception('Given sample rate (%d Hz) is different from '
-                                'audio file sample rate (%d Hz).' %
-                                (self.sr, sr_orig))
-            if sr_orig is None:
-                sr_orig = self.sr
-            N = len(s)
-            # processing all segments
             ret = []
-            for name, start, end, channel in segments:
-                start = int(float(start) * sr_orig)
-                end = int(N if end <= 0 else float(end) * sr_orig)
-                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+            for name, data, sr_orig in self._load_audio(audio_path, segments):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
