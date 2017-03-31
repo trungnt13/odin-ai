@@ -2,11 +2,12 @@
 from __future__ import print_function, division, absolute_import
 
 from numbers import Number
+from itertools import chain
 from collections import defaultdict, Iterator, OrderedDict
 
 import numpy as np
 
-from odin.utils import as_tuple
+from odin.utils import as_tuple, flatten_list
 from odin.config import get_rng
 
 
@@ -14,23 +15,86 @@ def stratified_sampling(x):
     pass
 
 
-def train_valid_test_split(x, train=0.6, seed=None):
+def classification_report(y_pred, y_true, labels):
+    """
+    Parameters
+    ----------
+    pass
+
+    Return
+    ------
+    Classification report in form of string
+    """
+    from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+    # ====== validate labels ====== #
+    labels = as_tuple(labels)
+    target_names = [str(i) for i in labels]
+    labels = list(range(0, len(labels)))
+    # ====== create report ====== #
+    s = ""
+    s += "Accuracy: %f\n" % accuracy_score(y_true, y_pred, normalize=True)
+    s += "Confusion matrix:\n"
+    s += str(confusion_matrix(y_true, y_pred, labels=labels)) + '\n'
+    s += "Report:\n"
+    s += str(classification_report(y_true, y_pred, labels=labels, digits=3,
+                                   target_names=target_names))
+    return s
+
+
+def train_valid_test_split(x, train=0.6, idfunc=None, inc_test=True, seed=None):
+    """ Split given list into 3 dataset: for training, validating,
+    and testing.
+
+    Parameters
+    ----------
+    x: list, tuple, numpy.ndarray
+        the dataset.
+    train: float (0.0 - 1.0)
+        proportion used for training, validating and testing will be
+        half of the remain.
+    idfunc: None or callable
+        a function transform the task list into unique identity for splitting,
+        `idfunc` has to return comparable keys.
+    inc_test: bool
+        if split a proportion of data for testing also.
+    seed: int
+        random seed to produce a re-producible results.
+
+    """
     # ====== check input ====== #
     if isinstance(x, dict):
         x = x.items()
+    elif isinstance(x, np.ndarray):
+        x = x.tolist()
+    # ====== check idfunc ====== #
+    if idfunc is None:
+        idfunc = lambda x: x
+    if not callable(idfunc):
+        raise ValueError("'idfunc' must be callable or None.")
     # ====== shuffle input ====== #
+    x_id = defaultdict(list)
+    for i in x:
+        x_id[idfunc(i)].append(i)
+    id_list = x_id.keys()
     if seed is not None:
         np.random.seed(seed)
-        np.random.shuffle(x)
+        np.random.shuffle(id_list)
     else:
-        get_rng().shuffle(x)
+        get_rng().shuffle(id_list)
     # ====== split ====== #
-    N = len(x)
-    train = int(float(train) * N)
+    N = len(id_list)
+    train = int(np.ceil(float(train) * N))
     if train >= N:
         raise ValueError("train proportion must larger than 0 and smaller than 1.")
-    valid = (N - train) // 2
-    return x[:train], x[train:train + valid], x[train + valid:]
+    valid = (N - train) // (2 if inc_test else 1)
+    # ====== return splitted ====== #
+    rets = (flatten_list(x_id[i] for i in id_list[:train]),
+            flatten_list(x_id[i] for i in id_list[train: train + valid]))
+    if inc_test:
+        rets += (flatten_list(x_id[i] for i in id_list[train + valid:]),)
+    assert sum(len(r) for r in rets) == len(x), \
+        "Number of returned data inconsitent from original data, %d != %d" % (sum(len(r) for r in rets), len(x))
+    return rets
 
 
 def freqcount(x, key=None, count=1, normalize=False, sort=False):

@@ -700,8 +700,10 @@ def confusion_matrix(y_pred, y_true, labels=None):
     elif y_pred.get_shape().ndims != 1:
         raise ValueError('pred must be 1-d or 2-d tensor variable')
 
-    return confusion_matrix(y_pred, y_true,
-                            num_classes=None if labels is None else len(labels))
+    if hasattr(labels, '__len__'):
+        labels = len(labels)
+    # transpose to match the format of sklearn
+    return tf.transpose(confusion_matrix(y_pred, y_true, num_classes=labels))
 
 
 def one_hot_max(x, axis=-1):

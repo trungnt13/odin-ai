@@ -80,7 +80,7 @@ class FeatureProcessor(object):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
         if os.path.exists(output_path):
-            print('[WARNING] Remove exist dataset at path:', output_path)
+            print('[WARNING] Remove existed dataset at path:', output_path)
             shutil.rmtree(output_path)
         self.dataset = Dataset(output_path)
         # PCA

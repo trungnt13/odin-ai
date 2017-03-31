@@ -798,7 +798,7 @@ def flatten_list(x, level=1):
     ----------
     level: int, or None
         how deep the function go into element of x to search for list and
-        flatten it.
+        flatten it. If None is given, flatten all list found.
 
     Example
     -------
@@ -810,6 +810,8 @@ def flatten_list(x, level=1):
     >>> print(flatten_list(l, level=None))
     >>> # [1, 2, 3, 4, 5, 6, 7, 8, 9]
     """
+    if isinstance(x, Iterator):
+        x = list(x)
     if level is None:
         level = 10e8
     if not isinstance(x, (tuple, list)):
