@@ -12,20 +12,33 @@ from odin import backend as K
 from odin.config import get_floatX
 from odin.utils import (is_lambda, is_number, get_module_from_path, is_string,
                         as_tuple)
+from odin.utils.decorators import functionable
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
 def _check_shape(s):
+    if callable(s): return functionable(s)
     if is_number(s) or s is None:
         s = (s,)
-    if isinstance(s, np.ndarray):
+    elif isinstance(s, np.ndarray):
         s = s.tolist()
-    if isinstance(s, (tuple, list)):
-        if all(is_number(i) or i is None for i in s):
-            return True
-    return False
+    return tuple([int(i) if is_number(i) else None for i in s])
+
+
+def _check_dtype(dtype):
+    if callable(dtype): return functionable(dtype)
+    # ====== check dtype ====== #
+    if dtype is None:
+        dtype = get_floatX()
+    elif isinstance(dtype, np.dtype) or is_string(dtype):
+        dtype = str(dtype)
+    elif isinstance(dtype, InputDescriptor):
+        dtype = lambda: dtype.dtype
+    else:
+        dtype = K.get_dtype(dtype, string=True)
+    return dtype
 
 
 def _shape_compare(shape1, shape2):
@@ -41,19 +54,20 @@ def _shape_compare(shape1, shape2):
 # ===========================================================================
 # Input descriptor
 # ===========================================================================
-class InputDescriptor(object):
-    """ InputDescriptor
+class VariableDescriptor(object):
+    """ VariableDescriptor
     Store all the necessary information to create placeholder as input
     to any ComputationalGraph.
 
     Parameters
     ----------
-    shape: tuple, list, TensorVariable
+    shape: tuple, list, TensorVariable, callable
         if TensorVariable is given, shape and dtype will be taken from
-        given variable
-    dtype: dtype
+        given variable. if a callable object is given, the object must
+        return shape information when called without any argument.
+    dtype: str, numpy.dtype, callable, InputDescriptor
         dtype of input variable
-    name: str, None
+    name: str, None, callable, InputDescriptor
         specific name for the variable
 
     Note
@@ -62,41 +76,40 @@ class InputDescriptor(object):
     """
 
     def __init__(self, shape, dtype=None, name=None):
-        super(InputDescriptor, self).__init__()
-        if K.is_variable(shape):
-            if dtype is None: dtype = K.get_dtype(shape, string=True)
-            shape = K.get_shape(shape)
-        # input the InputDescriptor directly
-        elif isinstance(shape, InputDescriptor):
-            dtype = shape.dtype if dtype is None else dtype
-            name = shape.name if name is None else name
-            shape = shape.shape
-        # ====== check shape ====== #
-        _check_shape(shape)
-        if isinstance(shape, np.ndarray):
-            shape = shape.tolist()
-        self._shape = tuple(shape)
-        # ====== check dtype ====== #
-        if dtype is None:
-            dtype = get_floatX()
-        if isinstance(dtype, np.dtype):
-            dtype = str(dtype)
-        elif is_string(dtype):
-            pass
-        else:
-            dtype = K.get_dtype(dtype, string=True)
-        self._dtype = str(dtype)
-        # ====== check name ====== #
-        self._name = name if name is None else str(name)
+        super(VariableDescriptor, self).__init__()
         # ====== placeholder ====== #
         self.__placeholder = None
+        self._name = name if name is None else str(name)
+        # Given a TensorVariabe, we don't want to pickle TensorVariable,
+        # so copy all necessary information
+        if K.is_variable(shape):
+            if dtype is None:
+                self._dtype = K.get_dtype(shape, string=True)
+            self._shape = K.get_shape(shape)
+        # input the InputDescriptor directly
+        elif isinstance(shape, VariableDescriptor):
+            self._shape = functionable(lambda x=shape: x.shape)
+            self._dtype = functionable(lambda x=shape: x.dtype) \
+                if dtype is None else _check_dtype(dtype)
+        # input regular information flow
+        else:
+            self._shape = _check_shape(shape)
+            self._dtype = _check_dtype(dtype)
+        # ====== create reference ====== #
+        # trick to store self in x, hence, no closure
+        self._shape_ref = functionable(lambda x=self: x.shape) \
+            if not callable(self._shape) else self._shape
+        self._dtype_ref = functionable(lambda x=self: x.dtype) \
+            if not callable(self._dtype) else self._dtype
 
     # ==================== pickle ==================== #
     def __getstate__(self):
-        return [self._shape, self._dtype, self._name]
+        return (self._shape, self._shape_ref,
+                self._dtype, self._dtype_ref, self._name)
 
     def __setstate__(self, states):
-        self._shape, self._dtype, self._name = states
+        (self._shape, self._shape_ref,
+         self._dtype, self._dtype_ref, self._name) = states
         self.__placeholder = None
 
     # ==================== properties ==================== #
@@ -104,7 +117,7 @@ class InputDescriptor(object):
     def placeholder(self):
         if self.__placeholder is None:
             self.__placeholder = K.placeholder(
-                shape=self._shape, dtype=self._dtype, name=self._name)
+                shape=self.shape, dtype=self.dtype, name=self.name)
         return self.__placeholder
 
     @property
@@ -113,16 +126,30 @@ class InputDescriptor(object):
 
     @property
     def shape(self):
-        return self._shape
+        return self._shape() if callable(self._shape) else self._shape
+
+    @property
+    def shape_ref(self):
+        """ ref is callable reference to the shape information of
+        this descriptor, it will return the actual shape if you
+        call it. """
+        return self._shape_ref
 
     @property
     def dtype(self):
-        return self._dtype
+        return self._dtype() if callable(self._dtype) else self._dtype
+
+    @property
+    def dtype_ref(self):
+        """ ref is callable reference to the dtype information of
+        this descriptor, it will return the actual dtype if you
+        call it. """
+        return self._dtype_ref
 
     # ==================== override ==================== #
     def __str__(self):
-        return "<InputDescriptor - name:%s shape:%s dtype:%s init:%s>" % \
-        (str(self._name), str(self._shape), str(self._dtype),
+        return "<VarDesc - name:%s shape:%s dtype:%s init:%s>" % \
+        (str(self.name), str(self.shape), str(self.dtype),
          False if self.__placeholder is None else True)
 
     def __repr__(self):
@@ -131,16 +158,121 @@ class InputDescriptor(object):
     def __cmp__(self, other):
         # ====== compare to a TensorVariable ====== #
         if K.is_variable(other):
-            other = InputDescriptor(
+            other = VariableDescriptor(
                 shape=K.get_shape(other), dtype=K.get_dtype(other, string=True))
-        # ====== compare to a InputDesriptor ====== #
-        if isinstance(other, InputDescriptor):
-            if _shape_compare(self._shape, other._shape) \
-            and self._dtype == other._dtype:
+        # ====== compare to a InputDescriptor ====== #
+        if isinstance(other, VariableDescriptor):
+            if _shape_compare(self.shape, other.shape) \
+            and self.dtype == other.dtype:
                 return 0
         # ====== compare to a shape tuple (ignore the dtype) ====== #
         elif isinstance(other, (tuple, list)):
             return 0 if _shape_compare(self.shape, other) else 1
+        return 1
+
+
+class InputDescriptor(object):
+
+    def __init__(self, desc=None):
+        super(InputDescriptor, self).__init__()
+        self._desc = []
+        self.set_variables(desc)
+        # ====== create reference ====== #
+        # trick to store self in x, hence, no closure
+        self._shape_ref = functionable(lambda x=self: x.shape)
+        self._dtype_ref = functionable(lambda x=self: x.dtype)
+
+    def _create_var_desc(self, info):
+        if isinstance(info, VariableDescriptor):
+            return info
+        if isinstance(info, dict):
+            return VariableDescriptor(**info)
+        info = as_tuple(info)
+        # shape tuple is given
+        if any(is_number(i) or i is None for i in info):
+            return VariableDescriptor(info)
+        return VariableDescriptor(*info)
+
+    def set_variables(self, desc):
+        if isinstance(desc, InputDescriptor):
+            self._desc = desc._desc
+        elif desc is not None:
+            # convert shape tuple to list of shape tuple
+            if any(is_number(i) or i is None for i in desc):
+                desc = (desc,)
+            self._desc = [self._create_var_desc(d) for d in as_tuple(desc)]
+        return self
+
+    def add_variables(self, desc):
+        if desc is not None:
+            # convert shape tuple to list of shape tuple
+            if any(is_number(i) or i is None for i in desc):
+                desc = (desc,)
+            self._desc += [self._create_var_desc(d) for d in as_tuple(desc)]
+        return self
+
+    # ==================== properties ==================== #
+    @property
+    def placeholder(self):
+        plh = [i.placeholder for i in self._desc]
+        return plh[0] if len(plh) == 1 else plh
+
+    @property
+    def name(self):
+        return ','.join([i.name for i in self._desc])
+
+    @property
+    def shape(self):
+        s = [i.shape for i in self._desc]
+        return s[0] if len(s) == 1 else s
+
+    @property
+    def shape_ref(self):
+        """ ref is callable reference to the shape information of
+        this descriptor, it will return the actual shape if you
+        call it. """
+        return self._shape_ref
+
+    @property
+    def dtype(self):
+        d = [i.dtype for i in self._desc]
+        return d[0] if len(d) == 1 else d
+
+    @property
+    def dtype_ref(self):
+        """ ref is callable reference to the dtype information of
+        this descriptor, it will return the actual dtype if you
+        call it. """
+        return self._dtype_ref
+
+    # ==================== override ==================== #
+    def __len__(self):
+        return len(self._desc)
+
+    def __getitem__(self, key):
+        return self._desc.__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, VariableDescriptor):
+            raise ValueError("InputDescriptor setitem only accept VariableDescriptor.")
+        return self._desc.__setitem__(key, value)
+
+    def __str__(self):
+        return "<InputDescriptor: %s" % '; '.join([str(i) for i in self._desc])
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __cmp__(self, other):
+        if not isinstance(other, InputDescriptor):
+            raise ValueError("Can only compare a InputDescriptor to another "
+                             "InputDescriptor.")
+        n = 0
+        for d1 in self._desc:
+            for d2 in other._desc:
+                if d1 == d2: n += 1
+        if n == len(self._desc):
+            return 0
         return 1
 
 
@@ -175,8 +307,8 @@ class ModelDescriptor(object):
     ...     return f(X), f
     >>> # First time initialize the input description
     >>> K.set_training(True)
-    >>> y_train = feedforward_vae([N.InputDescriptor(shape=(8, 8)),
-    ...                            N.InputDescriptor(shape=(12, 12))])
+    >>> y_train = feedforward_vae([N.VariableDescriptor(shape=(8, 8)),
+    ...                            N.VariableDescriptor(shape=(12, 12))])
     >>> K.set_training(False); y_score = feedforward_vae()
     >>> # Overide default Placeholder
     >>> X = K.placeholder(shape=(12, 12), name='X')
@@ -191,7 +323,7 @@ class ModelDescriptor(object):
             raise ValueError("This decorator can be only used with function, not "
                              "method or lambda function.")
         self._func = func
-        self.input_desc = None
+        self.input_desc = InputDescriptor()
         self._save_states = None
         self._save_kwargs = {}
         # ====== cached tensor variables ====== #
@@ -214,7 +346,7 @@ class ModelDescriptor(object):
         self._f_pred = None
 
     def _check_init_shape(self):
-        if self.input_desc is None:
+        if len(self.input_desc) == 0:
             raise ValueError("You must set 'inputs' when calling the ModelDescriptor "
                              ", the inputs can be TensorVariables, shape tuple, "
                              "or InputDescriptor.")
@@ -298,8 +430,7 @@ class ModelDescriptor(object):
     @property
     def placeholder(self):
         self._check_init_shape()
-        X = [i.placeholder for i in self.input_desc]
-        return X[0] if len(X) == 1 else X
+        return self.input_desc.placeholder
 
     @property
     def y_train(self):
@@ -359,38 +490,36 @@ class ModelDescriptor(object):
                 if K.is_variable(i): # TensorVariable
                     shape = K.get_shape(i)
                     input_desc.append(
-                        InputDescriptor(shape=shape, dtype=i.dtype, name=i.name))
+                        VariableDescriptor(shape=shape, dtype=i.dtype, name=i.name))
                 elif isinstance(i, (tuple, list)): # Shape tuple
                     shape = tuple(i)
                     input_desc.append(
-                        InputDescriptor(shape=shape, dtype='float32', name=None))
-                elif isinstance(i, InputDescriptor): # Input Descriptor
+                        VariableDescriptor(shape=shape, dtype='float32', name=None))
+                elif isinstance(i, VariableDescriptor): # VariableDescriptor
                     input_desc.append(i)
                 elif i is None: # just a empty place
                     input_desc.append(None)
                 else:
                     raise ValueError("input can be TensorVariable, shape tuple, or "
-                                     "odin.nnet.InputDescriptor, but the given "
+                                     "odin.nnet.VariableDescriptor, but the given "
                                      "argument has type: " + str(type(i)))
             # check if match previous inputs
-            if self.input_desc is not None:
-                for desc1, desc2 in zip(input_desc, self.input_desc):
-                    if desc1 is None: continue
-                    if desc1 != desc2:
-                        raise ValueError('This ModelDescriptor requires input: %s '
-                                         ', but the given description is: %s' %
-                                         (desc2, desc1))
+            if len(self.input_desc) > 0:
+                other = InputDescriptor(input_desc)
+                if self.input_desc != other:
+                    raise ValueError('This ModelDescriptor requires input: %s '
+                                     ', but the given description is: %s' %
+                                     (str(self.input_desc), str(other)))
             # First time specify the input description, None is not eaccepted
             elif any(i is None for i in input_desc):
                 raise ValueError("For the first time setting the input description, "
                                  "None value is not accepted.")
-            # finally assign the input description
+            # finally assign the first input description
             else:
-                self.input_desc = []
                 for i, j in enumerate(input_desc):
                     if j.name is None:
                         j._name = '%s%.2d' % (self.name, i)
-                    self.input_desc.append(j)
+                    self.input_desc.add_variables(j)
         # ====== get inputs variable====== #
         model_inputs = list(as_tuple(self.placeholder))
         # override default inputs with new variable

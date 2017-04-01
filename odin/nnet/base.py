@@ -89,7 +89,7 @@ class NNConfig(object):
         if not isinstance(nnops, NNOps):
             raise ValueError("nnops must be instance of odin.nnet.NNOps")
         self._nnops = nnops
-        self._input_desc = []
+        self._input_desc = InputDescriptor()
         self._variables = OrderedDict()
 
     @property
@@ -100,34 +100,38 @@ class NNConfig(object):
     @property
     def input(self):
         """ Return the list of all TensorVariables attached to this Config"""
-        inputs = [i.placeholder for i in self._input_desc]
-        return inputs[0] if len(inputs) == 1 else inputs
+        return self._input_desc.placeholder
 
     @property
     def input_shape(self):
-        shape = [i.shape for i in self._input_desc]
-        return shape[0] if len(shape) == 1 else shape
+        return self._input_desc.shape
 
-    def check_input_desc(self, input_desc):
-        input_desc = as_tuple(input_desc)
-        # make shape tuple, become list of shape tuple
-        if any(is_number(i) or i is None for i in input_desc):
-            input_desc = (input_desc,)
-        # have not initialized the input description
+    @property
+    def input_shape_ref(self):
+        return self._input_desc.shape_ref
+
+    @property
+    def input_desc(self):
+        return self._input_desc
+
+    def check_input_desc(self, inputs):
+        inputs = as_tuple(inputs)
+        # convert shape tuple to list of shape tuple
+        if any(is_number(i) or i is None for i in inputs):
+            inputs = (inputs,)
+        # first time initialized the input description
         if len(self._input_desc) == 0:
-            self._input_desc = [i if isinstance(i, InputDescriptor)
-                                else InputDescriptor(i) for i in input_desc]
+            self._input_desc.set_variables(inputs)
+            for i, j in enumerate(self._input_desc._desc):
+                j._name = '%s_in%.2d' % (self._nnops.name, i)
         # mismatch input desctiption
-        elif len(input_desc) != len(self._input_desc):
-            raise Exception("This Config required %d inputs, but was given "
-                            "%d inputs." % (len(self._input_desc), len(input_desc)))
-        for i, j in zip(input_desc, self._input_desc):
-            if i != j:
-                raise Exception("The config require input with %s, but was given "
-                                "other input with %s." % (str(j), str(i)))
+        _ = InputDescriptor(inputs)
+        if self._input_desc != _:
+            raise ValueError("This NNConfiguration required inputs: %s, but was given: "
+                            "%s." % (str(self._input_desc), str(_)))
         # automatic fetch placeholder to replace raw description
-        return [i if K.is_variable(i) else j.placeholder
-                for i, j in zip(input_desc, self._input_desc)]
+        return [i if K.is_variable(i) else j
+                for i, j in zip(inputs, as_tuple(self.input))]
 
     def __getattr__(self, name):
         if name in self._variables:
@@ -318,12 +322,20 @@ class NNOps(object):
         return self._configuration.input
 
     @property
+    def input_desc(self):
+        return self._configuration._input_desc
+
+    @property
     def nb_input(self):
         return len(self._configuration._input_desc)
 
     @property
     def input_shape(self):
         return self._configuration.input_shape
+
+    @property
+    def input_shape_ref(self):
+        return self._configuration.input_shape_ref
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
@@ -552,68 +564,6 @@ class TransposeDense(NNTransposeOps):
         # Nonlinearity might change the shape of activation
         activation = self.T.activation(activation)
         return activation
-
-
-class VariationalDense(NNOps):
-
-    def __init__(self, num_units,
-                 W_init=K.init.symmetric_uniform,
-                 b_init=K.init.constant(0),
-                 activation=K.linear,
-                 seed=None, **kwargs):
-        super(VariationalDense, self).__init__(**kwargs)
-        self.num_units = num_units
-        self.W_init = W_init
-        self.b_init = b_init
-        # hack to prevent infinite useless loop of transpose
-        self.activation = K.linear if activation is None else activation
-        self.seed = seed
-
-    # ==================== helper ==================== #
-    @cache_memory # same x will return the same mean and logsigma
-    def get_mean_logsigma(self, x):
-        b_mean = 0. if not hasattr(self, 'b_mean') else self.b_mean
-        b_logsigma = 0. if not hasattr(self, 'b_logsigma') else self.b_logsigma
-        mean = self.activation(K.dot(x, self.W_mean) + b_mean)
-        logsigma = self.activation(K.dot(x, self.W_logsigma) + b_logsigma)
-        mean.name = 'variational_mean'
-        logsigma.name = 'variational_logsigma'
-        add_role(mean, VARIATIONAL_MEAN)
-        add_role(logsigma, VARIATIONAL_LOGSIGMA)
-        return mean, logsigma
-
-    def sampling(self, x):
-        mean, logsigma = self.get_mean_logsigma(x)
-        epsilon = K.random_normal(shape=K.get_shape(mean), mean=0.0, std=1.0,
-                                  dtype=mean.dtype)
-        z = mean + K.exp(logsigma) * epsilon
-        return z
-
-    # ==================== abstract methods ==================== #
-    def _transpose(self):
-        raise NotImplementedError
-
-    def _initialize(self):
-        shape = (self.input_shape[-1], self.num_units)
-        self.config.create_params(self.W_init, shape, 'W_mean', roles=WEIGHT)
-        self.config.create_params(self.W_init, shape, 'W_logsigma', roles=WEIGHT)
-        if self.b_init is not None:
-            self.config.create_params(
-                self.b_init, (self.num_units,), 'b_mean', roles=BIAS)
-            self.config.create_params(
-                self.b_init, (self.num_units,), 'b_logsigma', roles=BIAS)
-
-    def _apply(self, x):
-        input_shape = K.get_shape(x)
-        # calculate statistics
-        mean, logsigma = self.get_mean_logsigma(x)
-        # variational output
-        output = mean
-        if K.is_training():
-            output = self.sampling(x)
-        # set shape for output
-        K.add_shape(output, input_shape[:-1] + (self.num_units,))
-        return output
 
 
 class ParametricRectifier(NNOps):

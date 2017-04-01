@@ -18,8 +18,8 @@ print(ds)
 # Model
 # ===========================================================================
 input_desc = [
-    N.InputDescriptor(shape=(None, 28, 28), dtype='float32', name='X'),
-    N.InputDescriptor(shape=(None,), dtype='float32', name='y')
+    N.VariableDescriptor(shape=(None, 28, 28), dtype='float32', name='X'),
+    N.VariableDescriptor(shape=(None,), dtype='float32', name='y')
 ]
 model = N.get_model_descriptor('ladder1')
 K.set_training(True); y_train, cost = model(input_desc)

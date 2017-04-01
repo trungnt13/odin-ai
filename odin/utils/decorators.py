@@ -6,12 +6,14 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import sys
+import inspect
+import marshal
+from array import array
 from six.moves import builtins
 
 from collections import OrderedDict, defaultdict
 from collections import MutableMapping
 from functools import wraps, partial
-import inspect
 from six.moves import zip, zip_longest, cPickle
 import types
 
@@ -297,6 +299,36 @@ _primitives = (bool, int, float, str,
                type(None), type(type), np.ndarray)
 
 
+def func_to_str(func):
+    # conver to byte
+    code = cPickle.dumps(array("B", marshal.dumps(func.__code__)),
+                         protocol=cPickle.HIGHEST_PROTOCOL)
+    closure = None
+    if func.__closure__ is not None:
+        print("[WARNING] function: %s contains closure, which cannot be "
+              "serialized." % str(func))
+        closure = tuple([c.cell_contents for c in func.func_closure])
+    defaults = func.__defaults__
+    return (code, closure, defaults)
+
+
+def str_to_func(s, sandbox=None):
+    if isinstance(s, (tuple, list)):
+        code, closure, defaults = s
+    elif is_path(s): # path to file
+        with open(s, 'rb') as f:
+            code, closure, defaults = cPickle.load(f)
+    elif is_string(s): # pickled string
+        code, closure, defaults = cPickle.loads(s)
+    else:
+        raise ValueError("Unsupport str_to_func for type:%s" % type(s))
+    code = marshal.loads(cPickle.loads(code).tostring())
+    func = types.FunctionType(code=code, name=code.co_name,
+                              globals=sandbox if isinstance(sandbox, dict) else globals(),
+                              closure=closure, argdefs=defaults)
+    return func
+
+
 def _serialize_function_sandbox(function, source):
     '''environment, dictionary (e.g. globals(), locals())
     Parameters
@@ -309,47 +341,43 @@ def _serialize_function_sandbox(function, source):
     dictionary : cPickle dumps-able dictionary to store as text
     '''
     import re
-    import sys
-    import marshal
-    from array import array
-
     sys_module = re.compile('__\w+__')
 
     environment = function.func_globals
     func_module = function.__module__
     sandbox = OrderedDict()
-
-    def func_to_str(func):
-        # conver to byte
-        return cPickle.dumps(array("B", marshal.dumps(func.func_code)))
-
     # ====== serialize primitive type ====== #
-    seen_function = False
+    seen_main_function = False
     for name, val in environment.iteritems():
         typ = None
         # ignore system modules
         if sys_module.match(name) is not None:
             continue
-        # primitive type
+        # support primitive type
         if builtins.any(isinstance(val, i) for i in _primitives):
-            # function might nested, so cannot find it in globals()
-            if isinstance(val, types.FunctionType) and val == function:
-                seen_function = True
-            # print(k, v.__module__ if hasattr(v, '__module__') else v.__name__, func_module)
             typ = type(val)
             if isinstance(val, np.ndarray):
                 val = (val.tostring(), val.dtype)
                 typ = 'ndarray'
-            elif isinstance(val, types.ModuleType): # special case: import module
+            # special case: import module
+            elif isinstance(val, types.ModuleType):
                 val = val.__name__
                 typ = 'module'
-            elif val is None: # for some reason, pickle cannot serialize None type
+            # the FunctionType itself cannot be pickled (weird!)
+            elif val is types.FunctionType:
+                val = None
+                typ = 'function_type'
+            # for some reason, pickle cannot serialize None type
+            elif val is None:
                 val = None
                 typ = 'None'
             elif isinstance(val, dict) and 'MmapDict' in typ.__name__:
-                val = cPickle.dumps(val)
+                val = cPickle.dumps(val, protocol=cPickle.HIGHEST_PROTOCOL)
                 typ = 'MmapDict'
             elif inspect.isfunction(val): # special case: function
+                # function might nested, so cannot find it in globals()
+                if val == function:
+                    seen_main_function = True
                 # imported function
                 _ = '_main' if function == val else ''
                 if val.__module__ != func_module:
@@ -358,16 +386,15 @@ def _serialize_function_sandbox(function, source):
                 # defined function in the same script file
                 else:
                     typ = 'defined_function'
-                    val = (val.func_name, func_to_str(val))
+                    val = func_to_str(val)
                 typ += _
         # finally add to sandbox valid type
         if typ is not None:
             sandbox[name] = (typ, val)
     # ====== not seen the main function ====== #
-    if not seen_function: # mark the main function with "_main"
+    if not seen_main_function: # mark the main function with "_main"
         sandbox['random_name_12082518'] = ('defined_function_main',
-                                           (function.func_name,
-                                            func_to_str(function)))
+                                           func_to_str(function))
     return sandbox
 
 
@@ -379,11 +406,6 @@ def _deserialize_function_sandbox(sandbox):
     import marshal
     import importlib
 
-    def str_to_func(s, sandbox, name):
-        func = marshal.loads(cPickle.loads(s).tostring())
-        func = types.FunctionType(func, sandbox, name)
-        return func
-
     environment = {}
     defined_function = []
     main_func = None
@@ -392,6 +414,8 @@ def _deserialize_function_sandbox(sandbox):
         if is_string(typ):
             if typ == 'None':
                 val = None
+            elif typ == 'function_type':
+                val = types.FunctionType
             elif typ == 'MmapDict':
                 val = cPickle.loads(val)
             elif typ == 'ndarray':
@@ -402,7 +426,7 @@ def _deserialize_function_sandbox(sandbox):
                 val = getattr(importlib.import_module(val[1]), val[0])
                 if '_main' in typ: main_func = val
             elif 'defined_function' in typ:
-                val = str_to_func(val[1], globals(), name=val[0])
+                val = str_to_func(val, globals())
                 if '_main' in typ: main_func = val
                 defined_function.append(name)
         elif builtins.any(isinstance(typ, i) for i in _primitives):
@@ -417,6 +441,10 @@ def _deserialize_function_sandbox(sandbox):
         func = environment[name]
         func.func_globals.update(environment)
     return main_func, environment
+
+
+class _ArgPlaceHolder_(object):
+    pass
 
 
 class functionable(object):
@@ -438,28 +466,43 @@ class functionable(object):
 
     def __init__(self, func, *args, **kwargs):
         super(functionable, self).__init__()
-        # default arguments lost during pickling so need to store them
-        import inspect
-        final_args = OrderedDict()
-        spec = inspect.getargspec(func)
-        for i, j in zip(spec.args, args): # positional arguments
-            final_args[i] = j
-        final_args.update(kwargs)
-        if spec.defaults is not None:
-            final_args.update(reversed([(i, j)
-                            for i, j in zip(reversed(spec.args), reversed(spec.defaults))
-                            if i not in final_args]))
-
         self._function = func
-        # random id that identify this function
-        self._function_name = func.func_name
-        self._function_order = spec.args
-        self._function_kwargs = final_args
         try: # sometime cannot get the source
             self._source = inspect.getsource(self._function)
-        except:
+        except Exception as e:
+            print("[WARNING] Cannot get source code of function:", func,
+                  "(error:%s)" % str(e))
             self._source = None
         self._sandbox = _serialize_function_sandbox(func, self._source)
+        # ====== store argsmap ====== #
+        argspec = inspect.getargspec(func)
+        argsmap = OrderedDict([(i, _ArgPlaceHolder_()) for i in argspec.args])
+        # store defaults
+        if argspec.defaults is not None:
+            for name, arg in zip(argspec.args[::-1], argspec.defaults[::-1]):
+                argsmap[name] = arg
+        # update positional arguments
+        for name, arg in zip(argspec.args, args):
+            argsmap[name] = arg
+        # update kw arguments
+        argsmap.update(kwargs)
+        self._argsmap = argsmap
+
+    # ==================== Pickling methods ==================== #
+    def __getstate__(self):
+        # conver to byte
+        return (self._sandbox,
+                self._source,
+                self._argsmap)
+
+    def __setstate__(self, states):
+        (self._sandbox,
+         self._source,
+         self._argsmap) = states
+        # ====== deserialize the function ====== #
+        self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
+        if self._function is None:
+            raise RuntimeError('[funtionable] Cannot find function in sandbox.')
 
     # ==================== properties ==================== #
     @property
@@ -468,15 +511,7 @@ class functionable(object):
 
     @property
     def name(self):
-        return self._function_name
-
-    @property
-    def args_order(self):
-        return self._function_order
-
-    @property
-    def kwargs(self):
-        return self._function_kwargs
+        return self._function.func_name
 
     @property
     def source(self):
@@ -488,22 +523,24 @@ class functionable(object):
 
     # ==================== methods ==================== #
     def __call__(self, *args, **kwargs):
-        kwargs_ = dict(self._function_kwargs)
-        kwargs_.update(kwargs)
-        for i, j in zip(self._function_order, args):
-            kwargs_[i] = j
-        return self._function(**kwargs_)
+        final_args = self._argsmap.copy()
+        for i, j in zip(final_args.iterkeys(), args):
+            final_args[i] = j
+        final_args.update(kwargs)
+        final_args = {i: j for i, j in final_args.iteritems()
+                      if not isinstance(j, _ArgPlaceHolder_)}
+        return self._function(**final_args)
 
     def __str__(self):
-        s = 'Name:   %s\n' % self._function_name
-        s += 'kwargs: %s\n' % str(self._function_kwargs)
+        s = 'Name:   %s\n' % self._function.func_name
+        s += 'kwargs: %s\n' % str(self._argsmap)
         s += 'Sandbox:%s\n' % str(len(self._sandbox))
         s += str(self._source)
         return s
 
     def __eq__(self, other):
         if self._function == other._function and \
-           self._function_kwargs == other._function_kwargs:
+           self._argsmap == other._argsmap:
             return True
         return False
 
@@ -513,43 +550,21 @@ class functionable(object):
             raise ValueError('Only accept string for kwargs key or int for '
                              'index of args, but type(key)={}'.format(type(key)))
         if isinstance(key, str):
-            if key in self._function_kwargs:
-                self._function_kwargs[key] = value
+            if key in self._argsmap:
+                self._argsmap[key] = value
         else:
             key = int(key)
-            if key < len(self._function_kwargs):
-                key = self._function_kwargs.keys()[key]
-                self._function_kwargs[key] = value
+            if key < len(self._argsmap):
+                key = self._argsmap.keys()[key]
+                self._argsmap[key] = value
 
     def __getitem__(self, key):
         if not isinstance(key, (str, int, float, long)):
             raise ValueError('Only accept string for kwargs key or int for '
                              'index of args, but type(key)={}'.format(type(key)))
         if isinstance(key, str):
-            return self._function_kwargs[key]
-        return self._function_kwargs(int(key))
-
-    # ==================== Pickling methods ==================== #
-    def __getstate__(self):
-        # conver to byte
-        return (self._function_kwargs,
-                self._function_order,
-                self._function_name,
-                self._sandbox,
-                self._source)
-
-    def __setstate__(self, states):
-        (self._function_kwargs,
-        self._function_order,
-        self._function_name,
-        self._sandbox,
-        self._source) = states
-
-        # ====== deserialize the function ====== #
-        self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
-        if self._function is None:
-            raise AttributeError('Cannot find function with name={} in sandbox'
-                                 ''.format(self._function_name))
+            return self._argsmap[key]
+        return self._argsmap(int(key))
 
 
 # ===========================================================================

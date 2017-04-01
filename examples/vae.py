@@ -23,7 +23,7 @@ print("Input shape:", input_shape)
 # ====== get model ====== #
 model = N.get_model_descriptor('convolutional_vae')
 K.set_training(True); (z, qz, x) = model(
-    N.InputDescriptor(shape=input_shape, dtype='float32', name='X'))
+    N.VariableDescriptor(shape=input_shape, dtype='float32', name='X'))
 # K.set_training(False); y_score = model()
 X = model.placeholder
 parameters = model.parameters

@@ -64,7 +64,7 @@ class Pool(NNOps):
     def _transpose(self):
         ops = Upsample(size=self.pool_size, axes='auto',
             mode=self.transpose_mode, transpose_mode=self.mode,
-            output_shape=lambda: self.input_shape,
+            output_shape=self.input_shape_ref,
             name=self.name + '_transpose')
         ops._transpose_ops = self
         return ops
@@ -91,8 +91,7 @@ class Upsample(NNOps):
         self.axes = axes
         self.mode = mode
         self.transpose_mode = transpose_mode
-        self.output_shape = functionable(output_shape) \
-            if callable(output_shape) else output_shape
+        self.output_shape = output_shape
 
     def _apply(self, X):
         axes = self.axes
@@ -106,6 +105,8 @@ class Upsample(NNOps):
         X = K.upsample(X, scale=self.size, axes=axes, method=self.mode)
         # ====== check output_shape ====== #
         output_shape = self.output_shape
+        if callable(output_shape):
+            output_shape = output_shape()
         if output_shape is not None:
             if callable(output_shape):
                 output_shape = output_shape()
