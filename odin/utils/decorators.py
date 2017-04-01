@@ -461,7 +461,13 @@ class functionable(object):
     Note
     ----
     Please use this function with care, only primitive variables
-    are stored in pickling the function
+    are stored in pickling the function.
+    Avoid involving closure in creating function (because closure cannot
+    be serialized with any mean), for example:
+    >>> # Wrong way:
+    >>> lambda: obj.y
+    >>> # Good way (explicitly store the obj in default arguments):
+    >>> lambda x=obj: x.y
     """
 
     def __init__(self, func, *args, **kwargs):
