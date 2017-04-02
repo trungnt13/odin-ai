@@ -105,8 +105,6 @@ class Upsample(NNOps):
         X = K.upsample(X, scale=self.size, axes=axes, method=self.mode)
         # ====== check output_shape ====== #
         output_shape = self.output_shape
-        if callable(output_shape):
-            output_shape = output_shape()
         if output_shape is not None:
             if callable(output_shape):
                 output_shape = output_shape()

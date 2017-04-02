@@ -11,7 +11,7 @@ import numpy as np
 from odin import backend as K
 from odin.config import get_floatX
 from odin.utils import (is_lambda, is_number, get_module_from_path, is_string,
-                        as_tuple)
+                        as_tuple, ShapeRef, DtypeRef)
 from odin.utils.decorators import functionable
 
 
@@ -97,10 +97,8 @@ class VariableDescriptor(object):
             self._dtype = _check_dtype(dtype)
         # ====== create reference ====== #
         # trick to store self in x, hence, no closure
-        self._shape_ref = functionable(lambda x=self: x.shape) \
-            if not callable(self._shape) else self._shape
-        self._dtype_ref = functionable(lambda x=self: x.dtype) \
-            if not callable(self._dtype) else self._dtype
+        self._shape_ref = ShapeRef(self)
+        self._dtype_ref = DtypeRef(self)
 
     # ==================== pickle ==================== #
     def __getstate__(self):
@@ -179,8 +177,8 @@ class InputDescriptor(object):
         self.set_variables(desc)
         # ====== create reference ====== #
         # trick to store self in x, hence, no closure
-        self._shape_ref = functionable(lambda x=self: x.shape)
-        self._dtype_ref = functionable(lambda x=self: x.dtype)
+        self._shape_ref = ShapeRef(self)
+        self._dtype_ref = DtypeRef(self)
 
     def _create_var_desc(self, info):
         if isinstance(info, VariableDescriptor):
@@ -292,6 +290,16 @@ class ModelDescriptor(object):
     In short, this descriptor not only store the model itself, but also
     store the way how the model is created.
 
+    Usage
+    -----
+    >>> @ModelDescriptor
+    >>> def model_creator_function(X1, X2, ..., y1, y2, ..., saved_states):
+    ...     if save_states is None:
+    ...         # create your network here
+    ...     else:
+    ...         # load saved_states
+    ...     return [output1, output2, ...], saved_states
+
     Example
     -------
     >>> import numpy as np
@@ -305,15 +313,15 @@ class ModelDescriptor(object):
     ...         ])
     ...     # f is return for automatically saved
     ...     return f(X), f
-    >>> # First time initialize the input description
+    ... # First time initialize the input description
     >>> K.set_training(True)
     >>> y_train = feedforward_vae([N.VariableDescriptor(shape=(8, 8)),
     ...                            N.VariableDescriptor(shape=(12, 12))])
     >>> K.set_training(False); y_score = feedforward_vae()
-    >>> # Overide default Placeholder
+    ... # Overide default Placeholder
     >>> X = K.placeholder(shape=(12, 12), name='X')
     >>> K.set_training(True); y_train = feedforward_vae([None, X])
-    >>> # performing inference
+    ... # performing inference
     >>> feedforward_vae.f_pred(np.random.rand(8, 8), np.random.rand(12, 12))
     """
 
