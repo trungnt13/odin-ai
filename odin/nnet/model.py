@@ -34,8 +34,8 @@ def _check_dtype(dtype):
         dtype = get_floatX()
     elif isinstance(dtype, np.dtype) or is_string(dtype):
         dtype = str(dtype)
-    elif isinstance(dtype, InputDescriptor):
-        dtype = lambda: dtype.dtype
+    elif isinstance(dtype, VariableDescriptor):
+        dtype = DtypeRef(dtype)
     else:
         dtype = K.get_dtype(dtype, string=True)
     return dtype
@@ -88,9 +88,8 @@ class VariableDescriptor(object):
             self._shape = K.get_shape(shape)
         # input the InputDescriptor directly
         elif isinstance(shape, VariableDescriptor):
-            self._shape = functionable(lambda x=shape: x.shape)
-            self._dtype = functionable(lambda x=shape: x.dtype) \
-                if dtype is None else _check_dtype(dtype)
+            self._shape = ShapeRef(shape)
+            self._dtype = DtypeRef(shape) if dtype is None else _check_dtype(dtype)
         # input regular information flow
         else:
             self._shape = _check_shape(shape)
@@ -195,18 +194,20 @@ class InputDescriptor(object):
         if isinstance(desc, InputDescriptor):
             self._desc = desc._desc
         elif desc is not None:
+            desc = as_tuple(desc)
             # convert shape tuple to list of shape tuple
             if any(is_number(i) or i is None for i in desc):
                 desc = (desc,)
-            self._desc = [self._create_var_desc(d) for d in as_tuple(desc)]
+            self._desc = [self._create_var_desc(d) for d in desc]
         return self
 
     def add_variables(self, desc):
         if desc is not None:
+            desc = as_tuple(desc)
             # convert shape tuple to list of shape tuple
             if any(is_number(i) or i is None for i in desc):
                 desc = (desc,)
-            self._desc += [self._create_var_desc(d) for d in as_tuple(desc)]
+            self._desc += [self._create_var_desc(d) for d in desc]
         return self
 
     # ==================== properties ==================== #
@@ -244,6 +245,9 @@ class InputDescriptor(object):
         return self._dtype_ref
 
     # ==================== override ==================== #
+    def __iter__(self):
+        return self._desc.__iter__()
+
     def __len__(self):
         return len(self._desc)
 
@@ -338,6 +342,14 @@ class ModelDescriptor(object):
         self._last_outputs = {'train': None, 'score': None}
         self._f_train = None
         self._f_pred = None
+
+    @property
+    def input_shape(self):
+        return self.input_desc.shape
+
+    @property
+    def input_shape_ref(self):
+        return self.input_desc.shape_ref
 
     # ==================== pickle ==================== #
     def __getstate__(self):
@@ -497,8 +509,9 @@ class ModelDescriptor(object):
             for i in inputs:
                 if K.is_variable(i): # TensorVariable
                     shape = K.get_shape(i)
+                    dtype = K.get_dtype(i, string=True)
                     input_desc.append(
-                        VariableDescriptor(shape=shape, dtype=i.dtype, name=i.name))
+                        VariableDescriptor(shape=shape, dtype=dtype, name=i.name))
                 elif isinstance(i, (tuple, list)): # Shape tuple
                     shape = tuple(i)
                     input_desc.append(
@@ -525,8 +538,9 @@ class ModelDescriptor(object):
             # finally assign the first input description
             else:
                 for i, j in enumerate(input_desc):
-                    if j.name is None:
-                        j._name = '%s%.2d' % (self.name, i)
+                    name = j.name if j.name is not None else ''
+                    name = ''.join(name.split(':')[:-1])
+                    j._name = '%s_%s%.2d' % (self.name, name, i)
                     self.input_desc.add_variables(j)
         # ====== get inputs variable====== #
         model_inputs = list(as_tuple(self.placeholder))

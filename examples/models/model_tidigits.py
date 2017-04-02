@@ -4,7 +4,8 @@ from odin import nnet as N, backend as K
 
 
 @N.ModelDescriptor
-def gender(X, f):
+def gender(X, f, **kwargs):
+    nb_gender = kwargs.get('nb_gender', 4)
     if f is None:
         f = N.Sequence([
             N.Dimshuffle(pattern=(0, 1, 2, 'x')),
@@ -23,6 +24,6 @@ def gender(X, f):
                       input_mode='linear', direction_mode='unidirectional'),
 
             N.Flatten(outdim=2),
-            N.Dense(num_units=len(gender), activation=K.softmax)
+            N.Dense(num_units=nb_gender, activation=K.softmax)
         ], debug=True)
     return f(X), f
