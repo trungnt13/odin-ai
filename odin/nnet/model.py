@@ -448,7 +448,7 @@ class ModelDescriptor(object):
         return n
 
     @property
-    def placeholder(self):
+    def input(self):
         self._check_init_shape()
         return self.input_desc.placeholder
 
@@ -543,7 +543,7 @@ class ModelDescriptor(object):
                     j._name = '%s_%s%.2d' % (self.name, name, i)
                     self.input_desc.add_variables(j)
         # ====== get inputs variable====== #
-        model_inputs = list(as_tuple(self.placeholder))
+        model_inputs = list(as_tuple(self.input))
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):

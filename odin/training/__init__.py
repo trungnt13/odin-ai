@@ -53,15 +53,15 @@ def _plot_each_epoch(name, results, task_type):
     plt.tight_layout()
 
 
-def standard_trainer(train_data, valid_data,
-                     X, y_train, y_score, y_target, parameters,
-                     test_data=None,
+def standard_trainer(train_data, valid_data, test_data=None,
                      cost_train=None, cost_score=None, cost_regu=0,
-                     optimizer=None, confusion_matrix=False, gradient_norm=True,
+                     parameters=[], optimizer=None,
+                     confusion_matrix=None, gradient_norm=True,
                      batch_size=64, nb_epoch=3, valid_freq=1.,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
                      save_path=None, save_obj=None, report_path=None,
-                     enable_rollback=True, stop_callback=None, save_callback=None):
+                     enable_rollback=True, stop_callback=None, save_callback=None,
+                     labels=None):
     """
     Parameters
     ----------
@@ -100,67 +100,45 @@ def standard_trainer(train_data, valid_data,
         raise ValueError("Invalid optimizer, the optimizer must be instance of "
                          "backend.optimizers.Optimizer or having function "
                          "get_updates(self, loss_or_grads, params).")
-    #  check the cost functions
-    if cost_train is None:
-        cost_train = K.categorical_crossentropy
-    if cost_score is None:
-        cost_score = K.categorical_crossentropy
-    cost_train = as_tuple(cost_train)
+    #  check the cost train
+    cost_train = as_tuple(cost_train) if cost_train is not None else tuple()
+    if len(cost_train) == 0:
+        raise ValueError("You must specify cost_train.")
+    cost_train = [cost for cost in cost_train if K.is_variable(cost)]
     cost_train_name = [i.name if K.is_variable(i) else i.__name__
                        for i in cost_train]
-    cost_score = as_tuple(cost_score)
+    #  check the cost score
+    cost_score = as_tuple(cost_score) if cost_score is not None else tuple()
+    cost_score = [cost for cost in cost_score if K.is_variable(cost)]
     cost_score_name = [i.name if K.is_variable(i) else i.__name__
                        for i in cost_score]
-    cost_regu = as_tuple(cost_regu)
-    # check input X, y, parameters
-    X = as_tuple(X)
-    y_train = as_tuple(y_train)
-    y_score = as_tuple(y_score)
-    y_target = as_tuple(y_target)
-    parameters = as_tuple(parameters)
-    if len(X) == 0 or len(y_train) == 0 or len(y_score) == 0 or \
-    len(y_target) == 0 or len(parameters) == 0:
-        raise ValueError("X(len=%d), y_train(len=%d), y_score(len=%d), y_target(len=%d),"
-                         "and parameters(len=%d) must be list or tuple with length > 0."
-                         % (len(X), len(y_train), len(y_score), len(y_target),
-                            len(parameters)))
-    # get all cost
-    cost_train = [f_cost if K.is_variable(f_cost) else K.mean(f_cost(y_, y))
-                  for y_, y in zip(y_train, y_target)
-                  for f_cost in cost_train]
-    cost_score = [f_cost if K.is_variable(f_cost) else K.mean(f_cost(y_, y))
-                  for y_, y in zip(y_score, y_target)
-                  for f_cost in cost_score]
-    # add confusion matrix
-    if confusion_matrix:
-        if not is_number(confusion_matrix) and \
-        not isinstance(confusion_matrix, (tuple, list, np.ndarray)):
-            raise ValueError("confusion_matrix must be an integer, or list, tuple"
-                             " specifies number of classes, or list of all classes.")
-        labels = confusion_matrix
-        if is_number(confusion_matrix):
-            confusion_matrix = list(range(int(confusion_matrix)))
-            labels = confusion_matrix
-        elif not is_number(confusion_matrix[0]): # given list of label
-            labels = list(range(len(confusion_matrix)))
-        if len(labels) == 1:
-            raise ValueError("you have to specify the number of labels in 'confusion_matrix'")
-        for y_, y in zip(y_score, y_target):
-            cost_score.append(K.confusion_matrix(y_pred=y_, y_true=y, labels=labels))
-    # get the updates
+    cost_regu = as_tuple(cost_regu) if cost_regu is not None else tuple()
+    # check parameters
+    parameters = as_tuple(parameters) if parameters is not None else tuple()
+    # ====== get the updates ====== #
     training_cost = cost_train[0] + sum(c for c in cost_regu)
     updates = optimizer.get_updates(training_cost, parameters)
+    # ====== add confusion matrix ====== #
+    if confusion_matrix is not None and K.is_variable(confusion_matrix):
+        cost_score.append(confusion_matrix)
+        confusion_matrix = True
+    else:
+        confusion_matrix = False
     # ====== add gradient norm ====== #
     grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
         [optimizer.norm]
     if len(grad_norm) > 0:
         cost_train_name.append('gradient_norm')
     cost_train = [training_cost] + cost_train[1:] + grad_norm
+    # ====== get all input ====== #
+    train_inputs = K.ComputationGraph(cost_train).inputs
+    score_inputs = K.ComputationGraph(cost_score).inputs if len(cost_score) > 0 else []
     # ====== create function ====== #
     print('Building training functions ...')
-    f_train = K.function(inputs=X + y_target, outputs=cost_train, updates=updates)
+    f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
-    f_score = K.function(inputs=X + y_target, outputs=cost_score)
+    f_score = K.function(inputs=score_inputs, outputs=cost_score) \
+        if len(cost_score) > 0 and valid_data is not None else None
 
     # ====== evaluation ====== #
     def evaluation():
@@ -253,12 +231,14 @@ def standard_trainer(train_data, valid_data,
             # First the validation confusion matrix
             confusion = [sum(i[-1] for i in epoch)
                          for epoch in valid_epochs]
-            labels = [str(i) for i in confusion_matrix]
+            confusion_labels = labels
+            if labels is None:
+                confusion_labels = [str(i) for i in range(confusion[0].shape[0])]
             ncol = 3; nrow = int(np.ceil(len(confusion) / ncol))
             visual.plot_figure(nrow=nrow, ncol=ncol, dpi=180)
             for i, cm in enumerate(confusion):
                 ax = plt.subplot(nrow, ncol, i + 1)
-                visual.plot_confusion_matrix(cm, labels,
+                visual.plot_confusion_matrix(cm, confusion_labels,
                     axis=ax, fontsize=10, colorbar=False)
                 ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
             plt.suptitle("[Valid] Confustion matrices", fontsize=12)
@@ -266,7 +246,7 @@ def standard_trainer(train_data, valid_data,
             # The the test confusion matrix
             if test_data is not None and test_cm is not None:
                 plt.figure(figsize=(8, 9), dpi=180)
-                visual.plot_confusion_matrix(test_cm, labels,
+                visual.plot_confusion_matrix(test_cm, confusion_labels,
                     axis=None, fontsize=18, colorbar=False)
                 plt.suptitle("[Eval] Confustion matrices", fontsize=20)
                 plt.tight_layout()
@@ -281,28 +261,29 @@ def standard_trainer(train_data, valid_data,
         task.set_save(save_path, save_obj, save_hist=True)
     # set task
     task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
-    task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
+    if f_score is not None:
+        task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
+        # format for score
+        score_format = 'Results:' + \
+            __format_string(len(cost_score) - (len(y_score) if confusion_matrix else 0))
+        score_tracking = {(len(cost_score) - i - 1): (lambda x: sum(x))
+            for i in range(len(y_score))} if confusion_matrix else []
     task.set_signal_handlers(end=evaluation)
-    # format for score
-    score_format = 'Results:' + \
-        __format_string(len(cost_score) - (len(y_score) if confusion_matrix else 0))
-    score_tracking = {(len(cost_score) - i - 1): (lambda x: sum(x))
-        for i in range(len(y_score))} if confusion_matrix else []
     # set the callback
     history = History()
     task.set_callback([
+        history,
         ProgressMonitor(name='train',
             format='Results:' + __format_string(len(cost_train))),
-        ProgressMonitor(name='valid', format=score_format, tracking=score_tracking),
-        history,
+        NaNDetector(('train', 'valid'), patience=patience, rollback=True)
+    ] + ([ProgressMonitor(name='valid', format=score_format, tracking=score_tracking),
         EarlyStopGeneralizationLoss('valid', threshold=earlystop, patience=patience,
                  get_value=lambda x: np.mean([i[0] for i in x]
                                              if isinstance(x[0], (tuple, list))
                                              else x),
                  stop_callback=stop_callback, save_callback=save_callback
         ) if earlystop is not None else None,
-        NaNDetector(('train', 'valid'), patience=patience, rollback=True)
-    ])
+    ] if f_score is not None else []))
     return task, history
 
 

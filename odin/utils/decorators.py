@@ -363,6 +363,11 @@ def _serialize_function_sandbox(function, source):
             elif isinstance(val, types.ModuleType):
                 val = val.__name__
                 typ = 'module'
+            # edward distribution
+            elif isinstance(val, type) and str(val.__module__) == 'abc' and \
+            str(type(val).__module__) == "tensorflow.contrib.distributions.python.ops.distribution":
+                val = val.__name__
+                typ = 'edward_distribution'
             # the FunctionType itself cannot be pickled (weird!)
             elif val is types.FunctionType:
                 val = None
@@ -414,6 +419,14 @@ def _deserialize_function_sandbox(sandbox):
         if is_string(typ):
             if typ == 'None':
                 val = None
+            elif typ == 'edward_distribution':
+                try:
+                    import edward
+                    val = getattr(edward.models, val)
+                except ImportError:
+                    raise ImportError("Cannot import 'edward' library to deserialize "
+                                      "the function.")
+                # exec("from edward.models import %s as %s" % (val, name))
             elif typ == 'function_type':
                 val = types.FunctionType
             elif typ == 'MmapDict':
