@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from odin.utils import as_shape_tuple, struct
+from odin.utils import struct, is_number
 from odin.config import get_backend
 
 
@@ -180,6 +180,35 @@ def _check_tag(var):
 
 
 # ==================== shape ==================== #
+def _is_tensor(x):
+    if get_backend() == 'tensorflow':
+        import tensorflow as tf
+        if isinstance(x, (tf.Tensor, tf.Variable)):
+            return True
+    elif get_backend() == 'theano':
+        from theano.gof.graph import Constant
+        from theano.tensor.sharedvar import SharedVariable
+        from theano import Variable
+        if isinstance(x, (Constant, Variable, SharedVariable)):
+            return True
+    return False
+
+
+def as_shape_tuple(shape):
+    if is_number(shape):
+        shape = (int(shape),)
+    elif _is_tensor(shape):
+        shape = (shape,)
+    else:
+        if not isinstance(shape, (tuple, list, np.ndarray)):
+            raise ValueError('We only accept shape in tuple, list or numpy.ndarray.')
+        shape = tuple([(int(i) if i > 0 else None) if is_number(i) else i
+                       for i in shape])
+        if len([i for i in shape if i is None]) >= 2:
+            raise Exception('Shape tuple can only have 1 unknown dimension.')
+    return shape
+
+
 def add_shape(var, shape):
     _check_tag(var)
     # do nothing if not Number of tuple, list

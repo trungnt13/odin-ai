@@ -14,12 +14,13 @@ import numpy as np
 import tensorflow as tf
 
 from odin.config import CONFIG, get_rng
-from odin.utils import (as_tuple, as_shape_tuple, dict_union, uuid, is_number,
+from odin.utils import (as_tuple, dict_union, uuid, is_number,
                         is_string, flatten_list)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
-                        add_shape, get_shape, is_training)
+                        add_shape, get_shape, is_training,
+                        as_shape_tuple)
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph,
                       variable)
@@ -632,17 +633,27 @@ class Function(object):
         # ====== validate updates ====== #
         if isinstance(updates, dict):
             updates = updates.items()
-        updates = updates + ComputationGraph(outputs).updates.items()
-        # create updates ops
         with tf.control_dependencies(self.outputs):
-            updates_ops = []
-            for update in updates:
-                if isinstance(update, (tuple, list)):
-                    p, new_p = update
-                    updates_ops.append(tf.assign(p, new_p))
-                else: # assumed already an assign op
-                    updates_ops.append(update)
-            self.updates_op = tf.group(*updates_ops)
+            # create updates ops
+            if not isinstance(updates, tf.Operation):
+                updates_ops = []
+                for update in updates:
+                    if isinstance(update, (tuple, list)):
+                        p, new_p = update
+                        updates_ops.append(tf.assign(p, new_p))
+                    else: # assumed already an assign op
+                        updates_ops.append(update)
+                updates_ops = tf.group(*updates_ops)
+            else: # already an tensorflow Ops
+                updates_ops = updates
+            # annotated updates from Graph
+            updates_graph = ComputationGraph(outputs).updates
+            if len(updates_graph) > 0:
+                updates_graph = tf.group(*[tf.assign(v, new_v)
+                    for v, new_v in updates_graph.iteritems()])
+                updates_ops = tf.group(*[updates_ops, updates_graph])
+            # merged updated
+            self.updates_ops = updates_ops
 
     def __call__(self, *inputs, **kwargs):
         # dictionary as inputs
@@ -654,7 +665,7 @@ class Function(object):
             feed_dict[tensor] = value
         # ====== run the output ====== #
         session = get_session()
-        updated = session.run(self.outputs + [self.updates_op],
+        updated = session.run(self.outputs + [self.updates_ops],
                               feed_dict=feed_dict)
         # ====== get the results ====== #
         outputs = updated[:len(self.outputs)]

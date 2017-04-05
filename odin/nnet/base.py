@@ -18,6 +18,12 @@ from odin.utils import as_tuple, uuid, cache_memory, is_number
 
 from .model import InputDescriptor
 
+# ===========================================================================
+# Ops Context
+# ===========================================================================
+__B_INIT = K.init.constant(0.)
+__ACTIVATION = K.linear
+
 
 # ===========================================================================
 # Helper

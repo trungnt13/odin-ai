@@ -13,11 +13,11 @@ from tensorflow.contrib.framework import is_tensor as _is_tensor
 from tensorflow.contrib.distributions.python.ops.distribution import Distribution as _Distribution
 from tensorflow import variable_scope
 
-from odin.basic import (add_role, has_roles,
+from odin.basic import (add_role, has_roles, as_shape_tuple,
                         add_shape, get_shape,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
-from odin.utils import dict_union, as_shape_tuple
+from odin.utils import dict_union
 from odin.config import CONFIG
 
 FLOATX = CONFIG.floatX
@@ -345,6 +345,84 @@ class ComputationGraph(object):
     def dict_of_placeholders(self):
         """Return a mapping from an input name to the input."""
         return {var.name: var for var in self.placeholders}
+
+    # ==================== Graph manipulation ==================== #
+    def swap(self, dict_swap, scope="copied", replace_itself=False, copy_q=False):
+        """ Original implementation: Edward (https://github.com/blei-lab/edward)
+        Build a new node in the TensorFlow graph from `org_instance`,
+        where any of its ancestors existing in `dict_swap` are
+        replaced with `dict_swap`'s corresponding value.
+
+        The copying is done recursively, so any `Operation` whose output
+        is required to evaluate `org_instance` is also copied (if it isn't
+        already copied within the new scope). This is with the exception of
+        `tf.Variable`s, `tf.placeholder`s, and nodes of type `Queue`, which
+        are reused and not newly copied.
+
+        Parameters
+        ----------
+        dict_swap : dict, optional
+          Random variables, variables, tensors, or operations to swap with.
+          Its keys are what `org_instance` may depend on, and its values are
+          the corresponding object (not necessarily of the same class
+          instance, but must have the same type, e.g., float32) that is used
+          in exchange.
+        scope : str, optional
+          A scope for the new node(s). This is used to avoid name
+          conflicts with the original node(s).
+        replace_itself : bool, optional
+          Whether to replace `org_instance` itself if it exists in
+          `dict_swap`. (This is used for the recursion.)
+        copy_q : bool, optional
+          Whether to copy the replaced tensors too (if not already
+          copied within the new scope). Otherwise will reuse them.
+
+        Returns
+        -------
+        RandomVariable, tf.Variable, tf.Tensor, or tf.Operation
+          The copied node.
+
+        Examples
+        --------
+        >>> from odin import backend as K
+        >>> x = tf.constant(2.0, name='x')
+        >>> y = tf.constant(3.0, name='y')
+        >>> z = tf.multiply(x, y, name="z")
+        ... # define replacement variables
+        >>> qx = tf.constant(4.0, name='qx')
+        >>> qz = tf.constant(25.0, name='qz')
+        ... # The TensorFlow graph is currently
+        ... # `x` -> `z` <- y`, `qx`
+        ... # This adds a subgraph with newly copied nodes,
+        ... # `copied/qx` -> `copied/z` <- `copied/y`
+        >>> z_new = K.ComputationGraph(z).swap(
+        ...     dict_swap={x: qx, z: qz},
+        ...     replace_itself=False, copy_q=False)
+        >>> print([v.name for v in K.ComputationGraph(z_new).variables])
+        ... # [u'qx:0', u'copied/y:0', u'copied/z:0', u'copied/w:0']
+        >>> sess = tf.Session()
+        >>> sess.run(z) # 6.0
+        >>> sess.run(z_new) # 12.0
+        ... # with replace_itself = True
+        >>> z_new = K.ComputationGraph(z).swap(
+        ...     dict_swap={x: qx, z: qz},
+        ...     replace_itself=True, copy_q=False)
+        >>> print([v.name for v in K.ComputationGraph(z_new).variables])
+        ... # [u'qx:0', u'copied/y:0', u'qz:0', u'copied/w:0']
+        >>> sess.run(z_new) # 25.0
+        """
+        try:
+            from edward import copy
+        except ImportError:
+            raise RuntimeError("Require Edward library to manipulate the "
+                               "ComputationGraph.")
+        outputs_new = []
+        for o in self.outputs:
+            o_new = copy(org_instance=o, dict_swap=dict_swap, scope=scope,
+                     replace_itself=replace_itself, copy_q=copy_q)
+            dict_swap[o] = o_new
+            outputs_new.append(o_new)
+        return outputs_new
 
     # ==================== others ==================== #
     def __iter__(self):

@@ -21,11 +21,11 @@ from theano.gof.graph import Constant
 from theano.tensor.shared_randomstreams import RandomStateSharedVariable
 from theano.tensor.sharedvar import SharedVariable
 
-from odin.basic import (add_role, has_roles,
+from odin.basic import (add_role, has_roles, as_shape_tuple,
                         add_shape, get_shape,
                         AUXILIARY, PARAMETER)
 from odin.utils.decorators import singleton
-from odin.utils import dict_union, as_shape_tuple
+from odin.utils import dict_union
 from odin.config import CONFIG
 
 FLOATX = CONFIG.floatX
@@ -406,6 +406,10 @@ class ComputationGraph(object):
     def dict_of_placeholders(self):
         """Return a mapping from an input name to the input."""
         return {var.name: var for var in self.placeholders}
+
+    # ==================== Graph manipulation ==================== #
+    def copy(self, dict_swap, scope="copied", replace_itself=False, copy_q=False):
+        pass
 
     # ==================== others ==================== #
     def __iter__(self):

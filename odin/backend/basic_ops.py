@@ -247,6 +247,11 @@ def le(a, b):
 # Graph creator helper
 # ===========================================================================
 def function(inputs, outputs, updates=[], **kwargs):
+    # ====== check inputs ====== #
+    if inputs is None or len(as_tuple(inputs)) == 0:
+        inputs = ComputationGraph(outputs).inputs
+        print("[WARNING] inputs haven't specified, auto-inferred from Graph of "
+              "outputs, graph inputs: %s" % ', '.join([str(i) for i in inputs]))
     f = Function(inputs=inputs, outputs=outputs,
                  updates=updates, **kwargs)
     return f

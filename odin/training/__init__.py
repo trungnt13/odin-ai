@@ -54,7 +54,7 @@ def _plot_each_epoch(name, results, task_type):
 
 
 def standard_trainer(train_data, valid_data, test_data=None,
-                     cost_train=None, cost_score=None, cost_regu=0,
+                     cost_train=None, cost_score=None, cost_regu=None,
                      parameters=[], optimizer=None,
                      confusion_matrix=None, gradient_norm=True,
                      batch_size=64, nb_epoch=3, valid_freq=1.,
@@ -116,29 +116,35 @@ def standard_trainer(train_data, valid_data, test_data=None,
     # check parameters
     parameters = as_tuple(parameters) if parameters is not None else tuple()
     # ====== get the updates ====== #
-    training_cost = cost_train[0] + sum(c for c in cost_regu)
+    training_cost = cost_train[0]
+    if len(cost_regu) > 0:
+        training_cost += sum(c for c in cost_regu)
     updates = optimizer.get_updates(training_cost, parameters)
-    # ====== add confusion matrix ====== #
-    if confusion_matrix is not None and K.is_variable(confusion_matrix):
-        cost_score.append(confusion_matrix)
-        confusion_matrix = True
-    else:
-        confusion_matrix = False
     # ====== add gradient norm ====== #
     grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
         [optimizer.norm]
     if len(grad_norm) > 0:
         cost_train_name.append('gradient_norm')
     cost_train = [training_cost] + cost_train[1:] + grad_norm
-    # ====== get all input ====== #
-    train_inputs = K.ComputationGraph(cost_train).inputs
-    score_inputs = K.ComputationGraph(cost_score).inputs if len(cost_score) > 0 else []
+    # ====== add confusion matrix ====== #
+    if confusion_matrix is not None and K.is_variable(confusion_matrix):
+        cost_score.append(confusion_matrix)
+        confusion_matrix = True
+    else:
+        confusion_matrix = False
     # ====== create function ====== #
     print('Building training functions ...')
+    train_inputs = K.ComputationGraph(cost_train).inputs
     f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
-    f_score = K.function(inputs=score_inputs, outputs=cost_score) \
-        if len(cost_score) > 0 and valid_data is not None else None
+    f_score = None
+    if valid_data is not None:
+        if len(cost_score) == 0:
+            print("[WARNING] No scoring cost is specified, using training "
+                  "cost for validating!")
+            cost_score = cost_train[:-1] if gradient_norm else cost_train
+        score_inputs = K.ComputationGraph(cost_score).inputs
+        f_score = K.function(inputs=score_inputs, outputs=cost_score)
 
     # ====== evaluation ====== #
     def evaluation():

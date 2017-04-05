@@ -172,7 +172,7 @@ class Sequence(HelperOps):
         # ====== print debug ====== #
         if self.debug:
             print('**************** Sequences: %s ****************' % self.name)
-            print('Is training:', K.is_training())
+            print('Is training:', bool(K.is_training()))
             print('First input:', K.get_shape(x))
         # ====== applying ====== #
         all_outputs = []
