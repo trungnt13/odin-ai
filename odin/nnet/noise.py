@@ -1,6 +1,6 @@
 from __future__ import division, absolute_import
 
-from .base import NNOps
+from .base import NNOps, nnops_initscope
 
 from odin.basic import WEIGHT, BIAS
 from odin import backend as K
@@ -30,6 +30,7 @@ class Dropout(NNOps):
 
     """
 
+    @nnops_initscope
     def __init__(self, level=0.5,
                  noise_dims=None, noise_type='uniform',
                  rescale=True, **kwargs):
@@ -72,6 +73,7 @@ class Noise(NNOps):
 
     """
 
+    @nnops_initscope
     def __init__(self, level=0.075, noise_dims=None,
                  noise_type='gaussian', **kwargs):
         super(Noise, self).__init__(**kwargs)
@@ -100,6 +102,7 @@ class GaussianDenoising(NNOps):
     "Semi-Supervised Learning with Ladder Networks"
     """
 
+    @nnops_initscope
     def __init__(self, activation=K.sigmoid, **kwargs):
         super(GaussianDenoising, self).__init__(**kwargs)
         self.activation = K.linear if activation is None else activation

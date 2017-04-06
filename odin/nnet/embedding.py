@@ -4,7 +4,7 @@ import numpy as np
 
 from odin import backend as K
 from odin.basic import EMBEDDING
-from .base import NNOps, NNConfig
+from .base import NNOps, NNConfig, nnops_initscope
 
 
 class Embedding(NNOps):
@@ -23,6 +23,7 @@ class Embedding(NNOps):
         which has size (input_szie, output_size)
     """
 
+    @nnops_initscope
     def __init__(self, input_size, output_size,
                  W_init=K.init.uniform, **kwargs):
         super(Embedding, self).__init__(**kwargs)

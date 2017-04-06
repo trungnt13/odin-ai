@@ -762,6 +762,7 @@ class ParametricRectifier(NNOps):
     (3, 28)
     """
 
+    @nnops_initscope
     def __init__(self, alpha_init=K.init.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)

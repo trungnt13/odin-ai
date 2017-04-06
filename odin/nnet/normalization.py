@@ -1,6 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
-from .base import NNOps
+from .base import NNOps, nnops_initscope
 
 from odin import backend as K
 from odin.basic import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
@@ -127,6 +127,7 @@ class BatchNorm(NNOps):
            Internal Covariate Shift. http://arxiv.org/abs/1502.03167.
     """
 
+    @nnops_initscope
     def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
                  beta_init=K.init.constant(0), gamma_init=K.init.constant(1),
                  mean_init=K.init.constant(0), inv_std_init=K.init.constant(1),

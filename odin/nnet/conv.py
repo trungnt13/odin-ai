@@ -6,7 +6,7 @@ from odin import backend as K
 from odin.basic import PARAMETER, WEIGHT, BIAS
 from odin.utils import as_tuple
 from odin.utils.shape_calculation import get_conv_output_shape, get_deconv_output_shape
-from .base import NNOps, NNTransposeOps
+from .base import NNOps, NNTransposeOps, nnops_initscope
 
 
 class Conv(NNOps):
@@ -98,6 +98,7 @@ class Conv(NNOps):
     This Ops can be used for both 2D (images) and 3D (videos)
     """
 
+    @nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
                  W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
                  untie_biases=False, activation=K.linear,
@@ -202,6 +203,7 @@ class Conv(NNOps):
 # ===========================================================================
 class TransposeConv(Conv):
 
+    @nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
                  W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
                  untie_biases=False, activation=K.linear,

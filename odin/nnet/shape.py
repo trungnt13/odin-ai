@@ -2,7 +2,7 @@ from __future__ import division, absolute_import
 
 from odin import backend as K
 
-from .base import NNOps, NNTransposeOps
+from .base import NNOps, NNTransposeOps, nnops_initscope
 
 
 def _validate_input_shape(input_shape):
@@ -30,6 +30,7 @@ class FlattenLeft(NNOps):
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(3584, 28)
     """
 
+    @nnops_initscope
     def __init__(self, outdim=2, **kwargs):
         super(FlattenLeft, self).__init__(**kwargs)
         self.outdim = outdim
@@ -51,6 +52,7 @@ class Flatten(NNOps):
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
     """
 
+    @nnops_initscope
     def __init__(self, outdim=2, **kwargs):
         super(Flatten, self).__init__(**kwargs)
         self.outdim = outdim
@@ -69,6 +71,7 @@ class Flatten(NNOps):
 # ===========================================================================
 class Reshape(NNOps):
 
+    @nnops_initscope
     def __init__(self, shape, **kwargs):
         super(Reshape, self).__init__(**kwargs)
         self.shape = shape
@@ -84,6 +87,7 @@ class Reshape(NNOps):
 
 class Dimshuffle(NNOps):
 
+    @nnops_initscope
     def __init__(self, pattern, **kwargs):
         super(Dimshuffle, self).__init__(**kwargs)
         self.pattern = pattern
@@ -97,6 +101,7 @@ class Dimshuffle(NNOps):
 
 class Squeeze(NNOps):
 
+    @nnops_initscope
     def __init__(self, axis, **kwargs):
         super(Squeeze, self).__init__(**kwargs)
         self.axis = axis

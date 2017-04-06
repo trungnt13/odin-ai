@@ -14,7 +14,7 @@ from odin.basic import (INITIAL_STATE, WEIGHT, BIAS, PARAMETER,
                         BATCH_NORM_POPULATION_INVSTD)
 from odin.utils import as_tuple
 
-from .base import NNOps
+from .base import NNOps, nnops_initscope
 from .helper import Sequence, HelperOps
 from .normalization import BatchNorm
 
@@ -128,6 +128,7 @@ class BidirectionalRNN(HelperOps):
         a function to merge the output of forward and backward networks
     """
 
+    @nnops_initscope
     def __init__(self, forward, backward=None, mode=K.concatenate, **kwargs):
         if not isinstance(forward, NNOps):
             raise ValueError('forward must be instance of NNOps, but it is %s'
@@ -241,6 +242,7 @@ class RNN(BaseRNN):
 
     """
 
+    @nnops_initscope
     def __init__(self, num_units, activation=K.relu,
                  W_init=K.init.glorot_uniform,
                  b_init=K.init.constant(0.),
@@ -377,6 +379,7 @@ class GRU(BaseRNN):
 
     """
 
+    @nnops_initscope
     def __init__(self, num_units,
                  activation=K.tanh,
                  gate_activation=K.sigmoid,
@@ -569,6 +572,7 @@ class LSTM(BaseRNN):
 
     """
 
+    @nnops_initscope
     def __init__(self, num_units,
                  activation=K.tanh,
                  gate_activation=K.sigmoid,
@@ -778,6 +782,7 @@ class CudnnRNN(NNOps):
 
     """
 
+    @nnops_initscope
     def __init__(self, num_units,
             W_init=K.init.glorot_uniform,
             b_init=K.init.constant(0.),
