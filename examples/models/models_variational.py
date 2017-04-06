@@ -26,14 +26,10 @@ def convolutional_vae(X, saved_states, **kwargs):
         # Encoder
         f_inference = N.Sequence([
             N.Reshape(shape=(-1, 28, 28, 1)),
-            N.Conv(num_filters=32, filter_size=5, strides=2, pad='same', b_init=None),
-            N.BatchNorm(activation=K.elu),
-
-            N.Conv(num_filters=64, filter_size=5, strides=2, pad='same', b_init=None),
-            N.BatchNorm(activation=K.elu),
-
-            N.Conv(num_filters=128, filter_size=5, b_init=None),
-            N.BatchNorm(activation=K.elu),
+            N.Conv(num_filters=32, filter_size=3, strides=1, pad='valid',
+                   b_init=K.init.constant(0.), activation=K.elu),
+            N.Conv(num_filters=64, filter_size=5, strides=2, pad='same',
+                   b_init=K.init.constant(0.), activation=K.elu),
 
             N.Dropout(level=0.1),
             N.Flatten(outdim=2),
@@ -44,16 +40,12 @@ def convolutional_vae(X, saved_states, **kwargs):
         # Decoder
         f_generative = N.Sequence([
             N.Dimshuffle(pattern=(0, 'x', 'x', 1)),
-            N.TransposeConv(num_filters=128, filter_size=3, pad='valid', b_init=None),
-            N.BatchNorm(activation=K.elu),
-
-            N.TransposeConv(num_filters=64, filter_size=5, pad='valid', b_init=None),
-            N.BatchNorm(activation=K.elu),
-
-            N.TransposeConv(num_filters=32, filter_size=5, strides=2, pad='same', b_init=None),
-            N.BatchNorm(activation=K.elu),
-
-            N.TransposeConv(num_filters=1, filter_size=5, strides=2, pad='same', b_init=None),
+            N.TransposeConv(num_filters=64, filter_size=3, strides=1, pad='valid',
+                            b_init=K.init.constant(0.), activation=K.elu),
+            N.TransposeConv(num_filters=32, filter_size=5, strides=2, pad='same',
+                            b_init=K.init.constant(0.), activation=K.elu),
+            N.TransposeConv(num_filters=1, filter_size=13, strides=3, pad='valid',
+                            b_init=None),
             N.BatchNorm(activation=K.linear),
 
             N.Flatten(outdim=3)
@@ -74,11 +66,11 @@ def convolutional_vae(X, saved_states, **kwargs):
     # inference
     params = f_inference.parameters + f_generative.parameters
     inference = ed.KLqp(latent_vars={z: qz}, data={X_reconstruct: X})
-    inference.initialize()
     # ====== get cost for training ====== #
     # Bind p(x, z) and q(z | x) to the same placeholder for x.
     if K.is_training():
         import tensorflow as tf
+        inference.initialize()
         if True:
             optimizer = tf.train.AdamOptimizer(0.01, epsilon=1.0)
             updates = optimizer.apply_gradients(
@@ -92,9 +84,8 @@ def convolutional_vae(X, saved_states, **kwargs):
             init = tf.global_variables_initializer()
             init.run()
             f_train = lambda x: inference.update(feed_dict={X: x})['loss']
-    else:
-        samples = K.sigmoid(logits)
-    return (f_train if K.is_training() else samples, z), (f_inference, f_generative)
+    samples = K.sigmoid(logits)
+    return (samples, z, qz), (f_inference, f_generative)
 
 
 @N.ModelDescriptor

@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.framework import is_tensor as _is_tensor
 from tensorflow.contrib.distributions.python.ops.distribution import Distribution as _Distribution
-from tensorflow import variable_scope
+from tensorflow import variable_scope as _tf_variable_scope
 
 from odin.basic import (add_role, has_roles, as_shape_tuple,
                         add_shape, get_shape,
@@ -127,6 +127,10 @@ _CREATED_VARIABLE = {}
 _VAR_ID = 0
 
 
+def variable_scope(scope):
+    return _tf_variable_scope(scope, reuse=False)
+
+
 def variable(value, dtype=FLOATX, name=None):
     '''Instantiates a tensor.
 
@@ -147,10 +151,11 @@ def variable(value, dtype=FLOATX, name=None):
     if full_name in _CREATED_VARIABLE:
         variable = _CREATED_VARIABLE[full_name]
         if get_shape(variable) != value.shape:
-            raise Exception('Found pre-defined variable with shape="%s" but new'
-                            ' value has shape="%s"' % (get_shape(variable), value.shape))
+            raise Exception('Found pre-defined variable with scope="%s", name="%s" '
+                            'and shape="%s", but the new value has shape="%s"' %
+                            (current_scope, name, get_shape(variable), value.shape))
         else:
-            print("[WARNING] Load new value to old variable:", full_name)
+            print("[WARNING] Load new value to the old variable with name:", full_name)
         set_value(variable, value)
         return variable
     #### create totally new variable

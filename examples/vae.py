@@ -42,9 +42,13 @@ X_valid = ds['X_valid'].transform(
 X = K.placeholder(shape=(M,) + ds['X_train'].shape[1:], dtype='int32', name='X')
 print("Input shape:", X)
 model = N.get_model_descriptor('convolutional_vae')
-K.set_training(True); (f_train, z1) = model(X)
-K.set_training(False); (y_score, z2) = model(X)
-
+K.set_training(True); (y1, z1, qz1) = model(X)
+K.set_training(False); (y2, z2, qz2) = model(X)
+print([i.name for i in K.ComputationGraph(y1).variables])
+# print([i.name for i in K.ComputationGraph(y2).variables])
+for i, j in N.get_all_nnops().iteritems():
+    print(i, j)
+exit()
 # import tensorflow as tf
 # writer = tf.summary.FileWriter('/tmp/testlog',
 #     graph=y_score.graph)

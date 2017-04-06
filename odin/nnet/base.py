@@ -4,25 +4,143 @@ import inspect
 import numbers
 import warnings
 from itertools import chain
+from functools import wraps
 from collections import OrderedDict
+from contextlib import contextmanager
 from abc import ABCMeta, abstractmethod
-from six import add_metaclass, types, string_types
 from six.moves import zip, range, cPickle
+from six import add_metaclass, types, string_types
 
 import numpy as np
 
 from odin import backend as K
 from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
                         WEIGHT, BIAS, VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
-from odin.utils import as_tuple, uuid, cache_memory, is_number
+from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
 
 from .model import InputDescriptor
 
 # ===========================================================================
-# Ops Context
+# Global NNOps manager
 # ===========================================================================
-__B_INIT = K.init.constant(0.)
-__ACTIVATION = K.linear
+__ALL_NNOPS = {}
+
+
+def get_all_nnops():
+    """ Return a dictionary of (name, nnops) for all created NNOps """
+    return __ALL_NNOPS
+
+
+def assign_new_nnops(nnops):
+    if not isinstance(nnops, NNOps):
+        raise ValueError("The new assigned NNOps must be instance of odin.nnet.NNOps "
+                         ", but the given object has type: %s" % str(type(nnops)))
+    name = nnops.name
+    if name in get_all_nnops():
+        raise RuntimeError("Another NNOps of type: '%s', and name: '%s' has "
+                           "already existed." % (type(__ALL_NNOPS[name]), name))
+    __ALL_NNOPS[name] = nnops
+
+# ===========================================================================
+# Context manager
+# ===========================================================================
+__ARGS_SCOPE_STACK = [[(), {}]]
+
+
+def _get_current_arg_scope(nnops, ops_name):
+    ops, scope = __ARGS_SCOPE_STACK[-1]
+    for name in ops:
+        # first case, name is string
+        if is_string(name):
+            if ops_name in name or name == nnops.__class__.__name__ or \
+            name == str(type(nnops)):
+                return scope
+        # specified a type
+        elif isinstance(name, type) and name in inspect.getmro(type(nnops)):
+            return scope
+        # specified an object
+        elif isinstance(name, NNOps) and type(name) == type(nnops):
+            return scope
+    return {}
+
+
+@contextmanager
+def arg_scope(applied_nnops, **kwargs):
+    """Stores the default arguments for the given set of applied_nnops.
+
+    For usage, please see examples at top of the file.
+
+    Parameters
+    ----------
+    applied_nnops: List or tuple string, type, or NNOps
+        a dictionary containing the current scope. When list_ops_or_scope is a
+        dict, kwargs must be empty. When list_ops_or_scope is a list or tuple,
+        then every op in it need to be decorated with @add_arg_scope to work.
+    **kwargs: keyword=value that will define the defaults for each op in
+        list_ops. All the ops need to accept the given set of arguments.
+
+    Return
+    ------
+    the current_scope, which is a dictionary of {op: {arg: value}}
+
+    Raises
+    ------
+    TypeError: if list_ops is not a list or a tuple.
+    ValueError: if any op in list_ops has not be decorated with @add_arg_scope.
+    """
+    applied_nnops = as_tuple(applied_nnops)
+    # ====== yield then reset ====== #
+    __ARGS_SCOPE_STACK.append([applied_nnops, kwargs])
+    yield None
+    __ARGS_SCOPE_STACK.pop()
+
+
+def nnops_initscope(func):
+    if not callable(func) or func.__name__ != '__init__':
+        raise ValueError("nnops_initscope can be only applied to __init__ "
+                         "of NNOps instance.")
+    # getting the default arguments to check user intentionally override
+    # default argument.
+    spec = inspect.getargspec(func)
+    if 'self' != spec.args[0]:
+        raise RuntimeError("'self' argument must be the first argument of __init__.")
+    default_args = OrderedDict([(i, '__no_argument__') for i in spec.args])
+    if spec.defaults is not None:
+        for name, value in zip(spec.args[::-1], spec.defaults[::-1]):
+            default_args[name] = value
+
+    @wraps(func)
+    def _wrap_init(*args, **kwargs):
+        self_arg = kwargs['self'] if 'self' in kwargs else args[0]
+        if not isinstance(self_arg, NNOps):
+            raise ValueError("nnops_initscope can be only applied to __init__ "
+                             "of NNOps instance.")
+        # get name of the NNOps
+        ops_name = kwargs.get('name', None)
+        if ops_name is None:
+            ops_name = "%s_%s" % (self_arg.__class__.__name__, uuid())
+        # update the new arguments into default arguments
+        new_args = OrderedDict([(name, args[i]) if i < len(args)
+            else (name, default)
+            for i, (name, default) in enumerate(default_args.iteritems())])
+        new_args.update(kwargs)
+        new_args['name'] = ops_name
+        # get current scope
+        current_scope = _get_current_arg_scope(self_arg, ops_name)
+        final_args = {}
+        for name, val in new_args.iteritems():
+            # override default argument by current scope
+            if name in current_scope and \
+            (name not in default_args or default_args[name] == val):
+                final_args[name] = current_scope[name]
+            else:
+                final_args[name] = val
+        # check if all arguments is specified
+        if any(i == '__no_argument__' for i in final_args.itervalues()):
+            raise RuntimeError("The argument with name '%s' hasn't been specified."
+                % str([i for i, j in final_args.iteritems() if j == '__no_argument__']))
+        return func(**final_args)
+    return _wrap_init
 
 
 # ===========================================================================
@@ -169,7 +287,6 @@ class NNConfig(object):
         """
         if not isinstance(roles, (tuple, list)):
             roles = [roles]
-        nnops = self._nnops
         shape = tuple(shape)  # convert to tuple if needed
         if any(d <= 0 for d in shape):
             raise ValueError((
@@ -189,16 +306,14 @@ class NNConfig(object):
         # check spec returned
         spec = [i[0] for i in spec]
         if isinstance(spec[0], np.ndarray):
-            with K.variable_scope(nnops.name):
-                spec = np.concatenate(spec, axis=-1)
-                shape = spec.shape
-                spec = K.variable(spec, name=name)
+            spec = np.concatenate(spec, axis=-1)
+            shape = spec.shape
+            spec = K.variable(spec, name=name)
         elif K.is_trainable_variable(spec[0]):
             if nb_params > 1:
-                with K.variable_scope(nnops.name):
-                    spec = np.concatenate([K.get_value(i) for i in spec], axis=-1)
-                    shape = spec.shape
-                    spec = K.variable(spec, name=name)
+                spec = np.concatenate([K.get_value(i) for i in spec], axis=-1)
+                shape = spec.shape
+                spec = K.variable(spec, name=name)
             else:
                 spec = spec[0]
         elif K.is_variable(spec[0]):
@@ -276,15 +391,54 @@ class NNOps(object):
         super(NNOps, self).__init__()
         self._save_states = {}
 
-        self.name = name
         if name is None:
-            self.name = "%s_%s" % (self.__class__.__name__, uuid())
+            name = "%s_%s" % (self.__class__.__name__, uuid())
+        elif not is_string(name):
+            raise ValueError("name for NNOps must be string, but given name "
+                             "has type: %s" % (name))
+        self._name = str(name)
 
         self._configuration = NNConfig(self)
         self._transpose_ops = None
         self._is_initialized = False
+        # ====== check if there is predefined NNOps ====== #
+        assign_new_nnops(self)
+
+    # ==================== pickling method ==================== #
+    def __getstate__(self):
+        return self._save_states
+
+    def __setstate__(self, states):
+        self._save_states = states
+        for i, j in self._save_states.iteritems():
+            setattr(self, i, j)
+        # ====== check exist NNOps ====== #
+        name = self.name
+        if name in get_all_nnops():
+            # compare 2 NNOps to make sure they are the same
+            nnops = get_all_nnops()[name]
+            if type(nnops) == type(self):
+                for i, j in self._save_states.iteritems():
+                    if i in nnops._save_states:
+                        k = nnops._save_states[i]
+                        if type(k) == type(j):
+                            if K.is_variable(j) and K.get_shape(k) != K.get_shape(j):
+                                pass
+                            else:
+                                continue
+                    raise RuntimeError("The pre-defined NNOps (%s) and the "
+                        "new loaded NNOps is different on the attribute: '%s'" %
+                        (str(nnops), i))
+            else:
+                raise RuntimeError("Found pre-defined NNOps of type=%s, and")
+        else:
+            assign_new_nnops(self)
 
     # ==================== properties ==================== #
+    @property
+    def name(self):
+        return self._name
+
     @property
     def T(self):
         """ Return new ops which is transpose of this ops """
@@ -375,22 +529,23 @@ class NNOps(object):
 
     # ==================== interaction method ==================== #
     def apply(self, X, **kwargs):
-        # ====== initialize first ====== #
-        # only select necessary arguments
-        argspec = inspect.getargspec(self._initialize)
-        keywords = {}
-        # kwargs must be specified in args, or the _initialize
-        # must accept **kwaobject, class_or_type_or_tuplergs
-        for i, j in kwargs.iteritems():
-            if argspec.keywords is not None or i in argspec.args:
-                keywords[i] = j
-        # initialize the operator (call the initilazation process)
-        X = self._configuration.check_input_desc(X)
-        if not self._is_initialized:
-            self._initialize(**keywords)
-            self._is_initialized = True
-        # ====== calculate and return outputs ====== #
-        return self._apply(X[0] if len(X) == 1 else X, **kwargs)
+        with K.variable_scope(self.name):
+            # ====== initialize first ====== #
+            # only select necessary arguments
+            argspec = inspect.getargspec(self._initialize)
+            keywords = {}
+            # kwargs must be specified in args, or the _initialize
+            # must accept **kwaobject, class_or_type_or_tuplergs
+            for i, j in kwargs.iteritems():
+                if argspec.keywords is not None or i in argspec.args:
+                    keywords[i] = j
+            # initialize the operator (call the initilazation process)
+            X = self._configuration.check_input_desc(X)
+            if not self._is_initialized:
+                self._initialize(**keywords)
+                self._is_initialized = True
+            # ====== calculate and return outputs ====== #
+            return self._apply(X[0] if len(X) == 1 else X, **kwargs)
 
     def __call__(self, X, **kwargs):
         return self.apply(X, **kwargs)
@@ -403,15 +558,6 @@ class NNOps(object):
     # ==================== Slicing ==================== #
     def __getitem__(self, key):
         return NNSliceOps(self, key)
-
-    # ==================== pickling method ==================== #
-    def __getstate__(self):
-        return self._save_states
-
-    def __setstate__(self, states):
-        self._save_states = states
-        for i, j in self._save_states.iteritems():
-            setattr(self, i, j)
 
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
@@ -512,6 +658,7 @@ class NNTransposeOps(NNOps):
 # ===========================================================================
 class Dense(NNOps):
 
+    @nnops_initscope
     def __init__(self, num_units,
                  W_init=K.init.glorot_uniform,
                  b_init=K.init.constant(0),

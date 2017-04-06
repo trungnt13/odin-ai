@@ -134,7 +134,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
         confusion_matrix = False
     # ====== create function ====== #
     print('Building training functions ...')
-    train_inputs = K.ComputationGraph(cost_train).inputs
+    train_inputs = K.ComputationGraph(cost_train).inputs[::-1]
     f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
     f_score = None
@@ -143,7 +143,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
             print("[WARNING] No scoring cost is specified, using training "
                   "cost for validating!")
             cost_score = cost_train[:-1] if gradient_norm else cost_train
-        score_inputs = K.ComputationGraph(cost_score).inputs
+        score_inputs = K.ComputationGraph(cost_score).inputs[::-1]
         f_score = K.function(inputs=score_inputs, outputs=cost_score)
 
     # ====== evaluation ====== #
@@ -257,7 +257,10 @@ def standard_trainer(train_data, valid_data, test_data=None,
                 plt.suptitle("[Eval] Confustion matrices", fontsize=20)
                 plt.tight_layout()
         # save all the plot
-        visual.plot_save(path=report_path, dpi=180, clear_all=True)
+        if report_path == 'show':
+            plt.show()
+        else:
+            visual.plot_save(path=report_path, dpi=180, clear_all=True)
         if save_path is not None:
             print("Best checkpoint saved at:", save_path)
     # ====== Create trainer ====== #
@@ -271,9 +274,8 @@ def standard_trainer(train_data, valid_data, test_data=None,
         task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
         # format for score
         score_format = 'Results:' + \
-            __format_string(len(cost_score) - (len(y_score) if confusion_matrix else 0))
-        score_tracking = {(len(cost_score) - i - 1): (lambda x: sum(x))
-            for i in range(len(y_score))} if confusion_matrix else []
+            __format_string(len(cost_score) - 1)
+        score_tracking = {(len(cost_score) - 1): lambda x: sum(x)}
     task.set_signal_handlers(end=evaluation)
     # set the callback
     history = History()
