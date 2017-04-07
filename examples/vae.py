@@ -41,13 +41,12 @@ X_valid = ds['X_valid'].transform(
 # ====== get model ====== #
 X = K.placeholder(shape=(M,) + ds['X_train'].shape[1:], dtype='int32', name='X')
 print("Input shape:", X)
-model = N.get_model_descriptor('convolutional_vae')
+model = N.get_model_descriptor('dense_vae')
 K.set_training(True); (y1, z1, qz1) = model(X)
 K.set_training(False); (y2, z2, qz2) = model(X)
 print([i.name for i in K.ComputationGraph(y1).variables])
-# print([i.name for i in K.ComputationGraph(y2).variables])
-for i, j in N.get_all_nnops().iteritems():
-    print(i, j)
+print()
+print([i.name for i in K.ComputationGraph(y2).variables])
 exit()
 # import tensorflow as tf
 # writer = tf.summary.FileWriter('/tmp/testlog',

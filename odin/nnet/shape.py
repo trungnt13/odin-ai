@@ -13,15 +13,6 @@ def _validate_input_shape(input_shape):
                         % str(input_shape))
 
 
-class InvertReshape(NNTransposeOps):
-    """This Ops invert any shape changing operator"""
-
-    def _apply(self, X):
-        output_shape = self.T.input_shape
-        shape = tuple([-1 if i is None else i for i in output_shape])
-        return K.reshape(X, shape)
-
-
 # ===========================================================================
 # Flatten
 # ===========================================================================
@@ -44,7 +35,7 @@ class FlattenLeft(NNOps):
         return K.reshape(x, (-1,) + other_shape)
 
     def _transpose(self):
-        return InvertReshape(self)
+        return Reshape(shape=self.input_shape_ref)
 
 
 class Flatten(NNOps):
@@ -63,7 +54,7 @@ class Flatten(NNOps):
         return K.flatten(x, outdim=self.outdim)
 
     def _transpose(self):
-        return InvertReshape(self)
+        return Reshape(shape=self.input_shape_ref)
 
 
 # ===========================================================================
@@ -82,7 +73,7 @@ class Reshape(NNOps):
         return K.reshape(x, shape=self.shape)
 
     def _transpose(self):
-        return InvertReshape(self)
+        return Reshape(shape=self.input_shape_ref)
 
 
 class Dimshuffle(NNOps):
@@ -96,7 +87,7 @@ class Dimshuffle(NNOps):
         return K.dimshuffle(x, pattern=self.pattern)
 
     def _transpose(self):
-        return InvertReshape(self)
+        return Reshape(shape=self.input_shape_ref)
 
 
 class Squeeze(NNOps):

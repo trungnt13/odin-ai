@@ -44,12 +44,12 @@ def assign_new_nnops(nnops):
 # ===========================================================================
 # Context manager
 # ===========================================================================
-__ARGS_SCOPE_STACK = [[(), {}]]
+__ARGS_SCOPE_STACK = [{}]
 
 
 def _get_current_arg_scope(nnops, ops_name):
-    ops, scope = __ARGS_SCOPE_STACK[-1]
-    for name in ops:
+    ops = __ARGS_SCOPE_STACK[-1]
+    for name, scope in ops.iteritems():
         # first case, name is string
         if is_string(name):
             if ops_name in name or name == nnops.__class__.__name__ or \
@@ -88,9 +88,30 @@ def arg_scope(applied_nnops, **kwargs):
     TypeError: if list_ops is not a list or a tuple.
     ValueError: if any op in list_ops has not be decorated with @add_arg_scope.
     """
-    applied_nnops = as_tuple(applied_nnops)
+    if isinstance(applied_nnops, dict):
+        applied_nnops = applied_nnops.items()
+    else:
+        applied_nnops = as_tuple(applied_nnops)
+    # ====== assign scope for each Ops ====== #
+    nnops_scope = {}
+    for ops in applied_nnops:
+        scope = kwargs.copy()
+        if is_string(ops) or isinstance(ops, type):
+            nnops_scope[ops] = scope
+        elif isinstance(ops, (tuple, list)) and len(ops) == 2:
+            ops, add_scope = ops
+            scope.update(dict(add_scope))
+            nnops_scope[ops] = scope
+        elif isinstance(ops, dict):
+            if len(ops) > 1:
+                raise ValueError("No Support for length > 1, in ops argument specification.")
+            ops, add_scope = ops.items()[0]
+            scope.update(dict(add_scope))
+            nnops_scope[ops] = scope
+        else:
+            raise ValueError("Cannot parsing arguments scope for ops: %s" % str(ops))
     # ====== yield then reset ====== #
-    __ARGS_SCOPE_STACK.append([applied_nnops, kwargs])
+    __ARGS_SCOPE_STACK.append(nnops_scope)
     yield None
     __ARGS_SCOPE_STACK.pop()
 
@@ -152,6 +173,8 @@ def _initialize_param(name, spec, shape):
     # 0. initializing function.
     if callable(spec):
         spec = spec(shape)
+    elif is_number(spec):
+        spec = np.full(shape=shape, fill_value=spec)
     #####################################
     # 1. Shared variable, just check the shape.
     if K.is_trainable_variable(spec):
