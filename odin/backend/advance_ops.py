@@ -11,7 +11,7 @@ import numpy as np
 
 from odin.config import CONFIG, get_rng
 from odin.utils import as_tuple, is_number
-from odin.basic import add_updates, get_shape, add_shape, add_role, ACTIVATION_PARAMETER
+from odin.basic import add_updates, get_shape, add_shape, add_role, ActivationParameter
 
 from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
                         concatenate, clip, log, one_hot, reshape, constant, any,
@@ -359,10 +359,10 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
     input_shape = get_shape(x)
     # ====== check lower and upper ====== #
     if is_trainable_variable(lower):
-        add_role(lower, ACTIVATION_PARAMETER)
+        add_role(lower, ActivationParameter)
         lower.name = 'lower'
     if is_trainable_variable(upper):
-        add_role(upper, ACTIVATION_PARAMETER)
+        add_role(upper, ActivationParameter)
         upper.name = 'upper'
     if not is_variable(lower > upper) and lower > upper:
         raise ValueError("Upper bound for Randomized Rectifier needs "

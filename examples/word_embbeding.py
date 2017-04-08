@@ -19,7 +19,7 @@ from itertools import chain
 import numpy as np
 
 from odin import backend as K, nnet as N, fuel as F
-from odin.basic import has_roles, EMBEDDING
+from odin.basic import has_roles, EmbeddingWeights
 from odin.preprocessing.text import (Tokenizer, language, POSfilter,
                                      TYPEfilter, CasePreprocessor,
                                      TransPreprocessor)
@@ -125,7 +125,7 @@ f = N.Sequence([
 ], debug=True)
 
 y_pred = f(X)
-params = [p for p in f.parameters if not has_roles(p, EMBEDDING)]
+params = [p for p in f.parameters if not has_roles(p, EmbeddingWeights)]
 print('Params:', [p.name for p in params])
 
 cost_train = K.mean(K.categorical_crossentropy(y_pred, y))

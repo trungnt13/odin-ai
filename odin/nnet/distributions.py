@@ -7,7 +7,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 from odin import backend as K
 from odin.utils.cache_utils import cache_memory
-from odin.basic import (add_role, VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA,
+from odin.basic import (add_role, VariationalMean, VariationalLogsigma,
                         WEIGHT, BIAS)
 
 from .base import NNOps

@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 from odin import backend as K
-from odin.basic import EMBEDDING
+from odin.basic import EmbeddingWeights
 from .base import NNOps, NNConfig, nnops_initscope
 
 
@@ -39,7 +39,7 @@ class Embedding(NNOps):
     def _initialize(self):
         self.config.create_params(self.W_init,
                              shape=(self.input_size, self.output_size),
-                             name='W', roles=EMBEDDING, nb_params=1)
+                             name='W', roles=EmbeddingWeights, nb_params=1)
 
     def _apply(self, x):
         input_shape = K.get_shape(x)

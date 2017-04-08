@@ -14,8 +14,8 @@ import numpy as np
 
 from odin.config import CONFIG
 from odin.utils import as_tuple
-from odin.basic import (add_role, AUXILIARY, LEARNING_RATE,
-                        OPTIMIZER_HYPER_PARAMETER, VariableRole)
+from odin.basic import (add_role, Auxiliary, LearningRate,
+                        OptimizerHyperParameter, VariableRole)
 FLOATX = CONFIG.floatX
 
 # store python primitive operators
@@ -142,7 +142,7 @@ def total_norm_constraint(tensor_vars, max_norm, epsilon=1e-8,
     tensor_vars = as_tuple(tensor_vars)
     # ====== clip norm ====== #
     norm = sqrt(_sum([sum(square(tensor)) for tensor in tensor_vars]))
-    add_role(norm, AUXILIARY)
+    add_role(norm, Auxiliary)
     tensor_vars = [switch(norm >= max_norm, g * max_norm / norm, g)
                    if g is not None else None
                    for g in tensor_vars]
@@ -274,7 +274,7 @@ class Optimizer(object):
     """
 
     def __init__(self, lr, clipnorm=None, clipvalue=None):
-        self.lr = _as_variable(lr, name='learning_rate', roles=LEARNING_RATE)
+        self.lr = _as_variable(lr, name='learning_rate', roles=LearningRate)
 
         if clipnorm is not None and \
         (clipnorm if isinstance(clipnorm, numbers.Number) else get_value(clipnorm)) <= 0:
@@ -319,7 +319,7 @@ class Optimizer(object):
         else:
             self._norm = sqrt(_sum([sum(square(g)) for g in grads
                                     if g is not None]))
-            add_role(self._norm, AUXILIARY)
+            add_role(self._norm, Auxiliary)
         # ====== clipvalue ====== #
         if self.clipvalue is not None and self.clipvalue > 0:
             grads = [clip(g, -self.clipvalue, self.clipvalue)
@@ -363,18 +363,18 @@ class SGD(Optimizer):
     def __init__(self, lr=0.01, momentum=0.9, decay=None, nesterov=False,
                  clipnorm=None, clipvalue=None):
         super(SGD, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0., name='iterations', roles=AUXILIARY)
+        self.iterations = _as_variable(0., name='iterations', roles=Auxiliary)
         self.nesterov = nesterov
         # ====== momentum ====== #
         if momentum == 0:
             momentum = None
         self.momentum = _as_variable(momentum, name='momentum',
-                                     roles=OPTIMIZER_HYPER_PARAMETER)
+                                     roles=OptimizerHyperParameter)
         # ====== decay ====== #
         if decay == 0:
             decay = None
         self.decay = _as_variable(decay, name='decay',
-                                  roles=OPTIMIZER_HYPER_PARAMETER)
+                                  roles=OptimizerHyperParameter)
 
     def get_updates(self, loss_or_grads, params):
         grads = self.get_gradients(loss_or_grads, params)
@@ -459,7 +459,7 @@ class RMSProp(Optimizer):
                  clipnorm=None, clipvalue=None):
         super(RMSProp, self).__init__(lr, clipnorm, clipvalue)
         self.rho = _as_variable(rho, name='rho',
-                                roles=OPTIMIZER_HYPER_PARAMETER)
+                                roles=OptimizerHyperParameter)
         self.epsilon = constant(epsilon, dtype=FLOATX)
 
     def get_updates(self, loss_or_grads, params):
@@ -540,7 +540,7 @@ class Adadelta(Optimizer):
                  clipnorm=None, clipvalue=None):
         super(Adadelta, self).__init__(lr, clipnorm, clipvalue)
         self.rho = _as_variable(rho, name='rho',
-                                roles=OPTIMIZER_HYPER_PARAMETER)
+                                roles=OptimizerHyperParameter)
         self.epsilon = epsilon
 
     def get_updates(self, loss_or_grads, params):
@@ -609,11 +609,11 @@ class Adam(Optimizer):
     def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adam, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
+        self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
         self.beta_1 = _as_variable(beta_1, name='beta_1',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.beta_2 = _as_variable(beta_2, name='beta_2',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.epsilon = epsilon
 
     def get_updates(self, loss_or_grads, params):
@@ -678,11 +678,11 @@ class Adamax(Optimizer):
     def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  clipnorm=None, clipvalue=None):
         super(Adamax, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
+        self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
         self.beta_1 = _as_variable(beta_1, name='beta_1',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.beta_2 = _as_variable(beta_2, name='beta_2',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.epsilon = epsilon
 
     def get_updates(self, loss_or_grads, params):
@@ -753,14 +753,14 @@ class Nadam(Optimizer):
     def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                  schedule_decay=0.004, clipnorm=None, clipvalue=None):
         super(Nadam, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0, name='iterations', roles=AUXILIARY)
-        self.m_schedule = _as_variable(1., name='m_schedule', roles=AUXILIARY)
+        self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
+        self.m_schedule = _as_variable(1., name='m_schedule', roles=Auxiliary)
         self.schedule_decay = schedule_decay
 
         self.beta_1 = _as_variable(beta_1, name='beta_1',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.beta_2 = _as_variable(beta_2, name='beta_2',
-                                   roles=OPTIMIZER_HYPER_PARAMETER)
+                                   roles=OptimizerHyperParameter)
         self.epsilon = epsilon
 
     def get_updates(self, loss_or_grads, params):

@@ -23,7 +23,7 @@ from theano.tensor.sharedvar import SharedVariable
 
 from odin.basic import (add_role, has_roles, as_shape_tuple,
                         add_shape, get_shape,
-                        AUXILIARY, PARAMETER)
+                        Auxiliary, Parameter)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union
 from odin.config import CONFIG
@@ -396,11 +396,11 @@ class ComputationGraph(object):
     @property
     def parameters(self):
         return [var for var in self.trainable_variables
-                if has_roles(var, [PARAMETER])]
+                if has_roles(var, [Parameter])]
 
     @property
     def auxiliary_variables(self):
-        return [var for var in self.variables if has_roles(var, [AUXILIARY])]
+        return [var for var in self.variables if has_roles(var, [Auxiliary])]
 
     @property
     def dict_of_placeholders(self):

@@ -38,7 +38,7 @@ np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
 from odin.utils import get_modelpath, stdio, get_logpath, get_datasetpath
-from odin.basic import has_roles, BIAS, WEIGHT
+from odin.basic import has_roles, Bias, Weight
 from odin import training
 
 # set log path
@@ -165,7 +165,7 @@ cost_test_2 = K.mean(K.categorical_accuracy(y_score, y))
 cost_test_3 = K.confusion_matrix(y_score, y, labels=range(10))
 
 # ====== create optimizer ====== #
-parameters = [p for p in f.parameters if has_roles(p, [WEIGHT, BIAS])]
+parameters = [p for p in f.parameters if has_roles(p, [Weight, Bias])]
 optimizer = K.optimizers.RMSProp(lr=args['lr'])
 # ===========================================================================
 # Standard trainer

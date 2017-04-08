@@ -8,7 +8,7 @@ from six.moves import zip, range
 
 import numpy as np
 
-from odin.basic import add_updates, add_auxiliary_variable, add_role, AUXILIARY
+from odin.basic import add_updates, add_auxiliary_variable, add_role, Auxiliary
 from odin import backend as K
 from odin import nnet as N
 from odin.utils import segment_list
@@ -256,7 +256,7 @@ class BackendTest(unittest.TestCase):
         Y = K.variable(np.random.rand(12, 8), name='Y')
         Z = K.placeholder(shape=(8, 8), name='Z')
         a = K.dot(X, Y)
-        add_role(a, AUXILIARY)
+        add_role(a, Auxiliary)
         add_updates(a, X, X + 12)
         a = a + Z
         g1 = K.ComputationGraph(a)

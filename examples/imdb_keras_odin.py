@@ -7,7 +7,7 @@ from six.moves import cPickle
 import numpy as np
 
 from odin import backend as K, nnet as N, utils, fuel as F, training
-from odin.basic import has_roles, INITIAL_STATE
+from odin.basic import has_roles, InitialState
 from sklearn.metrics import accuracy_score
 
 # ===========================================================================
@@ -64,7 +64,7 @@ K.set_training(False); y_odin_score = net_odin(X)
 
 cost_train = K.mean(K.binary_crossentropy(y_odin_train, y))
 cost_score = K.mean(K.binary_accuracy(y_odin_score, y))
-parameters = [p for p in net_odin.parameters if not has_roles(p, INITIAL_STATE)]
+parameters = [p for p in net_odin.parameters if not has_roles(p, InitialState)]
 print('Params:', [p.name for p in parameters])
 
 opt = K.optimizers.RMSProp()

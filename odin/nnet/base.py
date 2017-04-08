@@ -14,8 +14,8 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
-from odin.basic import (add_role, has_roles, PARAMETER, VariableRole,
-                        WEIGHT, BIAS, VARIATIONAL_MEAN, VARIATIONAL_LOGSIGMA)
+from odin.basic import (add_role, has_roles, Parameter, VariableRole,
+                        Weight, Bias, VariationalMean, VariationalLogsigma)
 from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
 
 from .model import InputDescriptor
@@ -482,7 +482,7 @@ class NNOps(object):
     @property
     def parameters(self):
         """ return all TensorVariables which have the PARAMETER role"""
-        return [i for i in self.variables if has_roles(i, PARAMETER)]
+        return [i for i in self.variables if has_roles(i, Parameter)]
 
     @property
     def trainable_variables(self):
@@ -701,10 +701,10 @@ class Dense(NNOps):
     def _initialize(self):
         input_shape = self.input_shape
         shape = (input_shape[-1], self.num_units)
-        self.config.create_params(self.W_init, shape, 'W', roles=WEIGHT)
+        self.config.create_params(self.W_init, shape, 'W', roles=Weight)
         if self.b_init is not None:
             self.config.create_params(self.b_init,
-                shape=(self.num_units,), name='b', roles=BIAS)
+                shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
         input_shape = K.get_shape(X)
@@ -727,7 +727,7 @@ class TransposeDense(NNTransposeOps):
         self.num_units = self.T.input_shape[-1]
         if self.T.b_init is not None:
             self.config.create_params(self.T.b_init,
-                shape=(self.num_units,), name='b', roles=BIAS)
+                shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
         input_shape = K.get_shape(X)
@@ -807,7 +807,7 @@ class ParametricRectifier(NNOps):
             raise ValueError("ParametricRectifierLayer needs input sizes for "
                              "all axes that alpha's are not shared over.")
         self.alpha = self.config.create_params(
-            self.alpha_init, shape, name="alpha", roles=PARAMETER)
+            self.alpha_init, shape, name="alpha", roles=Parameter)
 
     def _apply(self, x):
         axes = iter(range(K.ndim(self.alpha)))

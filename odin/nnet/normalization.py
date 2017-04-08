@@ -3,8 +3,8 @@ from __future__ import print_function, division, absolute_import
 from .base import NNOps, nnops_initscope
 
 from odin import backend as K
-from odin.basic import (BATCH_NORM_SHIFT_PARAMETER, BATCH_NORM_SCALE_PARAMETER,
-                        BATCH_NORM_POPULATION_MEAN, BATCH_NORM_POPULATION_INVSTD,
+from odin.basic import (BatchNormPopulationMean, BatchNormScaleParameter,
+                        BatchNormPopulationInvStd, BatchNormShiftParameter,
                         add_updates)
 
 
@@ -168,20 +168,20 @@ class BatchNorm(NNOps):
         if self.beta_init is not None:
             self.config.create_params(
                 self.beta_init, shape=shape, name='beta',
-                roles=BATCH_NORM_SHIFT_PARAMETER)
+                roles=BatchNormShiftParameter)
         if self.gamma_init is not None:
             self.config.create_params(
                 self.gamma_init, shape=shape, name='gamma',
-                roles=BATCH_NORM_SCALE_PARAMETER)
+                roles=BatchNormScaleParameter)
         # running mean and invert std
         if self.mean_init is not None:
             self.config.create_params(
                 self.mean_init, shape=shape, name='mean',
-                roles=BATCH_NORM_POPULATION_MEAN)
+                roles=BatchNormPopulationMean)
         if self.inv_std_init is not None:
             self.config.create_params(
                 self.inv_std_init, shape=shape, name='inv_std',
-                roles=BATCH_NORM_POPULATION_INVSTD)
+                roles=BatchNormPopulationInvStd)
 
     def _apply(self, X, noise=0):
         input_shape = K.get_shape(X)

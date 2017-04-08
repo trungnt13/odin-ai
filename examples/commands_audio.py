@@ -11,7 +11,7 @@ import numpy as np
 from odin import fuel as F, nnet as N, backend as K, training
 from odin.utils import get_all_files, get_datasetpath, get_modelpath, get_logpath
 from odin.stats import freqcount
-from odin.basic import has_roles, WEIGHT, BIAS
+from odin.basic import has_roles, Weight, Bias
 
 # ===========================================================================
 # Const
@@ -126,7 +126,7 @@ f = N.Sequence([
 K.set_training(True); y_train = f(X)
 K.set_training(False); y_score = f(X)
 
-parameters = [p for p in f.parameters if has_roles(p, [WEIGHT, BIAS])]
+parameters = [p for p in f.parameters if has_roles(p, [Weight, Bias])]
 print("Parameters:", [p.name for p in parameters])
 # ===========================================================================
 # Create trainer

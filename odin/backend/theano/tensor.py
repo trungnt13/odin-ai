@@ -29,8 +29,7 @@ from odin.utils import (as_tuple, dict_union, package_installed,
                         uuid, is_number)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
-from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
-                        add_shape, get_shape, add_updates,
+from odin.basic import (add_role, add_shape, get_shape, add_updates,
                         as_shape_tuple)
 
 from .helpers import (auto_infer_shape, _check_target, variable,

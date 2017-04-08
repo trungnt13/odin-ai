@@ -2,7 +2,7 @@ from __future__ import division, absolute_import
 
 from .base import NNOps, nnops_initscope
 
-from odin.basic import WEIGHT, BIAS
+from odin.basic import Weight, Bias
 from odin import backend as K
 
 
@@ -111,26 +111,26 @@ class GaussianDenoising(NNOps):
         input_shape = self.input_shape
         shape = input_shape[1:]
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a1', roles=WEIGHT)
+            K.init.constant(0.), shape=shape, name='a1', roles=Weight)
         self.config.create_params(
-            K.init.constant(1.), shape=shape, name='a2', roles=WEIGHT)
+            K.init.constant(1.), shape=shape, name='a2', roles=Weight)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a3', roles=BIAS)
+            K.init.constant(0.), shape=shape, name='a3', roles=Bias)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a4', roles=WEIGHT)
+            K.init.constant(0.), shape=shape, name='a4', roles=Weight)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a5', roles=BIAS)
+            K.init.constant(0.), shape=shape, name='a5', roles=Bias)
 
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a6', roles=WEIGHT)
+            K.init.constant(0.), shape=shape, name='a6', roles=Weight)
         self.config.create_params(
-            K.init.constant(1.), shape=shape, name='a7', roles=WEIGHT)
+            K.init.constant(1.), shape=shape, name='a7', roles=Bias)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a8', roles=BIAS)
+            K.init.constant(0.), shape=shape, name='a8', roles=Bias)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a9', roles=WEIGHT)
+            K.init.constant(0.), shape=shape, name='a9', roles=Weight)
         self.config.create_params(
-            K.init.constant(0.), shape=shape, name='a10', roles=BIAS)
+            K.init.constant(0.), shape=shape, name='a10', roles=Bias)
 
     def _apply(self, u, mean, std, z_corr):
         mu = self.a1 * self.activation(self.a2 * u + self.a3) + self.a4 * u + self.a5

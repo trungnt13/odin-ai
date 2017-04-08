@@ -14,7 +14,7 @@ from tensorflow.contrib.distributions.python.ops.distribution import Distributio
 from tensorflow import variable_scope as _tf_variable_scope
 
 from odin.basic import (add_role, has_roles, as_shape_tuple, is_training,
-                        add_shape, get_shape, AUXILIARY, PARAMETER)
+                        add_shape, get_shape, Auxiliary, Parameter)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union
 from odin.config import CONFIG
@@ -74,7 +74,7 @@ def is_placeholder(variable):
 
 
 def is_trainable_variable(variable):
-    """Check if a variable is a Theano shared variable.
+    """Check if a variable is a shared variable.
 
     Notes
     -----
@@ -82,8 +82,10 @@ def is_trainable_variable(variable):
     random number generators.
 
     """
-    return (isinstance(variable, tf.Variable) and
-            variable.op.node_def.op[:8] == "Variable")
+    if (isinstance(variable, tf.Variable) and
+            variable.op.node_def.op[:8] == "Variable"):
+        return variable in variable.graph.get_collection('trainable_variables')
+    return False
 
 
 def is_variable(variable):
@@ -241,19 +243,19 @@ class ComputationGraph(object):
 
     """
 
-    def __init__(self, outputs):
-        if not isinstance(outputs, (tuple, list)):
+    def __init__(self, outputs=None):
+        if outputs is None:
+            outputs = []
+        elif not isinstance(outputs, (tuple, list)):
             outputs = [outputs]
         self.outputs = list(outputs)
         self._get_variables()
 
     def _get_variables(self):
-        """Collect variables, updates and auxiliary variables.
+        """ Collect variables, updates and auxiliary variables.
 
         In addition collects all :class:`.Scan` ops and recurses in the
-        respective inner Theano graphs.
-
-        """
+        respective inner Theano graphs. """
         _travelled_op = [] # to prevent recursive ops
 
         def get_all_variables(x):
@@ -273,31 +275,38 @@ class ComputationGraph(object):
                 variables += get_all_variables(i)
             return variables
 
+        def create_variables_iter(outputs):
+            if len(outputs) > 0:
+                for o in outputs:
+                    # travese each node of graph
+                    for v in get_all_variables(o):
+                        yield v
+            else:
+                graph = get_session().graph
+                all_ops = graph.get_operations()
+                for o in all_ops:
+                    for v in o._inputs + o._outputs + o._control_inputs:
+                        yield v
+        # store all the updates embedded into the Tensor Variables
         updates = OrderedDict()
-
         shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
         usual_outputs = [o for o in self.outputs if not is_trainable_variable(o)]
         variables = shared_outputs
-        trainable_variables = [v for v in shared_outputs]
+        trainable_variables = list(shared_outputs)
         inputs = []
-
-        if usual_outputs:
-            for o in self.outputs:
-                trainable_collections = {i.name: i
-                    for i in o.graph._collections.get('trainable_variables', {})}
-                # ====== travese each node of graph ====== #
-                for v in get_all_variables(o):
-                    _travelled_op = [] # reset the tracking list
-                    if is_placeholder(v):
-                        inputs.append(v)
-                    elif v.op.node_def.op[:8] == "Variable" and v.name in trainable_collections:
-                        v = trainable_collections[v.name]
-                        trainable_variables.append(v)
-                    if _is_tensor(v):
-                        variables.append(v)
-            inputs = list(set(inputs))
-            variables = list(set(variables + usual_outputs))
-            trainable_variables = list(set(trainable_variables))
+        # if the list of outputs is specified
+        # ====== travese each node of graph ====== #
+        for v in create_variables_iter(usual_outputs):
+            _travelled_op = [] # reset the tracking list
+            if is_placeholder(v):
+                inputs.append(v)
+            elif is_trainable_variable(v):
+                trainable_variables.append(v)
+            if _is_tensor(v):
+                variables.append(v)
+        inputs = list(set(inputs))
+        variables = list(set(variables + usual_outputs))
+        trainable_variables = list(set(trainable_variables))
         # ====== get all updates and auxiliary variables ====== #
         for v in inputs + variables:
             if hasattr(v, 'tag'):
@@ -339,11 +348,11 @@ class ComputationGraph(object):
     @property
     def parameters(self):
         return [var for var in self.trainable_variables
-                if has_roles(var, [PARAMETER])]
+                if has_roles(var, [Parameter])]
 
     @property
     def auxiliary_variables(self):
-        return [var for var in self.variables if has_roles(var, [AUXILIARY])]
+        return [var for var in self.variables if has_roles(var, [Auxiliary])]
 
     @property
     def dict_of_placeholders(self):

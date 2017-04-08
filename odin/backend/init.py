@@ -150,7 +150,7 @@ def orthogonal(shape, gain=1.0):
 # ===========================================================================
 # Fast initialization
 # ===========================================================================
-from odin.basic import add_role, WEIGHT, BIAS, PARAMETER
+from odin.basic import add_role, Weight, Bias, Parameter
 
 
 def rnn(input_dim, hidden_dim,
@@ -182,10 +182,10 @@ def rnn(input_dim, hidden_dim,
         b_wh = b_init((hidden_dim))
         return [W_i, b_wi, R_h, b_wh]
     params = init() + init() if bidirectional else init()
-    roles = [WEIGHT, BIAS]
+    roles = [Weight, Bias]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
-        roles = [PARAMETER]
+        roles = [Parameter]
     # names
     if one_vector:
         names = [name + '_rnn']
@@ -247,10 +247,10 @@ def lstm(input_dim, hidden_dim,
         return [W_i, b_wi, W_f, b_wf, W_c, b_wc, W_o, b_wo,
               R_i, b_ri, R_f, b_rf, R_c, b_rc, R_o, b_ro]
     params = init() + init() if bidirectional else init()
-    roles = [WEIGHT, BIAS]
+    roles = [Weight, Bias]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
-        roles = [PARAMETER]
+        roles = [Parameter]
     # names
     if one_vector:
         names = [name + '_lstm']
@@ -307,10 +307,10 @@ def gru(input_dim, hidden_dim,
         return [W_r, b_wr, W_i, b_wi, W_h, b_wh,
                 R_r, b_rr, R_i, b_ru, R_h, b_rh]
     params = init() + init() if bidirectional else init()
-    roles = [WEIGHT, BIAS]
+    roles = [Weight, Bias]
     if one_vector:
         params = [np.concatenate([p.flatten() for p in params])]
-        roles = [PARAMETER]
+        roles = [Parameter]
     # names
     if one_vector:
         names = [name + '_gru']

@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from odin.utils import struct, is_number
+from odin.utils import struct, is_number, as_tuple
 from odin.config import get_backend
 
 
@@ -31,144 +31,124 @@ def set_training(train):
 # ===========================================================================
 # Variable ROles
 # ===========================================================================
-class VariableRole(object):
+class Role(object):
+    """Base class for all roles."""
+
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError("This is class is only for annotation, you cannot "
+                           "create instance from this class.")
+
+
+class Variable(Role):
     """Base class for all variable roles."""
-
-    def __eq__(self, other):
-        return self.__class__ == other.__class__
-
-    def __repr__(self):
-        return re.sub(r'(?!^)([A-Z]+)', r'_\1',
-                      self.__class__.__name__[:-4]).upper()
-
-
-class AuxiliaryRole(VariableRole):
     pass
-#: Variables added to the graph as annotations
-AUXILIARY = AuxiliaryRole()
+
+
+class Auxiliary(Variable):
+    """ Variables added to the graph as annotations """
+    pass
 
 
 # ==================== Variational ==================== #
-class VariationalRole(VariableRole):
-    pass
-#: Variational statistics
-VARIATIONAL = VariationalRole()
-
-
-class VariationalMean(VariationalRole):
-    pass
-VARIATIONAL_MEAN = VariationalMean()
-
-
-class VariationalLogsigma(VariationalRole):
-    pass
-VARIATIONAL_LOGSIGMA = VariationalLogsigma()
-
-
-# ==================== Role for Variable ==================== #
-class CostRole(VariableRole):
-    pass
-#: A scalar cost that can be used to train or regularize
-COST = CostRole()
-
-
-class ParameterRole(VariableRole):
-    pass
-#: A parameter of the model
-PARAMETER = ParameterRole()
-
-
-class ActivationParameterRole(ParameterRole):
-    pass
-#: A parameter of the model
-ACTIVATION_PARAMETER = ActivationParameterRole()
-
-
-class WeightRole(ParameterRole):
-    pass
-#: The weight matrices of linear transformations
-WEIGHT = WeightRole()
-
-
-class BiasRole(ParameterRole):
-    pass
-#: Biases of linear transformations
-BIAS = BiasRole()
-
-
-class InitialStateRole(ParameterRole):
+class Variational(Variable):
+    """ All role related to variational inference """
     pass
 
 
-#: Initial state of a recurrent network
-INITIAL_STATE = InitialStateRole()
-
-
-class FilterRole(WeightRole):
+class VariationalMean(Variational):
     pass
-#: The filters (kernels) of a convolution operation
-FILTER = FilterRole()
 
 
-class DropoutRole(VariableRole):
+class VariationalLogsigma(Variational):
     pass
-#: Inputs with applied dropout
-DROPOUT = DropoutRole()
+
+
+# ==================== Role for Cost and Objective ==================== #
+class ObjectiveCost(Variable):
+    pass
+
+
+# ==================== Role for Trainable Variable ==================== #
+class Parameter(Variable):
+    pass
+
+
+class ActivationParameter(Parameter):
+    pass
+
+
+class Weight(Parameter):
+    pass
+
+
+class Bias(Parameter):
+    pass
+
+
+class InitialState(Parameter):
+    """ Initial state of a recurrent network """
+    pass
+
+
+class ConvKernel(Weight):
+    """ The filters (kernels) of a convolution operation """
+    pass
+
+
+class Dropout(Variable):
+    """ Inputs with applied dropout """
+    pass
 
 
 # ==================== Optimizer Algorithm roles ==================== #
-class OptimizerHyperParameterRole(VariableRole):
+class OptimizerHyperParameter(Variable):
+    """ Shared variables used in algorithms updates """
     pass
-#: Shared variables used in algorithms updates
-OPTIMIZER_HYPER_PARAMETER = OptimizerHyperParameterRole()
 
 
-class LearningRateRole(OptimizerHyperParameterRole):
+class LearningRate(OptimizerHyperParameter):
     pass
-LEARNING_RATE = LearningRateRole()
+
+
+class LearningRateDecay(OptimizerHyperParameter):
+    pass
 
 
 # ==================== Embedding ==================== #
-class EmbeddingWeights(WeightRole):
+class EmbeddingWeights(Weight):
+    """ weights for embedding operator """
     pass
-#: weights for embedding operator
-EMBEDDING = EmbeddingWeights()
 
 
 # ==================== Batch normalization roles ==================== #
-class BatchNormPopulationStatisticsRole(VariableRole):
+class BatchNorm(Variable):
+    """ base role for batch normalization population statistics """
     pass
-#: base role for batch normalization population statistics
-BATCH_NORM_POPULATION_STATISTICS = BatchNormPopulationStatisticsRole()
 
 
-class BatchNormPopulationMeanRole(BatchNormPopulationStatisticsRole):
+class BatchNormPopulationMean(BatchNorm):
+    """ mean activations accumulated over the dataset """
     pass
-#: mean activations accumulated over the dataset
-BATCH_NORM_POPULATION_MEAN = BatchNormPopulationMeanRole()
 
 
-class BatchNormPopulationInvStdRole(BatchNormPopulationStatisticsRole):
+class BatchNormPopulationInvStd(BatchNorm):
+    """ standard deviations of activations accumulated over the dataset """
     pass
-#: standard deviations of activations accumulated over the dataset
-BATCH_NORM_POPULATION_INVSTD = BatchNormPopulationInvStdRole()
 
 
-class BatchNormScaleParameterRole(ParameterRole):
+class BatchNormScaleParameter(Parameter, BatchNorm):
+    """ role given to the scale parameter, referred to as "scale" (or "gamma") in the """
     pass
-#: role given to the scale parameter, referred to as "scale" (or "gamma") in the
-# batch normalization manuscript, applied after normalizing.
-BATCH_NORM_SCALE_PARAMETER = BatchNormScaleParameterRole()
 
 
-class BatchNormShiftParameterRole(BiasRole):
+class BatchNormShiftParameter(Bias, BatchNorm):
+    """ role given to the shift parameter, referred to as "beta" in the
+    batch normalization manuscript, applied after normalizing and scaling.
+    Inherits from BIAS, because there really is no functional difference
+    with a normal bias, and indeed these are the only biases present
+    inside a BatchNormalizedMLP.
+    """
     pass
-#: role given to the shift parameter, referred to as "beta" in the
-# batch normalization manuscript, applied after normalizing and scaling.
-# Inherits from BIAS, because there really is no functional difference
-# with a normal bias, and indeed these are the only biases present
-# inside a BatchNormalizedMLP.
-BATCH_NORM_SHIFT_PARAMETER = BatchNormShiftParameterRole()
 
 
 # ===========================================================================
@@ -176,7 +156,10 @@ BATCH_NORM_SHIFT_PARAMETER = BatchNormShiftParameterRole()
 # ===========================================================================
 def _check_tag(var):
     if not hasattr(var, 'tag'):
-        var.tag = struct()
+        tag = struct()
+        tag.roles = []
+        var.tag = tag
+    return var
 
 
 # ==================== shape ==================== #
@@ -302,7 +285,7 @@ def add_updates(var, key, value):
 
 
 def add_role(var, role):
-    r"""Add a role to a given Theano variable.
+    r"""Add a role to a given variable.
 
     Parameters
     ----------
@@ -334,14 +317,13 @@ def add_role(var, role):
     WEIGHT
 
     """
+    # create tag attribute for variable
     _check_tag(var)
-    roles = getattr(var.tag, 'roles', [])
-    roles = [old_role for old_role in roles
-             if not isinstance(role, old_role.__class__)]
-    # add a role if it isn't in the list
-    if not any(isinstance(old_role, role.__class__) for old_role in roles):
-        roles += [role]
-    var.tag.roles = roles
+    roles = var.tag.roles
+    for r in as_tuple(role):
+        # add a role if it isn't in the list
+        if not any(isinstance(old_role, role.__class__) for old_role in roles):
+            roles.append(role)
 
 
 def add_auxiliary_variable(var, auxiliary, roles=None):
@@ -350,7 +332,7 @@ def add_auxiliary_variable(var, auxiliary, roles=None):
     """
     _check_tag(var)
     auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
-    add_role(auxiliary, AUXILIARY)
+    add_role(auxiliary, Auxiliary)
     if roles is not None:
         for role in roles:
             add_role(auxiliary, role)

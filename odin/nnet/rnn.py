@@ -7,11 +7,11 @@ from itertools import chain
 import numpy as np
 
 from odin import backend as K
-from odin.basic import (INITIAL_STATE, WEIGHT, BIAS, PARAMETER,
-                        has_roles, BATCH_NORM_SHIFT_PARAMETER,
-                        BATCH_NORM_SCALE_PARAMETER,
-                        BATCH_NORM_POPULATION_MEAN,
-                        BATCH_NORM_POPULATION_INVSTD)
+from odin.basic import (InitialState, Weight, Bias, Parameter,
+                        has_roles, BatchNormShiftParameter,
+                        BatchNormScaleParameter,
+                        BatchNormPopulationMean,
+                        BatchNormPopulationInvStd)
 from odin.utils import as_tuple
 
 from .base import NNOps, nnops_initscope
@@ -38,7 +38,7 @@ def _check_rnn_hidden_states(h0, ops, input_shape, name):
         if callable(h0) or K.is_trainable_variable(h0) or isinstance(h0, np.ndarray):
             h0 = ops.config.create_params(h0,
                 shape=(1,) + input_shape[2:-1] + (ops.num_units,),
-                name=name, roles=INITIAL_STATE)
+                name=name, roles=InitialState)
         else: # still store the states so it can be re-used on other inputs
             ops.h0 = h0
     return h0
@@ -58,16 +58,16 @@ def _init_input2hidden(ops, rnn_mode, input_mode, W_init, input_dims, hidden_dim
     # ====== check input ====== #
     if input_mode != 'skip':
         ops.config.create_params(W_init, shape=(input_dims, hidden_dims),
-                             name='W_in', roles=WEIGHT, nb_params=N)
+                             name='W_in', roles=Weight, nb_params=N)
         if input_mode == 'norm':
             ops.config.create_params(K.init.constant(0.), shape=(hidden_dims * N,),
-                                 name='beta', roles=BATCH_NORM_SHIFT_PARAMETER)
+                                 name='beta', roles=BatchNormShiftParameter)
             ops.config.create_params(K.init.constant(1.), shape=(hidden_dims * N,),
-                                 name='gamma', roles=BATCH_NORM_SCALE_PARAMETER)
+                                 name='gamma', roles=BatchNormScaleParameter)
             ops.config.create_params(K.init.constant(0.), shape=(hidden_dims * N,),
-                                 name='mean', roles=BATCH_NORM_POPULATION_MEAN)
+                                 name='mean', roles=BatchNormPopulationMean)
             ops.config.create_params(K.init.constant(1.), shape=(hidden_dims * N,),
-                                 name='inv_std', roles=BATCH_NORM_POPULATION_INVSTD)
+                                 name='inv_std', roles=BatchNormPopulationInvStd)
     # skip input mode
     elif input_dims != hidden_dims and \
     input_dims != hidden_dims * N: # 3 gates + 1 hid_update
@@ -300,11 +300,11 @@ class RNN(BaseRNN):
                            hidden_dims=self.num_units)
         # hidden connection
         self.config.create_params(W_init[1], shape=(self.num_units, self.num_units),
-                             name='W_hid', roles=WEIGHT)
+                             name='W_hid', roles=Weight)
         # bias
         if self.b_init is not None:
             self.config.create_params(self.b_init, shape=(self.num_units,),
-                                 name='b', roles=BIAS)
+                                 name='b', roles=Bias)
 
 
 # ===========================================================================
@@ -480,11 +480,11 @@ class GRU(BaseRNN):
         # ====== initialize inner parameters ====== #
         # W_update, W_reset, W_hidden
         self.config.create_params(self.W_hid_init, shape=(self.num_units, self.num_units),
-                             name='W_hid', roles=WEIGHT, nb_params=3)
+                             name='W_hid', roles=Weight, nb_params=3)
         # bias
         if self.b_init is not None:
             self.config.create_params(self.b_init, shape=(self.num_units,),
-                                 name='b', roles=BIAS, nb_params=3)
+                                 name='b', roles=Bias, nb_params=3)
 
 
 # ===========================================================================
@@ -693,15 +693,15 @@ class LSTM(BaseRNN):
         # ====== initialize inner parameters ====== #
         # W_input, W_forget, W_hidden, W_output
         self.config.create_params(self.W_hid_init, shape=(self.num_units, self.num_units),
-                             name='W_hid', roles=WEIGHT, nb_params=4)
+                             name='W_hid', roles=Weight, nb_params=4)
         # W_input, W_forget, W_output (peepholes is diagonal matrix)
         if self.W_peepholes is not None:
             self.config.create_params(self.W_peepholes, shape=(self.num_units,),
-                                 name='peepholes', roles=WEIGHT, nb_params=3)
+                                 name='peepholes', roles=Weight, nb_params=3)
         # bias
         if self.b_init is not None:
             self.config.create_params(self.b_init, shape=(self.num_units,),
-                                 name='b', roles=BIAS, nb_params=4)
+                                 name='b', roles=Bias, nb_params=4)
 
 
 # ===========================================================================
@@ -717,7 +717,7 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
             _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
                 else K.get_shape(s0)
             s0 = nnops.config.create_params(
-                s0, shape=_, name=name, roles=INITIAL_STATE)
+                s0, shape=_, name=name, roles=InitialState)
         # ====== check s0 shape ====== #
         init_shape = K.get_shape(s0)
         if K.ndim(s0) == 2:
@@ -846,7 +846,7 @@ class CudnnRNN(NNOps):
             for p in chain(*parameters):
                 self.config.create_params(p, shape=K.get_shape(p),
                                      name=p.name.split(':')[0].split('/')[1],
-                                     roles=PARAMETER)
+                                     roles=Parameter)
         # else initialize all in 1 big vector
         else:
             parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
@@ -854,7 +854,7 @@ class CudnnRNN(NNOps):
                                          bidirectional=is_bidirectional)
                                          for i in range(self.num_layers)])
             self.config.create_params(parameters, shape=parameters.shape,
-                                      name='params', roles=PARAMETER)
+                                      name='params', roles=Parameter)
 
     def _apply(self, X, h0=None, c0=None, mask=None):
         batch_size = K.get_shape(X, native=True)[0]
@@ -887,7 +887,7 @@ class CudnnRNN(NNOps):
         if self.params_split:
             parameters = K.concatenate([K.flatten(i, outdim=1)
                                         for i in self.parameters
-                                        if not has_roles(i, INITIAL_STATE)])
+                                        if not has_roles(i, InitialState)])
         else:
             parameters = self.params
         # ====== return CuDNN RNN ====== #

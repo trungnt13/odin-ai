@@ -18,8 +18,7 @@ from odin.utils import (as_tuple, dict_union, uuid, is_number,
                         is_string, flatten_list)
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
-from odin.basic import (add_role, PARAMETER, ACTIVATION_PARAMETER,
-                        add_shape, get_shape, is_training,
+from odin.basic import (add_shape, get_shape, is_training,
                         as_shape_tuple)
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph,

@@ -1,9 +1,7 @@
 from __future__ import division, absolute_import
 
-import numpy as np
-
 from odin import backend as K
-from odin.basic import PARAMETER, WEIGHT, BIAS
+from odin.basic import ConvKernel, Bias
 from odin.utils import as_tuple
 from odin.utils.shape_calculation import get_conv_output_shape, get_deconv_output_shape
 from .base import NNOps, NNTransposeOps, nnops_initscope
@@ -152,14 +150,14 @@ class Conv(NNOps):
         # ====== create config ====== #
         # weights
         self.config.create_params(
-            self.W_init, shape=self.kernel_shape, name='W', roles=WEIGHT)
+            self.W_init, shape=self.kernel_shape, name='W', roles=ConvKernel)
         if self.b_init is not None:
             if self.untie_biases:
                 biases_shape = self.output_shape[1:]
             else:
                 biases_shape = (self.num_filters,)
             self.config.create_params(
-                self.b_init, shape=biases_shape, name='b', roles=BIAS)
+                self.b_init, shape=biases_shape, name='b', roles=Bias)
 
     def _apply(self, X):
         # ====== apply convolution ====== #

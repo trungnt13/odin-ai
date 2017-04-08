@@ -2,12 +2,10 @@ from __future__ import print_function, division, absolute_import
 
 import types
 import inspect
-from itertools import chain
 
 import numpy as np
 
 from odin import backend as K
-from odin.basic import has_roles, PARAMETER
 from odin.utils import as_tuple, is_number
 from odin.utils.decorators import functionable
 
