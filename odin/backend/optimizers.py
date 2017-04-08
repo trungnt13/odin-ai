@@ -15,7 +15,7 @@ import numpy as np
 from odin.config import CONFIG
 from odin.utils import as_tuple
 from odin.basic import (add_role, Auxiliary, LearningRate,
-                        OptimizerHyperParameter, VariableRole)
+                        OptimizerHyperParameter, Role)
 FLOATX = CONFIG.floatX
 
 # store python primitive operators
@@ -54,7 +54,7 @@ def _as_variable(x, name, roles=None):
     if not is_variable(x):
         x = variable(x, name=name)
     if roles is not None:
-        roles = as_tuple(roles, t=VariableRole)
+        roles = [r for r in as_tuple(roles) if issubclass(r, Role)]
         for r in roles:
             add_role(x, r)
     return x

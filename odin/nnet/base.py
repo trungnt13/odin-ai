@@ -14,7 +14,7 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
-from odin.basic import (add_role, has_roles, Parameter, VariableRole,
+from odin.basic import (add_role, has_roles, Parameter, Variable,
                         Weight, Bias, VariationalMean, VariationalLogsigma)
 from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
 
@@ -300,7 +300,7 @@ class NNConfig(object):
             name for the variable
         nnops: NNOps
             parent operator of this parameters
-        roles: odin.basic.VariableRole
+        roles: odin.basic.Variable
             categories of this variable
         nb_params: int
             number of parameters that horizontally stacked into
@@ -346,7 +346,7 @@ class NNConfig(object):
         # ====== assign annotations ====== #
         # only add role for trainable variables
         for i in roles:
-            if isinstance(i, VariableRole) and K.is_trainable_variable(spec):
+            if issubclass(i, Variable) and K.is_trainable_variable(spec):
                 add_role(spec, i)
         # return actual variable or expression
         # override other parameters with same name

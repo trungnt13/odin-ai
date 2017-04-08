@@ -1,13 +1,16 @@
 from __future__ import print_function, division, absolute_import
 
 import re
+import inspect
 import numbers
 import warnings
+from functools import wraps
 from collections import OrderedDict
+from contextlib import contextmanager
 
 import numpy as np
 
-from odin.utils import struct, is_number, as_tuple
+from odin.utils import struct, is_number, as_tuple, flatten_list
 from odin.config import get_backend
 
 
@@ -115,7 +118,7 @@ class LearningRateDecay(OptimizerHyperParameter):
 
 
 # ==================== Embedding ==================== #
-class EmbeddingWeights(Weight):
+class EmbeddingWeight(Weight):
     """ weights for embedding operator """
     pass
 
@@ -162,7 +165,9 @@ def _check_tag(var):
     return var
 
 
-# ==================== shape ==================== #
+# ===========================================================================
+# Basic shape helper
+# ===========================================================================
 def _is_tensor(x):
     if get_backend() == 'tensorflow':
         import tensorflow as tf
@@ -272,10 +277,16 @@ def get_shape(x, native=False):
     return shape
 
 
-# ==================== updates ==================== #
+# ===========================================================================
+# Basic Role helper
+# ===========================================================================
 def add_updates(var, key, value):
     r""" Annotate updates to a given var, hence, this updates will
     be used when create function
+
+    Note
+    ----
+    updates won't be serialized during pickling of any variables.
 
     """
     _check_tag(var)
@@ -284,46 +295,39 @@ def add_updates(var, key, value):
     var.tag.updates = updates
 
 
-def add_role(var, role):
+def add_role(var, roles=None):
     r"""Add a role to a given variable.
 
     Parameters
     ----------
     var : :class:`~tensor.TensorVariable`
         The variable to assign the new role to.
-    role : :class:`.VariableRole` instance
+    roles : :subclass:`Role`
+        this roles will be concatenated with current roles scope.
 
     Notes
     -----
-    Some roles are subroles of others (e.g. :const:`WEIGHT` is a subrole
-    of :const:`PARAMETER`). This function will not add a role if a more
+    Some roles are subroles of others (e.g. :class:`Weight` is a subrole
+    of :class:`Parameter`). This function will not add a role if a more
     specific role has already been added. If you need to replace a role
-    with a parent role (e.g. replace :const:`WEIGHT` with
-    :const:`PARAMETER`) you must do so manually.
-
-    Examples
-    --------
-    >>> from theano import tensor
-    >>> W = tensor.matrix()
-    >>> from blocks.roles import PARAMETER, WEIGHT
-    >>> add_role(W, PARAMETER)
-    >>> print(*W.tag.roles)
-    PARAMETER
-    >>> add_role(W, WEIGHT)
-    >>> print(*W.tag.roles)
-    WEIGHT
-    >>> add_role(W, PARAMETER)
-    >>> print(*W.tag.roles)
-    WEIGHT
+    with a parent role (e.g. replace :class:`Weight` with
+    :class:`Parameter`) you must do so manually.
 
     """
     # create tag attribute for variable
     _check_tag(var)
-    roles = var.tag.roles
-    for r in as_tuple(role):
-        # add a role if it isn't in the list
-        if not any(isinstance(old_role, role.__class__) for old_role in roles):
-            roles.append(role)
+    roles = [r for r in as_tuple(roles)
+             if isinstance(r, type) and issubclass(r, Role)]
+    # append roles scope
+    roles += get_current_role_scope()
+    var_roles = list(getattr(var.tag, 'roles', []))
+    var_roles = var_roles + roles
+    # ====== shrink the roles so there is NO subrole ====== #
+    var_roles = [r for r in var_roles
+                 if not any(r != r0 and issubclass(r0, r) for r0 in var_roles)]
+    # ====== adding new role ====== #
+    var.tag.roles = var_roles
+    return var
 
 
 def add_auxiliary_variable(var, auxiliary, roles=None):
@@ -334,8 +338,8 @@ def add_auxiliary_variable(var, auxiliary, roles=None):
     auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
     add_role(auxiliary, Auxiliary)
     if roles is not None:
-        for role in roles:
-            add_role(auxiliary, role)
+        for r in roles:
+            add_role(auxiliary, r)
     auxiliary_variables.append(auxiliary)
     var.tag.auxiliary_variables = list(set(auxiliary_variables))
 
@@ -347,14 +351,14 @@ def has_roles(var, roles, match_all=False, exact=False):
     ----------
     var : :class:`~tensor.TensorVariable`
         Variable being queried.
-    roles : an iterable of :class:`.VariableRole` instances.
+    roles : an iterable of :subclass:`.Role`.
     match_all : bool, optional
         If ``True``, checks if the variable has all given roles.
         If ``False``, any of the roles is sufficient.
         ``False`` by default.
     exact : bool, optional
         If ``True``, use ``==`` for comparison to get exactly same roles.
-        If ``False``, use isinstance for comparison, hence, also match the
+        If ``False``, use issubclass for comparison, hence, also match the
         decesdant roles.
 
     """
@@ -362,17 +366,77 @@ def has_roles(var, roles, match_all=False, exact=False):
     if not hasattr(var, 'tag'):
         return False
     # prepare roles
-    if not hasattr(roles, '__iter__'):
-        roles = [roles]
+    roles = [r for r in as_tuple(roles) if issubclass(r, Role)]
     var_roles = getattr(var.tag, 'roles', [])
     if not exact:
-        matches = (any(isinstance(var_role, role.__class__) for
-                       var_role in var_roles) for role in roles)
+        matches = (any(issubclass(var_role, match_role) for var_role in var_roles)
+                   for match_role in roles)
     else:
-        matches = (any(var_role.__class__ == role.__class__ for
-                       var_role in var_roles) for role in roles)
+        matches = (any(var_role == match_role for var_role in var_roles)
+                   for match_role in roles)
     return all(matches) if match_all else any(matches)
 
 
 def get_roles(var):
     return getattr(var.tag, 'roles', [])
+
+
+# ===========================================================================
+# Role context manager
+# ===========================================================================
+__ROLE_STACK = [[]]
+
+
+def get_current_role_scope():
+    return __ROLE_STACK[-1]
+
+
+def output_roles(roles):
+    """
+    Example
+    -------
+    >>> with role_scope(Variational):
+    ...     @output_roles(Weight)
+    ...     def func():
+    ...         return K.variable(np.random.rand(12, 8))
+    ...     X = func()
+    >>> print(X.tag.roles)
+    ... # [<class 'odin.basic.Weight'>, <class 'odin.basic.Variational'>]
+    """
+    roles = [r for r in as_tuple(roles)
+             if isinstance(r, type) and issubclass(r, Role)]
+
+    def add_role_to_outputs(func):
+        @wraps(func)
+        def function(*args, **kwargs):
+            outputs = func(*args, **kwargs)
+            if isinstance(outputs, (tuple, list)):
+                for o in outputs:
+                    add_role(o, roles)
+            else:
+                add_role(outputs, roles)
+            return outputs
+        return function
+    return add_role_to_outputs
+
+
+@contextmanager
+def role_scope(*roles):
+    """
+    Example
+    -------
+    >>> X = K.variable(np.random.rand(12, 8))
+    >>> with role_scope(Weight, Variational, VariationalMean):
+    ...     add_role(X)
+    >>> print(X.tag.roles)
+    ... # [<class 'odin.basic.Weight'>, <class 'odin.basic.VariationalMean'>]
+    """
+    roles = [r for r in flatten_list(roles, level=None)
+             if isinstance(r, type) and issubclass(r, Role)]
+    # ====== shrink the roles so there is NO subrole ====== #
+    roles = __ROLE_STACK[-1] + roles
+    roles = [r for r in roles
+             if not any(r != r0 and issubclass(r0, r) for r0 in roles)]
+    __ROLE_STACK.append(roles)
+    yield roles
+    __ROLE_STACK.pop()
