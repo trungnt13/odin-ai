@@ -492,7 +492,12 @@ class functionable(object):
             print("[WARNING] Cannot get source code of function:", func,
                   "(error:%s)" % str(e))
             self._source = None
-        self._sandbox = _serialize_function_sandbox(func, self._source)
+        # try to pickle the function directly
+        try:
+            self._sandbox = cPickle.dumps(self._function,
+                protocol=cPickle.HIGHEST_PROTOCOL)
+        except:
+            self._sandbox = _serialize_function_sandbox(func, self._source)
         # ====== store argsmap ====== #
         argspec = inspect.getargspec(func)
         argsmap = OrderedDict([(i, _ArgPlaceHolder_()) for i in argspec.args])
@@ -519,7 +524,10 @@ class functionable(object):
          self._source,
          self._argsmap) = states
         # ====== deserialize the function ====== #
-        self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
+        if is_string(self._sandbox):
+            self._function = cPickle.loads(self._sandbox)
+        else:
+            self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
         if self._function is None:
             raise RuntimeError('[funtionable] Cannot find function in sandbox.')
 
@@ -553,7 +561,10 @@ class functionable(object):
     def __str__(self):
         s = 'Name:   %s\n' % self._function.func_name
         s += 'kwargs: %s\n' % str(self._argsmap)
-        s += 'Sandbox:%s\n' % str(len(self._sandbox))
+        if is_string(self._sandbox):
+            s += 'Sandbox: pickle-able\n'
+        else:
+            s += 'Sandbox:%s\n' % str(len(self._sandbox))
         s += str(self._source)
         return s
 
