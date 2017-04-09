@@ -399,38 +399,38 @@ def argtop_k(x, k=1):
 # Primitive ops
 # ===========================================================================
 @output_roles
-def add(x, y):
-    return tf.add(x, y)
+def add(x, y, name=None):
+    return tf.add(x, y, name=name)
 
 
 @output_roles
-def sub(x, y):
-    return tf.subtract(x, y)
+def sub(x, y, name=None):
+    return tf.subtract(x, y, name=name)
 
 
 @output_roles
-def mul(x, y):
-    return tf.multiply(x, y)
+def mul(x, y, name=None):
+    return tf.multiply(x, y, name=name)
 
 
 @output_roles
-def div(x, y):
-    return tf.divide(x, y)
+def div(x, y, name=None):
+    return tf.divide(x, y, name=name)
 
 
 @output_roles
-def mod(x, y):
-    return tf.mod(x, y)
+def mod(x, y, name=None):
+    return tf.mod(x, y, name=name)
 
 
 @output_roles
-def maximum(x, y):
-    return tf.maximum(x, y)
+def maximum(x, y, name=None):
+    return tf.maximum(x, y, name=name)
 
 
 @output_roles
-def minimum(x, y):
-    return tf.minimum(x, y)
+def minimum(x, y, name=None):
+    return tf.minimum(x, y, name=name)
 
 
 # ===========================================================================

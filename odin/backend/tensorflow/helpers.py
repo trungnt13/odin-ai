@@ -248,8 +248,8 @@ class ComputationGraph(object):
 
     """
 
-    def __init__(self, *outputs):
-        outputs = flatten_list(outputs, level=None)
+    def __init__(self, outputs):
+        outputs = flatten_list(as_list(outputs), level=None)
         self.outputs = [o for o in outputs if o is not None]
         self._get_variables()
 
@@ -258,30 +258,50 @@ class ComputationGraph(object):
 
         In addition collects all :class:`.Scan` ops and recurses in the
         respective inner Theano graphs. """
-        _travelled_op = [] # to prevent recursive ops
+        _travelled_up = [] # to prevent recursive ops
+        _travelled_down = [] # to prevent recursive ops
 
-        def get_all_variables(x):
+        def get_all_variables_trace_down(x):
             """ recursively travel down the inputs tree to get all
             variables """
             variables = []
             op = x.op
             # ====== check travelled ops ====== #
-            if op in _travelled_op:
+            if op in _travelled_down:
                 return variables
             else:
-                _travelled_op.append(op)
+                _travelled_down.append(op)
             # ====== get all variable ====== #
             inputs = op._inputs
             variables += inputs
             for i in inputs:
-                variables += get_all_variables(i)
+                variables += get_all_variables_trace_down(i)
+            return variables
+
+        def get_all_variables_trace_up(x):
+            """ travel up the outputs tree to get all variables"""
+            variables = []
+            # ====== check travelled ops ====== #
+            for op in x.consumers():
+                if op in _travelled_up:
+                    continue
+                else:
+                    _travelled_up.append(op)
+                # ====== get all variable ====== #
+                inputs = [i for i in op._inputs if i != x]
+                outputs = op._outputs
+                variables += inputs + outputs
+                for o in outputs:
+                    variables += get_all_variables_trace_up(o)
             return variables
 
         def create_variables_iter(outputs):
             if len(outputs) > 0:
                 for o in outputs:
                     # travese each node of graph
-                    for v in get_all_variables(o):
+                    all_variables = get_all_variables_trace_down(o) + \
+                        get_all_variables_trace_up(o)
+                    for v in all_variables:
                         yield v
             else:
                 graph = get_session().graph
@@ -309,7 +329,6 @@ class ComputationGraph(object):
                 global_vars[v.name] = v
         # then iterate over all tensor
         for v in create_variables_iter(usual_outputs):
-            _travelled_op = [] # reset the tracking list
             if v.name in global_vars:
                 variables.append(global_vars[v.name])
             if _is_tensor(v):
@@ -471,6 +490,9 @@ class ComputationGraph(object):
                     # TODO: think about what to do with new Ops here
 
     # ==================== others ==================== #
+    def __len__(self):
+        return len(self.variables)
+
     def __iter__(self):
         for v in self.variables:
             yield v
