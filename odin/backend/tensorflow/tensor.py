@@ -19,7 +19,8 @@ from odin.utils import (as_tuple, dict_union, uuid, is_number,
 from odin.utils.shape_calculation import (get_conv_output_shape,
                                           get_pool_output_shape)
 from odin.basic import (add_shape, get_shape, is_training,
-                        as_shape_tuple)
+                        as_shape_tuple, output_roles, ConfusionMatrix,
+                        Randomization)
 
 from .helpers import (get_session, as_tensor_variable, ComputationGraph,
                       variable)
@@ -125,6 +126,7 @@ backend_ops_lt = tf.less
 backend_ops_le = tf.less_equal
 
 
+@output_roles
 def switch(condition, then_expression, else_expression):
     if condition.dtype != tf.bool:
         condition = tf.cast(condition, 'bool')
@@ -155,6 +157,7 @@ def addbroadcast(x, *axes):
 # ===========================================================================
 # Predefined data
 # ===========================================================================
+@output_roles
 def zeros(shape, dtype=FLOATX, name=None):
     """Instantiate an all-zeros variable.
     """
@@ -162,6 +165,7 @@ def zeros(shape, dtype=FLOATX, name=None):
     return x
 
 
+@output_roles
 def ones(shape, dtype=FLOATX, name=None):
     """Instantiate an all-ones variable.
     """
@@ -169,6 +173,7 @@ def ones(shape, dtype=FLOATX, name=None):
     return x
 
 
+@output_roles
 def ones_like(x, dtype=None):
     if dtype is None:
         dtype = x.dtype.base_dtype
@@ -176,6 +181,7 @@ def ones_like(x, dtype=None):
     return x
 
 
+@output_roles
 def zeros_like(x, dtype=None):
     if dtype is None:
         dtype = x.dtype.base_dtype
@@ -183,6 +189,7 @@ def zeros_like(x, dtype=None):
     return x
 
 
+@output_roles
 def cast(x, dtype):
     if 'tensorflow.' in str(x.__class__):
         return tf.cast(x, dtype)
@@ -196,6 +203,7 @@ def cast(x, dtype):
 # Assumed overridden:
 # +, -, /, *, +=, -=, *=, /=
 # ===========================================================================
+@output_roles
 def dot(x, y):
     '''Multiplies 2 tensors.
     When attempting to multiply a ND tensor
@@ -225,6 +233,7 @@ def dot(x, y):
     return output
 
 
+@output_roles
 def batched_dot(x, y):
     """Batchwise dot product.
     This function computes the dot product between the two tensors,
@@ -252,11 +261,13 @@ def batched_dot(x, y):
     return output
 
 
+@output_roles
 def transpose(x, axes=None):
     """ Transposes a matrix. """
     return tf.transpose(x, perm=axes)
 
 
+@output_roles
 def gather(reference, indices):
     """Retrieves the vectors of indices `indices`
     in the 2D tensor `reference`.
@@ -271,6 +282,7 @@ def gather(reference, indices):
     return tf.gather(reference, indices)
 
 
+@output_roles
 def scatter():
     pass
 
@@ -278,6 +290,7 @@ def scatter():
 # ===========================================================================
 # ELEMENT-WISE OPERATIONS
 # ===========================================================================
+@output_roles
 def var(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     x = tf.cast(x, FLOATX)
@@ -286,6 +299,7 @@ def var(x, axis=None, keepdims=False):
     return tf.reduce_mean(devs_squared, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def mean(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     dtype = x.dtype.base_dtype
@@ -294,20 +308,24 @@ def mean(x, axis=None, keepdims=False):
     return tf.reduce_mean(x, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def std(x, axis=None, keepdims=False):
     return tf.sqrt(var(x, axis=axis, keepdims=keepdims))
 
 
+@output_roles
 def max(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     return tf.reduce_max(x, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def min(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     return tf.reduce_min(x, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def sum(x, axis=None, keepdims=False):
     """Sum of the values in a tensor, alongside the specified axis.
     """
@@ -315,6 +333,7 @@ def sum(x, axis=None, keepdims=False):
     return tf.reduce_sum(x, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def prod(x, axis=None, keepdims=False):
     """Multiply the values in a tensor, alongside the specified axis.
     """
@@ -322,6 +341,7 @@ def prod(x, axis=None, keepdims=False):
     return tf.reduce_prod(x, axis=axis, keep_dims=keepdims)
 
 
+@output_roles
 def any(x, axis=None, keepdims=False):
     """Bitwise reduction (logical OR).
     """
@@ -332,6 +352,7 @@ def any(x, axis=None, keepdims=False):
     return tf.cast(x, original_dtype)
 
 
+@output_roles
 def argmax(x, axis=-1, keepdims=False):
     axis %= x.get_shape().ndims
     x = tf.argmax(x, axis)
@@ -340,6 +361,7 @@ def argmax(x, axis=-1, keepdims=False):
     return x
 
 
+@output_roles
 def argmin(x, axis=-1, keepdims=False):
     axis %= x.get_shape().ndims
     x = tf.argmin(x, axis)
@@ -348,6 +370,7 @@ def argmin(x, axis=-1, keepdims=False):
     return x
 
 
+@output_roles
 def arange(start, stop=None, step=1, dtype=None):
     x = tf.range(start, limit=stop, delta=step)
     if dtype is not None:
@@ -355,6 +378,7 @@ def arange(start, stop=None, step=1, dtype=None):
     return x
 
 
+@output_roles
 def argsort(x):
     """ The indices in -1 axis will be sorted by the values in
     descending order.
@@ -365,6 +389,7 @@ def argsort(x):
     # raise NotImplementedError
 
 
+@output_roles
 def argtop_k(x, k=1):
     # top-k accuracy
     return tf.nn.top_k(x, k=k, sorted=True)
@@ -373,30 +398,37 @@ def argtop_k(x, k=1):
 # ===========================================================================
 # Primitive ops
 # ===========================================================================
+@output_roles
 def add(x, y):
     return tf.add(x, y)
 
 
+@output_roles
 def sub(x, y):
     return tf.subtract(x, y)
 
 
+@output_roles
 def mul(x, y):
     return tf.multiply(x, y)
 
 
+@output_roles
 def div(x, y):
     return tf.divide(x, y)
 
 
+@output_roles
 def mod(x, y):
     return tf.mod(x, y)
 
 
+@output_roles
 def maximum(x, y):
     return tf.maximum(x, y)
 
 
+@output_roles
 def minimum(x, y):
     return tf.minimum(x, y)
 
@@ -404,6 +436,7 @@ def minimum(x, y):
 # ===========================================================================
 # SHAPE OPERATIONS
 # ===========================================================================
+@output_roles
 def reverse(x, axes=-1):
     """Apply [::-1] to appropriate axis"""
     if not isinstance(axes, (tuple, list)):
@@ -414,21 +447,25 @@ def reverse(x, axes=-1):
     return tf.reverse(x, dims)
 
 
+@output_roles
 def concatenate(tensors, axis=-1):
     axis = _normalize_axis(axis, tensors[0].get_shape().ndims)
     return tf.concat(tensors, axis=axis)
 
 
+@output_roles
 def stack(tensors):
     """ (5, 2) and (5, 2) => (2, 5, 2) """
     return tf.stack(tensors)
 
 
+@output_roles
 def expand_dims(x, dim=-1):
     """ Add a 1-sized dimension at index "dim". """
     return tf.expand_dims(x, dim)
 
 
+@output_roles
 def reshape(x, shape):
     """ x.shape = [25, 08, 12]
     reshape(shape=([1], [2], [0]))
@@ -448,6 +485,7 @@ def reshape(x, shape):
     return tf.reshape(x, new_shape)
 
 
+@output_roles
 def dimshuffle(x, pattern):
     """Transpose dimensions.
 
@@ -462,6 +500,7 @@ def dimshuffle(x, pattern):
     return x
 
 
+@output_roles
 def flatten(x, outdim=1):
     if outdim == 1:
         return tf.reshape(x, [-1])
@@ -473,6 +512,7 @@ def flatten(x, outdim=1):
     return tf.reshape(x, output_shape)
 
 
+@output_roles
 def repeat(x, n, axes=None):
     """Repeat a N-D tensor.
 
@@ -492,6 +532,7 @@ def repeat(x, n, axes=None):
         return tf.tile(x, multiples=[n for i in range(ndim)])
 
 
+@output_roles
 def squeeze(x, axis):
     """Remove a 1-dimension from the tensor at index "axis".
     """
@@ -506,6 +547,7 @@ def squeeze(x, axis):
     return add_shape(x, output_shape)
 
 
+@output_roles
 def pad(x, paddings, mode='constant'):
     """Pad the all dimension given in axes` of a N-D tensor
     with "padding" zeros left and right.
@@ -542,6 +584,7 @@ def pad(x, paddings, mode='constant'):
 # ===========================================================================
 # Graph manipulation
 # ===========================================================================
+@output_roles
 def gradients(loss, variables, consider_constant=None):
     """
     Return symbolic gradients for one or more variables with respect to some
@@ -594,14 +637,17 @@ def gradients(loss, variables, consider_constant=None):
     return tf.gradients(loss, variables, colocate_gradients_with_ops=True)
 
 
+@output_roles
 def stop_gradient(vars):
     return tf.stop_gradient(vars)
 
 
+@output_roles
 def jacobian(loss, variables):
     raise NotImplementedError
 
 
+@output_roles
 def hessian(loss, variables):
     raise NotImplementedError
 
@@ -676,6 +722,7 @@ class Function(object):
 # ===========================================================================
 # utilities
 # ===========================================================================
+@output_roles
 def one_hot(x, nb_class):
     '''Input: nD integer tensor of shape (batch_size, dim1, dim2, ... dim(n-1))
     Output: (n + 1)D one hot representation of the input
@@ -684,6 +731,7 @@ def one_hot(x, nb_class):
     return tf.one_hot(x, depth=nb_class, axis=-1)
 
 
+@output_roles(ConfusionMatrix)
 def confusion_matrix(y_pred, y_true, labels=None):
     """
     Computes the confusion matrix of given vectors containing
@@ -716,6 +764,7 @@ def confusion_matrix(y_pred, y_true, labels=None):
     return tf.transpose(confusion_matrix(y_pred, y_true, num_classes=labels))
 
 
+@output_roles
 def one_hot_max(x, axis=-1):
     """
     Example
@@ -736,6 +785,7 @@ def one_hot_max(x, axis=-1):
     )
 
 
+@output_roles
 def apply_mask(x, mask):
     """
     x : 3D tensor
@@ -761,18 +811,21 @@ def set_rng(seed):
     _RNG = np.random.RandomState(seed=seed)
 
 
+@output_roles(Randomization)
 def random_normal(shape, mean=0.0, std=1.0, dtype=FLOATX):
     return tf.random_normal(shape, mean=mean, stddev=std,
                             dtype=dtype.base_dtype if hasattr(dtype, 'base_dtype') else dtype,
                             seed=_RNG.randint(10e6))
 
 
+@output_roles(Randomization)
 def random_uniform(shape, low=0.0, high=1.0, dtype=FLOATX):
     return tf.random_uniform(shape, minval=low, maxval=high,
                              dtype=dtype.base_dtype if hasattr(dtype, 'base_dtype') else dtype,
                              seed=_RNG.randint(10e6))
 
 
+@output_roles(Randomization)
 def random_binomial(shape, p, dtype=FLOATX, seed=None):
     if hasattr(dtype, 'base_dtype'):
         dtype = dtype.base_dtype
@@ -804,6 +857,7 @@ def __validate_strides_padding_dilation(strides, border_mode, filter_dilation, n
     return strides, border_mode, filter_dilation
 
 
+@output_roles
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            filter_dilation=(1, 1)):
     """ Dimension is ordered by
@@ -853,6 +907,7 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     return x
 
 
+@output_roles
 def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
              filter_dilation=(1, 1)):
     """
@@ -874,6 +929,7 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1), border_mode='valid',
     return x
 
 
+@output_roles
 def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
            filter_dilation=(1, 1, 1)):
     """
@@ -908,6 +964,7 @@ def conv3d(x, kernel, strides=(1, 1, 1), border_mode='valid',
     return x
 
 
+@output_roles
 def deconv3d(x, kernel, output_shape, strides=(1, 1, 1), border_mode='valid',
              filter_dilation=(1, 1, 1)):
     """
@@ -958,6 +1015,7 @@ def __validate_pool_stride_border(pool_size, strides, border_mode, mode, ndim):
     return pool_size, strides, border_mode, mode
 
 
+@output_roles
 def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid', mode='max'):
     """
     Parameters
@@ -1000,6 +1058,7 @@ def pool2d(x, pool_size=(2, 2), strides=None, border_mode='valid', mode='max'):
     return x
 
 
+@output_roles
 def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0), mode='max'):
     """
     Parameters
@@ -1045,6 +1104,7 @@ def pool3d(x, pool_size=(2, 2), strides=None, border_mode=(0, 0), mode='max'):
 # ===========================================================================
 # RNN and loop
 # ===========================================================================
+@output_roles
 def Scan(fn,
          sequences=None,
          outputs_info=None,
@@ -1095,6 +1155,7 @@ def Scan(fn,
     return outputs
 
 
+@output_roles
 def rnn_dnn(X, hidden_size, rnn_mode,
             num_layers=1,
             parameters=None,

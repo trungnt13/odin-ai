@@ -216,6 +216,11 @@ class ComputationGraph(object):
     outputs : (list of) :class:`~tensor.TensorVariable`
         The output(s) of the computation graph.
 
+    Note
+    ----
+    This :class:`ComputationGraph` is a `singleton` class since once a graph
+    is created, it will never be changed (node insertion or deletion).
+
     Attributes
     ----------
     inputs : list of :class:`~tensor.TensorVariable`
@@ -296,17 +301,28 @@ class ComputationGraph(object):
         inputs = []
         # if the list of outputs is specified
         # ====== travese each node of graph ====== #
+        # first get all variables
+        global_vars = {}
+        if len(usual_outputs) > 0:
+            for o in usual_outputs:
+                for v in o.graph.get_collection('variables'):
+                    global_vars[v.name] = v
+        else:
+            for v in get_session().graph.get_collection('variables'):
+                global_vars[v.name] = v
+        # then iterate over all tensor
         for v in create_variables_iter(usual_outputs):
             _travelled_op = [] # reset the tracking list
-            if is_placeholder(v):
-                inputs.append(v)
-            elif is_trainable_variable(v):
-                trainable_variables.append(v)
-            if _is_tensor(v):
-                variables.append(v)
-        inputs = list(set(inputs))
+            if v.name in global_vars:
+                variables.append(global_vars[v.name])
+            variables.append(v)
         variables = list(set(variables + usual_outputs))
-        trainable_variables = list(set(trainable_variables))
+        # sorted by Ops ID in _nodes=
+        variables = sorted(variables,
+            key=lambda x: [ID for ID, ops in x.graph._nodes_by_id.iteritems()
+                          if ops == x.op][0])
+        inputs = [v for v in variables if is_placeholder(v)]
+        trainable_variables = [v for v in variables if is_trainable_variable(v)]
         # ====== get all updates and auxiliary variables ====== #
         for v in inputs + variables:
             if hasattr(v, 'tag'):

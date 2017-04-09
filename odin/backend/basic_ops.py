@@ -5,7 +5,7 @@ import platform
 from six.moves import builtins
 
 from odin.config import auto_config
-from odin.basic import set_training, is_training
+from odin.basic import set_training, is_training, output_roles
 from odin.utils import package_installed, exec_commands, is_number
 
 config = auto_config()
@@ -90,23 +90,28 @@ def get_dtype(x, numpy=False, string=False):
 
 
 # ==================== activations ==================== #
+@output_roles
 def relu(x, alpha=0.):
     return _copy_shape(x, backend_ops_relu, alpha)
 
 
+@output_roles
 def elu(x, alpha=1.0):
     """ Exponential linear unit """
     return _copy_shape(x, backend_ops_elu, alpha)
 
 
+@output_roles
 def softmax(x):
     return _copy_shape(x, backend_ops_softmax)
 
 
+@output_roles
 def softplus(x):
     return _copy_shape(x, backend_ops_softplus)
 
 
+@output_roles
 def softsign(x):
     return _copy_shape(x, backend_ops_softsign)
 
@@ -115,19 +120,23 @@ def linear(x):
     return x
 
 
+@output_roles
 def sigmoid(x):
     return _copy_shape(x, backend_ops_sigmoid)
 
 
+@output_roles
 def hard_sigmoid(x):
     return _copy_shape(x, backend_ops_hard_sigmoid)
 
 
+@output_roles
 def tanh(x):
     return _copy_shape(x, backend_ops_tanh)
 
 
 # ==================== arthimetic ==================== #
+@output_roles
 def clip(x, min_value, max_value):
     if max_value < min_value:
         max_value = min_value
@@ -136,56 +145,68 @@ def clip(x, min_value, max_value):
     return _copy_shape(x, backend_ops_clip, min_value, max_value)
 
 
+@output_roles
 def square(x):
     if x.__class__.__name__ == 'IndexedSlices':
         x = add(x, 0.)
     return _copy_shape(x, backend_ops_square)
 
 
+@output_roles
 def abs(x):
     return _copy_shape(x, backend_ops_abs)
 
 
+@output_roles
 def inv(x):
     return _copy_shape(x, backend_ops_inv)
 
 
+@output_roles
 def sqrt(x):
     x = clip(x, 0., np.inf)
     return _copy_shape(x, backend_ops_sqrt)
 
 
+@output_roles
 def exp(x):
     return _copy_shape(x, backend_ops_exp)
 
 
+@output_roles
 def log(x):
     return _copy_shape(x, backend_ops_log)
 
 
+@output_roles
 def round(x):
     return _copy_shape(x, backend_ops_round)
 
 
+@output_roles
 def pow(x, a):
     return _copy_shape(x, backend_ops_pow, a)
 
 
+@output_roles
 def sign(x):
     return _copy_shape(x, backend_ops_sign)
 
 
+@output_roles
 def ceil(x):
     if is_number(x): return math.ceil(x)
     return _copy_shape(x, backend_ops_ceil)
 
 
+@output_roles
 def floor(x):
     if is_number(x): return math.floor(x)
     return _copy_shape(x, backend_ops_floor)
 
 
 # ==================== others ==================== #
+@output_roles
 def diag(x):
     input_shape = get_shape(x)
     x = backend_ops_diag(x)
@@ -194,6 +215,7 @@ def diag(x):
     return x
 
 
+@output_roles
 def eye(n, m=None, dtype=FLOATX):
     """ Return a 2-D array with ones on the diagonal and zeros elsewhere.
 
@@ -213,31 +235,37 @@ def eye(n, m=None, dtype=FLOATX):
 
 
 # ==================== comparators ==================== #
+@output_roles
 def neq(a, b):
     """a != b"""
     return _copy_shape(a, backend_ops_neq, b)
 
 
+@output_roles
 def eq(a, b):
     """a == b"""
     return _copy_shape(a, backend_ops_eq, b)
 
 
+@output_roles
 def gt(a, b):
     """a > b"""
     return _copy_shape(a, backend_ops_gt, b)
 
 
+@output_roles
 def ge(a, b):
     """a >= b"""
     return _copy_shape(a, backend_ops_ge, b)
 
 
+@output_roles
 def lt(a, b):
     """a < b"""
     return _copy_shape(a, backend_ops_lt, b)
 
 
+@output_roles
 def le(a, b):
     """a <= b"""
     return _copy_shape(a, backend_ops_le, b)
@@ -257,5 +285,6 @@ def function(inputs, outputs, updates=[], **kwargs):
     return f
 
 
+@output_roles
 def castX(x):
     return cast(x, FLOATX)

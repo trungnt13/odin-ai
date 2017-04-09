@@ -4,7 +4,7 @@ import re
 import inspect
 import numbers
 import warnings
-from functools import wraps
+from decorator import decorator
 from collections import OrderedDict
 from contextlib import contextmanager
 
@@ -42,6 +42,11 @@ class Role(object):
                            "create instance from this class.")
 
 
+class Randomization(Role):
+    """Base class for all variable roles."""
+    pass
+
+
 class Variable(Role):
     """Base class for all variable roles."""
     pass
@@ -49,6 +54,10 @@ class Variable(Role):
 
 class Auxiliary(Variable):
     """ Variables added to the graph as annotations """
+    pass
+
+
+class ConfusionMatrix(Auxiliary):
     pass
 
 
@@ -198,7 +207,10 @@ def as_shape_tuple(shape):
 
 
 def add_shape(var, shape):
-    _check_tag(var)
+    try:
+        _check_tag(var)
+    except:
+        return var
     # do nothing if not Number of tuple, list
     if isinstance(shape, np.ndarray):
         shape = shape.tolist()
@@ -289,7 +301,10 @@ def add_updates(var, key, value):
     updates won't be serialized during pickling of any variables.
 
     """
-    _check_tag(var)
+    try:
+        _check_tag(var)
+    except:
+        return var
     updates = getattr(var.tag, 'updates', OrderedDict())
     updates[key] = value
     var.tag.updates = updates
@@ -315,7 +330,10 @@ def add_role(var, roles=None):
 
     """
     # create tag attribute for variable
-    _check_tag(var)
+    try:
+        _check_tag(var)
+    except:
+        return var
     roles = [r for r in as_tuple(roles)
              if isinstance(r, type) and issubclass(r, Role)]
     # append roles scope
@@ -334,7 +352,10 @@ def add_auxiliary_variable(var, auxiliary, roles=None):
     r""" Annotate auxiliary variable to a given var
 
     """
-    _check_tag(var)
+    try:
+        _check_tag(var)
+    except:
+        return var
     auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
     add_role(auxiliary, Auxiliary)
     if roles is not None:
@@ -342,6 +363,7 @@ def add_auxiliary_variable(var, auxiliary, roles=None):
             add_role(auxiliary, r)
     auxiliary_variables.append(auxiliary)
     var.tag.auxiliary_variables = list(set(auxiliary_variables))
+    return var
 
 
 def has_roles(var, roles, match_all=False, exact=False):
@@ -391,8 +413,9 @@ def get_current_role_scope():
     return __ROLE_STACK[-1]
 
 
-def output_roles(roles):
-    """
+def output_roles(roles=None):
+    """ A decorators to assign specific role to all outputs of a function.
+
     Example
     -------
     >>> with role_scope(Variational):
@@ -403,20 +426,25 @@ def output_roles(roles):
     >>> print(X.tag.roles)
     ... # [<class 'odin.basic.Weight'>, <class 'odin.basic.Variational'>]
     """
-    roles = [r for r in as_tuple(roles)
-             if isinstance(r, type) and issubclass(r, Role)]
+    @decorator
+    def add_role_to_outputs(func, *args, **kwargs):
+        outputs = func(*args, **kwargs)
+        if isinstance(outputs, (tuple, list)):
+            for o in outputs:
+                add_role(o, roles)
+        else:
+            add_role(outputs, roles)
+        return outputs
 
-    def add_role_to_outputs(func):
-        @wraps(func)
-        def function(*args, **kwargs):
-            outputs = func(*args, **kwargs)
-            if isinstance(outputs, (tuple, list)):
-                for o in outputs:
-                    add_role(o, roles)
-            else:
-                add_role(outputs, roles)
-            return outputs
-        return function
+    # roles are not specified, given function directly
+    if inspect.isfunction(roles) or inspect.ismethod(roles):
+        func = roles
+        roles = []
+        return add_role_to_outputs(func)
+    # roles are specified
+    else:
+        roles = [r for r in as_tuple(roles)
+                 if isinstance(r, type) and issubclass(r, Role)]
     return add_role_to_outputs
 
 
