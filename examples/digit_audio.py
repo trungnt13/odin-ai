@@ -159,9 +159,9 @@ K.set_training(True); y_train = f(X)
 K.set_training(False); y_score = f(X)
 
 # ====== create cost ====== #
-cost_train = K.mean(K.categorical_crossentropy(y_train, y))
-cost_test_1 = K.mean(K.categorical_crossentropy(y_score, y))
-cost_test_2 = K.mean(K.categorical_accuracy(y_score, y))
+cost_train = K.mean(K.categorical_crossentropy(y_train, y), name='crossentropy')
+cost_test_1 = K.mean(K.categorical_crossentropy(y_score, y), name='crossentropy_score')
+cost_test_2 = K.mean(K.categorical_accuracy(y_score, y), name='accuracy')
 cost_test_3 = K.confusion_matrix(y_score, y, labels=range(10))
 
 # ====== create optimizer ====== #

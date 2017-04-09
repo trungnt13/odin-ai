@@ -204,7 +204,7 @@ def cast(x, dtype):
 # +, -, /, *, +=, -=, *=, /=
 # ===========================================================================
 @output_roles
-def dot(x, y):
+def dot(x, y, name=None):
     '''Multiplies 2 tensors.
     When attempting to multiply a ND tensor
     with a ND tensor, reproduces the Theano behavior
@@ -229,12 +229,12 @@ def dot(x, y):
     # calculate dot product and desire shape
     output_shape = [-1 if i is None else i
                     for i in shapeX[:-1] + outshapeY]
-    output = tf.reshape(tf.matmul(x, y), output_shape)
+    output = tf.reshape(tf.matmul(x, y), output_shape, name=name)
     return output
 
 
 @output_roles
-def batched_dot(x, y):
+def batched_dot(x, y, name=None):
     """Batchwise dot product.
     This function computes the dot product between the two tensors,
     by iterating over the first dimension.
@@ -257,14 +257,15 @@ def batched_dot(x, y):
     # calculate dot product and desire shape
     output_shape = shapeX[:-1] + outshapeY
     output = tf.reshape(tf.matmul(x, y),
-                        [i if i is not None else -1 for i in output_shape])
+                        [i if i is not None else -1 for i in output_shape],
+                        name=name)
     return output
 
 
 @output_roles
-def transpose(x, axes=None):
+def transpose(x, axes=None, name=None):
     """ Transposes a matrix. """
-    return tf.transpose(x, perm=axes)
+    return tf.transpose(x, perm=axes, name=name)
 
 
 @output_roles
@@ -291,82 +292,86 @@ def scatter():
 # ELEMENT-WISE OPERATIONS
 # ===========================================================================
 @output_roles
-def var(x, axis=None, keepdims=False):
+def var(x, axis=None, keepdims=False, name=None):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     x = tf.cast(x, FLOATX)
     m = tf.reduce_mean(x, axis=axis, keep_dims=True)
     devs_squared = tf.square(x - m)
-    return tf.reduce_mean(devs_squared, axis=axis, keep_dims=keepdims)
+    return tf.reduce_mean(devs_squared, axis=axis, keep_dims=keepdims, name=None)
 
 
 @output_roles
-def mean(x, axis=None, keepdims=False):
+def mean(x, axis=None, keepdims=False, name=None):
     axis = _normalize_axis(axis, x.get_shape().ndims)
     dtype = x.dtype.base_dtype
     if 'int' in str(dtype) or 'bool' in str(dtype):
         x = tf.cast(x, FLOATX)
-    return tf.reduce_mean(x, axis=axis, keep_dims=keepdims)
+    return tf.reduce_mean(x, axis=axis, keep_dims=keepdims, name=name)
 
 
 @output_roles
-def std(x, axis=None, keepdims=False):
-    return tf.sqrt(var(x, axis=axis, keepdims=keepdims))
+def std(x, axis=None, keepdims=False, name=None):
+    return tf.sqrt(var(x, axis=axis, keepdims=keepdims), name=name)
 
 
 @output_roles
-def max(x, axis=None, keepdims=False):
+def max(x, axis=None, keepdims=False, name=None):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_max(x, axis=axis, keep_dims=keepdims)
+    return tf.reduce_max(x, axis=axis, keep_dims=keepdims, name=name)
 
 
 @output_roles
-def min(x, axis=None, keepdims=False):
+def min(x, axis=None, keepdims=False, name=None):
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_min(x, axis=axis, keep_dims=keepdims)
+    return tf.reduce_min(x, axis=axis, keep_dims=keepdims, name=name)
 
 
 @output_roles
-def sum(x, axis=None, keepdims=False):
+def sum(x, axis=None, keepdims=False, name=None):
     """Sum of the values in a tensor, alongside the specified axis.
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_sum(x, axis=axis, keep_dims=keepdims)
+    return tf.reduce_sum(x, axis=axis, keep_dims=keepdims, name=name)
 
 
 @output_roles
-def prod(x, axis=None, keepdims=False):
+def prod(x, axis=None, keepdims=False, name=None):
     """Multiply the values in a tensor, alongside the specified axis.
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
-    return tf.reduce_prod(x, axis=axis, keep_dims=keepdims)
+    return tf.reduce_prod(x, axis=axis, keep_dims=keepdims, name=name)
 
 
 @output_roles
-def any(x, axis=None, keepdims=False):
+def any(x, axis=None, keepdims=False, name=None):
     """Bitwise reduction (logical OR).
     """
     axis = _normalize_axis(axis, x.get_shape().ndims)
     original_dtype = x.dtype
     x = tf.cast(x, tf.bool)
     x = tf.reduce_any(x, axis=axis, keep_dims=keepdims)
-    return tf.cast(x, original_dtype)
+    return tf.cast(x, original_dtype, name=name)
 
 
 @output_roles
-def argmax(x, axis=-1, keepdims=False):
+def argmax(x, axis=-1, keepdims=False, name=None):
     axis %= x.get_shape().ndims
-    x = tf.argmax(x, axis)
     if keepdims:
-        x = tf.expand_dims(x, axis)
+        x = tf.argmax(x, axis)
+        x = tf.expand_dims(x, axis, name=name)
+    else:
+        x = tf.argmax(x, axis, name=name)
     return x
 
 
 @output_roles
-def argmin(x, axis=-1, keepdims=False):
+def argmin(x, axis=-1, keepdims=False, name=None):
     axis %= x.get_shape().ndims
-    x = tf.argmin(x, axis)
     if keepdims:
-        x = tf.expand_dims(x, axis)
+        x = tf.argmin(x, axis)
+        x = tf.expand_dims(x, axis, name=name)
+    else:
+        x = tf.argmin(x, axis, name=name)
     return x
 
 
@@ -761,7 +766,8 @@ def confusion_matrix(y_pred, y_true, labels=None):
     if hasattr(labels, '__len__'):
         labels = len(labels)
     # transpose to match the format of sklearn
-    return tf.transpose(confusion_matrix(y_pred, y_true, num_classes=labels))
+    return tf.transpose(confusion_matrix(y_pred, y_true, num_classes=labels),
+        name='confusion_matrix')
 
 
 @output_roles
