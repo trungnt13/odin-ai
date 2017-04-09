@@ -428,8 +428,6 @@ class NNOps(object):
         self._configuration = NNConfig(self)
         self._transpose_ops = None
         self._is_initialized = False
-        # ====== check if there is predefined NNOps ====== #
-        assign_new_nnops(self)
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -454,11 +452,12 @@ class NNOps(object):
                             else:
                                 continue
                     raise RuntimeError("The pre-defined NNOps (%s) and the "
-                        "new loaded NNOps is different on the attribute: '%s'" %
-                        (str(nnops), i))
+                        "new NNOps (%s) is different on the attribute: '%s'; "
+                        "%s != %s." % (str(nnops), str(self), i, str(j), str(k)))
             else:
-                raise RuntimeError("Found pre-defined NNOps of type=%s, and")
-        else:
+                raise RuntimeError("Found pre-defined NNOps of type=%s, and the "
+                                   "new NNOps with type=%s." % (type(nnops), type(self)))
+        elif self._is_initialized:
             assign_new_nnops(self)
 
     # ==================== properties ==================== #
@@ -571,6 +570,8 @@ class NNOps(object):
             if not self._is_initialized:
                 self._initialize(**keywords)
                 self._is_initialized = True
+                # only assign new NNOps if it is initialized
+                assign_new_nnops(self)
             # ====== calculate and return outputs ====== #
             return self._apply(X[0] if len(X) == 1 else X, **kwargs)
 

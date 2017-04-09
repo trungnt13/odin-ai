@@ -9,7 +9,7 @@ os.environ['ODIN'] = 'gpu,float32,tensorflow'
 
 import numpy as np
 
-from odin import backend as K, nnet as N, fuel as F
+from odin import backend as K, nnet as N, fuel as F, basic as B
 from odin.stats import train_valid_test_split
 from odin import training
 
@@ -72,20 +72,20 @@ K.set_training(True); y_train = f(X)
 K.set_training(False); y_score = f(X)
 f_pred = K.function(inputs=X, outputs=y_score)
 
-
 param = [p for p in f.parameters]
-opt = K.optimizers.RMSProp(lr=0.00001)
+opt = K.optimizers.Adam(lr=0.001)
 
 # ===========================================================================
 # Training
 # ===========================================================================
 train, hist = training.standard_trainer(
     train_data=feeder_train, valid_data=feeder_valid,
-    X=X, y_train=y_train, y_score=y_score, y_target=y,
-    cost_train=K.categorical_crossentropy,
-    cost_score=[K.categorical_crossentropy, K.categorical_accuracy],
+    cost_train=K.mean(K.categorical_crossentropy(y_train, y)),
+    cost_score=[K.mean(K.categorical_crossentropy(y_score, y)), B.EarlyStop,
+                K.mean(K.categorical_accuracy(y_score, y)), B.AccuracyValue],
+    confusion_matrix=K.confusion_matrix(y_score, y, labels=len(gender)),
     parameters=param,
     batch_size=64, valid_freq=0.6,
     optimizer=opt, stop_callback=opt.get_lr_callback(),
-    confusion_matrix=gender)
+    labels=gender)
 train.run()

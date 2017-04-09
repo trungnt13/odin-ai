@@ -9,7 +9,7 @@ import numpy as np
 
 from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import get_rng
-from odin import fuel
+from odin import fuel, basic
 from odin.fuel import Dataset, as_data
 from odin.utils import struct, as_tuple, is_number, Progbar
 
@@ -54,8 +54,8 @@ def _plot_each_epoch(name, results, task_type):
 
 
 def standard_trainer(train_data, valid_data, test_data=None,
-                     cost_train=None, cost_score=None, cost_regu=None,
-                     parameters=[], optimizer=None,
+                     cost_train='auto', cost_score='auto', cost_regu='auto',
+                     parameters='auto', optimizer='auto',
                      confusion_matrix=None, gradient_norm=True,
                      batch_size=64, nb_epoch=3, valid_freq=1.,
                      seed=1208, shuffle_level=2, patience=3, earlystop=5,
@@ -91,16 +91,17 @@ def standard_trainer(train_data, valid_data, test_data=None,
     from odin import backend as K
     # ====== prepare variables and cost ====== #
     # check optimizer
-    if optimizer is None:
-        print("[WARNING] No optimizer is given, use default SGD with "
-              "Nesterov momentum (lr=0.00001, momentum=0.9).")
-        optimizer = K.optimizers.SGD(lr=0.0001, momentum=0.9, nesterov=True)
+    if optimizer is None or optimizer == 'auto':
+        print("[WARNING] No optimizer is given, use default Adam optimizer.")
+        optimizer = K.optimizers.Adam()
     elif not isinstance(optimizer, K.optimizers.Optimizer) and \
     not hasattr(optimizer, "get_updates"):
         raise ValueError("Invalid optimizer, the optimizer must be instance of "
                          "backend.optimizers.Optimizer or having function "
                          "get_updates(self, loss_or_grads, params).")
     #  check the cost train
+    if cost_train == 'auto':
+        cost_train = K.ComputationGraph().get_roles(basic.TrainingCost)
     cost_train = as_tuple(cost_train) if cost_train is not None else tuple()
     if len(cost_train) == 0:
         raise ValueError("You must specify cost_train.")
@@ -108,12 +109,22 @@ def standard_trainer(train_data, valid_data, test_data=None,
     cost_train_name = [i.name if K.is_variable(i) else i.__name__
                        for i in cost_train]
     #  check the cost score
+    if cost_score == 'auto':
+        graph = K.ComputationGraph()
+        cost_score = graph.get_roles(basic.EarlyStop)
     cost_score = as_tuple(cost_score) if cost_score is not None else tuple()
     cost_score = [cost for cost in cost_score if K.is_variable(cost)]
     cost_score_name = [i.name if K.is_variable(i) else i.__name__
                        for i in cost_score]
+    #  check the cost regu
+    if cost_regu == 'auto':
+        cost_regu = K.ComputationGraph().get_roles(basic.RegularizeCost)
+        if len(cost_regu) == 0:
+            cost_regu = None
     cost_regu = as_tuple(cost_regu) if cost_regu is not None else tuple()
     # check parameters
+    if parameters == 'auto':
+        parameters = K.ComputationGraph().parameters
     parameters = as_tuple(parameters) if parameters is not None else tuple()
     # ====== get the updates ====== #
     training_cost = cost_train[0]
@@ -134,7 +145,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
         confusion_matrix = False
     # ====== create function ====== #
     print('Building training functions ...')
-    train_inputs = K.ComputationGraph(cost_train).inputs[::-1]
+    train_inputs = K.ComputationGraph(cost_train).inputs
     f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
     f_score = None
@@ -143,7 +154,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
             print("[WARNING] No scoring cost is specified, using training "
                   "cost for validating!")
             cost_score = cost_train[:-1] if gradient_norm else cost_train
-        score_inputs = K.ComputationGraph(cost_score).inputs[::-1]
+        score_inputs = K.ComputationGraph(cost_score).inputs
         f_score = K.function(inputs=score_inputs, outputs=cost_score)
 
     # ====== evaluation ====== #

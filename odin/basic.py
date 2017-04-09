@@ -69,6 +69,23 @@ class ConfusionMatrix(Auxiliary):
     pass
 
 
+class EarlyStop(Auxiliary):
+    pass
+
+
+# ==================== Role for Cost and Objective ==================== #
+class ObjectiveCost(Variable):
+    pass
+
+
+class TrainingCost(ObjectiveCost):
+    pass
+
+
+class RegularizeCost(ObjectiveCost):
+    pass
+
+
 # ==================== Variational ==================== #
 class Variational(Variable):
     """ All role related to variational inference """
@@ -80,11 +97,6 @@ class VariationalMean(Variational):
 
 
 class VariationalLogsigma(Variational):
-    pass
-
-
-# ==================== Role for Cost and Objective ==================== #
-class ObjectiveCost(Variable):
     pass
 
 
@@ -318,7 +330,7 @@ def add_updates(var, key, value):
     var.tag.updates = updates
 
 
-def add_role(var, roles=None):
+def add_role(variables, roles=None):
     r"""Add a role to a given variable.
 
     Parameters
@@ -338,22 +350,23 @@ def add_role(var, roles=None):
 
     """
     # create tag attribute for variable
-    try:
-        _check_tag(var)
-    except:
-        return var
-    roles = [r for r in as_tuple(roles)
-             if isinstance(r, type) and issubclass(r, Role)]
-    # append roles scope
-    roles += get_current_role_scope()
-    var_roles = list(getattr(var.tag, 'roles', []))
-    var_roles = var_roles + roles
-    # ====== shrink the roles so there is NO subrole ====== #
-    var_roles = [r for r in var_roles
-                 if not any(r != r0 and issubclass(r0, r) for r0 in var_roles)]
-    # ====== adding new role ====== #
-    var.tag.roles = var_roles
-    return var
+    for var in as_tuple(variables):
+        try:
+            _check_tag(var)
+        except:
+            continue
+        roles = [r for r in as_tuple(roles)
+                 if isinstance(r, type) and issubclass(r, Role)]
+        # append roles scope
+        roles += get_current_role_scope()
+        var_roles = list(getattr(var.tag, 'roles', []))
+        var_roles = var_roles + roles
+        # ====== shrink the roles so there is NO subrole ====== #
+        var_roles = [r for r in var_roles
+                     if not any(r != r0 and issubclass(r0, r) for r0 in var_roles)]
+        # ====== adding new role ====== #
+        var.tag.roles = var_roles
+    return variables
 
 
 def add_auxiliary_variable(var, auxiliary, roles=None):

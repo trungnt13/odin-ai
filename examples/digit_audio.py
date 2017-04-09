@@ -24,7 +24,7 @@ args = ArgController(
 ).add('-cnn', 'enable CNN or not', True
 ).add('-vad', 'number of GMM component for VAD', 2
 # for trainign
-).add('-lr', 'learning rate', 0.0001
+).add('-lr', 'learning rate', 0.001
 ).add('-epoch', 'number of epoch', 5
 ).add('-bs', 'batch size', 8
 ).parse()
@@ -166,67 +166,20 @@ cost_test_3 = K.confusion_matrix(y_score, y, labels=range(10))
 
 # ====== create optimizer ====== #
 parameters = [p for p in f.parameters if has_roles(p, [Weight, Bias])]
-optimizer = K.optimizers.RMSProp(lr=args['lr'])
+optimizer = K.optimizers.Adam(lr=args['lr'])
 # ===========================================================================
 # Standard trainer
 # ===========================================================================
-if True:
-    trainer, hist = training.standard_trainer(
-        train_data=train_feeder, valid_data=valid_feeder, test_data=test_feeder,
-        X=X, y_train=y_train, y_score=y_score, y_target=y, parameters=parameters,
-        cost_score=[K.categorical_crossentropy, K.categorical_accuracy],
-        cost_train=[K.categorical_crossentropy],
-        optimizer=optimizer,
-        confusion_matrix=range(10),
-        gradient_norm=True,
-        nb_epoch=args['epoch'],
-        batch_size=8,
-        save_path=get_modelpath(name='digit_audio.ai', override=True),
-        save_obj=f,
-        report_path=get_logpath(name="digit_audio.pdf", override=True),
-    )
-    trainer.run()
-    exit()
-# ===========================================================================
-# Continue create your own training process
-# ===========================================================================
-updates = optimizer.get_updates(cost_train, parameters)
-
-# ====== create function ====== #
-print('Building training functions ...')
-f_train = K.function([X, y], [cost_train, optimizer.norm],
-                     updates=updates)
-print('Building testing functions ...')
-f_test = K.function([X, y], [cost_test_1, cost_test_2, cost_test_3])
-print('Building predicting functions ...')
-f_pred = K.function(X, y_score)
-
-# ===========================================================================
-# Build trainer
-# ===========================================================================
-print('Start training ...')
-task = training.MainLoop(batch_size=args['bs'], seed=1208, shuffle_level=2)
-task.set_save(get_modelpath(name='digit_audio.ai', override=True), f)
-task.set_task(f_train, train_feeder, epoch=args['epoch'], name='train')
-task.set_subtask(f_test, valid_feeder, freq=0.6, name='valid')
-task.set_subtask(f_test, test_feeder, when=-1, name='test')
-task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
-    training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
-                             tracking={2: lambda x: sum(x)}),
-    training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
-    training.History(),
-    training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
-    training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
-])
-task.run()
-
-# ====== plot the training process ====== #
-task['History'].print_info()
-task['History'].print_batch('train')
-task['History'].print_batch('valid')
-task['History'].print_epoch('test')
-print('Benchmark TRAIN-batch:', task['History'].benchmark('train', 'batch_end').mean)
-print('Benchmark TRAIN-epoch:', task['History'].benchmark('train', 'epoch_end').mean)
-print('Benchmark PRED-batch:', task['History'].benchmark('valid', 'batch_end').mean)
-print('Benchmark PRED-epoch:', task['History'].benchmark('valid', 'epoch_end').mean)
+trainer, hist = training.standard_trainer(
+    train_data=train_feeder, valid_data=valid_feeder, test_data=test_feeder,
+    cost_train=cost_train, cost_score=[cost_test_1, cost_test_2], cost_regu=None,
+    parameters=parameters, optimizer=optimizer,
+    confusion_matrix=cost_test_3, gradient_norm=True,
+    nb_epoch=args['epoch'], batch_size=8, valid_freq=1.,
+    save_path=get_modelpath(name='digit_audio.ai', override=True),
+    save_obj=f,
+    report_path=get_logpath(name="digit_audio.pdf", override=True),
+    enable_rollback=True, stop_callback=None, save_callback=None,
+    labels=range(10)
+)
+trainer.run()

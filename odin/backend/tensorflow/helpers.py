@@ -249,7 +249,7 @@ class ComputationGraph(object):
 
     """
 
-    def __init__(self, outputs):
+    def __init__(self, outputs=None):
         outputs = flatten_list(as_list(outputs), level=None)
         self.outputs = [o for o in outputs if o is not None]
         self._get_variables()
@@ -489,6 +489,10 @@ class ComputationGraph(object):
                 for i in range(old_max_ops[g], new_max_ops[g] + 1):
                     op = g._nodes_by_id[i]
                     # TODO: think about what to do with new Ops here
+
+    def get_roles(self, roles, match_all=False, exact=False):
+        return [v for v in self.variables
+                if has_roles(v, roles, match_all=match_all, exact=exact)]
 
     # ==================== others ==================== #
     def __len__(self):
