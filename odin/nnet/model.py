@@ -110,6 +110,19 @@ class VariableDescriptor(object):
         self.__placeholder = None
 
     # ==================== properties ==================== #
+    def set_placeholder(self, plh):
+        if not K.is_placeholder(plh):
+            raise ValueError("a placholder must be specified.")
+        if K.get_shape(plh) == self.shape and \
+        K.get_dtype(plh, string=True) == self.dtype:
+            self.__placeholder = plh
+        else:
+            raise ValueError("This VariableDescriptor require input with shape=%s,"
+                             "and dtype=%s, but given a placholder with shape=%s, "
+                             "dtype=%s." % (str(self.shape), self.dtype,
+                                str(K.get_shape(plh)), K.get_dtype(plh, string=True)))
+        return self
+
     @property
     def placeholder(self):
         if self.__placeholder is None:
@@ -211,6 +224,17 @@ class InputDescriptor(object):
         return self
 
     # ==================== properties ==================== #
+    def set_placeholder(self, plh):
+        plh = [i for i in as_tuple(plh) if i is None or K.is_placeholder(i)]
+        if len(plh) < len(self._desc):
+            plh += [None] * len(self._desc) - len(plh)
+        elif len(plh) > len(self._desc):
+            plh = plh[:len(self._desc)]
+        for v, p in zip(self._desc, plh):
+            if p is not None:
+                v.set_placeholder(p)
+        return self
+
     @property
     def placeholder(self):
         plh = [i.placeholder for i in self._desc]

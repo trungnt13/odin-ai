@@ -57,6 +57,10 @@ class Auxiliary(Variable):
     pass
 
 
+class AccuracyValue(Auxiliary):
+    pass
+
+
 class ConfusionMatrix(Auxiliary):
     pass
 

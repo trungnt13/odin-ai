@@ -16,7 +16,7 @@ from tensorflow import variable_scope as _tf_variable_scope
 from odin.basic import (add_role, has_roles, as_shape_tuple, is_training,
                         add_shape, get_shape, Auxiliary, Parameter)
 from odin.utils.decorators import singleton
-from odin.utils import dict_union
+from odin.utils import dict_union, as_list, flatten_list
 from odin.config import CONFIG
 
 FLOATX = CONFIG.floatX
@@ -248,12 +248,9 @@ class ComputationGraph(object):
 
     """
 
-    def __init__(self, outputs=None):
-        if outputs is None:
-            outputs = []
-        elif not isinstance(outputs, (tuple, list)):
-            outputs = [outputs]
-        self.outputs = list(outputs)
+    def __init__(self, *outputs):
+        outputs = flatten_list(outputs, level=None)
+        self.outputs = [o for o in outputs if o is not None]
         self._get_variables()
 
     def _get_variables(self):
@@ -315,12 +312,16 @@ class ComputationGraph(object):
             _travelled_op = [] # reset the tracking list
             if v.name in global_vars:
                 variables.append(global_vars[v.name])
-            variables.append(v)
+            if _is_tensor(v):
+                variables.append(v)
         variables = list(set(variables + usual_outputs))
         # sorted by Ops ID in _nodes=
-        variables = sorted(variables,
-            key=lambda x: [ID for ID, ops in x.graph._nodes_by_id.iteritems()
-                          if ops == x.op][0])
+        graph_nodes_ID = {}
+        for v in variables:
+            if v.graph not in graph_nodes_ID:
+                graph_nodes_ID[v.graph] = {op: ID
+                    for ID, op in v.graph._nodes_by_id.iteritems()}
+        variables = sorted(variables, key=lambda x: graph_nodes_ID[x.graph][x.op])
         inputs = [v for v in variables if is_placeholder(v)]
         trainable_variables = [v for v in variables if is_trainable_variable(v)]
         # ====== get all updates and auxiliary variables ====== #
@@ -452,6 +453,22 @@ class ComputationGraph(object):
             dict_swap[o] = o_new
             outputs_new.append(o_new)
         return outputs_new
+
+    @contextmanager
+    def with_roles(self, roles, match_all=False, exact=False):
+        vars = [v for v in self.variables
+                if has_roles(v, roles, match_all=match_all, exact=exact)]
+        # tracking if new variables have been created
+        all_graph = list(set([v.graph for v in self.variables]))
+        old_max_ops = {g: g._nodes_by_id.keys()[-1] for g in all_graph}
+        yield vars
+        new_max_ops = {g: g._nodes_by_id.keys()[-1] for g in all_graph}
+        # ====== check if new Ops is performed in this context ====== #
+        for g in all_graph:
+            if old_max_ops[g] < new_max_ops[g]:
+                for i in range(old_max_ops[g], new_max_ops[g] + 1):
+                    op = g._nodes_by_id[i]
+                    # TODO: think about what to do with new Ops here
 
     # ==================== others ==================== #
     def __iter__(self):

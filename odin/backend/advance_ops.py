@@ -11,7 +11,9 @@ import numpy as np
 
 from odin.config import CONFIG, get_rng
 from odin.utils import as_tuple, is_number
-from odin.basic import add_updates, get_shape, add_shape, add_role, ActivationParameter
+from odin.basic import (add_updates, get_shape, add_shape, add_role,
+                        ActivationParameter, ObjectiveCost, AccuracyValue,
+                        output_roles)
 
 from .basic_ops import (is_variable, ndim, expand_dims, repeat, dimshuffle,
                         concatenate, clip, log, one_hot, reshape, constant, any,
@@ -399,6 +401,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto'):
 # ===========================================================================
 # Advanced cost function
 # ===========================================================================
+@output_roles(ObjectiveCost)
 def bayes_crossentropy(y_pred, y_true, nb_classes=None):
     shape = get_shape(y_pred)
     if ndim(y_pred) == 1:
@@ -432,12 +435,14 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None):
     return - 1 / nb_classes * sum(loss / prob_distribution, axis=1)
 
 
+@output_roles(ObjectiveCost)
 def bayes_binary_crossentropy(y_pred, y_true):
     y_pred = concatenate([1 - y_pred, y_pred])
     y_true = one_hot(cast(y_true, 'int32'), nb_class=2)
     return bayes_crossentropy(y_pred, y_true, nb_classes=2)
 
 
+@output_roles(ObjectiveCost)
 def categorical_crossentropy(output, target):
     """ NOTE: the crossentropy is different between tensorflow and theano
     If the `output` and `target` are mistaken the position, the gradients of
@@ -454,10 +459,12 @@ def categorical_crossentropy(output, target):
     return x
 
 
+@output_roles(ObjectiveCost)
 def squared_error(output, target):
     return square(output - target)
 
 
+@output_roles(ObjectiveCost)
 def binary_crossentropy(output, target):
     input_shape = get_shape(output)
     if ndim(output) > 1: output = flatten(output, outdim=1)
@@ -470,6 +477,7 @@ def binary_crossentropy(output, target):
     return x
 
 
+@output_roles(ObjectiveCost)
 def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
                       binary=True):
     """Computes the binary hinge loss between predictions and targets.
@@ -518,6 +526,7 @@ def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
     return theano.tensor.nnet.relu(delta - predictions * targets)
 
 
+@output_roles(ObjectiveCost)
 def multiclass_hinge_loss(predictions, targets, delta=1):
     """Computes the multi-class hinge loss between predictions and targets.
     .. math:: L_i = \\max_{j \\not = p_i} (0, t_j - t_{p_i} + \\delta)
@@ -607,6 +616,7 @@ def LER(y_true, y_pred, return_mean=True):
     return results
 
 
+@output_roles(AccuracyValue)
 def binary_accuracy(y_pred, y_true, threshold=0.5):
     """ Non-differentiable """
     if ndim(y_pred) > 1: y_pred = reshape(y_pred, (-1,))
@@ -616,6 +626,7 @@ def binary_accuracy(y_pred, y_true, threshold=0.5):
               cast(y_true, 'int32'))
 
 
+@output_roles(AccuracyValue)
 def categorical_accuracy(y_pred, y_true, top_k=1):
     """ Non-differentiable """
     if ndim(y_true) == ndim(y_pred):
@@ -1087,6 +1098,7 @@ def apply_noise(x, level=0.075, noise_dims=None, noise_type='gaussian'):
 # ===========================================================================
 # helper function
 # ===========================================================================
+@output_roles
 def L2(variables):
     l2 = constant(0., name='L2const')
     for v in as_tuple(variables):
@@ -1094,6 +1106,7 @@ def L2(variables):
     return l2
 
 
+@output_roles
 def L1(variables):
     l1 = constant(0., name='L1const')
     for v in as_tuple(variables):
@@ -1101,6 +1114,7 @@ def L1(variables):
     return l1
 
 
+@output_roles
 def L2_normalize(variable, axis):
     norm = sqrt(sum(square(variable), axis=axis, keepdims=True))
     return variable / norm

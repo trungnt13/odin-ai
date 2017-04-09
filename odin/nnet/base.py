@@ -277,8 +277,12 @@ class NNConfig(object):
             raise ValueError("This NNConfiguration required inputs: %s, but was given: "
                             "%s." % (str(self._input_desc), str(_)))
         # automatic fetch placeholder to replace raw description
-        return [i if K.is_variable(i) else j
-                for i, j in zip(inputs, as_tuple(self.input))]
+        inputs = [i if K.is_variable(i) else None for i in inputs]
+        # Don't create placeholders if user already gave the Input Tensor
+        if any(i is None for i in inputs):
+            inputs = [j if i is None else i
+                      for i, j in zip(inputs, as_tuple(self.input))]
+        return inputs
 
     def __getattr__(self, name):
         if name in self._variables:
