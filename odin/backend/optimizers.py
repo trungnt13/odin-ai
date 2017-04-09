@@ -6,16 +6,17 @@
 from __future__ import print_function, division, absolute_import
 
 import numbers
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractproperty
 from collections import OrderedDict
 from six import add_metaclass
 
 import numpy as np
 
 from odin.config import CONFIG
-from odin.utils import as_tuple
+from odin.utils import as_tuple, is_number
+from odin.utils.cache_utils import cache_memory
 from odin.basic import (add_role, Auxiliary, LearningRate,
-                        OptimizerHyperParameter, Role)
+                        OptimizerHyperParameter, Role, GradientsNorm)
 FLOATX = CONFIG.floatX
 
 # store python primitive operators
@@ -58,43 +59,6 @@ def _as_variable(x, name, roles=None):
         for r in roles:
             add_role(x, r)
     return x
-
-
-def get_or_compute_grads(loss_or_grads, params):
-    """Helper function returning a list of gradients
-
-    Parameters
-    ----------
-    loss_or_grads : symbolic expression or list of expressions
-        A scalar loss expression, or a list of gradient expressions
-    params : list of shared variables
-        The variables to return the gradients for
-
-    Returns
-    -------
-    list of expressions
-        If `loss_or_grads` is a list, it is assumed to be a list of
-        gradients and returned as is, unless it does not match the length
-        of `params`, in which case a `ValueError` is raised.
-        Otherwise, `loss_or_grads` is assumed to be a cost expression and
-        the function returns `theano.grad(loss_or_grads, params)`.
-
-    Raises
-    ------
-    ValueError
-        If `loss_or_grads` is a list of a different length than `params`, or if
-        any element of `params` is not a shared variable (while we could still
-        compute its gradient, we can never update it and want to fail early).
-    """
-    if any(not (is_variable(p) or is_placeholder(p)) for p in params):
-        raise ValueError("params must contain shared variables only.")
-    if isinstance(loss_or_grads, list):
-        if not len(loss_or_grads) == len(params):
-            raise ValueError("Got %d gradient expressions for %d parameters" %
-                             (len(loss_or_grads), len(params)))
-        return loss_or_grads
-    else:
-        return gradients(loss_or_grads, params)
 
 
 def total_norm_constraint(tensor_vars, max_norm, epsilon=1e-8,
@@ -266,66 +230,116 @@ class Optimizer(object):
     ----------
     lr: float, variable
         learning rate
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
         when their absolute value exceeds this value.
-
+    Note
+    ----
+    decayed_learning_rate = learning_rate *
+                        decay_rate ^ (global_step / decay_steps)
     """
 
-    def __init__(self, lr, clipnorm=None, clipvalue=None):
-        self.lr = _as_variable(lr, name='learning_rate', roles=LearningRate)
+    def __init__(self, lr, decay_steps=None, decay_rate=0.96,
+                 clipnorm=None, clipvalue=None):
+        self._lr = _as_variable(lr, name='learning_rate', roles=LearningRate)
+        self._lr_decay = None
+        self._step = variable(0., name="%s_step" % self.__class__.__name__)
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
 
         if clipnorm is not None and \
-        (clipnorm if isinstance(clipnorm, numbers.Number) else get_value(clipnorm)) <= 0:
+        (clipnorm if is_number(clipnorm) else get_value(clipnorm)) <= 0:
             raise ValueError('clipnorm value must greater than 0.')
         self.clipnorm = clipnorm
+
         if clipvalue is not None and \
-        (clipvalue if isinstance(clipnorm, numbers.Number) else get_value(clipvalue)) <= 0:
+        (clipvalue if is_number(clipnorm) else get_value(clipvalue)) <= 0:
             raise ValueError('clipvalue value must greater than 0.')
         self.clipvalue = clipvalue
+
         # ====== internal states values ====== #
         self._norm = 0.
-        self.updates = {}
+        self._algorithm = None
+        self._is_initialized = False
+
+    @property
+    def step(self):
+        return self._step
+
+    @property
+    def lr_value(self):
+        return self._lr
+
+    @property
+    def lr(self):
+        if self.decay_steps is not None:
+            if self._lr_decay is None:
+                import tensorflow as tf
+                self._lr_decay = tf.train.exponential_decay(self._lr,
+                    self._step, self.decay_steps, self.decay_rate,
+                    staircase=True)
+            return self._lr_decay
+        else:
+            return self._lr
+
+    @property
+    def algorithm(self):
+        return self._algorithm
 
     @property
     def norm(self):
         """Return L2-norm value of all gradients """
         return self._norm
 
-    @abstractmethod
+    @cache_memory
     def get_updates(self, loss_or_grads, params):
-        pass
-
-    def __call__(self, loss_or_grads, params):
-        updates = self.get_updates(loss_or_grads, params)
-        if not isinstance(updates, (dict, list, tuple)):
-            raise ValueError('returned "updates" must be dict, list, tuple which '
-                            'contain pair of (params<=>new_params).')
-        self.updates = updates
+        grads_vars = self.get_gradients(loss_or_grads, params)
+        updates = self.algorithm.apply_gradients(grads_vars,
+            global_step=self._step)
+        # ====== initialize ====== #
+        import tensorflow as tf
+        init = tf.global_variables_initializer()
+        init.run()
         return updates
 
+    def __call__(self, loss_or_grads, params):
+        return self.get_updates(loss_or_grads, params)
+
+    @cache_memory
     def get_gradients(self, loss_or_grads, params):
         """
         Note
         ----
         The returned gradients may contain None value
         """
-        grads = get_or_compute_grads(loss_or_grads, params)
+        # check valid algorithm
+        if self.algorithm is None or \
+        not hasattr(self.algorithm, 'compute_gradients') or \
+        not hasattr(self.algorithm, 'apply_gradients'):
+            raise RuntimeError("Optimizer is None, or doesn't has attributes: "
+                               "compute_gradients and apply_gradients.")
+        # get the gradient
+        grads_var = self.algorithm.compute_gradients(loss_or_grads,
+            var_list=params)
+        grads_var = {g: v for g, v in grads_var if g is not None}
+        grads = grads_var.keys()
+        params = grads_var.values()
         # ====== clipnorm ====== #
         if self.clipnorm is not None and self.clipnorm > 0:
-            grads, self._norm = total_norm_constraint(grads, self.clipnorm,
-                                                      return_norm=True)
+            grads, self._norm = total_norm_constraint(
+                grads, self.clipnorm, return_norm=True)
         else:
-            self._norm = sqrt(_sum([sum(square(g)) for g in grads
-                                    if g is not None]))
-            add_role(self._norm, Auxiliary)
+            self._norm = sqrt(_sum([sum(square(g)) for g in grads]))
+            add_role(self._norm, GradientsNorm)
         # ====== clipvalue ====== #
         if self.clipvalue is not None and self.clipvalue > 0:
-            grads = [clip(g, -self.clipvalue, self.clipvalue)
-                     if g is not None else g
-                     for g in grads]
-        return grads
+            grads = [clip(g, -self.clipvalue, self.clipvalue) for g in grads]
+        return [(g, p) for g, p in zip(grads, params)]
 
     def get_lr_callback(self, decay=2.):
         """ Return: a lambda function, everytime you call this function
@@ -333,9 +347,9 @@ class Optimizer(object):
         :math:`lr_{new} = lr_{old} / decay`
         """
         def lr_decay():
-            lr = get_value(self.lr)
+            lr = get_value(self._lr)
             lr = lr / decay
-            set_value(self.lr, lr)
+            set_value(self._lr, lr)
 
         return lr_decay
 
@@ -348,11 +362,12 @@ class SGD(Optimizer):
     momentum: float >= 0. None
         Parameter updates momentum. If momentum is None or 0,
         no momentum is not applied
-    decay: float >= 0, or None
-        Learning rate decay over each update. If decay is None or 0,
-        no decay is applied
     nesterov: boolean.
         Whether to apply Nesterov momentum.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -360,54 +375,26 @@ class SGD(Optimizer):
 
     """
 
-    def __init__(self, lr=0.01, momentum=0.9, decay=None, nesterov=False,
+    def __init__(self, lr=0.01, momentum=0.9, nesterov=False,
+                 decay_steps=None, decay_rate=0.96,
                  clipnorm=None, clipvalue=None):
-        super(SGD, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0., name='iterations', roles=Auxiliary)
-        self.nesterov = nesterov
+        super(SGD, self).__init__(lr=lr,
+            decay_steps=decay_steps, decay_rate=decay_rate,
+            clipnorm=clipnorm, clipvalue=clipvalue)
         # ====== momentum ====== #
         if momentum == 0:
             momentum = None
         self.momentum = _as_variable(momentum, name='momentum',
                                      roles=OptimizerHyperParameter)
+        self.nesterov = nesterov
         # ====== decay ====== #
-        if decay == 0:
-            decay = None
-        self.decay = _as_variable(decay, name='decay',
-                                  roles=OptimizerHyperParameter)
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-        lr = self.lr
-        updates = []
-        if self.decay is not None:
-            lr = lr * (1. / (1. + self.decay * self.iterations))
-            updates.append((self.iterations, self.iterations + 1))
-
-        # momentum
+        import tensorflow as tf
         if self.momentum is not None:
-            shapes = [get_shape(p) for p in params]
-            moments = [variable(np.zeros(shape)) for shape in shapes]
-        else: # just create dummy moments
-            moments = [None] * len(params)
-        # ====== main updates ====== #
-        for p, g, m in zip(params, grads, moments):
-            if g is None: continue
-            update_gradient = lr * g
-            # ====== applying momentum ====== #
-            if self.momentum is not None:
-                v = self.momentum * m - update_gradient  # velocity
-                updates.append((m, v))
-                if self.nesterov:
-                    new_p = p + self.momentum * v - update_gradient
-                else:
-                    new_p = p + v
-            # ====== NO momentum ====== #
-            else:
-                new_p = p - update_gradient
-            # final updates
-            updates.append((p, new_p))
-        return updates
+            self._algorithm = tf.train.MomentumOptimizer(self.lr,
+                self.momentum, use_nesterov=nesterov)
+        else:
+            self._algorithm = tf.train.GradientDescentOptimizer(
+                learning_rate=self.lr)
 
 
 class RMSProp(Optimizer):
@@ -455,30 +442,21 @@ class RMSProp(Optimizer):
            Coursera. http://www.youtube.com/watch?v=O3sxAc4hxZU (formula @5:20)
     """
 
-    def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8,
+    def __init__(self, lr=0.001, rho=0.9, momentum=0.0, epsilon=1e-10,
+                 decay_steps=None, decay_rate=0.96,
                  clipnorm=None, clipvalue=None):
-        super(RMSProp, self).__init__(lr, clipnorm, clipvalue)
+        super(RMSProp, self).__init__(lr=lr,
+            decay_steps=decay_steps, decay_rate=decay_rate,
+            clipnorm=clipnorm, clipvalue=clipvalue)
         self.rho = _as_variable(rho, name='rho',
                                 roles=OptimizerHyperParameter)
-        self.epsilon = constant(epsilon, dtype=FLOATX)
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-
-        shapes = [get_shape(p) for p in params]
-        accumulators = [variable(np.zeros(shape)) for shape in shapes]
-        updates = []
-
-        for p, g, a in zip(params, grads, accumulators):
-            if g is None: continue
-            # update accumulator
-            new_a = self.rho * a + (1. - self.rho) * square(g)
-            updates.append((a, new_a))
-            # update parameters
-            new_p = p - self.lr * g / (sqrt(new_a) + self.epsilon)
-            # add to updates
-            updates.append((p, new_p))
-        return updates
+        self.momentum = _as_variable(momentum, name='momentum',
+                                roles=OptimizerHyperParameter)
+        self.epsilon = epsilon
+        import tensorflow as tf
+        self._algorithm = tf.train.RMSPropOptimizer(self.lr,
+            decay=self.rho, momentum=self.momentum, epsilon=self.epsilon,
+            centered=False)
 
 
 class Adadelta(Optimizer):
@@ -537,34 +515,18 @@ class Adadelta(Optimizer):
     """
 
     def __init__(self, lr=1.0, rho=0.95, epsilon=1e-8,
+                 decay_steps=None, decay_rate=0.96,
                  clipnorm=None, clipvalue=None):
-        super(Adadelta, self).__init__(lr, clipnorm, clipvalue)
+        super(Adadelta, self).__init__(lr=lr,
+            decay_steps=decay_steps, decay_rate=decay_rate,
+            clipnorm=clipnorm, clipvalue=clipvalue)
         self.rho = _as_variable(rho, name='rho',
                                 roles=OptimizerHyperParameter)
         self.epsilon = epsilon
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-
-        shapes = [get_shape(p) for p in params]
-        accumulators = [variable(np.zeros(shape)) for shape in shapes]
-        delta_accumulators = [variable(np.zeros(shape)) for shape in shapes]
-        updates = []
-
-        for p, g, a, d_a in zip(params, grads, accumulators, delta_accumulators):
-            if g is None: continue
-            # update accumulator
-            new_a = self.rho * a + (1. - self.rho) * square(g)
-            updates.append((a, new_a))
-            # use the new accumulator and the *old* delta_accumulator
-            update = g * sqrt(d_a + self.epsilon) / sqrt(new_a + self.epsilon)
-            # update new parameters
-            new_p = p - self.lr * update
-            updates.append((p, new_p))
-            # update delta_accumulator
-            new_d_a = self.rho * d_a + (1 - self.rho) * square(update)
-            updates.append((d_a, new_d_a))
-        return updates
+        import tensorflow as tf
+        self._algorithm = tf.train.AdadeltaOptimizer(
+            learning_rate=self.lr, rho=self.rho,
+            epsilon=self.epsilon)
 
 
 class Adam(Optimizer):
@@ -606,39 +568,20 @@ class Adam(Optimizer):
            arXiv preprint arXiv:1412.6980.
     """
 
-    def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
+    def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8,
+                 decay_steps=None, decay_rate=0.96,
                  clipnorm=None, clipvalue=None):
-        super(Adam, self).__init__(lr, clipnorm, clipvalue)
-        self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
-        self.beta_1 = _as_variable(beta_1, name='beta_1',
-                                   roles=OptimizerHyperParameter)
-        self.beta_2 = _as_variable(beta_2, name='beta_2',
-                                   roles=OptimizerHyperParameter)
+        super(Adam, self).__init__(lr=lr,
+            decay_steps=decay_steps, decay_rate=decay_rate,
+            clipnorm=clipnorm, clipvalue=clipvalue)
+        self.beta1 = _as_variable(beta1, name='beta1',
+                                  roles=OptimizerHyperParameter)
+        self.beta2 = _as_variable(beta2, name='beta2',
+                                  roles=OptimizerHyperParameter)
         self.epsilon = epsilon
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-        t = self.iterations + 1
-        updates = [(self.iterations, t)]
-
-        lr_t = self.lr * sqrt(1. - pow(self.beta_2, t)) / (1. - pow(self.beta_1, t))
-
-        shapes = [get_shape(p) for p in params]
-        ms = [variable(np.zeros(shape)) for shape in shapes]
-        vs = [variable(np.zeros(shape)) for shape in shapes]
-
-        for p, g, m, v in zip(params, grads, ms, vs):
-            if g is None: continue
-            m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
-            v_t = (self.beta_2 * v) + (1. - self.beta_2) * square(g)
-            p_t = p - lr_t * m_t / (sqrt(v_t) + self.epsilon)
-            # updates new statistics
-            updates.append((m, m_t))
-            updates.append((v, v_t))
-            # updates new params
-            new_p = p_t
-            updates.append((p, new_p))
-        return updates
+        import tensorflow as tf
+        self._algorithm = tf.train.AdamOptimizer(learning_rate=self.lr,
+            beta1=self.beta1, beta2=self.beta2, epsilon=self.epsilon)
 
 
 class Adamax(Optimizer):
@@ -684,30 +627,7 @@ class Adamax(Optimizer):
         self.beta_2 = _as_variable(beta_2, name='beta_2',
                                    roles=OptimizerHyperParameter)
         self.epsilon = epsilon
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-        t = self.iterations + 1
-        updates = [(self.iterations, t)]
-
-        lr_t = self.lr / (1. - pow(self.beta_1, t))
-
-        shapes = [get_shape(p) for p in params]
-        # zero init of 1st moment
-        ms = [variable(np.zeros(shape)) for shape in shapes]
-        # zero init of exponentially weighted infinity norm
-        us = [variable(np.zeros(shape)) for shape in shapes]
-        for p, g, m, u in zip(params, grads, ms, us):
-            if g is None: continue
-            m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
-            u_t = maximum(self.beta_2 * u, abs(g))
-            p_t = p - lr_t * m_t / (u_t + self.epsilon)
-            updates.append((m, m_t))
-            updates.append((u, u_t))
-            # updates new parametesr
-            new_p = p_t
-            updates.append((p, new_p))
-        return updates
+        raise NotImplementedError
 
 
 class Nadam(Optimizer):
@@ -762,40 +682,7 @@ class Nadam(Optimizer):
         self.beta_2 = _as_variable(beta_2, name='beta_2',
                                    roles=OptimizerHyperParameter)
         self.epsilon = epsilon
-
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-        t = self.iterations + 1
-        updates = [(self.iterations, t)]
-
-        # Due to the recommendations in [2], i.e. warming momentum schedule
-        momentum_cache_t = self.beta_1 * (1. - 0.5 * (pow(0.96, t * self.schedule_decay)))
-        momentum_cache_t_1 = self.beta_1 * (1. - 0.5 * (pow(0.96, (t + 1) * self.schedule_decay)))
-        m_schedule_new = self.m_schedule * momentum_cache_t
-        m_schedule_next = self.m_schedule * momentum_cache_t * momentum_cache_t_1
-        updates.append((self.m_schedule, m_schedule_new))
-
-        shapes = [get_shape(p) for p in params]
-        ms = [variable(np.zeros(shape)) for shape in shapes]
-        vs = [variable(np.zeros(shape)) for shape in shapes]
-
-        for p, g, m, v in zip(params, grads, ms, vs):
-            if g is None: continue
-            # the following equations given in [1]
-            g_prime = g / (1. - m_schedule_new)
-            m_t = self.beta_1 * m + (1. - self.beta_1) * g
-            m_t_prime = m_t / (1. - m_schedule_next)
-            v_t = self.beta_2 * v + (1. - self.beta_2) * square(g)
-            v_t_prime = v_t / (1. - pow(self.beta_2, t))
-            m_t_bar = (1. - momentum_cache_t) * g_prime + momentum_cache_t_1 * m_t_prime
-
-            updates.append((m, m_t))
-            updates.append((v, v_t))
-            # update the parameters
-            p_t = p - self.lr * m_t_bar / (sqrt(v_t_prime) + self.epsilon)
-            new_p = p_t
-            updates.append((p, new_p))
-        return updates
+        raise NotImplementedError
 
 
 class Adagrad(Optimizer):
@@ -808,9 +695,10 @@ class Adagrad(Optimizer):
     ----------
     lr : float or symbolic scalar
         The learning rate controlling the size of update steps
-    epsilon : float or symbolic scalar
-        Small value added for numerical stability, `epsilon` might
-        have huge impact on final performance.
+    initial_accumulator_value: A floating point value.
+        Starting value for the gradients accumulators, must be positive.
+    dual_avg: bool
+        if True, use Adagrad Dual Averaging algorithm for sparse linear models.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -843,24 +731,29 @@ class Adagrad(Optimizer):
            Notes on AdaGrad. http://www.ark.cs.cmu.edu/cdyer/adagrad.pdf
     """
 
-    def __init__(self, lr=0.01, epsilon=1e-8,
+    def __init__(self, lr=0.01, initial_accumulator_value=0.1,
+                 dual_avg=False,
+                 l1_regularization=0.0,
+                 l2_regularization=0.0,
+                 decay_steps=None, decay_rate=0.96,
                  clipnorm=None, clipvalue=None):
-        super(Adagrad, self).__init__(lr, clipnorm, clipvalue)
-        self.epsilon = epsilon
+        super(Adagrad, self).__init__(lr=lr,
+            decay_steps=decay_steps, decay_rate=decay_rate,
+            clipnorm=clipnorm, clipvalue=clipvalue)
+        self.initial_accumulator_value = float(initial_accumulator_value)
+        self.l1_regularization = _as_variable(l1_regularization,
+            name='l1_regularization')
+        self.l2_regularization = _as_variable(l2_regularization,
+            name='l2_regularization')
+        self.dual_avg = bool(dual_avg)
 
-    def get_updates(self, loss_or_grads, params):
-        grads = self.get_gradients(loss_or_grads, params)
-        updates = []
-
-        shapes = [get_shape(p) for p in params]
-        accumulators = [variable(np.zeros(shape)) for shape in shapes]
-
-        for p, g, a in zip(params, grads, accumulators):
-            if g is None: continue
-            # update accumulator
-            new_a = a + square(g)
-            updates.append((a, new_a))
-            # new parameters
-            new_p = p - (self.lr * g / sqrt(new_a + self.epsilon))
-            updates.append((p, new_p))
-        return updates
+        import tensorflow as tf
+        if self.dual_avg:
+            self._algorithm = tf.train.AdagradDAOptimizer(learning_rate=self.lr,
+                global_step=self._step,
+                initial_gradient_squared_accumulator_value=self.initial_accumulator_value,
+                l1_regularization_strength=self.l1_regularization,
+                l2_regularization_strength=self.l2_regularization)
+        else:
+            self._algorithm = tf.train.AdagradOptimizer(learning_rate=self.lr,
+                initial_accumulator_value=self.initial_accumulator_value)

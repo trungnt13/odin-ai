@@ -57,6 +57,10 @@ class Auxiliary(Variable):
     pass
 
 
+class GradientsNorm(Auxiliary):
+    pass
+
+
 class AccuracyValue(Auxiliary):
     pass
 

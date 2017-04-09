@@ -14,7 +14,8 @@ from tensorflow.contrib.distributions.python.ops.distribution import Distributio
 from tensorflow import variable_scope as _tf_variable_scope
 
 from odin.basic import (add_role, has_roles, as_shape_tuple, is_training,
-                        add_shape, get_shape, Auxiliary, Parameter)
+                        add_shape, get_shape, Auxiliary, Parameter,
+                        output_roles)
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_list, flatten_list
 from odin.config import CONFIG
