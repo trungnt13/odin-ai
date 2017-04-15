@@ -108,3 +108,7 @@ class ShapeRef(PrimitiveRef, tuple):
         elif isinstance(v, (tuple, list, np.ndarray)):
             return tuple(v)
         return None
+
+# ===========================================================================
+# Async file IO
+# ===========================================================================

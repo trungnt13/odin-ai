@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ===========================================================================
 # Popular encoding:
 #  utf-8
@@ -10,14 +11,13 @@ from __future__ import print_function, division, absolute_import
 
 import timeit
 import string
-from numbers import Number
 from collections import OrderedDict, Iterator, Iterable, defaultdict
 from abc import abstractmethod, ABCMeta
 from six import add_metaclass, string_types
 
 import numpy as np
 
-from odin.utils import as_tuple, Progbar, pad_sequences, is_string
+from odin.utils import as_tuple, Progbar, pad_sequences, is_string, is_number
 from odin.stats import freqcount
 from multiprocessing import Pool, cpu_count
 
@@ -83,6 +83,7 @@ class TextPreprocessor(object):
 
 
 class CasePreprocessor(TextPreprocessor):
+    """Remove case, name, and split the text"""
 
     def __init__(self, lower, keep_name=True, split=' '):
         super(CasePreprocessor, self).__init__()
@@ -324,7 +325,7 @@ class Tokenizer(object):
                  lemmatization=True,
                  language='en',
                  batch_size=2048,
-                 nb_threads=None,
+                 nb_processors=None,
                  order='word',
                  engine='odin',
                  print_progress=True):
@@ -354,8 +355,8 @@ class Tokenizer(object):
         self.lemmatization = lemmatization
 
         self.batch_size = batch_size
-        self.nb_threads = (int(nb_threads) if nb_threads is not None
-                           else cpu_count())
+        self.nb_processors = (int(nb_processors) if nb_processors is not None
+                              else cpu_count())
         # ====== filter and preprocessor ====== #
         self.filters = filters if filters is None else as_tuple(filters)
         if preprocessors is None:
@@ -387,12 +388,15 @@ class Tokenizer(object):
         return word_dictionary
 
     def _validate_texts(self, texts):
+        """ Valiate the input to `fit` and `transform` """
         if not isinstance(texts, Iterable) and \
         not isinstance(texts, Iterator) and \
         not is_string(texts):
             raise ValueError('texts must be an iterator, generator or a string.')
         if is_string(texts):
             texts = (texts,)
+        # convert to unicode
+        texts = (t.decode('utf-8') for t in texts)
         return texts
 
     # ==================== properties ==================== #
@@ -443,7 +447,7 @@ class Tokenizer(object):
         top = []
         count = self._word_counts if self.__order == 'word' else self._word_docs
         for i, w in enumerate(self.dictionary.iterkeys()):
-            if i == 0:continue
+            if i == 0: continue
             top.append((w, count[w]))
             if i >= n + 1: break
         return top
@@ -459,7 +463,7 @@ class Tokenizer(object):
                 yield t
         nlp = language(self.language)
         texts = textit(texts)
-        for nb_docs, doc in enumerate(nlp.pipe(texts, n_threads=self.nb_threads,
+        for nb_docs, doc in enumerate(nlp.pipe(texts, n_threads=self.nb_processors,
                                                batch_size=self.batch_size)):
             doc_tokens = []
             for sent in doc.sents:
@@ -504,15 +508,18 @@ class Tokenizer(object):
             globals()['__stopwords'] = stopwords
         # add the index for ordering
         nb_docs = 0
-        pool = Pool(processes=self.nb_threads, initializer=initializer,
+        pool = Pool(processes=self.nb_processors, initializer=initializer,
                     initargs=(self.filters, self.preprocessors, self.language,
                               self.lemmatization, self.char_level, self.stopwords))
+        # return the tokenized documents as original order.
         if keep_order:
             it = pool.imap(func=_preprocess_func, iterable=texts,
                            chunksize=self.batch_size)
+        # don't care about the order, often used for fitting
         else:
             it = pool.imap_unordered(func=_preprocess_func, iterable=texts,
                                      chunksize=self.batch_size)
+        # iterate over each return document
         for doc in it:
             nb_docs += 1
             if vocabulary is not None:
@@ -522,11 +529,12 @@ class Tokenizer(object):
         pool.join()
 
     def fit(self, texts, vocabulary=None):
-        """q
+        """
         Parameters
         ----------
         texts: iterator of unicode
-            iterator, generator or list of unicode string.
+            iterator, generator or list (e.g. [u'a', u'b', ...])
+            of unicode documents.
         """
         texts = self._validate_texts(texts)
         word_counts = self._word_counts
@@ -578,6 +586,9 @@ class Tokenizer(object):
         """
         Parameters
         ----------
+        texts: iterator of unicode
+            iterator, generator or list (e.g. [u'a', u'b', ...])
+            of unicode documents.
         mode: 'binary', 'tfidf', 'count', 'freq', 'seq'
             'binary', abc
             'tfidf', abc
@@ -595,7 +606,7 @@ class Tokenizer(object):
             raise ValueError('The "mode" argument must be: "seq", "binary", '
                              '"count", "freq", or "tfidf".')
         # ====== check token_not_found ====== #
-        if not isinstance(token_not_found, Number) and \
+        if not is_number(token_not_found) and \
         not is_string(token_not_found) and \
         token_not_found not in ('ignore', 'raise'):
             raise ValueError('token_not_found can be: "ignore", "raise"'
@@ -603,7 +614,7 @@ class Tokenizer(object):
                              'represented a token.')
         if token_not_found not in ('ignore', 'raise'):
             token_not_found = int(self.dictionary[token_not_found])
-        elif isinstance(token_not_found, Number):
+        elif is_number(token_not_found):
             token_not_found = int(token_not_found)
         # ====== pick engine ====== #
         if self.__engine == 'spacy':
@@ -616,7 +627,7 @@ class Tokenizer(object):
         # ====== preprocess arguments ====== #
         if isinstance(end_document, str):
             end_document = dictionary.index(end_document)
-        elif isinstance(end_document, Number):
+        elif is_number(end_document):
             end_document = int(end_document)
         # ====== processing ====== #
         if hasattr(texts, '__len__'):
@@ -693,7 +704,7 @@ class Tokenizer(object):
         if not isinstance(vocabulary, dict):
             raise ValueError('"vocabulary" must be any instance of dict.')
         # ====== check token_not_found ====== #
-        if not isinstance(token_not_found, Number) and \
+        if not is_number(token_not_found) and \
         not is_string(token_not_found) and \
         token_not_found not in ('ignore', 'raise'):
             raise ValueError('token_not_found can be: "ignore", "raise"'
@@ -701,7 +712,7 @@ class Tokenizer(object):
                              'represented a token.')
         if token_not_found not in ('ignore', 'raise'):
             token_not_found = int(self.dictionary[token_not_found])
-        elif isinstance(token_not_found, Number):
+        elif is_number(token_not_found):
             token_not_found = int(token_not_found)
         # ====== create embedding matrix ====== #
         ndim = len(vocabulary.itervalues().next())

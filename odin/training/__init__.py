@@ -765,7 +765,7 @@ class MainLoop(object):
                             if isinstance(x, str): # signal
                                 msg = callback.record(subtask.name, x,
                                                       0, 0, 0, None)
-                                if x == 'task_end': # task finnished
+                                if x == 'task_end': # task finished
                                     subtask_map[subtask][-1] = True
                                 if x == 'epoch_end': break
                             else: # results
@@ -794,7 +794,7 @@ class MainLoop(object):
                         if isinstance(x, str): # signals
                             msg = callback.record(crosstask.name, x,
                                                   0, 0, 0, None)
-                            if x == 'task_end': # finnished crosstask
+                            if x == 'task_end': # finished crosstask
                                 crosstask_map[crosstask][-1] = True
                         else: #results
                             msg = callback.record(crosstask.name, 'batch_end',

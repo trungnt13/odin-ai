@@ -7,11 +7,15 @@ from collections import defaultdict, OrderedDict
 
 
 @contextmanager
-def UnitTimer(factor=1):
+def UnitTimer(factor=1, name=None):
     start = timeit.default_timer()
     yield None
     end = timeit.default_timer()
-    print('Time: %f (sec)' % ((end - start) / factor))
+    # set name for timing task
+    name = ''
+    if name is not None:
+        name = 'Task:%s ' % str(name)
+    print('%sTime: %f (sec)' % (name, (end - start) / factor))
 
 
 class Profile(object):

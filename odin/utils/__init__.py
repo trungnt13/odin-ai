@@ -30,7 +30,7 @@ except:
 import numpy
 import six
 
-from .mpi import SelfIterator, segment_list, SharedCounter
+from .mpi import SelfIterator, segment_list, SharedCounter, async
 from .profile import *
 from .cache_utils import *
 from .python_utils import *

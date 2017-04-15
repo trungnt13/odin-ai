@@ -9,6 +9,7 @@ from collections import OrderedDict
 import numpy as np
 
 from odin.config import get_rng
+from odin.utils import UnitTimer, async
 
 
 class MmapDict(dict):
@@ -42,19 +43,20 @@ class MmapDict(dict):
             dict_size = int(file.read(MmapDict.SIZE_BYTES))
             # read dictionary
             file.seek(self._max_position)
-            self._dict = cPickle.loads(file.read(dict_size))
+            pickled_indices = file.read(dict_size)
+            self._indices_dict = async(lambda: cPickle.loads(pickled_indices))()
         # ====== create new file from scratch ====== #
         else:
             if read_only:
                 raise Exception('File at path:"%s" does not exist '
                                 '(read-only mode).' % path)
-            self._dict = OrderedDict()
+            self._indices_dict = OrderedDict()
             # max position is header, include start and length of indices dict
             self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2
             file = open(str(path), mode='w+')
             file.write(MmapDict.HEADER) # just write the header
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-            _ = cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL)
+            _ = cPickle.dumps(self._indices_dict, protocol=cPickle.HIGHEST_PROTOCOL)
             # write the length of Pickled indices dictionary
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
             file.write(_)
@@ -78,6 +80,12 @@ class MmapDict(dict):
 
     # ==================== I/O methods ==================== #
     @property
+    def indices(self):
+        if not isinstance(self._indices_dict, dict):
+            self._indices_dict = self._indices_dict.get()
+        return self._indices_dict
+
+    @property
     def path(self):
         return self._path
 
@@ -98,7 +106,7 @@ class MmapDict(dict):
         file.seek(len(MmapDict.HEADER))
         file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
         # length of Pickled indices dictionary
-        _ = cPickle.dumps(self._dict, protocol=cPickle.HIGHEST_PROTOCOL)
+        _ = cPickle.dumps(self.indices, protocol=cPickle.HIGHEST_PROTOCOL)
         file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
         # write new values
         file.seek(old_position)
@@ -131,18 +139,18 @@ class MmapDict(dict):
             self._file.close()
 
     def __str__(self):
-        return str(self.__class__) + ':' + self._path + ':' + str(len(self._dict))
+        return str(self.__class__) + ':' + self._path + ':' + str(len(self.indices))
 
     def __repr__(self):
         return str(self)
 
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
-        if key in self._dict:
+        if key in self.indices:
             raise Exception('This dictionary do not support update.')
         # we using marshal so this only support primitive value
         value = marshal.dumps(value)
-        self._dict[key] = (self._max_position, len(value))
+        self.indices[key] = (self._max_position, len(value))
         self._max_position += len(value)
         self._write_value += value
         # store newly added value for fast query
@@ -156,27 +164,27 @@ class MmapDict(dict):
     def __getitem__(self, key):
         if key in self._new_dict:
             return marshal.loads(self._new_dict[key])
-        start, size = self._dict[key]
+        start, size = self.indices[key]
         self._mmap.seek(start)
         return marshal.loads(self._mmap.read(size))
 
     def __contains__(self, key):
-        return key in self._dict
+        return key in self.indices
 
     def __len__(self):
-        return len(self._dict)
+        return len(self.indices)
 
     def __delitem__(self, key):
-        del self._dict[key]
+        del self.indices[key]
 
     def __cmp__(self, dict):
         if isinstance(dict, MmapDict):
-            return cmp(self._dict, dict._dict)
+            return cmp(self.indices, dict._dict)
         else:
-            return cmp(self._dict, dict)
+            return cmp(self.indices, dict)
 
     def keys(self, shuffle=False):
-        k = self._dict.keys()
+        k = self.indices.keys()
         if shuffle:
             get_rng().shuffle(k)
         return k
@@ -184,7 +192,7 @@ class MmapDict(dict):
     def iterkeys(self, shuffle=False):
         if shuffle:
             return (k for k in self.keys(shuffle))
-        return self._dict.iterkeys()
+        return self.indices.iterkeys()
 
     def values(self, shuffle=False):
         return list(self.itervalues(shuffle))
@@ -199,10 +207,10 @@ class MmapDict(dict):
     def iteritems(self, shuffle=False):
         # ====== shuffling if required ====== #
         if shuffle:
-            it = self._dict.items()
+            it = self.indices.items()
             get_rng().shuffle(it)
         else:
-            it = self._dict.iteritems()
+            it = self.indices.iteritems()
         # ====== iter over items ====== #
         for key, (start, size) in it:
             if key in self._new_dict:
@@ -213,13 +221,13 @@ class MmapDict(dict):
             yield key, marshal.loads(value)
 
     def clear(self):
-        self._dict.clear()
+        self.indices.clear()
 
     def copy(self):
         raise NotImplementedError
 
     def has_key(self, key):
-        return key in self._dict
+        return key in self.indices
 
     def update(*args, **kwargs):
         raise NotImplementedError

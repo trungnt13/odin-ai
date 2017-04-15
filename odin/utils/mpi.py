@@ -4,13 +4,61 @@ import os
 import time
 import types
 import inspect
-from abc import ABCMeta, abstractmethod
 from six import add_metaclass
+from collections import defaultdict
+from abc import ABCMeta, abstractmethod
 from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_process
 
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
+
+# ===========================================================================
+# Threading
+# ===========================================================================
+from multiprocessing.pool import ThreadPool
+from decorator import decorator
+
+_async_function_counter = defaultdict(int)
+_thread_pool = None
+
+
+class _async(object):
+    """ A class converting blocking functions into asynchronous
+    functions by using threads.
+
+    Example
+    -------
+    """
+
+    def __init__(self, func, *args, **kw):
+        _async_function_counter[func] = _async_function_counter[func] + 1
+        name = '<async:[%s]-[%s]>' % (func.__name__, _async_function_counter[func])
+        self.name = name
+        # check initialized thread pool
+        global _thread_pool
+        if _thread_pool is None:
+            _thread_pool = ThreadPool(processes=1)
+
+        self._async_task = _thread_pool.apply_async(func=func, args=args, kwds=kw,
+            callback=lambda *args, **kwargs: self._callback(*args, **kwargs))
+
+    def _callback(self, result):
+        self._result = result
+
+    @property
+    def finished(self):
+        return self._async_task.ready() and self._async_task.successful()
+
+    def get(self, timeout=None):
+        """Return actual result of the function"""
+        if hasattr(self, '_result'):
+            return self._result
+        return self._async_task.get(timeout=timeout)
+
+
+async = decorator(_async)
+
 # ===========================================================================
 # Helper methods
 # ===========================================================================
@@ -98,7 +146,7 @@ class SelfIterator(object):
     >>> it = TestIt()
     >>> for i in it:
     >>>     print(i, len(it)) # output: 1 3, 2 2, 3 1, 4 0
-    >>> print(it.finnished) # True
+    >>> print(it.finished) # True
     >>> for i in it:
     >>>     print(i) # nothing printed out
 
@@ -116,7 +164,7 @@ class SelfIterator(object):
 
     def __str__(self):
         return '<%s: length=%d: finished=%s: replicable=%s>' % \
-        (self.__class__.__name__, len(self), self.finnished, self.replicable)
+        (self.__class__.__name__, len(self), self.finished, self.replicable)
 
     # ==================== general API ==================== #
     def __iter__(self):
@@ -125,7 +173,7 @@ class SelfIterator(object):
         return self
 
     @property
-    def finnished(self):
+    def finished(self):
         return self._is_finished
 
     @property
@@ -142,7 +190,7 @@ class SelfIterator(object):
             self._init()
             self._is_initialized = True
         # check if finished
-        if self.finnished:
+        if self.finished:
             raise StopIteration
         # run the iteration
         try:
@@ -159,7 +207,7 @@ class SelfIterator(object):
             self._init()
             self._is_initialized = True
         # check if finished
-        if self.finnished:
+        if self.finished:
             raise StopIteration
         # run the iteration
         try:
@@ -361,7 +409,7 @@ class MPI(SelfIterator):
         if not self.__processes_started:
             return
         # terminate or join all processes
-        if self.finnished == SIG_TERMINATE_ITERATOR:
+        if self.finished == SIG_TERMINATE_ITERATOR:
             [p.terminate() for p in self.__processes if p.is_alive()]
         else:
             [p.join() for p in self.__processes]
@@ -393,7 +441,7 @@ class MPI(SelfIterator):
 
     def run(self):
         """"""
-        if self.finnished:
+        if self.finished:
             raise Exception('The MPI already finished, call copy() to '
                             'replicate this MPI, and re-run it if you want.')
         return iter(self)
