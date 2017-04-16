@@ -20,31 +20,71 @@ from multiprocessing.pool import ThreadPool
 from decorator import decorator
 
 _async_function_counter = defaultdict(int)
+_nb_threads = 2
 _thread_pool = None
 
 
-class _async(object):
+def set_nb_threads(n):
+    """ Set number of Threads for the ThreadPool that execute async_task. """
+    global _nb_threads
+    if _nb_threads != n:
+        _nb_threads = n
+        global _thread_pool
+        if _thread_pool is not None:
+            _thread_pool.join()
+            _thread_pool.close()
+        _thread_pool = ThreadPool(processes=_nb_threads)
+
+
+class _async_task(object):
     """ A class converting blocking functions into asynchronous
     functions by using threads.
 
     Example
     -------
+    >>> def callback(r):
+    ...     print('callback!')
+    >>>
+    >>> @async(callback=callback)
+    >>> def run(x):
+    ...     return x + 2
+    >>> y = run(10)
+    >>> print(y)
+    >>> print(y.get())
+    ... # <odin.utils.mpi._async object at 0x110f76dd0>
+    ... # callback!
+    ... # 12
     """
 
     def __init__(self, func, *args, **kw):
         _async_function_counter[func] = _async_function_counter[func] + 1
-        name = '<async:[%s]-[%s]>' % (func.__name__, _async_function_counter[func])
+        name = '<async_task:[%s]-[%s]>' % (func.__name__, _async_function_counter[func])
         self.name = name
+        self._callback = lambda r: None
         # check initialized thread pool
         global _thread_pool
         if _thread_pool is None:
-            _thread_pool = ThreadPool(processes=1)
-
+            _thread_pool = ThreadPool(processes=_nb_threads)
+        # create asyn task
         self._async_task = _thread_pool.apply_async(func=func, args=args, kwds=kw,
-            callback=lambda *args, **kwargs: self._callback(*args, **kwargs))
+            callback=lambda result: self.__callback(result))
 
-    def _callback(self, result):
+    def __str__(self):
+        return self.name + " Finished:%s" % bool(self.finished)
+
+    def __repr__(self):
+        return str(self)
+
+    def __callback(self, result):
         self._result = result
+        callback_spec = inspect.getargspec(self._callback)
+        if len(callback_spec.args) == 1 or callback_spec.varargs is not None:
+            self._callback(result)
+        elif len(callback_spec.args) - (0 if callback_spec.defaults is None
+                                        else len(callback_spec.defaults)) > 1:
+            raise RuntimeError("callback must has 1 input argument or no input argument.")
+        else:
+            self._callback()
 
     @property
     def finished(self):
@@ -57,7 +97,22 @@ class _async(object):
         return self._async_task.get(timeout=timeout)
 
 
-async = decorator(_async)
+def async(func=None, callback=None):
+    """ This create and Asynchronized result using Threading instead of
+    multiprocessing, you can take advantage from share memory in threading
+    for async-IO using this decorator.
+    """
+    @decorator
+    def _decorator_func_(func, *args, **kwargs):
+        task = _async_task(func, *args, **kwargs)
+        if callable(callback):
+            task._callback = callback
+        return task
+    # roles are not specified, given function directly
+    if inspect.isfunction(func) or inspect.ismethod(func):
+        return _decorator_func_(func)
+    # roles are specified
+    return _decorator_func_
 
 # ===========================================================================
 # Helper methods
