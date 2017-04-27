@@ -18,7 +18,8 @@ import numpy as np
 import scipy.fftpack as fft
 import scipy.signal
 
-from odin.utils import pad_center, framing, is_number, cache_memory
+from odin.utils import is_number, cache_memory
+from .signal import pad_center, get_window
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
@@ -191,23 +192,6 @@ def save(f, s, fs, subtype=None):
 # ===========================================================================
 # Spectrogram manipulation
 # ===========================================================================
-@cache_memory
-def __get_window(window, Nx, fftbins=True):
-    ''' Cached version of scipy.signal.get_window '''
-    if six.callable(window):
-        return window(Nx)
-    elif (isinstance(window, (six.string_types, tuple)) or
-          np.isscalar(window)):
-        return scipy.signal.get_window(window, Nx, fftbins=fftbins)
-    elif isinstance(window, (np.ndarray, list)):
-        if len(window) == Nx:
-            return np.asarray(window)
-        raise ValueError('Window size mismatch: '
-                         '{:d} != {:d}'.format(len(window), Nx))
-    else:
-        raise ValueError('Invalid window specification: {}'.format(window))
-
-
 @cache_memory
 def __num_two_factors(x):
     """return number of times x is divideable for 2"""
@@ -563,13 +547,16 @@ def stft(y, n_fft=2048, hop_length=None, win_length=None, window='hann'):
     # By default, use the entire frame
     if win_length is None:
         win_length = n_fft
+    elif is_number(win_length):
+        win_length = int(win_length)
 
     # Set the default hop, if it's not already specified
     if hop_length is None:
         hop_length = int(win_length // 4)
+    elif is_number(hop_length):
+        hop_length = int(hop_length)
 
     fft_window = __get_window(window, win_length, fftbins=True)
-
     # Reshape so that the window can be broadcast
     fft_window = fft_window.reshape((-1, 1))
 
@@ -594,8 +581,8 @@ def stft(y, n_fft=2048, hop_length=None, win_length=None, window='hann'):
     return stft_matrix
 
 
-def istft(stft_matrix, hop_length=None, win_length=None, window=None,
-          center=True, dtype=np.float32):
+def istft(stft_matrix, hop_length=None, win_length=None, window='hann',
+          original_length=None):
     """
     Inverse short-time Fourier transform (ISTFT).
 
@@ -632,12 +619,9 @@ def istft(stft_matrix, hop_length=None, win_length=None, window=None,
         - a window function, such as `scipy.signal.hanning`
         - a user-specified window vector of length `n_fft`
 
-    center      : boolean
-        - If `True`, `D` is assumed to have centered frames.
-        - If `False`, `D` is assumed to have left-aligned frames.
-
-    dtype       : numeric type
-        Real numeric type for `y`.  Default is 32-bit float.
+    original_length: None, int
+        precise length of original raw signal, the reconstruct will
+        provide different length from original signal most of the time
 
     Returns
     -------
@@ -655,54 +639,46 @@ def istft(stft_matrix, hop_length=None, win_length=None, window=None,
     # By default, use the entire frame
     if win_length is None:
         win_length = n_fft
+    elif is_number(win_length):
+        win_length = int(win_length)
 
     # Set the default hop, if it's not already specified
     if hop_length is None:
         hop_length = int(win_length / 4)
+    elif is_number(hop_length):
+        hop_length = int(hop_length)
 
-    if window is None:
-        # Default is an asymmetric Hann window.
-        ifft_window = scipy.signal.hann(win_length, sym=False)
-
-    elif six.callable(window):
-        # User supplied a windowing function
-        ifft_window = window(win_length)
-
-    else:
-        # User supplied a window vector.
-        # Make it into an array
-        ifft_window = np.asarray(window)
-
-        # Verify that the shape matches
-        if ifft_window.size != n_fft:
-            raise ValueError('Size mismatch between n_fft and window size')
-
-    # Pad out to match n_fft
-    ifft_window = pad_center(ifft_window, n_fft)
+    ifft_window = __get_window(window, win_length, fftbins=True)
 
     n_frames = stft_matrix.shape[1]
-    expected_signal_len = n_fft + hop_length * (n_frames - 1)
-    y = np.zeros(expected_signal_len, dtype=dtype)
-    ifft_window_sum = np.zeros(expected_signal_len, dtype=dtype)
+    # nb_frame = 1 + floor[(len(y) - win) / hop]
+    if original_length is None:
+        expected_signal_len = ((win_length + hop_length * (n_frames - 1)) +
+            (win_length + hop_length * n_frames)) // 2
+    else:
+        original_length = int(original_length)
+    y = np.zeros(expected_signal_len, dtype='float32')
+    ifft_window_sum = np.zeros(expected_signal_len, dtype='float32')
     ifft_window_square = ifft_window * ifft_window
 
     for i in range(n_frames):
-        sample = i * hop_length
         spec = stft_matrix[:, i].flatten()
         spec = np.concatenate((spec.conj(), spec[-2:0:-1]), 0)
-        ytmp = ifft_window * fft.ifft(spec).real
+        ytmp = ifft_window * fft.ifft(spec, n=win_length).real
 
-        y[sample:(sample + n_fft)] = y[sample:(sample + n_fft)] + ytmp
-        ifft_window_sum[sample:(sample + n_fft)] += ifft_window_square
+        sample_start = i * hop_length
+        sample_end = sample_start + win_length
+
+        y[sample_start:sample_end] = y[sample_start:sample_end] + ytmp
+        ifft_window_sum[sample_start:sample_end] += ifft_window_square
 
     # Normalize by sum of squared window
     approx_nonzero_indices = ifft_window_sum > SMALL_FLOAT
     y[approx_nonzero_indices] /= ifft_window_sum[approx_nonzero_indices]
-
-    if center:
-        y = y[int(n_fft // 2):-int(n_fft // 2)]
-
-    return y
+    # center = True
+    # if center:
+    #     y = y[int(n_fft // 2):-int(n_fft // 2)]
+    return y - np.mean(y)
 
 
 def compute_delta(data, width=9, order=1, axis=-1, trim=True):
@@ -991,9 +967,9 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         pitch_freq = compute_delta(pitch_freq, width=9, order=1, axis=-1)[-1]
     # ====== 5: extract power spectrogram ====== #
     S = S**2
-    powerspectrogram = None
+    logpowerspectrogram = None
     if get_spec:
-        powerspectrogram = librosa.logamplitude(S,
+        logpowerspectrogram = librosa.logamplitude(S,
             amin=1e-10, top_db=80.0).astype('float32')
     # ====== 6: extract log-mel filter bank ====== #
     melspectrogram = None
@@ -1034,8 +1010,8 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                 [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
                 axis=0)
     # ====== 8: make sure CQT give the same length with STFT ====== #
-    if get_qspec and qspec.shape[1] > powerspectrogram.shape[1]:
-        n = qspec.shape[1] - powerspectrogram.shape[1]
+    if get_qspec and qspec.shape[1] > logpowerspectrogram.shape[1]:
+        n = qspec.shape[1] - logpowerspectrogram.shape[1]
         qspec = qspec[:, n // 2:-int(np.ceil(n / 2))]
         if qphase is not None:
             qphase = qphase[:, n // 2:-int(np.ceil(n / 2))]
@@ -1046,7 +1022,7 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     return OrderedDict([
         ('mfcc', None if mfcc is None else mfcc.T),
         ('energy', log_energy.T if get_energy else None),
-        ('spec', None if powerspectrogram is None else powerspectrogram.T),
+        ('spec', None if logpowerspectrogram is None else logpowerspectrogram.T),
         ('mspec', None if melspectrogram is None else melspectrogram.T),
 
         ('qspec', None if qspec is None else qspec.T),

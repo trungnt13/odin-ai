@@ -17,14 +17,19 @@ from six import add_metaclass, string_types
 
 import numpy as np
 
-from odin.utils import as_tuple, Progbar, pad_sequences, is_string, is_number
+from odin.utils import as_tuple, Progbar, is_string, is_number
 from odin.stats import freqcount
 from multiprocessing import Pool, cpu_count
+
+from .signal import pad_sequences
 
 _nlp = {}
 _stopword_list = []
 
 
+# ===========================================================================
+# Helper
+# ===========================================================================
 def language(lang='en'):
     """Support language: 'en', 'de' """
     import spacy
@@ -32,7 +37,9 @@ def language(lang='en'):
     if lang not in ('en', 'de'):
         raise ValueError('We only support languages: en-English, de-German.')
     if lang not in _nlp:
-        _nlp[lang] = spacy.load(lang)
+        if lang == 'en':
+            # "en_core_web_md"
+            _nlp[lang] = spacy.load(lang)
     return _nlp[lang]
 
 
@@ -87,7 +94,7 @@ class CasePreprocessor(TextPreprocessor):
 
     def __init__(self, lower, keep_name=True, split=' '):
         super(CasePreprocessor, self).__init__()
-        self.lower = lower
+        self.lower = bool(lower)
         self.split = split
         self.keep_name = keep_name
 

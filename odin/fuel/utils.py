@@ -86,6 +86,12 @@ class MmapDict(dict):
         return self._indices_dict
 
     @property
+    def loaded(self):
+        if not isinstance(self._indices_dict, dict):
+            return self._indices_dict.finished
+        return True
+
+    @property
     def path(self):
         return self._path
 

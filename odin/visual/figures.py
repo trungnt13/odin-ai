@@ -14,6 +14,7 @@ import warnings
 import colorsys
 from six import string_types
 from six.moves import zip, range
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -319,9 +320,19 @@ def tile_raster_images(X, tile_shape=None, tile_spacing=(2, 2), spacing_value=0.
 # ===========================================================================
 # Plotting methods
 # ===========================================================================
-def subplot(*arg):
+@contextmanager
+def figure():
     from matplotlib import pyplot as plt
-    return plt.subplot(*arg)
+    fig = plt.figure()
+    yield fig
+
+
+def subplot(*arg, **kwargs):
+    from matplotlib import pyplot as plt
+    subplot = plt.subplot(*arg)
+    if 'title' in kwargs:
+        subplot.set_title(kwargs['title'])
+    return subplot
 
 
 def subplot2grid(shape, loc, colspan=1, rowspan=1):
@@ -446,7 +457,7 @@ def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
     return ax
 
 
-def plot_waveplot(y, ax=None):
+def plot_raw(y, ax=None):
     '''Plot the amplitude envelope of a waveform.
     '''
     from matplotlib import pyplot as plt

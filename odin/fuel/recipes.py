@@ -11,9 +11,10 @@ from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, segment_axis, one_hot, is_string,
+from odin.utils import (segment_list, one_hot, is_string,
                         is_number, Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
+from odin.preprocessing.signal import segment_axis
 from odin.utils.decorators import functionable
 
 from .data import Data, MutableData

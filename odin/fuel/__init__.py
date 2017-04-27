@@ -61,7 +61,7 @@ def load_digit_wav():
         # remove downloaded zip files
         os.remove(datapath)
         import traceback; traceback.print_exc()
-    return outpath
+    return Dataset(outpath, read_only=True)
 
 
 def load_commands_wav():
