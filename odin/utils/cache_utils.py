@@ -8,8 +8,9 @@ from functools import wraps
 from six import string_types
 from six.moves import builtins
 from decorator import FunctionMaker, decorator
+from collections import defaultdict, OrderedDict, Hashable
 
-from collections import defaultdict, OrderedDict
+import numpy as np
 
 # to set the cache dir, set the environment CACHE_DIR
 __cache_dir = os.environ.get("CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
@@ -70,7 +71,17 @@ def cache_disk(function):
 # ===========================================================================
 # Cache
 # ===========================================================================
-__CACHE = defaultdict(lambda: ([], [])) #KEY_ARGS, RET_VALUE
+__CACHE = defaultdict(lambda: ([], [])) #id(function) -> (KEY_ARGS, RET_VALUE)
+__NO_ARGUMENT = '___NO_ARGUMENT___'
+
+
+def __compare_cached_key(key, keylist):
+    """Return index of match key if any key in the keylist match
+    the given key"""
+    try:
+        return keylist.index(key)
+    except ValueError:
+        return None
 
 
 def clear_mem_cache():
@@ -124,6 +135,9 @@ def cache_memory(func, *attrs):
         raise ValueError('Tracking attribute must be string represented name of'
                          ' attribute, but given attributes have types: {}'
                          ''.format(tuple(map(type, attrs))))
+    # sort the attrs name so they always in unique order
+    if len(attrs) > 0:
+        attrs = sorted(attrs)
 
     def wrap_function(func):
         # ====== fetch arguments in order ====== #
@@ -142,38 +156,44 @@ def cache_memory(func, *attrs):
         def wrapper(*args, **kwargs):
             # ====== check if strict_mode and caching enable ====== #
             if strict_mode:
+                # __cache__ specified in args
                 if any(isinstance(a, string_types) and a == '__cache__'
                        for a in args):
                     args = tuple([a for a in args
                                   if not isinstance(a, string_types) or a != '__cache__'])
+                # __cache__ specified in kwargs
                 elif '__cache__' in kwargs:
                     kwargs.pop('__cache__')
+                # no cache just call the function
                 else:
-                    # no cache just call the function
                     return func(*args, **kwargs)
             # ====== additional arguments ====== #
-            input_args = list(args)
-            excluded = {i: j for i, j in zip(args_name, input_args)}
-            # check default kwargs
-            for i, j in args_defaults.iteritems():
-                if i in excluded: # already input as positional argument
-                    continue
-                if i in kwargs: # specified value
-                    input_args.append(kwargs[i])
-                else: # default value
-                    input_args.append(j)
+            input_args = [__NO_ARGUMENT] * len(args_name)
+            input_args[:len(args)] = args
+            # merge default arguments
+            for i, name in enumerate(args_name[len(args):]):
+                if name in kwargs:
+                    input_args[len(args) + i] = args_defaults[name]
+                elif name in args_defaults:
+                    input_args[len(args) + i] = args_defaults[name]
+                else:
+                    raise ValueError("Cannot find specified argument for "
+                        "argument with name: %s" % name)
             # ====== create cache_key ====== #
-            object_vars = {k: getattr(args[0], k) for k in attrs
-                           if hasattr(args[0], k)}
-            cache_key = (input_args, object_vars)
+            # custom attribute
+            object_attrs = [getattr(args[0], k) for k in attrs
+                            if hasattr(args[0], k)]
+            cache_key = input_args + object_attrs
+            cache_key = [id(k) if isinstance(k, np.ndarray) else k
+                         for k in cache_key]
             # ====== check cache ====== #
             key_list = __CACHE[id(func)][0]
             value_list = __CACHE[id(func)][1]
+            match_index = __compare_cached_key(cache_key, key_list)
             # get old cached value
-            if cache_key in key_list:
-                idx = key_list.index(cache_key)
-                return value_list[idx]
-            # call the function to get new value
+            if match_index is not None:
+                return value_list[match_index]
+            # call the function to get new cached value
             else:
                 value = func(*args, **kwargs)
                 key_list.append(cache_key)
@@ -185,7 +205,3 @@ def cache_memory(func, *attrs):
     if func is None:
         return wrap_function
     return wrap_function(func)
-
-
-def cache_memory_strict():
-    pass
