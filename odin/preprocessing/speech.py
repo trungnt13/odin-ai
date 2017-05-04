@@ -18,18 +18,14 @@ import numpy as np
 import scipy.fftpack as fft
 import scipy.signal
 
-from odin.utils import is_number, cache_memory
-from .signal import pad_center, get_window
+from odin.utils import is_number, cache_memory, is_string
+from .signal import (pad_center, get_window, segment_axis, stft, istft,
+                     compute_delta, smooth, pre_emphasis, spectra,
+                     vad_energy)
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
 SMALL_FLOAT = 1e-20
-
-VAD_MODE_STRICT = 1.2
-VAD_MODE_STANDARD = 2.
-VAD_MODE_SENSITIVE = 2.4
-__current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
-
 
 # ===========================================================================
 # Predefined variables of speech datasets
@@ -145,21 +141,6 @@ def read(f, pcm=False, remove_dc_offset=True):
     return s, fs
 
 
-def pre_emphasis(s, coeff=0.97):
-    """Pre-emphasis of an audio signal.
-    Parameters
-    ----------
-    s: np.ndarray
-        the input vector of signal to pre emphasize
-    coeff: float (0, 1)
-        coefficience that defines the pre-emphasis filter.
-    """
-    if s.ndim == 1:
-        return np.append(s[0], s[1:] - coeff * s[:-1])
-    else:
-        return s - np.c_[s[:, :1], s[:, :-1]] * coeff
-
-
 def est_audio_length(fpath, sr=8000, bitdepth=16):
     """ Estimate audio length in second """
     if not os.path.exists(fpath):
@@ -179,14 +160,14 @@ def resample(s, fs_orig, fs_new, axis=0, best_algorithm=True):
     return s
 
 
-def save(f, s, fs, subtype=None):
+def save(file_or_path, s, fs, subtype=None):
     '''
     Return
     ------
     waveform (ndarray), sample rate (int)
     '''
     from soundfile import write
-    return write(f, s, fs, subtype=subtype)
+    return write(file_or_path, s, fs, subtype=subtype)
 
 
 # ===========================================================================
@@ -202,15 +183,6 @@ def __num_two_factors(x):
         num_twos += 1
         x //= 2
     return num_twos
-
-
-@cache_memory
-def __cqt_response_override(win_length):
-    '''Compute the filter response with a target STFT hop.'''
-    # Compute the STFT matrix and filter response energy
-    return lambda y, n_fft, hop_length, fft_basis: fft_basis.dot(
-        stft(np.pad(y, int(win_length // 2), mode='reflect'), n_fft=n_fft,
-            win_length=win_length, hop_length=hop_length, window=np.ones))
 
 
 @cache_memory
@@ -244,85 +216,6 @@ def __to_separated_indices(idx, min_distance=1, min_length=8):
             n += 1
     segments[-1].append(idx[-1])
     return [(s[0], s[-1] + 1) for s in segments if len(s) >= min_length]
-
-
-def smooth(x, win=11, window='hanning'):
-    """
-    Paramaters
-    ----------
-    x: 1-D vector
-        input signal.
-    win: int
-        length of window for smoothing, the longer the window, the more details
-        are reduced for smoothing.
-    window: 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
-        window function, 'flat' for moving average.
-
-    Return
-    ------
-    y: smoothed vector
-
-    Example
-    -------
-    """
-    if win < 3:
-        return x
-    if window not in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
-        raise ValueError("Window is on of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
-    s = np.concatenate([2 * x[0] - x[win - 1::-1],
-                        x,
-                        2 * x[-1] - x[-1:-win:-1]], axis=0)
-    # moving average
-    if window == 'flat':
-        w = np.ones(win, 'd')
-    # windowing
-    else:
-        w = eval('np.' + window + '(win)')
-    y = np.convolve(w / w.sum(), s, mode='same')
-    return y[win:-win + 1]
-
-
-def set_vad_mode(mode):
-    """
-    Paramters
-    ---------
-    mode: float
-        a number from 1.0 to 2.4, the higher the number, the more
-        sensitive it is to any high-energy segments.
-    """
-    if is_number(mode):
-        global __current_vad_mode
-        mode = min(max(mode, 1.), 2.4)
-        __current_vad_mode = float(mode)
-
-
-def vad_energy(log_energy, distrib_nb=2, nb_train_it=24):
-    from sklearn.mixture import GaussianMixture
-    # center and normalize the energy
-    log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
-    if log_energy.ndim == 1:
-        log_energy = log_energy[:, np.newaxis]
-    # create mixture model: diag, spherical
-    world = GaussianMixture(
-        n_components=distrib_nb, covariance_type='diag',
-        init_params='kmeans', max_iter=nb_train_it,
-        weights_init=np.ones(distrib_nb) / distrib_nb,
-        means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
-        precisions_init=np.ones((distrib_nb, 1)),
-    )
-    try:
-        world.fit(log_energy)
-    except (ValueError, IndexError): # index error because of float32 cumsum
-        if distrib_nb - 1 >= 2:
-            return vad_energy(log_energy,
-                distrib_nb=distrib_nb - 1, nb_train_it=nb_train_it)
-        return np.zeros(shape=(log_energy.shape[0],)), 0
-    # Compute threshold
-    threshold = world.means_.max() - \
-        __current_vad_mode * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
-    # Apply frame selection with the current threshold
-    label = log_energy.ravel() > threshold
-    return label, threshold
 
 
 def speech_enhancement(X, Gain, NN=2):
@@ -494,267 +387,11 @@ def speech_enhancement(X, Gain, NN=2):
     return X1
 
 
-def stft(y, n_fft=2048, hop_length=None, win_length=None, window='hann'):
-    """ Modified version from `librosa`, since the `librosa` version create
-    different windows from `kaldi` and `sidekit`, we make this version
-    compatible to them.
-
-    Short-time Fourier transform (STFT)
-
-    Parameters
-    ----------
-    y : np.ndarray [shape=(n,)], real-valued
-        the input signal (audio time series)
-
-    n_fft : int > 0 [scalar]
-        FFT window size
-
-    hop_length : int > 0 [scalar]
-        number audio of frames between STFT columns.
-        If unspecified, defaults `win_length / 4`.
-
-    win_length  : int <= n_fft [scalar]
-        Each frame of audio is windowed by `window()`.
-        The window will be of length `win_length` and then padded
-        with zeros to match `n_fft`.
-
-        If unspecified, defaults to ``win_length = n_fft``.
-
-    window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
-        - a window specification (string, tuple, or number);
-          see `scipy.signal.get_window`
-        - a window function, such as `scipy.signal.hanning`
-        - a vector or array of length `n_fft`
-
-    Returns
-    -------
-    D : np.ndarray [shape=(1 + n_fft/2, t), dtype=dtype]
-        STFT matrix
-
-        a complex-valued matrix D such that:
-        `np.abs(D[f, t])` is the magnitude of frequency bin `f`
-        at frame `t`
-
-        `np.angle(D[f, t])` is the phase of frequency bin `f`
-        at frame `t`
-
-    See Also
-    --------
-    istft : Inverse STFT
-
-    """
-
-    # By default, use the entire frame
-    if win_length is None:
-        win_length = n_fft
-    elif is_number(win_length):
-        win_length = int(win_length)
-
-    # Set the default hop, if it's not already specified
-    if hop_length is None:
-        hop_length = int(win_length // 4)
-    elif is_number(hop_length):
-        hop_length = int(hop_length)
-
-    fft_window = __get_window(window, win_length, fftbins=True)
-    # Reshape so that the window can be broadcast
-    fft_window = fft_window.reshape((-1, 1))
-
-    # Window the time series.
-    y_frames = framing(y, frame_length=win_length, hop_length=hop_length)
-
-    # Pre-allocate the STFT matrix
-    stft_matrix = np.empty((int(1 + n_fft // 2), y_frames.shape[1]),
-                           dtype=np.complex64,
-                           order='F')
-
-    # how many columns can we fit within MAX_MEM_BLOCK?
-    n_columns = int(MAX_MEM_BLOCK / (stft_matrix.shape[0] *
-                                     stft_matrix.itemsize))
-
-    for bl_s in range(0, stft_matrix.shape[1], n_columns):
-        bl_t = min(bl_s + n_columns, stft_matrix.shape[1])
-        # RFFT and Conjugate here to match phase from DPWE code
-        stft_matrix[:, bl_s:bl_t] = fft.fft(fft_window * y_frames[:, bl_s:bl_t],
-                                            n=n_fft,
-                                            axis=0)[:stft_matrix.shape[0]].conj()
-    return stft_matrix
-
-
-def istft(stft_matrix, hop_length=None, win_length=None, window='hann',
-          original_length=None):
-    """
-    Inverse short-time Fourier transform (ISTFT).
-
-    Converts a complex-valued spectrogram `stft_matrix` to time-series `y`
-    by minimizing the mean squared error between `stft_matrix` and STFT of
-    `y` as described in [1]_.
-
-    In general, window function, hop length and other parameters should be same
-    as in stft, which mostly leads to perfect reconstruction of a signal from
-    unmodified `stft_matrix`.
-
-    .. [1] D. W. Griffin and J. S. Lim,
-        "Signal estimation from modified short-time Fourier transform,"
-        IEEE Trans. ASSP, vol.32, no.2, pp.236–243, Apr. 1984.
-
-    Parameters
-    ----------
-    stft_matrix : np.ndarray [shape=(1 + n_fft/2, t)]
-        STFT matrix from `stft`
-
-    hop_length  : int > 0 [scalar]
-        Number of frames between STFT columns.
-        If unspecified, defaults to `win_length / 4`.
-
-    win_length  : int <= n_fft = 2 * (stft_matrix.shape[0] - 1)
-        When reconstructing the time series, each frame is windowed
-        and each sample is normalized by the sum of squared window
-        according to the `window` function (see below).
-
-        If unspecified, defaults to `n_fft`.
-
-    window      : None, function, np.ndarray [shape=(n_fft,)]
-        - None (default): use an asymmetric Hann window
-        - a window function, such as `scipy.signal.hanning`
-        - a user-specified window vector of length `n_fft`
-
-    original_length: None, int
-        precise length of original raw signal, the reconstruct will
-        provide different length from original signal most of the time
-
-    Returns
-    -------
-    y : np.ndarray [shape=(n,)]
-        time domain signal reconstructed from `stft_matrix`
-
-    See Also
-    --------
-    stft : Short-time Fourier Transform
-
-    """
-
-    n_fft = 2 * (stft_matrix.shape[0] - 1)
-
-    # By default, use the entire frame
-    if win_length is None:
-        win_length = n_fft
-    elif is_number(win_length):
-        win_length = int(win_length)
-
-    # Set the default hop, if it's not already specified
-    if hop_length is None:
-        hop_length = int(win_length / 4)
-    elif is_number(hop_length):
-        hop_length = int(hop_length)
-
-    ifft_window = __get_window(window, win_length, fftbins=True)
-
-    n_frames = stft_matrix.shape[1]
-    # nb_frame = 1 + floor[(len(y) - win) / hop]
-    if original_length is None:
-        expected_signal_len = ((win_length + hop_length * (n_frames - 1)) +
-            (win_length + hop_length * n_frames)) // 2
-    else:
-        original_length = int(original_length)
-    y = np.zeros(expected_signal_len, dtype='float32')
-    ifft_window_sum = np.zeros(expected_signal_len, dtype='float32')
-    ifft_window_square = ifft_window * ifft_window
-
-    for i in range(n_frames):
-        spec = stft_matrix[:, i].flatten()
-        spec = np.concatenate((spec.conj(), spec[-2:0:-1]), 0)
-        ytmp = ifft_window * fft.ifft(spec, n=win_length).real
-
-        sample_start = i * hop_length
-        sample_end = sample_start + win_length
-
-        y[sample_start:sample_end] = y[sample_start:sample_end] + ytmp
-        ifft_window_sum[sample_start:sample_end] += ifft_window_square
-
-    # Normalize by sum of squared window
-    approx_nonzero_indices = ifft_window_sum > SMALL_FLOAT
-    y[approx_nonzero_indices] /= ifft_window_sum[approx_nonzero_indices]
-    # center = True
-    # if center:
-    #     y = y[int(n_fft // 2):-int(n_fft // 2)]
-    return y - np.mean(y)
-
-
-def compute_delta(data, width=9, order=1, axis=-1, trim=True):
-    r'''Compute delta features: local estimate of the derivative
-    of the input data along the selected axis.
-
-    Parameters
-    ----------
-    data      : np.ndarray
-        the input data matrix (eg, spectrogram), shape=(d, t)
-    width     : int >= 3, odd [scalar]
-        Number of frames over which to compute the delta feature
-    order     : int > 0 [scalar]
-        the order of the difference operator.
-        1 for first derivative, 2 for second, etc.
-    axis      : int [scalar]
-        the axis along which to compute deltas.
-        Default is -1 (columns).
-    trim      : bool
-        set to `True` to trim the output matrix to the original size.
-
-    Returns
-    -------
-    delta_data   : list(np.ndarray) [shape=(d, t) or (d, t + window)]
-        delta matrix of `data`.
-        return list of deltas
-
-    Examples
-    --------
-    Compute MFCC deltas, delta-deltas
-    >>> mfcc = mfcc(y=y, sr=sr)
-    >>> mfcc_delta1, mfcc_delta2 = compute_delta(mfcc, 2)
-    '''
-
-    data = np.atleast_1d(data)
-
-    if width < 3 or np.mod(width, 2) != 1:
-        raise ValueError('width must be an odd integer >= 3')
-
-    if order <= 0 or not isinstance(order, int):
-        raise ValueError('order must be a positive integer')
-
-    half_length = 1 + int(width // 2)
-    window = np.arange(half_length - 1., -half_length, -1.)
-
-    # Normalize the window so we're scale-invariant
-    window /= np.sum(np.abs(window)**2)
-
-    # Pad out the data by repeating the border values (delta=0)
-    padding = [(0, 0)] * data.ndim
-    width = int(width)
-    padding[axis] = (width, width)
-    delta_x = np.pad(data, padding, mode='edge')
-
-    all_deltas = []
-    for _ in range(order):
-        delta_x = scipy.signal.lfilter(window, 1, delta_x, axis=axis)
-        all_deltas.append(delta_x)
-
-    # Cut back to the original shape of the input data
-    if trim:
-        _ = []
-        for delta_x in all_deltas:
-            idx = [slice(None)] * delta_x.ndim
-            idx[axis] = slice(- half_length - data.shape[axis], - half_length)
-            delta_x = delta_x[idx]
-            _.append(delta_x.astype('float32'))
-        all_deltas = _
-
-    return all_deltas
-
-
-def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
-                    get_spec=True, get_mspec=False, get_mfcc=False,
-                    get_qspec=False, get_phase=False, get_pitch=False,
-                    get_vad=True, get_energy=False, get_delta=False,
+def speech_features(s, sr=None,
+                    win=0.02, shift=0.01, nb_melfilters=None, nb_ceps=None,
+                    get_spec=True, get_qspec=False, get_phase=False,
+                    get_pitch=False, get_vad=True, get_energy=False,
+                    get_delta=False,
                     fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                     pitch_threshold=0.8, pitch_fmax=1200,
                     vad_smooth=3, vad_minlen=0.1,
@@ -843,19 +480,28 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     (txd): time x features
     """
     from odin.fuel import Data
-    if isinstance(s, Data):
+    # file path
+    if is_string(s):
+        path = s
+        s, sr_ = read(path)
+        if sr_ is None and sr is None:
+            raise ValueError("Cannot get sample rate from file: %s" % path)
+        if sr_ is not None:
+            sr = sr_
+    # Data object
+    elif isinstance(s, Data):
         s = s[:]
+    # check valid 1-D numpy array
     if np.prod(s.shape) == np.max(s.shape):
         s = s.ravel()
-    elif s.ndim >= 2:
+    else:
         raise Exception('Speech Feature Extraction only accept 1-D signal')
     s = s.astype('float32')
-    import librosa
-    from librosa.core import constantq
-    # ====== resample if necessary ====== #
+    # resample if necessary
     if sr_new is not None and int(sr_new) != int(sr):
         s = resample(s, sr, sr_new, axis=0, best_algorithm=False)
         sr = sr_new
+    # ====== check other info ====== #
     if fmax is None:
         fmax = sr // 2
     if fmin is None or fmin < 0 or fmin >= fmax:
@@ -868,16 +514,16 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
     shift_length = shift * sr
     # hop_length must be 2^x
     hop_length = int(shift_length)
-    # preemphais
-    s = pre_emphasis(s, coeff=preemphasis)
-    nb_ceps += 1 # increase one so we can ignore the first MFCC
+    # nb_ceps += 1 # increase one so we can ignore the first MFCC
     # ====== 0: extract Constant Q-transform ====== #
     q_melspectrogram = None
     q_mfcc = None
     qspec = None
     qphase = None
+    # qspec requires librosa
     if get_qspec:
-        constantq.__cqt_response = __cqt_response_override(win_length)
+        import librosa
+        from librosa.core import constantq
         # auto adjust bins_per_octave to get maximum range of frequency
         bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin)) + 1
         # adjust the bins_per_octave to make acceptable hop_length
@@ -891,99 +537,72 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
                                    fmin=fmin, tuning=0.0, real=False, norm=1,
                                    filter_scale=1., sparsity=0.01).astype('complex64')
         # get log power Q-spectrogram
-        qS = np.abs(qtrans)
-        qS = qS**2
-        if np.any(np.isnan(qS)):
-            return None
-        # power spectrum of Q-transform
-        qspec = librosa.logamplitude(qS, amin=1e-10, top_db=80.0).astype('float32')
+        Q = spectra(S=qtrans.T, sr=sr,
+                    nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
+                    fmin=fmin, fmax=fmax, power=2.0, log=True)
+        qspec = Q['spec']
+        q_melspectrogram = Q['mspec'] if 'mspec' in Q else None
+        q_mfcc = Q['mfcc'] if 'mfcc' in Q else None
         # phase of Q-transform
         if get_phase:
             # GD: derivative along frequency axis
             qphase = compute_delta(np.angle(qtrans),
-                width=9, axis=0, order=1)[-1].astype('float32')
-        # perfom cepstral analysis for Q-transform
-        if get_mspec or get_mfcc:
-            q_melspectrogram = librosa.feature.melspectrogram(
-                y=None, sr=sr, S=qS, n_fft=n_fft, hop_length=hop_length,
-                n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
-            q_melspectrogram = librosa.logamplitude(q_melspectrogram,
-                amin=1e-10, top_db=80.0).astype('float32')
-            if get_mfcc:
-                q_mfcc = librosa.feature.mfcc(
-                    y=None, sr=sr, S=q_melspectrogram, n_mfcc=nb_ceps).astype('float32')
-                q_mfcc = q_mfcc[1:] # ignore the first coefficient
-    # ====== 1: extract VAD and energy ====== #
-    # centering the raw signal by padding
-    if center:
-        s = np.pad(s, int(win_length // 2), mode='reflect')
-    log_energy = None
-    vad = None
-    vad_ids = None
-    if get_energy or get_vad:
-        frames = framing(s, frame_length=win_length, hop_length=hop_length)
-        energy = (frames**2).sum(axis=0)
-        energy = np.where(energy == 0., np.finfo(float).eps, energy)
-        log_energy = np.log(energy).astype('float32')[None, :]
-        if get_vad:
-            distribNb, nbTrainIt = 2, 24
-            if is_number(get_vad) and get_vad >= 2:
-                distribNb = int(get_vad)
-            vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
-                                            nb_train_it=nbTrainIt)
-            vad = vad.astype('uint8')
-            if vad_smooth:
-                vad_smooth = 3 if int(vad_smooth) == 1 else vad_smooth
-                # at least 2 voice frames
-                vad = smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
-                vad = vad.astype('uint8')
-            vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
-                                                      min_distance=1,
-                                                      min_length=int(vad_minlen / shift)),
-                               dtype='int32')
-    # ====== 2: extract STFT and Spectrogram ====== #
+                width=9, axis=0, order=1)[-1].astype('float32').T
+    # ====== 1: extract STFT and Spectrogram ====== #
     # no padding for center
-    stft_ = stft(s, n_fft=n_fft, win_length=win_length, hop_length=hop_length)
-    S = np.abs(stft_)
-    if np.any(np.isnan(S)):
-        return None
-    # ====== 3: extract phase features ====== #
+    log_energy = None
+    S = stft(s, n_fft=n_fft, hop_length=hop_length, window='hann',
+             center=center, preemphasis=preemphasis,
+             energy=get_energy if get_energy == 'log' else
+             (get_energy or get_vad))
+    if isinstance(S, tuple):
+        log_energy = S[1]
+        S = S[0]
+    # ====== 2: extract phase features ====== #
     phase = None
     if get_phase:
         # GD: derivative along frequency axis
-        phase = compute_delta(np.angle(stft_),
+        phase = compute_delta(np.angle(S),
             width=9, axis=0, order=1)[-1].astype('float32')
-    # ====== 4: extract pitch features ====== #
+    # ====== 3: extract VAD ====== #
+    vad = None
+    vad_ids = None
+    if get_vad:
+        distribNb, nbTrainIt = 2, 24
+        if is_number(get_vad) and get_vad >= 2:
+            distribNb = int(get_vad)
+        vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
+                                        nb_train_it=nbTrainIt)
+        vad = vad.astype('uint8')
+        if vad_smooth:
+            vad_smooth = 3 if int(vad_smooth) == 1 else vad_smooth
+            # at least 2 voice frames
+            vad = smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
+            vad = vad.astype('uint8')
+        vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
+                                                  min_distance=1,
+                                                  min_length=int(vad_minlen / shift)),
+                           dtype='int32')
+    # ====== 4: extract spectrogram ====== #
+    S = spectra(sr=sr, S=S, nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
+                fmin=fmin, fmax=fmax, power=2.0, log=True)
+    logpowerspectrogram = S['spec']
+    melspectrogram = S['mspec'] if 'mspec' in S else None
+    mfcc = S['mfcc'] if 'mfcc' in S else None
+    # ====== 5: extract pitch features ====== #
     pitch_freq = None
     if get_pitch:
+        import librosa
         # we don't care about pitch magnitude
         pitch_freq, _ = librosa.piptrack(
-            y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
-            fmin=fmin, fmax=pitch_fmax, threshold=pitch_threshold)
+            y=None, sr=sr, S=logpowerspectrogram, n_fft=n_fft,
+            hop_length=hop_length, fmin=fmin, fmax=pitch_fmax,
+            threshold=pitch_threshold)
         pitch_freq = pitch_freq.astype('float32')[:__max_fft_bins(sr, n_fft, pitch_fmax)]
         # normalize to 0-1
         _ = np.min(pitch_freq)
         pitch_freq = (pitch_freq - _) / (np.max(pitch_freq) - _)
         pitch_freq = compute_delta(pitch_freq, width=9, order=1, axis=-1)[-1]
-    # ====== 5: extract power spectrogram ====== #
-    S = S**2
-    logpowerspectrogram = None
-    if get_spec:
-        logpowerspectrogram = librosa.logamplitude(S,
-            amin=1e-10, top_db=80.0).astype('float32')
-    # ====== 6: extract log-mel filter bank ====== #
-    melspectrogram = None
-    mfcc = None
-    if get_mspec or get_mfcc:
-        melspectrogram = librosa.feature.melspectrogram(
-            y=None, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length,
-            n_mels=nb_melfilters, fmin=fmin, fmax=fmax, htk=False)
-        melspectrogram = librosa.logamplitude(melspectrogram,
-            amin=1e-10, top_db=80.0).astype('float32')
-        if get_mfcc:
-            mfcc = librosa.feature.mfcc(
-                y=None, sr=sr, S=melspectrogram, n_mfcc=nb_ceps).astype('float32')
-            mfcc = mfcc[1:] # ignore the first coefficient
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
@@ -1020,17 +639,17 @@ def speech_features(s, sr, win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
         if q_mfcc is not None:
             q_mfcc = q_mfcc[:, n // 2:-int(np.ceil(n / 2))]
     return OrderedDict([
-        ('mfcc', None if mfcc is None else mfcc.T),
-        ('energy', log_energy.T if get_energy else None),
-        ('spec', None if logpowerspectrogram is None else logpowerspectrogram.T),
-        ('mspec', None if melspectrogram is None else melspectrogram.T),
+        ('mfcc', None if mfcc is None else mfcc),
+        ('energy', log_energy if get_energy else None),
+        ('spec', None if logpowerspectrogram is None else logpowerspectrogram),
+        ('mspec', None if melspectrogram is None else melspectrogram),
 
-        ('qspec', None if qspec is None else qspec.T),
-        ('qmspec', None if q_melspectrogram is None else q_melspectrogram.T),
-        ('qmfcc', None if q_mfcc is None else q_mfcc.T),
+        ('qspec', None if qspec is None else qspec),
+        ('qmspec', None if q_melspectrogram is None else q_melspectrogram),
+        ('qmfcc', None if q_mfcc is None else q_mfcc),
 
-        ('phase', phase.T if get_phase else None),
-        ('qphase', qphase.T if get_phase and get_qspec else None),
+        ('phase', phase if get_phase else None),
+        ('qphase', qphase if get_phase and get_qspec else None),
 
         ('pitch', None if pitch_freq is None else pitch_freq.T),
 

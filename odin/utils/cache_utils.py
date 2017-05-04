@@ -173,7 +173,7 @@ def cache_memory(func, *attrs):
             # merge default arguments
             for i, name in enumerate(args_name[len(args):]):
                 if name in kwargs:
-                    input_args[len(args) + i] = args_defaults[name]
+                    input_args[len(args) + i] = kwargs[name]
                 elif name in args_defaults:
                     input_args[len(args) + i] = args_defaults[name]
                 else:

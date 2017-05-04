@@ -321,10 +321,20 @@ def tile_raster_images(X, tile_shape=None, tile_spacing=(2, 2), spacing_value=0.
 # Plotting methods
 # ===========================================================================
 @contextmanager
-def figure():
+def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True):
     from matplotlib import pyplot as plt
-    fig = plt.figure()
+    inches_for_box = 2.4
+    if nrow != ncol:
+        nrow = inches_for_box * ncol
+        ncol = inches_for_box * nrow
+    else:
+        nrow = inches_for_box * nrow
+        ncol = inches_for_box * ncol
+    nrow += 1.2 # for the title
+    fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
     yield fig
+    if show:
+        plot_show(block=True, tight_layout=tight_layout)
 
 
 def subplot(*arg, **kwargs):
@@ -347,20 +357,6 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
         ax.set_xlabel(xlabel)
     if ylabel is not None:
         ax.set_ylabel(ylabel)
-
-
-def plot_figure(nrow, ncol, dpi=180):
-    inches_for_box = 2.4
-    from matplotlib import pyplot as plt
-    if nrow != ncol:
-        nrow = inches_for_box * ncol
-        ncol = inches_for_box * nrow
-    else:
-        nrow = inches_for_box * nrow
-        ncol = inches_for_box * ncol
-    nrow += 1.2 # for the title
-    fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
-    return fig
 
 
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
@@ -454,17 +450,6 @@ def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
         ax.plot(x, c=color, lw=lw, **kwargs)
     else:
         ax.plot(x, y, c=color, lw=lw, **kwargs)
-    return ax
-
-
-def plot_raw(y, ax=None):
-    '''Plot the amplitude envelope of a waveform.
-    '''
-    from matplotlib import pyplot as plt
-
-    ax = ax if ax is not None else plt.gca()
-    ax.plot(y)
-
     return ax
 
 
