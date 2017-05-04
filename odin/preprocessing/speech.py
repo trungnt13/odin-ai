@@ -21,7 +21,7 @@ import scipy.signal
 from odin.utils import is_number, cache_memory, is_string
 from .signal import (pad_center, get_window, segment_axis, stft, istft,
                      compute_delta, smooth, pre_emphasis, spectra,
-                     vad_energy)
+                     vad_energy, power2db)
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
@@ -585,8 +585,9 @@ def speech_features(s, sr=None,
                            dtype='int32')
     # ====== 4: extract spectrogram ====== #
     S = spectra(sr=sr, S=S, nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-                fmin=fmin, fmax=fmax, power=2.0, log=True)
-    logpowerspectrogram = S['spec']
+                fmin=fmin, fmax=fmax, power=2.0, log=False)
+    powerspectrogram = S['spec']
+    logpowerspectrogram = power2db(powerspectrogram)
     melspectrogram = S['mspec'] if 'mspec' in S else None
     mfcc = S['mfcc'] if 'mfcc' in S else None
     # ====== 5: extract pitch features ====== #
@@ -595,7 +596,7 @@ def speech_features(s, sr=None,
         import librosa
         # we don't care about pitch magnitude
         pitch_freq, _ = librosa.piptrack(
-            y=None, sr=sr, S=logpowerspectrogram, n_fft=n_fft,
+            y=None, sr=sr, S=powerspectrogram, n_fft=n_fft,
             hop_length=hop_length, fmin=fmin, fmax=pitch_fmax,
             threshold=pitch_threshold)
         pitch_freq = pitch_freq.astype('float32')[:__max_fft_bins(sr, n_fft, pitch_fmax)]
