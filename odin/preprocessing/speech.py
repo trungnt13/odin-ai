@@ -406,16 +406,14 @@ def speech_features(s, sr=None,
         window length in millisecond
     shift: float
         hop length between windows, in millisecond
-    nb_melfilters: int
-        number of Mel bands to generate
-    nb_ceps: int
-        number of MFCCs to return
+    nb_melfilters: int, or None
+        number of Mel bands to generate, if None, mel-filter banks features
+        won't be returned
+    nb_ceps: int, or None
+        number of MFCCs to return, if None, mfcc coefficients won't be
+        returned
     get_spec: bool
         if True, include the log-power spectrogram
-    get_mspec: bool
-        if True, include the log-power mel-spectrogram
-    get_mfcc: bool
-        if True, include the MFCCs features
     get_qspec: bool
         if True, return Q-transform coefficients
     get_phase: bool
