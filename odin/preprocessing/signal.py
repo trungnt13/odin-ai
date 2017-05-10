@@ -985,9 +985,9 @@ def spectra(sr, y=None, S=None,
     # ====== extrct mel-filter-bands features ====== #
     mel_spec = None
     if nb_melfilters is not None or nb_ceps is not None:
-        nb_melfilters = 24 if nb_melfilters is None else int(nb_melfilters)
-        mel_basis = mel_filters(sr, n_fft=n_fft, n_mels=nb_melfilters,
-                                fmin=fmin, fmax=fmax)
+        mel_basis = mel_filters(sr, n_fft=n_fft,
+            n_mels=24 if nb_melfilters is None else int(nb_melfilters),
+            fmin=fmin, fmax=fmax)
         # transpose to (nb_samples; nb_mels)
         mel_spec = np.dot(mel_basis, spec.T)
         mel_spec = mel_spec.astype('float32')

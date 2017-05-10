@@ -23,10 +23,6 @@ from .signal import (pad_center, get_window, segment_axis, stft, istft,
                      compute_delta, smooth, pre_emphasis, spectra,
                      vad_energy, power2db)
 
-# Constrain STFT block sizes to 512 KB
-MAX_MEM_BLOCK = 2**8 * 2**11
-SMALL_FLOAT = 1e-20
-
 # ===========================================================================
 # Predefined variables of speech datasets
 # ===========================================================================
@@ -51,7 +47,8 @@ nist15_lang_list = np.asarray([
     # Polish, Russian
     'qsl-pol', 'qsl-rus',
     # Caribbean, European, Latin American, Brazilian
-    'spa-car', 'spa-eur', 'spa-lac', 'por-brz'])
+    'spa-car', 'spa-eur', 'spa-lac', 'por-brz'
+])
 
 
 def nist15_label(label):
