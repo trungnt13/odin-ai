@@ -388,9 +388,8 @@ def speech_features(s, sr=None,
                     win=0.02, shift=0.01, nb_melfilters=None, nb_ceps=None,
                     get_spec=True, get_qspec=False, get_phase=False,
                     get_pitch=False, get_vad=True, get_energy=False,
-                    get_delta=False,
-                    fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                    pitch_threshold=0.8, pitch_fmax=1200,
+                    get_delta=False, fmin=64, fmax=None, sr_new=None,
+                    preemphasis=0.97, pitch_threshold=0.8, pitch_fmax=1200,
                     vad_smooth=3, vad_minlen=0.1,
                     cqt_bins=96, center=True):
     """ Automatically extract multiple acoustic representation of
@@ -596,34 +595,35 @@ def speech_features(s, sr=None,
             threshold=pitch_threshold)
         pitch_freq = pitch_freq.astype('float32')[:__max_fft_bins(sr, n_fft, pitch_fmax)]
         # normalize to 0-1
-        _ = np.min(pitch_freq)
-        pitch_freq = (pitch_freq - _) / (np.max(pitch_freq) - _)
+        # _ = np.min(pitch_freq)
+        # pitch_freq = (pitch_freq - _) / (np.max(pitch_freq) - _)
         pitch_freq = compute_delta(pitch_freq, width=9, order=1, axis=-1)[-1]
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
         if log_energy is not None:
+            log_energy = log_energy[:, None]
             log_energy = np.concatenate(
                 [log_energy] + compute_delta(log_energy, order=get_delta),
-                axis=0)
+                axis=1)
         # STFT
         if melspectrogram is not None:
             melspectrogram = np.concatenate(
                 [melspectrogram] + compute_delta(melspectrogram, order=get_delta),
-                axis=0)
+                axis=1)
         if mfcc is not None:
             mfcc = np.concatenate(
                 [mfcc] + compute_delta(mfcc, order=get_delta),
-                axis=0)
+                axis=1)
         # Q-transform
         if q_melspectrogram is not None:
             q_melspectrogram = np.concatenate(
                 [q_melspectrogram] + compute_delta(q_melspectrogram, order=get_delta),
-                axis=0)
+                axis=1)
         if q_mfcc is not None:
             q_mfcc = np.concatenate(
                 [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
-                axis=0)
+                axis=1)
     # ====== 8: make sure CQT give the same length with STFT ====== #
     if get_qspec and qspec.shape[1] > logpowerspectrogram.shape[1]:
         n = qspec.shape[1] - logpowerspectrogram.shape[1]

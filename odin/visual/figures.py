@@ -55,7 +55,9 @@ marker_styles = [
 ]
 
 
-def generate_random_colors(n):
+def generate_random_colors(n, seed=None):
+    if seed is not None:
+        np.random.seed(seed)
     colors = []
     for i in range(n):
         h = 0.05 + i / n # we want maximizing hue
@@ -379,8 +381,11 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
     '''Plot the amplitude envelope of a waveform.
     Parameters
     ----------
+    x: 1D array
+    y: 1D array
     color: list
-        list of colors for each class, check `generate_random_colors`
+        list of colors for each class, check `generate_random_colors`,
+        length of color must be equal to `x` and `y`
     marker: list
         different marker for each color
     legend: dict
@@ -397,7 +402,7 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
     if color is None:
         color = [default_color] * len(x)
         is_color_none = True
-    elif len(color) != len(x):
+    if len(color) != len(x):
         raise ValueError("There are %d colors, but %d data points" %
                          len(color), len(x))
     # ====== check marker ====== #
@@ -409,13 +414,13 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
                          len(marker), len(x))
     # ====== check legend ====== #
     if legend is None:
-        legend = {str(c) + str(m): "%s_%s" % (c, m)
+        legend = {(c, m): "%s_%s" % (c, m)
                   for c in set(color) for m in set(marker)}
     elif is_marker_none:
-        legend = {i + default_marker: j for i, j in legend.iteritems()}
+        legend = {(i, default_marker): j for i, j in legend.iteritems()}
     elif is_color_none:
-        legend = {default_color + i: j for i, j in legend.iteritems()}
-    elif not all(c + m in legend for c in set(color) for m in set(marker)):
+        legend = {(default_color, i): j for i, j in legend.iteritems()}
+    if not all((c, m) in legend for c in set(color) for m in set(marker)):
         raise ValueError("Legend must contains following keys: %s, but the given "
                         "legend only contains: %s"
                          % (str([c + m for c in set(color) for m in set(marker)]),
@@ -507,8 +512,7 @@ def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
     get_vad = True if not get_vad else get_vad
     y = speech.speech_features(s, sr, win=win, shift=shift,
             nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-            get_spec=True, get_mspec=True, get_mfcc=True,
-            get_qspec=get_qspec, get_phase=False, get_pitch=False,
+            get_spec=True, get_qspec=get_qspec, get_phase=False, get_pitch=False,
             get_vad=get_vad, get_energy=True, get_delta=False,
             fmin=fmin, fmax=fmax, sr_new=sr_new, preemphasis=preemphasis,
             pitch_threshold=pitch_threshold, pitch_fmax=pitch_fmax,

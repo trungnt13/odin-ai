@@ -94,7 +94,11 @@ class FeatureProcessor(object):
         # defaults
         self.jobs = []
         self.njobs = 0
+        # list for internal control of FeatureProcessor behaviour
         self.primary_indices = []
+        # all feature properties with name given in this list will
+        # be excluded during pca calculation
+        self.excluded_pca = []
 
     # ==================== Abstract properties ==================== #
     @abstractproperty
@@ -151,7 +155,8 @@ class FeatureProcessor(object):
                 cache_data = np.concatenate(cache_data, 0)
                 # NOTE: if nb_samples < nb_features, fitting PCA
                 # will course error
-                if self.pca and statistic_able[name]:
+                if self.pca and statistic_able[name] and \
+                name not in self.excluded_pca:
                     pca[name].partial_fit(cache_data)
                 # flush data
                 if name in dataset:
@@ -206,14 +211,21 @@ class FeatureProcessor(object):
         cache = None
         dataset.flush()
         # ====== saving indices ====== #
+        saved_primary = False
         for n, ids in indices.iteritems():
-            outpath = os.path.join(dataset.path,
-                'indices' if n in self.primary_indices else 'indices_%s' % n)
+            if n in self.primary_indices:
+                # do not repeat saving the same indices
+                if saved_primary: continue
+                outpath = 'indices'
+                saved_primary = True
+            else:
+                outpath = 'indices_%s' % n
+            # save the indices to MmapDict
+            outpath = os.path.join(dataset.path, outpath)
             _ = MmapDict(outpath)
             for name, start, end in ids:
                 _[name] = (int(start), int(end))
-            _.flush()
-            _.close()
+            _.flush(); _.close()
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):
@@ -224,20 +236,25 @@ class FeatureProcessor(object):
                 mean = np.where(np.isnan(mean), self.substitute_nan, mean)
                 std = np.where(np.isnan(std), self.substitute_nan, std)
             else:
-                assert not np.any(np.isnan(mean)), 'Mean contains NaN, %s' % name
-                assert not np.any(np.isnan(std)), 'Std contains NaN, %s' % name
+                assert not np.any(np.isnan(mean)), 'Mean contains NaN, name: %s' % name
+                assert not np.any(np.isnan(std)), 'Std contains NaN, name: %s' % name
             dataset[name + '_sum1'] = sum1
             dataset[name + '_sum2'] = sum2
             dataset[name + '_mean'] = mean
             dataset[name + '_std'] = std
-            dataset[name + '_pca'] = pca
+            if pca is not None:
+                dataset[name + '_pca'] = pca
         # save all stats
         if self.save_stats:
             print('Saving statistics of each data ...')
             for n, d, s in self.features_properties:
                 if s: # save stats
                     print(' * Name:', n)
-                    s1, s2, pca_ = sum1[n], sum2[n], pca[n]
+                    s1, s2 = sum1[n], sum2[n],
+                    if self.pca and n not in self.excluded_pca:
+                        pca_ = pca[n]
+                    else:
+                        pca_ = None
                     save_mean_std(s1, s2, pca_, n, dataset)
         # ====== dataset flush() ====== #
         dataset.flush(); dataset.close()
@@ -262,17 +279,16 @@ def _segments_preprocessing(segments, audio_ext):
     audio_ext = as_tuple('' if audio_ext is None else audio_ext,
                          t=string_types)
     # ====== load jobs ====== #
-    # WAVE dataset
     if isinstance(segments, Dataset):
-        if ('indices' not in segments or
-            'raw' not in segments or
-                'sr' not in segments):
-            raise RuntimeError("The given Dataset must contains 'indices', 'raw' "
-                               "and 'sr' Data.")
-        jobs = [(segments, ((name, start, end, 0),))
-                for name, (start, end) in segments['indices'].iteritems()]
-        nb_jobs = len(jobs)
-        return jobs, nb_jobs
+        # WAVE dataset
+        if ('indices' in segments and 'raw' in segments and 'sr' in segments):
+            jobs = [(segments, ((name, start, end, 0),))
+                    for name, (start, end) in segments['indices'].iteritems()]
+            nb_jobs = len(jobs)
+            return jobs, nb_jobs
+        # assume that each key in dataset is a files
+        file_list = [(os.path.basename(segments[k]), segments[k], 0.0, -1.0)
+                     for k in segments.keys()] # segment, path, start, end
     # NOT loaded segments
     elif isinstance(segments, str):
         if not os.path.exists(segments):
@@ -404,16 +420,14 @@ class SpeechProcessor(FeatureProcessor):
         window length in millisecond
     shift: float
         hop length between windows, in millisecond
-    nb_melfilters: int
-        number of Mel bands to generate
-    nb_ceps: int
-        number of MFCCs to return
+    nb_melfilters: int, or None
+        number of Mel bands to generate, if None, mel-filter banks features
+        won't be returned
+    nb_ceps: int, or None
+        number of MFCCs to return, if None, mfcc coefficients won't be
+        returned
     get_spec: bool
         if True, include the log-power spectrogram
-    get_mspec: bool
-        if True, include the log-power mel-spectrogram
-    get_mfcc: bool
-        if True, include the MFCCs features
     get_qspec: bool
         if True, return Q-transform coefficients
     get_phase: bool
@@ -494,9 +508,8 @@ class SpeechProcessor(FeatureProcessor):
     '''
 
     def __init__(self, segments, output_path, sr=None,
-                win=0.02, shift=0.01, nb_melfilters=24, nb_ceps=12,
-                get_spec=True, get_mspec=False, get_mfcc=False,
-                get_qspec=False, get_phase=False, get_pitch=False,
+                win=0.02, shift=0.01, nb_melfilters=None, nb_ceps=None,
+                get_spec=True, get_qspec=False, get_phase=False, get_pitch=False,
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
                 pitch_threshold=0.8, pitch_fmax=800,
@@ -510,19 +523,19 @@ class SpeechProcessor(FeatureProcessor):
             ncache=ncache, ncpu=ncpu)
         self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         # ====== which features to get ====== #
-        if not get_spec and not get_mspec and not get_mfcc \
-        and not get_pitch and not get_energy and not get_vad:
-            raise Exception('You must specify which features you want: '
-                            'spectrogram, filter-banks, MFCC, or pitch.')
         features_properties = []
-        if get_mfcc: features_properties.append(('mfcc', dtype, True))
-        if get_energy: features_properties.append(('energy', dtype, True))
         if get_spec: features_properties.append(('spec', dtype, True))
-        if get_mspec: features_properties.append(('mspec', dtype, True))
+        if get_energy: features_properties.append(('energy', dtype, True))
+        if nb_melfilters is not None:
+            features_properties.append(('mspec', dtype, True))
+        if nb_ceps is not None:
+            features_properties.append(('mfcc', dtype, True))
         if get_qspec:
             features_properties.append(('qspec', dtype, True))
-            if get_mspec: features_properties.append(('qmspec', dtype, True))
-            if get_mfcc: features_properties.append(('qmfcc', dtype, True))
+            if nb_melfilters is not None:
+                features_properties.append(('qmspec', dtype, True))
+            if nb_ceps is not None:
+                features_properties.append(('qmfcc', dtype, True))
             if get_phase: features_properties.append(('qphase', dtype, True))
         if get_phase: features_properties.append(('phase', dtype, True))
         if get_pitch: features_properties.append(('pitch', dtype, True))
@@ -532,15 +545,15 @@ class SpeechProcessor(FeatureProcessor):
         self.__features_properties = features_properties
 
         self.get_spec = get_spec
-        self.get_mspec = get_mspec
-        self.get_mfcc = get_mfcc
         self.get_pitch = get_pitch
         self.get_qspec = get_qspec
         self.get_phase = get_phase
         self.get_vad = get_vad
         self.get_energy = get_energy
         self.get_delta = int(get_delta)
-        self.primary_indices = ['mfcc']
+        # control FeatureProcessor behaviour
+        self.primary_indices = ['mfcc', 'spec', 'mfcc', 'vad']
+        self.excluded_pca = ['energy', 'vad']
         # ====== feature information ====== #
         self.sr = sr
         self.win = win
@@ -608,8 +621,7 @@ class SpeechProcessor(FeatureProcessor):
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
                         win=self.win, shift=self.shift,
                         nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
-                        get_spec=self.get_spec, get_mspec=self.get_mspec,
-                        get_mfcc=self.get_mfcc, get_qspec=self.get_qspec,
+                        get_spec=self.get_spec, get_qspec=self.get_qspec,
                         get_phase=self.get_phase, get_pitch=self.get_pitch,
                         get_vad=self.get_vad, get_energy=self.get_energy,
                         get_delta=self.get_delta,

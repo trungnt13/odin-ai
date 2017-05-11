@@ -20,8 +20,7 @@ print('Raw signal:', y.shape, sr)
 
 feat = speech.speech_features(y, sr,
     win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=13,
-    get_spec=True, get_mspec=True, get_mfcc=True,
-    get_qspec=True, get_phase=True, get_pitch=True,
+    get_spec=True, get_qspec=True, get_phase=True, get_pitch=True,
     get_vad=True, get_energy=True, get_delta=None,
     pitch_threshold=0.8, fmin=64, fmax=None,
     sr_new=None, preemphasis=0.97)

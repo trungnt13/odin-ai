@@ -544,7 +544,7 @@ class SpeechTransform(BaseEstimator, TransformerMixin):
             win=self.win, shift=self.shift, delta_order=self.delta_order,
             energy=self.energy, vad=self.vad, dtype='float32',
             pitch_threshold=self.pitch_threshold, get_pitch=get_pitch,
-            get_spec=get_spec, get_mspec=get_mspec, get_mfcc=get_mfcc)
+            get_spec=get_spec)
         # ====== return results ====== #
         if data is None:
             return None
