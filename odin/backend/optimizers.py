@@ -412,6 +412,10 @@ class RMSProp(Optimizer):
     epsilon : float or symbolic scalar
         Small value added for numerical stability, `epsilon` might
         have huge impact on final performance.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -474,6 +478,10 @@ class Adadelta(Optimizer):
     epsilon : float or symbolic scalar
         Small value added for numerical stability, `epsilon` might
         have huge impact on final performance.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -545,6 +553,10 @@ class Adam(Optimizer):
     epsilon : float or symbolic scalar
         Small value added for numerical stability, `epsilon` might
         have huge impact on final performance.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -601,6 +613,10 @@ class Adamax(Optimizer):
     epsilon : float or symbolic scalar
         Small value added for numerical stability, `epsilon` might
         have huge impact on final performance.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -647,6 +663,10 @@ class Nadam(Optimizer):
     epsilon : float or symbolic scalar
         Small value added for numerical stability, `epsilon` might
         have huge impact on final performance.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -699,6 +719,10 @@ class Adagrad(Optimizer):
         Starting value for the gradients accumulators, must be positive.
     dual_avg: bool
         if True, use Adagrad Dual Averaging algorithm for sparse linear models.
+    decay_steps: A scalar `int32` or `int64` `Tensor` or a Python number.
+      Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
+    decay_rate: A scalar `float32` or `float64` `Tensor` or a
+      Python number.  The decay rate.
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped

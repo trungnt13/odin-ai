@@ -111,11 +111,12 @@ recipes = [
     ),
     # F.recipes.VADindex(ds['vadids'],
     #      frame_length=longest_vad, padding=None),
+    # F.recipes.Stacking(left_context=5, right_context=5, shift=1),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
                          transcription_transform=lambda x: x[-1]),
-    # F.recipes.CreateBatch(),
-    F.recipes.CreateFile()
+    F.recipes.CreateBatch(),
+    # F.recipes.CreateFile()
 ]
 
 train_feeder.set_recipes(recipes)

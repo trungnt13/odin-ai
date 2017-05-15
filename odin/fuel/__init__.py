@@ -7,7 +7,7 @@ from .feeders import *
 import recipes
 from zipfile import ZipFile, ZIP_DEFLATED
 
-from odin.utils import get_file
+from odin.utils import get_file, get_script_path
 
 
 def load_swb1_aligment(nb_senones=2304):

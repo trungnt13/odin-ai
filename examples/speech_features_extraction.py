@@ -22,7 +22,7 @@ datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit', override=True)
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
                          win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
-                         get_delta=2, get_energy=True, get_phase=True,
+                         get_delta=2, get_energy=True, get_phase=False,
                          get_spec=True, get_pitch=True, get_vad=2, get_qspec=False,
                          pitch_threshold=0.8, cqt_bins=96,
                          vad_smooth=3, vad_minlen=0.1,
@@ -94,7 +94,9 @@ if PCA:
     feat_pca = ds[feat + '_pca']
     for f, (start, end) in ds['indices']:
         X.append(
-            np.mean(feat_pca.transform(ds[feat][start:end]), axis=0, keepdims=True))
+            np.mean(
+                feat_pca.transform(ds[feat][start:end]), axis=0, keepdims=True
+        ))
         y.append(int(f[0]))
     X = np.concatenate(X, axis=0)
     y = np.asarray(y)
