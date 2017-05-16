@@ -791,6 +791,9 @@ class Sequencing(FeederRecipe):
             - 'pad'   Pad with a constant value
     endvalue: Number
         the value to use for end='pad'
+    endmode: 'pre', 'post'
+        if "pre", padding or wrapping at the beginning of the array.
+        if "post", padding or wrapping at the ending of the array.
     transcription_transform: callable
         a function transform a sequence of transcription value into
         desire value for 1 sample.

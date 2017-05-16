@@ -79,6 +79,12 @@ def standard_trainer(train_data, valid_data, test_data=None,
     gradient_norm: bool
         if True, record the L2-norm of gradients from all parameters for
         each iteration.
+    patience: int
+        number of failures detected by earlystopping before terminating the
+        training.
+    earlystop: int or None
+        if None, turn-off early-stopping. Otherwise, it is percentage of
+        generalization loss.
 
     Return
     ------

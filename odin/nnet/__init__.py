@@ -1,4 +1,5 @@
-from .model import ModelDescriptor, VariableDescriptor, InputDescriptor, get_model_descriptor
+from .model import (ModelDescriptor, VariableDescriptor, InputDescriptor,
+                    get_model_descriptor)
 from .base import *
 from .conv import *
 from .noise import *

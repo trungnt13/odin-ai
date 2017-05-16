@@ -321,7 +321,7 @@ class ModelDescriptor(object):
     Usage
     -----
     >>> @ModelDescriptor
-    >>> def model_creator_function(X1, X2, ..., y1, y2, ..., saved_states):
+    >>> def model_creator_function(X1, X2, ..., y1, y2, ..., saved_states, **kwargs):
     ...     if save_states is None:
     ...         # create your network here
     ...     else:
@@ -332,8 +332,10 @@ class ModelDescriptor(object):
     -------
     >>> import numpy as np
     >>> from odin import nnet
+    ...
     >>> @nnet.ModelDescriptor
-    >>> def feedforward_vae(X, X1, f):
+    >>> def feedforward_vae(X, X1, f, **kwargs):
+    ...     check = kwargs['check']
     ...     if f is None:
     ...         f = N.Sequence([
     ...             N.Dense(num_units=10, activation=K.softmax),
@@ -342,9 +344,12 @@ class ModelDescriptor(object):
     ...     # f is return for automatically saved
     ...     return f(X), f
     ... # First time initialize the input description
+    ...
     >>> K.set_training(True)
-    >>> y_train = feedforward_vae([N.VariableDescriptor(shape=(8, 8)),
-    ...                            N.VariableDescriptor(shape=(12, 12))])
+    >>> y_train = feedforward_vae(inputs=[N.VariableDescriptor(shape=(8, 8)),
+    ...                                   N.VariableDescriptor(shape=(12, 12))],
+    ...                           check=True)
+    ...
     >>> K.set_training(False); y_score = feedforward_vae()
     ... # Overide default Placeholder
     >>> X = K.placeholder(shape=(12, 12), name='X')
