@@ -491,6 +491,7 @@ class ComputationGraph(object):
                     # TODO: think about what to do with new Ops here
 
     def get_roles(self, roles, match_all=False, exact=False):
+        """ Return all variables with given roles """
         return [v for v in self.variables
                 if has_roles(v, roles, match_all=match_all, exact=exact)]
 

@@ -23,6 +23,7 @@ __all__ = [
     'load_imdb',
     'load_iris',
     'load_digit_audio',
+    'load_tiwave',
 ]
 
 
@@ -394,7 +395,7 @@ def _load_data_from_path(datapath, create_dataset=True):
         zf.close()
         os.remove(datapath_tmp)
     if create_dataset:
-        ds = Dataset(datapath)
+        ds = Dataset(datapath, read_only=True)
         return ds
     return datapath
 
@@ -493,5 +494,12 @@ def load_iris():
 def load_digit_audio():
     path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
     name = 'digit'
+    datapath = get_file(name, path)
+    return _load_data_from_path(datapath)
+
+
+def load_tiwave():
+    path = 'https://s3.amazonaws.com/ai-datasets/tiwave.zip'
+    name = 'tiwave'
     datapath = get_file(name, path)
     return _load_data_from_path(datapath)

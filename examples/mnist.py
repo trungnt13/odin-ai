@@ -5,17 +5,10 @@ import numpy as np
 
 from odin.utils import get_modelpath, ArgController, stdio, get_logpath
 
-stdio(get_logpath('tmp.log', override=True))
-
-arg = ArgController(version=0.12
-).add('-backend', 'theano or tensorflow', 'tensorflow'
-).add('-ds', 'dataset cifar10, or mnist', 'mnist'
-).add('-epoch', 'number of epoch', 3
-).add('-lr', 'learning rate', 0.01
-).parse()
+stdio(get_logpath('mnist.log', override=True))
 
 import os
-os.environ['ODIN'] = 'float32,gpu,%s,seed=12' % arg['backend']
+os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12'
 
 from odin import backend as K
 from odin import nnet as N
@@ -26,13 +19,7 @@ from six.moves import cPickle
 # ===========================================================================
 # Load data
 # ===========================================================================
-USE_MNIST_DATA = True if 'mnist' in arg['ds'].lower() else False
-
-if USE_MNIST_DATA:
-    ds = fuel.load_mnist()
-else:
-    ds = fuel.load_cifar10()
-
+ds = fuel.load_mnist()
 X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X')
 y = K.placeholder(shape=(None,), name='y', dtype='int32')
 
@@ -40,7 +27,7 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 # Build network
 # ===========================================================================
 ops = N.Sequence([
-    N.Dimshuffle((0, 1, 2, 'x')) if USE_MNIST_DATA else None,
+    N.Dimshuffle((0, 1, 2, 'x')),
     N.BatchNorm(axes='auto'),
     N.Conv(32, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
     N.Pool(pool_size=(2, 2), strides=None),
@@ -62,7 +49,7 @@ cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
 cost_test_3 = K.confusion_matrix(y_pred_score, y, labels=range(10))
 
 parameters = ops.parameters
-optimizer = K.optimizers.SGD(lr=arg['lr'])
+optimizer = K.optimizers.Adadelta(lr=1.0)
 updates = optimizer(cost_train, parameters)
 print('Building training functions ...')
 f_train = K.function([X, y], [cost_train, optimizer.norm],
@@ -78,7 +65,7 @@ f_pred = K.function(X, y_pred_score)
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
 task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
-task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=arg['epoch'], name='train')
+task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
 task.set_callback([

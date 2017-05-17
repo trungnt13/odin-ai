@@ -80,7 +80,8 @@ opt = K.optimizers.Adam(lr=0.001)
 # ===========================================================================
 train, hist = training.standard_trainer(
     train_data=feeder_train, valid_data=feeder_valid,
-    cost_train=K.mean(K.categorical_crossentropy(y_train, y)),
+    cost_train=[K.mean(K.categorical_crossentropy(y_train, y)),
+                K.mean(K.categorical_accuracy(y_train, y))],
     cost_score=[K.mean(K.categorical_crossentropy(y_score, y)), B.EarlyStop,
                 K.mean(K.categorical_accuracy(y_score, y)), B.AccuracyValue],
     confusion_matrix=K.confusion_matrix(y_score, y, labels=len(gender)),

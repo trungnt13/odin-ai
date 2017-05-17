@@ -258,21 +258,21 @@ def standard_trainer(train_data, valid_data, test_data=None,
             if labels is None:
                 confusion_labels = [str(i) for i in range(confusion[0].shape[0])]
             ncol = 3; nrow = int(np.ceil(len(confusion) / ncol))
-            visual.plot_figure(nrow=nrow, ncol=ncol, dpi=180)
-            for i, cm in enumerate(confusion):
-                ax = plt.subplot(nrow, ncol, i + 1)
-                visual.plot_confusion_matrix(cm, confusion_labels,
-                    axis=ax, fontsize=10, colorbar=False)
-                ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
-            plt.suptitle("[Valid] Confustion matrices", fontsize=12)
-            plt.tight_layout()
-            # The the test confusion matrix
-            if test_data is not None and test_cm is not None:
-                plt.figure(figsize=(8, 9), dpi=180)
-                visual.plot_confusion_matrix(test_cm, confusion_labels,
-                    axis=None, fontsize=18, colorbar=False)
-                plt.suptitle("[Eval] Confustion matrices", fontsize=20)
+            with visual.figure(nrow=nrow, ncol=ncol, dpi=180):
+                for i, cm in enumerate(confusion):
+                    ax = plt.subplot(nrow, ncol, i + 1)
+                    visual.plot_confusion_matrix(cm, confusion_labels,
+                        axis=ax, fontsize=10, colorbar=False)
+                    ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
+                plt.suptitle("[Valid] Confustion matrices", fontsize=12)
                 plt.tight_layout()
+                # The test confusion matrix
+                if test_data is not None and test_cm is not None:
+                    plt.figure(figsize=(8, 9), dpi=180)
+                    visual.plot_confusion_matrix(test_cm, confusion_labels,
+                        axis=None, fontsize=18, colorbar=False)
+                    plt.suptitle("[Eval] Confustion matrices", fontsize=20)
+                    plt.tight_layout()
         # save all the plot
         if report_path == 'show':
             plt.show()

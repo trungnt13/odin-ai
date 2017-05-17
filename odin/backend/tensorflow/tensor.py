@@ -198,6 +198,14 @@ def cast(x, dtype):
     return np.cast[dtype](x)
 
 
+@output_roles
+def identity(x, name=None):
+    """ Return a tensor with the same shape and contents as
+    the input tensor or value.
+    """
+    return tf.identity(x, name=name)
+
+
 # ===========================================================================
 # LINEAR ALGEBRA
 # Assumed overridden:

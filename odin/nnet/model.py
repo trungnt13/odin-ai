@@ -597,8 +597,8 @@ class ModelDescriptor(object):
         outputs = self._func(*model_inputs, **kwargs)
         # ====== check outputs values ====== #
         if outputs is None or len(outputs) != 2:
-            raise ValueError("[ModelDescriptor] function must return:  "
-                             "output and a pickle-able object to save the model.")
+            raise ValueError("[ModelDescriptor] function must return only 2 objects: "
+                             "an output, and a pickle-able object to save the model.")
         if outputs[1] is not None:
             self._save_states = outputs[1]
         # cached last outputs
