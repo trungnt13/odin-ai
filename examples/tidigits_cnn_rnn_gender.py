@@ -15,10 +15,11 @@ import numpy as np
 from odin import backend as K, nnet as N, fuel as F, basic as B
 from odin.stats import train_valid_test_split
 from odin import training
-from odin.utils import get_logpath, Progbar
+from odin.utils import get_logpath, Progbar, get_modelpath
 
 
 REPORT_PATH = get_logpath(name='tidigits_gender.pdf', override=True)
+MODEL_PATH = get_modelpath(name='tidigits_gender.ai', override=True)
 # ===========================================================================
 # Load data
 # Saved WAV file:
@@ -66,10 +67,6 @@ feeder_train.set_recipes(recipes + [F.recipes.CreateBatch()])
 feeder_valid.set_recipes(recipes + [F.recipes.CreateBatch()])
 feeder_test.set_recipes(recipes + [F.recipes.CreateFile()])
 
-# prog = Progbar(feeder_valid.shape[0])
-# for X, y in feeder_valid.set_batch(64, seed=1208, shuffle_level=2):
-#     prog.add(X.shape[0])
-
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -99,6 +96,24 @@ train, hist = training.standard_trainer(
     batch_size=64, valid_freq=0.5, nb_epoch=3,
     optimizer=opt, stop_callback=opt.get_lr_callback(),
     labels=gender,
+    save_obj=f, save_path=MODEL_PATH,
     report_path=REPORT_PATH
 )
 train.run()
+
+# ===========================================================================
+# Testing
+# ===========================================================================
+from sklearn.metrics import accuracy_score, confusion_matrix
+y_test_pred = []
+y_test_true = []
+prog = Progbar(target=feeder_test.shape[0])
+for X, y in feeder_test.set_batch(256, seed=None):
+    y_test_pred.append(f_pred(X))
+    y_test_true.append(y)
+    prog.add(X.shape[0])
+y_test_pred = np.argmax(np.concatenate(y_test_pred, axis=0), axis=-1)
+y_test_true = np.argmax(np.concatenate(y_test_true), axis=-1)
+print("Accuracy:", accuracy_score(y_test_true, y_test_pred))
+print("Confusion matrix:")
+print(confusion_matrix(y_test_true, y_test_pred))
