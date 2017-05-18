@@ -104,7 +104,7 @@ class Callback(object):
         self.__results = None
         self._kwargs = None
 
-        self.__nb_samples = defaultdict(int)
+        self.__nb_total_samples = defaultdict(int)
         self.__nb_iter = defaultdict(int)
         self.__nb_epoch = defaultdict(int)
 
@@ -116,19 +116,20 @@ class Callback(object):
 
         self.__nb_iter = value[0]
         self.__nb_epoch = value[1]
-        self.__nb_samples = value[2]
+        self.__nb_total_samples = value[2]
 
         # ====== load variables ====== #
         for i, j in value[-1].iteritems():
             setattr(self, i, j)
 
     def __getstate__(self):
-        return (self.__nb_iter, self.__nb_epoch, self.__nb_samples,
+        return (self.__nb_iter, self.__nb_epoch, self.__nb_total_samples,
                 self._saveable_variables)
 
     # ==================== utilities methods ==================== #
     def record(self, event_name, event_type,
-               nb_iter, nb_epoch, nb_samples,
+               nb_iter, nb_epoch,
+               nb_total_samples,
                results, **kwargs):
         """
         Parameters
@@ -142,7 +143,7 @@ class Callback(object):
             number of iteration
         nb_epoch: int
             number of epoch
-        nb_samples: int
+        nb_total_samples: int
             number of samples has been trained on
         results: object
             any temporary results returned
@@ -161,7 +162,8 @@ class Callback(object):
 
         self.__nb_epoch[event_name] = max(nb_epoch, self.__nb_epoch[event_name])
         self.__nb_iter[event_name] = max(nb_iter, self.__nb_iter[event_name])
-        self.__nb_samples[event_name] = max(nb_samples, self.__nb_samples[event_name])
+        self.__nb_total_samples[event_name] = max(nb_total_samples,
+            self.__nb_total_samples[event_name])
         # ====== call appropriate function ====== #
         messages = []
         if hasattr(self, str(event_type)):
@@ -199,8 +201,8 @@ class Callback(object):
         return self.__nb_iter[self.__event_name]
 
     @property
-    def nb_samples(self):
-        return self.__nb_samples[self.__event_name]
+    def nb_total_samples(self):
+        return self.__nb_total_samples[self.__event_name]
 
     @property
     def nb_epoch(self):
@@ -255,16 +257,17 @@ class CallbackList(Callback):
 
     # ==================== utilities methods ==================== #
     def record(self, event_name, event_type,
-               nb_iter, nb_epoch, nb_samples,
+               nb_iter, nb_epoch,
+               nb_total_samples,
                results, **kwargs):
         # ====== process the event ====== #
         super(CallbackList, self).record(event_name, event_type,
-                                         nb_iter, nb_epoch, nb_samples,
+                                         nb_iter, nb_epoch, nb_total_samples,
                                          results, **kwargs)
         messages = []
         for cb in self._callbacks:
             msg = cb.record(event_name, event_type,
-                            nb_iter, nb_epoch, nb_samples,
+                            nb_iter, nb_epoch, nb_total_samples,
                             results, **kwargs)
             if msg is not None:
                 messages += msg
@@ -300,7 +303,7 @@ class Checkpoint(Callback):
 
 class History(Callback):
     """ History
-    [time, event_name, event_type, nb_samples, nb_iter, nb_epoch, results]
+    [time, event_name, event_type, nb_total_samples, nb_iter, nb_epoch, results]
     """
 
     def __init__(self):
@@ -316,13 +319,13 @@ class History(Callback):
         return {'_history': self._history}
 
     def record(self, event_name, event_type,
-               nb_iter, nb_epoch, nb_samples,
+               nb_iter, nb_epoch, nb_total_samples,
                results, **kwargs):
         self._history.append([
             timeit.default_timer(), # time
             event_name, # name (Train, Valid ...)
             event_type, # batch_end, batch_start ...
-            nb_samples, # nb_samples
+            nb_total_samples, # nb_total_samples
             nb_iter, # nb_iterations
             nb_epoch, # nb_epoch
             results # results
@@ -835,7 +838,7 @@ class ProgressMonitor(Callback):
         self._prog.title = 'Name:%-8s,Epoch:%2d,' % \
         (self.name[:8], self.nb_epoch) + title
         # progress
-        n = round(((self.nb_samples % samples_size) / samples_size) * 100)
+        n = round(((self.nb_total_samples % samples_size) / samples_size) * 100)
         self._prog.update(min(int(n), 99))
 
     def epoch_end(self):
@@ -880,36 +883,36 @@ class Debug(Callback):
 
     def task_start(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:task_start'
 
     def task_end(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:task_end'
 
     def epoch_start(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:epoch_start'
 
     def epoch_end(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:epoch_end'
 
     def batch_start(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:batch_start'
 
     def batch_end(self):
         print(Debug.FORMAT % (self.event_name, self.event_type,
-                              self.nb_samples, self.nb_iter, self.nb_epoch,
+                              self.nb_total_samples, self.nb_iter, self.nb_epoch,
                               str(self._kwargs)))
         return 'event:batch_end'

@@ -288,7 +288,8 @@ def standard_trainer(train_data, valid_data, test_data=None,
     # set task
     task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
     if f_score is not None:
-        task.set_subtask(f_score, valid_data, freq=valid_freq, name='valid')
+        task.set_subtask(f_score, valid_data, freq=valid_freq, p=1.,
+                         when=0, name='valid')
         # format for score
         score_format = 'Results:' + __format_string(len(cost_score) -
             (1 if confusion_matrix else 0))
@@ -387,11 +388,13 @@ class Task(object):
         '''
         Return
         ------
-        'task_start':
-        'epoch_start' : beginning of epoch
-        'epoch_end' : epoch ended
-        'task_end' : task ended
-        (results, nb_iter, nb_samples, nb_epoch) : results of execute function on data
+        One of the following:
+        * 'task_start':
+        * 'epoch_start' : beginning of epoch
+        * 'epoch_end' : epoch ended
+        * 'task_end' : task ended
+        * (results, nb_iter, nb_samples,
+           nb_total_samples, nb_epoch) : results of execute function on data
 
         Note
         ----
@@ -400,7 +403,7 @@ class Task(object):
         nb_iter = 0
         p = self._p
         nb_epoch = 0
-        nb_samples = 0
+        nb_total_samples = 0
         forced_to_terminate = False
         yield None # just for initalize the iterator
         yield 'task_start'
@@ -430,7 +433,7 @@ class Task(object):
                     x = [x]
                 # update some info
                 shape0 = x[0].shape[0]
-                nb_samples += shape0
+                nb_total_samples += shape0
                 nb_samples_per_epoch += x[0].shape[0]
                 nb_iter += 1
                 # apply the function
@@ -439,7 +442,7 @@ class Task(object):
                 else:
                     results = None
                 # return results and check TERMINATE signal
-                yield (results, nb_iter, nb_samples, nb_epoch)
+                yield (results, nb_iter, shape0, nb_total_samples, nb_epoch)
                 if self._stop_all:
                     forced_to_terminate = True
                     # send signal to the data iterators also
@@ -477,6 +480,12 @@ class Task(object):
 # ===========================================================================
 # MainLoop
 # ===========================================================================
+def _percentage_or_number(x, n):
+    if 0. <= x <= 1.:
+        return int(x * n)
+    return int(x)
+
+
 class MainLoop(object):
 
     """ MainLoop
@@ -668,7 +677,8 @@ class MainLoop(object):
 
     def set_subtask(self, func, data, epoch=float('inf'), p=1., freq=0.5,
                     when=0, name=None):
-        '''
+        ''' A subtask is a repeative Task
+
         Parameters
         ----------
         when: float
@@ -686,7 +696,8 @@ class MainLoop(object):
 
     def set_crosstask(self, func, data, epoch=float('inf'), p=0.5,
                       when=0, name=None):
-        '''
+        ''' A crosstask is
+
         Parameters
         ----------
         when: float
@@ -737,9 +748,9 @@ class MainLoop(object):
         callback = self._callback
         batch_size = self._batch_size
         # ====== prepare subtask ====== #
-        # iterator, is_ended=False
-        subtask_map = {i: [iter(i), False] for i in self._subtask}
-        # iterator, is_ended=False
+        # iterator, is_permanent_finished=False, freq_count
+        subtask_map = {i: [iter(i), False, [0]] for i in self._subtask}
+        # iterator, is_permanent_finished=False
         crosstask_map = {i: [iter(i), False] for i in self._crosstask}
         # ====== main logics ====== #
         msg = [] # store returned callback messages
@@ -747,29 +758,35 @@ class MainLoop(object):
             # return signal: start_epoch, end_epoch or end_task
             if isinstance(i, str):
                 msg = callback.record(self._task.name, event_type=i,
-                                      nb_iter=0, nb_epoch=0, nb_samples=0,
+                                      nb_iter=0, nb_epoch=0,
+                                      nb_total_samples=0,
                                       results=None,
                                       samples_size=self._task.samples_per_epoch)
             # return actual results
             else:
                 # ====== main task ====== #
-                results, nb_iter, nb_samples, nb_epoch = i
+                results, nb_iter, nb_samples, nb_total_samples, nb_epoch = i
+                nb_samples_per_epoch = self._task.samples_per_epoch
                 msg = callback.record(self._task.name, event_type='batch_end',
                                       nb_iter=nb_iter, nb_epoch=nb_epoch,
-                                      nb_samples=nb_samples, results=results,
+                                      nb_total_samples=nb_total_samples,
+                                      results=results,
                                       samples_size=self._task.samples_per_epoch)
                 # ====== run subtask ====== #
                 for subtask, (freq, when) in self._subtask.iteritems():
-                    subtask_iter, is_end = subtask_map[subtask]
+                    subtask_iter, is_end, freq_count = subtask_map[subtask]
                     if is_end: continue # already ended
                     # check if it is good time to start, if when is negative,
                     # start from last epoch.
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
-                    when = int(when * self._task.samples_per_epoch)
-                    freq = int(freq * self._task.samples_per_epoch)
+                    when = _percentage_or_number(when, nb_samples_per_epoch)
+                    freq = _percentage_or_number(freq, nb_samples_per_epoch)
+                    # ok to start counting
+                    if nb_total_samples >= when:
+                        freq_count[0] += nb_samples
                     # OK to run
-                    if nb_samples > batch_size and nb_samples >= when and \
-                    (nb_samples - when) % freq < batch_size:
+                    if freq_count[0] >= freq:
+                        freq_count[0] = 0 # reset the frequent count
                         for x in subtask_iter:
                             if isinstance(x, str): # signal
                                 msg = callback.record(subtask.name, x,
@@ -778,9 +795,11 @@ class MainLoop(object):
                                     subtask_map[subtask][-1] = True
                                 if x == 'epoch_end': break
                             else: # results
+                                _res, _n_it, _n_sam, _n_total_sam, _n_epo = x
                                 msg = callback.record(subtask.name, 'batch_end',
-                                                nb_iter=x[1], nb_samples=x[2],
-                                                nb_epoch=x[3], results=x[0],
+                                                nb_iter=_n_it,
+                                                nb_total_samples=_n_total_sam,
+                                                nb_epoch=_n_epo, results=_res,
                                                 samples_size=subtask.samples_per_epoch)
                             # process callback msg for subtasks
                             if SIG_TRAIN_SAVE in msg: self._save()
@@ -798,7 +817,7 @@ class MainLoop(object):
                     when = float(when % self._task.epoch) + 1. if when < 0 else when
                     when = int(when * self._task.samples_per_epoch)
                     # OK to run
-                    if nb_samples > batch_size and nb_samples >= when and not is_end:
+                    if nb_samples > batch_size and nb_samples >= when:
                         x = crosstask_iter.next()
                         if isinstance(x, str): # signals
                             msg = callback.record(crosstask.name, x,
@@ -806,9 +825,11 @@ class MainLoop(object):
                             if x == 'task_end': # finished crosstask
                                 crosstask_map[crosstask][-1] = True
                         else: #results
+                            _res, _n_it, _n_sam, _n_total_sam, _n_epo = x
                             msg = callback.record(crosstask.name, 'batch_end',
-                                            nb_iter=x[1], nb_samples=x[2],
-                                            nb_epoch=x[3], results=x[0])
+                                            nb_iter=_n_it,
+                                            nb_total_samples=_n_total_sam,
+                                            nb_epoch=_n_epo, results=_res)
             # ====== process callback msg for main task ====== #
             # (this is important order)
             if SIG_TRAIN_SAVE in msg: self._save()

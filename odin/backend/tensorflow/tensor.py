@@ -667,8 +667,7 @@ def hessian(loss, variables):
 
 class Function(object):
     """ Two way to call this Function
-    f(x1, x2, x3)
-    or f('x1'=x1, 'x2'=x2, 'x3'=x3)
+    f(x1, x2, x3) or f('x1'=x1, 'x2'=x2, 'x3'=x3)
     """
 
     def __init__(self, inputs, outputs, updates=[], **kwargs):

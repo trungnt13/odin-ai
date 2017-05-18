@@ -4,6 +4,9 @@
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 
+import matplotlib
+matplotlib.use('Agg')
+
 import os
 os.environ['ODIN'] = 'gpu,float32,tensorflow'
 
@@ -12,7 +15,10 @@ import numpy as np
 from odin import backend as K, nnet as N, fuel as F, basic as B
 from odin.stats import train_valid_test_split
 from odin import training
+from odin.utils import get_logpath, Progbar
 
+
+REPORT_PATH = get_logpath(name='tidigits_gender.pdf', override=True)
 # ===========================================================================
 # Load data
 # Saved WAV file:
@@ -28,7 +34,7 @@ ds = F.Dataset(PATH, read_only=True)
 print(ds)
 gender = list(set([i.split('_')[1] for i in ds['indices'].keys()]))
 digits = [i.split('_')[-1] for i in ds['indices'].keys()]
-
+print("Labels:", gender)
 # ===========================================================================
 # SPlit dataset
 # ===========================================================================
@@ -52,13 +58,17 @@ recipes = [
         end='pad', endmode='post', endvalue=0)
 ]
 
-feeder_train = F.Feeder(ds['mspec'], indices=train, ncpu=1)
-feeder_valid = F.Feeder(ds['mspec'], indices=valid, ncpu=1)
-feeder_test = F.Feeder(ds['mspec'], indices=test, ncpu=1)
+feeder_train = F.Feeder(ds['mspec'], indices=train, ncpu=4)
+feeder_valid = F.Feeder(ds['mspec'], indices=valid, ncpu=4)
+feeder_test = F.Feeder(ds['mspec'], indices=test, ncpu=4)
 
 feeder_train.set_recipes(recipes + [F.recipes.CreateBatch()])
 feeder_valid.set_recipes(recipes + [F.recipes.CreateBatch()])
-feeder_test.set_recipes(recipes + [F.recipes.CreateBatch()])
+feeder_test.set_recipes(recipes + [F.recipes.CreateFile()])
+
+# prog = Progbar(feeder_valid.shape[0])
+# for X, y in feeder_valid.set_batch(64, seed=1208, shuffle_level=2):
+#     prog.add(X.shape[0])
 
 # ===========================================================================
 # Create model
@@ -73,7 +83,7 @@ K.set_training(False); y_score = f(X)
 f_pred = K.function(inputs=X, outputs=y_score)
 
 param = [p for p in f.parameters]
-opt = K.optimizers.Adam(lr=0.001)
+opt = K.optimizers.RMSProp(lr=0.001)
 
 # ===========================================================================
 # Training
@@ -86,7 +96,9 @@ train, hist = training.standard_trainer(
                 K.mean(K.categorical_accuracy(y_score, y)), B.AccuracyValue],
     confusion_matrix=K.confusion_matrix(y_score, y, labels=len(gender)),
     parameters=param,
-    batch_size=64, valid_freq=0.6,
+    batch_size=64, valid_freq=0.5, nb_epoch=3,
     optimizer=opt, stop_callback=opt.get_lr_callback(),
-    labels=gender)
+    labels=gender,
+    report_path=REPORT_PATH
+)
 train.run()
