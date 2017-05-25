@@ -148,7 +148,7 @@ plot_save('/tmp/tmp.pdf', dpi=180, clear_all=True)
 if USE_DOWNSAMPLED_DATASET:
     segments = ds
 acous = F.SpeechProcessor(segments, outpath, sr=None, sr_new=None,
-                win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
+                win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=12,
                 get_spec=True, get_qspec=False,
                 get_phase=False, get_pitch=False,
                 get_vad=2, get_energy=True, get_delta=2,

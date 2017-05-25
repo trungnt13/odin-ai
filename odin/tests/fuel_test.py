@@ -109,7 +109,7 @@ class FuelTest(unittest.TestCase):
             return
         output_path = utils.get_datasetpath(name='digit', override=True)
         feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                         win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                         win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=13,
                          get_delta=2, get_energy=True, pitch_threshold=0.8,
                          get_spec=True, get_mspec=True, get_mfcc=True,
                          get_pitch=True, get_vad=True,

@@ -418,7 +418,7 @@ class SpeechProcessor(FeatureProcessor):
         sample rate
     win: float
         window length in millisecond
-    shift: float
+    hop: float
         hop length between windows, in millisecond
     nb_melfilters: int, or None
         number of Mel bands to generate, if None, mel-filter banks features
@@ -498,7 +498,7 @@ class SpeechProcessor(FeatureProcessor):
     Example
     -------
     >>> feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
-    >>>                          win=0.025, shift=0.01, n_filters=40, n_ceps=13,
+    >>>                          win=0.025, hop=0.01, n_filters=40, n_ceps=13,
     >>>                          delta_order=2, energy=True, pitch_threshold=0.5,
     >>>                          get_spec=True, get_mspec=True, get_mfcc=True,
     >>>                          get_pitch=False, get_vad=True,
@@ -508,7 +508,7 @@ class SpeechProcessor(FeatureProcessor):
     '''
 
     def __init__(self, segments, output_path, sr=None,
-                win=0.02, shift=0.01, nb_melfilters=None, nb_ceps=None,
+                win=0.02, hop=0.01, nb_melfilters=None, nb_ceps=None,
                 get_spec=True, get_qspec=False, get_phase=False, get_pitch=False,
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
@@ -557,7 +557,7 @@ class SpeechProcessor(FeatureProcessor):
         # ====== feature information ====== #
         self.sr = sr
         self.win = win
-        self.shift = shift
+        self.hop = hop
         self.nb_melfilters = nb_melfilters
         self.nb_ceps = nb_ceps
         # constraint pitch threshold in 0-1
@@ -619,7 +619,7 @@ class SpeechProcessor(FeatureProcessor):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
-                        win=self.win, shift=self.shift,
+                        win=self.win, hop=self.hop,
                         nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
                         get_spec=self.get_spec, get_qspec=self.get_qspec,
                         get_phase=self.get_phase, get_pitch=self.get_pitch,

@@ -385,7 +385,7 @@ def speech_enhancement(X, Gain, NN=2):
 
 
 def speech_features(s, sr=None,
-                    win=0.02, shift=0.01, nb_melfilters=None, nb_ceps=None,
+                    win=0.02, hop=0.01, nb_melfilters=None, nb_ceps=None,
                     get_spec=True, get_qspec=False, get_phase=False,
                     get_pitch=False, get_vad=True, get_energy=False,
                     get_delta=False, fmin=64, fmax=None, sr_new=None,
@@ -403,7 +403,7 @@ def speech_features(s, sr=None,
         sample rate
     win: float
         window length in millisecond
-    shift: float
+    hop: float
         hop length between windows, in millisecond
     nb_melfilters: int, or None
         number of Mel bands to generate, if None, mel-filter banks features
@@ -505,9 +505,7 @@ def speech_features(s, sr=None,
     win_length = int(win * sr)
     # n_fft must be 2^x
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
-    shift_length = shift * sr
-    # hop_length must be 2^x
-    hop_length = int(shift_length)
+    hop_length = int(hop * sr) # hop_length must be 2^x
     # nb_ceps += 1 # increase one so we can ignore the first MFCC
     # ====== 0: extract Constant Q-transform ====== #
     q_melspectrogram = None
@@ -575,7 +573,7 @@ def speech_features(s, sr=None,
             vad = vad.astype('uint8')
         vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
                                                   min_distance=1,
-                                                  min_length=int(vad_minlen / shift)),
+                                                  min_length=int(vad_minlen / hop)),
                            dtype='int32')
     # ====== 4: extract spectrogram ====== #
     S = spectra(sr=sr, S=S, nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,

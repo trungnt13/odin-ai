@@ -52,7 +52,7 @@ if False:
     datapath = F.load_digit_wav()
     output_path = get_datasetpath(name='digit', override=True)
     feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                    win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                    win=0.025, hop=0.01, nb_melfilters=40, nb_ceps=13,
                     get_spec=True, get_mspec=True, get_mfcc=True,
                     get_qspec=True, get_phase=True, get_pitch=True,
                     get_vad=args['vad'], get_energy=True, get_delta=2,

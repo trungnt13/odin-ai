@@ -30,7 +30,7 @@ datapath = get_datasetpath("commands", override=False)
 # ====== start preprocessing audio files ====== #
 if False:
     speech = F.SpeechProcessor(wav_path, datapath,
-                win=0.025, shift=0.01, nb_melfilters=40, nb_ceps=13,
+                win=0.025, hop=0.01, nb_melfilters=40, nb_ceps=13,
                 get_spec=True, get_mspec=True, get_mfcc=True,
                 get_qspec=True, get_phase=True, get_pitch=False,
                 get_energy=True, get_delta=2, fmin=64, fmax=4000,

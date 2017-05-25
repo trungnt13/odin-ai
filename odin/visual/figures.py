@@ -470,7 +470,7 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
+def plot_audio(s, sr=None, win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=12,
                get_qspec=False, get_vad=True, fmin=64, fmax=None,
                sr_new=None, preemphasis=0.97,
                pitch_threshold=0.8, pitch_fmax=1200,
@@ -510,7 +510,7 @@ def plot_audio(s, sr=None, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
     title = str(title) + ":" + name
     # ====== processing ====== #
     get_vad = True if not get_vad else get_vad
-    y = speech.speech_features(s, sr, win=win, shift=shift,
+    y = speech.speech_features(s, sr, win=win, hop=hop,
             nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
             get_spec=True, get_qspec=get_qspec, get_phase=False, get_pitch=False,
             get_vad=get_vad, get_energy=True, get_delta=False,
