@@ -389,9 +389,9 @@ def speech_features(s, sr=None,
                     get_spec=True, get_qspec=False, get_phase=False,
                     get_pitch=False, get_vad=True, get_energy=False,
                     get_delta=False, fmin=64, fmax=None, sr_new=None,
-                    preemphasis=0.97, pitch_threshold=0.8, pitch_fmax=1200,
+                    pitch_threshold=0.8, pitch_fmax=1200,
                     vad_smooth=3, vad_minlen=0.1,
-                    cqt_bins=96, center=True):
+                    cqt_bins=96, preemphasis=0.97, center=True):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -434,7 +434,7 @@ def speech_features(s, sr=None,
         upper frequency cutoff.
     sr_new: int or None
         new sample rate
-    preemphasis: float `(0, 1)`
+    preemphasis: float `(0, 1)`, or None
         pre-emphasis coefficience
     pitch_threshold: float in `(0, 1)`
         A bin in spectrum X is considered a pitch when it is greater than

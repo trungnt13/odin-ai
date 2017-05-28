@@ -126,6 +126,34 @@ def mel2hz(mels):
     return freqs
 
 
+def db2power(S_db, ref=1.0):
+    '''Convert a dB-scale spectrogram to a power spectrogram.
+
+    This effectively inverts `power_to_db`:
+
+        `db_to_power(S_db) ~= ref * 10.0**(S_db / 10)`
+
+    Original code: librosa
+
+    Parameters
+    ----------
+    S_db : np.ndarray
+        dB-scaled spectrogram
+    ref : number > 0
+        Reference power: output will be scaled by this value
+
+    Returns
+    -------
+    S : np.ndarray
+        Power spectrogram
+
+    Notes
+    -----
+    This function caches at level 30.
+    '''
+    return ref * np.power(10.0, 0.1 * S_db)
+
+
 def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
     """Convert a power spectrogram (amplitude/magnitude squared)
     to decibel (dB) units (using logarithm)
@@ -139,16 +167,13 @@ def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
     ----------
     S : np.ndarray
         input power
-
     ref : scalar or callable
         If scalar, the amplitude `abs(S)` is scaled relative to `ref`:
         `10 * log10(S / ref)`.
         Zeros in the output correspond to positions where `S == ref`.
         If callable, the reference value is computed as `ref(S)`.
-
     amin : float > 0 [scalar]
         minimum threshold for `abs(S)` and `ref`
-
     top_db : float >= 0 [scalar]
         threshold the output at `top_db` below the peak:
         ``max(10 * log10(S)) - top_db``
@@ -737,8 +762,20 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
 # ===========================================================================
 # Fourier transform
 # ===========================================================================
+def framing(y, win_length, hop_length, window='hann', center=True):
+    if center:
+        y = np.pad(y, int(win_length // 2), mode='reflect')
+    # Window the time series.
+    y_frames = segment_axis(y,
+        frame_length=win_length, hop_length=hop_length, end='cut')
+    if window is not None:
+        fft_window = get_window(window, win_length, fftbins=True)
+        y_frames = y_frames * fft_window.reshape(1, -1)
+    return y_frames
+
+
 def stft(y, n_fft=256, hop_length=None, window='hann',
-         center=False, preemphasis=None, energy=False):
+         center=True, preemphasis=None, energy=False):
     """Short-time Fourier transform (STFT)
 
     Returns a complex-valued matrix D such that
@@ -780,7 +817,7 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
           `D[:, t]` is centered at `y[t * hop_length]`.
         - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
 
-    preemphasis: 0.97
+    preemphasis: float `(0, 1)`, None
     energy: False, True or 'log'
 
     Returns
@@ -789,24 +826,16 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
         STFT matrix
     """
     # if n_fft is None:
-    # n_fft = 2 ** int(np.ceil(np.log2(win_length)))
     n_fft = int(n_fft)
     # Set the default hop, if it's not already specified
     if hop_length is None:
         hop_length = n_fft // 4
     hop_length = int(hop_length)
-    fft_window = get_window(window, n_fft, fftbins=True)
-    # Reshape so that the window can be broadcast
-    fft_window = fft_window.reshape((-1, 1))
     # pre-emphasis
     if isinstance(preemphasis, Number) and 0. < preemphasis < 1.:
         y = pre_emphasis(y, coeff=preemphasis)
-    # Pad the time series so that frames are centered
-    if center:
-        y = np.pad(y, int(n_fft // 2), mode='reflect')
-    # Window the time series.
-    y_frames = segment_axis(y, frame_length=n_fft, hop_length=hop_length,
-        end='cut').T
+    y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
+                       center=center, window=window).T
     # calculate frames energy
     if energy:
         log_energy = (y_frames**2).sum(axis=0)
@@ -824,7 +853,7 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
         bl_t = min(bl_s + n_columns, stft_matrix.shape[1])
         # RFFT and Conjugate here to match phase from DPWE code
         stft_matrix[:, bl_s:bl_t] = fftpack.fft(
-            fft_window * y_frames[:, bl_s:bl_t], axis=0
+            y_frames[:, bl_s:bl_t], axis=0
         )[:stft_matrix.shape[0]].conj()
     # return in form (t, d)
     if energy:
@@ -832,7 +861,7 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
     return stft_matrix.T
 
 
-def istft(stft_matrix, hop_length=None, window='hann', center=False):
+def istft(stft_matrix, hop_length=None, window='hann', center=True):
     """
     Inverse short-time Fourier transform (ISTFT).
 
@@ -918,7 +947,7 @@ def istft(stft_matrix, hop_length=None, window='hann', center=False):
 def spectra(sr, y=None, S=None,
             n_fft=256, hop_length=None, window='hann',
             nb_melfilters=None, nb_ceps=None, fmin=64, fmax=None,
-            top_db=80.0, power=2.0, log=True):
+            top_db=80.0, power=2.0, log=True, backend='odin'):
     """Compute spectra information from STFT matrix or a power spectrogram,
     The extracted spectra include:
     * log-power spectrogram
@@ -936,23 +965,20 @@ def spectra(sr, y=None, S=None,
     ----------
     y : np.ndarray [shape=(n,)] or None
         audio time-series
-
     sr : number > 0 [scalar]
         sampling rate of `y`
-
     S : np.ndarray [shape=(d, t)]
         spectrogram
-
     n_fft : int > 0 [scalar]
         length of the FFT window
-
     hop_length : int > 0 [scalar]
         number of samples between successive frames.
         See `librosa.core.stft`
-
     power : float > 0 [scalar]
         Exponent for the magnitude melspectrogram.
         e.g., 1 for energy, 2 for power, etc.
+    backend: 'odin', 'sptk'
+        support backend for calculating the spectra
 
     Returns
     -------
@@ -960,50 +986,186 @@ def spectra(sr, y=None, S=None,
         Mel spectrogram
 
     """
-    # ====== STFT matrix not specified ====== #
-    if S is None:
-        S = stft(y, n_fft=n_fft, hop_length=hop_length, window=window,
-                 center=False, preemphasis=0.97, energy=False)
-    n_fft = int(2 * (S.shape[1] - 1))
-    # ====== check arguments ====== #
-    power = int(power)
-    # check fmax
-    if sr is None and fmax is None:
-        fmax = 4000
-    else:
-        fmax = sr // 2 if fmax is None else int(fmax)
-    # check fmin
-    fmin = int(fmin)
-    if fmin >= fmax:
-        raise ValueError("fmin must < fmax.")
-    # ====== extract the basic spectrogram ====== #
-    if 'complex' in str(S.dtype): # STFT
-        spec = np.abs(S)
-    if power > 1:
-        spec = np.power(spec, power)
-    spec = spec.astype('float32')
-    # ====== extrct mel-filter-bands features ====== #
+    backend = str(backend)
+    if backend not in ('odin', 'sptk'):
+        raise ValueError("'backend' must be: 'odin' or 'sptk'.")
     mel_spec = None
-    if nb_melfilters is not None or nb_ceps is not None:
-        mel_basis = mel_filters(sr, n_fft=n_fft,
-            n_mels=24 if nb_melfilters is None else int(nb_melfilters),
-            fmin=fmin, fmax=fmax)
-        # transpose to (nb_samples; nb_mels)
-        mel_spec = np.dot(mel_basis, spec.T)
-        mel_spec = mel_spec.astype('float32')
-    if mel_spec is not None:
-        mel_spec = power2db(mel_spec, top_db=top_db)
-    # ====== extract cepstrum features ====== #
     mfcc = None
-    if nb_ceps is not None:
-        nb_ceps = int(nb_ceps) + 1
-        dct_basis = dct_filters(nb_ceps, mel_spec.shape[0])
-        mfcc = np.dot(dct_basis, mel_spec).astype('float32')[1:, :]
+    # ====== sptk backend ====== #
+    if backend == 'sptk':
+        if y is None:
+            raise ValueError("orginal raw waveform is required for sptk.")
+        try:
+            import pysptk
+        except ImportError:
+            raise RuntimeError("backend 'sptk' require pysptk for running.")
+        n_fft = int(n_fft)
+        hop_length = n_fft // 4 if hop_length is None else int(hop_length)
+        # framing input signals
+        y_frames = framing(y, win_length=n_fft, hop_length=hop_length)
+        mel_spec = np.apply_along_axis(pysptk.mcep, 1, y_frames,
+            order=nb_melfilters - 1 if nb_melfilters is not None else 24,
+            alpha=0.)
+        spec = np.abs(np.apply_along_axis(pysptk.mgc2sp, 1, mel_spec,
+            alpha=0.0, gamma=0.0, fftlen=n_fft))
+        # MFCC features
+        if nb_ceps is not None:
+            mfcc = np.apply_along_axis(pysptk.mfcc, 1, y_frames,
+                order=int(nb_ceps), fs=sr, alpha=0.97,
+                window_len=n_fft, frame_len=n_fft,
+                num_filterbanks=24 if nb_melfilters is None else nb_melfilters,
+                czero=False, power=False)
+        if nb_melfilters is None:
+            mel_spec = None
+        if power > 1:
+            spec = np.power(spec, power)
+        if log:
+            spec = power2db(spec, top_db=top_db)
+            if mel_spec is not None:
+                mel_spec = power2db(mel_spec, top_db=top_db)
+    # ====== ODIN: STFT matrix not specified ====== #
+    else:
+        if S is None:
+            S = stft(y, n_fft=n_fft, hop_length=hop_length, window=window,
+                     preemphasis=0.97, energy=False)
+        n_fft = int(2 * (S.shape[1] - 1))
+        # ====== check arguments ====== #
+        power = int(power)
+        # check fmax
+        if sr is None and fmax is None:
+            fmax = 4000
+        else:
+            fmax = sr // 2 if fmax is None else int(fmax)
+        # check fmin
+        fmin = int(fmin)
+        if fmin >= fmax:
+            raise ValueError("fmin must < fmax.")
+        # ====== extract the basic spectrogram ====== #
+        if 'complex' in str(S.dtype): # STFT
+            spec = np.abs(S)
+        if power > 1:
+            spec = np.power(spec, power)
+        spec = spec.astype('float32')
+        # ====== extrct mel-filter-bands features ====== #
+        if nb_melfilters is not None or nb_ceps is not None:
+            mel_basis = mel_filters(sr, n_fft=n_fft,
+                n_mels=24 if nb_melfilters is None else int(nb_melfilters),
+                fmin=fmin, fmax=fmax)
+            # transpose to (nb_samples; nb_mels)
+            mel_spec = np.dot(mel_basis, spec.T)
+            mel_spec = mel_spec.astype('float32').T
+        # ====== extract cepstrum features ====== #
+        # extract MFCC
+        log_mel_spec = None
+        if nb_ceps is not None:
+            nb_ceps = int(nb_ceps) + 1
+            log_mel_spec = power2db(mel_spec, top_db=top_db)
+            dct_basis = dct_filters(nb_ceps, log_mel_spec.shape[1])
+            mfcc = np.dot(dct_basis, log_mel_spec.T).astype('float32')[1:, :].T
+        # applying log to convert to db
+        if log:
+            spec = power2db(spec, top_db=top_db)
+            if mel_spec is not None:
+                mel_spec = log_mel_spec if log_mel_spec is not None else \
+                    power2db(mel_spec, top_db=top_db)
     # ====== return result ====== #
     results = {}
-    results['spec'] = power2db(spec) if log else spec
+    results['spec'] = spec
     if nb_melfilters is not None:
-        results['mspec'] = mel_spec.T
+        results['mspec'] = mel_spec
     if nb_ceps is not None:
-        results['mfcc'] = mfcc.T
+        results['mfcc'] = mfcc
     return results
+
+
+# ===========================================================================
+# invert spectrogram
+# ===========================================================================
+_mspec_synthesizer = {}
+
+
+def imspec(mspec, hop_length, pitch=None, log=False):
+    try:
+        import pysptk
+    except ImportError:
+        raise RuntimeError("invert mel-spectrogram requires pysptk library.")
+    n = mspec.shape[0]
+    order = mspec.shape[1] - 1
+    hop_length = int(hop_length)
+    # ====== check stored Synthesizer ====== #
+    if (order, hop_length) not in _mspec_synthesizer:
+        _mspec_synthesizer[(order, hop_length)] = \
+            pysptk.synthesis.Synthesizer(pysptk.synthesis.LMADF(order=order),
+                                         hop_length)
+    # ====== generate source excitation ====== #
+    if pitch is None:
+        pitch = np.zeros(shape=(n,))
+    source_excitation = pysptk.excite(pitch.astype('float64'),
+                                      hopsize=hop_length)
+    # ====== invert log to get power ====== #
+    if log:
+        mspec = db2power(mspec)
+    return _mspec_synthesizer[(order, hop_length)].synthesis(
+        source_excitation, mspec)
+
+
+# ===========================================================================
+# F0 analysis
+# ===========================================================================
+def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
+                otype="pitch", algorithm='swipe'):
+    """
+
+    Parameters
+    ----------
+    y : array
+        A whole audio signal
+    sr : int
+        Sampling frequency.
+    hop_length : int
+        Hop length.
+    fmin : float, optional
+        Minimum fundamental frequency. Default is 60.0
+    fmax : float, optional
+        Maximum fundamental frequency. Default is 260.0
+    threshold : float, optional
+        Voice/unvoiced threshold. Default is 0.3 (as suggested for SWIPE)
+        Threshold >= 1.0 is suggested for RAPT
+    otype : str or int, optional
+        Output format
+            (0) pitch
+            (1) f0
+            (2) log(f0)
+        Default is f0.
+    algorithm: 'swipe', 'rapt', 'avg'
+        SWIPE - A Saw-tooth Waveform Inspired Pitch Estimation.
+        RAPT - a robust algorithm for pitch tracking.
+        avg - apply swipe and rapt at the same time, then take average.
+        Default is 'RAPT'
+    """
+    try:
+        import pysptk
+    except ImportError:
+        raise RuntimeError("Pitch tracking requires pysptk library.")
+    # ====== check arguments ====== #
+    algorithm = str(algorithm)
+    if algorithm not in ('rapt', 'swipe', 'avg'):
+        raise ValueError("'algorithm' argument must be: 'rapt', 'swipe' or 'avg'")
+    otype = str(otype)
+    if otype not in ('f0', 'pitch'):
+        raise ValueError("Support 'otype' include: 'f0', 'pitch'")
+    # ====== Do it ====== #
+    sr = int(sr)
+    if algorithm == 'avg':
+        y1 = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=hop_length,
+                          threshold=threshold, min=fmin, max=fmax, otype=otype)
+        y2 = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=hop_length,
+                         voice_bias=threshold, min=fmin, max=fmax, otype=otype)
+        y = (y1 + y2) / 2
+    elif algorithm == 'swipe':
+        y = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=hop_length,
+                         threshold=threshold, min=fmin, max=fmax, otype=otype)
+    else:
+        y = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=hop_length,
+                        voice_bias=threshold, min=fmin, max=fmax, otype=otype)
+    return y
