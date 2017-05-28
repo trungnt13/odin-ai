@@ -789,36 +789,24 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
     ----------
     y : np.ndarray [shape=(n,)], real-valued
         the input signal (audio time series)
-
     n_fft : int > 0 [scalar]
         FFT window size
-
     hop_length : int > 0 [scalar]
         number audio of frames between STFT columns.
         If unspecified, defaults `win_length / 4`.
-
-    win_length  : int <= n_fft [scalar]
-        Each frame of audio is windowed by `window()`.
-        The window will be of length `win_length` and then padded
-        with zeros to match `n_fft`.
-
-        If unspecified, defaults to ``win_length = n_fft``.
-
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
         - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.hanning`
         - a vector or array of length `n_fft`
-
-        .. see also:: `filters.get_window`
-
-    center      : boolean
+    center : boolean
         - If `True`, the signal `y` is padded so that frame
           `D[:, t]` is centered at `y[t * hop_length]`.
         - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
-
     preemphasis: float `(0, 1)`, None
-    energy: False, True or 'log'
+        pre-emphasis coefficience
+    energy: bool
+        if True, return log-frame-wise energy
 
     Returns
     -------
@@ -841,8 +829,7 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
         log_energy = (y_frames**2).sum(axis=0)
         log_energy = np.where(log_energy == 0., np.finfo(np.float32).eps,
                               log_energy)
-        if isinstance(energy, string_types) and energy.lower() == 'log':
-            log_energy = np.log(log_energy)
+        log_energy = np.log(log_energy)
     # Pre-allocate the STFT matrix
     stft_matrix = np.empty((int(1 + n_fft // 2), y_frames.shape[1]),
                            dtype=np.complex64, order='F')
@@ -881,31 +868,18 @@ def istft(stft_matrix, hop_length=None, window='hann', center=True):
     ----------
     stft_matrix : np.ndarray [shape=(1 + n_fft/2, t)]
         STFT matrix from `stft`
-
     hop_length  : int > 0 [scalar]
         Number of frames between STFT columns.
         If unspecified, defaults to `win_length / 4`.
-
-    win_length  : int <= n_fft = 2 * (stft_matrix.shape[0] - 1)
-        When reconstructing the time series, each frame is windowed
-        and each sample is normalized by the sum of squared window
-        according to the `window` function (see below).
-
-        If unspecified, defaults to `n_fft`.
-
     window      : string, tuple, number, function, np.ndarray [shape=(n_fft,)]
         - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.hanning`
         - a user-specified window vector of length `n_fft`
-
-        .. see also:: `filters.get_window`
-
     center      : boolean
         - If `True`, `D` is assumed to have centered frames.
         - If `False`, `D` is assumed to have left-aligned frames.
-
-    dtype       : numeric type
+    dtype : numeric type
         Real numeric type for `y`.  Default is 32-bit float.
 
     Returns
@@ -946,8 +920,10 @@ def istft(stft_matrix, hop_length=None, window='hann', center=True):
 
 def spectra(sr, y=None, S=None,
             n_fft=256, hop_length=None, window='hann',
-            nb_melfilters=None, nb_ceps=None, fmin=64, fmax=None,
-            top_db=80.0, power=2.0, log=True, backend='odin'):
+            nb_melfilters=None, nb_ceps=None,
+            fmin=64, fmax=None,
+            top_db=80.0, power=2.0, log=True,
+            backend='odin'):
     """Compute spectra information from STFT matrix or a power spectrogram,
     The extracted spectra include:
     * log-power spectrogram
@@ -977,6 +953,8 @@ def spectra(sr, y=None, S=None,
     power : float > 0 [scalar]
         Exponent for the magnitude melspectrogram.
         e.g., 1 for energy, 2 for power, etc.
+    log: bool
+        if True, convert all power spectrogram to DB
     backend: 'odin', 'sptk'
         support backend for calculating the spectra
 
@@ -991,6 +969,7 @@ def spectra(sr, y=None, S=None,
         raise ValueError("'backend' must be: 'odin' or 'sptk'.")
     mel_spec = None
     mfcc = None
+    log_mel_spec = None
     # ====== sptk backend ====== #
     if backend == 'sptk':
         if y is None:
@@ -1008,6 +987,7 @@ def spectra(sr, y=None, S=None,
             alpha=0.)
         spec = np.abs(np.apply_along_axis(pysptk.mgc2sp, 1, mel_spec,
             alpha=0.0, gamma=0.0, fftlen=n_fft))
+        phase = np.apply_along_axis(pysptk.c2ndps, 1, mel_spec, fftlen=n_fft)
         # MFCC features
         if nb_ceps is not None:
             mfcc = np.apply_along_axis(pysptk.mfcc, 1, y_frames,
@@ -1019,10 +999,6 @@ def spectra(sr, y=None, S=None,
             mel_spec = None
         if power > 1:
             spec = np.power(spec, power)
-        if log:
-            spec = power2db(spec, top_db=top_db)
-            if mel_spec is not None:
-                mel_spec = power2db(mel_spec, top_db=top_db)
     # ====== ODIN: STFT matrix not specified ====== #
     else:
         if S is None:
@@ -1040,12 +1016,15 @@ def spectra(sr, y=None, S=None,
         fmin = int(fmin)
         if fmin >= fmax:
             raise ValueError("fmin must < fmax.")
+        # ====== getting phase spectrogram ====== #
+        phase = np.angle(S)
+        phase = compute_delta(phase, width=9, axis=0, order=1
+            )[-1].astype('float32')
         # ====== extract the basic spectrogram ====== #
         if 'complex' in str(S.dtype): # STFT
             spec = np.abs(S)
         if power > 1:
             spec = np.power(spec, power)
-        spec = spec.astype('float32')
         # ====== extrct mel-filter-bands features ====== #
         if nb_melfilters is not None or nb_ceps is not None:
             mel_basis = mel_filters(sr, n_fft=n_fft,
@@ -1056,21 +1035,21 @@ def spectra(sr, y=None, S=None,
             mel_spec = mel_spec.astype('float32').T
         # ====== extract cepstrum features ====== #
         # extract MFCC
-        log_mel_spec = None
         if nb_ceps is not None:
             nb_ceps = int(nb_ceps) + 1
             log_mel_spec = power2db(mel_spec, top_db=top_db)
             dct_basis = dct_filters(nb_ceps, log_mel_spec.shape[1])
             mfcc = np.dot(dct_basis, log_mel_spec.T).astype('float32')[1:, :].T
-        # applying log to convert to db
-        if log:
-            spec = power2db(spec, top_db=top_db)
-            if mel_spec is not None:
-                mel_spec = log_mel_spec if log_mel_spec is not None else \
-                    power2db(mel_spec, top_db=top_db)
+    # applying log to convert to db
+    if log:
+        spec = power2db(spec, top_db=top_db)
+        if mel_spec is not None:
+            mel_spec = log_mel_spec if log_mel_spec is not None else \
+                power2db(mel_spec, top_db=top_db)
     # ====== return result ====== #
     results = {}
     results['spec'] = spec
+    results['phase'] = phase
     if nb_melfilters is not None:
         results['mspec'] = mel_spec
     if nb_ceps is not None:
@@ -1168,4 +1147,4 @@ def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
     else:
         y = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=hop_length,
                         voice_bias=threshold, min=fmin, max=fmax, otype=otype)
-    return y
+    return y.astype('float32')

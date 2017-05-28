@@ -21,7 +21,7 @@ import scipy.signal
 from odin.utils import is_number, cache_memory, is_string
 from .signal import (pad_center, get_window, segment_axis, stft, istft,
                      compute_delta, smooth, pre_emphasis, spectra,
-                     vad_energy, power2db)
+                     vad_energy, power2db, pitch_track)
 
 # ===========================================================================
 # Predefined variables of speech datasets
@@ -387,11 +387,13 @@ def speech_enhancement(X, Gain, NN=2):
 def speech_features(s, sr=None,
                     win=0.02, hop=0.01, nb_melfilters=None, nb_ceps=None,
                     get_spec=True, get_qspec=False, get_phase=False,
-                    get_pitch=False, get_vad=True, get_energy=False,
-                    get_delta=False, fmin=64, fmax=None, sr_new=None,
-                    pitch_threshold=0.8, pitch_fmax=1200,
+                    get_pitch=False, get_f0=False,
+                    get_vad=True, get_energy=False, get_delta=False,
+                    fmin=64, fmax=None, sr_new=None,
+                    pitch_threshold=0.3, pitch_fmax=260,
                     vad_smooth=3, vad_minlen=0.1,
-                    cqt_bins=96, preemphasis=0.97, center=True):
+                    cqt_bins=96, preemphasis=None, center=True,
+                    power=2, log=True, backend='odin'):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -437,10 +439,9 @@ def speech_features(s, sr=None,
     preemphasis: float `(0, 1)`, or None
         pre-emphasis coefficience
     pitch_threshold: float in `(0, 1)`
-        A bin in spectrum X is considered a pitch when it is greater than
-        `threshold*X.max()`
+        Voice/unvoiced threshold for pitch tracking. (Default is 0.3)
     pitch_fmax: float
-        maximum frequency of pitch
+        maximum frequency of pitch. (Default is 260 Hz)
     vad_smooth: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.
@@ -453,6 +454,13 @@ def speech_features(s, sr=None,
         If `True`, the signal `y` is padded so that frame
           `D[:, t]` is centered at `y[t * hop_length]`.
         If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+    power : float > 0 [scalar]
+        Exponent for the magnitude spectrogram.
+        e.g., 1 for energy, 2 for power, etc.
+    log: bool
+        if True, convert all power spectrogram to DB
+    backend: 'odin', 'sptk'
+        support backend for calculating the spectra
 
     Return
     ------
@@ -507,6 +515,17 @@ def speech_features(s, sr=None,
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
     hop_length = int(hop * sr) # hop_length must be 2^x
     # nb_ceps += 1 # increase one so we can ignore the first MFCC
+    # ====== 5: extract pitch features ====== #
+    pitch_freq = None
+    if get_pitch:
+        pitch_freq = pitch_track(s, sr, hop_length, fmin=fmin,
+            fmax=pitch_fmax, threshold=pitch_threshold, otype='pitch',
+            algorithm='swipe').reshape(-1, 1)
+    f0_freq = None
+    if get_f0:
+        f0_freq = pitch_track(s, sr, hop_length, fmin=fmin,
+            fmax=pitch_fmax, threshold=pitch_threshold, otype='f0',
+            algorithm='swipe').reshape(-1, 1)
     # ====== 0: extract Constant Q-transform ====== #
     q_melspectrogram = None
     q_mfcc = None
@@ -545,8 +564,7 @@ def speech_features(s, sr=None,
     log_energy = None
     S = stft(s, n_fft=n_fft, hop_length=hop_length, window='hann',
              center=center, preemphasis=preemphasis,
-             energy=get_energy if get_energy == 'log' else
-             (get_energy or get_vad))
+             energy=True if get_energy or get_vad else False)
     if isinstance(S, tuple):
         log_energy = S[1]
         S = S[0]
@@ -582,20 +600,6 @@ def speech_features(s, sr=None,
     logpowerspectrogram = power2db(powerspectrogram)
     melspectrogram = S['mspec'] if 'mspec' in S else None
     mfcc = S['mfcc'] if 'mfcc' in S else None
-    # ====== 5: extract pitch features ====== #
-    pitch_freq = None
-    if get_pitch:
-        import librosa
-        # we don't care about pitch magnitude
-        pitch_freq, _ = librosa.piptrack(
-            y=None, sr=sr, S=powerspectrogram, n_fft=n_fft,
-            hop_length=hop_length, fmin=fmin, fmax=pitch_fmax,
-            threshold=pitch_threshold)
-        pitch_freq = pitch_freq.astype('float32')[:__max_fft_bins(sr, n_fft, pitch_fmax)]
-        # normalize to 0-1
-        # _ = np.min(pitch_freq)
-        # pitch_freq = (pitch_freq - _) / (np.max(pitch_freq) - _)
-        pitch_freq = compute_delta(pitch_freq, width=9, order=1, axis=-1)[-1]
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
@@ -645,7 +649,8 @@ def speech_features(s, sr=None,
         ('phase', phase if get_phase else None),
         ('qphase', qphase if get_phase and get_qspec else None),
 
-        ('pitch', None if pitch_freq is None else pitch_freq.T),
+        ('f0', None if f0_freq is None else f0_freq),
+        ('pitch', None if pitch_freq is None else pitch_freq),
 
         ('vad', vad),
         ('vadids', vad_ids),
