@@ -762,6 +762,175 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
 # ===========================================================================
 # Fourier transform
 # ===========================================================================
+def speech_enhancement(X, Gain=0.9, NN=2):
+    """This program is only to process the single file seperated by the silence
+    section if the silence section is detected, then a counter to number of
+    buffer is set and pre-processing is required.
+
+    Usage: SpeechENhance(wavefilename, Gain, Noise_floor)
+
+    :param X: input audio signal
+    :param Gain: default value is 0.9, suggestion range 0.6 to 1.4,
+            higher value means more subtraction or noise redcution
+    :param NN:
+
+    :return: a 1-dimensional array of boolean that
+        is True for high energy frames.
+
+    Note
+    ----
+    I move this function here, so we don't have to import `sidekit`.
+    You can check original version from `sidekit.frontend.vad`.
+    Copyright 2014 Sun Han Wu and Anthony Larcher
+    """
+    if X.shape[0] < 512:  # creer une exception
+        return X
+
+    num1 = 40  # dsiable buffer number
+    Alpha = 0.75  # original value is 0.9
+    FrameSize = 32 * 2  # 256*2
+    FrameShift = int(FrameSize / NN)  # FrameSize/2=128
+    nfft = FrameSize  # = FrameSize
+    Fmax = int(np.floor(nfft / 2) + 1)  # 128+1 = 129
+    # arising hamming windows
+    Hamm = 1.08 * (0.54 - 0.46 * np.cos(2 * np.pi * np.arange(FrameSize) / (FrameSize - 1)))
+    y0 = np.zeros(FrameSize - FrameShift)  # 128 zeros
+
+    Eabsn = np.zeros(Fmax)
+    Eta1 = Eabsn
+
+    ###################################################################
+    # initial parameter for noise min
+    mb = np.ones((1 + FrameSize // 2, 4)) * FrameSize / 2  # 129x4  set four buffer * FrameSize/2
+    im = 0
+    Beta1 = 0.9024  # seems that small value is better;
+    pxn = np.zeros(1 + FrameSize // 2)  # 1+FrameSize/2=129 zeros vector
+
+    ###################################################################
+    old_absx = Eabsn
+    x = np.zeros(FrameSize)
+    x[FrameSize - FrameShift:FrameSize] = X[
+        np.arange(np.min((int(FrameShift), X.shape[0])))]  # fread(ifp, FrameSize, 'short')% read  FrameSize samples
+
+    if x.shape[0] < FrameSize:
+        EOF = 1
+        return X
+
+    EOF = 0
+    Frame = 0
+
+    ###################################################################
+    # add the pre-noise estimates
+    for i in range(200):
+        Frame += 1
+        fftn = fftpack.fft(x * Hamm)  # get its spectrum
+        absn = np.abs(fftn[0:Fmax])  # get its amplitude
+
+        # add the following part from noise estimation algorithm
+        pxn = Beta1 * pxn + (1 - Beta1) * absn  # Beta=0.9231 recursive pxn
+        im = (im + 1) % 40  # noise_memory=47;  im=0 (init) for noise level estimation
+
+        if im:
+            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
+        else:
+            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
+            mb[:, 0] = pxn
+            #  0-2  vector shifted to 1 to 3
+
+        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
+        # over_sub_noise= oversubtraction factor
+
+        # end of noise detection algotihm
+        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
+        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
+        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
+
+        if In_data.shape[0] < FrameShift:  # to check file is out
+            EOF = 1
+            break
+        else:
+            x[FrameSize - FrameShift:FrameSize] = In_data  # shift new 128 to position 129 to FrameSize location
+            # end of for loop for noise estimation
+
+    # end of prenoise estimation ************************
+    x = np.zeros(FrameSize)
+    x[FrameSize - FrameShift:FrameSize] = X[np.arange(np.min((int(FrameShift), X.shape[0])))]
+
+    if x.shape[0] < FrameSize:
+        EOF = 1
+        return X
+
+    EOF = 0
+    Frame = 0
+
+    X1 = np.zeros(X.shape)
+    Frame = 0
+
+    while EOF == 0:
+        Frame += 1
+        xwin = x * Hamm
+
+        fftx = fftpack.fft(xwin, nfft)  # FrameSize FFT
+        absx = np.abs(fftx[0:Fmax])  # Fmax=129,get amplitude of x
+        argx = fftx[:Fmax] / (absx + np.spacing(1))  # normalize x spectrum phase
+
+        absn = absx
+
+        # add the following part from rainer algorithm
+        pxn = Beta1 * pxn + (1 - Beta1) * absn  # s Beta=0.9231   recursive pxn
+
+        im = int((im + 1) % (num1 * NN / 2))  # original =40 noise_memory=47;  im=0 (init) for noise level estimation
+
+        if im:
+            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
+        else:
+            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
+            mb[:, 0] = pxn
+
+        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
+
+        Eabsn = pn
+        Gaina = Gain
+
+        temp1 = Eabsn * Gaina
+
+        Eta1 = Alpha * old_absx + (1 - Alpha) * np.maximum(absx - temp1, 0)
+        new_absx = (absx * Eta1) / (Eta1 + temp1)  # wiener filter
+        old_absx = new_absx
+
+        ffty = new_absx * argx  # multiply amplitude with its normalized spectrum
+
+        y = np.real(fftpack.ifft(np.concatenate((ffty, np.conj(ffty[np.arange(Fmax - 2, 0, -1)])))))
+
+        y[:FrameSize - FrameShift] = y[:FrameSize - FrameShift] + y0
+        y0 = y[FrameShift:FrameSize]  # keep 129 to FrameSize point samples
+        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
+
+        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
+        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
+
+        z = 2 / NN * y[:FrameShift]  # left channel is the original signal
+        z /= 1.15
+        z = np.minimum(z, 32767)
+        z = np.maximum(z, -32768)
+        index0 = np.arange(FrameShift * (Frame - 1), FrameShift * Frame)
+        if not all(index0 < X1.shape[0]):
+            idx = 0
+            while (index0[idx] < X1.shape[0]) & (idx < index0.shape[0]):
+                X1[index0[idx]] = z[idx]
+                idx += 1
+        else:
+            X1[index0] = z
+
+        if In_data.shape[0] == 0:
+            EOF = 1
+        else:
+            x[np.arange(FrameSize - FrameShift, FrameSize + In_data.shape[0] - FrameShift)] = In_data
+
+    X1 = X1[X1.shape[0] - X.shape[0]:]
+    return X1
+
+
 def framing(y, win_length, hop_length, window='hann', center=True):
     if center:
         y = np.pad(y, int(win_length // 2), mode='reflect')
@@ -944,7 +1113,7 @@ def spectra(sr, y=None, S=None,
             nb_melfilters=None, nb_ceps=None,
             fmin=64, fmax=None,
             top_db=80.0, power=2.0, log=True,
-            backend='odin'):
+            preemphasis=None, backend='odin'):
     """Compute spectra information from STFT matrix or a power spectrogram,
     The extracted spectra include:
     * log-power spectrogram
@@ -976,6 +1145,8 @@ def spectra(sr, y=None, S=None,
         e.g., 1 for energy, 2 for power, etc.
     log: bool
         if True, convert all power spectrogram to DB
+    preemphasis: float `(0, 1)`, None
+        pre-emphasis coefficience
     backend: 'odin', 'sptk'
         support backend for calculating the spectra
 
@@ -1007,7 +1178,8 @@ def spectra(sr, y=None, S=None,
         n_fft = int(n_fft)
         hop_length = n_fft // 4 if hop_length is None else int(hop_length)
         # framing input signals
-        y_frames = framing(y, win_length=n_fft, hop_length=hop_length)
+        y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
+                           window=window)
         log_energy = get_energy(y_frames, log=True)
         mel_spec = np.apply_along_axis(pysptk.mcep, 1, y_frames,
             order=nb_melfilters - 1 if nb_melfilters is not None else 24,
@@ -1017,20 +1189,26 @@ def spectra(sr, y=None, S=None,
         phase = np.apply_along_axis(pysptk.c2ndps, 1, mel_spec, fftlen=n_fft)
         # MFCC features
         if nb_ceps is not None:
-            mfcc = np.apply_along_axis(pysptk.mfcc, 1, y_frames,
-                order=int(nb_ceps), fs=sr, alpha=0.97,
-                window_len=n_fft, frame_len=n_fft,
-                num_filterbanks=24 if nb_melfilters is None else nb_melfilters,
-                czero=False, power=False)
-            if not np.all(np.isfinite(mfcc)):
-                raise RuntimeError("NaN in computation of MFCCs for sptk backenk.")
+            mfcc_trial = 25
+            # sometimes PySPTK return NaN for unknown reason
+            while mfcc_trial >= 0:
+                mfcc_trial -= 1
+                mfcc = np.apply_along_axis(pysptk.mfcc, 1, y_frames,
+                    order=int(nb_ceps), fs=sr,
+                    alpha=0. if preemphasis is None else preemphasis,
+                    window_len=n_fft, frame_len=n_fft,
+                    num_filterbanks=24 if nb_melfilters is None else nb_melfilters,
+                    czero=False, power=False)
+                if not np.isnan(mfcc.astype('float32').sum()):
+                    break
         if nb_melfilters is None:
             mel_spec = None
     # ====== ODIN: STFT matrix not specified ====== #
     else:
         if S is None:
-            S, log_energy = stft(y, n_fft=n_fft, hop_length=hop_length, window=window,
-                                 preemphasis=0.97, energy=True)
+            S, log_energy = stft(y, n_fft=n_fft, hop_length=hop_length,
+                                 window=window, preemphasis=preemphasis,
+                                 energy=True)
         n_fft = int(2 * (S.shape[1] - 1))
         # ====== check arguments ====== #
         power = int(power)
@@ -1059,14 +1237,14 @@ def spectra(sr, y=None, S=None,
                 fmin=fmin, fmax=fmax)
             # transpose to (nb_samples; nb_mels)
             mel_spec = np.dot(mel_basis, spec.T)
-            mel_spec = mel_spec.astype('float32').T
+            mel_spec = mel_spec.T
         # ====== extract cepstrum features ====== #
         # extract MFCC
         if nb_ceps is not None:
             nb_ceps = int(nb_ceps) + 1
             log_mel_spec = power2db(mel_spec, top_db=top_db)
             dct_basis = dct_filters(nb_ceps, log_mel_spec.shape[1])
-            mfcc = np.dot(dct_basis, log_mel_spec.T).astype('float32')[1:, :].T
+            mfcc = np.dot(dct_basis, log_mel_spec.T)[1:, :].T
         # applying log to convert to db
         if log:
             spec = power2db(spec, top_db=top_db)
@@ -1074,14 +1252,16 @@ def spectra(sr, y=None, S=None,
                 mel_spec = log_mel_spec if log_mel_spec is not None else \
                     power2db(mel_spec, top_db=top_db)
     # ====== return result ====== #
+    if mel_spec is not None:
+        mel_spec = mel_spec.astype('float32')
+    if mfcc is not None:
+        mfcc = mfcc.astype('float32')
     results = {}
     results['spec'] = spec.astype('float32')
     results['phase'] = phase.astype('float32')
     results['energy'] = log_energy
-    if nb_melfilters is not None:
-        results['mspec'] = mel_spec.astype('float32')
-    if nb_ceps is not None:
-        results['mfcc'] = mfcc.astype("float32")
+    results['mspec'] = mel_spec
+    results['mfcc'] = mfcc
     return results
 
 
@@ -1091,7 +1271,8 @@ def spectra(sr, y=None, S=None,
 _mspec_synthesizer = {}
 
 
-def imspec(mspec, hop_length, pitch=None, log=False):
+def imspec(mspec, hop_length, pitch=None, log=False,
+           normalize=True, enhance=False):
     try:
         import pysptk
     except ImportError:
@@ -1107,13 +1288,20 @@ def imspec(mspec, hop_length, pitch=None, log=False):
     # ====== generate source excitation ====== #
     if pitch is None:
         pitch = np.zeros(shape=(n,))
-    source_excitation = pysptk.excite(pitch.astype('float64'),
-                                      hopsize=hop_length)
+    else:
+        pitch = pitch.ravel()
+    source_excitation = pysptk.excite(pitch.astype('float64'), hopsize=hop_length)
     # ====== invert log to get power ====== #
     if log:
         mspec = db2power(mspec)
-    return _mspec_synthesizer[(order, hop_length)].synthesis(
-        source_excitation, mspec)
+    y = _mspec_synthesizer[(order, hop_length)].synthesis(
+        source_excitation.astype('float64'), mspec.astype('float64'))
+    # ====== post-processing ====== #
+    if normalize:
+        y = (y - y.mean()) / y.std()
+    if enhance:
+        y = speech_enhancement(y)
+    return y
 
 
 # ===========================================================================

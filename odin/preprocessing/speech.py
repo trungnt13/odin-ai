@@ -15,8 +15,6 @@ import warnings
 from collections import OrderedDict
 
 import numpy as np
-import scipy.fftpack as fft
-import scipy.signal
 
 from odin.utils import is_number, cache_memory, is_string
 from .signal import (pad_center, get_window, segment_axis, stft, istft,
@@ -215,184 +213,16 @@ def __to_separated_indices(idx, min_distance=1, min_length=8):
     return [(s[0], s[-1] + 1) for s in segments if len(s) >= min_length]
 
 
-def speech_enhancement(X, Gain, NN=2):
-    """This program is only to process the single file seperated by the silence
-    section if the silence section is detected, then a counter to number of
-    buffer is set and pre-processing is required.
-
-    Usage: SpeechENhance(wavefilename, Gain, Noise_floor)
-
-    :param X: input audio signal
-    :param Gain: default value is 0.9, suggestion range 0.6 to 1.4,
-            higher value means more subtraction or noise redcution
-    :param NN:
-
-    :return: a 1-dimensional array of boolean that
-        is True for high energy frames.
-
-    Note
-    ----
-    I move this function here, so we don't have to import `sidekit`.
-    You can check original version from `sidekit.frontend.vad`.
-    Copyright 2014 Sun Han Wu and Anthony Larcher
-    """
-    if X.shape[0] < 512:  # creer une exception
-        return X
-
-    num1 = 40  # dsiable buffer number
-    Alpha = 0.75  # original value is 0.9
-    FrameSize = 32 * 2  # 256*2
-    FrameShift = int(FrameSize / NN)  # FrameSize/2=128
-    nfft = FrameSize  # = FrameSize
-    Fmax = int(np.floor(nfft / 2) + 1)  # 128+1 = 129
-    # arising hamming windows
-    Hamm = 1.08 * (0.54 - 0.46 * np.cos(2 * np.pi * np.arange(FrameSize) / (FrameSize - 1)))
-    y0 = np.zeros(FrameSize - FrameShift)  # 128 zeros
-
-    Eabsn = np.zeros(Fmax)
-    Eta1 = Eabsn
-
-    ###################################################################
-    # initial parameter for noise min
-    mb = np.ones((1 + FrameSize // 2, 4)) * FrameSize / 2  # 129x4  set four buffer * FrameSize/2
-    im = 0
-    Beta1 = 0.9024  # seems that small value is better;
-    pxn = np.zeros(1 + FrameSize // 2)  # 1+FrameSize/2=129 zeros vector
-
-    ###################################################################
-    old_absx = Eabsn
-    x = np.zeros(FrameSize)
-    x[FrameSize - FrameShift:FrameSize] = X[
-        np.arange(np.min((int(FrameShift), X.shape[0])))]  # fread(ifp, FrameSize, 'short')% read  FrameSize samples
-
-    if x.shape[0] < FrameSize:
-        EOF = 1
-        return X
-
-    EOF = 0
-    Frame = 0
-
-    ###################################################################
-    # add the pre-noise estimates
-    for i in range(200):
-        Frame += 1
-        fftn = fft.fft(x * Hamm)  # get its spectrum
-        absn = np.abs(fftn[0:Fmax])  # get its amplitude
-
-        # add the following part from noise estimation algorithm
-        pxn = Beta1 * pxn + (1 - Beta1) * absn  # Beta=0.9231 recursive pxn
-        im = (im + 1) % 40  # noise_memory=47;  im=0 (init) for noise level estimation
-
-        if im:
-            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
-        else:
-            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
-            mb[:, 0] = pxn
-            #  0-2  vector shifted to 1 to 3
-
-        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
-        # over_sub_noise= oversubtraction factor
-
-        # end of noise detection algotihm
-        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
-        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
-        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
-
-        if In_data.shape[0] < FrameShift:  # to check file is out
-            EOF = 1
-            break
-        else:
-            x[FrameSize - FrameShift:FrameSize] = In_data  # shift new 128 to position 129 to FrameSize location
-            # end of for loop for noise estimation
-
-    # end of prenoise estimation ************************
-    x = np.zeros(FrameSize)
-    x[FrameSize - FrameShift:FrameSize] = X[np.arange(np.min((int(FrameShift), X.shape[0])))]
-
-    if x.shape[0] < FrameSize:
-        EOF = 1
-        return X
-
-    EOF = 0
-    Frame = 0
-
-    X1 = np.zeros(X.shape)
-    Frame = 0
-
-    while EOF == 0:
-        Frame += 1
-        xwin = x * Hamm
-
-        fftx = fft.fft(xwin, nfft)  # FrameSize FFT
-        absx = np.abs(fftx[0:Fmax])  # Fmax=129,get amplitude of x
-        argx = fftx[:Fmax] / (absx + np.spacing(1))  # normalize x spectrum phase
-
-        absn = absx
-
-        # add the following part from rainer algorithm
-        pxn = Beta1 * pxn + (1 - Beta1) * absn  # s Beta=0.9231   recursive pxn
-
-        im = int((im + 1) % (num1 * NN / 2))  # original =40 noise_memory=47;  im=0 (init) for noise level estimation
-
-        if im:
-            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
-        else:
-            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
-            mb[:, 0] = pxn
-
-        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
-
-        Eabsn = pn
-        Gaina = Gain
-
-        temp1 = Eabsn * Gaina
-
-        Eta1 = Alpha * old_absx + (1 - Alpha) * np.maximum(absx - temp1, 0)
-        new_absx = (absx * Eta1) / (Eta1 + temp1)  # wiener filter
-        old_absx = new_absx
-
-        ffty = new_absx * argx  # multiply amplitude with its normalized spectrum
-
-        y = np.real(np.fft.fftpack.ifft(np.concatenate((ffty, np.conj(ffty[np.arange(Fmax - 2, 0, -1)])))))
-
-        y[:FrameSize - FrameShift] = y[:FrameSize - FrameShift] + y0
-        y0 = y[FrameShift:FrameSize]  # keep 129 to FrameSize point samples
-        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
-
-        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
-        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
-
-        z = 2 / NN * y[:FrameShift]  # left channel is the original signal
-        z /= 1.15
-        z = np.minimum(z, 32767)
-        z = np.maximum(z, -32768)
-        index0 = np.arange(FrameShift * (Frame - 1), FrameShift * Frame)
-        if not all(index0 < X1.shape[0]):
-            idx = 0
-            while (index0[idx] < X1.shape[0]) & (idx < index0.shape[0]):
-                X1[index0[idx]] = z[idx]
-                idx += 1
-        else:
-            X1[index0] = z
-
-        if In_data.shape[0] == 0:
-            EOF = 1
-        else:
-            x[np.arange(FrameSize - FrameShift, FrameSize + In_data.shape[0] - FrameShift)] = In_data
-
-    X1 = X1[X1.shape[0] - X.shape[0]:]
-    return X1
-
-
 def speech_features(s, sr=None,
-                    win=0.02, hop=0.01, nb_melfilters=None, nb_ceps=None,
+                    win=0.02, hop=0.01, window='hann',
+                    nb_melfilters=None, nb_ceps=None,
                     get_spec=True, get_qspec=False, get_phase=False,
                     get_pitch=False, get_f0=False,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None,
                     pitch_threshold=0.3, pitch_fmax=260,
                     vad_smooth=3, vad_minlen=0.1,
-                    cqt_bins=96, preemphasis=None, center=True,
+                    cqt_bins=96, preemphasis=None,
                     power=2, log=True, backend='odin'):
     """ Automatically extract multiple acoustic representation of
     speech features
@@ -533,7 +363,6 @@ def speech_features(s, sr=None,
     qphase = None
     # qspec requires librosa
     if get_qspec:
-        import librosa
         from librosa.core import constantq
         # auto adjust bins_per_octave to get maximum range of frequency
         bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin)) + 1
@@ -550,30 +379,24 @@ def speech_features(s, sr=None,
         # get log power Q-spectrogram
         Q = spectra(S=qtrans.T, sr=sr,
                     nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-                    fmin=fmin, fmax=fmax, power=2.0, log=True)
+                    fmin=fmin, fmax=fmax, power=2.0, log=True,
+                    backend='odin')
         qspec = Q['spec']
         q_melspectrogram = Q['mspec'] if 'mspec' in Q else None
         q_mfcc = Q['mfcc'] if 'mfcc' in Q else None
-        # phase of Q-transform
-        if get_phase:
-            # GD: derivative along frequency axis
-            qphase = compute_delta(np.angle(qtrans),
-                width=9, axis=0, order=1)[-1].astype('float32').T
+        qphase = Q['phase']
     # ====== 1: extract STFT and Spectrogram ====== #
     # no padding for center
-    log_energy = None
-    S = stft(s, n_fft=n_fft, hop_length=hop_length, window='hann',
-             center=center, preemphasis=preemphasis,
-             energy=True if get_energy or get_vad else False)
-    if isinstance(S, tuple):
-        log_energy = S[1]
-        S = S[0]
-    # ====== 2: extract phase features ====== #
-    phase = None
-    if get_phase:
-        # GD: derivative along frequency axis
-        phase = compute_delta(np.angle(S),
-            width=9, axis=0, order=1)[-1].astype('float32')
+    feat = spectra(sr=sr, y=s, n_fft=n_fft, hop_length=hop_length,
+                   window=window, nb_melfilters=nb_melfilters,
+                   nb_ceps=nb_ceps, fmin=fmin, fmax=fmax,
+                   power=power, log=log,
+                   preemphasis=preemphasis, backend=backend)
+    # ====== 4: extract spectrogram ====== #
+    spec = feat['spec']
+    mspec = feat['mspec'] if 'mspec' in feat else None
+    mfcc = feat['mfcc'] if 'mfcc' in feat else None
+    log_energy = feat['energy']
     # ====== 3: extract VAD ====== #
     vad = None
     vad_ids = None
@@ -593,13 +416,6 @@ def speech_features(s, sr=None,
                                                   min_distance=1,
                                                   min_length=int(vad_minlen / hop)),
                            dtype='int32')
-    # ====== 4: extract spectrogram ====== #
-    S = spectra(sr=sr, S=S, nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-                fmin=fmin, fmax=fmax, power=2.0, log=False)
-    powerspectrogram = S['spec']
-    logpowerspectrogram = power2db(powerspectrogram)
-    melspectrogram = S['mspec'] if 'mspec' in S else None
-    mfcc = S['mfcc'] if 'mfcc' in S else None
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
@@ -609,9 +425,9 @@ def speech_features(s, sr=None,
                 [log_energy] + compute_delta(log_energy, order=get_delta),
                 axis=1)
         # STFT
-        if melspectrogram is not None:
-            melspectrogram = np.concatenate(
-                [melspectrogram] + compute_delta(melspectrogram, order=get_delta),
+        if mspec is not None:
+            mspec = np.concatenate(
+                [mspec] + compute_delta(mspec, order=get_delta),
                 axis=1)
         if mfcc is not None:
             mfcc = np.concatenate(
@@ -627,8 +443,8 @@ def speech_features(s, sr=None,
                 [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
                 axis=1)
     # ====== 8: make sure CQT give the same length with STFT ====== #
-    if get_qspec and qspec.shape[1] > logpowerspectrogram.shape[1]:
-        n = qspec.shape[1] - logpowerspectrogram.shape[1]
+    if get_qspec and qspec.shape[1] > spec.shape[1]:
+        n = qspec.shape[1] - spec.shape[1]
         qspec = qspec[:, n // 2:-int(np.ceil(n / 2))]
         if qphase is not None:
             qphase = qphase[:, n // 2:-int(np.ceil(n / 2))]
@@ -637,21 +453,21 @@ def speech_features(s, sr=None,
         if q_mfcc is not None:
             q_mfcc = q_mfcc[:, n // 2:-int(np.ceil(n / 2))]
     return OrderedDict([
+        ('spec', spec if get_spec else None),
+        ('mspec', None if mspec is None else mspec),
         ('mfcc', None if mfcc is None else mfcc),
         ('energy', log_energy if get_energy else None),
-        ('spec', None if logpowerspectrogram is None else logpowerspectrogram),
-        ('mspec', None if melspectrogram is None else melspectrogram),
 
-        ('qspec', None if qspec is None else qspec),
+        ('qspec', qspec if get_qspec else None),
         ('qmspec', None if q_melspectrogram is None else q_melspectrogram),
         ('qmfcc', None if q_mfcc is None else q_mfcc),
 
-        ('phase', phase if get_phase else None),
+        ('phase', feat['phase'] if get_phase else None),
         ('qphase', qphase if get_phase and get_qspec else None),
 
-        ('f0', None if f0_freq is None else f0_freq),
-        ('pitch', None if pitch_freq is None else pitch_freq),
+        ('f0', f0_freq if get_f0 else None),
+        ('pitch', pitch_freq if get_pitch else None),
 
-        ('vad', vad),
-        ('vadids', vad_ids),
+        ('vad', vad if get_vad else None),
+        ('vadids', vad_ids if get_vad else None),
     ])
