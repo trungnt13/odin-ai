@@ -774,6 +774,27 @@ def framing(y, win_length, hop_length, window='hann', center=True):
     return y_frames
 
 
+def get_energy(frames, log=True):
+    """ Calculate frame-wise energy
+    Parameters
+    ----------
+    frames: ndarray
+        framed signal with shape (nb_frames x window_length)
+    log: bool
+        if True, return log energy of each frames
+
+    Return
+    ------
+    E : ndarray [shape=(nb_frames,), dtype=float32]
+    """
+    log_energy = (frames**2).sum(axis=1)
+    log_energy = np.where(log_energy == 0., np.finfo(np.float32).eps,
+                          log_energy)
+    if log:
+        log_energy = np.log(log_energy)
+    return log_energy.astype('float32')
+
+
 def stft(y, n_fft=256, hop_length=None, window='hann',
          center=True, preemphasis=None, energy=False):
     """Short-time Fourier transform (STFT)
@@ -812,6 +833,8 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
     -------
     D : np.ndarray [shape=(t, 1 + n_fft/2), dtype=complex64]
         STFT matrix
+    log_energy : ndarray [shape=(t,), dtype=float32]
+        (log) energy of each frame
     """
     # if n_fft is None:
     n_fft = int(n_fft)
@@ -823,14 +846,12 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
     if isinstance(preemphasis, Number) and 0. < preemphasis < 1.:
         y = pre_emphasis(y, coeff=preemphasis)
     y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
-                       center=center, window=window).T
+                       center=center, window=window)
     # calculate frames energy
     if energy:
-        log_energy = (y_frames**2).sum(axis=0)
-        log_energy = np.where(log_energy == 0., np.finfo(np.float32).eps,
-                              log_energy)
-        log_energy = np.log(log_energy)
+        log_energy = get_energy(y_frames, log=True)
     # Pre-allocate the STFT matrix
+    y_frames = y_frames.T
     stft_matrix = np.empty((int(1 + n_fft // 2), y_frames.shape[1]),
                            dtype=np.complex64, order='F')
     # how many columns can we fit within MAX_MEM_BLOCK?
@@ -963,6 +984,10 @@ def spectra(sr, y=None, S=None,
     S : np.ndarray [shape=(n_mels, t)]
         Mel spectrogram
 
+    Note
+    ----
+    `log` and `power` don't work for `sptk` backend
+
     """
     backend = str(backend)
     if backend not in ('odin', 'sptk'):
@@ -970,6 +995,7 @@ def spectra(sr, y=None, S=None,
     mel_spec = None
     mfcc = None
     log_mel_spec = None
+    log_energy = None
     # ====== sptk backend ====== #
     if backend == 'sptk':
         if y is None:
@@ -982,6 +1008,7 @@ def spectra(sr, y=None, S=None,
         hop_length = n_fft // 4 if hop_length is None else int(hop_length)
         # framing input signals
         y_frames = framing(y, win_length=n_fft, hop_length=hop_length)
+        log_energy = get_energy(y_frames, log=True)
         mel_spec = np.apply_along_axis(pysptk.mcep, 1, y_frames,
             order=nb_melfilters - 1 if nb_melfilters is not None else 24,
             alpha=0.)
@@ -995,15 +1022,15 @@ def spectra(sr, y=None, S=None,
                 window_len=n_fft, frame_len=n_fft,
                 num_filterbanks=24 if nb_melfilters is None else nb_melfilters,
                 czero=False, power=False)
+            if not np.all(np.isfinite(mfcc)):
+                raise RuntimeError("NaN in computation of MFCCs for sptk backenk.")
         if nb_melfilters is None:
             mel_spec = None
-        if power > 1:
-            spec = np.power(spec, power)
     # ====== ODIN: STFT matrix not specified ====== #
     else:
         if S is None:
-            S = stft(y, n_fft=n_fft, hop_length=hop_length, window=window,
-                     preemphasis=0.97, energy=False)
+            S, log_energy = stft(y, n_fft=n_fft, hop_length=hop_length, window=window,
+                                 preemphasis=0.97, energy=True)
         n_fft = int(2 * (S.shape[1] - 1))
         # ====== check arguments ====== #
         power = int(power)
@@ -1040,20 +1067,21 @@ def spectra(sr, y=None, S=None,
             log_mel_spec = power2db(mel_spec, top_db=top_db)
             dct_basis = dct_filters(nb_ceps, log_mel_spec.shape[1])
             mfcc = np.dot(dct_basis, log_mel_spec.T).astype('float32')[1:, :].T
-    # applying log to convert to db
-    if log:
-        spec = power2db(spec, top_db=top_db)
-        if mel_spec is not None:
-            mel_spec = log_mel_spec if log_mel_spec is not None else \
-                power2db(mel_spec, top_db=top_db)
+        # applying log to convert to db
+        if log:
+            spec = power2db(spec, top_db=top_db)
+            if mel_spec is not None:
+                mel_spec = log_mel_spec if log_mel_spec is not None else \
+                    power2db(mel_spec, top_db=top_db)
     # ====== return result ====== #
     results = {}
-    results['spec'] = spec
-    results['phase'] = phase
+    results['spec'] = spec.astype('float32')
+    results['phase'] = phase.astype('float32')
+    results['energy'] = log_energy
     if nb_melfilters is not None:
-        results['mspec'] = mel_spec
+        results['mspec'] = mel_spec.astype('float32')
     if nb_ceps is not None:
-        results['mfcc'] = mfcc
+        results['mfcc'] = mfcc.astype("float32")
     return results
 
 
