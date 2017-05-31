@@ -17,7 +17,8 @@ from odin.utils import Progbar, get_all_files, get_all_ext, exec_commands
 
 README = \
 """
-Sample rate: 20,000 Hz
+Original sample rate: 20,000 Hz
+Downsampled sample rate: 8,000 Hz
 
 Category       Symbol    Number    Age Range (years)
   Man            M        111           21 - 70
@@ -67,7 +68,6 @@ infopath = os.path.join(inpath, 'data/children/doc/spkrinfo.txt')
 USE_DOWNSAMPLED_DATASET = True
 
 print('Input path:', inpath)
-print('Output dataset:', outpath)
 print('Convert WAV to:', wavpath)
 print('WAVE dataset:', wav_ds)
 
@@ -104,21 +104,23 @@ def get_name(path):
 # Convert all SPHERE to wav using sph2pipe
 # ===========================================================================
 # ====== convert all compress audio to .wav using sph2pipe ====== #
-if True:
+if False:
     if os.path.exists(wavpath):
         print("[WARNING] Remove old WAV audio at:", wavpath)
         shutil.rmtree(wavpath)
     os.mkdir(wavpath)
     cmds = ["sph2pipe %s %s -f rif" % (path, os.path.join(wavpath, get_name(path)))
             for path in audio_files]
-    exec_commands(cmds)
+    exec_commands(cmds, print_progress=True)
 # ====== create new segments list ====== #
 segments = get_all_files(wavpath, filter_func=lambda f: f[-4:] == '.wav')
 # remove .wav extension
 segments = [[os.path.basename(path).replace('.wav', ''), path, 0, -1, 0]
             for path in segments]
 # ====== store everything in one dataset ====== #
-if True:
+if False:
+    if os.path.exists(wav_ds):
+        shutil.rmtree(wav_ds)
     wave = F.WaveProcesor(segments, output_path=wav_ds, audio_ext='.wav',
                           sr_new=8000, dtype='float16', datatype='memmap',
                           ncache=0.2, ncpu=12)
@@ -132,37 +134,51 @@ if True:
 ds = F.Dataset(wav_ds, read_only=True)
 print(ds)
 print("Saving processed sample files ...")
-samples_file = [i for i in ds['indices'].keys(shuffle=True)[:3]]
-for f in samples_file:
-    start, end = ds['indices'][f]
-    s = ds['raw'][start:end]
-    print(" * ", f, s.shape)
-    plot_audio(s, sr=8000, win=0.02, shift=0.01, nb_melfilters=40, nb_ceps=12,
-        get_qspec=False, get_vad=2, fmin=64, fmax=4000,
-        sr_new=None, preemphasis=0.97,
-        pitch_threshold=0.8, pitch_fmax=1200,
-        vad_smooth=8, vad_minlen=0.01,
-        cqt_bins=96, center=False, title=os.path.basename(f))
-plot_save('/tmp/tmp.pdf', dpi=180, clear_all=True)
+nb_samples = 3
+samples_file = [i for i in ds['indices'].keys(shuffle=True)[:nb_samples]]
+for backend in ('odin', 'sptk'):
+    for f in samples_file:
+        start, end = ds['indices'][f]
+        s = ds['raw'][start:end]
+        print(" * ", f, s.shape)
+        plot_audio(s, sr=8000, win=0.02, hop=0.01, window='hann',
+            nb_melfilters=40, nb_ceps=13,
+            get_qspec=True, get_vad=2, fmin=64, fmax=None,
+            sr_new=None, preemphasis=None,
+            pitch_threshold=0.3, pitch_fmax=260,
+            vad_smooth=8, vad_minlen=0.01, cqt_bins=96,
+            power=2, log=True, backend=backend,
+            title=os.path.basename(f))
+    plot_save('/tmp/tmp_%s.pdf' % backend, dpi=180, clear_all=True)
 # ====== processing ====== #
 if USE_DOWNSAMPLED_DATASET:
     segments = ds
-acous = F.SpeechProcessor(segments, outpath, sr=None, sr_new=None,
-                win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=12,
-                get_spec=True, get_qspec=False,
-                get_phase=False, get_pitch=False,
-                get_vad=2, get_energy=True, get_delta=2,
-                fmin=64, fmax=4000, preemphasis=0.97,
-                pitch_threshold=0.8, pitch_fmax=800,
-                vad_smooth=12, vad_minlen=0.1,
-                cqt_bins=96, pca=True, pca_whiten=False,
-                center=True, audio_ext='.wav',
-                save_stats=True, substitute_nan=None,
-                dtype='float16', datatype='memmap', ncache=0.2, ncpu=12)
-acous.run()
-with open(os.path.join(outpath, 'README'), 'w') as f:
-    f.write(README)
-# ====== validate saved dataset ====== #
-ds = F.Dataset(outpath, read_only=True)
-print(ds.readme)
-ds.close()
+for backend in ('odin', 'sptk'):
+    path_ = outpath + '_%s' % backend
+    if os.path.exists(path_):
+        shutil.rmtree(path_)
+    print("Output path:", path_)
+    acous = F.SpeechProcessor(segments, path_,
+                    sr=None, sr_new=None,
+                    win=0.02, hop=0.01, window='hann',
+                    nb_melfilters=40, nb_ceps=12,
+                    get_spec=True, get_qspec=True,
+                    get_phase=True, get_pitch=True, get_f0=True,
+                    get_vad=2, get_energy=True, get_delta=2,
+                    fmin=64, fmax=None,
+                    preemphasis=0.97 if backend == 'odin' else None,
+                    pitch_threshold=0.3, pitch_fmax=260,
+                    vad_smooth=12, vad_minlen=0.1,
+                    cqt_bins=96, pca=True, pca_whiten=False,
+                    save_stats=True, substitute_nan=None,
+                    power=2, log=True, backend=backend,
+                    audio_ext='.wav', dtype='float16', datatype='memmap',
+                    ncache=0.2, ncpu=12 + 1)
+    acous.run()
+    # copy README
+    with open(os.path.join(path_, 'README'), 'w') as f:
+        f.write(README)
+    # ====== validate saved dataset ====== #
+    ds = F.Dataset(path_, read_only=True)
+    print(ds.readme)
+    ds.close()

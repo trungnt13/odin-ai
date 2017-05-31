@@ -470,12 +470,14 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_audio(s, sr=None, win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=12,
-               get_qspec=False, get_vad=True, fmin=64, fmax=None,
-               sr_new=None, preemphasis=0.97,
-               pitch_threshold=0.8, pitch_fmax=1200,
-               vad_smooth=3, vad_minlen=0.1,
-               cqt_bins=96, center=True, title=""):
+def plot_audio(s, sr=None, win=0.02, hop=0.01, window='hann',
+               nb_melfilters=40, nb_ceps=13,
+               get_qspec=True, get_vad=True,
+               fmin=64, fmax=None,
+               sr_new=None, preemphasis=None,
+               pitch_threshold=0.3, pitch_fmax=260,
+               vad_smooth=3, vad_minlen=0.1, cqt_bins=96,
+               power=2, log=True, backend='odin', title=""):
     from matplotlib import pyplot as plt
     from odin.preprocessing import speech
 
@@ -510,29 +512,34 @@ def plot_audio(s, sr=None, win=0.02, hop=0.01, nb_melfilters=40, nb_ceps=12,
     title = str(title) + ":" + name
     # ====== processing ====== #
     get_vad = True if not get_vad else get_vad
-    y = speech.speech_features(s, sr, win=win, hop=hop,
+    y = speech.speech_features(s, sr, win=win, hop=hop, window=window,
             nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-            get_spec=True, get_qspec=get_qspec, get_phase=False, get_pitch=False,
+            get_spec=True, get_qspec=get_qspec, get_phase=True,
+            get_pitch=True, get_f0=True,
             get_vad=get_vad, get_energy=True, get_delta=False,
             fmin=fmin, fmax=fmax, sr_new=sr_new, preemphasis=preemphasis,
             pitch_threshold=pitch_threshold, pitch_fmax=pitch_fmax,
-            vad_smooth=vad_smooth, vad_minlen=vad_minlen,
-            cqt_bins=cqt_bins, center=center)
+            vad_smooth=vad_smooth, vad_minlen=vad_minlen, cqt_bins=cqt_bins,
+            power=power, log=log, backend=backend)
     # ====== plot raw signals ====== #
     if sr > 16000:
         s = speech.resample(s, sr, 16000)
         sr = 16000
     plt.figure()
-    plt.subplot(2, 1, 1)
-    plt.plot(s)
-    plt.subplot(2, 1, 2)
-    plt.plot(y['energy'].ravel())
+    plt.subplot(4, 1, 1); plt.plot(s); plt.title('Raw')
+    plt.subplot(4, 1, 2); plt.plot(y['energy'].ravel()); plt.title('Energy')
+    plt.subplot(4, 1, 3); plt.plot(y['pitch'].ravel()); plt.title('Pitch')
+    plt.subplot(4, 1, 4); plt.plot(y['f0'].ravel()); plt.title('F0')
     plt.tight_layout()
     plt.suptitle(title)
     # ====== plot spectrogram ====== #
     spectrogram(y['spec'], y['vad'], title='STFT power spectrum')
+    spectrogram(y['mspec'], y['vad'], title='(STFT) Mel-cepstrum')
+    spectrogram(y['mfcc'], y['vad'], title='(STFT) MFCCs')
     if get_qspec:
         spectrogram(y['qspec'], y['vad'], title='CQT power spectrum')
+        spectrogram(y['qmspec'], y['vad'], title='(CQT) Mel-cepstrum')
+        spectrogram(y['qmfcc'], y['vad'], title='(CQT) MFCCs')
     return y
 
 
@@ -950,7 +957,7 @@ def plot_hinton(matrix, max_weight=None, ax=None):
 # ===========================================================================
 # Helper methods
 # ===========================================================================
-def plot_show(block=False, tight_layout=False):
+def plot_show(block=True, tight_layout=False):
     from matplotlib import pyplot as plt
     if tight_layout:
         plt.tight_layout()

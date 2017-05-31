@@ -524,7 +524,8 @@ class SpeechProcessor(FeatureProcessor):
                 power=2, log=True, backend='odin',
                 pca=True, pca_whiten=False,
                 audio_ext=None, save_stats=True, substitute_nan=None,
-                dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
+                dtype='float16', datatype='memmap',
+                ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
             save_stats=save_stats, substitute_nan=substitute_nan,
