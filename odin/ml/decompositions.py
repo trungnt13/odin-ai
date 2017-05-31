@@ -184,6 +184,10 @@ class MiniBatchPCA(IncrementalPCA):
         self._cache_batches = []
         self._nb_cached_samples = 0
 
+    @property
+    def is_fitted(self):
+        return self.components_ is not None
+
     # ==================== Training ==================== #
     def fit(self, X, y=None, print_progress=False):
         """Fit the model with X, using minibatches of size batch_size.

@@ -24,7 +24,7 @@ from six import string_types
 
 import numpy as np
 import scipy as sp
-from scipy import linalg, fftpack
+from scipy import linalg, fftpack, signal
 from numpy.lib.stride_tricks import as_strided
 try:
     from odin.utils import cache_memory, cache_disk
@@ -340,7 +340,7 @@ def get_window(window, Nx, fftbins=True):
         return window(Nx)
     elif (isinstance(window, (six.string_types, tuple)) or
           np.isscalar(window)):
-        return sp.signal.get_window(window, Nx, fftbins=fftbins)
+        return signal.get_window(window, Nx, fftbins=fftbins)
     elif isinstance(window, (np.ndarray, list)):
         if len(window) == Nx:
             return np.asarray(window)
@@ -456,7 +456,7 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
 
     all_deltas = []
     for _ in range(order):
-        delta_x = sp.signal.lfilter(window, 1, delta_x, axis=axis)
+        delta_x = signal.lfilter(window, 1, delta_x, axis=axis)
         all_deltas.append(delta_x)
 
     # Cut back to the original shape of the input data

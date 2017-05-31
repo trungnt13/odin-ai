@@ -156,7 +156,8 @@ class FeatureProcessor(object):
                 # NOTE: if nb_samples < nb_features, fitting PCA
                 # will course error
                 if self.pca and statistic_able[name] and \
-                name not in self.excluded_pca:
+                name not in self.excluded_pca and \
+                (cache_data.ndim >= 2 and cache_data.shape[-1] > 1):
                     pca[name].partial_fit(cache_data)
                 # flush data
                 if name in dataset:
@@ -242,7 +243,7 @@ class FeatureProcessor(object):
             dataset[name + '_sum2'] = sum2
             dataset[name + '_mean'] = mean
             dataset[name + '_std'] = std
-            if pca is not None:
+            if pca is not None and pca.is_fitted:
                 dataset[name + '_pca'] = pca
         # save all stats
         if self.save_stats:
@@ -462,6 +463,13 @@ class SpeechProcessor(FeatureProcessor):
         speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
+    power : float > 0 [scalar]
+        Exponent for the magnitude spectrogram.
+        e.g., 1 for energy, 2 for power, etc.
+    log: bool
+        if True, convert all power spectrogram to DB
+    backend: 'odin', 'sptk'
+        support backend for calculating the spectra
     pca: bool
         save trained PCA for each features
     pca_whiten : bool
@@ -472,10 +480,6 @@ class SpeechProcessor(FeatureProcessor):
         (the relative variance scales of the components) but can sometimes
         improve the predictive accuracy of the downstream estimators by
         making data respect some hard-wired assumptions.
-    center : bool
-        If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     save_stats: bool
         same the first order and second order statistics, standard deviation
         of all features
@@ -508,14 +512,18 @@ class SpeechProcessor(FeatureProcessor):
     '''
 
     def __init__(self, segments, output_path, sr=None,
-                win=0.02, hop=0.01, nb_melfilters=None, nb_ceps=None,
-                get_spec=True, get_qspec=False, get_phase=False, get_pitch=False,
+                win=0.02, hop=0.01, window='hann',
+                nb_melfilters=None, nb_ceps=None,
+                get_spec=True, get_qspec=False, get_phase=False,
+                get_pitch=False, get_f0=False,
                 get_vad=True, get_energy=False, get_delta=False,
-                fmin=64, fmax=None, sr_new=None, preemphasis=0.97,
-                pitch_threshold=0.8, pitch_fmax=800,
+                fmin=64, fmax=None, sr_new=None,
+                pitch_threshold=0.3, pitch_fmax=260,
                 vad_smooth=3, vad_minlen=0.1,
-                cqt_bins=96, pca=True, pca_whiten=False,
-                center=True, audio_ext=None, save_stats=True, substitute_nan=None,
+                cqt_bins=96, preemphasis=None,
+                power=2, log=True, backend='odin',
+                pca=True, pca_whiten=False,
+                audio_ext=None, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap', ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
@@ -539,6 +547,7 @@ class SpeechProcessor(FeatureProcessor):
             if get_phase: features_properties.append(('qphase', dtype, True))
         if get_phase: features_properties.append(('phase', dtype, True))
         if get_pitch: features_properties.append(('pitch', dtype, True))
+        if get_f0: features_properties.append(('f0', dtype, True))
         if get_vad:
             features_properties.append(('vad', 'uint8', False))
             features_properties.append(('vadids', 'dict', False))
@@ -546,6 +555,7 @@ class SpeechProcessor(FeatureProcessor):
 
         self.get_spec = get_spec
         self.get_pitch = get_pitch
+        self.get_f0 = get_f0
         self.get_qspec = get_qspec
         self.get_phase = get_phase
         self.get_vad = get_vad
@@ -558,6 +568,7 @@ class SpeechProcessor(FeatureProcessor):
         self.sr = sr
         self.win = win
         self.hop = hop
+        self.window = window
         self.nb_melfilters = nb_melfilters
         self.nb_ceps = nb_ceps
         # constraint pitch threshold in 0-1
@@ -570,7 +581,9 @@ class SpeechProcessor(FeatureProcessor):
         self.fmax = fmax
         self.sr_new = sr_new
         self.preemphasis = preemphasis
-        self.center = center
+        self.power = power
+        self.log = log
+        self.backend = backend
 
     # ==================== Abstract properties ==================== #
     @property
@@ -619,17 +632,18 @@ class SpeechProcessor(FeatureProcessor):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
-                        win=self.win, hop=self.hop,
+                        win=self.win, hop=self.hop, window=self.window,
                         nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
                         get_spec=self.get_spec, get_qspec=self.get_qspec,
                         get_phase=self.get_phase, get_pitch=self.get_pitch,
+                        get_f0=self.get_f0,
                         get_vad=self.get_vad, get_energy=self.get_energy,
                         get_delta=self.get_delta,
                         pitch_threshold=self.pitch_threshold, pitch_fmax=self.pitch_fmax,
                         vad_smooth=self.vad_smooth, vad_minlen=self.vad_minlen,
                         cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
                         sr_new=self.sr_new, preemphasis=self.preemphasis,
-                        center=self.center)
+                        power=self.power, log=self.log, backend=self.backend)
                 if features is not None:
                     ret.append((name, [features[i[0]]
                                        for i in self.__features_properties]))

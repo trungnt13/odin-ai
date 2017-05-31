@@ -21,12 +21,14 @@ PCA = True
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit', override=True)
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
-                         win=0.025, hop=0.01, nb_melfilters=40, nb_ceps=13,
-                         get_delta=2, get_energy=True, get_phase=False,
-                         get_spec=True, get_pitch=True, get_vad=2, get_qspec=False,
-                         pitch_threshold=0.8, cqt_bins=96,
-                         vad_smooth=3, vad_minlen=0.1,
-                         pca=PCA, pca_whiten=False, center=True,
+                         win=0.025, hop=0.01, window='hann',
+                         nb_melfilters=40, nb_ceps=13,
+                         get_delta=2, get_energy=True, get_phase=True,
+                         get_spec=True, get_pitch=True, get_f0=True,
+                         get_vad=2, get_qspec=True,
+                         pitch_threshold=0.3, cqt_bins=96,
+                         vad_smooth=3, vad_minlen=0.1, backend='sptk',
+                         pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float16', datatype='memmap',
                          ncache=0.12, ncpu=12)
@@ -66,6 +68,7 @@ if PCA:
 
 ds.archive()
 print("Archive at:", ds.archive_path)
+
 # ====== plot the processed files ====== #
 figpath = os.path.join(utils.get_tempdir(), 'speech_features.pdf')
 files = np.random.choice(ds['indices'].keys(), size=3, replace=False)
@@ -74,16 +77,20 @@ for f in files:
                        show=False, tight_layout=True):
         start, end = ds['indices'][f]
         vad = ds['vad'][start:end]
-        energy = ds['energy'][start:end][:, 0]
-        spec = ds['spec'][start:end]
-        mspec = ds['mspec'][start:end][:, :40]
-        mfcc = ds['mfcc'][start:end][:, :13]
-        visual.subplot(4, 1, 1); visual.plot(energy.ravel())
-        visual.subplot(4, 1, 2)
+        pitch = ds['pitch'][start:end].astype('float32')
+        energy = ds['energy'][start:end][:, 0].astype('float32')
+        spec = ds['spec'][start:end].astype('float32')
+        mspec = ds['mspec'][start:end][:, :40].astype('float32')
+        mfcc = ds['mfcc'][start:end][:, :13].astype('float32')
+        visual.subplot(5, 1, 1)
+        visual.plot(energy.ravel())
+        visual.subplot(5, 1, 2)
+        visual.plot(pitch.ravel())
+        visual.subplot(5, 1, 3)
         visual.plot_spectrogram(spec.T, vad=vad)
-        visual.subplot(4, 1, 3)
+        visual.subplot(5, 1, 4)
         visual.plot_spectrogram(mspec.T, vad=vad)
-        visual.subplot(4, 1, 4)
+        visual.subplot(5, 1, 5)
         visual.plot_spectrogram(mfcc.T, vad=vad)
 
 # ====== Visual cluster ====== #
@@ -108,7 +115,6 @@ if PCA:
         visual.plot_scatter(X[:, 0], X[:, 1], color=y, legend=legend)
     with visual.figure(ncol=1, nrow=5):
         visual.plot_scatter(X_[:, 0], X_[:, 1], color=y, legend=legend)
-
 # ====== save all the figure ====== #
 visual.plot_save(figpath, tight_plot=True)
 print("Figure saved to:", figpath)

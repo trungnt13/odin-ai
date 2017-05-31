@@ -577,7 +577,8 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
     from matplotlib import pyplot as plt
 
     # colormap = _cmap(x)
-    colormap = 'spectral'
+    # colormap = 'spectral'
+    colormap = 'nipy_spectral'
 
     if x.ndim > 2:
         raise ValueError('No support for > 2D')

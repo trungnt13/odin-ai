@@ -280,10 +280,6 @@ def speech_features(s, sr=None,
         speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
-    center : bool
-        If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     power : float > 0 [scalar]
         Exponent for the magnitude spectrogram.
         e.g., 1 for energy, 2 for power, etc.
