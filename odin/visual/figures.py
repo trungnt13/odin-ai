@@ -323,7 +323,7 @@ def tile_raster_images(X, tile_shape=None, tile_spacing=(2, 2), spacing_value=0.
 # Plotting methods
 # ===========================================================================
 @contextmanager
-def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True):
+def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
     from matplotlib import pyplot as plt
     inches_for_box = 2.4
     if nrow != ncol:
@@ -335,6 +335,7 @@ def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True):
     nrow += 1.2 # for the title
     fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
     yield fig
+    plt.suptitle(title)
     if show:
         plot_show(block=True, tight_layout=tight_layout)
 

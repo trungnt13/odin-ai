@@ -1280,10 +1280,10 @@ def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
     order = mspec.shape[1] - 1
     hop_length = int(hop_length)
     # ====== check stored Synthesizer ====== #
-    if (order, hop_length) not in _mspec_synthesizer:
-        _mspec_synthesizer[(order, hop_length)] = \
-            pysptk.synthesis.Synthesizer(pysptk.synthesis.LMADF(order=order),
-                                         hop_length)
+    # if (order, hop_length) not in _mspec_synthesizer:
+    _mspec_synthesizer[(order, hop_length)] = \
+        pysptk.synthesis.Synthesizer(pysptk.synthesis.LMADF(order=order),
+                                     hop_length)
     # ====== generate source excitation ====== #
     if pitch is None:
         pitch = np.zeros(shape=(n,))
@@ -1293,6 +1293,7 @@ def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
     # ====== invert log to get power ====== #
     y = _mspec_synthesizer[(order, hop_length)].synthesis(
         source_excitation.astype('float64'), mspec.astype('float64'))
+    y = np.nan_to_num(y)
     # ====== post-processing ====== #
     if normalize:
         y = (y - y.mean()) / y.std()

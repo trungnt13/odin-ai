@@ -22,17 +22,20 @@ PCA = True
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
-feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
+feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
+                         sr_new=None,
                          win=0.02, hop=0.01, window='hann',
                          nb_melfilters=40, nb_ceps=13,
                          get_delta=False, get_energy=True, get_phase=True,
                          get_spec=True, get_pitch=True, get_f0=True,
                          get_vad=2, get_qspec=True,
                          pitch_threshold=0.3, cqt_bins=96,
-                         vad_smooth=3, vad_minlen=0.1, backend=backend,
+                         vad_smooth=3, vad_minlen=0.1,
+                         preemphasis=None, power=2, log=True,
+                         backend=backend,
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
-                         dtype='float16', datatype='memmap',
+                         dtype='float32', datatype='memmap',
                          ncache=0.12, ncpu=12)
 with utils.UnitTimer():
     feat.run()
@@ -58,29 +61,25 @@ for n in ds.keys():
             print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
-
 for name, segs in ds['vadids'].iteritems():
     if len(segs) == 0:
         start, end = ds['indices'][name]
         vad = ds['vad'][start:end].tolist()
         print("NO vadids for", name, np.sum(vad), vad)
-
 if PCA:
     for name, (start, end) in ds['indices'].iteritems():
         for vad_start, vad_end in ds['vadids'][name]:
             assert vad_end > vad_start
             assert not np.any(
                 np.isnan(ds['spec_pca'].transform(ds['spec'][vad_start:vad_end], n_components=2)))
-
 ds.archive()
 print("Archive at:", ds.archive_path)
-
 # ====== plot the processed files ====== #
 figpath = os.path.join(utils.get_tempdir(), 'speech_features_%s.pdf' % backend)
 files = np.random.choice(ds['indices'].keys(), size=3, replace=False)
 for f in files:
     with visual.figure(ncol=1, nrow=5, dpi=180,
-                       show=False, tight_layout=True):
+                       show=False, tight_layout=True, title=f):
         start, end = ds['indices'][f]
         vad = ds['vad'][start:end]
         pitch = ds['pitch'][start:end].astype('float32')
@@ -98,7 +97,6 @@ for f in files:
         visual.plot_spectrogram(mspec.T, vad=vad)
         visual.subplot(5, 1, 5)
         visual.plot_spectrogram(mfcc.T, vad=vad)
-
 # ====== Visual cluster ====== #
 if PCA:
     from sklearn.manifold import TSNE

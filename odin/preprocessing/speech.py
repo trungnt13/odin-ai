@@ -148,7 +148,10 @@ def resample(s, fs_orig, fs_new, axis=0, best_algorithm=True):
     '''
     fs_orig = int(fs_orig)
     fs_new = int(fs_new)
-    if fs_orig != fs_new:
+    if fs_new > fs_orig:
+        raise ValueError("Do not support upsampling audio from %d(Hz) to %d(Hz)."
+            % (fs_orig, fs_new))
+    elif fs_orig != fs_new:
         import resampy
         s = resampy.resample(s, sr_orig=fs_orig, sr_new=fs_new, axis=axis,
                              filter='kaiser_best' if best_algorithm else 'kaiser_fast')
