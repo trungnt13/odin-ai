@@ -4,9 +4,9 @@
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 
-import sys
+import re
 import os
-import types
+import sys
 import warnings
 import shutil
 from numbers import Number
@@ -26,6 +26,8 @@ from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
 from .utils import MmapDict
+
+_default_module = re.compile('__.*__')
 
 __all__ = [
     'WaveProcesor',
@@ -83,6 +85,7 @@ class FeatureProcessor(object):
             print('[WARNING] Remove existed dataset at path:', output_path)
             shutil.rmtree(output_path)
         self.dataset = Dataset(output_path)
+        self.output_path = output_path
         # PCA
         self.pca = bool(pca)
         self.pca_whiten = bool(pca_whiten)
@@ -262,6 +265,15 @@ class FeatureProcessor(object):
         # ====== all MmapDict flush() ====== #
         for d in dicts.itervalues():
             d.flush(); d.close()
+        # ====== saving the configuration ====== #
+        config = MmapDict(os.path.join(self.output_path, 'config'))
+        for i in dir(self):
+            if _default_module.match(i) is not None:
+                continue
+            j = getattr(self, i)
+            if isinstance(j, (Number, string_types, bool)):
+                config[i] = j
+        config.flush()
 
 
 # ===========================================================================
@@ -552,6 +564,8 @@ class SpeechProcessor(FeatureProcessor):
         if get_vad:
             features_properties.append(('vad', 'uint8', False))
             features_properties.append(('vadids', 'dict', False))
+        # store the sample rate of each file also
+        features_properties.append(('sr', 'dict', False))
         self.__features_properties = features_properties
 
         self.get_spec = get_spec
@@ -636,8 +650,8 @@ class SpeechProcessor(FeatureProcessor):
                         win=self.win, hop=self.hop, window=self.window,
                         nb_melfilters=self.nb_melfilters, nb_ceps=self.nb_ceps,
                         get_spec=self.get_spec, get_qspec=self.get_qspec,
-                        get_phase=self.get_phase, get_pitch=self.get_pitch,
-                        get_f0=self.get_f0,
+                        get_phase=self.get_phase,
+                        get_pitch=self.get_pitch, get_f0=self.get_f0,
                         get_vad=self.get_vad, get_energy=self.get_energy,
                         get_delta=self.get_delta,
                         pitch_threshold=self.pitch_threshold, pitch_fmax=self.pitch_fmax,
@@ -646,8 +660,12 @@ class SpeechProcessor(FeatureProcessor):
                         sr_new=self.sr_new, preemphasis=self.preemphasis,
                         power=self.power, log=self.log, backend=self.backend)
                 if features is not None:
-                    ret.append((name, [features[i[0]]
-                                       for i in self.__features_properties]))
+                    saved_features = [features[i[0]]
+                        for i in self.__features_properties[:-1]]
+                    # append the sample rate
+                    saved_features.append(sr_orig if self.sr_new is None
+                                          else self.sr_new)
+                    ret.append((name, saved_features))
                 else:
                     msg = 'Ignore segments: %s, error: NaN values' % name
                     warnings.warn(msg)

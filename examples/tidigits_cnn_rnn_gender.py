@@ -29,7 +29,8 @@ MODEL_PATH = get_modelpath(name='tidigits_gender.ai', override=True)
 #     speaker code "as", "a" is first production,
 #     digit sequence "4-2-9-1-8-1-5".
 # ===========================================================================
-PATH = '/home/trung/data/tidigits'
+PATH = '/home/trung/data/tidigits_odin'
+FEAT = 'mspec'
 SEED = 12082518
 ds = F.Dataset(PATH, read_only=True)
 print(ds)
@@ -59,9 +60,9 @@ recipes = [
         end='pad', endmode='post', endvalue=0)
 ]
 
-feeder_train = F.Feeder(ds['mspec'], indices=train, ncpu=4)
-feeder_valid = F.Feeder(ds['mspec'], indices=valid, ncpu=4)
-feeder_test = F.Feeder(ds['mspec'], indices=test, ncpu=4)
+feeder_train = F.Feeder(ds[FEAT], indices=train, ncpu=4)
+feeder_valid = F.Feeder(ds[FEAT], indices=valid, ncpu=4)
+feeder_test = F.Feeder(ds[FEAT], indices=test, ncpu=4)
 
 feeder_train.set_recipes(recipes + [F.recipes.CreateBatch()])
 feeder_valid.set_recipes(recipes + [F.recipes.CreateBatch()])

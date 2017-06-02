@@ -17,17 +17,19 @@ from odin import visual
 from odin import fuel as F, utils
 from collections import defaultdict
 
+backend = 'sptk'
 PCA = True
 datapath = F.load_digit_wav()
-output_path = utils.get_datasetpath(name='digit', override=True)
+output_path = utils.get_datasetpath(name='digit_%s' % backend,
+                                    override=True)
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=16000,
-                         win=0.025, hop=0.01, window='hann',
+                         win=0.02, hop=0.01, window='hann',
                          nb_melfilters=40, nb_ceps=13,
-                         get_delta=2, get_energy=True, get_phase=True,
+                         get_delta=False, get_energy=True, get_phase=True,
                          get_spec=True, get_pitch=True, get_f0=True,
                          get_vad=2, get_qspec=True,
                          pitch_threshold=0.3, cqt_bins=96,
-                         vad_smooth=3, vad_minlen=0.1, backend='sptk',
+                         vad_smooth=3, vad_minlen=0.1, backend=backend,
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float16', datatype='memmap',
@@ -40,6 +42,10 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 ds = F.Dataset(output_path, read_only=True)
 print('Output path:', output_path)
 print(ds)
+print("* Configurations:")
+for i, j in ds['config'].iteritems():
+    print(' ', i, ':', j)
+
 
 for n in ds.keys():
     if '_pca' in n:
@@ -70,7 +76,7 @@ ds.archive()
 print("Archive at:", ds.archive_path)
 
 # ====== plot the processed files ====== #
-figpath = os.path.join(utils.get_tempdir(), 'speech_features.pdf')
+figpath = os.path.join(utils.get_tempdir(), 'speech_features_%s.pdf' % backend)
 files = np.random.choice(ds['indices'].keys(), size=3, replace=False)
 for f in files:
     with visual.figure(ncol=1, nrow=5, dpi=180,

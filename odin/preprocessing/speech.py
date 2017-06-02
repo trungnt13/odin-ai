@@ -392,7 +392,20 @@ def speech_features(s, sr=None,
     spec = feat['spec']
     mspec = feat['mspec'] if 'mspec' in feat else None
     mfcc = feat['mfcc'] if 'mfcc' in feat else None
-    log_energy = feat['energy']
+    log_energy = feat['energy'][:, None] # always 2D
+    # ====== adjust the length of pitch and f0 equal to spec ====== #
+    if pitch_freq is not None:
+        if len(pitch_freq) > len(spec):
+            pitch_freq = pitch_freq[:len(spec)]
+        elif len(pitch_freq) < len(spec):
+            _ = len(spec) - len(pitch_freq)
+            pitch_freq = np.pad(pitch_freq, ((0, _), (0, 0)), mode='constant')
+    if f0_freq is not None:
+        if len(f0_freq) > len(spec):
+            f0_freq = f0_freq[:len(spec)]
+        elif len(f0_freq) < len(spec):
+            _ = len(spec) - len(f0_freq)
+            f0_freq = np.pad(f0_freq, ((0, _), (0, 0)), mode='constant')
     # ====== 3: extract VAD ====== #
     vad = None
     vad_ids = None
@@ -416,7 +429,6 @@ def speech_features(s, sr=None,
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
         if log_energy is not None:
-            log_energy = log_energy[:, None]
             log_energy = np.concatenate(
                 [log_energy] + compute_delta(log_energy, order=get_delta),
                 axis=1)

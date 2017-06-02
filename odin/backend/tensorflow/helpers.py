@@ -10,7 +10,7 @@ import numpy as np
 
 import tensorflow as tf
 from tensorflow.contrib.framework import is_tensor as _is_tensor
-from tensorflow.contrib.distributions.python.ops.distribution import Distribution as _Distribution
+from tensorflow.contrib.distributions import Distribution as _Distribution
 from tensorflow import variable_scope as _tf_variable_scope
 
 from odin.basic import (add_role, has_roles, as_shape_tuple, is_training,

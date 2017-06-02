@@ -1271,8 +1271,7 @@ def spectra(sr, y=None, S=None,
 _mspec_synthesizer = {}
 
 
-def imspec(mspec, hop_length, pitch=None, log=False,
-           normalize=True, enhance=False):
+def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
     try:
         import pysptk
     except ImportError:
@@ -1292,8 +1291,6 @@ def imspec(mspec, hop_length, pitch=None, log=False,
         pitch = pitch.ravel()
     source_excitation = pysptk.excite(pitch.astype('float64'), hopsize=hop_length)
     # ====== invert log to get power ====== #
-    if log:
-        mspec = db2power(mspec)
     y = _mspec_synthesizer[(order, hop_length)].synthesis(
         source_excitation.astype('float64'), mspec.astype('float64'))
     # ====== post-processing ====== #
