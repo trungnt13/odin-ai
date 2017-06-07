@@ -18,6 +18,7 @@
 from __future__ import print_function, division, absolute_import
 
 import six
+import copy
 import warnings
 from numbers import Number
 from six import string_types
@@ -1152,7 +1153,7 @@ def spectra(sr, y=None, S=None,
 
     Returns
     -------
-    S : np.ndarray [shape=(n_mels, t)]
+    S : np.ndarray [shape=(t, nb_melfilters)]
         Mel spectrogram
 
     Note
@@ -1272,6 +1273,15 @@ _mspec_synthesizer = {}
 
 
 def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
+    """ Invert mel-spectrogram back to raw waveform
+
+    Parameters
+    ----------
+    hop_length : int > 0 [scalar]
+        number audio of frames between STFT columns.
+        If unspecified, defaults `win_length / 4`.
+
+    """
     try:
         import pysptk
     except ImportError:
@@ -1299,6 +1309,44 @@ def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
         y = (y - y.mean()) / y.std()
     if enhance:
         y = speech_enhancement(y)
+    return y
+
+
+def ispec(spec, hop_length, window="hann", nb_iter=30, db=False, normalize=True):
+    """ Invert power spectrogram back to raw waveform
+
+    Parameters
+    ----------
+    spec : np.ndarray [shape=(t, n_fft / 2 + 1)]
+        magnitude, power, or DB spectrogram of STFT
+    hop_length : int > 0 [scalar]
+        number audio of frames between STFT columns.
+        If unspecified, defaults `win_length / 4`.
+    window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
+        - a window specification (string, tuple, or number);
+          see `scipy.signal.get_window`
+        - a window function, such as `scipy.signal.hanning`
+        - a vector or array of length `n_fft`
+    nb_iter: int
+        number of iteration, the higher the better audio quality
+    db: bool
+        if the given spectrogram is in decibel (dB) units (used logarithm)
+    normalize: bool
+        normalize output raw signal to have mean=0., and std=1.
+
+    """
+    if db: spec = db2power(spec)
+    X_best = copy.deepcopy(spec)
+    n_fft = (spec.shape[1] - 1) * 2
+    for i in range(nb_iter):
+        X_t = istft(X_best, hop_length=hop_length, window=window)
+        est = stft(X_t, n_fft=n_fft, hop_length=hop_length, window=window)
+        phase = est / np.maximum(1e-8, np.abs(est))
+        X_best = spec * phase[:len(spec)]
+    X_t = istft(X_best, hop_length=hop_length, window=window)
+    y = np.real(X_t)
+    if normalize:
+        y = (y - y.mean()) / y.std()
     return y
 
 

@@ -323,9 +323,13 @@ def _segments_preprocessing(segments, audio_ext):
                          for i in segments]
         # list of all information
         elif isinstance(segments[0], (tuple, list)):
-            if len(segments[0]) != 4 and len(segments[0]) != 5:
-                raise Exception('segments must contain information in following for:'
-                                '[name] [path] [start] [end]')
+            if len(segments[0]) == 1: # only path is given
+                segments = [(path, path, 0, -1, 0) for path in segments]
+            elif len(segments[0]) == 2: # name and path are given
+                segments = [(name, path, 0, -1, 0) for name, path in segments]
+            elif len(segments[0]) != 4 and len(segments[0]) != 5:
+                raise Exception('segments must contain information in following order:'
+                                '[name] [path] [start] [end] [channel]')
             file_list = segments
     # filter using support audio extension
     file_list = [f for f in file_list if any(ext in f[1][-len(ext):]
@@ -352,11 +356,29 @@ class WaveProcesor(FeatureProcessor):
      * "indices": MmapDict contain the mapping from file name to (start, end).
      * "raw": the big memmap contains all concatenated raw waveform.
      * "sr": MmapDict contains the mapping from file name to its sample rate.
+
+    Parameters
+    ----------
+    segments : path, list
+        if path, directory of all audio file, or segment csv file in
+        following format (channel can be omitted), start and end is in second
+            name                |     path             |start|end |channel
+        ------------------------|----------------------|-----|----|---
+        sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
+        sw02001-B_001980-002131 | /path/to/sw02001.sph | 0.0 | -1 | 1
+    output_path: str
+        path to output folder
+    sr: int
+        sample rate
+    dtype: numpy.dtype, None, 'auto'
+        if None or 'auto', keep the original dtype of audio
+
     """
 
     def __init__(self, segments, output_path, sr=None, sr_new=None,
-                audio_ext=None, dtype='float16',
-                datatype='memmap', ncache=0.12, ncpu=1):
+                audio_ext=None, pcm=False, remove_dc_offset=True,
+                dtype='float16', datatype='memmap',
+                ncache=0.12, ncpu=1):
         super(WaveProcesor, self).__init__(output_path=output_path,
             datatype=datatype, pca=False, pca_whiten=False,
             save_stats=False, substitute_nan=False,
@@ -364,9 +386,15 @@ class WaveProcesor(FeatureProcessor):
         if isinstance(segments, Dataset):
             raise ValueError("WaveProcesor does not support segments as a Dataset.")
         self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
+        if dtype is None or (is_string(dtype) and dtype == 'auto'):
+            s, _ = speech.read(self.jobs[0][0], pcm=pcm, dtype=None)
+            dtype = s.dtype
+            del s
         self.sr = sr
         self.sr_new = sr_new
         self.dtype = dtype
+        self.pcm = pcm
+        self.remove_dc_offset = remove_dc_offset
         self.primary_indices = ['raw']
 
     @property
@@ -380,7 +408,8 @@ class WaveProcesor(FeatureProcessor):
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
             # load audio data
-            s, sr_orig = speech.read(audio_path)
+            s, sr_orig = speech.read(audio_path, pcm=self.pcm,
+                remove_dc_offset=self.remove_dc_offset)
             # check original sample rate
             if sr_orig is not None and self.sr is not None and \
             sr_orig != self.sr:
@@ -427,6 +456,8 @@ class SpeechProcessor(FeatureProcessor):
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
         sw02001-B_001980-002131 | /path/to/sw02001.sph | 0.0 | -1 | 1
+    output_path: str
+        path to output folder
     sr: int
         sample rate
     win: float

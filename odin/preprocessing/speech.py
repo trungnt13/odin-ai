@@ -118,7 +118,7 @@ def timit_phonemes(phn, map39=False, blank=False):
 # ===========================================================================
 # Audio helper
 # ===========================================================================
-def read(f, pcm=False, remove_dc_offset=True):
+def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
     '''
     Return
     ------
@@ -130,9 +130,12 @@ def read(f, pcm=False, remove_dc_offset=True):
     else:
         from soundfile import read
         s, fs = read(f)
-    s = s.astype(np.float32)
+    # ====== copy new array with given dtype ====== #
+    if dtype is None:
+        dtype = s.dtype
+    s = s.astype(dtype)
     if remove_dc_offset:
-        s -= np.mean(s, 0)
+        s -= np.mean(s, 0, dtype=dtype)
     return s, fs
 
 
@@ -158,14 +161,35 @@ def resample(s, fs_orig, fs_new, axis=0, best_algorithm=True):
     return s
 
 
-def save(file_or_path, s, fs, subtype=None):
+def save(file_or_path, s, sr, subtype=None):
     '''
+    Parameters
+    ----------
+    s : array_like
+        The data to write.  Usually two-dimensional (channels x frames),
+        but one-dimensional `data` can be used for mono files.
+        Only the data types ``'float64'``, ``'float32'``, ``'int32'``
+        and ``'int16'`` are supported.
+
+        .. note:: The data type of `data` does **not** select the data
+                  type of the written file. Audio data will be
+                  converted to the given `subtype`. Writing int values
+                  to a float file will *not* scale the values to
+                  [-1.0, 1.0). If you write the value ``np.array([42],
+                  dtype='int32')``, to a ``subtype='FLOAT'`` file, the
+                  file will then contain ``np.array([42.],
+                  dtype='float32')``.
+    subtype: str
+        'PCM_24': 'Signed 24 bit PCM'
+        'PCM_16': 'Signed 16 bit PCM'
+        'PCM_S8': 'Signed 8 bit PCM'
+
     Return
     ------
     waveform (ndarray), sample rate (int)
     '''
     from soundfile import write
-    return write(file_or_path, s, fs, subtype=subtype)
+    return write(file_or_path, s, sr, subtype=subtype)
 
 
 # ===========================================================================
