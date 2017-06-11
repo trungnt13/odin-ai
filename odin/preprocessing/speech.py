@@ -139,8 +139,12 @@ def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
     return s, fs
 
 
-def est_audio_length(fpath, sr=8000, bitdepth=16):
+def audio_duration(fpath, sr=None, bitdepth=None):
     """ Estimate audio length in second """
+    if sr is None or bitdepth is None:
+        s, sr = read(fpath, remove_dc_offset=False)
+        duration = max(s.shape) / sr
+        del s; return duration
     if not os.path.exists(fpath):
         raise Exception('File at path:%s does not exist' % fpath)
     return os.path.getsize(fpath) / (bitdepth / 8) / sr
@@ -366,7 +370,10 @@ def speech_features(s, sr=None,
     win_length = int(win * sr)
     # n_fft must be 2^x
     n_fft = 2 ** int(np.ceil(np.log2(win_length)))
-    hop_length = int(hop * sr) # hop_length must be 2^x
+    if hop is not None:
+        hop_length = int(hop * sr) # hop_length must be 2^x
+    else:
+        hop_length = n_fft // 4
     # nb_ceps += 1 # increase one so we can ignore the first MFCC
     # ====== 5: extract pitch features ====== #
     pitch_freq = None

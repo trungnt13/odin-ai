@@ -361,7 +361,9 @@ class WaveProcesor(FeatureProcessor):
     ----------
     segments : path, list
         if path, directory of all audio file, or segment csv file in
-        following format (channel can be omitted), start and end is in second
+        following format (channel can be omitted), `start` and `end` is in second
+        (if `start`, or `end` is smaller than 1. then they are understand as
+        percentage)
             name                |     path             |start|end |channel
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
@@ -430,8 +432,12 @@ class WaveProcesor(FeatureProcessor):
             # processing all segments
             ret = []
             for name, start, end, channel in segments:
-                start = int(float(start) * sr_orig)
-                end = int(N if end <= 0 else float(end) * sr_orig)
+                if 0. <= start < 1. and 0. < end <= 1.:
+                    start = int(start * N)
+                    end = int(np.ceil(end * N))
+                else:
+                    start = int(float(start) * sr_orig)
+                    end = int(N if end <= 0 else float(end) * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
                 ret.append((name, [data, int(sr_orig)]))
             # return result
@@ -451,7 +457,9 @@ class SpeechProcessor(FeatureProcessor):
     ----------
     segments : path, list
         if path, directory of all audio file, or segment csv file in
-        following format (channel can be omitted), start and end is in second
+        following format (channel can be omitted), `start` and `end` is in second
+        (if `start`, or `end` is smaller than 1. then they are understand as
+        percentage)
             name                |     path             |start|end |channel
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
@@ -660,8 +668,12 @@ class SpeechProcessor(FeatureProcessor):
                                    "of this Processor.")
             N = len(s)
             for name, start, end, channel in segments:
-                start = int(float(start) * sr_orig)
-                end = int(N if end <= 0 else float(end) * sr_orig)
+                if 0. <= start < 1. and 0. < end <= 1.:
+                    start = int(start * N)
+                    end = int(np.ceil(end * N))
+                else:
+                    start = int(float(start) * sr_orig)
+                    end = int(N if end <= 0 else float(end) * sr_orig)
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
                 yield (name, data, sr_orig)
 

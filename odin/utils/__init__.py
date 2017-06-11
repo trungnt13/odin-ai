@@ -86,6 +86,18 @@ def batching(n, batch_size):
             for i in range(0, n + batch_size, batch_size) if i < n]
 
 
+def read_lines(file_path):
+    if not os.path.exists(file_path):
+        raise ValueError('File at path: %s does not exist.' % file_path)
+    if os.path.isdir(file_path):
+        raise ValueError("Path to %s is a folder" % file_path)
+    lines = []
+    with open(file_path, 'r') as f:
+        for i in f:
+            lines.append(i[:-1] if i[-1] == '\n' else i)
+    return lines
+
+
 # ===========================================================================
 # Others
 # ===========================================================================

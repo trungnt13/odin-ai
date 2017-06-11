@@ -14,7 +14,7 @@ import numpy as np
 from odin.utils import (segment_list, one_hot, is_string,
                         is_number, Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
-from odin.preprocessing.signal import segment_axis
+from odin.preprocessing.signal import segment_axis, compute_delta
 from odin.utils.decorators import functionable
 
 from .data import Data, MutableData
@@ -357,6 +357,74 @@ class Whitening(FeederRecipe):
 
     def __init__(self):
         super(Whitening, self).__init__()
+
+
+class ComputeDelta(FeederRecipe):
+    """Compute delta features: local estimate of the derivative
+    of the input data along the selected axis.
+
+    Parameters
+    ----------
+    delta: int > 0 [scalar]
+        the order of the difference operator.
+        1 for first derivative, 2 for second, etc.
+    axis: int [scalar]
+        the axis along which to compute deltas.
+        Default is -1 (columns).
+    keep_original: bool
+        if False, ignore original data and only return concatenated deltas
+        features
+    data_idx: int, list of int, None
+        if None, calculate data for all data processed by this recipes
+        if int or list of int, calculte delta for the given set of data.
+
+    Returns
+    -------
+    delta_data   : list(np.ndarray) [shape=(d, t) or (d, t + window)]
+        delta matrix of `data`.
+        return list of deltas
+
+    """
+
+    def __init__(self, delta=1, axis=-1, keep_original=True, data_idx=None):
+        super(ComputeDelta, self).__init__()
+        delta = int(delta)
+        if delta < 0:
+            raise ValueError("delta must >= 0")
+        self.delta = delta
+        self.axis = axis
+        self.keep_original = keep_original
+        self.data_idx = None if data_idx is None else as_tuple(data_idx, t=int)
+
+    def process(self, name, X, y):
+        if self.delta > 0:
+            if self.data_idx is None:
+                X = [np.concatenate(
+                    ([x] if self.keep_original else []) +
+                    compute_delta(x, order=self.delta, axis=self.axis),
+                    axis=self.axis)
+                for x in X]
+            else:
+                X = [x if i not in self.data_idx else
+                np.concatenate(
+                    ([x] if self.keep_original else []) +
+                    compute_delta(x, order=self.delta, axis=self.axis),
+                    axis=self.axis)
+                for i, x in enumerate(X)]
+        return name, X, y
+
+    def shape_transform(self, shapes, indices):
+        if self.delta > 0:
+            n = (self.delta + 1) if self.keep_original else self.delta
+            axis = self.axis
+            if self.data_idx is None:
+                shapes = [s[:axis] + (s[axis] * n,) + s[((axis % len(s)) + 1):]
+                          for s in shapes]
+            else:
+                shapes = [s if i not in self.data_idx else
+                          s[:axis] + (s[axis] * n,) + s[axis:]
+                          for i, s in enumerate(shapes)]
+        return shapes, indices
 
 
 # ===========================================================================
