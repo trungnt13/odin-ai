@@ -23,16 +23,17 @@ from . import rand
 from . import rnn_cell
 
 
-def get_variables(scope=None, graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,
-                                          tf.GraphKeys.LOCAL_VARIABLES,
-                                          tf.GraphKeys.MODEL_VARIABLES]):
+def get_all_variables(scope=None, graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,
+                                              tf.GraphKeys.LOCAL_VARIABLES,
+                                              tf.GraphKeys.MODEL_VARIABLES,
+                                              tf.GraphKeys.TRAINABLE_VARIABLES]):
     var = []
     for k in graph_keys:
         var += [i for i in tf.get_collection(k) if isinstance(i, tf.Variable)]
     if scope is not None:
         scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
         var = [v for v in var if len(scope_name_pattern.findall(v.name))]
-    return var
+    return list(set(var))
 
 
 def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
@@ -55,30 +56,21 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
     # check name and value
     if value is not None:
         value = np.array(value)
-    # check roles
-    if roles is None:
-        roles = []
-    else:
-        roles = as_tuple(roles)
     #### Found cached variable, just load new value into it
     if name is not None:
-        current_scope = tf.get_variable_scope().name
-        all_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,
-            scope=current_scope)
+        all_variables = get_all_variables()
         for v in all_variables:
             v_shape = tuple(v.get_shape().as_list())
-            if v.name == name + ':0': # found duplicated variable
+            if v.name == name: # found duplicated variable
                 # set new value for variable
-                if value is not None:
-                    if v_shape == value.shape:
-                        return role.add_role(set_value(v, value), roles)
-                    else:
-                        raise ValueError("Pre-defined variable with name: %s and"
-                            " shape: %s, which is different from given shape: %s"
-                            % (name, v_shape, value.shape))
+                if (value is not None and v_shape != value.shape) or \
+                (shape is not None and v_shape != as_tuple(shape)):
+                    raise ValueError("Pre-defined variable with name: %s and"
+                        " shape: %s, which is different from given shape: %s"
+                        % (name, v_shape,
+                            value.shape if value is not None else shape))
                 # just get the variable
-                else:
-                    return role.add_role(v, roles)
+                return role.add_role(v, roles)
     #### create totally new variable
     if value is None:
         variable = tf.get_variable(name=name, shape=shape)
@@ -150,7 +142,7 @@ def eval(x, feed_dict=None):
 _saver = {}
 
 
-def save_variables(var_list, path, session=None, global_step=None):
+def save_variables(var_list, path, session=None):
     """ This function only apply for trainable parameters """
     if session is None:
         session = get_session()
@@ -162,10 +154,29 @@ def save_variables(var_list, path, session=None, global_step=None):
         saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
             allow_empty=False)
     # ====== save the variables ====== #
-    saver.save(session, path, global_step=global_step,
+    checkpoint = saver.save(session, path, global_step=None,
         write_meta_graph=False, write_state=False)
     # ====== save the collections ====== #
     collections = {var.name: role.get_roles(var, return_string=True)
                    for var in var_list}
     cPickle.dump(collections, open(path + '.collections', 'w'),
         protocol=cPickle.HIGHEST_PROTOCOL)
+    return checkpoint
+
+
+def restore_variables(var_list, path, session=None):
+    if session is None:
+        session = get_session()
+    var_list = as_tuple(var_list)
+    name = '|'.join(sorted([v.name for v in var_list]))
+    if name in _saver:
+        saver = _saver[name]
+    else:
+        saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
+            allow_empty=False)
+    # ====== save the variables ====== #
+    saver.restore(session, path)
+    # ====== save the collections ====== #
+    collections = cPickle.load(open(path + '.collections', 'r'))
+    for var, roles in collections.iteritems():
+        variable(name=var, roles=roles)

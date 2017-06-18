@@ -7,7 +7,7 @@ from odin.utils import uuid, as_tuple
 from odin.config import get_rng, CONFIG, randint
 
 from .helpers import is_training
-from .roles import add_role, Weight, Bias, Parameter
+from .role import add_role, Weight, Bias, Parameter
 
 floatX = CONFIG.floatX
 

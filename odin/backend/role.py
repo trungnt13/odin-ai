@@ -204,14 +204,21 @@ def add_role(variables, roles):
     """
     if roles is None:
         return variables
-    roles = as_tuple(roles)
+    roles = tuple([name_to_roles(r) for r in as_tuple(roles)])
     # create tag attribute for variable
     for var in as_tuple(variables):
         # append roles scope
-        var_roles = get_roles(var, return_string=False) + roles + \
+        var_roles = get_roles(var, return_string=False) + \
+            roles + \
             get_current_role_scope()
-        var_roles = [r for r in var_roles
-                 if isinstance(r, type) and issubclass(r, Role)]
+        # ====== handle string roles first ====== #
+        _ = []
+        for r in var_roles:
+            if isinstance(r, string_types):
+                tf.add_to_collection(r, var)
+            elif isinstance(r, type) and issubclass(r, Role):
+                _.append(r)
+        var_roles = _
         # ====== shrink the roles so there is NO subrole ====== #
         new_roles = []
         for r in var_roles:
@@ -233,7 +240,7 @@ def _cmp_role(r1, r2, exact):
     if isinstance(r1, string_types) or isinstance(r2, string_types):
         if inspect.isclass(r1): r1 = r1.__name__
         if inspect.isclass(r2): r2 = r2.__name__
-        return r1 == r2 if exact else r1 in r2
+        return r1 == r2
     # subclass of Role
     return r1 == r2 if exact else issubclass(r1, r2)
 

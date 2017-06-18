@@ -17,7 +17,7 @@ from odin.config import CONFIG
 from odin.utils import as_tuple, is_number, uuid
 from odin.utils.cache_utils import cache_memory
 
-from .roles import (add_role, Auxiliary, LearningRate, OptimizerHyperParameter,
+from .role import (add_role, Auxiliary, LearningRate, OptimizerHyperParameter,
                     GradientsNorm, GraidentsClipping)
 from .helpers import is_tensor, get_value
 

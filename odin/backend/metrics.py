@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin.utils import is_number
 from odin.config import get_epsilon
 
-from .roles import AccuracyValue, return_roles, ObjectiveCost
+from .role import AccuracyValue, return_roles, ObjectiveCost
 from .tensor import argsort, dimshuffle
 from .helpers import is_tensor
 

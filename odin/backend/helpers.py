@@ -15,7 +15,7 @@ from odin.config import get_session
 from odin.utils.decorators import singleton
 from odin.utils import dict_union, as_list, flatten_list, as_tuple
 
-from .roles import (has_roles, Auxiliary, Parameter)
+from .role import (has_roles, Auxiliary, Parameter)
 
 
 # ===========================================================================
