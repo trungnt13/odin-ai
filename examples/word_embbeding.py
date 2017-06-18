@@ -19,7 +19,6 @@ from itertools import chain
 import numpy as np
 
 from odin import backend as K, nnet as N, fuel as F
-from odin.basic import has_roles, EmbeddingWeight
 from odin.preprocessing.text import (Tokenizer, language, POSfilter,
                                      TYPEfilter, CasePreprocessor,
                                      TransPreprocessor)

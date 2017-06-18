@@ -5,9 +5,9 @@ os.environ['ODIN'] = 'float32,tensorflow,gpu'
 from six.moves import cPickle
 
 import numpy as np
+import tensorflow as tf
 
 from odin import backend as K, nnet as N, utils, fuel as F, training
-from odin.basic import has_roles, InitialState
 from sklearn.metrics import accuracy_score
 
 # ===========================================================================
@@ -53,7 +53,7 @@ net_odin = N.Sequence([
         N.Dense(lstm_output_size, activation=K.linear, name='forgetgate'), # forget-gate
         N.Dense(lstm_output_size, activation=K.linear, name='cellupdate'), # cell-update
         N.Dense(lstm_output_size, activation=K.linear, name='outgate') # output-gate
-    ], merge_function=K.concatenate),
+    ], merge_function=tf.concat),
     N.LSTM(num_units=lstm_output_size, input_mode='skip')[:, -1],
     N.Dense(1, activation=K.sigmoid)
 ], debug=True)

@@ -11,7 +11,6 @@ import numpy as np
 from odin import fuel as F, nnet as N, backend as K, training
 from odin.utils import get_all_files, get_datasetpath, get_modelpath, get_logpath
 from odin.stats import freqcount
-from odin.basic import has_roles, Weight, Bias
 
 # ===========================================================================
 # Const

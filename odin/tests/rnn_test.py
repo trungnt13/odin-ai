@@ -248,7 +248,7 @@ class RNNTest(unittest.TestCase):
                 for rnn_mode in ['gru', 'lstm', 'rnn_relu', 'rnn_tanh']:
                     for init_state, init_state_name in zip([
                         None, # None init
-                        K.init.uniform, # function init
+                        K.rand.uniform, # function init
                         K.variable(np.random.rand(real_layers, 1, hidden_size)), # variable
                         K.variable(np.random.rand(real_layers, batch_size, hidden_size)), # variable
                         K.zeros(shape=(real_layers, 1, hidden_size)),

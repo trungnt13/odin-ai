@@ -20,6 +20,7 @@ import shutil
 import tempfile
 import subprocess
 import warnings
+from six import string_types
 from multiprocessing import cpu_count
 
 import numpy
@@ -91,6 +92,16 @@ class AttributeDict(dict):
 # Auto config
 # ===========================================================================
 CONFIG = None
+_SESSION = None
+
+
+def set_session(session):
+    global _SESSION
+    _SESSION = session
+
+
+def get_session():
+    return _SESSION
 
 
 def auto_config(config=None):
@@ -116,43 +127,23 @@ def auto_config(config=None):
     # ====== specific pattern ====== #
     valid_cnmem_name = re.compile('(cnmem)[=]?[10]?\.\d*')
     valid_seed = re.compile('seed\D?(\d*)')
-    # valid_cache_dir = re.compile("cache([=\s\.])([~\/\.a-zA-Z][~\/\.\w]*)")
 
     floatX = 'float32'
-    backend = 'tensorflow'
-    optimizer = 'fast_run'
     epsilon = 1e-8
     device = 'cpu'
     cnmem = 0.
     seed = 1208251813
-    multigpu = False
+    debug = False
     if config is None: # load config from flags
         ODIN_FLAGS = os.getenv("ODIN", "")
         s = ODIN_FLAGS.split(',')
         # ====== processing each tag ====== #
         for i in s:
             i = i.lower().strip()
-            # # ====== cache-dir ====== #
-            # if 'cache' in i:
-            #     match = valid_cache_dir.match(i)
-            #     if match is None:
-            #         raise ValueError("Specifying cache_dir must follows pattern: "
-            #                          "cache[=. ][path/to/cache/dir]")
-            #     cache_dir = str(match.group(2))
-            #     if "~" == cache_dir[0]:
-            #         cache_dir = os.path.expanduser("~") + cache_dir[1:]
             # ====== Data type ====== #
             if 'float' in i or 'int' in i:
                 floatX = i
-            # ====== Backend ====== #
-            elif 'theano' in i:
-                backend = 'theano'
-            elif 'tensorflow' in i or 'tf' in i:
-                backend = 'tensorflow'
             # ====== Devices ====== #
-            elif 'multigpu' in i:
-                multigpu = True
-                device = 'gpu'
             elif 'cpu' in i:
                 device = 'cpu'
             elif 'gpu' in i:
@@ -166,8 +157,6 @@ def auto_config(config=None):
                                      ' or cnmem.75' % str(i))
                 i = i[match.start():match.end()].replace('cnmem', '').replace('=', '')
                 cnmem = float(i)
-            elif 'fast_compile' in i:
-                optimizer = 'fast_compile'
             # ====== seed ====== #
             elif 'seed' in i:
                 match = valid_seed.match(i)
@@ -175,14 +164,15 @@ def auto_config(config=None):
                     raise ValueError('Invalid pattern for specifying seed value, '
                                      'you can try: [seed][non-digit][digits]')
                 seed = int(match.group(1))
+            # ====== debug ====== #
+            elif 'debug' in i:
+                debug = True
     else: # load config from object
         floatX = config['floatX']
-        backend = config['backend']
-        optimizer = config['optimizer']
-        multigpu = config['multigpu']
         device = config['device']
         cnmem = config['cnmem']
         seed = config['seed']
+        debug = config['debug']
     # adject epsilon
     if floatX == 'float16':
         epsilon = 10e-5
@@ -192,70 +182,45 @@ def auto_config(config=None):
         epsilon = 10e-12
     # ====== Log the configuration ====== #
     sys.stderr.write('[Auto-Config] Device : %s\n' % device)
-    sys.stderr.write('[Auto-Config] Multi-GPU : %s\n' % multigpu)
-    sys.stderr.write('[Auto-Config] Backend: %s\n' % backend)
-    sys.stderr.write('[Auto-Config] Optimizer: %s\n' % optimizer)
     sys.stderr.write('[Auto-Config] FloatX : %s\n' % floatX)
     sys.stderr.write('[Auto-Config] Epsilon: %s\n' % epsilon)
     sys.stderr.write('[Auto-Config] CNMEM  : %s\n' % cnmem)
     sys.stderr.write('[Auto-Config] SEED  : %s\n' % seed)
+    sys.stderr.write('[Auto-Config] Debug  : %s\n' % debug)
     if device == 'gpu':
         dev = _query_gpu_info()
-        if not multigpu:
-            dev = {'n': 1, 'dev0': dev['dev0']}
     else:
         dev = {'n': cpu_count()}
     # ==================== create theano flags ==================== #
-    ########## Theano
-    if backend == 'theano':
-        if multigpu and not _check_package_available('pygpu'):
-            raise Exception('"multigpu" option in theano requires installation of '
-                            'libgpuarray and pygpu.')
-        if device == 'cpu':
-            contexts = "device=%s" % device
-        else:
-            if not _check_package_available('pygpu'): # single gpu
-                contexts = 'device=gpu'
-            else: # multi gpu
-                contexts = "device=cuda"
-                # contexts = 'contexts='
-                # contexts += ';'.join(["dev%d->cuda%d" % (j, j)
-                #                       for j in range(dev['n'])])
-        flags = contexts + ",mode=FAST_RUN,floatX=%s" % floatX
-        # ====== others ====== #
-        # Speedup CuDNNv4
-        flags += (',dnn.conv.algo_fwd=time_once' +
-                  ',dnn.conv.algo_bwd_filter=time_once' +
-                  ',dnn.conv.algo_bwd_data=time_once')
-        # CNMEM
-        if cnmem > 0. and cnmem <= 1.:
-            flags += ',lib.cnmem=%.2f,allow_gc=True' % cnmem
-        if len(optimizer) > 0:
-            flags += ',optimizer={}'.format(optimizer)
-        flags += ',optimizer_including=unsafe'
-        flags += ',exception_verbosity=high'
-        os.environ['THEANO_FLAGS'] = flags
-        import theano
-    ########## Tensorflow
-    elif backend == 'tensorflow':
-        if device == 'cpu':
-            os.environ['CUDA_VISIBLE_DEVICES'] = ""
-        else:
-            pass
-        import tensorflow
-    else:
-        raise ValueError('Unsupport backend: ' + backend)
-
+    if device == 'cpu':
+        os.environ['CUDA_VISIBLE_DEVICES'] = ""
     # ====== Return global objects ====== #
     global CONFIG
     CONFIG = AttributeDict()
     CONFIG.update({'device': device,
                    'device_info': dev,
                    'floatX': floatX, 'epsilon': epsilon,
-                   'multigpu': multigpu, 'optimizer': optimizer,
-                   'cnmem': cnmem, 'backend': backend, 'seed': seed})
+                   'cnmem': cnmem, 'seed': seed,
+                   'debug': debug})
     global _RNG_GENERATOR
     _RNG_GENERATOR = numpy.random.RandomState(seed=seed)
+    # ====== initialize tensorflow session ====== #
+    import tensorflow as tf
+    global _SESSION
+    __session_args = {
+        'intra_op_parallelism_threads': CONFIG['device_info']['n'],
+        'allow_soft_placement': True,
+        'log_device_placement': debug,
+    }
+    if CONFIG['device'] == 'gpu':
+        if CONFIG['cnmem'] > 0:
+            __session_args['gpu_options'] = tf.GPUOptions(
+                per_process_gpu_memory_fraction=CONFIG['cnmem'],
+                allow_growth=False)
+        else:
+            __session_args['gpu_options'] = tf.GPUOptions(
+                allow_growth=True)
+    _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**__session_args))
     return CONFIG
 
 
@@ -270,6 +235,12 @@ def __validate_config():
 def get_rng():
     """return the numpy random state as a Randomness Generator"""
     return _RNG_GENERATOR
+
+
+def randint(low=0, high=10e8, size=None, dtype='int32'):
+    """Randomly generate and integer seed for any stochastic function."""
+    return _RNG_GENERATOR.randint(low=low, high=high, size=size,
+        dtype=dtype)
 
 
 def get_device():

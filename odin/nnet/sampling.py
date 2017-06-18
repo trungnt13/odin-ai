@@ -1,15 +1,25 @@
 from __future__ import division, absolute_import, print_function
 
 import numpy as np
+import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import is_number, is_string
+from odin.utils import is_number, is_string, as_tuple
 from odin.utils.decorators import functionable
 
-from .base import NNOps, nnops_initscope
+from .base import NNOp, _nnops_initscope
 
 
-class Pool(NNOps):
+def _preprocess_windows(window, ndims):
+    if len(window) != ndims:
+        if len(window) == ndims - 2:
+            return window
+        else:
+            return as_tuple(window, N=(ndims - 2))
+    return window
+
+
+class Pool(NNOp):
     """
     Parameters
     ----------
@@ -17,8 +27,9 @@ class Pool(NNOps):
         Factor by which to downscale (vertical ws, horizontal ws, ...).
     strides : tuple of two ints or theano vector of ints of size 2.
         Stride size, which is the number of shifts over rows/cols to get the
-        next pool region. If stride is None, it is considered equal to ws
-        (no overlap on pooling regions).
+        next pool region.
+        If stride is None, it is considered equal to pool_size (no overlap
+        on pooling regions).
     pad : tuple of two ints or theano vector of ints of size 2.
         (pad_h, pad_w), pad zeros to extend beyond four borders of the
         images, pad_h is the size of the top and bottom margins, and
@@ -37,33 +48,27 @@ class Pool(NNOps):
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
 
-    @nnops_initscope
-    def __init__(self, pool_size=2, strides=None, pad='valid',
-                 mode='max', pool_func='auto', transpose_mode='nn', **kwargs):
+    @_nnops_initscope
+    def __init__(self, pool_size=2, strides=None, dilation=1,
+                 pad='valid', mode='max', transpose_mode='nn', **kwargs):
         super(Pool, self).__init__(**kwargs)
-        self.pool_size = pool_size
-        self.strides = strides
-        self.pad = pad
-        self.mode = mode
+        self.strides = (pool_size,) if strides is None else as_tuple(strides, t=int)
+        self.pool_size = as_tuple(pool_size, t=int)
+        self.dilation = (1,) if dilation is None else as_tuple(dilation, t=int)
+        self.pad = pad.upper() if is_string(pad) else as_tuple(pad, t=int)
+        self.mode = mode.upper()
         self.transpose_mode = transpose_mode
-        self.pool_func = functionable(pool_func) if callable(pool_func) \
-            else pool_func
 
     def _apply(self, X):
-        if self.pool_func == 'auto':
-            if K.ndim(X) == 4:
-                pool_func = K.pool2d
-            elif K.ndim(X) == 5:
-                pool_func = K.pool3d
-            else:
-                raise RuntimeError("Pooling unsupport for %d-D input." % K.ndim(X))
-        else: # user sepecifed pool_func
-            pool_func = self.pool_func
-        return pool_func(X, pool_size=self.pool_size, strides=self.strides,
-                         border_mode=self.pad, mode=self.mode)
+        ndims = X.get_shape().ndims
+        return tf.nn.pool(X,
+            window_shape=_preprocess_windows(self.pool_size, ndims),
+            strides=_preprocess_windows(self.strides, ndims),
+            dilation_rate=_preprocess_windows(self.dilation, ndims),
+            padding=self.pad, pooling_type=self.mode)
 
     def _transpose(self):
-        ops = Upsample(size=self.pool_size, axes='auto',
+        ops = Upsample(size=self.strides, axes='auto',
             mode=self.transpose_mode, transpose_mode=self.mode,
             output_shape=self.input_shape_ref,
             name=self.name + '_transpose')
@@ -71,7 +76,7 @@ class Pool(NNOps):
         return ops
 
 
-class Upsample(NNOps):
+class Upsample(NNOp):
     """ Upsampling
 
     Parameters
@@ -85,7 +90,7 @@ class Upsample(NNOps):
 
     """
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, size=2, axes='auto', mode='nn', transpose_mode='max',
                  output_shape=None, **kwargs):
         super(Upsample, self).__init__(**kwargs)
@@ -97,12 +102,13 @@ class Upsample(NNOps):
 
     def _apply(self, X):
         axes = self.axes
+        ndims = X.get_shape().ndims
         if is_string(axes) and axes.lower() == 'auto':
-            if K.ndim(X) == 3:
+            if ndims == 3:
                 axes = (1,)
-            elif K.ndim(X) == 4:
+            elif ndims == 4:
                 axes = (1, 2)
-            elif K.ndim(X) == 5:
+            elif ndims == 5:
                 axes = (1, 2, 3)
         X = K.upsample(X, scale=self.size, axes=axes, method=self.mode)
         # ====== check output_shape ====== #
@@ -112,20 +118,19 @@ class Upsample(NNOps):
                 output_shape = output_shape()
             # do padding if necessary
             paddings = [[0, 0] if i is None or o is None or i >= o else
-                        [K.cast(K.ceil((o - i) / 2), 'int32'),
-                         K.cast(K.floor((o - i) / 2), 'int32')]
-                        for i, o in zip(K.get_shape(X), output_shape)]
-            if np.sum(paddings) > 0:
-                X = K.pad(X, paddings=paddings, mode='constant')
+                        [tf.cast(tf.ceil((o - i) / 2), 'int32'),
+                         tf.cast(tf.floor((o - i) / 2), 'int32')]
+                        for i, o in zip(X.get_shape().as_list(), output_shape)]
+            if not all(i == [0, 0] for i in paddings):
+                X = tf.pad(X, paddings=paddings, mode='CONSTANT')
             # do slice if necessary
-            slices = [slice(K.cast(K.floor((i - o) / 2), 'int32'),
-                            K.cast(-K.ceil((i - o) / 2), 'int32'), None)
+            slices = [slice(tf.cast(tf.floor((i - o) / 2), 'int32'),
+                            tf.cast(-tf.ceil((i - o) / 2), 'int32'), None)
                       if i > o else slice(None)
-                      for i, o in zip(K.get_shape(X), output_shape)]
+                      for i, o in zip(X.get_shape().as_list(), output_shape)]
             if any(s is not slice(None) for s in slices):
                 X = X[slices]
-            # add shape
-            K.add_shape(X, tuple([i if is_number(i) else None
+            K.set_shape(X, tuple([i if is_number(i) else None
                                   for i in output_shape]))
         return X
 

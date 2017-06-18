@@ -414,7 +414,7 @@ class SequentialModel(BaseEstimator, TransformerMixin):
     def __getstate__(self):
         self._check_initialized()
         return (
-            self._seq_ops, # main NNOps
+            self._seq_ops, # main NNOp
             self._input_info, # list: (name, dtype, shape)
             self._output_info,
             self._path,

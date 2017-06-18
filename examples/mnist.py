@@ -4,11 +4,12 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 from odin.utils import get_modelpath, ArgController, stdio, get_logpath
-
 stdio(get_logpath('mnist.log', override=True))
 
 import os
-os.environ['ODIN'] = 'float32,gpu,tensorflow,seed=12'
+os.environ['ODIN'] = 'float32,gpu,seed=12'
+
+import tensorflow as tf
 
 from odin import backend as K
 from odin import nnet as N
@@ -29,15 +30,18 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 ops = N.Sequence([
     N.Dimshuffle((0, 1, 2, 'x')),
     N.BatchNorm(axes='auto'),
-    N.Conv(32, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
+    N.Conv(32, (3, 3), strides=(1, 1), pad='same',
+           activation=tf.nn.relu),
     N.Pool(pool_size=(2, 2), strides=None),
-    N.Conv(64, (3, 3), strides=(1, 1), pad='same', activation=K.relu),
+    N.Conv(64, (3, 3), strides=(1, 1), pad='same',
+           activation=tf.nn.relu),
     N.Pool(pool_size=(2, 2), strides=None),
     N.Dropout(level=0.5),
     N.Flatten(outdim=2),
-    N.Dense(256, activation=K.relu),
-    N.Dense(10, activation=K.softmax)
+    N.Dense(256, activation=tf.nn.relu),
+    N.Dense(10, activation=tf.nn.softmax)
 ], debug=True)
+exit()
 ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
 
 K.set_training(True); y_pred_train = ops(X)

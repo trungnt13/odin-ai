@@ -1,13 +1,12 @@
 from __future__ import print_function, division, absolute_import
 
-import numpy as np
+import tensorflow as tf
 
 from odin import backend as K
-from odin.basic import EmbeddingWeight
-from .base import NNOps, NNConfig, nnops_initscope
+from .base import NNOp, NNConfig, _nnops_initscope
 
 
-class Embedding(NNOps):
+class Embedding(NNOp):
     """ Embedding
     Parameters
     ----------
@@ -23,9 +22,9 @@ class Embedding(NNOps):
         which has size (input_szie, output_size)
     """
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, input_size, output_size,
-                 W_init=K.init.uniform, **kwargs):
+                 W_init=K.rand.uniform, **kwargs):
         super(Embedding, self).__init__(**kwargs)
         self.input_size = input_size
         self.output_size = output_size
@@ -39,11 +38,7 @@ class Embedding(NNOps):
     def _initialize(self):
         self.config.create_params(self.W_init,
                              shape=(self.input_size, self.output_size),
-                             name='W', roles=EmbeddingWeight, nb_params=1)
+                             name='W', roles=K.role.EmbeddingWeight, nb_params=1)
 
     def _apply(self, x):
-        input_shape = K.get_shape(x)
-        output_shape = input_shape + (self.output_size,)
-        x = K.gather(self.W, K.cast(x, 'int32'))
-        K.add_shape(x, output_shape)
-        return x
+        return tf.gather(self.W, tf.cast(x, tf.int32))

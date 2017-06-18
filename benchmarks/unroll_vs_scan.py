@@ -15,7 +15,6 @@ os.environ['ODIN'] = 'float32,gpu,tensorflow'
 import numpy as np
 
 from odin import backend as K, utils
-from odin.basic import get_shape
 import tensorflow as tf
 
 

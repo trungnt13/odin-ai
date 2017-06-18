@@ -1,14 +1,15 @@
 from __future__ import print_function, division, absolute_import
 
-from .base import NNOps, nnops_initscope
+from .base import NNOp, _nnops_initscope
 
 from odin import backend as K
-from odin.basic import (BatchNormPopulationMean, BatchNormScaleParameter,
-                        BatchNormPopulationInvStd, BatchNormShiftParameter,
-                        add_updates)
+from odin.utils import as_tuple
+from odin.backend.role import (BatchNormPopulationMean, BatchNormScaleParameter,
+                        BatchNormPopulationInvStd, BatchNormShiftParameter)
+import tensorflow as tf
 
 
-class BatchNorm(NNOps):
+class BatchNorm(NNOp):
     """ This class is adpated from Lasagne:
     Original work Copyright (c) 2014-2015 lasagne contributors
     All rights reserved.
@@ -75,6 +76,9 @@ class BatchNorm(NNOps):
         these dimensions will be setted to 1 in noise_shape, and
         used to broadcast the dropout mask.
         If `noise_dims` is "auto", it will be the same as `axes`
+    fused: bool
+        if `True`, use a faster, fused implementation based on
+        nn.fused_batch_norm. If `None`, use the fused implementation if possible.
     **kwargs
         Any additional keyword arguments are passed to the :class:`Layer`
         superclass.
@@ -127,11 +131,12 @@ class BatchNorm(NNOps):
            Internal Covariate Shift. http://arxiv.org/abs/1502.03167.
     """
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
-                 beta_init=K.init.constant(0), gamma_init=K.init.constant(1),
-                 mean_init=K.init.constant(0), inv_std_init=K.init.constant(1),
-                 noise_level=None, noise_dims='auto', activation=K.linear, **kwargs):
+                 beta_init=K.rand.constant(0), gamma_init=K.rand.constant(1),
+                 mean_init=K.rand.constant(0), var_init=K.rand.constant(1),
+                 noise_level=None, noise_dims='auto',
+                 activation=K.linear, **kwargs):
         super(BatchNorm, self).__init__(**kwargs)
         self.axes = axes
         self.epsilon = epsilon
@@ -139,7 +144,7 @@ class BatchNorm(NNOps):
         self.beta_init = beta_init
         self.gamma_init = gamma_init
         self.mean_init = mean_init
-        self.inv_std_init = inv_std_init
+        self.var_init = var_init
         # ====== noise ====== #
         self.noise_level = noise_level
         self.noise_dims = noise_dims
@@ -153,12 +158,12 @@ class BatchNorm(NNOps):
             # filters with shape [batch, height, width, depth],
             # pass axes=[0, 1, 2]
             self.axes = tuple(range(0, len(self.input_shape) - 1))
-        elif isinstance(self.axes, int):
-            self.axes = (self.axes,)
+        else:
+            self.axes = as_tuple(self.axes, t=int)
         # check noise_dims
         if self.noise_dims == 'auto':
             self.noise_dims = self.axes
-        # create parameters, ignoring all dimensions in axes
+        # create parameters, ignoring all dimensions provided in axes
         shape = [size for axis, size in enumerate(self.input_shape)
                  if axis not in self.axes]
         if any(size is None for size in shape):
@@ -178,56 +183,49 @@ class BatchNorm(NNOps):
             self.config.create_params(
                 self.mean_init, shape=shape, name='mean',
                 roles=BatchNormPopulationMean)
-        if self.inv_std_init is not None:
+        if self.var_init is not None:
             self.config.create_params(
-                self.inv_std_init, shape=shape, name='inv_std',
+                self.var_init, shape=shape, name='var',
                 roles=BatchNormPopulationInvStd)
 
     def _apply(self, X, noise=0):
-        input_shape = K.get_shape(X)
-        ndim = K.ndim(X)
-        is_training = K.is_training()
+        ndim = X.get_shape().ndims
         # if is training, normalize input by its own mean and std
-        mean = (K.mean(X, self.axes)
-            if is_training or not hasattr(self, 'mean') else self.mean)
-        inv_std = (K.inv(K.sqrt(K.var(X, self.axes) + self.epsilon))
-            if is_training or not hasattr(self, 'inv_std') else self.inv_std)
-        # set a default update for them:
-        if is_training:
-            if hasattr(self, 'mean'):
-                running_mean = ((1 - self.alpha) * self.mean +
-                                self.alpha * mean)
-            if hasattr(self, 'inv_std'):
-                running_inv_std = ((1 - self.alpha) * self.inv_std +
-                                   self.alpha * inv_std)
+        mean, var = tf.nn.moments(X, axes=self.axes)
         # prepare dimshuffle pattern inserting broadcastable axes as needed
         param_axes = iter(range(ndim - len(self.axes)))
-        pattern = ['x' if input_axis in self.axes
-                   else next(param_axes)
+        pattern = ['x' if input_axis in self.axes else next(param_axes)
                    for input_axis in range(ndim)]
         # apply dimshuffle pattern to all parameters
-        beta = 0 if not hasattr(self, 'beta') else K.dimshuffle(self.beta, pattern)
-        gamma = 1 if not hasattr(self, 'gamma') else K.dimshuffle(self.gamma, pattern)
-        # ====== normalizing the input ====== #
+        beta = 0 if self.beta_init is None else \
+            K.dimshuffle(self.beta, pattern)
+        gamma = 1 if self.gamma_init is None else \
+            K.dimshuffle(self.gamma, pattern)
+
+        # ====== if trainign: use local mean and var ====== #
+        def training_fn():
+            running_mean = ((1 - self.alpha) * self.mean +
+                            self.alpha * mean)
+            running_var = ((1 - self.alpha) * self.var +
+                           self.alpha * var)
+            with tf.control_dependencies([
+                    tf.assign(self.mean, running_mean),
+                    tf.assign(self.var, running_var)]):
+                return tf.identity(mean), tf.identity(var)
+
+        # ====== if inference: use global mean and var ====== #
+        def infer_fn():
+            return self.mean, self.var
+
+        mean, var = tf.cond(K.is_training(), training_fn, infer_fn)
+        inv_std = tf.rsqrt(var + self.epsilon)
         normalized = (X - K.dimshuffle(mean, pattern)) * \
             (gamma * K.dimshuffle(inv_std, pattern))
-        # applying noise if required
+        # ====== applying noise if required ====== #
         if self.noise_level is not None:
-            if noise >= 0:
-                training = K.is_training()
-                if noise > 0: K.set_training(True)
-                normalized = K.apply_noise(normalized, level=self.noise_level,
-                             noise_dims=self.noise_dims, noise_type='gaussian')
-                K.set_training(training)
+            normalized = K.apply_noise(normalized, level=self.noise_level,
+                noise_dims=self.noise_dims, noise_type='gaussian')
+        # add beta
         normalized = normalized + beta
-        # set shape for output
-        K.add_shape(normalized, input_shape)
         # activated output
-        output = self.activation(normalized)
-        # add updates for final output
-        if is_training:
-            if hasattr(self, 'mean'):
-                add_updates(output, self.mean, running_mean)
-            if hasattr(self, 'inv_std'):
-                add_updates(output, self.inv_std, running_inv_std)
-        return output
+        return self.activation(normalized)

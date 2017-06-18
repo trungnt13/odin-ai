@@ -2,16 +2,16 @@ from __future__ import print_function, division, absolute_import
 
 
 # def lstm_batch_norm(num_units,
-#                     W_input_init=K.init.glorot_uniform,
-#                     W_hidden_init=K.init.orthogonal,
-#                     W_peephole_init=K.init.glorot_uniform,
+#                     W_input_init=K.rand.glorot_uniform,
+#                     W_hidden_init=K.rand.orthogonal,
+#                     W_peephole_init=K.rand.glorot_uniform,
 #                     activation=K.tanh, gate_activation=K.sigmoid,
 #                     tied_input=False, batch_norm=True, name=None):
 #     if name is None:
 #         name = 'lstm_batch_norm_%s' % utils.uuid()
 #     # ====== create input_gates ====== #
 #     ops_list = []
-#     bias = None if batch_norm else K.init.constant(0)
+#     bias = None if batch_norm else K.rand.constant(0)
 #     if tied_input:
 #         input_gates = Dense(num_units, W_init=W_input_init, b_init=bias,
 #                             activation=K.linear, name='%s_gates' % name)

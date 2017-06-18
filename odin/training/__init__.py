@@ -111,16 +111,16 @@ def standard_trainer(train_data, valid_data, test_data=None,
     cost_train = as_tuple(cost_train) if cost_train is not None else tuple()
     if len(cost_train) == 0:
         raise ValueError("You must specify cost_train.")
-    cost_train = [cost for cost in cost_train if K.is_variable(cost)]
-    cost_train_name = [i.name if K.is_variable(i) else i.__name__
+    cost_train = [cost for cost in cost_train if K.is_tensor(cost)]
+    cost_train_name = [i.name if K.is_tensor(i) else i.__name__
                        for i in cost_train]
     #  check the cost score
     if cost_score == 'auto':
         graph = K.ComputationGraph()
         cost_score = graph.get_roles(basic.EarlyStop)
     cost_score = as_tuple(cost_score) if cost_score is not None else tuple()
-    cost_score = [cost for cost in cost_score if K.is_variable(cost)]
-    cost_score_name = [i.name if K.is_variable(i) else i.__name__
+    cost_score = [cost for cost in cost_score if K.is_tensor(cost)]
+    cost_score_name = [i.name if K.is_tensor(i) else i.__name__
                        for i in cost_score]
     #  check the cost regu
     if cost_regu == 'auto':
@@ -144,7 +144,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
         cost_train_name.append('gradient_norm')
     cost_train = [training_cost] + cost_train[1:] + grad_norm
     # ====== add confusion matrix ====== #
-    if confusion_matrix is not None and K.is_variable(confusion_matrix):
+    if confusion_matrix is not None and K.is_tensor(confusion_matrix):
         cost_score.append(confusion_matrix)
         confusion_matrix = True
     else:

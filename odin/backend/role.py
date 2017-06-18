@@ -1,34 +1,14 @@
 from __future__ import print_function, division, absolute_import
 
-import re
+import sys
 import inspect
-import numbers
-import warnings
+from six import string_types
 from decorator import decorator
-from collections import OrderedDict
 from contextlib import contextmanager
 
-import numpy as np
+import tensorflow as tf
 
-from odin.utils import struct, is_number, as_tuple, flatten_list
-from odin.config import get_backend
-
-
-# ===========================================================================
-# TRaining flag
-# ===========================================================================
-__IS_TRAINING = False
-
-
-def is_training():
-    if __IS_TRAINING:
-        return 1
-    return 0
-
-
-def set_training(train):
-    global __IS_TRAINING
-    __IS_TRAINING = train
+from odin.utils import as_tuple, flatten_list
 
 
 # ===========================================================================
@@ -146,6 +126,10 @@ class LearningRateDecay(OptimizerHyperParameter):
     pass
 
 
+class GraidentsClipping(OptimizerHyperParameter):
+    pass
+
+
 # ==================== Embedding ==================== #
 class EmbeddingWeight(Weight):
     """ weights for embedding operator """
@@ -184,153 +168,22 @@ class BatchNormShiftParameter(Bias, BatchNorm):
 
 
 # ===========================================================================
-# Variable tagging
+# Helpers
 # ===========================================================================
-def _check_tag(var):
-    if not hasattr(var, 'tag'):
-        tag = struct()
-        tag.roles = []
-        var.tag = tag
-    return var
+_all_roles_name = {}
+for name, obj in inspect.getmembers(sys.modules[__name__]):
+    if inspect.isclass(obj) and issubclass(obj, Role):
+        _all_roles_name[name] = obj
 
 
-# ===========================================================================
-# Basic shape helper
-# ===========================================================================
-def _is_tensor(x):
-    if get_backend() == 'tensorflow':
-        import tensorflow as tf
-        if isinstance(x, (tf.Tensor, tf.Variable)):
-            return True
-    elif get_backend() == 'theano':
-        from theano.gof.graph import Constant
-        from theano.tensor.sharedvar import SharedVariable
-        from theano import Variable
-        if isinstance(x, (Constant, Variable, SharedVariable)):
-            return True
-    return False
-
-
-def as_shape_tuple(shape):
-    if is_number(shape):
-        shape = (int(shape),)
-    elif _is_tensor(shape):
-        shape = (shape,)
-    else:
-        if not isinstance(shape, (tuple, list, np.ndarray)):
-            raise ValueError('We only accept shape in tuple, list or numpy.ndarray.')
-        shape = tuple([(int(i) if i > 0 else None) if is_number(i) else i
-                       for i in shape])
-        if len([i for i in shape if i is None]) >= 2:
-            raise Exception('Shape tuple can only have 1 unknown dimension.')
-    return shape
-
-
-def add_shape(var, shape):
-    try:
-        _check_tag(var)
-    except:
-        return var
-    # do nothing if not Number of tuple, list
-    if isinstance(shape, np.ndarray):
-        shape = shape.tolist()
-    if not isinstance(shape, (tuple, list)):
-        shape = (shape,)
-    # not Number or None, not a valid shape
-    if any(not isinstance(s, numbers.Number) and s is not None
-           for s in shape):
-        return
-    # check shape tuple
-    try:
-        shape = as_shape_tuple(shape)
-    except Exception as e:
-        print("Cannot process shape=%s, exception:%s" % (str(shape), str(e)))
-        return var
-    # check ndim
-    ndim = var.ndim if hasattr(var, 'ndim') else var.get_shape().ndims
-    if len(shape) != ndim:
-        raise ValueError('Variable has ndim={} but given shape has ndim={}'
-                         '.'.format(ndim, len(shape)))
-    # ====== NO override ====== #
-    if hasattr(var.tag, 'shape') and var.tag.shape != shape:
-        warnings.warn('Variable already had shape=%s, and the given shape is: %s'
-                      '.' % (var.tag.shape, shape))
-    # ====== override or assign ====== #
-    else:
-        var.tag.shape = shape
-    return var
-
-
-def get_shape(x, native=False):
-    """Return the shape of a tensor, this function search for predefined shape
-    of `x` first, otherwise, return the theano shape
-
-    Warning: type returned will be different for
-    Theano backend (Theano tensor type) and TF backend (TF TensorShape).
-
-    Parameters
-    ----------
-    x: theano or tensorflow variable, numpy.ndarray
-        variable for getting the shape
-    not_none : bool
-        if `not_none`=True, does not allow None in returned shape tuple.
-        Default value is False
-    native : bool
-        if True, return the native shape information returned by backend (i.e.
-        object shape not int shape)
-    """
-    # ====== get default shape ====== #
-    if hasattr(x, 'tag') and hasattr(x.tag, 'shape'):
-        shape = x.tag.shape
-        # just ensure the tagged shape equal to actual tensorflow shape
-        if get_backend() == 'tensorflow':
-            tensorflow_shape = x.get_shape().as_list()
-            if len(shape) != len(tensorflow_shape) or \
-            any(i != j for i, j in zip(shape, tensorflow_shape)
-                    if i is not None and j is not None):
-                raise ValueError("The tagged shape is %s, but the system shape is "
-                                "%s." % (shape, x.get_shape().as_list()))
-    elif hasattr(x, 'get_shape'):
-        shape = tuple(x.get_shape().as_list())
-    elif hasattr(x, 'shape'):
-        shape = x.shape
-    else:
-        raise ValueError('Cannot get_shape of variable: ' + str(x))
-    # ====== check tag shape ====== #
-    if native and isinstance(shape, (tuple, list)):
-        if get_backend() == 'theano':
-            native_shape = x.shape
-        else:
-            import tensorflow as tf
-            native_shape = tf.shape(x)
-        # return a mix of native tensor variable shape, and int shape
-        return tuple([native_shape[i] if j is None or j < 0 else j
-                      for i, j in enumerate(shape)])
-    return shape
+def name_to_roles(name):
+    return _all_roles_name.get(name, name)
 
 
 # ===========================================================================
 # Basic Role helper
 # ===========================================================================
-def add_updates(var, key, value):
-    r""" Annotate updates to a given var, hence, this updates will
-    be used when create function
-
-    Note
-    ----
-    updates won't be serialized during pickling of any variables.
-
-    """
-    try:
-        _check_tag(var)
-    except:
-        return var
-    updates = getattr(var.tag, 'updates', OrderedDict())
-    updates[key] = value
-    var.tag.updates = updates
-
-
-def add_role(variables, roles=None):
+def add_role(variables, roles):
     r"""Add a role to a given variable.
 
     Parameters
@@ -349,42 +202,40 @@ def add_role(variables, roles=None):
     :class:`Parameter`) you must do so manually.
 
     """
+    if roles is None:
+        return variables
+    roles = as_tuple(roles)
     # create tag attribute for variable
     for var in as_tuple(variables):
-        try:
-            _check_tag(var)
-        except:
-            continue
-        roles = [r for r in as_tuple(roles)
-                 if isinstance(r, type) and issubclass(r, Role)]
         # append roles scope
-        roles += get_current_role_scope()
-        var_roles = list(getattr(var.tag, 'roles', []))
-        var_roles = var_roles + roles
-        # ====== shrink the roles so there is NO subrole ====== #
+        var_roles = get_roles(var, return_string=False) + roles + \
+            get_current_role_scope()
         var_roles = [r for r in var_roles
-                     if not any(r != r0 and issubclass(r0, r) for r0 in var_roles)]
+                 if isinstance(r, type) and issubclass(r, Role)]
+        # ====== shrink the roles so there is NO subrole ====== #
+        new_roles = []
+        for r in var_roles:
+            if any(r != r0 and issubclass(r0, r) for r0 in var_roles):
+                tf.get_collection_ref(r.__name__).remove(var)
+            else:
+                new_roles.append(r)
         # ====== adding new role ====== #
-        var.tag.roles = var_roles
+        for r in new_roles:
+            tf.add_to_collection(r.__name__, var)
     return variables
 
 
-def add_auxiliary_variable(var, auxiliary, roles=None):
-    r""" Annotate auxiliary variable to a given var
-
+def _cmp_role(r1, r2, exact):
+    """ check if r1 is subclass of r2, or
+    if r1 or r2 is string, r1 is equal r2
     """
-    try:
-        _check_tag(var)
-    except:
-        return var
-    auxiliary_variables = getattr(var.tag, 'auxiliary_variables', [])
-    add_role(auxiliary, Auxiliary)
-    if roles is not None:
-        for r in roles:
-            add_role(auxiliary, r)
-    auxiliary_variables.append(auxiliary)
-    var.tag.auxiliary_variables = list(set(auxiliary_variables))
-    return var
+    # String types role
+    if isinstance(r1, string_types) or isinstance(r2, string_types):
+        if inspect.isclass(r1): r1 = r1.__name__
+        if inspect.isclass(r2): r2 = r2.__name__
+        return r1 == r2 if exact else r1 in r2
+    # subclass of Role
+    return r1 == r2 if exact else issubclass(r1, r2)
 
 
 def has_roles(var, roles, match_all=False, exact=False):
@@ -394,7 +245,8 @@ def has_roles(var, roles, match_all=False, exact=False):
     ----------
     var : :class:`~tensor.TensorVariable`
         Variable being queried.
-    roles : an iterable of :subclass:`.Role`.
+    roles : an iterable of :subclass:`.Role` or `str`
+        List of all roles to match (role can come from `tf.GraphKeys`)
     match_all : bool, optional
         If ``True``, checks if the variable has all given roles.
         If ``False``, any of the roles is sufficient.
@@ -405,23 +257,35 @@ def has_roles(var, roles, match_all=False, exact=False):
         decesdant roles.
 
     """
-    # don't have tag attribute
-    if not hasattr(var, 'tag'):
-        return False
     # prepare roles
-    roles = [r for r in as_tuple(roles) if issubclass(r, Role)]
-    var_roles = getattr(var.tag, 'roles', [])
-    if not exact:
-        matches = (any(issubclass(var_role, match_role) for var_role in var_roles)
-                   for match_role in roles)
-    else:
-        matches = (any(var_role == match_role for var_role in var_roles)
-                   for match_role in roles)
+    roles = [name_to_roles(r) if isinstance(r, string_types) else r
+             for r in as_tuple(roles)
+             if isinstance(r, string_types) or issubclass(r, Role)]
+    var_roles = get_roles(var, return_string=False)
+    matches = [any(_cmp_role(var_role, match_role, exact) for var_role in var_roles)
+               for match_role in roles]
     return all(matches) if match_all else any(matches)
 
 
-def get_roles(var):
-    return getattr(var.tag, 'roles', [])
+def get_roles(var, return_string=True):
+    """
+    Parameters
+    ----------
+    var: `Tensor`
+    return_string: bool
+        if True, return the string which are name of all roles
+        otherwise convert role to actual class and return them
+    """
+    roles = []
+    for r, var_list in tf.get_default_graph()._collections.iteritems():
+        if var in var_list:
+            if not return_string:
+                roles.append(name_to_roles(r))
+            else:
+                roles.append(r)
+    # always return the same order of roles
+    return as_tuple(sorted(roles,
+        key=lambda x: x if isinstance(x, string_types) else x.__name__))
 
 
 # ===========================================================================
@@ -431,16 +295,16 @@ __ROLE_STACK = [[]]
 
 
 def get_current_role_scope():
-    return __ROLE_STACK[-1]
+    return tuple(__ROLE_STACK[-1])
 
 
-def output_roles(roles=None):
+def return_roles(roles=None):
     """ A decorators to assign specific role to all outputs of a function.
 
     Example
     -------
     >>> with role_scope(Variational):
-    ...     @output_roles(Weight)
+    ...     @return_roles(Weight)
     ...     def func():
     ...         return K.variable(np.random.rand(12, 8))
     ...     X = func()

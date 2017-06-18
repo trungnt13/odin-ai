@@ -38,7 +38,6 @@ np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
 from odin.utils import get_modelpath, stdio, get_logpath, get_datasetpath
-from odin.basic import has_roles, Bias, Weight
 from odin import training
 
 # set log path

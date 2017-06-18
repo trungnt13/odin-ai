@@ -1,6 +1,5 @@
 from __future__ import print_function, division, absolute_import
 
-from odin.basic import add_shape
 from odin import nnet as N, backend as K
 import edward as ed
 from edward.models import Bernoulli, Normal
@@ -27,9 +26,9 @@ def dense_vae(X, saved_states, **kwargs):
             f_generative = N.Sequence([
                 N.Dimshuffle(pattern=(0, 'x', 'x', 1)),
                 N.TransposeConv(num_filters=64, filter_size=3, strides=1, pad='valid',
-                                b_init=K.init.constant(0.), activation=K.elu),
+                                b_init=K.rand.constant(0.), activation=K.elu),
                 N.TransposeConv(num_filters=32, filter_size=5, strides=2, pad='same',
-                                b_init=K.init.constant(0.), activation=K.elu),
+                                b_init=K.rand.constant(0.), activation=K.elu),
                 N.TransposeConv(num_filters=1, filter_size=13, strides=3, pad='valid',
                                 b_init=None),
                 N.BatchNorm(activation=K.linear),
@@ -96,9 +95,9 @@ def convolutional_vae(X, saved_states, **kwargs):
         f_inference = N.Sequence([
             N.Reshape(shape=(-1, 28, 28, 1)),
             N.Conv(num_filters=32, filter_size=3, strides=1, pad='valid',
-                   b_init=K.init.constant(0.), activation=K.elu),
+                   b_init=K.rand.constant(0.), activation=K.elu),
             N.Conv(num_filters=64, filter_size=5, strides=2, pad='same',
-                   b_init=K.init.constant(0.), activation=K.elu),
+                   b_init=K.rand.constant(0.), activation=K.elu),
 
             N.Dropout(level=0.1),
             N.Flatten(outdim=2),
@@ -110,9 +109,9 @@ def convolutional_vae(X, saved_states, **kwargs):
         f_generative = N.Sequence([
             N.Dimshuffle(pattern=(0, 'x', 'x', 1)),
             N.TransposeConv(num_filters=64, filter_size=3, strides=1, pad='valid',
-                            b_init=K.init.constant(0.), activation=K.elu),
+                            b_init=K.rand.constant(0.), activation=K.elu),
             N.TransposeConv(num_filters=32, filter_size=5, strides=2, pad='same',
-                            b_init=K.init.constant(0.), activation=K.elu),
+                            b_init=K.rand.constant(0.), activation=K.elu),
             N.TransposeConv(num_filters=1, filter_size=13, strides=3, pad='valid',
                             b_init=None),
             N.BatchNorm(activation=K.linear),

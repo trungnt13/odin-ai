@@ -167,13 +167,15 @@ _uuid_chars = list(chain(map(chr, range(65, 91)),  # ABCD
 _uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
 
 
-def uuid():
+def uuid(length=8):
     """ Generate random UUID 8 characters with very very low collision """
     # m = time.time()
     # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
     # uniqid = str(uuid.uuid4())[:8]
-    uniquid = ''.join(_uuid_random_state.choice(_uuid_chars,
-                                          size=8, replace=True))
+    uniquid = ''.join(
+        _uuid_random_state.choice(_uuid_chars,
+                                  size=length,
+                                  replace=True))
     return uniquid
 
 

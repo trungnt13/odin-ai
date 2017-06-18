@@ -7,13 +7,13 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 from odin import backend as K
 from odin.utils.cache_utils import cache_memory
-from odin.basic import (add_role, VariationalMean, VariationalLogsigma,
+from odin.backend.role import (add_role, VariationalMean, VariationalLogsigma,
                         WEIGHT, BIAS)
 
-from .base import NNOps
+from .base import NNOp
 
 
-class Distribution(NNOps):
+class Distribution(NNOp):
     """ Class for distribution within NN architectures """
 
     def __init__(self, **kwargs):
@@ -27,11 +27,11 @@ class Normal(object):
         super(Normal, self).__init__(**kwargs)
 
 
-class VariationalDense(NNOps):
+class VariationalDense(NNOp):
 
     def __init__(self, num_units,
-                 W_init=K.init.symmetric_uniform,
-                 b_init=K.init.constant(0),
+                 W_init=K.rand.symmetric_uniform,
+                 b_init=K.rand.constant(0),
                  activation=K.linear,
                  seed=None, **kwargs):
         super(VariationalDense, self).__init__(**kwargs)

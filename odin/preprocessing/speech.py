@@ -125,7 +125,7 @@ def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
         waveform (ndarray: [samples;channel]), sample rate (int)
     '''
     if pcm or (isinstance(f, str) and
-               any(i in f for i in ['pcm', 'PCM'])):
+               any(i in f for i in ['.pcm', '.PCM'])):
         s, fs = (np.memmap(f, dtype=np.int16, mode='r'), None)
     else:
         from soundfile import read

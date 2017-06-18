@@ -14,30 +14,32 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
-from odin.basic import (add_role, has_roles, Parameter, Variable,
-                        Weight, Bias, VariationalMean, VariationalLogsigma)
+from odin.backend.role import (add_role, has_roles, Parameter, Variable,
+                                Weight, Bias)
 from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
+
+import tensorflow as tf
 
 from .model import InputDescriptor
 
 # ===========================================================================
-# Global NNOps manager
+# Global NNOp manager
 # ===========================================================================
 __ALL_NNOPS = {}
 
 
 def get_all_nnops():
-    """ Return a dictionary of (name, nnops) for all created NNOps """
+    """ Return a dictionary of (name, nnops) for all created NNOp """
     return __ALL_NNOPS
 
 
 def assign_new_nnops(nnops):
-    if not isinstance(nnops, NNOps):
-        raise ValueError("The new assigned NNOps must be instance of odin.nnet.NNOps "
+    if not isinstance(nnops, NNOp):
+        raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
     name = nnops.name
     if name in get_all_nnops():
-        raise RuntimeError("Another NNOps of type: '%s', and name: '%s' has "
+        raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
                            "already existed." % (type(__ALL_NNOPS[name]), name))
     __ALL_NNOPS[name] = nnops
 
@@ -59,7 +61,7 @@ def _get_current_arg_scope(nnops, ops_name):
         elif isinstance(name, type) and name in inspect.getmro(type(nnops)):
             return scope
         # specified an object
-        elif isinstance(name, NNOps) and type(name) == type(nnops):
+        elif isinstance(name, NNOp) and type(name) == type(nnops):
             return scope
     return {}
 
@@ -72,7 +74,7 @@ def arg_scope(applied_nnops, **kwargs):
 
     Parameters
     ----------
-    applied_nnops: List or tuple string, type, or NNOps
+    applied_nnops: List or tuple string, type, or NNOp
         a dictionary containing the current scope. When list_ops_or_scope is a
         dict, kwargs must be empty. When list_ops_or_scope is a list or tuple,
         then every op in it need to be decorated with @add_arg_scope to work.
@@ -116,10 +118,11 @@ def arg_scope(applied_nnops, **kwargs):
     __ARGS_SCOPE_STACK.pop()
 
 
-def nnops_initscope(func):
+def _nnops_initscope(func):
+    """ Add this decorator to __init__ of any NNet Op """
     if not callable(func) or func.__name__ != '__init__':
-        raise ValueError("nnops_initscope can be only applied to __init__ "
-                         "of NNOps instance.")
+        raise ValueError("_nnops_initscope can be only applied to __init__ "
+                         "of NNOp instance.")
     # getting the default arguments to check user intentionally override
     # default argument.
     spec = inspect.getargspec(func)
@@ -133,10 +136,10 @@ def nnops_initscope(func):
     @wraps(func)
     def _wrap_init(*args, **kwargs):
         self_arg = kwargs['self'] if 'self' in kwargs else args[0]
-        if not isinstance(self_arg, NNOps):
-            raise ValueError("nnops_initscope can be only applied to __init__ "
-                             "of NNOps instance.")
-        # get name of the NNOps
+        if not isinstance(self_arg, NNOp):
+            raise ValueError("_nnops_initscope can be only applied to __init__ "
+                             "of NNOp instance.")
+        # get name of the NNOp
         ops_name = kwargs.get('name', None)
         if ops_name is None:
             ops_name = "%s_%s" % (self_arg.__class__.__name__, uuid())
@@ -178,9 +181,7 @@ def _initialize_param(name, spec, shape):
     #####################################
     # 1. Shared variable, just check the shape.
     if K.is_trainable_variable(spec):
-        spec_shape = K.get_shape(spec)
-        if not isinstance(spec_shape, tuple):
-            spec_shape = K.eval(spec_shape)
+        spec_shape = spec.get_shape().as_list()
         if shape is None:
             shape = spec_shape
         elif tuple(shape) != tuple(spec_shape):
@@ -189,14 +190,14 @@ def _initialize_param(name, spec, shape):
                             (str(shape), str(spec_shape), str(name)))
     #####################################
     # 2. expression, we can only check number of dimension.
-    elif K.is_variable(spec):
+    elif K.is_tensor(spec):
         # We cannot check the shape here, Theano expressions (even shared
         # variables) do not have a fixed compile-time shape. We can check the
         # dimensionality though.
         # Note that we cannot assign a name here. We could assign to the
         # `name` attribute of the variable, but the user may have already
         # named the variable and we don't want to override this.
-        if shape is not None and K.ndim(spec) != len(shape):
+        if shape is not None and spec.get_shape().ndims != len(shape):
             raise Exception("parameter with name=%s has %d dimensions, should be "
                             "%d" % (name, spec.ndim, len(shape)))
     #####################################
@@ -214,27 +215,13 @@ def _initialize_param(name, spec, shape):
     return spec, shape
 
 
-def _recurrsive_extract_shape(x):
-    shape_list = []
-    if not isinstance(x, (tuple, list)):
-        x = [x]
-    for i in x:
-        if K.is_variable(i):
-            shape = K.get_shape(i)
-            if isinstance(shape, (tuple, list)):
-                shape_list.append(shape)
-        elif isinstance(i, (tuple, list)):
-            shape_list += _recurrsive_extract_shape(i)
-    return shape_list
-
-
 class NNConfig(object):
 
     def __init__(self, nnops):
         super(NNConfig, self).__init__()
         # name -> variables
-        if not isinstance(nnops, NNOps):
-            raise ValueError("nnops must be instance of odin.nnet.NNOps")
+        if not isinstance(nnops, NNOp):
+            raise ValueError("nnops must be instance of odin.nnet.NNOp")
         self._nnops = nnops
         self._input_desc = InputDescriptor()
         self._variables = OrderedDict()
@@ -277,7 +264,7 @@ class NNConfig(object):
             raise ValueError("This NNConfiguration required inputs: %s, but was given: "
                             "%s." % (str(self._input_desc), str(_)))
         # automatic fetch placeholder to replace raw description
-        inputs = [i if K.is_variable(i) else None for i in inputs]
+        inputs = [i if K.is_tensor(i) else None for i in inputs]
         # Don't create placeholders if user already gave the Input Tensor
         if any(i is None for i in inputs):
             inputs = [j if i is None else i
@@ -288,7 +275,7 @@ class NNConfig(object):
         if name in self._variables:
             return self._variables[name]
         elif name not in self.__dict__:
-            raise AttributeError('Cannot find attribute with name="%s", for NNOps '
+            raise AttributeError('Cannot find attribute with name="%s", for NNOp '
                                  'with name="%s"' % (name, self._nnops.name))
         return super(NNConfig, self).__getattr__(name)
 
@@ -302,7 +289,7 @@ class NNConfig(object):
             expected shape for given variable
         name: str
             name for the variable
-        nnops: NNOps
+        nnops: NNOp
             parent operator of this parameters
         roles: odin.basic.Variable
             categories of this variable
@@ -343,10 +330,10 @@ class NNConfig(object):
                 spec = K.variable(spec, name=name)
             else:
                 spec = spec[0]
-        elif K.is_variable(spec[0]):
+        elif K.is_tensor(spec[0]):
             shape = (shape[0] * nb_params,) if len(shape) == 1 \
                 else shape[:-1] + (shape[-1] * nb_params,)
-            spec = K.concatenate(spec, axis=-1)
+            spec = tf.concat(spec, axis=-1)
         # ====== assign annotations ====== #
         # only add role for trainable variables
         for i in roles:
@@ -380,7 +367,7 @@ class NNConfig(object):
 # Main Ops
 # ===========================================================================
 @add_metaclass(ABCMeta)
-class NNOps(object):
+class NNOp(object):
     """ Basics of all Neural Network operators
 
     Properties
@@ -388,7 +375,7 @@ class NNOps(object):
     name: str
         identity of the operator, this name is the scope for its operator
         and should be unique.
-    T: NNOps
+    T: NNOp
         transpose operator of this one (NOTE: some ops does not support
         transpose and raise NotImplementedError)
     parameters: list of variables
@@ -405,23 +392,23 @@ class NNOps(object):
 
     Override
     --------
-    _transpose(self): NNOps
-        return another NNOps which is transposed version of this ops
+    _transpose(self): NNOp
+        return another NNOp which is transposed version of this ops
 
     Note
     ----
-    All NNOps are pickle-able!
-    if NNOps is applied to a list of inputs, it will process each input seperated
+    All NNOp are pickle-able!
+    if NNOp is applied to a list of inputs, it will process each input seperated
     """
 
     def __init__(self, name=None, **kwargs):
-        super(NNOps, self).__init__()
+        super(NNOp, self).__init__()
         self._save_states = {}
 
         if name is None:
             name = "%s_%s" % (self.__class__.__name__, uuid())
         elif not is_string(name):
-            raise ValueError("name for NNOps must be string, but given name "
+            raise ValueError("name for NNOp must be string, but given name "
                              "has type: %s" % (name))
         self._name = str(name)
 
@@ -437,26 +424,26 @@ class NNOps(object):
         self._save_states = states
         for i, j in self._save_states.iteritems():
             setattr(self, i, j)
-        # ====== check exist NNOps ====== #
+        # ====== check exist NNOp ====== #
         name = self.name
         if name in get_all_nnops():
-            # compare 2 NNOps to make sure they are the same
+            # compare 2 NNOp to make sure they are the same
             nnops = get_all_nnops()[name]
             if type(nnops) == type(self):
                 for i, j in self._save_states.iteritems():
                     if i in nnops._save_states:
                         k = nnops._save_states[i]
                         if type(k) == type(j):
-                            if K.is_variable(j) and K.get_shape(k) != K.get_shape(j):
+                            if K.is_tensor(j) and k.get_shape() != j.get_shape():
                                 pass
                             else:
                                 continue
-                    raise RuntimeError("The pre-defined NNOps (%s) and the "
-                        "new NNOps (%s) is different on the attribute: '%s'; "
+                    raise RuntimeError("The pre-defined NNOp (%s) and the "
+                        "new NNOp (%s) is different on the attribute: '%s'; "
                         "%s != %s." % (str(nnops), str(self), i, str(j), str(k)))
             else:
-                raise RuntimeError("Found pre-defined NNOps of type=%s, and the "
-                                   "new NNOps with type=%s." % (type(nnops), type(self)))
+                raise RuntimeError("Found pre-defined NNOp of type=%s, and the "
+                                   "new NNOp with type=%s." % (type(nnops), type(self)))
         elif self._is_initialized:
             assign_new_nnops(self)
 
@@ -470,8 +457,8 @@ class NNOps(object):
         """ Return new ops which is transpose of this ops """
         if self._transpose_ops is None:
             self._transpose_ops = self._transpose()
-            if not isinstance(self._transpose_ops, NNOps):
-                raise ValueError("The _transposed method must return NNOps."
+            if not isinstance(self._transpose_ops, NNOp):
+                raise ValueError("The _transposed method must return NNOp."
                                  "but the returned object has type=%s" %
                                  str(type(self._transpose_ops)))
         return self._transpose_ops
@@ -503,7 +490,7 @@ class NNOps(object):
 
     @property
     def input(self):
-        """ Create list of placeholder to represent inputs of this NNOps
+        """ Create list of placeholder to represent inputs of this NNOp
         """
         return self._configuration.input
 
@@ -531,7 +518,7 @@ class NNOps(object):
             # otherwise, only save primitive types
             if isinstance(value, _PRIMITIVE_TYPES):
                 self._save_states[name] = value
-        return super(NNOps, self).__setattr__(name, value)
+        return super(NNOp, self).__setattr__(name, value)
 
     def __getattr__(self, name):
         # merge the attributes of ops wit its configuration
@@ -555,7 +542,7 @@ class NNOps(object):
 
     # ==================== interaction method ==================== #
     def apply(self, X, **kwargs):
-        with K.variable_scope(self.name):
+        with tf.variable_scope(self.name, reuse=self.is_initialized):
             # ====== initialize first ====== #
             # only select necessary arguments
             argspec = inspect.getargspec(self._initialize)
@@ -570,10 +557,11 @@ class NNOps(object):
             if not self._is_initialized:
                 self._initialize(**keywords)
                 self._is_initialized = True
-                # only assign new NNOps if it is initialized
+                # only assign new NNOp if it is initialized
                 assign_new_nnops(self)
             # ====== calculate and return outputs ====== #
-            return self._apply(X[0] if len(X) == 1 else X, **kwargs)
+            rets = self._apply(X[0] if len(X) == 1 else X, **kwargs)
+            return rets
 
     def __call__(self, X, **kwargs):
         return self.apply(X, **kwargs)
@@ -585,24 +573,24 @@ class NNOps(object):
 
     # ==================== Slicing ==================== #
     def __getitem__(self, key):
-        return NNSliceOps(self, key)
+        return NNSliceOp(self, key)
 
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.init.constant, NNConfig, NNOps)
+                    K.rand.constant, NNConfig, NNOp)
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
-class NNSliceOps(NNOps):
+class NNSliceOp(NNOp):
 
     def __init__(self, ops, slice):
-        if not isinstance(ops, NNOps):
-            raise ValueError('ops must be instance of NNOps, but was given argument '
+        if not isinstance(ops, NNOp):
+            raise ValueError('ops must be instance of NNOp, but was given argument '
                              'has %s' % str(type(ops)))
-        super(NNSliceOps, self).__init__()
+        super(NNSliceOp, self).__init__()
         self._ops = ops
         if not isinstance(slice, (tuple, list)):
             slice = [slice]
@@ -614,33 +602,9 @@ class NNSliceOps(NNOps):
 
     def _apply(self, X, **kwargs):
         y = self._ops.apply(X, **kwargs)
-        return_list = True
-        if not isinstance(y, (tuple, list)):
-            return_list = False
-            y = [y]
+        return_list = True if isinstance(y, (tuple, list)) else False
         # apply slice and calculate the shape
-        output = []
-        for i in y:
-            shape = K.get_shape(i)
-            i = i[self.slice]
-            # good to calculate new output shape
-            if isinstance(shape, (tuple, list)):
-                new_shape = []
-                for dim, idx in zip(shape, self.slice):
-                    if isinstance(idx, numbers.Number):
-                        dim = -1
-                    elif dim is not None and isinstance(idx, slice):
-                        dim = idx.indices(dim)
-                        dim = dim[1] - dim[0]
-                    # -1 mean delete that dimension because of int index
-                    if dim > 0 or dim is None:
-                        new_shape.append(dim)
-                # slice is not specified for all dimension
-                if len(new_shape) < K.ndim(i):
-                    new_shape += shape[len(self.slice):]
-                # add the new shape
-                K.add_shape(i, new_shape)
-            output.append(i)
+        output = [i[self.slice] for i in as_tuple(y)]
         # return output
         if return_list:
             return output
@@ -652,16 +616,16 @@ class NNSliceOps(NNOps):
                              self._ops.is_initialized, str(self.slice))
 
 
-class NNTransposeOps(NNOps):
+class NNTransposeOps(NNOp):
     """ TransposeOps
-    Create a transposed view of the origin NNOps
+    Create a transposed view of the origin NNOp
     """
 
     def __init__(self, ops):
         super(NNTransposeOps, self).__init__(name=ops.name + '_transpose')
-        if not isinstance(ops, NNOps):
+        if not isinstance(ops, NNOp):
             raise ValueError("NNTransposeOps can only be applied for instance of "
-                             "odin.nnet.NNOps, but was given type=%s" % str(type(ops)))
+                             "odin.nnet.NNOp, but was given type=%s" % str(type(ops)))
         self._transpose_ops = ops
 
     def _transpose(self):
@@ -670,8 +634,8 @@ class NNTransposeOps(NNOps):
 
     def _initialize(self, **kwargs):
         if not self._transpose_ops.is_initialized:
-            raise RuntimeError("The original NNOps with name:%s have not been "
-                               "initialized, you must call the original NNOps "
+            raise RuntimeError("The original NNOp with name:%s have not been "
+                               "initialized, you must call the original NNOp "
                                "first." % self._ops)
 
     def __str__(self):
@@ -684,12 +648,12 @@ class NNTransposeOps(NNOps):
 # ===========================================================================
 # Simple ops
 # ===========================================================================
-class Dense(NNOps):
+class Dense(NNOp):
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, num_units,
-                 W_init=K.init.glorot_uniform,
-                 b_init=K.init.constant(0),
+                 W_init=K.rand.glorot_uniform,
+                 b_init=K.rand.constant(0),
                  activation=K.linear,
                  **kwargs):
         super(Dense, self).__init__(**kwargs)
@@ -712,17 +676,13 @@ class Dense(NNOps):
                 shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
-        input_shape = K.get_shape(X)
         # calculate projection
         activation = K.dot(X, self.W)
         # add the bias
         if self.b_init is not None:
             activation = activation + self.b
-        # set shape for output
-        K.add_shape(activation, input_shape[:-1] + (self.num_units,))
         # Nonlinearity might change the shape of activation
-        activation = self.activation(activation)
-        return activation
+        return self.activation(activation)
 
 
 class TransposeDense(NNTransposeOps):
@@ -735,19 +695,15 @@ class TransposeDense(NNTransposeOps):
                 shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
-        input_shape = K.get_shape(X)
         # calculate projection
-        activation = K.dot(X, K.transpose(self.T.W))
+        activation = K.dot(X, tf.transpose(self.T.W))
         if self.T.b_init is not None:
             activation = activation + self.b
-        # set shape for output
-        K.add_shape(activation, input_shape[:-1] + (self.num_units,))
         # Nonlinearity might change the shape of activation
-        activation = self.T.activation(activation)
-        return activation
+        return self.T.activation(activation)
 
 
-class ParametricRectifier(NNOps):
+class ParametricRectifier(NNOp):
     """ This class is adpated from Lasagne:
     Original work Copyright (c) 2014-2015 lasagne contributors
     All rights reserved.
@@ -790,8 +746,8 @@ class ParametricRectifier(NNOps):
     (3, 28)
     """
 
-    @nnops_initscope
-    def __init__(self, alpha_init=K.init.constant(0.25),
+    @_nnops_initscope
+    def __init__(self, alpha_init=K.rand.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)
         self.alpha_init = alpha_init

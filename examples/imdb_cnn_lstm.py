@@ -1,11 +1,12 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-os.environ['ODIN'] = 'float32,cpu,tensorflow,seed=12082518'
+os.environ['ODIN'] = 'float32,cpu,seed=12082518'
 from six.moves import cPickle
 from itertools import chain
 
 import numpy as np
+import tensorflow as tf
 
 from odin import (fuel as F,
                   nnet as N,
@@ -63,7 +64,7 @@ f = N.Sequence([
         N.Dense(lstm_output_size, activation=K.linear, name='forgetgate'), # forget-gate
         N.Dense(lstm_output_size, activation=K.linear, name='cellupdate'), # cell-update
         N.Dense(lstm_output_size, activation=K.linear, name='outgate') # output-gate
-    ], merge_function=K.concatenate),
+    ], merge_function=tf.concat),
     N.LSTM(num_units=lstm_output_size, input_mode='skip')[:, -1],
     N.Dense(1, activation=K.sigmoid)
 ], debug=True)

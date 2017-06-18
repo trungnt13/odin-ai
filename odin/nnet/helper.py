@@ -4,18 +4,18 @@ import types
 import inspect
 
 import numpy as np
+import tensorflow as tf
 
 from odin import backend as K
 from odin.utils import as_tuple, is_number
 from odin.utils.decorators import functionable
 
-
-from .base import NNOps
+from .base import NNOp
 
 
 def _shrink_kwargs(op, kwargs):
     """ Return a subset of kwargs that given op can accept """
-    if hasattr(op, '_apply'): #NNOps
+    if hasattr(op, '_apply'): #NNOp
         op = op._apply
     elif isinstance(op, functionable): # functionable
         op = op.function
@@ -27,15 +27,15 @@ def _shrink_kwargs(op, kwargs):
     return keywords
 
 
-class HelperOps(NNOps):
+class HelperOps(NNOp):
     """ HelperOps
-    In general, helper is the operator that take in a list of NNOps
+    In general, helper is the operator that take in a list of NNOp
     and make an unique output from them.
 
     Parameters
     ----------
-    ops: NNOps or callable
-        list or single NNOps, or callable
+    ops: NNOp or callable
+        list or single NNOp, or callable
 
     """
 
@@ -58,9 +58,9 @@ class Merge(HelperOps):
     """
     Parameters
     ----------
-    ops: list of NNOps
-        list of inputs operator, we expect one input for each NNOps,
-        however, if only one 1 input is given, we apply all NNOps on the
+    ops: list of NNOp
+        list of inputs operator, we expect one input for each NNOp,
+        however, if only one 1 input is given, we apply all NNOp on the
         same input.
     merge_function: callable
         function that convert a list of variables into 1 variable
@@ -76,45 +76,9 @@ class Merge(HelperOps):
         results = [op(x, **_shrink_kwargs(op, kwargs))
                    for x, op in zip(X, self.ops)]
         if callable(self.merge_function):
-            output = self.merge_function(results)
-            for i in as_tuple(output):
-                if not isinstance(K.get_shape(i), tuple):
-                    raise Exception('returned output from merge_function lost shape '
-                                    'information.')
-            return output
+            return self.merge_function(results)
         else:
             return results
-
-
-class Switcher(NNOps):
-    """ Simple Ops, perform specific Ops while training and other one for
-    deploying
-    """
-
-    def __init__(self, training, deploying, **kwargs):
-        super(Switcher, self).__init__([], **kwargs)
-        if not callable(training) or not callable(deploying):
-            raise ValueError('training and deploying must be callable')
-        self.training = training
-        self.deploying = deploying
-
-    def _apply(self, x, **kwargs):
-        is_training = False
-        for i in as_tuple(x):
-            if K.is_variable(i) and K.is_training():
-                is_training = True
-        if is_training:
-            self.ops = [self.training]
-            return self.training(x, **_shrink_kwargs(self.training, kwargs))
-        else:
-            self.ops = [self.deploying]
-            return self.deploying(x, **_shrink_kwargs(self.deploying, kwargs))
-
-    def _transpose(self):
-        if hasattr(self.training, 'T') and hasattr(self.deploying, 'T'):
-            return Switcher(self.training.T, self.deploying.T,
-                            name=self.name + '_transpose')
-        raise Exception('One of training or deploying ops do not support transpose.')
 
 
 class Sequence(HelperOps):
@@ -135,9 +99,9 @@ class Sequence(HelperOps):
 
     Note
     ----
-    You can specify kwargs for a specific NNOps using `params` keywords,
+    You can specify kwargs for a specific NNOp using `params` keywords,
     for example: `params={1: {'noise': 1}}` will applying noise=1 to the
-    1st NNOps, or `params={(1, 2, 3): {'noise': 1}}` to specify keywords
+    1st NNOp, or `params={(1, 2, 3): {'noise': 1}}` to specify keywords
     for the 1st, 2nd, 3rd Ops.
 
     Example
@@ -166,8 +130,8 @@ class Sequence(HelperOps):
         # ====== print debug ====== #
         if self.debug:
             print('**************** Sequences: %s ****************' % self.name)
-            print('Is training:', bool(K.is_training()))
-            print('First input:', K.get_shape(x))
+            print('Is training:', K.get_value(K.is_training()))
+            print('First input:', x.get_shape().as_list())
         # ====== applying ====== #
         all_outputs = []
         for op in self.ops:
@@ -179,8 +143,8 @@ class Sequence(HelperOps):
             # print after finnish the op
             if self.debug:
                 print(' ', op.name if isinstance(op, functionable) else str(op), '->',
-                    [K.get_shape(i) for i in x]
-                    if isinstance(x, (tuple, list)) else K.get_shape(x))
+                    [i.get_shape().as_list() for i in x]
+                    if isinstance(x, (tuple, list)) else x.get_shape().as_list())
         # end debug
         if self.debug:
             print()

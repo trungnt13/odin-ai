@@ -1,59 +1,66 @@
 """Annotated computation graph management."""
 from __future__ import print_function, absolute_import, division
 
-import os
-import warnings
+import re
+from six import string_types
 from contextlib import contextmanager
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import numpy as np
 
 import tensorflow as tf
-from tensorflow.contrib.framework import is_tensor as _is_tensor
 from tensorflow.contrib.distributions import Distribution as _Distribution
-from tensorflow import variable_scope as _tf_variable_scope
 
-from odin.basic import (add_role, has_roles, as_shape_tuple, is_training,
-                        add_shape, get_shape, Auxiliary, Parameter,
-                        output_roles)
+from odin.config import get_session
 from odin.utils.decorators import singleton
-from odin.utils import dict_union, as_list, flatten_list
-from odin.config import CONFIG
+from odin.utils import dict_union, as_list, flatten_list, as_tuple
 
-FLOATX = CONFIG.floatX
-NPROCESSORS = CONFIG['device_info']['n']
-
-# ===========================================================================
-# Initialize session
-# ===========================================================================
-__session_args = {
-    'intra_op_parallelism_threads': NPROCESSORS,
-    'allow_soft_placement': True,
-    'log_device_placement': False,
-}
-if CONFIG['device'] == 'gpu':
-    if CONFIG['cnmem'] > 0:
-        __session_args['gpu_options'] = tf.GPUOptions(
-            per_process_gpu_memory_fraction=CONFIG['cnmem'],
-            allow_growth=False)
-    else:
-        __session_args['gpu_options'] = tf.GPUOptions(
-            allow_growth=True)
-_SESSION = tf.InteractiveSession(config=tf.ConfigProto(**__session_args))
-
-
-def set_session(session):
-    global _SESSION
-    _SESSION = session
-
-
-def get_session():
-    return _SESSION
+from .roles import (has_roles, Auxiliary, Parameter)
 
 
 # ===========================================================================
 # Basic query
 # ===========================================================================
+def __init_training_var():
+    x = tf.Variable(initial_value=False, dtype=tf.bool, name='IsTraining',
+                    trainable=False)
+    get_session().run(x.initializer)
+    return x
+__IS_TRAINING = defaultdict(__init_training_var)
+
+
+def is_training(graph=None):
+    if graph is None:
+        graph = get_session().graph
+    return __IS_TRAINING[graph]
+
+
+def set_training(is_training, graph=None, return_ops=False):
+    if graph is None:
+        graph = get_session().graph
+    return set_value(__IS_TRAINING[graph], bool(is_training),
+                     return_ops=return_ops)
+
+
+def cond_training(train_fn, infer_fn,
+                  train_dependencies=None, infer_dependencies=None,
+                  name="ConditionalTraining"):
+    with tf.variable_scope(name):
+        if train_dependencies is not None:
+            def _train_fn():
+                with tf.control_dependencies(as_tuple(train_dependencies)):
+                    return train_fn()
+        else:
+            _train_fn = train_fn
+        if infer_dependencies is not None:
+            def _infer_fn():
+                with tf.control_dependencies(as_tuple(infer_dependencies)):
+                    return infer_fn()
+        else:
+            _infer_fn = infer_fn
+        return tf.cond(__IS_TRAINING, fn1=_train_fn, fn2=_infer_fn)
+
+
 def is_placeholder(variable):
     """Check if variable is a user-provided graph input.
 
@@ -84,16 +91,68 @@ def is_trainable_variable(variable):
 
     """
     if (isinstance(variable, tf.Variable) and
-            variable.op.node_def.op[:8] == "Variable"):
+            variable.op.node_def.op == "VariableV2"):
         return variable in variable.graph.get_collection('trainable_variables')
     return False
 
 
-def is_variable(variable):
+def is_distribution(x):
+    return isinstance(x, _Distribution)
+
+
+def is_tensor(variable, inc_distribution=True, inc_variable=True):
     """ a variable is any tensor variable in (e.g. placeholder,
     trainable_variable, intermediate tensor, ...)
+    All `TensorType` includes:
+    * ops.Tensor
+    * sparse_tensor.SparseTensor
+    * variables.Variable
     """
-    return _is_tensor(variable) or isinstance(variable, _Distribution)
+    _ = tf.contrib.framework.is_tensor(variable)
+    if not inc_variable:
+        _ &= (not isinstance(variable, tf.Variable))
+    if inc_distribution:
+        _ |= is_distribution(variable)
+    return _
+
+
+def set_shape(tensor, shape):
+    """ This function will filling the missing shape information
+    of given tensor
+    """
+    if not is_tensor(tensor):
+        raise ValueError('tensor must be instance of `Tensor`.')
+    # ====== Test ====== #
+    ndims = tensor.get_shape().ndims
+    shape = as_tuple(shape)
+    if ndims != len(shape):
+        raise ValueError("The tensor has %d dimensions, but the given shape "
+                         "has %d dimension." % (ndims, len(shape)))
+    # ====== DO it ====== #
+    old_shape = tensor.get_shape()
+    new_shape = []
+    for old, new in zip(old_shape, shape):
+        old_value = old.value
+        if isinstance(new, tf.Dimension):
+            new = new.value
+        # matching old and new values
+        if old_value is not None and new is not None:
+            if old_value != new:
+                raise ValueError("Known shape information mismatch, from tensorflow"
+                    ":%s, and given shape:%s." %
+                    (str(old_shape.as_list()), str(shape)))
+            else:
+                new_shape.append(old_value)
+        elif old_value is None and new is not None:
+            new_shape.append(new)
+        elif old_value is not None and new is None:
+            new_shape.append(old_value)
+        elif old is None and new is None:
+            new_shape.append(old)
+        else:
+            new_shape.append(None)
+    tensor.set_shape(new_shape)
+    return tensor
 
 
 # ===========================================================================
@@ -105,100 +164,213 @@ def get_value(x):
     return x.eval(session=get_session())
 
 
-def set_value(x, value):
+def set_value(x, value, return_ops=False, name='SetValue'):
     '''Sets the value of a tensor variable,
     from a Numpy array.
+
+    Parameters
+    ----------
+    x: `Tensor`
+    value: real value
+    return_ops: bool
+        if True, return assign Op and feed_dict instead of running
+        the Op directly
     '''
-    value = np.asarray(value, dtype=x.dtype.as_numpy_dtype)
-    if hasattr(x, '_assign_placeholder'):
-        assign_placeholder = x._assign_placeholder
-        assign_op = x._assign_op
-    else:
-        assign_placeholder = tf.placeholder(dtype=x.dtype.base_dtype, shape=value.shape)
-        assign_op = x.assign(assign_placeholder)
-        x._assign_placeholder = assign_placeholder
-        x._assign_op = assign_op
-    get_session().run(assign_op, feed_dict={assign_placeholder: value})
-
-
-# ===========================================================================
-# VARIABLE MANIPULATION
-# ===========================================================================
-_CREATED_VARIABLE = {}
-# var id start from 0 and increasing to make sure no duplicate variable
-_VAR_ID = 0
-
-
-def variable_scope(scope):
-    return _tf_variable_scope(scope, reuse=False)
-
-
-def variable(value, dtype=FLOATX, name=None):
-    '''Instantiates a tensor.
-
-    # Arguments
-        value: numpy array, initial value of the tensor.
-        dtype: tensor type.
-        name: optional name string for the tensor.
-
-    # Returns
-        Tensor variable instance.
-    '''
-    # ensure unique name
-    if name is None:
-        global _VAR_ID; name = 'VAR_%d' % _VAR_ID; _VAR_ID += 1
-    #### Found cached variable, just load new value into it
-    current_scope = tf.get_variable_scope().name
-    full_name = name if len(current_scope) == 0 else current_scope + '/' + name
-    if full_name in _CREATED_VARIABLE:
-        variable = _CREATED_VARIABLE[full_name]
-        if get_shape(variable) != value.shape:
-            raise Exception('Found pre-defined variable with scope="%s", name="%s" '
-                            'and shape="%s", but the new value has shape="%s"' %
-                            (current_scope, name, get_shape(variable), value.shape))
-        else:
-            print("[WARNING] Load new value to the old variable with name:", full_name)
-        set_value(variable, value)
-        return variable
-    #### create totally new variable
-    variable = tf.Variable(value, dtype=dtype, name=name)
-    if tf.get_default_graph() is _SESSION.graph:
-        _SESSION.run(variable.initializer)
-    else:
-        raise Exception("The default tensorflow session have not been associated "
-                        "with ODIN session, hence, cannot initialized the variable."
-                        "Consider using set_session() to manually assign current "
-                        "ODIN session.")
-    add_shape(variable, tuple(variable.get_shape().as_list()))
-    # ====== save all created variable ====== #
-    _CREATED_VARIABLE[variable.name.split(':')[0]] = variable
-    return variable
-
-
-def placeholder(shape, dtype=FLOATX, name=None):
-    shape = as_shape_tuple(shape)
-    # ====== Modify add name prefix ====== #
-    placeholder = tf.placeholder(dtype=dtype, shape=shape, name=name)
-    # store the predefined shape of placeholder
-    add_shape(placeholder, shape)
-    return placeholder
-
-
-def as_tensor_variable(x, name=None, dtype=None):
-    if dtype is None:
-        dtype = x.dtype
-    x = tf.convert_to_tensor(x, name=name, dtype=dtype)
+    if isinstance(value, np.ndarray):
+        value = np.asarray(value, dtype=x.dtype.as_numpy_dtype)
+    elif is_tensor(value):
+        value = tf.cast(value, dtype=x.dtype.base_dtype)
+    assign_op = tf.assign(x, value, name=name)
+    if return_ops:
+        return assign_op
+    get_session().run(assign_op)
     return x
 
 
-def constant(value, dtype=None, shape=None, name='Const'):
-    x = tf.constant(value, dtype=dtype, shape=shape, name=name)
-    add_shape(x, x.get_shape())
-    return x
+# ===========================================================================
+# Session helper
+# ===========================================================================
+def _filter_string(criterion, x):
+    if isinstance(criterion, string_types):
+        return criterion == x
+    elif callable(criterion):
+        return criterion(x)
+    elif criterion is None:
+        return True
+    raise ValueError("Unknown criterion for filtering.")
+
+
+def get_graph():
+    return get_session().graph
+
+
+_ops_ID = {}
+
+
+def get_operations(type=None, device=None, sort=True, scope=None):
+    """ Return list of all operations in default graph
+    The follow attributes can be access within the operation:
+     * name : string
+     * type : string, type of the op (e.g. `"MatMul"`).
+     * device:  string name of the device to which this op has been assigned
+     * _inputs : list of `Tensor`
+     * _outputs : list of `Tensor`
+     * _control_inputs : Before this op is executed, the operations in
+         `control_inputs` have finished executing.
+     * graph : `Graph` that contains this operation
+     * node_def : serialized `NodeDef` representation of this operation.
+     * op_def : `OpDef` proto that represents the type of this op.
+     * traceback : call stack from when this operation was constructed.
+
+    Some important op type:
+     * "Placeholder"
+     * "VariableV2"
+     * "Const"
+     * "Assign"
+     *
+    """
+    ops = get_graph().get_operations()
+    # update OpID
+    if len(_ops_ID) != len(ops):
+        for ID, op in get_graph()._nodes_by_id.iteritems():
+            if op not in _ops_ID:
+                _ops_ID[op] = ID
+    # filter out some op
+    if type is not None:
+        ops = [o for o in ops if _filter_string(type, o.type)]
+    if device is not None:
+        ops = [o for o in ops if _filter_string(device, o.device)]
+    if scope is not None:
+        scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
+        ops = [o for o in ops if len(scope_name_pattern.findall(o.name))]
+    # sorted by OpID
+    if sort and len(ops) > 1:
+        ops = sorted(ops, key=lambda x: _ops_ID[x])
+    return ops
+
+
+def get_operationID(op):
+    ops = get_graph().get_operations()
+    # update OpID
+    if len(_ops_ID) != len(ops):
+        for ID, op in get_graph()._nodes_by_id.iteritems():
+            if op not in _ops_ID:
+                _ops_ID[op] = ID
+    return _ops_ID[op]
+
+
+def get_tensor(types=['variable', 'placeholder', 'tensor'],
+               device=None, scope=None):
+    support_types = ['variable', 'placeholder', 'tensor']
+    if any(t not in support_types for t in types):
+        raise ValueError("All suppported types include: %s" % str(support_types))
+    ops = get_operations(device=device, scope=scope, sort=False)
+    allvars = []
+    for o in ops:
+        allvars += o._inputs + o._outputs
+        for i in o._control_inputs:
+            allvars += i._inputs + i._outputs
+    allvars = list(set(allvars))
+    # ====== filter out unsupport types ====== #
+    # if 'tensor' not in types:
+    allvars = [v for v in allvars if is_placeholder(v)]
+    return allvars
 
 
 # ===========================================================================
 # ComputationGraph
+# ===========================================================================
+class Function(object):
+    """ Two way to call this Function
+    f(x1, x2, x3) or f('x1'=x1, 'x2'=x2, 'x3'=x3)
+    Parameters
+    ----------
+    inputs: list of `tf.placeholder` or `tf.Variable`
+    outputs: list of `tf.Tensor`
+    updates: list, or dict
+        mapping from `Tensor` to its new value which is `Tensor` or
+        real value.
+    defaults: dict
+        mapping from `Variable` or `placeholder` to its default values.
+    """
+
+    def __init__(self, inputs, outputs, updates=[], defaults={}):
+        # ====== validate input ====== #
+        if isinstance(inputs, dict):
+            self.inputs_name = inputs.keys()
+            inputs = inputs.values()
+        elif not isinstance(inputs, (tuple, list)):
+            inputs = [inputs]
+        self.inputs = flatten_list(inputs, level=None)
+        if not hasattr(self, 'inputs_name'):
+            self.inputs_name = [i.name.split(':')[0] for i in self.inputs]
+        # ====== defaults ====== #
+        defaults = dict(defaults)
+        self.defaults = defaults
+        # ====== validate outputs ====== #
+        return_list = True
+        if not isinstance(outputs, (tuple, list)):
+            outputs = (outputs,)
+            return_list = False
+        self.outputs = flatten_list(list(outputs), level=None)
+        self.return_list = return_list
+        # ====== validate updates ====== #
+        if isinstance(updates, dict):
+            updates = updates.items()
+        with tf.control_dependencies(self.outputs):
+            # create updates ops
+            if not isinstance(updates, tf.Operation):
+                updates_ops = []
+                for update in updates:
+                    if isinstance(update, (tuple, list)):
+                        p, new_p = update
+                        updates_ops.append(tf.assign(p, new_p))
+                    else: # assumed already an assign op
+                        updates_ops.append(update)
+                updates_ops = tf.group(*updates_ops)
+            else: # already an tensorflow Ops
+                updates_ops = updates
+            # annotated updates from Graph
+            updates_graph = ComputationGraph(outputs).updates
+            if len(updates_graph) > 0:
+                updates_graph = tf.group(*[tf.assign(v, new_v)
+                    for v, new_v in updates_graph.iteritems()])
+                updates_ops = tf.group(*[updates_ops, updates_graph])
+            # merged updated
+            self.updates_ops = updates_ops
+
+    def __call__(self, *inputs, **kwargs):
+        # dictionary as inputs
+        if len(kwargs) == len(self.inputs_name):
+            inputs = [kwargs[i] for i in self.inputs_name]
+        # ====== create feed_dict ====== #
+        feed_dict = {}
+        for tensor, value in zip(self.inputs, inputs):
+            feed_dict[tensor] = value
+        feed_dict.update(self.defaults)
+        # ====== run the output ====== #
+        session = get_session()
+        updated = session.run(self.outputs + [self.updates_ops],
+                              feed_dict=feed_dict)
+        # ====== get the results ====== #
+        outputs = updated[:len(self.outputs)]
+        if not self.return_list:
+            outputs = outputs[0]
+        return outputs
+
+
+def function(inputs, outputs, updates=[], defaults={}):
+    # ====== check inputs ====== #
+    if inputs is None or len(as_tuple(inputs)) == 0:
+        inputs = ComputationGraph(outputs).inputs
+        print("[WARNING] inputs haven't specified, auto-inferred from Graph of "
+              "outputs, graph inputs: %s" % ', '.join([str(i) for i in inputs]))
+    return Function(inputs=inputs, outputs=outputs,
+                    updates=updates, defaults=defaults)
+
+
+# ===========================================================================
+# Computational graph
 # ===========================================================================
 @singleton
 class ComputationGraph(object):
@@ -262,7 +434,7 @@ class ComputationGraph(object):
         _travelled_up = [] # to prevent recursive ops
         _travelled_down = [] # to prevent recursive ops
 
-        def get_all_variables_trace_down(x):
+        def get_all_tensor_trace_down(x):
             """ recursively travel down the inputs tree to get all
             variables """
             variables = []
@@ -276,10 +448,10 @@ class ComputationGraph(object):
             inputs = op._inputs
             variables += inputs
             for i in inputs:
-                variables += get_all_variables_trace_down(i)
+                variables += get_all_tensor_trace_down(i)
             return variables
 
-        def get_all_variables_trace_up(x):
+        def get_all_tensor_trace_up(x):
             """ travel up the outputs tree to get all variables"""
             variables = []
             # ====== check travelled ops ====== #
@@ -293,17 +465,19 @@ class ComputationGraph(object):
                 outputs = op._outputs
                 variables += inputs + outputs
                 for o in outputs:
-                    variables += get_all_variables_trace_up(o)
+                    variables += get_all_tensor_trace_up(o)
             return variables
 
-        def create_variables_iter(outputs):
+        def create_tensor_iter(outputs):
+            # if specific outputs is given
             if len(outputs) > 0:
                 for o in outputs:
                     # travese each node of graph
-                    all_variables = get_all_variables_trace_down(o) + \
-                        get_all_variables_trace_up(o)
+                    all_variables = get_all_tensor_trace_down(o) + \
+                        get_all_tensor_trace_up(o)
                     for v in all_variables:
                         yield v
+            # get all variables and tensor within the graph
             else:
                 graph = get_session().graph
                 all_ops = graph.get_operations()
@@ -317,7 +491,6 @@ class ComputationGraph(object):
         variables = shared_outputs
         trainable_variables = list(shared_outputs)
         inputs = []
-        # if the list of outputs is specified
         # ====== travese each node of graph ====== #
         # first get all variables
         global_vars = {}
@@ -329,10 +502,10 @@ class ComputationGraph(object):
             for v in get_session().graph.get_collection('variables'):
                 global_vars[v.name] = v
         # then iterate over all tensor
-        for v in create_variables_iter(usual_outputs):
+        for v in create_tensor_iter(usual_outputs):
             if v.name in global_vars:
                 variables.append(global_vars[v.name])
-            if _is_tensor(v):
+            if is_tensor(v):
                 variables.append(v)
         variables = list(set(variables + usual_outputs))
         # sorted by Ops ID in _nodes=
@@ -350,7 +523,7 @@ class ComputationGraph(object):
                 # updates
                 _ = getattr(v.tag, 'updates', OrderedDict())
                 _ = OrderedDict([(i, j) for i, j in _.iteritems()
-                                 if is_variable(i)])
+                                 if is_tensor(i)])
                 updates = dict_union(updates, _)
                 # auxiliary_variables
                 for _ in getattr(v.tag, 'auxiliary_variables', []):

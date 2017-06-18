@@ -7,9 +7,9 @@ import functools
 from types import FunctionType
 
 import numpy as np
+import tensorflow as tf
 
 from odin import backend as K
-from odin.config import get_floatX
 from odin.utils import (is_lambda, is_number, get_module_from_path, is_string,
                         as_tuple, ShapeRef, DtypeRef)
 from odin.utils.decorators import functionable
@@ -31,13 +31,13 @@ def _check_dtype(dtype):
     if callable(dtype): return functionable(dtype)
     # ====== check dtype ====== #
     if dtype is None:
-        dtype = get_floatX()
+        dtype = K.floatX
     elif isinstance(dtype, np.dtype) or is_string(dtype):
         dtype = str(dtype)
     elif isinstance(dtype, VariableDescriptor):
         dtype = DtypeRef(dtype)
-    else:
-        dtype = K.get_dtype(dtype, string=True)
+    elif isinstance(dtype, tf.DType):
+        dtype = str(dtype.as_numpy_dtype)
     return dtype
 
 
@@ -82,10 +82,10 @@ class VariableDescriptor(object):
         self._name = name if name is None else str(name)
         # Given a TensorVariabe, we don't want to pickle TensorVariable,
         # so copy all necessary information
-        if K.is_variable(shape):
+        if K.is_tensor(shape):
             if dtype is None:
-                self._dtype = K.get_dtype(shape, string=True)
-            self._shape = K.get_shape(shape)
+                self._dtype = str(shape.dtype.as_numpy_dtype)
+            self._shape = shape.get_shape().as_list()
         # input the InputDescriptor directly
         elif isinstance(shape, VariableDescriptor):
             self._shape = ShapeRef(shape)
@@ -113,14 +113,15 @@ class VariableDescriptor(object):
     def set_placeholder(self, plh):
         if not K.is_placeholder(plh):
             raise ValueError("a placholder must be specified.")
-        if K.get_shape(plh) == self.shape and \
-        K.get_dtype(plh, string=True) == self.dtype:
+        if plh.get_shape().as_list() == self.shape and \
+        str(plh.dtype.as_numpy_dtype) == self.dtype:
             self.__placeholder = plh
         else:
             raise ValueError("This VariableDescriptor require input with shape=%s,"
                              "and dtype=%s, but given a placholder with shape=%s, "
                              "dtype=%s." % (str(self.shape), self.dtype,
-                                str(K.get_shape(plh)), K.get_dtype(plh, string=True)))
+                                str(plh.get_shape().as_list()),
+                                 str(plh.dtype.as_numpy_dtype)))
         return self
 
     @property
@@ -167,9 +168,10 @@ class VariableDescriptor(object):
 
     def __cmp__(self, other):
         # ====== compare to a TensorVariable ====== #
-        if K.is_variable(other):
+        if K.is_tensor(other):
             other = VariableDescriptor(
-                shape=K.get_shape(other), dtype=K.get_dtype(other, string=True))
+                shape=other.get_shape().as_list(),
+                dtype=str(other.dtype.as_numpy_dtype))
         # ====== compare to a InputDescriptor ====== #
         if isinstance(other, VariableDescriptor):
             if _shape_compare(self.shape, other.shape) \
@@ -473,7 +475,7 @@ class ModelDescriptor(object):
         n = 0
         for p in self.parameters:
             if K.is_trainable_variable(p):
-                n += np.prod(K.get_shape(p)).astype('int32')
+                n += np.prod(p.get_shape().as_list()).astype('int32')
         return n
 
     @property
@@ -536,9 +538,9 @@ class ModelDescriptor(object):
             # get the input shape
             input_desc = []
             for i in inputs:
-                if K.is_variable(i): # TensorVariable
-                    shape = K.get_shape(i)
-                    dtype = K.get_dtype(i, string=True)
+                if K.is_tensor(i): # TensorVariable
+                    shape = i.get_shape().as_list()
+                    dtype = str(i.dtype.as_numpy_dtype)
                     input_desc.append(
                         VariableDescriptor(shape=shape, dtype=dtype, name=i.name))
                 elif isinstance(i, (tuple, list)): # Shape tuple
@@ -576,7 +578,7 @@ class ModelDescriptor(object):
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):
-                if K.is_variable(j):
+                if K.is_tensor(j):
                     model_inputs[i] = j
         # ====== call the function ====== #
         argspecs = inspect.getargspec(self._func)

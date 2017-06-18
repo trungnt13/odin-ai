@@ -1,13 +1,98 @@
 from __future__ import division, absolute_import
 
+import numpy as np
+import tensorflow as tf
+
 from odin import backend as K
-from odin.basic import ConvKernel, Bias
-from odin.utils import as_tuple
-from odin.utils.shape_calculation import get_conv_output_shape, get_deconv_output_shape
-from .base import NNOps, NNTransposeOps, nnops_initscope
+from odin.utils import as_tuple, is_string
+from odin.backend.role import ConvKernel, Bias
+from .base import NNOp, NNTransposeOps, _nnops_initscope
 
 
-class Conv(NNOps):
+# ===========================================================================
+# Helper
+# ===========================================================================
+def __get_deconv_shape_1axis(n, kernel_shape, border_mode,
+                             subsample, dilation=1):
+    if None in [n, kernel_shape, border_mode,
+                subsample, dilation]:
+        return None
+    if dilation != 1:
+        raise ValueError("Deconvolution with dilation != 1 is not supported.")
+    # ====== upsample ====== #
+    if subsample != 1:
+        n = n * subsample
+    # ====== padding ====== #
+    if isinstance(border_mode, str):
+        border_mode = border_mode.lower()
+    if border_mode == "half" or border_mode == "same":
+        n = n
+    elif border_mode == "full": # M + N - 1
+        n += 1 - kernel_shape
+    elif border_mode == "valid": # M - N + 1
+        n += max(kernel_shape - subsample, 0)
+    elif border_mode >= 0:
+        n += max(kernel_shape - subsample, 0) - border_mode
+    else:
+        raise ValueError("border_mode must be >= 0")
+    return n
+
+
+def get_deconv_output_shape(image_shape, kernel_shape,
+                            border_mode, subsample,
+                            filter_dilation=None):
+    """ Invert the process of calculating output shape for convolution
+    (Deconvolution, or TransposedConvolution)
+
+    Parameters
+    ----------
+    image_shape: tuple of int (symbolic or numeric) corresponding to the input
+        order: (samples, conv_dim1, conv_dim2, conv_dim3, ..., input_depth)
+        (i.e tensorflow-NHWC format)
+    kernel_shape: tuple of int (symbolic or numeric) corresponding to the
+        order: (kernel_dim1, kernel_dim2, kernel_dim3, ..., input_depth, out_depth)
+        (i.e tensorflow-NHWC format)
+    border_mode: string, int (symbolic or numeric) or tuple of int (symbolic
+        or numeric). If it is a string, it must be 'valid', 'half' or 'full'.
+        If it is a tuple, its two (or three) elements respectively correspond
+        to the padding on height and width (and possibly depth) axis.
+    subsample: tuple of int (symbolic or numeric). Its or three elements
+        espectively correspond to the subsampling on height and width (and
+        possibly depth) axis.
+    filter_dilation: tuple of int (symbolic or numeric). Its two elements
+        correspond respectively to the dilation on height and width axis.
+
+    Returns
+    -------
+    output_shape: tuple of int corresponding to the output image shape. Its
+        four element must correspond respectively to: batch size, number of
+        output channels, height and width of the image. None where undefined.
+
+    """
+    # ======  convert tensorflow shape to theano shape ====== #
+    image_shape = (image_shape[0], image_shape[-1]) + tuple(image_shape[1:-1])
+    kernel_shape = (kernel_shape[-1], kernel_shape[-2]) + tuple(kernel_shape[:-2])
+    # ====== infer shape ====== #
+    bsize, imshp = image_shape[0], image_shape[2:]
+    outkern, kshp = kernel_shape[1], kernel_shape[2:]
+    if filter_dilation is None:
+        filter_dilation = np.ones(len(subsample), dtype='int')
+    if isinstance(border_mode, tuple):
+        out_shp = tuple(__get_deconv_shape_1axis(
+            imshp[i], kshp[i], border_mode[i],
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    else:
+        out_shp = tuple(__get_deconv_shape_1axis(
+            imshp[i], kshp[i], border_mode,
+            subsample[i], filter_dilation[i]) for i in range(len(subsample)))
+    # ====== convert theano to tensorflow shape ====== #
+    return (bsize, ) + out_shp + (outkern,)
+
+
+# ===========================================================================
+# Ops
+# ===========================================================================
+class Conv(NNOp):
     """ Convolutional Operator
 
     Performs a 2D or 3D convolution on its input and optionally adds a bias and
@@ -21,7 +106,7 @@ class Conv(NNOps):
     filter_size : int or iterable of int
         tuple specifying the size of the filters.
 
-    stride : int or iterable of int
+    strides : int or iterable of int
         specifying the stride of the convolution operation.
 
     pad : int, iterable of int, 'full', 'same' or 'valid' (default: 'valid')
@@ -81,24 +166,20 @@ class Conv(NNOps):
         adjacent filter elements.
 
     **kwargs
-        Any additional keyword arguments are passed to the `NNOps` superclass.
-
-    Attributes
-    ----------
-    W : Theano shared variable or expression
-        Variable or expression representing the filter weights.
-
-    b : Theano shared variable or expression
-        Variable or expression representing the biases.
+        Any additional keyword arguments are passed to the `NNOp` superclass.
 
     Note
     ----
-    This Ops can be used for both 2D (images) and 3D (videos)
+    This Ops can be used for 1D, 2D (images) and 3D (videos).
+    dim_ordering : tf-tensorflow (defaults)
+        input shape: (samples, conv_dim1, conv_dim2, input_depth)
+        kernel shape: (kernel_dim1, kernel_dim2, input_depth, out_depth)
+    Only support float32 on CPU
     """
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
-                 W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
+                 W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
                  untie_biases=False, activation=K.linear,
                  dilation=1, **kwargs):
         super(Conv, self).__init__(**kwargs)
@@ -118,35 +199,31 @@ class Conv(NNOps):
         # TF kernel shape: (kernel_dim1, kernel_dim2, ..., input_depth, out_depth)
         return self.filter_size + (self.input_shape[-1], self.num_filters)
 
-    @property
-    def output_shape(self):
-        return get_conv_output_shape(self.input_shape, self.kernel_shape,
-                border_mode=self.pad, subsample=self.strides,
-                filter_dilation=self.dilation)
-
     def _transpose(self):
         return DeConv(self)
 
     def _initialize(self):
         # ====== validate init arguments ====== #
-        ndim = len(self.input_shape) - 2; self.ndim = ndim
+        self.ndim = len(self.input_shape) - 2
         # padding
         if isinstance(self.pad, (tuple, list, int)):
-            self.pad = as_tuple(self.pad, ndim, int)
+            self.pad = as_tuple(self.pad, self.ndim, int)
         elif self.pad is None:
-            self.pad = (0,) * ndim
+            self.pad = (0,) * self.ndim
+        elif is_string(self.pad):
+            self.pad = self.pad.upper()
         # strides
         if self.strides is None:
-            self.strides = (0,) * ndim
+            self.strides = (1,) * self.ndim
         else:
-            self.strides = as_tuple(self.strides, ndim, int)
+            self.strides = as_tuple(self.strides, self.ndim, int)
         # dilation
         if self.dilation is None:
-            self.dilation = (1,) * ndim
+            self.dilation = (1,) * self.ndim
         else:
-            self.dilation = as_tuple(self.dilation, ndim, int)
+            self.dilation = as_tuple(self.dilation, self.ndim, int)
         # filter size
-        self.filter_size = as_tuple(self.filter_size, ndim, int)
+        self.filter_size = as_tuple(self.filter_size, self.ndim, int)
         # ====== create config ====== #
         # weights
         self.config.create_params(
@@ -161,38 +238,30 @@ class Conv(NNOps):
 
     def _apply(self, X):
         # ====== apply convolution ====== #
-        self._last_input = X
         conved = self.convolve(X)
-        output_shape = K.get_shape(conved)
-        # ====== check output_shape match the estimated output_shape ====== #
-        if len(output_shape) != len(self.output_shape) or \
-        any(i != j for i, j in zip(output_shape, self.output_shape)
-                if i is not None and j is not None):
-            raise RuntimeError("The actual output_shape of this Convolution Ops "
-                               "is %s, but the pre-estimated output_shape is: %s "
-                               % (str(output_shape), str(self.output_shape)))
         # ====== apply bias ====== #
         if hasattr(self, 'b'):
             if self.untie_biases:
-                conved += K.expand_dims(self.b, 0)
+                conved += tf.expand_dims(self.b, axis=0)
             else:
                 conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
-        K.add_shape(conved, output_shape)
-        activated = self.activation(conved)
-        # set shape for output
-        return activated
+        return self.activation(conved)
 
     def convolve(self, X):
-        if self.ndim == 2:
-            conv_func = K.conv2d
+        if self.ndim == 1:
+            data_format = "NWC"
+        elif self.ndim == 2:
+            data_format = "NHWC"
         elif self.ndim == 3:
-            conv_func = K.conv3d
+            data_format = "NDHWC"
         else:
             raise Exception('No support for %d-D input.' % self.ndim)
-        conved = conv_func(X, kernel=self.W,
-                           strides=self.strides,
-                           border_mode=self.pad,
-                           filter_dilation=self.dilation)
+        # ====== perform normal convolution ====== #
+        conved = tf.nn.convolution(input=X, filter=self.W,
+            padding=self.pad,
+            strides=self.strides,
+            dilation_rate=self.dilation,
+            data_format=data_format)
         return conved
 
 
@@ -201,9 +270,9 @@ class Conv(NNOps):
 # ===========================================================================
 class TransposeConv(Conv):
 
-    @nnops_initscope
+    @_nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
-                 W_init=K.init.glorot_uniform, b_init=K.init.constant(0),
+                 W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
                  untie_biases=False, activation=K.linear,
                  dilation=1, output_shape=None, **kwargs):
         super(TransposeConv, self).__init__(num_filters=num_filters,
@@ -234,25 +303,23 @@ class TransposeConv(Conv):
 
     def convolve(self, X):
         if self.ndim == 2:
-            deconv_func = K.deconv2d
+            deconv_func = tf.nn.conv2d_transpose
         elif self.ndim == 3:
-            deconv_func = K.deconv3d
+            deconv_func = tf.nn.conv3d_transpose
         else:
             raise Exception('No support for %d-D input.' % self.ndim)
         # ====== prepare the deconvolution ====== #
         # theano require batch_dims is Constant or None, but tensorflow
         # require batch_dims is a native TensorVariable
         output_shape = self.output_shape
-        native_shape = K.get_shape(X, native=True)
+        _ = tuple(output_shape)
+        native_shape = tf.shape(X)
         output_shape = [native_shape[i] if j is None else j
                         for i, j in enumerate(output_shape)]
-        deconved = deconv_func(X, kernel=self.W,
-                               output_shape=output_shape,
-                               strides=self.strides,
-                               border_mode=self.pad,
-                               filter_dilation=self.dilation)
-
-        return deconved
+        deconved = deconv_func(value=X, filter=self.W,
+            output_shape=output_shape, strides=(1,) + self.strides + (1,),
+            padding=self.pad)
+        return K.set_shape(deconved, _)
 
 
 # ===========================================================================
@@ -296,7 +363,7 @@ class DeConv(NNTransposeOps):
                     dilation=ops.dilation, output_shape=ops.input_shape,
                     name=self.name + '_deconv')
         else:
-            raise ValueError("Unsupport deconvolution for NNOps with type=%s"
+            raise ValueError("Unsupport deconvolution for NNOp with type=%s"
                              % str(type(self.T)))
 
     def _apply(self, X):
