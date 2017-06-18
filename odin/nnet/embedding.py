@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 import tensorflow as tf
 
 from odin import backend as K
-from .base import NNOp, NNConfig, _nnops_initscope
+from .base import NNOp, _nnops_initscope
 
 
 class Embedding(NNOp):
@@ -36,9 +36,9 @@ class Embedding(NNOp):
         return (self.input_size, self.output_size)
 
     def _initialize(self):
-        self.config.create_params(self.W_init,
-                             shape=(self.input_size, self.output_size),
-                             name='W', roles=K.role.EmbeddingWeight, nb_params=1)
+        self.get_variable(initializer=self.W_init,
+                          shape=(self.input_size, self.output_size),
+                          name='W', roles=K.role.EmbeddingWeight)
 
     def _apply(self, x):
         return tf.gather(self.W, tf.cast(x, tf.int32))

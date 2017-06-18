@@ -474,7 +474,7 @@ class ModelDescriptor(object):
     def nb_parameters(self):
         n = 0
         for p in self.parameters:
-            if K.is_trainable_variable(p):
+            if K.is_variable(p):
                 n += np.prod(p.get_shape().as_list()).astype('int32')
         return n
 

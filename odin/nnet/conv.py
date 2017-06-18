@@ -226,15 +226,15 @@ class Conv(NNOp):
         self.filter_size = as_tuple(self.filter_size, self.ndim, int)
         # ====== create config ====== #
         # weights
-        self.config.create_params(
-            self.W_init, shape=self.kernel_shape, name='W', roles=ConvKernel)
+        self.get_variable(initializer=self.W_init,
+            shape=self.kernel_shape, name='W', roles=ConvKernel)
         if self.b_init is not None:
             if self.untie_biases:
                 biases_shape = self.output_shape[1:]
             else:
                 biases_shape = (self.num_filters,)
-            self.config.create_params(
-                self.b_init, shape=biases_shape, name='b', roles=Bias)
+            self.get_variable(initializer=self.b_init,
+                shape=biases_shape, name='b', roles=Bias)
 
     def _apply(self, X):
         # ====== apply convolution ====== #

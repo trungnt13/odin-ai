@@ -183,6 +183,11 @@ def name_to_roles(name):
 # ===========================================================================
 # Basic Role helper
 # ===========================================================================
+def _add_to_collection_no_duplication(name, var):
+    if var not in tf.get_collection(str(name)):
+        tf.add_to_collection(name, var)
+
+
 def add_role(variables, roles):
     r"""Add a role to a given variable.
 
@@ -215,7 +220,7 @@ def add_role(variables, roles):
         _ = []
         for r in var_roles:
             if isinstance(r, string_types):
-                tf.add_to_collection(r, var)
+                _add_to_collection_no_duplication(r, var)
             elif isinstance(r, type) and issubclass(r, Role):
                 _.append(r)
         var_roles = _
@@ -228,7 +233,7 @@ def add_role(variables, roles):
                 new_roles.append(r)
         # ====== adding new role ====== #
         for r in new_roles:
-            tf.add_to_collection(r.__name__, var)
+            _add_to_collection_no_duplication(r.__name__, var)
     return variables
 
 

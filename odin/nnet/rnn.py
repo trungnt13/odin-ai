@@ -64,7 +64,7 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
     if s0 is None and hasattr(nnops, name):
         s0 = getattr(nnops, name)
     elif s0 is not None:
-        if callable(s0) or K.is_trainable_variable(s0) or isinstance(s0, np.ndarray):
+        if callable(s0) or K.is_variable(s0) or isinstance(s0, np.ndarray):
             _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
                 else s0.get_shape()
             s0 = nnops.config.create_params(
@@ -283,17 +283,17 @@ class CudnnRNN(NNOp):
                               for i in range(self.num_layers)]
             # print([(j.name, j.tag.roles) for i in parameters for j in i]); exit()
             for p in chain(*parameters):
-                self.config.create_params(p, shape=p.get_shape(),
-                                     name=p.name.split(':')[0].split('/')[1],
-                                     roles=Parameter)
+                self.get_variable(initializer=p, shape=p.get_shape(),
+                                  name=p.name.split(':')[0].split('/')[1],
+                                  roles=Parameter)
         # else initialize all in 1 big vector
         else:
             parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
                                          one_vector=True, return_variable=False,
                                          bidirectional=is_bidirectional)
                                          for i in range(self.num_layers)])
-            self.config.create_params(parameters, shape=parameters.shape,
-                                      name='params', roles=Parameter)
+            self.get_variable(initializer=parameters, shape=parameters.shape,
+                              name='params', roles=Parameter)
 
     def _apply(self, X, h0=None, c0=None, mask=None):
         batch_size = X.get_shape()[0]

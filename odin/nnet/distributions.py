@@ -68,13 +68,13 @@ class VariationalDense(NNOp):
 
     def _initialize(self):
         shape = (self.input_shape[-1], self.num_units)
-        self.config.create_params(self.W_init, shape, 'W_mean', roles=WEIGHT)
-        self.config.create_params(self.W_init, shape, 'W_logsigma', roles=WEIGHT)
+        self.get_variable(initializer=self.W_init, shape=shape, name='W_mean', roles=WEIGHT)
+        self.get_variable(initializer=self.W_init, shape=shape, name='W_logsigma', roles=WEIGHT)
         if self.b_init is not None:
-            self.config.create_params(
-                self.b_init, (self.num_units,), 'b_mean', roles=BIAS)
-            self.config.create_params(
-                self.b_init, (self.num_units,), 'b_logsigma', roles=BIAS)
+            self.get_variable(initializer=self.b_init,
+                shape=(self.num_units,), name='b_mean', roles=BIAS)
+            self.get_variable(initializer=self.b_init,
+                shape=(self.num_units,), name='b_logsigma', roles=BIAS)
 
     def _apply(self, x):
         input_shape = K.get_shape(x)

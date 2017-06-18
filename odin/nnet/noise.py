@@ -98,27 +98,27 @@ class GaussianDenoising(NNOp):
     def _initialize(self):
         input_shape = self.input_shape
         shape = input_shape[1:]
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a1', roles=Weight)
-        self.config.create_params(
-            K.rand.constant(1.), shape=shape, name='a2', roles=Weight)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a3', roles=Bias)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a4', roles=Weight)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a5', roles=Bias)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a1', roles=Weight)
+        # self.config.create_params(
+        #     K.rand.constant(1.), shape=shape, name='a2', roles=Weight)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a3', roles=Bias)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a4', roles=Weight)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a5', roles=Bias)
 
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a6', roles=Weight)
-        self.config.create_params(
-            K.rand.constant(1.), shape=shape, name='a7', roles=Bias)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a8', roles=Bias)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a9', roles=Weight)
-        self.config.create_params(
-            K.rand.constant(0.), shape=shape, name='a10', roles=Bias)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a6', roles=Weight)
+        # self.config.create_params(
+        #     K.rand.constant(1.), shape=shape, name='a7', roles=Bias)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a8', roles=Bias)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a9', roles=Weight)
+        # self.config.create_params(
+        #     K.rand.constant(0.), shape=shape, name='a10', roles=Bias)
 
     def _apply(self, u, mean, std, z_corr):
         mu = self.a1 * self.activation(self.a2 * u + self.a3) + self.a4 * u + self.a5

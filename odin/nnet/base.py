@@ -15,7 +15,7 @@ import numpy as np
 
 from odin import backend as K
 from odin.backend.role import (add_role, has_roles, Parameter, Variable,
-                                Weight, Bias)
+                               Weight, Bias)
 from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
 
 import tensorflow as tf
@@ -168,202 +168,6 @@ def _nnops_initscope(func):
 
 
 # ===========================================================================
-# Helper
-# ===========================================================================
-def _initialize_param(name, spec, shape):
-    """ return a ndarray or trainable_variable """
-    #####################################
-    # 0. initializing function.
-    if callable(spec):
-        spec = spec(shape)
-    elif is_number(spec):
-        spec = np.full(shape=shape, fill_value=spec)
-    #####################################
-    # 1. Shared variable, just check the shape.
-    if K.is_trainable_variable(spec):
-        spec_shape = spec.get_shape().as_list()
-        if shape is None:
-            shape = spec_shape
-        elif tuple(shape) != tuple(spec_shape):
-            raise Exception('Require variable with shape=%s, but was given different '
-                            'shape=%s, name:%s.' %
-                            (str(shape), str(spec_shape), str(name)))
-    #####################################
-    # 2. expression, we can only check number of dimension.
-    elif K.is_tensor(spec):
-        # We cannot check the shape here, Theano expressions (even shared
-        # variables) do not have a fixed compile-time shape. We can check the
-        # dimensionality though.
-        # Note that we cannot assign a name here. We could assign to the
-        # `name` attribute of the variable, but the user may have already
-        # named the variable and we don't want to override this.
-        if shape is not None and spec.get_shape().ndims != len(shape):
-            raise Exception("parameter with name=%s has %d dimensions, should be "
-                            "%d" % (name, spec.ndim, len(shape)))
-    #####################################
-    # 3. numpy ndarray, create shared variable wraper for it.
-    elif isinstance(spec, np.ndarray):
-        if shape is not None and spec.shape != shape:
-            raise RuntimeError("parameter with name=%s has shape %s, should be "
-                               "%s" % (name, spec.shape, shape))
-    #####################################
-    # 5. Exception.
-    else:
-        raise RuntimeError("cannot initialize parameters: 'spec' is not "
-                           "a numpy array, a Theano expression, or a "
-                           "callable")
-    return spec, shape
-
-
-class NNConfig(object):
-
-    def __init__(self, nnops):
-        super(NNConfig, self).__init__()
-        # name -> variables
-        if not isinstance(nnops, NNOp):
-            raise ValueError("nnops must be instance of odin.nnet.NNOp")
-        self._nnops = nnops
-        self._input_desc = InputDescriptor()
-        self._variables = OrderedDict()
-
-    @property
-    def variables(self):
-        """ Return the list of all TensorVariables attached to this Config"""
-        return self._variables.values()
-
-    @property
-    def input(self):
-        """ Return the list of all TensorVariables attached to this Config"""
-        return self._input_desc.placeholder
-
-    @property
-    def input_shape(self):
-        return self._input_desc.shape
-
-    @property
-    def input_shape_ref(self):
-        return self._input_desc.shape_ref
-
-    @property
-    def input_desc(self):
-        return self._input_desc
-
-    def check_input_desc(self, inputs):
-        inputs = as_tuple(inputs)
-        # convert shape tuple to list of shape tuple
-        if any(is_number(i) or i is None for i in inputs):
-            inputs = (inputs,)
-        # first time initialized the input description
-        if len(self._input_desc) == 0:
-            self._input_desc.set_variables(inputs)
-            for i, j in enumerate(self._input_desc._desc):
-                j._name = '%s_in%.2d' % (self._nnops.name, i)
-        # mismatch input desctiption
-        _ = InputDescriptor(inputs)
-        if self._input_desc != _:
-            raise ValueError("This NNConfiguration required inputs: %s, but was given: "
-                            "%s." % (str(self._input_desc), str(_)))
-        # automatic fetch placeholder to replace raw description
-        inputs = [i if K.is_tensor(i) else None for i in inputs]
-        # Don't create placeholders if user already gave the Input Tensor
-        if any(i is None for i in inputs):
-            inputs = [j if i is None else i
-                      for i, j in zip(inputs, as_tuple(self.input))]
-        return inputs
-
-    def __getattr__(self, name):
-        if name in self._variables:
-            return self._variables[name]
-        elif name not in self.__dict__:
-            raise AttributeError('Cannot find attribute with name="%s", for NNOp '
-                                 'with name="%s"' % (name, self._nnops.name))
-        return super(NNConfig, self).__getattr__(name)
-
-    def create_params(self, spec, shape, name, roles=[], nb_params=1):
-        """
-        Parameters
-        ----------
-        spec: variable, numpy.ndarray, function
-            specification for initializing the weights
-        shape: tuple, list
-            expected shape for given variable
-        name: str
-            name for the variable
-        nnops: NNOp
-            parent operator of this parameters
-        roles: odin.basic.Variable
-            categories of this variable
-        nb_params: int
-            number of parameters that horizontally stacked into
-            given `shape (e.g. nb_params=2, create 2 parameters with
-            given `shape and horizontally stack them into 1 parameters)
-            * do NOT support when `spec` is variable.
-        """
-        if not isinstance(roles, (tuple, list)):
-            roles = [roles]
-        shape = tuple(shape)  # convert to tuple if needed
-        if any(d <= 0 for d in shape):
-            raise ValueError((
-                "Cannot create param with a non-positive shape dimension. "
-                "Tried to create param with shape=%r, name=%r") %
-                (shape, name))
-
-        # ====== create parameters ====== #
-        spec = as_tuple(spec, nb_params)
-        spec = [_initialize_param(name, s, shape) for s in spec]
-        # check shape returned
-        shape = list(set([i[-1] for i in spec]))
-        if len(shape) > 1:
-            raise Exception('shape are inconsitent among all given "spec", the '
-                            'created shape is: %s' % str(shape))
-        shape = shape[0]
-        # check spec returned
-        spec = [i[0] for i in spec]
-        if isinstance(spec[0], np.ndarray):
-            spec = np.concatenate(spec, axis=-1)
-            shape = spec.shape
-            spec = K.variable(spec, name=name)
-        elif K.is_trainable_variable(spec[0]):
-            if nb_params > 1:
-                spec = np.concatenate([K.get_value(i) for i in spec], axis=-1)
-                shape = spec.shape
-                spec = K.variable(spec, name=name)
-            else:
-                spec = spec[0]
-        elif K.is_tensor(spec[0]):
-            shape = (shape[0] * nb_params,) if len(shape) == 1 \
-                else shape[:-1] + (shape[-1] * nb_params,)
-            spec = tf.concat(spec, axis=-1)
-        # ====== assign annotations ====== #
-        # only add role for trainable variables
-        for i in roles:
-            if issubclass(i, Variable) and K.is_trainable_variable(spec):
-                add_role(spec, i)
-        # return actual variable or expression
-        # override other parameters with same name
-        self._variables[name] = spec
-        return spec
-
-    def __str__(self):
-        s = ""
-        for i in self._input_desc:
-            s += str(i) + "\n"
-        s += ' - Parameters: ' + ', '.join([str(i) for i in self._variables.values()])
-        return s
-
-    # ==================== pickling method ==================== #
-    def __getstate__(self):
-        return self._nnops, self._input_desc, \
-        [(name, K.pickling_variable(var)) for name, var in self._variables.iteritems()]
-
-    def __setstate__(self, states):
-        self._nnops = states[0]
-        self._input_desc = states[1]
-        self._variables = OrderedDict([(name, K.pickling_variable(var))
-                           for name, var in states[2]])
-
-
-# ===========================================================================
 # Main Ops
 # ===========================================================================
 @add_metaclass(ABCMeta)
@@ -386,9 +190,8 @@ class NNOp(object):
     _apply(self, x, **kwargs): resulted variables
         apply take a list of variables and custom parameters to compute
         output variables
-    _initialize(self, x, **kwargs): NNConfig
-        create and return NNConfig object, which is identity from
-        other configuration
+    _initialize(self, **kwargs):
+        create parameters
 
     Override
     --------
@@ -412,9 +215,35 @@ class NNOp(object):
                              "has type: %s" % (name))
         self._name = str(name)
 
-        self._configuration = NNConfig(self)
+        self._input_desc = InputDescriptor()
         self._transpose_ops = None
         self._is_initialized = False
+        # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
+        self._variable_info = {}
+
+    def _check_input_desc(self, inputs):
+        inputs = as_tuple(inputs)
+        # convert shape tuple to list of shape tuple
+        if any(is_number(i) or i is None for i in inputs):
+            inputs = (inputs,)
+        # first time initialized the input description
+        if len(self._input_desc) == 0:
+            self._input_desc.set_variables(inputs)
+            for i, j in enumerate(self._input_desc._desc):
+                j._name = '%s_inp%.2d' % (self.name, i)
+        # mismatch input desctiption
+        _ = InputDescriptor(inputs)
+        if self._input_desc != _:
+            raise ValueError("This NNConfiguration required inputs: %s, but was given: "
+                            "%s." % (str(self._input_desc), str(_)))
+        # automatic fetch placeholder to replace raw description
+        inputs = [i if K.is_tensor(i) else None for i in inputs]
+        # Don't create placeholders if user already gave the Input Tensor
+        if any(i is None for i in inputs):
+            inputs = [j if i is None else i
+                      for i, j in zip(inputs,
+                                as_tuple(self._input_desc.placeholder))]
+        return inputs
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -448,6 +277,86 @@ class NNOp(object):
             assign_new_nnops(self)
 
     # ==================== properties ==================== #
+    def get_variable(self, name, shape=None, initializer=None, roles=[]):
+        """
+        Parameters
+        ----------
+        name: str
+            name for the variable
+        shape: tuple, list
+            expected shape for given variable
+        initializer: variable, numpy.ndarray, function
+            specification for initializing the weights, if a function
+            is given, the arguments must contain `shape`
+        roles: `odin.backend.role.Role`
+            categories of this variable
+        """
+        if shape is not None:
+            shape = tuple(shape)  # convert to tuple if needed
+            if any(d <= 0 or d is None for d in shape):
+                raise ValueError((
+                    "Cannot create param with a non-positive shape dimension. "
+                    "Tried to create param with shape=%r, name=%r") %
+                    (shape, name))
+        if initializer is None and shape is None:
+            if name not in self._variable_info:
+                raise ValueError("Cannot find variable with name: %s for NNOps "
+                    "with name: %s" % (name, self.name))
+            var_name, t = self._variable_info[name]
+            if t == 'variable':
+                var = K.get_all_variables(full_name=var_name)
+            elif t == 'tensor':
+                var = K.get_tensors(full_name=var_name)
+            return add_role(var[0], roles)
+        #####################################
+        # 0. initializing function.
+        if callable(initializer):
+            var = initializer(shape)
+        elif is_number(initializer):
+            var = np.full(shape=shape, fill_value=initializer)
+        else:
+            var = initializer
+        #####################################
+        # 1. Numpy ndarray.
+        if isinstance(var, np.ndarray):
+            scope = tf.get_variable_scope().name
+            if self.name not in scope:
+                with tf.variable_scope(self.name):
+                    var = K.variable(var, shape=shape, name=name)
+            else:
+                var = K.variable(var, shape=shape, name=name)
+            self._variable_info[name] = (var.name, 'variable')
+        #####################################
+        # 2. Shared variable, just check the shape.
+        elif K.is_variable(var):
+            _shape = var.get_shape().as_list()
+            if shape is not None and tuple(shape) != tuple(_shape):
+                raise Exception('Require variable with shape=%s, but was given different '
+                                'shape=%s, name:%s.' %
+                                (str(shape), str(_shape), str(name)))
+            self._variable_info[name] = (var.name, 'variable')
+        #####################################
+        # 3. expression, we can only check number of dimension.
+        elif K.is_tensor(var):
+            # We cannot check the shape here, Theano expressions (even shared
+            # variables) do not have a fixed compile-time shape. We can check the
+            # dimensionality though.
+            # Note that we cannot assign a name here. We could assign to the
+            # `name` attribute of the variable, but the user may have already
+            # named the variable and we don't want to override this.
+            if shape is not None and var.get_shape().ndims != len(shape):
+                raise Exception("parameter with name=%s has %d dimensions, should be "
+                                "%d" % (name, var.get_shape().ndims, len(shape)))
+            self._variable_info[name] = (var.name, 'tensor')
+        #####################################
+        # 4. Exception.
+        else:
+            raise RuntimeError("cannot initialize parameters: 'spec' is not "
+                               "a numpy array, a Theano expression, or a "
+                               "callable")
+        # ====== assign annotations ====== #
+        return add_role(var, roles)
+
     @property
     def name(self):
         return self._name
@@ -467,22 +376,23 @@ class NNOp(object):
     def variables(self):
         if not self._is_initialized:
             raise Exception("This operators haven't initialized.")
-        return self._configuration.variables
+        allvars = K.get_all_variables()
+        allname = [name for _, (name, t) in self._variable_info.iteritems()
+                   if t == 'variable']
+        return [v for v in allvars if v.name in allname]
+
+    @property
+    def all_variables(self):
+        allvars = self.variables
+        tensors = K.get_tensors(
+            full_name=[name for _, (name, t) in self._variable_info.iteritems()
+                       if t == 'tensor'])
+        return allvars + K.ComputationGraph(tensors).variables
 
     @property
     def parameters(self):
         """ return all TensorVariables which have the PARAMETER role"""
         return [i for i in self.variables if has_roles(i, Parameter)]
-
-    @property
-    def trainable_variables(self):
-        """ return all TensorVariables which are trainable """
-        return [i for i in self.variables
-                if K.is_trainable_variable(i)]
-
-    @property
-    def config(self):
-        return self._configuration
 
     @property
     def is_initialized(self):
@@ -492,23 +402,23 @@ class NNOp(object):
     def input(self):
         """ Create list of placeholder to represent inputs of this NNOp
         """
-        return self._configuration.input
+        return self._input_desc.placeholder
 
     @property
     def input_desc(self):
-        return self._configuration._input_desc
+        return self._input_desc
 
     @property
     def nb_input(self):
-        return len(self._configuration._input_desc)
+        return len(self._input_desc)
 
     @property
     def input_shape(self):
-        return self._configuration.input_shape
+        return self._input_desc.shape
 
     @property
     def input_shape_ref(self):
-        return self._configuration.input_shape_ref
+        return self._input_desc.input_shape_ref
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
@@ -524,7 +434,9 @@ class NNOp(object):
         # merge the attributes of ops wit its configuration
         if name in self.__dict__:
             return self.__dict__[name]
-        return getattr(self._configuration, name)
+        if name in self._variable_info:
+            return self.get_variable(name)
+        raise AttributeError("NNOp cannot find attribute with name: %s" % name)
 
     # ==================== abstract method ==================== #
     def _initialize(self, **kwargs):
@@ -553,7 +465,7 @@ class NNOp(object):
                 if argspec.keywords is not None or i in argspec.args:
                     keywords[i] = j
             # initialize the operator (call the initilazation process)
-            X = self._configuration.check_input_desc(X)
+            X = self._check_input_desc(X)
             if not self._is_initialized:
                 self._initialize(**keywords)
                 self._is_initialized = True
@@ -578,7 +490,7 @@ class NNOp(object):
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.rand.constant, NNConfig, NNOp)
+                    K.rand.constant, NNOp, InputDescriptor)
 
 
 # ===========================================================================
@@ -670,9 +582,10 @@ class Dense(NNOp):
     def _initialize(self):
         input_shape = self.input_shape
         shape = (input_shape[-1], self.num_units)
-        self.config.create_params(self.W_init, shape, 'W', roles=Weight)
+        self.get_variable(name='W', shape=shape, initializer=self.W_init,
+                          roles=Weight)
         if self.b_init is not None:
-            self.config.create_params(self.b_init,
+            self.get_variable(initializer=self.b_init,
                 shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
@@ -691,7 +604,7 @@ class TransposeDense(NNTransposeOps):
         super(TransposeDense, self)._initialize()
         self.num_units = self.T.input_shape[-1]
         if self.T.b_init is not None:
-            self.config.create_params(self.T.b_init,
+            self.get_variable(initializer=self.T.b_init,
                 shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
@@ -767,8 +680,8 @@ class ParametricRectifier(NNOp):
         if any(size is None for size in shape):
             raise ValueError("ParametricRectifierLayer needs input sizes for "
                              "all axes that alpha's are not shared over.")
-        self.alpha = self.config.create_params(
-            self.alpha_init, shape, name="alpha", roles=Parameter)
+        self.alpha = self.get_variable(initializer=self.alpha_init,
+            shape=shape, name="alpha", roles=Parameter)
 
     def _apply(self, x):
         axes = iter(range(K.ndim(self.alpha)))

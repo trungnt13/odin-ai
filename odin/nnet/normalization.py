@@ -171,21 +171,21 @@ class BatchNorm(NNOp):
                              "all axes not normalized over.")
         # init learnable parameters
         if self.beta_init is not None:
-            self.config.create_params(
-                self.beta_init, shape=shape, name='beta',
+            self.get_variable(initializer=self.beta_init,
+                shape=shape, name='beta',
                 roles=BatchNormShiftParameter)
         if self.gamma_init is not None:
-            self.config.create_params(
-                self.gamma_init, shape=shape, name='gamma',
+            self.get_variable(initializer=self.gamma_init,
+                shape=shape, name='gamma',
                 roles=BatchNormScaleParameter)
         # running mean and invert std
         if self.mean_init is not None:
-            self.config.create_params(
-                self.mean_init, shape=shape, name='mean',
+            self.get_variable(initializer=self.mean_init,
+                shape=shape, name='mean',
                 roles=BatchNormPopulationMean)
         if self.var_init is not None:
-            self.config.create_params(
-                self.var_init, shape=shape, name='var',
+            self.get_variable(initializer=self.var_init,
+                shape=shape, name='var',
                 roles=BatchNormPopulationInvStd)
 
     def _apply(self, X, noise=0):

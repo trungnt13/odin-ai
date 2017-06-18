@@ -81,7 +81,7 @@ def is_placeholder(variable):
         variable.op.node_def.op == "Placeholder"
 
 
-def is_trainable_variable(variable):
+def is_variable(variable):
     """Check if a variable is a shared variable.
 
     Notes
@@ -92,7 +92,7 @@ def is_trainable_variable(variable):
     """
     if (isinstance(variable, tf.Variable) and
             variable.op.node_def.op == "VariableV2"):
-        return variable in variable.graph.get_collection('trainable_variables')
+        return True
     return False
 
 
@@ -259,22 +259,34 @@ def get_operationID(op):
     return _ops_ID[op]
 
 
-def get_tensor(types=['variable', 'placeholder', 'tensor'],
-               device=None, scope=None):
-    support_types = ['variable', 'placeholder', 'tensor']
-    if any(t not in support_types for t in types):
-        raise ValueError("All suppported types include: %s" % str(support_types))
+def get_tensors(name=None, full_name=None, device=None, scope=None):
+    """
+    Parameters
+    ----------
+    name: str
+        name of tensor (without variable scope)
+    full_name: str
+        name of tensor WITH variable scope.
+    """
     ops = get_operations(device=device, scope=scope, sort=False)
-    allvars = []
+    alltensors = []
     for o in ops:
-        allvars += o._inputs + o._outputs
+        alltensors += o._inputs + o._outputs
         for i in o._control_inputs:
-            allvars += i._inputs + i._outputs
-    allvars = list(set(allvars))
+            alltensors += i._inputs + i._outputs
+    alltensors = list(set(alltensors))
     # ====== filter out unsupport types ====== #
-    # if 'tensor' not in types:
-    allvars = [v for v in allvars if is_placeholder(v)]
-    return allvars
+    if name is not None:
+        name = as_tuple(name, t=string_types)
+        alltensors = [t for t in alltensors
+        if any((n == t.name.split('/')[-1] or
+                n + ':0' == t.name.split('/')[-1]) for n in name)]
+    if full_name is not None:
+        full_name = as_tuple(full_name, t=string_types)
+        alltensors = [t for t in alltensors
+                      if any((n == t.name or
+                              n + ':0' == t.name) for n in full_name)]
+    return alltensors
 
 
 # ===========================================================================
@@ -486,8 +498,8 @@ class ComputationGraph(object):
                         yield v
         # store all the updates embedded into the Tensor Variables
         updates = OrderedDict()
-        shared_outputs = [o for o in self.outputs if is_trainable_variable(o)]
-        usual_outputs = [o for o in self.outputs if not is_trainable_variable(o)]
+        shared_outputs = [o for o in self.outputs if is_variable(o)]
+        usual_outputs = [o for o in self.outputs if not is_variable(o)]
         variables = shared_outputs
         trainable_variables = list(shared_outputs)
         inputs = []
@@ -516,7 +528,7 @@ class ComputationGraph(object):
                     for ID, op in v.graph._nodes_by_id.iteritems()}
         variables = sorted(variables, key=lambda x: graph_nodes_ID[x.graph][x.op])
         inputs = [v for v in variables if is_placeholder(v)]
-        trainable_variables = [v for v in variables if is_trainable_variable(v)]
+        trainable_variables = [v for v in variables if is_variable(v)]
         # ====== get all updates and auxiliary variables ====== #
         for v in inputs + variables:
             if hasattr(v, 'tag'):
@@ -536,24 +548,15 @@ class ComputationGraph(object):
 
     # ==================== Get variables ==================== #
     @property
-    def inputs(self):
-        """ Same as placeholder """
-        return self.placeholders
-
-    @property
     def placeholders(self):
         """Inputs to the graph, excluding constants and shared variables."""
         return self._inputs
 
     @property
-    def intermediary_variables(self):
+    def tensors(self):
         return [var for var in self.variables if
                 var not in self.placeholders and
                 var not in self.outputs]
-
-    @property
-    def trainable_variables(self):
-        return self._trainable_variables
 
     @property
     def parameters(self):

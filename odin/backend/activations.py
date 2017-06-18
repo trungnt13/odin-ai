@@ -118,9 +118,9 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto', name="RandRectify")
     """
     ndims = x.get_shape().ndims
     # ====== check lower and upper ====== #
-    if is_trainable_variable(lower):
+    if is_variable(lower):
         add_role(lower, ActivationParameter)
-    if is_trainable_variable(upper):
+    if is_variable(upper):
         add_role(upper, ActivationParameter)
     if not is_tensor(lower > upper) and lower > upper:
         raise ValueError("Upper bound for Randomized Rectifier needs "
