@@ -13,7 +13,8 @@ from tensorflow.contrib.distributions import Distribution as _Distribution
 
 from odin.config import get_session
 from odin.utils.decorators import singleton
-from odin.utils import dict_union, as_list, flatten_list, as_tuple
+from odin.utils.cache_utils import cache_memory
+from odin.utils import dict_union, as_list, flatten_list, as_tuple, is_string
 
 from .role import (has_roles, Auxiliary, Parameter)
 
@@ -205,9 +206,27 @@ def get_graph():
 
 
 _ops_ID = {}
+_name_pattern = re.compile('.*_\d+')
 
 
-def get_operations(type=None, device=None, sort=True, scope=None):
+def get_normalized_name(x):
+    """Get normalized name of `Tensor`, `Variable` or `Op` in tensorflow
+    The normalized name remove:
+     * '_%d' suffix of scope and name.
+     * ':%d' indices of name.
+    """
+    if hasattr(x, 'name'):
+        x = x.name
+    # remove the index
+    x = x.split(':')[0]
+    # remove the _%d
+    x = '/'.join(['_'.join(i.split('_')[:-1]) if _name_pattern.match(i) else i
+                  for i in x.split('/')])
+    return x
+
+
+def get_operations(type=None, device=None, sort=False, scope=None,
+                   footprint=None):
     """ Return list of all operations in default graph
     The follow attributes can be access within the operation:
      * name : string
@@ -243,6 +262,8 @@ def get_operations(type=None, device=None, sort=True, scope=None):
     if scope is not None:
         scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
         ops = [o for o in ops if len(scope_name_pattern.findall(o.name))]
+    if footprint is not None:
+        ops = [o for o in ops if get_operation_footprint(o) == footprint]
     # sorted by OpID
     if sort and len(ops) > 1:
         ops = sorted(ops, key=lambda x: _ops_ID[x])
@@ -250,6 +271,8 @@ def get_operations(type=None, device=None, sort=True, scope=None):
 
 
 def get_operationID(op):
+    """operation ID is unique ID of Op, the ID represent the order
+    of created Op."""
     ops = get_graph().get_operations()
     # update OpID
     if len(_ops_ID) != len(ops):
@@ -257,6 +280,44 @@ def get_operationID(op):
             if op not in _ops_ID:
                 _ops_ID[op] = ID
     return _ops_ID[op]
+
+
+@cache_memory
+def get_operation_footprint(op):
+    """ Trace back the inputs of given Op and record all:
+    * placholders
+    * variables
+    * ops
+    Those are related to given op.
+
+    The final footprint is concatenated string of all variables,
+    placeholders, constants, and Ops
+
+    Note
+    ----
+    This is just a fair attempt to create short identification of a
+    tenorflow Op
+    """
+    var = []
+    placeholder = []
+    const = []
+    ops = [op.type]
+    inputs = op._inputs
+    while len(inputs) > 0:
+        i = inputs.pop()
+        o = i.op
+        ops.append(o.type)
+        if o.type == "VariableV2":
+            var.append(i)
+        elif o.type == "Placeholder":
+            placeholder.append(i)
+        elif o.type == "Const":
+            const.append(i)
+        inputs = o._inputs + inputs
+    return ':'.join([get_normalized_name(v) for v in var]) + '|' +\
+           ':'.join([get_normalized_name(p) for p in placeholder]) + '|' +\
+           ':'.join([get_normalized_name(c) for c in const]) + '|' +\
+           ':'.join([j.split(':')[0] for j in ops])
 
 
 def get_all_variables(scope=None, name=None, full_name=None,
@@ -547,9 +608,11 @@ class ComputationGraph(object):
                 with o.graph.as_default():
                     for v in get_all_variables():
                         global_vars[v.name] = v
+                        global_vars[v.value().name] = v
         else:
             for v in get_all_variables():
                 global_vars[v.name] = v
+                global_vars[v.value().name] = v
         # then iterate over all tensor
         for t in create_tensor_iter(outputs):
             if t.name in global_vars:

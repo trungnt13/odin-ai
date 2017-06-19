@@ -277,6 +277,7 @@ class NNOp(object):
             assign_new_nnops(self)
 
     # ==================== properties ==================== #
+    @cache_memory
     def get_variable(self, name, shape=None, initializer=None, roles=[]):
         """
         Parameters
@@ -303,11 +304,19 @@ class NNOp(object):
                 raise ValueError("Cannot find variable with name: %s for NNOps "
                     "with name: %s" % (name, self.name))
             var_name, t = self._variable_info[name]
+            # get variable
             if t == 'variable':
-                var = K.get_all_variables(full_name=var_name)
+                var = K.get_all_variables(full_name=var_name)[0]
+            # get tensor
             elif t == 'tensor':
-                var = K.get_tensors(full_name=var_name)
-            return add_role(var[0], roles)
+                name, footprint = var_name
+                op = K.get_operations(footprint=footprint)
+                if len(op) == 0:
+                    raise RuntimeError("Cannot find any Op with given footprint: %s"
+                        % footprint)
+                var = op[0]._outputs[int(name.split(':')[-1])]
+            # only care about the first variable
+            return add_role(var, roles)
         #####################################
         # 0. initializing function.
         if callable(initializer):
@@ -347,7 +356,8 @@ class NNOp(object):
             if shape is not None and var.get_shape().ndims != len(shape):
                 raise Exception("parameter with name=%s has %d dimensions, should be "
                                 "%d" % (name, var.get_shape().ndims, len(shape)))
-            self._variable_info[name] = (var.name, 'tensor')
+            self._variable_info[name] = ((var.name, K.get_operation_footprint(var.op)),
+                                         'tensor')
         #####################################
         # 4. Exception.
         else:
@@ -384,9 +394,9 @@ class NNOp(object):
     @property
     def all_variables(self):
         allvars = self.variables
-        tensors = K.get_tensors(
-            full_name=[name for _, (name, t) in self._variable_info.iteritems()
-                       if t == 'tensor'])
+        tensors = [self.get_variable(name)
+                   for name, (info, t) in self._variable_info.iteritems()
+                   if t == 'tensor']
         return allvars + K.ComputationGraph(tensors).variables
 
     @property
