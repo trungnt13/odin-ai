@@ -23,39 +23,6 @@ from . import rand
 from . import rnn_cell
 
 
-def get_all_variables(scope=None, name=None, full_name=None,
-                      graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,
-                                  tf.GraphKeys.LOCAL_VARIABLES,
-                                  tf.GraphKeys.MODEL_VARIABLES,
-                                  tf.GraphKeys.TRAINABLE_VARIABLES]):
-    """
-    Parameters
-    ----------
-    name: str
-        name of tensor (without variable scope)
-    full_name: str
-        name of tensor WITH variable scope.
-    """
-    var = []
-    for k in graph_keys:
-        var += [i for i in tf.get_collection(k) if isinstance(i, tf.Variable)]
-    var = list(set(var))
-    if scope is not None:
-        scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
-        var = [v for v in var if len(scope_name_pattern.findall(v.name))]
-    if name is not None:
-        name = as_tuple(name, t=string_types)
-        var = [v for v in var
-               if any((v.name.split('/')[-1] == n or
-                       v.name.split('/')[-1] == n + ':0') for n in name)]
-    if full_name is not None:
-        full_name = as_tuple(full_name, t=string_types)
-        var = [v for v in var
-               if any((n == v.name or
-                       n + ':0' == v.name) for n in full_name)]
-    return var
-
-
 def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
     '''Instantiates a tensor, automatically initialize the variable
     in tensorflow

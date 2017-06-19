@@ -259,6 +259,39 @@ def get_operationID(op):
     return _ops_ID[op]
 
 
+def get_all_variables(scope=None, name=None, full_name=None,
+                      graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,
+                                  tf.GraphKeys.LOCAL_VARIABLES,
+                                  tf.GraphKeys.MODEL_VARIABLES,
+                                  tf.GraphKeys.TRAINABLE_VARIABLES]):
+    """
+    Parameters
+    ----------
+    name: str
+        name of tensor (without variable scope)
+    full_name: str
+        name of tensor WITH variable scope.
+    """
+    var = []
+    for k in graph_keys:
+        var += [i for i in tf.get_collection(k) if isinstance(i, tf.Variable)]
+    var = list(set(var))
+    if scope is not None:
+        scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
+        var = [v for v in var if len(scope_name_pattern.findall(v.name))]
+    if name is not None:
+        name = as_tuple(name, t=string_types)
+        var = [v for v in var
+               if any((v.name.split('/')[-1] == n or
+                       v.name.split('/')[-1] == n + ':0') for n in name)]
+    if full_name is not None:
+        full_name = as_tuple(full_name, t=string_types)
+        var = [v for v in var
+               if any((n == v.name or
+                       n + ':0' == v.name) for n in full_name)]
+    return var
+
+
 def get_tensors(name=None, full_name=None, device=None, scope=None):
     """
     Parameters
@@ -398,8 +431,11 @@ class ComputationGraph(object):
 
     Parameters
     ----------
-    outputs : (list of) :class:`~tensor.TensorVariable`
+    outputs : (list of) :class:`~tf.Tensor`
         The output(s) of the computation graph.
+    trace_up : bool
+        if True, all the descendant `Tensor` that computed based on
+        those outputs will be traced.
 
     Note
     ----
@@ -433,9 +469,10 @@ class ComputationGraph(object):
 
     """
 
-    def __init__(self, outputs=None):
+    def __init__(self, outputs=None, trace_up=False):
         outputs = flatten_list(as_list(outputs), level=None)
         self.outputs = [o for o in outputs if o is not None]
+        self._trace_up = trace_up
         self._get_variables()
 
     def _get_variables(self):
@@ -448,8 +485,8 @@ class ComputationGraph(object):
 
         def get_all_tensor_trace_down(x):
             """ recursively travel down the inputs tree to get all
-            variables """
-            variables = []
+            tensor """
+            tensors = []
             op = x.op
             # ====== check travelled ops ====== #
             if op in _travelled_down:
@@ -458,14 +495,14 @@ class ComputationGraph(object):
                 _travelled_down.append(op)
             # ====== get all variable ====== #
             inputs = op._inputs
-            variables += inputs
+            tensors += inputs
             for i in inputs:
-                variables += get_all_tensor_trace_down(i)
-            return variables
+                tensors += get_all_tensor_trace_down(i)
+            return tensors
 
         def get_all_tensor_trace_up(x):
             """ travel up the outputs tree to get all variables"""
-            variables = []
+            tensors = []
             # ====== check travelled ops ====== #
             for op in x.consumers():
                 if op in _travelled_up:
@@ -475,97 +512,86 @@ class ComputationGraph(object):
                 # ====== get all variable ====== #
                 inputs = [i for i in op._inputs if i != x]
                 outputs = op._outputs
-                variables += inputs + outputs
+                tensors += inputs + outputs
                 for o in outputs:
-                    variables += get_all_tensor_trace_up(o)
-            return variables
+                    tensors += get_all_tensor_trace_up(o)
+            return tensors
 
         def create_tensor_iter(outputs):
             # if specific outputs is given
             if len(outputs) > 0:
                 for o in outputs:
                     # travese each node of graph
-                    all_variables = get_all_tensor_trace_down(o) + \
-                        get_all_tensor_trace_up(o)
-                    for v in all_variables:
-                        yield v
+                    all_tensors = get_all_tensor_trace_down(o)
+                    if self._trace_up:
+                        all_tensors += get_all_tensor_trace_up(o)
+                    for t in all_tensors:
+                        yield t
             # get all variables and tensor within the graph
             else:
-                graph = get_session().graph
-                all_ops = graph.get_operations()
-                for o in all_ops:
-                    for v in o._inputs + o._outputs + o._control_inputs:
-                        yield v
+                for o in outputs:
+                    with o.graph.as_default():
+                        for op in get_operations(sort=False):
+                            for t in op._inputs + op._outputs:
+                                yield t
         # store all the updates embedded into the Tensor Variables
-        updates = OrderedDict()
-        shared_outputs = [o for o in self.outputs if is_variable(o)]
-        usual_outputs = [o for o in self.outputs if not is_variable(o)]
-        variables = shared_outputs
-        trainable_variables = list(shared_outputs)
-        inputs = []
+        variables = [o for o in self.outputs if is_variable(o)]
+        outputs = [o for o in self.outputs if not is_variable(o)]
+        tensors = []
+        placeholders = []
         # ====== travese each node of graph ====== #
         # first get all variables
         global_vars = {}
-        if len(usual_outputs) > 0:
-            for o in usual_outputs:
-                for v in o.graph.get_collection('variables'):
-                    global_vars[v.name] = v
+        if len(outputs) > 0:
+            for o in outputs:
+                with o.graph.as_default():
+                    for v in get_all_variables():
+                        global_vars[v.name] = v
         else:
-            for v in get_session().graph.get_collection('variables'):
+            for v in get_all_variables():
                 global_vars[v.name] = v
         # then iterate over all tensor
-        for v in create_tensor_iter(usual_outputs):
-            if v.name in global_vars:
-                variables.append(global_vars[v.name])
-            if is_tensor(v):
-                variables.append(v)
-        variables = list(set(variables + usual_outputs))
+        for t in create_tensor_iter(outputs):
+            if t.name in global_vars:
+                variables.append(global_vars[t.name])
+            elif is_tensor(t):
+                tensors.append(t)
+        variables = list(set(variables))
+        tensors = list(set(tensors + outputs))
         # sorted by Ops ID in _nodes=
         graph_nodes_ID = {}
-        for v in variables:
-            if v.graph not in graph_nodes_ID:
-                graph_nodes_ID[v.graph] = {op: ID
-                    for ID, op in v.graph._nodes_by_id.iteritems()}
-        variables = sorted(variables, key=lambda x: graph_nodes_ID[x.graph][x.op])
-        inputs = [v for v in variables if is_placeholder(v)]
-        trainable_variables = [v for v in variables if is_variable(v)]
-        # ====== get all updates and auxiliary variables ====== #
-        for v in inputs + variables:
-            if hasattr(v, 'tag'):
-                # updates
-                _ = getattr(v.tag, 'updates', OrderedDict())
-                _ = OrderedDict([(i, j) for i, j in _.iteritems()
-                                 if is_tensor(i)])
-                updates = dict_union(updates, _)
-                # auxiliary_variables
-                for _ in getattr(v.tag, 'auxiliary_variables', []):
-                    if _ not in variables:
-                        variables.append(_)
-        self._inputs = inputs
-        self.variables = variables
-        self._trainable_variables = trainable_variables
-        self.updates = updates
+        for t in tensors:
+            if t.graph not in graph_nodes_ID:
+                graph_nodes_ID[t.graph] = {op: ID
+                    for ID, op in t.graph._nodes_by_id.iteritems()}
+        tensors = sorted(tensors, key=lambda x: graph_nodes_ID[x.graph][x.op])
+        placeholders = [t for t in tensors if is_placeholder(t)]
+
+        self._placeholders = placeholders
+        self._tensors = tensors
+        self._variables = variables
 
     # ==================== Get variables ==================== #
     @property
     def placeholders(self):
         """Inputs to the graph, excluding constants and shared variables."""
-        return self._inputs
+        return list(self._placeholders)
 
     @property
     def tensors(self):
-        return [var for var in self.variables if
-                var not in self.placeholders and
-                var not in self.outputs]
+        return self._tensors
+
+    @property
+    def variables(self):
+        return list(self._variables)
 
     @property
     def parameters(self):
-        return [var for var in self.trainable_variables
-                if has_roles(var, [Parameter])]
+        return [var for var in self._variables if has_roles(var, Parameter)]
 
     @property
-    def auxiliary_variables(self):
-        return [var for var in self.variables if has_roles(var, [Auxiliary])]
+    def auxiliary_tensors(self):
+        return [t for t in self._tensors if has_roles(t, Auxiliary)]
 
     @property
     def dict_of_placeholders(self):

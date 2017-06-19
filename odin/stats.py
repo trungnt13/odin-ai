@@ -83,7 +83,9 @@ def train_valid_test_split(x, train=0.6, idfunc=None, inc_test=True, seed=None):
         get_rng().shuffle(id_list)
     # ====== split ====== #
     N = len(id_list)
-    train = int(np.ceil(float(train) * N))
+    if N == 1:
+        raise ValueError("Only find 1 sample, cannot split")
+    train = int(np.floor(float(train) * N))
     if train >= N:
         raise ValueError("train proportion must larger than 0 and smaller than 1.")
     valid = (N - train) // (2 if inc_test else 1)

@@ -369,11 +369,17 @@ def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
     return ax
 
 
-def plot_histogram(x, bins=12, ax=None):
+def plot_histogram(x, bins=12, ax=None, normalize=False):
+    """
+    x: histogram
+    """
     from matplotlib import pyplot as plt
     ax = ax if ax is not None else plt.gca()
-    weights = np.ones_like(x, dtype=float) / len(x)
-    ax.hist(x, bins=bins, alpha=0.6, weights=weights)
+    if normalize:
+        weights = np.ones_like(x, dtype=float) / len(x)
+    else:
+        weights = None
+    ax.hist(x, bins=bins, alpha=0.8, weights=weights)
     return ax
 
 
