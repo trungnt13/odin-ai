@@ -9,7 +9,7 @@ import numpy as np
 
 from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import get_rng
-from odin import fuel, basic
+from odin import fuel
 from odin.fuel import Dataset, as_data
 from odin.utils import struct, as_tuple, is_number, Progbar
 
@@ -107,7 +107,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
                          "get_updates(self, loss_or_grads, params).")
     #  check the cost train
     if cost_train == 'auto':
-        cost_train = K.ComputationGraph().get_roles(basic.TrainingCost)
+        cost_train = K.ComputationGraph().get_roles(K.role.TrainingCost)
     cost_train = as_tuple(cost_train) if cost_train is not None else tuple()
     if len(cost_train) == 0:
         raise ValueError("You must specify cost_train.")
@@ -117,14 +117,14 @@ def standard_trainer(train_data, valid_data, test_data=None,
     #  check the cost score
     if cost_score == 'auto':
         graph = K.ComputationGraph()
-        cost_score = graph.get_roles(basic.EarlyStop)
+        cost_score = graph.get_roles(K.role.EarlyStop)
     cost_score = as_tuple(cost_score) if cost_score is not None else tuple()
     cost_score = [cost for cost in cost_score if K.is_tensor(cost)]
     cost_score_name = [i.name if K.is_tensor(i) else i.__name__
                        for i in cost_score]
     #  check the cost regu
     if cost_regu == 'auto':
-        cost_regu = K.ComputationGraph().get_roles(basic.RegularizeCost)
+        cost_regu = K.ComputationGraph().get_roles(K.role.RegularizeCost)
         if len(cost_regu) == 0:
             cost_regu = None
     cost_regu = as_tuple(cost_regu) if cost_regu is not None else tuple()

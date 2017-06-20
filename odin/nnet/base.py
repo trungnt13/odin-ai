@@ -33,7 +33,7 @@ def get_all_nnops():
     return __ALL_NNOPS
 
 
-def assign_new_nnops(nnops):
+def _assign_new_nnops(nnops):
     if not isinstance(nnops, NNOp):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
@@ -219,7 +219,7 @@ class NNOp(object):
         self._transpose_ops = None
         self._is_initialized = False
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
-        self._variable_info = {}
+        self._variable_info = OrderedDict()
 
     def _check_input_desc(self, inputs):
         inputs = as_tuple(inputs)
@@ -251,30 +251,14 @@ class NNOp(object):
 
     def __setstate__(self, states):
         self._save_states = states
-        for i, j in self._save_states.iteritems():
-            setattr(self, i, j)
+        for key, val in self._save_states.iteritems():
+            setattr(self, key, val)
         # ====== check exist NNOp ====== #
         name = self.name
         if name in get_all_nnops():
-            # compare 2 NNOp to make sure they are the same
-            nnops = get_all_nnops()[name]
-            if type(nnops) == type(self):
-                for i, j in self._save_states.iteritems():
-                    if i in nnops._save_states:
-                        k = nnops._save_states[i]
-                        if type(k) == type(j):
-                            if K.is_tensor(j) and k.get_shape() != j.get_shape():
-                                pass
-                            else:
-                                continue
-                    raise RuntimeError("The pre-defined NNOp (%s) and the "
-                        "new NNOp (%s) is different on the attribute: '%s'; "
-                        "%s != %s." % (str(nnops), str(self), i, str(j), str(k)))
-            else:
-                raise RuntimeError("Found pre-defined NNOp of type=%s, and the "
-                                   "new NNOp with type=%s." % (type(nnops), type(self)))
+            raise RuntimeError("Found duplicated NNOp with name: %s" % name)
         elif self._is_initialized:
-            assign_new_nnops(self)
+            _assign_new_nnops(self)
 
     # ==================== properties ==================== #
     @cache_memory
@@ -306,14 +290,16 @@ class NNOp(object):
             var_name, t = self._variable_info[name]
             # get variable
             if t == 'variable':
-                var = K.get_all_variables(full_name=var_name)[0]
+                var = K.get_all_variables(full_name=var_name)
+                if len(var) == 0:
+                    raise RuntimeError("Cannot find variable with name: %s" % var_name)
+                var = var[0]
             # get tensor
             elif t == 'tensor':
                 name, footprint = var_name
                 op = K.get_operations(footprint=footprint)
                 if len(op) == 0:
-                    raise RuntimeError("Cannot find any Op with given footprint: %s"
-                        % footprint)
+                    raise RuntimeError("Cannot find any Op with given footprint: %s" % footprint)
                 var = op[0]._outputs[int(name.split(':')[-1])]
             # only care about the first variable
             return add_role(var, roles)
@@ -384,20 +370,20 @@ class NNOp(object):
 
     @property
     def variables(self):
+        """ Get all variables related to this Op"""
         if not self._is_initialized:
             raise Exception("This operators haven't initialized.")
-        allvars = K.get_all_variables()
+
         allname = [name for _, (name, t) in self._variable_info.iteritems()
                    if t == 'variable']
-        return [v for v in allvars if v.name in allname]
+        allvars = [v for v in K.get_all_variables() if v.name in allname]
 
-    @property
-    def all_variables(self):
-        allvars = self.variables
         tensors = [self.get_variable(name)
                    for name, (info, t) in self._variable_info.iteritems()
                    if t == 'tensor']
-        return allvars + K.ComputationGraph(tensors).variables
+        tensors = K.ComputationGraph(tensors).variables
+
+        return allvars + tensors
 
     @property
     def parameters(self):
@@ -480,7 +466,7 @@ class NNOp(object):
                 self._initialize(**keywords)
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
-                assign_new_nnops(self)
+                _assign_new_nnops(self)
             # ====== calculate and return outputs ====== #
             rets = self._apply(X[0] if len(X) == 1 else X, **kwargs)
             return rets
