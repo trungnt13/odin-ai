@@ -10,298 +10,10 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import (is_lambda, is_number, get_module_from_path, is_string,
-                        as_tuple, ShapeRef, DtypeRef)
 from odin.utils.decorators import functionable
+from odin.utils import (is_lambda, is_number, get_module_from_path, as_tuple)
 
-
-# ===========================================================================
-# Helper
-# ===========================================================================
-def _check_shape(s):
-    if callable(s): return functionable(s)
-    if is_number(s) or s is None:
-        s = (s,)
-    elif isinstance(s, np.ndarray):
-        s = s.tolist()
-    return tuple([int(i) if is_number(i) else None for i in s])
-
-
-def _check_dtype(dtype):
-    if callable(dtype): return functionable(dtype)
-    # ====== check dtype ====== #
-    if dtype is None:
-        dtype = K.floatX
-    elif isinstance(dtype, np.dtype) or is_string(dtype):
-        dtype = str(dtype)
-    elif isinstance(dtype, VariableDescriptor):
-        dtype = DtypeRef(dtype)
-    elif isinstance(dtype, tf.DType):
-        dtype = str(dtype.as_numpy_dtype)
-    return dtype
-
-
-def _shape_compare(shape1, shape2):
-    """Return True if shape1 == shape2"""
-    if len(shape1) != len(shape2):
-        return False
-    for s1, s2 in zip(shape1, shape2):
-        if s1 != s2:
-            return False
-    return True
-
-
-# ===========================================================================
-# Input descriptor
-# ===========================================================================
-class VariableDescriptor(object):
-    """ VariableDescriptor
-    Store all the necessary information to create placeholder as input
-    to any ComputationalGraph.
-
-    Parameters
-    ----------
-    shape: tuple, list, TensorVariable, callable
-        if TensorVariable is given, shape and dtype will be taken from
-        given variable. if a callable object is given, the object must
-        return shape information when called without any argument.
-    dtype: str, numpy.dtype, callable, InputDescriptor
-        dtype of input variable
-    name: str, None, callable, InputDescriptor
-        specific name for the variable
-
-    Note
-    ----
-    This object is pickle-able and comparable
-    """
-
-    def __init__(self, shape, dtype=None, name=None):
-        super(VariableDescriptor, self).__init__()
-        # ====== placeholder ====== #
-        self.__placeholder = None
-        self._name = name if name is None else str(name)
-        # Given a TensorVariabe, we don't want to pickle TensorVariable,
-        # so copy all necessary information
-        if K.is_tensor(shape):
-            if dtype is None:
-                self._dtype = str(shape.dtype.as_numpy_dtype)
-            self._shape = shape.get_shape().as_list()
-        # input the InputDescriptor directly
-        elif isinstance(shape, VariableDescriptor):
-            self._shape = ShapeRef(shape)
-            self._dtype = DtypeRef(shape) if dtype is None else _check_dtype(dtype)
-        # input regular information flow
-        else:
-            self._shape = _check_shape(shape)
-            self._dtype = _check_dtype(dtype)
-        # ====== create reference ====== #
-        # trick to store self in x, hence, no closure
-        self._shape_ref = ShapeRef(self)
-        self._dtype_ref = DtypeRef(self)
-
-    # ==================== pickle ==================== #
-    def __getstate__(self):
-        return (self._shape, self._shape_ref,
-                self._dtype, self._dtype_ref, self._name)
-
-    def __setstate__(self, states):
-        (self._shape, self._shape_ref,
-         self._dtype, self._dtype_ref, self._name) = states
-        self.__placeholder = None
-
-    # ==================== properties ==================== #
-    def set_placeholder(self, plh):
-        if not K.is_placeholder(plh):
-            raise ValueError("a placholder must be specified.")
-        if plh.get_shape().as_list() == self.shape and \
-        str(plh.dtype.as_numpy_dtype) == self.dtype:
-            self.__placeholder = plh
-        else:
-            raise ValueError("This VariableDescriptor require input with shape=%s,"
-                             "and dtype=%s, but given a placholder with shape=%s, "
-                             "dtype=%s." % (str(self.shape), self.dtype,
-                                str(plh.get_shape().as_list()),
-                                 str(plh.dtype.as_numpy_dtype)))
-        return self
-
-    @property
-    def placeholder(self):
-        if self.__placeholder is None:
-            self.__placeholder = K.placeholder(
-                shape=self.shape, dtype=self.dtype, name=self.name)
-        return self.__placeholder
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def shape(self):
-        return self._shape() if callable(self._shape) else self._shape
-
-    @property
-    def shape_ref(self):
-        """ ref is callable reference to the shape information of
-        this descriptor, it will return the actual shape if you
-        call it. """
-        return self._shape_ref
-
-    @property
-    def dtype(self):
-        return self._dtype() if callable(self._dtype) else self._dtype
-
-    @property
-    def dtype_ref(self):
-        """ ref is callable reference to the dtype information of
-        this descriptor, it will return the actual dtype if you
-        call it. """
-        return self._dtype_ref
-
-    # ==================== override ==================== #
-    def __str__(self):
-        return "<VarDesc - name:%s shape:%s dtype:%s init:%s>" % \
-        (str(self.name), str(self.shape), str(self.dtype),
-         False if self.__placeholder is None else True)
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __cmp__(self, other):
-        # ====== compare to a TensorVariable ====== #
-        if K.is_tensor(other):
-            other = VariableDescriptor(
-                shape=other.get_shape().as_list(),
-                dtype=str(other.dtype.as_numpy_dtype))
-        # ====== compare to a InputDescriptor ====== #
-        if isinstance(other, VariableDescriptor):
-            if _shape_compare(self.shape, other.shape) \
-            and self.dtype == other.dtype:
-                return 0
-        # ====== compare to a shape tuple (ignore the dtype) ====== #
-        elif isinstance(other, (tuple, list)):
-            return 0 if _shape_compare(self.shape, other) else 1
-        return 1
-
-
-class InputDescriptor(object):
-
-    def __init__(self, desc=None):
-        super(InputDescriptor, self).__init__()
-        self._desc = []
-        self.set_variables(desc)
-        # ====== create reference ====== #
-        # trick to store self in x, hence, no closure
-        self._shape_ref = ShapeRef(self)
-        self._dtype_ref = DtypeRef(self)
-
-    def _create_var_desc(self, info):
-        if isinstance(info, VariableDescriptor):
-            return info
-        if isinstance(info, dict):
-            return VariableDescriptor(**info)
-        info = as_tuple(info)
-        # shape tuple is given
-        if any(is_number(i) or i is None for i in info):
-            return VariableDescriptor(info)
-        return VariableDescriptor(*info)
-
-    def set_variables(self, desc):
-        if isinstance(desc, InputDescriptor):
-            self._desc = desc._desc
-        elif desc is not None:
-            desc = as_tuple(desc)
-            # convert shape tuple to list of shape tuple
-            if any(is_number(i) or i is None for i in desc):
-                desc = (desc,)
-            self._desc = [self._create_var_desc(d) for d in desc]
-        return self
-
-    def add_variables(self, desc):
-        if desc is not None:
-            desc = as_tuple(desc)
-            # convert shape tuple to list of shape tuple
-            if any(is_number(i) or i is None for i in desc):
-                desc = (desc,)
-            self._desc += [self._create_var_desc(d) for d in desc]
-        return self
-
-    # ==================== properties ==================== #
-    def set_placeholder(self, plh):
-        plh = [i for i in as_tuple(plh) if i is None or K.is_placeholder(i)]
-        if len(plh) < len(self._desc):
-            plh += [None] * len(self._desc) - len(plh)
-        elif len(plh) > len(self._desc):
-            plh = plh[:len(self._desc)]
-        for v, p in zip(self._desc, plh):
-            if p is not None:
-                v.set_placeholder(p)
-        return self
-
-    @property
-    def placeholder(self):
-        plh = [i.placeholder for i in self._desc]
-        return plh[0] if len(plh) == 1 else plh
-
-    @property
-    def name(self):
-        return ','.join([i.name for i in self._desc])
-
-    @property
-    def shape(self):
-        s = [i.shape for i in self._desc]
-        return s[0] if len(s) == 1 else s
-
-    @property
-    def shape_ref(self):
-        """ ref is callable reference to the shape information of
-        this descriptor, it will return the actual shape if you
-        call it. """
-        return self._shape_ref
-
-    @property
-    def dtype(self):
-        d = [i.dtype for i in self._desc]
-        return d[0] if len(d) == 1 else d
-
-    @property
-    def dtype_ref(self):
-        """ ref is callable reference to the dtype information of
-        this descriptor, it will return the actual dtype if you
-        call it. """
-        return self._dtype_ref
-
-    # ==================== override ==================== #
-    def __iter__(self):
-        return self._desc.__iter__()
-
-    def __len__(self):
-        return len(self._desc)
-
-    def __getitem__(self, key):
-        return self._desc.__getitem__(key)
-
-    def __setitem__(self, key, value):
-        if not isinstance(value, VariableDescriptor):
-            raise ValueError("InputDescriptor setitem only accept VariableDescriptor.")
-        return self._desc.__setitem__(key, value)
-
-    def __str__(self):
-        return "<InputDescriptor: %s" % '; '.join([str(i) for i in self._desc])
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __cmp__(self, other):
-        if not isinstance(other, InputDescriptor):
-            raise ValueError("Can only compare a InputDescriptor to another "
-                             "InputDescriptor.")
-        n = 0
-        for d1 in self._desc:
-            for d2 in other._desc:
-                if d1 == d2: n += 1
-        if n == len(self._desc):
-            return 0
-        return 1
+from .base import name_scope, _check_dtype, VariableDescriptor, InputDescriptor
 
 
 # ===========================================================================
@@ -369,10 +81,10 @@ class ModelDescriptor(object):
         self.input_desc = InputDescriptor()
         self._save_states = None
         self._save_kwargs = {}
+        self._opID = [0] # store as reference value
         # ====== cached tensor variables ====== #
-        self._last_outputs = {'train': None, 'score': None}
-        self._f_train = None
-        self._f_pred = None
+        self._last_outputs = None
+        self._f_outputs = None
 
     @property
     def input_shape(self):
@@ -384,53 +96,22 @@ class ModelDescriptor(object):
 
     # ==================== pickle ==================== #
     def __getstate__(self):
-        from odin.utils.decorators import functionable
         return [functionable(self._func), self.input_desc,
-                self._save_states, self._save_kwargs]
+                self._save_states, self._save_kwargs, self._opID]
 
     def __setstate__(self, states):
         (self._func, self.input_desc,
-            self._save_states, self._save_kwargs) = states
+            self._save_states, self._save_kwargs, self._opID) = states
         self._func = self._func.function
-        self._last_outputs = {'train': None, 'score': None}
-        self._f_train = None
-        self._f_pred = None
+
+        self._last_outputs = None
+        self._f_outputs = None
 
     def _check_init_shape(self):
         if len(self.input_desc) == 0:
             raise ValueError("You must set 'inputs' when calling the ModelDescriptor "
                              ", the inputs can be TensorVariables, shape tuple, "
                              "or InputDescriptor.")
-
-    def check_data(self, X, learn_factor=12.):
-        """
-        Parameters
-        ----------
-        learn_factor: float
-            your assumption about how many data points a parameter can learn.
-        """
-        if isinstance(X, (tuple, list)):
-            X = X[0]
-        if not hasattr(X, 'shape'):
-            raise ValueError("The input data must have attribute shape, so we can "
-                             "calculate the number of features and samples, but "
-                             "given data has type: %s" % str(type(X)))
-        shape = X.shape
-        if not is_number(shape[0]):
-            nb_points = sum(np.prod(s) for s in shape)
-            shape = shape[0]
-        else:
-            nb_points = np.prod(shape)
-        nb_samples = shape[0]
-        nb_params = self.nb_parameters
-        # ====== hard constraint ====== #
-        if nb_points / learn_factor < nb_params:
-            raise RuntimeError("The number of parameters is: %d, which is "
-                               "significant greater than the number of data points "
-                               "(only %d data points). It is not recommended to "
-                               "train a deep network for this datasets." %
-                               (nb_params, nb_points // learn_factor))
-        # ====== soft constraint ====== #
 
     # ==================== properties ==================== #
     @property
@@ -447,13 +128,14 @@ class ModelDescriptor(object):
         return self._func.__name__
 
     @property
+    def opID(self):
+        return self._opID[0]
+
+    @property
     def variables(self):
         v = []
         if self._save_states is not None:
-            states = self._save_states
-            if not isinstance(states, (tuple, list)):
-                states = (states,)
-            for s in states:
+            for s in as_tuple(self._save_states):
                 if hasattr(s, 'variables'):
                     v += s.variables
         return v
@@ -540,7 +222,7 @@ class ModelDescriptor(object):
             for i in inputs:
                 if K.is_tensor(i): # TensorVariable
                     shape = i.get_shape().as_list()
-                    dtype = str(i.dtype.as_numpy_dtype)
+                    dtype = _check_dtype(i.dtype.base_dtype)
                     input_desc.append(
                         VariableDescriptor(shape=shape, dtype=dtype, name=i.name))
                 elif isinstance(i, (tuple, list)): # Shape tuple
@@ -596,7 +278,9 @@ class ModelDescriptor(object):
         else: # get the saved kwargs
             kwargs = self._save_kwargs
         model_inputs.append(self._save_states)
-        outputs = self._func(*model_inputs, **kwargs)
+        # finally call the function to get outputs
+        with name_scope(self.name, id_start=self._opID):
+            outputs = self._func(*model_inputs, **kwargs)
         # ====== check outputs values ====== #
         if outputs is None or len(outputs) != 2:
             raise ValueError("[ModelDescriptor] function must return only 2 objects: "
@@ -605,12 +289,8 @@ class ModelDescriptor(object):
             self._save_states = outputs[1]
         # cached last outputs
         outputs = outputs[0]
-        if K.is_training():
-            self._last_outputs['train'] = outputs
-            self._f_train = None # reset train function
-        else:
-            self._last_outputs['score'] = outputs
-            self._f_pred = None # reset prediciton function
+        self._last_outputs = outputs
+        self._f_outputs = None # reset last function
         return outputs
 
     def __getattr__(self, name):

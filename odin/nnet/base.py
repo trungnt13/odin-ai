@@ -14,13 +14,12 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
-from odin.backend.role import (add_role, has_roles, Parameter, Variable,
-                               Weight, Bias)
-from odin.utils import as_tuple, uuid, cache_memory, is_number, is_string
+from odin.utils.decorators import functionable
+from odin.utils import (as_tuple, uuid, cache_memory, is_number, is_string,
+                        ShapeRef, DtypeRef)
+from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
-
-from .model import InputDescriptor
 
 # ===========================================================================
 # Global NNOp manager
@@ -142,7 +141,7 @@ def _nnops_initscope(func):
         # get name of the NNOp
         ops_name = kwargs.get('name', None)
         if ops_name is None:
-            ops_name = "%s_%s" % (self_arg.__class__.__name__, uuid())
+            ops_name = _create_op_name(self_arg.__class__, ops_name)
         # update the new arguments into default arguments
         new_args = OrderedDict([(name, args[i]) if i < len(args)
             else (name, default)
@@ -165,6 +164,336 @@ def _nnops_initscope(func):
                 % str([i for i, j in final_args.iteritems() if j == '__no_argument__']))
         return func(**final_args)
     return _wrap_init
+
+
+_NAME_SCOPE = None
+_NNOP_ID = [0]
+
+
+@contextmanager
+def name_scope(name_prefix, id_start=0):
+    """ Name scope that are prepended to all NNOp name
+    Note
+    ----
+    if the name scope is given, an increasement ID is generated for
+    duplicated NNOp instead of UUID.
+    """
+    global _NAME_SCOPE, _NNOP_ID
+    if _NAME_SCOPE is not None:
+        raise ValueError("Current NNOp name scope is: %s, cannot override by "
+            "new name scope: %s" % (_NAME_SCOPE, name_prefix))
+    if not is_string(name_prefix):
+        raise ValueError("name_prefix must be string types, but given %s" % type(name_prefix))
+    # ====== assign name scope and start ID for NNOp ====== #
+    _NAME_SCOPE = name_prefix
+    _NNOP_ID[0] = id_start if is_number(id_start) else id_start[0]
+    yield name_prefix
+    _NAME_SCOPE = None
+    if isinstance(id_start, list):
+        id_start[0] = _NNOP_ID[0]
+
+
+def _create_op_name(op_class, name=None):
+    if name is None:
+        name = [op_class.__name__]
+        if _NAME_SCOPE is not None:
+            name = [_NAME_SCOPE] + name + [str(_NNOP_ID[0])]
+            _NNOP_ID[0] += 1
+        else:
+            name += [str(uuid())]
+        name = '_'.join(name)
+    elif not is_string(name):
+        raise ValueError("name for NNOp must be string, but given name "
+                         "has type: %s" % (name))
+    return name
+
+
+# ===========================================================================
+# Helper
+# ===========================================================================
+def _check_shape(s):
+    if callable(s): return functionable(s)
+    if is_number(s) or s is None:
+        s = (s,)
+    elif isinstance(s, np.ndarray):
+        s = s.tolist()
+    return tuple([int(i) if is_number(i) else None for i in s])
+
+
+def _check_dtype(dtype):
+    if callable(dtype): return functionable(dtype)
+    # ====== check dtype ====== #
+    if dtype is None:
+        dtype = K.floatX
+    elif isinstance(dtype, np.dtype) or is_string(dtype):
+        dtype = str(dtype)
+    elif isinstance(dtype, VariableDescriptor):
+        dtype = DtypeRef(dtype)
+    elif isinstance(dtype, tf.DType):
+        dtype = dtype.base_dtype.name
+    return dtype
+
+
+def _shape_compare(shape1, shape2):
+    """Return True if shape1 == shape2"""
+    if len(shape1) != len(shape2):
+        return False
+    for s1, s2 in zip(shape1, shape2):
+        if s1 != s2:
+            return False
+    return True
+
+
+# ===========================================================================
+# Input descriptor
+# ===========================================================================
+class VariableDescriptor(object):
+    """ VariableDescriptor
+    Store all the necessary information to create placeholder as input
+    to any ComputationalGraph.
+
+    Parameters
+    ----------
+    shape: tuple, list, TensorVariable, callable
+        if TensorVariable is given, shape and dtype will be taken from
+        given variable. if a callable object is given, the object must
+        return shape information when called without any argument.
+    dtype: str, numpy.dtype, callable, InputDescriptor
+        dtype of input variable
+    name: str, None, callable, InputDescriptor
+        specific name for the variable
+
+    Note
+    ----
+    This object is pickle-able and comparable
+    """
+
+    def __init__(self, shape, dtype=None, name=None):
+        super(VariableDescriptor, self).__init__()
+        # ====== placeholder ====== #
+        self.__placeholder = None
+        self._name = name if name is None else str(name)
+        # Given a TensorVariabe, we don't want to pickle TensorVariable,
+        # so copy all necessary information
+        if K.is_tensor(shape):
+            if dtype is None:
+                self._dtype = _check_dtype(shape.dtype)
+            self._shape = shape.get_shape().as_list()
+        # input the InputDescriptor directly
+        elif isinstance(shape, VariableDescriptor):
+            self._shape = ShapeRef(shape)
+            self._dtype = DtypeRef(shape) if dtype is None else _check_dtype(dtype)
+        # input regular information flow
+        else:
+            self._shape = _check_shape(shape)
+            self._dtype = _check_dtype(dtype)
+        # ====== create reference ====== #
+        # trick to store self in x, hence, no closure
+        self._shape_ref = ShapeRef(self)
+        self._dtype_ref = DtypeRef(self)
+
+    # ==================== pickle ==================== #
+    def __getstate__(self):
+        return (self._shape, self._shape_ref,
+                self._dtype, self._dtype_ref, self._name)
+
+    def __setstate__(self, states):
+        (self._shape, self._shape_ref,
+         self._dtype, self._dtype_ref, self._name) = states
+        self.__placeholder = None
+
+    # ==================== properties ==================== #
+    def set_placeholder(self, plh):
+        if not K.is_placeholder(plh):
+            raise ValueError("a placholder must be specified.")
+        if plh.get_shape().as_list() == self.shape and \
+        _check_dtype(plh.dtype) == self.dtype:
+            self.__placeholder = plh
+        else:
+            raise ValueError("This VariableDescriptor require input with shape=%s,"
+                             "and dtype=%s, but given a placholder with shape=%s, "
+                             "dtype=%s." % (str(self.shape), self.dtype,
+                            str(plh.get_shape().as_list()), _check_dtype(plh.dtype)))
+        return self
+
+    @property
+    def placeholder(self):
+        if self.__placeholder is None:
+            self.__placeholder = K.placeholder(
+                shape=self.shape, dtype=self.dtype, name=self.name)
+        return self.__placeholder
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def shape(self):
+        return self._shape() if callable(self._shape) else self._shape
+
+    @property
+    def shape_ref(self):
+        """ ref is callable reference to the shape information of
+        this descriptor, it will return the actual shape if you
+        call it. """
+        return self._shape_ref
+
+    @property
+    def dtype(self):
+        return self._dtype() if callable(self._dtype) else self._dtype
+
+    @property
+    def dtype_ref(self):
+        """ ref is callable reference to the dtype information of
+        this descriptor, it will return the actual dtype if you
+        call it. """
+        return self._dtype_ref
+
+    # ==================== override ==================== #
+    def __str__(self):
+        return "<VarDesc - name:%s shape:%s dtype:%s init:%s>" % \
+        (str(self.name), str(self.shape), str(self.dtype),
+         False if self.__placeholder is None else True)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __cmp__(self, other):
+        # ====== compare to a TensorVariable ====== #
+        if K.is_tensor(other):
+            other = VariableDescriptor(
+                shape=other.get_shape().as_list(),
+                dtype=_check_dtype(other.dtype))
+        # ====== compare to a InputDescriptor ====== #
+        if isinstance(other, VariableDescriptor):
+            if _shape_compare(self.shape, other.shape) \
+            and self.dtype == other.dtype:
+                return 0
+        # ====== compare to a shape tuple (ignore the dtype) ====== #
+        elif isinstance(other, (tuple, list)):
+            return 0 if _shape_compare(self.shape, other) else 1
+        return 1
+
+
+class InputDescriptor(object):
+
+    def __init__(self, desc=None):
+        super(InputDescriptor, self).__init__()
+        self._desc = []
+        self.set_variables(desc)
+        # ====== create reference ====== #
+        # trick to store self in x, hence, no closure
+        self._shape_ref = ShapeRef(self)
+        self._dtype_ref = DtypeRef(self)
+
+    def _create_var_desc(self, info):
+        if isinstance(info, VariableDescriptor):
+            return info
+        if isinstance(info, dict):
+            return VariableDescriptor(**info)
+        info = as_tuple(info)
+        # shape tuple is given
+        if any(is_number(i) or i is None for i in info):
+            return VariableDescriptor(info)
+        return VariableDescriptor(*info)
+
+    def set_variables(self, desc):
+        if isinstance(desc, InputDescriptor):
+            self._desc = desc._desc
+        elif desc is not None:
+            desc = as_tuple(desc)
+            # convert shape tuple to list of shape tuple
+            if any(is_number(i) or i is None for i in desc):
+                desc = (desc,)
+            self._desc = [self._create_var_desc(d) for d in desc]
+        return self
+
+    def add_variables(self, desc):
+        if desc is not None:
+            desc = as_tuple(desc)
+            # convert shape tuple to list of shape tuple
+            if any(is_number(i) or i is None for i in desc):
+                desc = (desc,)
+            self._desc += [self._create_var_desc(d) for d in desc]
+        return self
+
+    # ==================== properties ==================== #
+    def set_placeholder(self, plh):
+        plh = [i for i in as_tuple(plh) if i is None or K.is_placeholder(i)]
+        if len(plh) < len(self._desc):
+            plh += [None] * len(self._desc) - len(plh)
+        elif len(plh) > len(self._desc):
+            plh = plh[:len(self._desc)]
+        for v, p in zip(self._desc, plh):
+            if p is not None:
+                v.set_placeholder(p)
+        return self
+
+    @property
+    def placeholder(self):
+        plh = [i.placeholder for i in self._desc]
+        return plh[0] if len(plh) == 1 else plh
+
+    @property
+    def name(self):
+        return ','.join([i.name for i in self._desc])
+
+    @property
+    def shape(self):
+        s = [i.shape for i in self._desc]
+        return s[0] if len(s) == 1 else s
+
+    @property
+    def shape_ref(self):
+        """ ref is callable reference to the shape information of
+        this descriptor, it will return the actual shape if you
+        call it. """
+        return self._shape_ref
+
+    @property
+    def dtype(self):
+        d = [i.dtype for i in self._desc]
+        return d[0] if len(d) == 1 else d
+
+    @property
+    def dtype_ref(self):
+        """ ref is callable reference to the dtype information of
+        this descriptor, it will return the actual dtype if you
+        call it. """
+        return self._dtype_ref
+
+    # ==================== override ==================== #
+    def __iter__(self):
+        return self._desc.__iter__()
+
+    def __len__(self):
+        return len(self._desc)
+
+    def __getitem__(self, key):
+        return self._desc.__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, VariableDescriptor):
+            raise ValueError("InputDescriptor setitem only accept VariableDescriptor.")
+        return self._desc.__setitem__(key, value)
+
+    def __str__(self):
+        return "<InputDescriptor: %s" % '; '.join([str(i) for i in self._desc])
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __cmp__(self, other):
+        if not isinstance(other, InputDescriptor):
+            raise ValueError("Can only compare a InputDescriptor to another "
+                             "InputDescriptor.")
+        n = 0
+        for d1 in self._desc:
+            for d2 in other._desc:
+                if d1 == d2: n += 1
+        if n == len(self._desc):
+            return 0
+        return 1
 
 
 # ===========================================================================
@@ -205,15 +534,9 @@ class NNOp(object):
     """
 
     def __init__(self, name=None, **kwargs):
-        super(NNOp, self).__init__()
         self._save_states = {}
-
-        if name is None:
-            name = "%s_%s" % (self.__class__.__name__, uuid())
-        elif not is_string(name):
-            raise ValueError("name for NNOp must be string, but given name "
-                             "has type: %s" % (name))
-        self._name = str(name)
+        # ====== create default NNOp name ====== #
+        self._name = _create_op_name(self.__class__, name)
 
         self._input_desc = InputDescriptor()
         self._transpose_ops = None

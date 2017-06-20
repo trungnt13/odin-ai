@@ -178,7 +178,7 @@ def set_value(x, value, return_ops=False, name='SetValue'):
         the Op directly
     '''
     if isinstance(value, np.ndarray):
-        value = np.asarray(value, dtype=x.dtype.as_numpy_dtype)
+        value = np.asarray(value, dtype=x.dtype.base_dtype)
     elif is_tensor(value):
         value = tf.cast(value, dtype=x.dtype.base_dtype)
     assign_op = tf.assign(x, value, name=name)
@@ -246,7 +246,6 @@ def get_operations(type=None, device=None, sort=False, scope=None,
      * "VariableV2"
      * "Const"
      * "Assign"
-     *
     """
     ops = get_graph().get_operations()
     # update OpID
@@ -282,7 +281,7 @@ def get_operationID(op):
     return _ops_ID[op]
 
 
-@cache_memory
+# @cache_memory
 def get_operation_footprint(op):
     """ Trace back the inputs of given Op and record all:
     * placholders
@@ -298,11 +297,13 @@ def get_operation_footprint(op):
     This is just a fair attempt to create short identification of a
     tenorflow Op
     """
+    if not isinstance(op, tf.Operation) and hasattr(op, 'op'):
+        op = op.op
     var = []
     placeholder = []
     const = []
     ops = [op.type]
-    inputs = op._inputs
+    inputs = list(op._inputs)
     while len(inputs) > 0:
         i = inputs.pop()
         o = i.op
@@ -313,7 +314,7 @@ def get_operation_footprint(op):
             placeholder.append(i)
         elif o.type == "Const":
             const.append(i)
-        inputs = o._inputs + inputs
+        inputs = list(o._inputs) + inputs
     return ':'.join([get_normalized_name(v) for v in var]) + '|' +\
            ':'.join([get_normalized_name(p) for p in placeholder]) + '|' +\
            ':'.join([get_normalized_name(c) for c in const]) + '|' +\
@@ -365,9 +366,9 @@ def get_tensors(name=None, full_name=None, device=None, scope=None):
     ops = get_operations(device=device, scope=scope, sort=False)
     alltensors = []
     for o in ops:
-        alltensors += o._inputs + o._outputs
+        alltensors += list(o._inputs) + list(o._outputs)
         for i in o._control_inputs:
-            alltensors += i._inputs + i._outputs
+            alltensors += list(i._inputs) + list(i._outputs)
     alltensors = list(set(alltensors))
     # ====== filter out unsupport types ====== #
     if name is not None:
@@ -555,7 +556,7 @@ class ComputationGraph(object):
             else:
                 _travelled_down.append(op)
             # ====== get all variable ====== #
-            inputs = op._inputs
+            inputs = list(op._inputs)
             tensors += inputs
             for i in inputs:
                 tensors += get_all_tensor_trace_down(i)
@@ -572,7 +573,7 @@ class ComputationGraph(object):
                     _travelled_up.append(op)
                 # ====== get all variable ====== #
                 inputs = [i for i in op._inputs if i != x]
-                outputs = op._outputs
+                outputs = list(op._outputs)
                 tensors += inputs + outputs
                 for o in outputs:
                     tensors += get_all_tensor_trace_up(o)
@@ -593,7 +594,7 @@ class ComputationGraph(object):
                 for o in outputs:
                     with o.graph.as_default():
                         for op in get_operations(sort=False):
-                            for t in op._inputs + op._outputs:
+                            for t in list(op._inputs) + list(op._outputs):
                                 yield t
         # store all the updates embedded into the Tensor Variables
         variables = [o for o in self.outputs if is_variable(o)]

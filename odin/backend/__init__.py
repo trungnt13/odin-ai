@@ -136,7 +136,7 @@ def save_variables(var_list, path, session=None):
     """ This function only apply for trainable parameters """
     if session is None:
         session = get_session()
-    var_list = as_tuple(var_list)
+    var_list = [v for v in set(as_tuple(var_list)) if is_variable(v)]
     name = '|'.join(sorted([v.name for v in var_list]))
     if name in _saver:
         saver = _saver[name]
@@ -146,27 +146,48 @@ def save_variables(var_list, path, session=None):
     # ====== save the variables ====== #
     checkpoint = saver.save(session, path, global_step=None,
         write_meta_graph=False, write_state=False)
+    # ====== save meta-info for recreate variable ====== #
+    var_meta = []
+    for v in var_list:
+        name = v.name.split(':')[0]
+        dtype = v.dtype.base_dtype.name
+        shape = v.get_shape().as_list()
+        var_meta.append((name, dtype, shape))
     # ====== save the collections ====== #
     collections = {var.name: role.get_roles(var, return_string=True)
                    for var in var_list}
-    cPickle.dump(collections, open(path + '.collections', 'w'),
-        protocol=cPickle.HIGHEST_PROTOCOL)
+    cPickle.dump([collections, var_meta],
+                 open(path + '.collections', 'w'),
+                 protocol=cPickle.HIGHEST_PROTOCOL)
     return checkpoint
 
 
-def restore_variables(var_list, path, session=None):
+def restore_variables(path, session=None):
     if session is None:
         session = get_session()
-    var_list = as_tuple(var_list)
+    # ====== load and check var meta ====== #
+    collections, var_meta = cPickle.load(open(path + '.collections', 'r'))
+    var_list = []
+    allvars = {v.name.split(':')[0]: v for v in get_all_variables()}
+    for name, dtype, shape in var_meta:
+        if name in allvars: # found predefined variable
+            var_list.append(allvars[name])
+        else: # create new variable
+            if tf.get_variable_scope().name:
+                raise RuntimeError("The current variable scope is: %s, you can "
+                    "only restore variables from default scope."
+                    % tf.get_variable_scope().name)
+            var_list.append(tf.Variable(
+                initial_value=np.empty(shape=shape),
+                name=name, dtype=dtype))
+    # ====== restore the variables ====== #
     name = '|'.join(sorted([v.name for v in var_list]))
     if name in _saver:
         saver = _saver[name]
     else:
         saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
             allow_empty=False)
-    # ====== save the variables ====== #
     saver.restore(session, path)
-    # ====== save the collections ====== #
-    collections = cPickle.load(open(path + '.collections', 'r'))
-    for var, roles in collections.iteritems():
-        variable(name=var, roles=roles)
+    # ====== restore the collections ====== #
+    for v in var_list:
+        role.add_role(v, collections[v.name])
