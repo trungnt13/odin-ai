@@ -25,15 +25,22 @@ import tensorflow as tf
 # ===========================================================================
 # Global NNOp manager
 # ===========================================================================
-__ALL_NNOPS = {}
+_ALL_NNOPS = {}
 
 
 def get_all_nnops(model_scope=None, op_type=None):
     """ Return a dictionary of (name, nnops) for all created NNOp """
-    allops = __ALL_NNOPS.values()
+    allops = _ALL_NNOPS.values()
     if model_scope is not None:
         if not is_string(model_scope): model_scope = model_scope.name
         allops = [o for o in allops if o.name[:len(model_scope)] == model_scope]
+    if op_type is not None:
+        op_type = [i for i in as_tuple(op_type)
+                   if is_string(op_type) or issubclass(op_type, NNOp)]
+        allops = [o for o in allops
+                  if any(o.__class__.__name__ == t if is_string(t)
+                         else isinstance(o, t)
+                         for t in op_type)]
     return allops
 
 
@@ -42,10 +49,10 @@ def _assign_new_nnops(nnops):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
     name = nnops.name
-    if name in __ALL_NNOPS:
+    if name in _ALL_NNOPS:
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
-                           "already existed." % (type(__ALL_NNOPS[name]), name))
-    __ALL_NNOPS[name] = nnops
+                           "already existed." % (type(_ALL_NNOPS[name]), name))
+    _ALL_NNOPS[name] = nnops
 
 # ===========================================================================
 # Context manager
@@ -144,8 +151,7 @@ def _nnops_initscope(func):
             raise ValueError("_nnops_initscope can be only applied to __init__ "
                              "of NNOp instance.")
         # get name of the NNOp
-        ops_name = _create_op_name(self_arg.__class__,
-                                   kwargs.get('name', None))
+        ops_name = kwargs.get('name', None)
         # update the new arguments into default arguments
         new_args = OrderedDict([(name, args[i]) if i < len(args)
             else (name, default)
@@ -196,23 +202,6 @@ def name_scope(name_prefix, id_start=0):
     _NAME_SCOPE = None
     if isinstance(id_start, list):
         id_start[0] = _NNOP_ID[0]
-
-
-def _create_op_name(op_class, name=None):
-    if name is None: # automatic
-        name = op_class.__name__
-        opID = '_' + (str(uuid()) if _NAME_SCOPE is None else str(_NNOP_ID[0]))
-    elif is_string(name): # regulation for the NNOp name
-        if '/' in name or ':' in name:
-            raise ValueError("Invalid name for NNOp:" % name)
-        opID = ''
-    else:
-        raise ValueError("name for NNOp must be string, but given name "
-                         "has type: %s" % (name))
-    if _NAME_SCOPE is not None:
-        name = _NAME_SCOPE + '/' + name
-        _NNOP_ID[0] += 1
-    return name + opID
 
 
 # ===========================================================================
@@ -493,30 +482,47 @@ class InputDescriptor(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-class _NNOp_Meta(ABCMeta):
+def _create_op_name(op_class, name=None):
+    if name is None: # automatic
+        name = op_class.__name__
+        if _NAME_SCOPE is not None:
+            name = _NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[0])
+            _NNOP_ID[0] += 1
+        else:
+            name = name + "_" + str(uuid())
+    elif is_string(name): # regulation for the NNOp name
+        if '/' in name or ':' in name:
+            raise ValueError("Invalid name for NNOp:" % name)
+    else:
+        raise ValueError("name for NNOp must be string, but given name "
+                         "has type: %s" % (name))
+    return name
 
-    def __call__(cls, *args, **kwargs):
-        spec = inspect.getargspec(cls.__init__)
-        kwspec = {}
-        if spec.defaults is not None:
-            kwspec.update(zip(reversed(spec.args), reversed(spec.defaults)))
-        kwspec.update(zip(spec.args[1:], args))
-        kwspec.update(kwargs)
-        # convert all path to abspath to make sure same path are the same
-        for i, j in kwspec.iteritems():
-            if is_path(j):
-                kwspec[i] = os.path.abspath(j)
-        # check duplicate instances
-        instances = Singleton._instances[cls]
-        for arguments, instance in instances:
-            if arguments == kwspec:
-                return instance
+
+class _NNOp_Meta(ABCMeta):
+    """ This Meta return the same instance if found a duplicated NNOp
+    created before with the same name
+
+    Example
+    -------
+    >>> f1 = N.Dense(name="dense")
+    >>> f2 = N.Dense(name="dense")
+    >>> print(f1 == f2) # True
+    """
+
+    def __call__(clazz, *args, **kwargs):
+        ops_name = kwargs.get('name', None)
+        ops_name = _create_op_name(clazz, ops_name)
+        kwargs.update({'name': ops_name})
+        if ops_name in _ALL_NNOPS:
+            old_clazz = _ALL_NNOPS[ops_name].__class__
+            if clazz != old_clazz:
+                raise RuntimeError("Found predefined NNOp with type: %s, but "
+                    "the new NNOp has type: %s" % (old_clazz, clazz))
+            return _ALL_NNOPS[ops_name]
         # not found old instance
-        instance = super(Singleton, cls).__call__(*args, **kwargs)
-        instances.append((kwspec, instance))
-        setattr(instance, 'dispose',
-                types.MethodType(Singleton._dispose, instance))
-        return instance
+        return super(_NNOp_Meta, clazz).__call__(*args, **kwargs)
+
 
 @add_metaclass(_NNOp_Meta)
 class NNOp(object):
@@ -599,7 +605,7 @@ class NNOp(object):
             setattr(self, key, val)
         # ====== check exist NNOp ====== #
         name = self.name
-        if name in __ALL_NNOPS:
+        if name in _ALL_NNOPS:
             raise RuntimeError("Found duplicated NNOp with name: %s" % name)
         elif self._is_initialized:
             _assign_new_nnops(self)

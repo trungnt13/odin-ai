@@ -222,11 +222,12 @@ class ModelDescriptor(object):
         if argspecs.keywords is None:
             kwargs = {}
         elif len(kwargs) > 0: # override saved kwargs
-            self._save_kwargs = kwargs
+            self._save_kwargs.update(kwargs)
         else: # get the saved kwargs
             kwargs = self._save_kwargs
         # finally call the function to get outputs
-        with name_scope(self.name, id_start=self._opID):
+        with name_scope(self.name,
+                        id_start=self._opID if self.opID == 0 else [0]):
             outputs = self._func(*model_inputs, **kwargs)
         # ====== check outputs values ====== #
         self._last_outputs = outputs
