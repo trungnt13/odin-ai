@@ -483,16 +483,21 @@ class InputDescriptor(object):
 # Main Ops
 # ===========================================================================
 def _create_op_name(op_class, name=None):
-    if name is None: # automatic
+    # automatic generate name
+    if name is None:
         name = op_class.__name__
         if _NAME_SCOPE is not None:
             name = _NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[0])
             _NNOP_ID[0] += 1
         else:
             name = name + "_" + str(uuid())
-    elif is_string(name): # regulation for the NNOp name
+    # regulation for the NNOp name
+    elif is_string(name):
         if '/' in name or ':' in name:
             raise ValueError("Invalid name for NNOp:" % name)
+        if _NAME_SCOPE is not None:
+            name = _NAME_SCOPE + '/' + name
+            _NNOP_ID[0] += 1
     else:
         raise ValueError("name for NNOp must be string, but given name "
                          "has type: %s" % (name))
@@ -584,8 +589,8 @@ class NNOp(object):
         # mismatch input desctiption
         _ = InputDescriptor().set_variables(inputs)
         if self._input_desc != _:
-            raise ValueError("This NNConfiguration required inputs: %s, but was given: "
-                            "%s." % (str(self._input_desc), str(_)))
+            raise ValueError("This NNOp required inputs: %s, but was given: %s."
+                            % (str(self._input_desc), str(_)))
         # automatic fetch placeholder to replace raw description
         inputs = [i if K.is_tensor(i) else None for i in inputs]
         # Don't create placeholders if user already gave the Input Tensor
