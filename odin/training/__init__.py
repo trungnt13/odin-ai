@@ -160,7 +160,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
             print("[WARNING] No scoring cost is specified, using training "
                   "cost for validating!")
             cost_score = cost_train[:-1] if gradient_norm else cost_train
-        score_inputs = K.ComputationGraph(cost_score).inputs
+        score_inputs = K.ComputationGraph(cost_score).placeholders
         f_score = K.function(inputs=score_inputs, outputs=cost_score)
 
     # ====== evaluation ====== #

@@ -44,7 +44,7 @@ def get_all_nnops(model_scope=None, op_type=None):
     return allops
 
 
-def _assign_new_nnops(nnops):
+def _assign_new_nnop(nnops):
     if not isinstance(nnops, NNOp):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
@@ -495,6 +495,7 @@ def _create_op_name(op_class, name=None):
     elif is_string(name):
         if '/' in name or ':' in name:
             raise ValueError("Invalid name for NNOp:" % name)
+        # still add name scope
         if _NAME_SCOPE is not None:
             name = _NAME_SCOPE + '/' + name
             _NNOP_ID[0] += 1
@@ -613,7 +614,7 @@ class NNOp(object):
         if name in _ALL_NNOPS:
             raise RuntimeError("Found duplicated NNOp with name: %s" % name)
         elif self._is_initialized:
-            _assign_new_nnops(self)
+            _assign_new_nnop(self)
 
     # ==================== properties ==================== #
     @cache_memory
@@ -821,7 +822,7 @@ class NNOp(object):
                 self._initialize(**keywords)
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
-                _assign_new_nnops(self)
+                _assign_new_nnop(self)
             # ====== calculate and return outputs ====== #
             rets = self._apply(X[0] if len(X) == 1 else X, **kwargs)
             return rets
