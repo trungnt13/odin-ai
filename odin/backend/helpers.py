@@ -434,17 +434,9 @@ class Function(object):
                         updates_ops.append(tf.assign(p, new_p))
                     else: # assumed already an assign op
                         updates_ops.append(update)
-                updates_ops = tf.group(*updates_ops)
+                self.updates_ops = tf.group(*updates_ops)
             else: # already an tensorflow Ops
-                updates_ops = updates
-            # annotated updates from Graph
-            updates_graph = ComputationGraph(outputs).updates
-            if len(updates_graph) > 0:
-                updates_graph = tf.group(*[tf.assign(v, new_v)
-                    for v, new_v in updates_graph.iteritems()])
-                updates_ops = tf.group(*[updates_ops, updates_graph])
-            # merged updated
-            self.updates_ops = updates_ops
+                self.updates_ops = updates
 
     def __call__(self, *inputs, **kwargs):
         # dictionary as inputs

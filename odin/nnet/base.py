@@ -1,5 +1,6 @@
 from __future__ import division, absolute_import, print_function
 
+import re
 import inspect
 import numbers
 import warnings
@@ -27,9 +28,13 @@ import tensorflow as tf
 __ALL_NNOPS = {}
 
 
-def get_all_nnops():
+def get_all_nnops(model_scope=None, op_type=None):
     """ Return a dictionary of (name, nnops) for all created NNOp """
-    return __ALL_NNOPS
+    allops = __ALL_NNOPS.values()
+    if model_scope is not None:
+        if not is_string(model_scope): model_scope = model_scope.name
+        allops = [o for o in allops if o.name[:len(model_scope)] == model_scope]
+    return allops
 
 
 def _assign_new_nnops(nnops):
@@ -37,7 +42,7 @@ def _assign_new_nnops(nnops):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
     name = nnops.name
-    if name in get_all_nnops():
+    if name in __ALL_NNOPS:
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
                            "already existed." % (type(__ALL_NNOPS[name]), name))
     __ALL_NNOPS[name] = nnops
@@ -139,9 +144,8 @@ def _nnops_initscope(func):
             raise ValueError("_nnops_initscope can be only applied to __init__ "
                              "of NNOp instance.")
         # get name of the NNOp
-        ops_name = kwargs.get('name', None)
-        if ops_name is None:
-            ops_name = _create_op_name(self_arg.__class__, ops_name)
+        ops_name = _create_op_name(self_arg.__class__,
+                                   kwargs.get('name', None))
         # update the new arguments into default arguments
         new_args = OrderedDict([(name, args[i]) if i < len(args)
             else (name, default)
@@ -187,25 +191,28 @@ def name_scope(name_prefix, id_start=0):
     # ====== assign name scope and start ID for NNOp ====== #
     _NAME_SCOPE = name_prefix
     _NNOP_ID[0] = id_start if is_number(id_start) else id_start[0]
-    yield name_prefix
+    with tf.variable_scope(_NAME_SCOPE):
+        yield name_prefix
     _NAME_SCOPE = None
     if isinstance(id_start, list):
         id_start[0] = _NNOP_ID[0]
 
 
 def _create_op_name(op_class, name=None):
-    if name is None:
-        name = [op_class.__name__]
-        if _NAME_SCOPE is not None:
-            name = [_NAME_SCOPE] + name + [str(_NNOP_ID[0])]
-            _NNOP_ID[0] += 1
-        else:
-            name += [str(uuid())]
-        name = '_'.join(name)
-    elif not is_string(name):
+    if name is None: # automatic
+        name = op_class.__name__
+        opID = '_' + (str(uuid()) if _NAME_SCOPE is None else str(_NNOP_ID[0]))
+    elif is_string(name): # regulation for the NNOp name
+        if '/' in name or ':' in name:
+            raise ValueError("Invalid name for NNOp:" % name)
+        opID = ''
+    else:
         raise ValueError("name for NNOp must be string, but given name "
                          "has type: %s" % (name))
-    return name
+    if _NAME_SCOPE is not None:
+        name = _NAME_SCOPE + '/' + name
+        _NNOP_ID[0] += 1
+    return name + opID
 
 
 # ===========================================================================
@@ -279,6 +286,9 @@ class VariableDescriptor(object):
             if dtype is None:
                 self._dtype = _check_dtype(shape.dtype)
             self._shape = shape.get_shape().as_list()
+            # store the placeholder so don't have to create it again
+            if K.is_placeholder(shape):
+                self.__placeholder = shape
         # input the InputDescriptor directly
         elif isinstance(shape, VariableDescriptor):
             self._shape = ShapeRef(shape)
@@ -317,7 +327,7 @@ class VariableDescriptor(object):
         return self
 
     @property
-    def placeholder(self):
+    def placeholders(self):
         if self.__placeholder is None:
             self.__placeholder = K.placeholder(
                 shape=self.shape, dtype=self.dtype, name=self.name)
@@ -377,25 +387,13 @@ class VariableDescriptor(object):
 
 class InputDescriptor(object):
 
-    def __init__(self, desc=None):
+    def __init__(self):
         super(InputDescriptor, self).__init__()
         self._desc = []
-        self.set_variables(desc)
         # ====== create reference ====== #
         # trick to store self in x, hence, no closure
         self._shape_ref = ShapeRef(self)
         self._dtype_ref = DtypeRef(self)
-
-    def _create_var_desc(self, info):
-        if isinstance(info, VariableDescriptor):
-            return info
-        if isinstance(info, dict):
-            return VariableDescriptor(**info)
-        info = as_tuple(info)
-        # shape tuple is given
-        if any(is_number(i) or i is None for i in info):
-            return VariableDescriptor(info)
-        return VariableDescriptor(*info)
 
     def set_variables(self, desc):
         if isinstance(desc, InputDescriptor):
@@ -405,21 +403,17 @@ class InputDescriptor(object):
             # convert shape tuple to list of shape tuple
             if any(is_number(i) or i is None for i in desc):
                 desc = (desc,)
-            self._desc = [self._create_var_desc(d) for d in desc]
-        return self
-
-    def add_variables(self, desc):
-        if desc is not None:
-            desc = as_tuple(desc)
-            # convert shape tuple to list of shape tuple
-            if any(is_number(i) or i is None for i in desc):
-                desc = (desc,)
-            self._desc += [self._create_var_desc(d) for d in desc]
+            self._desc = [d if isinstance(d, VariableDescriptor)
+                          else VariableDescriptor(d)
+                          for d in desc]
+        else:
+            raise ValueError("Cannot handle given description: %s " % type(desc))
         return self
 
     # ==================== properties ==================== #
     def set_placeholder(self, plh):
-        plh = [i for i in as_tuple(plh) if i is None or K.is_placeholder(i)]
+        plh = [i for i in as_tuple(plh)
+               if i is None or K.is_placeholder(i)]
         if len(plh) < len(self._desc):
             plh += [None] * len(self._desc) - len(plh)
         elif len(plh) > len(self._desc):
@@ -430,8 +424,8 @@ class InputDescriptor(object):
         return self
 
     @property
-    def placeholder(self):
-        plh = [i.placeholder for i in self._desc]
+    def placeholders(self):
+        plh = [i.placeholders for i in self._desc]
         return plh[0] if len(plh) == 1 else plh
 
     @property
@@ -499,7 +493,32 @@ class InputDescriptor(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-@add_metaclass(ABCMeta)
+class _NNOp_Meta(ABCMeta):
+
+    def __call__(cls, *args, **kwargs):
+        spec = inspect.getargspec(cls.__init__)
+        kwspec = {}
+        if spec.defaults is not None:
+            kwspec.update(zip(reversed(spec.args), reversed(spec.defaults)))
+        kwspec.update(zip(spec.args[1:], args))
+        kwspec.update(kwargs)
+        # convert all path to abspath to make sure same path are the same
+        for i, j in kwspec.iteritems():
+            if is_path(j):
+                kwspec[i] = os.path.abspath(j)
+        # check duplicate instances
+        instances = Singleton._instances[cls]
+        for arguments, instance in instances:
+            if arguments == kwspec:
+                return instance
+        # not found old instance
+        instance = super(Singleton, cls).__call__(*args, **kwargs)
+        instances.append((kwspec, instance))
+        setattr(instance, 'dispose',
+                types.MethodType(Singleton._dispose, instance))
+        return instance
+
+@add_metaclass(_NNOp_Meta)
 class NNOp(object):
     """ Basics of all Neural Network operators
 
@@ -536,8 +555,10 @@ class NNOp(object):
     def __init__(self, name=None, **kwargs):
         self._save_states = {}
         # ====== create default NNOp name ====== #
-        self._name = _create_op_name(self.__class__, name)
-
+        if not is_string(name):
+            raise ValueError("NNOp must be given a name at __init__, or using "
+                "`_nnops_initscope` function to automatically generate name.")
+        self._name = name
         self._input_desc = InputDescriptor()
         self._transpose_ops = None
         self._is_initialized = False
@@ -555,7 +576,7 @@ class NNOp(object):
             for i, j in enumerate(self._input_desc._desc):
                 j._name = '%s_inp%.2d' % (self.name, i)
         # mismatch input desctiption
-        _ = InputDescriptor(inputs)
+        _ = InputDescriptor().set_variables(inputs)
         if self._input_desc != _:
             raise ValueError("This NNConfiguration required inputs: %s, but was given: "
                             "%s." % (str(self._input_desc), str(_)))
@@ -565,7 +586,7 @@ class NNOp(object):
         if any(i is None for i in inputs):
             inputs = [j if i is None else i
                       for i, j in zip(inputs,
-                                as_tuple(self._input_desc.placeholder))]
+                                as_tuple(self._input_desc.placeholders))]
         return inputs
 
     # ==================== pickling method ==================== #
@@ -578,7 +599,7 @@ class NNOp(object):
             setattr(self, key, val)
         # ====== check exist NNOp ====== #
         name = self.name
-        if name in get_all_nnops():
+        if name in __ALL_NNOPS:
             raise RuntimeError("Found duplicated NNOp with name: %s" % name)
         elif self._is_initialized:
             _assign_new_nnops(self)
@@ -637,12 +658,7 @@ class NNOp(object):
         #####################################
         # 1. Numpy ndarray.
         if isinstance(var, np.ndarray):
-            scope = tf.get_variable_scope().name
-            if self.name not in scope:
-                with tf.variable_scope(self.name):
-                    var = K.variable(var, shape=shape, name=name)
-            else:
-                var = K.variable(var, shape=shape, name=name)
+            var = K.variable(var, shape=shape, name=name)
             self._variable_info[name] = (var.name, 'variable')
         #####################################
         # 2. Shared variable, just check the shape.
@@ -721,7 +737,7 @@ class NNOp(object):
     def input(self):
         """ Create list of placeholder to represent inputs of this NNOp
         """
-        return self._input_desc.placeholder
+        return self._input_desc.placeholders
 
     @property
     def input_desc(self):
@@ -773,7 +789,12 @@ class NNOp(object):
 
     # ==================== interaction method ==================== #
     def apply(self, X, **kwargs):
-        with tf.variable_scope(self.name, reuse=self.is_initialized):
+        # self.name can contain ModelDescriptor varable scope, hence,
+        # remove the scope here
+        name = self.name
+        if '/' in name:
+            name = name.split('/')[-1]
+        with tf.variable_scope(name, reuse=self.is_initialized):
             # ====== initialize first ====== #
             # only select necessary arguments
             argspec = inspect.getargspec(self._initialize)

@@ -13,7 +13,8 @@ from odin import backend as K
 from odin.utils.decorators import functionable
 from odin.utils import (is_lambda, is_number, get_module_from_path, as_tuple)
 
-from .base import name_scope, _check_dtype, VariableDescriptor, InputDescriptor
+from .base import (name_scope, _check_dtype, get_all_nnops,
+                   VariableDescriptor, InputDescriptor,)
 
 
 # ===========================================================================
@@ -78,8 +79,7 @@ class ModelDescriptor(object):
             raise ValueError("This decorator can be only used with function, not "
                              "method or lambda function.")
         self._func = func
-        self.input_desc = InputDescriptor()
-        self._save_states = None
+        self._input_desc = InputDescriptor()
         self._save_kwargs = {}
         self._opID = [0] # store as reference value
         # ====== cached tensor variables ====== #
@@ -88,30 +88,23 @@ class ModelDescriptor(object):
 
     @property
     def input_shape(self):
-        return self.input_desc.shape
+        return self._input_desc.shape
 
     @property
     def input_shape_ref(self):
-        return self.input_desc.shape_ref
+        return self._input_desc.shape_ref
 
     # ==================== pickle ==================== #
     def __getstate__(self):
-        return [functionable(self._func), self.input_desc,
-                self._save_states, self._save_kwargs, self._opID]
+        return [functionable(self._func), self._input_desc,
+                self._save_kwargs, self._opID]
 
     def __setstate__(self, states):
-        (self._func, self.input_desc,
-            self._save_states, self._save_kwargs, self._opID) = states
+        (self._func, self._input_desc, self._save_kwargs, self._opID) = states
         self._func = self._func.function
 
         self._last_outputs = None
         self._f_outputs = None
-
-    def _check_init_shape(self):
-        if len(self.input_desc) == 0:
-            raise ValueError("You must set 'inputs' when calling the ModelDescriptor "
-                             ", the inputs can be TensorVariables, shape tuple, "
-                             "or InputDescriptor.")
 
     # ==================== properties ==================== #
     @property
@@ -119,94 +112,59 @@ class ModelDescriptor(object):
         return self._func
 
     @property
-    def kwargs(self):
-        """ Return the most recent kwargs used for the function """
-        return self._save_states
-
-    @property
     def name(self):
         return self._func.__name__
 
     @property
     def opID(self):
+        """ Return the number of Op have been created in this model
+        (start from 0)
+        """
         return self._opID[0]
 
     @property
     def variables(self):
-        v = []
-        if self._save_states is not None:
-            for s in as_tuple(self._save_states):
-                if hasattr(s, 'variables'):
-                    v += s.variables
-        return v
+        allvars = K.get_all_variables(scope=self.name)
+        for o in self.nnops:
+            allvars += o.variables
+        return list(set(allvars))
 
     @property
     def parameters(self):
-        params = []
-        if self._save_states is not None:
-            states = self._save_states
-            if not isinstance(states, (tuple, list)):
-                states = (states,)
-            for s in states:
-                if hasattr(s, 'parameters'):
-                    params += s.parameters
-        return params
+        return [v for v in self.variables
+                if K.role.has_roles(v, K.role.Parameter)]
 
     @property
     def nb_parameters(self):
         n = 0
         for p in self.parameters:
-            if K.is_variable(p):
-                n += np.prod(p.get_shape().as_list()).astype('int32')
+            n += np.prod(p.get_shape().as_list()).astype('int32')
         return n
 
     @property
-    def input(self):
-        self._check_init_shape()
-        return self.input_desc.placeholder
+    def placeholders(self):
+        return self._input_desc.placeholders
 
     @property
-    def y_train(self):
-        # auto-create outputs
-        if self._last_outputs['train'] is None and len(self.input_desc) > 0:
-            K.set_training(True); self()
-        return self._last_outputs['train']
+    def last_outputs(self):
+        return self._last_outputs
 
     @property
-    def y_score(self):
-        # auto-create outputs
-        if self._last_outputs['score'] is None and len(self.input_desc) > 0:
-            K.set_training(False); self()
-        return self._last_outputs['score']
-
-    @property
-    def f_train(self):
-        """ Note: This only return the train output, no updates is performed """
-        if self._f_train is None:
-            if self._last_outputs['train'] is None and len(self.input_desc) == 0:
+    def f_outputs(self):
+        if self._f_outputs is None:
+            if self._last_outputs is None and len(self._input_desc) == 0:
                 raise ValueError("No cache value of outputs with training mode ENABLED "
                                  "found, you must call this Descriptor with "
                                  "InputDescriptor first.")
-            outputs = self.y_train
+            outputs = self._last_outputs
             # get number of actual inputs need for prediction
-            self._f_train = K.function(K.ComputationGraph(outputs).inputs, outputs)
-        return self._f_train
+            self._f_outputs = K.function(
+                K.ComputationGraph(outputs).placeholders, outputs)
+        return self._f_outputs
 
     @property
-    def f_pred(self):
-        if self._f_pred is None:
-            if self._last_outputs['score'] is None and len(self.input_desc) == 0:
-                raise ValueError("No cache value of outputs with training mode DISABLE "
-                                 "found, you must call this Descriptor with "
-                                 "InputDescriptor first.")
-            outputs = self.y_score
-            # get number of actual inputs need for prediction
-            self._f_pred = K.function(K.ComputationGraph(outputs).inputs, outputs)
-        return self._f_pred
-
-    @property
-    def save_states(self):
-        return self._save_states
+    def nnops(self):
+        return get_all_nnops(model_scope=self.name)
 
     # ==================== decorator ==================== #
     def __call__(self, inputs=None, **kwargs):
@@ -220,17 +178,10 @@ class ModelDescriptor(object):
             # get the input shape
             input_desc = []
             for i in inputs:
-                if K.is_tensor(i): # TensorVariable
-                    shape = i.get_shape().as_list()
-                    dtype = _check_dtype(i.dtype.base_dtype)
-                    input_desc.append(
-                        VariableDescriptor(shape=shape, dtype=dtype, name=i.name))
-                elif isinstance(i, (tuple, list)): # Shape tuple
-                    shape = tuple(i)
-                    input_desc.append(
-                        VariableDescriptor(shape=shape, dtype='float32', name=None))
-                elif isinstance(i, VariableDescriptor): # VariableDescriptor
-                    input_desc.append(i)
+                # TensorVariable, Shape-tuple, VariableDescriptor
+                if K.is_tensor(i) or isinstance(i, (tuple, list)) or \
+                isinstance(i, VariableDescriptor):
+                    input_desc.append(VariableDescriptor(i))
                 elif i is None: # just a empty place
                     input_desc.append(None)
                 else:
@@ -238,25 +189,23 @@ class ModelDescriptor(object):
                                      "odin.nnet.VariableDescriptor, but the given "
                                      "argument has type: " + str(type(i)))
             # check if match previous inputs
-            if len(self.input_desc) > 0:
-                other = InputDescriptor(input_desc)
-                if self.input_desc != other:
+            if len(self._input_desc) > 0:
+                other = InputDescriptor().set_variables(input_desc)
+                if self._input_desc != other:
                     raise ValueError('This ModelDescriptor requires input: %s '
                                      ', but the given description is: %s' %
-                                     (str(self.input_desc), str(other)))
+                                     (str(self._input_desc), str(other)))
             # First time specify the input description, None is not eaccepted
             elif any(i is None for i in input_desc):
                 raise ValueError("For the first time setting the input description, "
                                  "None value is not accepted.")
             # finally assign the first input description
             else:
-                for i, j in enumerate(input_desc):
-                    name = j.name if j.name is not None else ''
-                    name = ''.join(name.split(':')[:-1])
-                    j._name = '%s_%s%.2d' % (self.name, name, i)
-                    self.input_desc.add_variables(j)
+                self._input_desc.set_variables(input_desc)
+                for i, j in enumerate(self._input_desc._desc):
+                    j._name = '%s_inp%.2d' % (self.name, i)
         # ====== get inputs variable====== #
-        model_inputs = list(as_tuple(self.input))
+        model_inputs = list(as_tuple(self.placeholders))
         # override default inputs with new variable
         if inputs is not None:
             for i, j in enumerate(inputs):
@@ -264,11 +213,10 @@ class ModelDescriptor(object):
                     model_inputs[i] = j
         # ====== call the function ====== #
         argspecs = inspect.getargspec(self._func)
-        nb_inputs = len(self.input_desc)
-        if len(argspecs.args) != nb_inputs + 1:
+        nb_inputs = len(self._input_desc)
+        if len(argspecs.args) != nb_inputs:
             raise ValueError("This Descriptor requires a function with %d input "
-                             "arguments (%d for inputs variables, and 1 for "
-                             "saved_states), but the given function has %d arguments, "
+                             "arguments, but the given function has %d arguments, "
                              "which are: %s" % (nb_inputs + 1, nb_inputs,
                              len(argspecs.args), str(argspecs.args)))
         if argspecs.keywords is None:
@@ -277,18 +225,10 @@ class ModelDescriptor(object):
             self._save_kwargs = kwargs
         else: # get the saved kwargs
             kwargs = self._save_kwargs
-        model_inputs.append(self._save_states)
         # finally call the function to get outputs
         with name_scope(self.name, id_start=self._opID):
             outputs = self._func(*model_inputs, **kwargs)
         # ====== check outputs values ====== #
-        if outputs is None or len(outputs) != 2:
-            raise ValueError("[ModelDescriptor] function must return only 2 objects: "
-                             "an output, and a pickle-able object to save the model.")
-        if outputs[1] is not None:
-            self._save_states = outputs[1]
-        # cached last outputs
-        outputs = outputs[0]
         self._last_outputs = outputs
         self._f_outputs = None # reset last function
         return outputs
