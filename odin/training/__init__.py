@@ -151,7 +151,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
         confusion_matrix = False
     # ====== create function ====== #
     print('Building training functions ...')
-    train_inputs = K.ComputationGraph(cost_train).inputs
+    train_inputs = K.ComputationGraph(cost_train).placeholders
     f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
     print('Building scoring functions ...')
     f_score = None
