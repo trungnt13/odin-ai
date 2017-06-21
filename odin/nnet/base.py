@@ -16,7 +16,7 @@ import numpy as np
 
 from odin import backend as K
 from odin.utils.decorators import functionable
-from odin.utils import (as_tuple, uuid, cache_memory, is_number, is_string,
+from odin.utils import (as_tuple, uuid, cache_memory, is_number, is_string, is_path,
                         ShapeRef, DtypeRef)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
