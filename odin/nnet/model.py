@@ -97,10 +97,11 @@ class ModelDescriptor(object):
     # ==================== pickle ==================== #
     def __getstate__(self):
         return [functionable(self._func), self._input_desc,
-                self._save_kwargs, self._opID]
+                self._save_kwargs, self._opID, self.nnops]
 
     def __setstate__(self, states):
-        (self._func, self._input_desc, self._save_kwargs, self._opID) = states
+        (self._func, self._input_desc, self._save_kwargs,
+            self._opID, nnops) = states
         self._func = self._func.function
 
         self._last_outputs = None
@@ -170,8 +171,10 @@ class ModelDescriptor(object):
     def __call__(self, inputs=None, **kwargs):
         # ====== check inputs ====== #
         if inputs is not None:
+            # number
             if is_number(inputs):
                 inputs = (inputs,)
+            # shape tuple
             if not isinstance(inputs, (tuple, list)) or \
             any(is_number(i) for i in inputs):
                 inputs = [inputs]
@@ -190,11 +193,11 @@ class ModelDescriptor(object):
                                      "argument has type: " + str(type(i)))
             # check if match previous inputs
             if len(self._input_desc) > 0:
-                other = InputDescriptor().set_variables(input_desc)
-                if self._input_desc != other:
-                    raise ValueError('This ModelDescriptor requires input: %s '
-                                     ', but the given description is: %s' %
-                                     (str(self._input_desc), str(other)))
+                for v1, v2 in zip(self._input_desc, input_desc):
+                    if v2 is not None and v1 != v2:
+                        raise ValueError('This ModelDescriptor requires input: %s '
+                                         ', but the given description is: %s' %
+                                         (str(v1), str(v2)))
             # First time specify the input description, None is not eaccepted
             elif any(i is None for i in input_desc):
                 raise ValueError("For the first time setting the input description, "
@@ -204,13 +207,15 @@ class ModelDescriptor(object):
                 self._input_desc.set_variables(input_desc)
                 for i, j in enumerate(self._input_desc._desc):
                     j._name = '%s_inp%.2d' % (self.name, i)
+        else:
+            inputs = as_tuple(self.placeholders)
         # ====== get inputs variable====== #
         model_inputs = list(as_tuple(self.placeholders))
         # override default inputs with new variable
-        if inputs is not None:
-            for i, j in enumerate(inputs):
-                if K.is_tensor(j):
-                    model_inputs[i] = j
+        for i, j in enumerate(inputs):
+            if K.is_tensor(j):
+                model_inputs[i] = j
+        print(model_inputs)
         # ====== call the function ====== #
         argspecs = inspect.getargspec(self._func)
         nb_inputs = len(self._input_desc)
@@ -226,9 +231,11 @@ class ModelDescriptor(object):
         else: # get the saved kwargs
             kwargs = self._save_kwargs
         # finally call the function to get outputs
-        with name_scope(self.name,
-                        id_start=self._opID if self.opID == 0 else [0]):
+        _ = [0]
+        with name_scope(self.name, id_start=_):
             outputs = self._func(*model_inputs, **kwargs)
+        if _[0] > self._opID[0]:
+            self._opID[0] = _[0]
         # ====== check outputs values ====== #
         self._last_outputs = outputs
         self._f_outputs = None # reset last function

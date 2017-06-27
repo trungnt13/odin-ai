@@ -484,6 +484,15 @@ def speech_features(s, sr=None,
             q_mfcc = np.concatenate(
                 [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
                 axis=1)
+        # Pitch and F0
+        if get_pitch:
+            pitch_freq = np.concatenate(
+                [pitch_freq] + compute_delta(pitch_freq, order=get_delta),
+                axis=1)
+        if get_f0:
+            f0_freq = np.concatenate(
+                [f0_freq] + compute_delta(f0_freq, order=get_delta),
+                axis=1)
     # ====== 8: make sure CQT give the same length with STFT ====== #
     if get_qspec and qspec.shape[1] > spec.shape[1]:
         n = qspec.shape[1] - spec.shape[1]

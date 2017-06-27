@@ -17,7 +17,7 @@ from odin import visual
 from odin import fuel as F, utils
 from collections import defaultdict
 
-backend = 'sptk'
+backend = 'odin'
 PCA = True
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
@@ -26,7 +26,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          sr_new=None,
                          win=0.02, hop=0.01, window='hann',
                          nb_melfilters=40, nb_ceps=13,
-                         get_delta=False, get_energy=True, get_phase=True,
+                         get_delta=2, get_energy=True, get_phase=True,
                          get_spec=True, get_pitch=True, get_f0=True,
                          get_vad=2, get_qspec=True,
                          pitch_threshold=0.3, cqt_bins=96,

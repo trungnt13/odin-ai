@@ -461,7 +461,8 @@ class InputDescriptor(object):
         return self._desc.__setitem__(key, value)
 
     def __str__(self):
-        return "<InputDescriptor: %s" % '; '.join([str(i) for i in self._desc])
+        return "<InputDescriptor: %s" % '; '.join(
+            ['-'.join([str(i.shape), str(i.dtype)]) for i in self._desc])
 
     def __repr__(self):
         return self.__str__()
@@ -471,9 +472,9 @@ class InputDescriptor(object):
             raise ValueError("Can only compare a InputDescriptor to another "
                              "InputDescriptor.")
         n = 0
-        for d1 in self._desc:
-            for d2 in other._desc:
-                if d1 == d2: n += 1
+        for d1, d2 in zip(self._desc, other._desc):
+            if d1 == d2:
+                n += 1
         if n == len(self._desc):
             return 0
         return 1
