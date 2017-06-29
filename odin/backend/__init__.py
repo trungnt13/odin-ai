@@ -45,19 +45,17 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
         value = np.array(value)
     #### Found cached variable, just load new value into it
     if name is not None:
-        all_variables = get_all_variables()
-        for v in all_variables:
+        for v in get_all_variables(name=name):
             v_shape = tuple(v.get_shape().as_list())
-            if v.name == name: # found duplicated variable
-                # set new value for variable
-                if (value is not None and v_shape != value.shape) or \
-                (shape is not None and v_shape != as_tuple(shape)):
-                    raise ValueError("Pre-defined variable with name: %s and"
-                        " shape: %s, which is different from given shape: %s"
-                        % (name, v_shape,
-                            value.shape if value is not None else shape))
-                # just get the variable
-                return role.add_role(v, roles)
+            # set new value for variable
+            if (value is not None and v_shape != value.shape) or \
+            (shape is not None and v_shape != as_tuple(shape)):
+                raise ValueError("Pre-defined variable with name: %s and"
+                    " shape: %s, which is different from given shape: %s"
+                    % (name, v_shape,
+                        value.shape if value is not None else shape))
+            # just get the variable
+            return role.add_role(v, roles)
     #### create totally new variable
     if value is None:
         variable = tf.get_variable(name=name, shape=shape)
