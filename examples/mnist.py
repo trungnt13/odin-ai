@@ -41,11 +41,10 @@ ops = N.Sequence([
     N.Dense(256, activation=tf.nn.relu),
     N.Dense(10, activation=tf.nn.softmax)
 ], debug=True)
-exit()
 ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
-
-K.set_training(True); y_pred_train = ops(X)
-K.set_training(False); y_pred_score = ops(X)
+y_pred = ops(X)
+ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
+exit()
 
 cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
 cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))

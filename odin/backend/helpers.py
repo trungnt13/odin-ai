@@ -281,7 +281,7 @@ def get_operationID(op):
     return _ops_ID[op]
 
 
-# @cache_memory
+@cache_memory
 def get_operation_footprint(op):
     """ Trace back the inputs of given Op and record all:
     * placholders

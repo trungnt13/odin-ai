@@ -11,12 +11,10 @@ from .base import NNOp, _nnops_initscope
 
 
 def _preprocess_windows(window, ndims):
-    if len(window) != ndims:
-        if len(window) == ndims - 2:
-            return window
-        else:
-            return as_tuple(window, N=(ndims - 2))
-    return window
+    if len(window) == ndims - 2:
+        return window
+    else:
+        return as_tuple(window, N=(ndims - 2))
 
 
 class Pool(NNOp):
@@ -52,8 +50,8 @@ class Pool(NNOp):
     def __init__(self, pool_size=2, strides=None, dilation=1,
                  pad='valid', mode='max', transpose_mode='nn', **kwargs):
         super(Pool, self).__init__(**kwargs)
-        self.strides = (pool_size,) if strides is None else as_tuple(strides, t=int)
         self.pool_size = as_tuple(pool_size, t=int)
+        self.strides = pool_size if strides is None else as_tuple(strides, t=int)
         self.dilation = (1,) if dilation is None else as_tuple(dilation, t=int)
         self.pad = pad.upper() if is_string(pad) else as_tuple(pad, t=int)
         self.mode = mode.upper()

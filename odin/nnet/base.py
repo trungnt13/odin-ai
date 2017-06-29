@@ -1,6 +1,8 @@
 from __future__ import division, absolute_import, print_function
 
+import os
 import re
+import shutil
 import inspect
 import numbers
 import warnings
@@ -16,11 +18,77 @@ import numpy as np
 
 from odin import backend as K
 from odin.utils.decorators import functionable
-from odin.utils import (as_tuple, uuid, cache_memory, is_number, is_string, is_path,
-                        ShapeRef, DtypeRef)
+from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number, is_string, is_path,
+                        ShapeRef, DtypeRef, flatten_list, get_all_files)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
+
+
+# ===========================================================================
+# Helper method for serialize NNOp
+# ===========================================================================
+def serialize(nnops, path, save_variables=True, variables=[],
+    override=False):
+    """ Serialize NNOp or list of NNOp and all necessary variables
+    to a folder.
+
+    Parameters
+    ----------
+    nnops: NNOp, or list; tuple of NNOp
+    path: str
+        path to a folder
+    save_variables: bool
+        if True, save all variables related to all given NNOps
+    variables: list of tensorflow Variables
+        additional list of variables to be saved with this model
+    override: bool
+        if True, remove existed folder to override everythin.
+
+    Return
+    ------
+    path: str
+        path to the folder that store NNOps and variables
+    """
+    # ====== checking path ====== #
+    if override:
+        shutil.rmtree(path)
+    if os.path.exists(path):
+        if os.path.isfile(path):
+            raise ValueError("path must be path to a folder.")
+    else:
+        os.mkdir(path)
+    nnops_path = os.path.join(path, 'nnops.ai')
+    vars_path = os.path.join(path, 'variables')
+    # ====== getting save data ====== #
+    var = []
+    if save_variables:
+        var = nnops.variables if isinstance(nnops, NNOp) else \
+            flatten_list([o.variables for o in nnops])
+    var = list(set(var + as_list(variables)))
+    # save NNOps
+    with open(nnops_path, 'w') as f:
+        cPickle.dump(nnops, f, protocol=cPickle.HIGHEST_PROTOCOL)
+    # save Variables
+    if len(var) > 0:
+        K.save_variables(var, vars_path)
+    return path
+
+
+def deserialize(path):
+    if not (os.path.exists(path) and os.path.isdir(path)):
+        raise ValueError("path must be path to a folder.")
+    nnops_path = os.path.join(path, 'nnops.ai')
+    vars_path = os.path.join(path, 'variables')
+    # ====== load the NNOps ====== #
+    if not os.path.exists(nnops_path):
+        raise ValueError("Cannot file path to serialized NNOps at: %s" % nnops_path)
+    with open(nnops_path, 'r') as f:
+        nnops = cPickle.load(f)
+    # ====== load the Variables ====== #
+    if os.path.exists(vars_path + '.index'):
+        K.restore_variables(vars_path)
+    return nnops
 
 # ===========================================================================
 # Global NNOp manager
@@ -53,6 +121,7 @@ def _assign_new_nnop(nnops):
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
                            "already existed." % (type(_ALL_NNOPS[name]), name))
     _ALL_NNOPS[name] = nnops
+
 
 # ===========================================================================
 # Context manager
@@ -517,6 +586,9 @@ class _NNOp_Meta(ABCMeta):
     >>> print(f1 == f2) # True
     """
 
+    # def __new__(clazz, *args, **kwargs):
+    #     return super(_NNOp_Meta, self).__new__(clazz, *args, **kwargs)
+
     def __call__(clazz, *args, **kwargs):
         ops_name = kwargs.get('name', None)
         ops_name = _create_op_name(clazz, ops_name)
@@ -562,8 +634,24 @@ class NNOp(object):
     Note
     ----
     All NNOp are pickle-able!
-    if NNOp is applied to a list of inputs, it will process each input seperated
+    You must use: protocol=cPickle.HIGHEST_PROTOCOL when dump NNOp.
+    if NNOp is applied to a list of inputs, it will process each input seperated.
     """
+
+    def __new__(clazz, *args, **kwargs):
+        # pickle call __new__
+        if len(args) == 1 and len(kwargs) == 0 and is_string(args[0]) and \
+        '[__name__]' in args[0]:
+            name = args[0].replace('[__name__]', '')
+            if name in _ALL_NNOPS:
+                instance = _ALL_NNOPS[name]
+                if not isinstance(instance, clazz):
+                    raise RuntimeError("Found duplicated NNOp with type: '%s', "
+                        "which is different from pickled type: '%s'" %
+                        (type(instance), clazz))
+                return instance
+        # instantiate object
+        return super(NNOp, clazz).__new__(clazz, *args, **kwargs)
 
     def __init__(self, name=None, **kwargs):
         self._save_states = {}
@@ -610,12 +698,18 @@ class NNOp(object):
         self._save_states = states
         for key, val in self._save_states.iteritems():
             setattr(self, key, val)
-        # ====== check exist NNOp ====== #
+        # # ====== check exist NNOp ====== #
         name = self.name
         if name in _ALL_NNOPS:
-            raise RuntimeError("Found duplicated NNOp with name: %s" % name)
-        elif self._is_initialized:
-            _assign_new_nnop(self)
+            if type(_ALL_NNOPS[name]) != type(self):
+                raise RuntimeError("Found duplicated NNOp with name: '%s' and type: '%s'"
+                    % (name, str(type(_ALL_NNOPS[name]))))
+            elif _ALL_NNOPS[name] != self:
+                raise RuntimeError("You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
+                    "when using `pickle` or `cPickle` to be able pickling NNOp.")
+
+    def __getnewargs__(self):
+        return ('[__name__]' + self.name,)
 
     # ==================== properties ==================== #
     @cache_memory
