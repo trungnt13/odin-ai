@@ -552,31 +552,31 @@ class Tokenizer(object):
         elif self.__engine == 'odin':
             processor = self._preprocess_docs_odin
         # ====== start processing ====== #
-        prog = Progbar(target=1208)
-        start_time = timeit.default_timer()
-        for nb_docs, doc in processor(texts, vocabulary, keep_order=False):
-            total_docs_tokens = 0
-            seen_words = {}
-            # update words->count
-            for token in doc:
-                total_docs_tokens += 1
-                word_counts[token] += 1
-                # update words->doc
-                if token not in seen_words:
-                    seen_words[token] = 1
-                    word_docs[token] += 1
-            # save longest docs
-            if total_docs_tokens > self.__longest_document[-1]:
-                self.__longest_document = [doc, total_docs_tokens]
-            # print progress
-            if self.print_progress:
-                prog.title = '[Training]#Doc:%d #Tok:%d' % (nb_docs, len(word_counts))
+        with Progbar(target=1208) as prog:
+            start_time = timeit.default_timer()
+            for nb_docs, doc in processor(texts, vocabulary, keep_order=False):
+                total_docs_tokens = 0
+                seen_words = {}
+                # update words->count
+                for token in doc:
+                    total_docs_tokens += 1
+                    word_counts[token] += 1
+                    # update words->doc
+                    if token not in seen_words:
+                        seen_words[token] = 1
+                        word_docs[token] += 1
+                # save longest docs
+                if total_docs_tokens > self.__longest_document[-1]:
+                    self.__longest_document = [doc, total_docs_tokens]
+                # print progress
+                prog['#Doc'] = nb_docs
+                prog['#Tok'] = len(word_counts)
                 prog.add(1)
                 if prog.seen_so_far >= 0.8 * prog.target:
                     prog.target = 1.2 * prog.target
         # ====== print summary of the process ====== #
-        if self.print_progress:
-            prog.target = nb_docs; prog.update(nb_docs)
+        # if self.print_progress:
+        #     prog.target = nb_docs; prog.update(nb_docs)
         processing_time = timeit.default_timer() - start_time
         print('Processed %d-docs, %d-tokens in %f second.' %
             (nb_docs, len(word_counts), processing_time))
@@ -643,34 +643,34 @@ class Tokenizer(object):
         else:
             target_len = 1208
             auto_adjust_len = True
-        prog = Progbar(target=target_len)
-        for nb_docs, doc in processor(texts, vocabulary=None, keep_order=True):
-            # found the word in dictionary
-            vec = []
-            for x in doc:
-                idx = dictionary.get(x, -1)
-                if idx >= 0: vec.append(idx)
-                # not found the token in dictionary
-                elif token_not_found == 'ignore':
-                    continue
-                elif token_not_found == 'raise':
-                    raise RuntimeError('Cannot find token: "%s" in dictionary' % x)
-                elif isinstance(token_not_found, int):
-                    vec.append(token_not_found)
-            # append ending document token
-            if end_document is not None:
-                vec.append(end_document)
-            # add the final results
-            results.append(vec)
-            # print progress
-            if self.print_progress:
-                prog.title = "[Transforming] %d docs" % nb_docs
-                prog.add(1)
-                if auto_adjust_len and prog.seen_so_far >= 0.8 * prog.target:
-                    prog.target = 1.2 * prog.target
+        with Progbar(target=target_len, name="Tokenize Transform") as prog:
+            for nb_docs, doc in processor(texts, vocabulary=None, keep_order=True):
+                # found the word in dictionary
+                vec = []
+                for x in doc:
+                    idx = dictionary.get(x, -1)
+                    if idx >= 0: vec.append(idx)
+                    # not found the token in dictionary
+                    elif token_not_found == 'ignore':
+                        continue
+                    elif token_not_found == 'raise':
+                        raise RuntimeError('Cannot find token: "%s" in dictionary' % x)
+                    elif isinstance(token_not_found, int):
+                        vec.append(token_not_found)
+                # append ending document token
+                if end_document is not None:
+                    vec.append(end_document)
+                # add the final results
+                results.append(vec)
+                # print progress
+                if self.print_progress:
+                    prog['#Docs'] = nb_docs
+                    prog.add(1)
+                    if auto_adjust_len and prog.seen_so_far >= 0.8 * prog.target:
+                        prog.target = 1.2 * prog.target
         # end the process
-        if self.print_progress and auto_adjust_len:
-            prog.target = nb_docs; prog.update(nb_docs)
+        # if self.print_progress and auto_adjust_len:
+        #     prog.target = nb_docs; prog.update(nb_docs)
         # ====== pad the sequence ====== #
         # just transform into sequence of tokens
         if mode == 'seq':

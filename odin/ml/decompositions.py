@@ -10,7 +10,6 @@ from sklearn.decomposition import IncrementalPCA
 from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
-from odin.utils import Progbar
 from odin.utils.mpi import MPI
 from odin.fuel import Data
 
@@ -189,7 +188,7 @@ class MiniBatchPCA(IncrementalPCA):
         return self.components_ is not None
 
     # ==================== Training ==================== #
-    def fit(self, X, y=None, print_progress=False):
+    def fit(self, X, y=None):
         """Fit the model with X, using minibatches of size batch_size.
 
         Parameters
@@ -215,13 +214,9 @@ class MiniBatchPCA(IncrementalPCA):
         else:
             batch_size = self.batch_size
 
-        if print_progress:
-            prog = Progbar(target=n_samples)
         for batch in gen_batches(n_samples, batch_size):
             x = X[batch]
             self.partial_fit(x, check_input=False)
-            if print_progress:
-                prog.add(x.shape[0])
         return self
 
     def partial_fit(self, X, y=None, check_input=True):
@@ -314,8 +309,7 @@ class MiniBatchPCA(IncrementalPCA):
             self.noise_variance_ = 0.
         return self
 
-    def transform(self, X, y=None, n_components=None,
-                  print_progress=False):
+    def transform(self, X, y=None, n_components=None):
         n = X.shape[0]
         if self.batch_size is None:
             batch_size = 12 * len(self.mean_)
@@ -323,8 +317,6 @@ class MiniBatchPCA(IncrementalPCA):
             batch_size = self.batch_size
         batch_list = [(i, min(i + batch_size, n))
             for i in range(0, n + batch_size, batch_size) if i < n]
-        if print_progress:
-            prog = Progbar(target=n)
         # ====== start transforming ====== #
         X_transformed = []
         for start, end in batch_list:
@@ -332,8 +324,6 @@ class MiniBatchPCA(IncrementalPCA):
             if n_components is not None:
                 x = x[:, :n_components]
             X_transformed.append(x)
-            if print_progress:
-                prog.add(x.shape[0])
         return np.concatenate(X_transformed, axis=0)
 
     def invert_transform(self, X, y=None):
@@ -342,7 +332,7 @@ class MiniBatchPCA(IncrementalPCA):
         return super(MiniBatchPCA, self).inverse_transform(X=X, y=y)
 
     def transform_mpi(self, X, y=None, keep_order=True, ncpu=4,
-                      n_components=None, print_progress=False):
+                      n_components=None):
         """ Sample as transform but using multiprocessing """
         n = X.shape[0]
         if self.batch_size is None:
@@ -351,8 +341,6 @@ class MiniBatchPCA(IncrementalPCA):
             batch_size = self.batch_size
         batch_list = [(i, min(i + batch_size, n))
             for i in range(0, n + batch_size, batch_size) if i < n]
-        if print_progress:
-            prog = Progbar(target=n)
 
         # ====== run MPI jobs ====== #
         def map_func(batch):
@@ -371,8 +359,6 @@ class MiniBatchPCA(IncrementalPCA):
         X_transformed = []
         for start, x in mpi:
             X_transformed.append((start, x))
-            if print_progress:
-                prog.add(x.shape[0])
         if keep_order:
             X_transformed = sorted(X_transformed, key=lambda x: x[0])
         X_transformed = np.concatenate([x[-1] for x in X_transformed], axis=0)

@@ -153,11 +153,11 @@ class Dataset(object):
             if not os.path.exists(extract_path):
                 os.mkdir(extract_path)
             maxlen = max([len(i) for i in allfile])
-            progbar = Progbar(len(allfile))
-            for i, f in enumerate(allfile):
-                zfile.extract(f, path=extract_path)
-                progbar.title = ('Unarchiving: %-' + str(maxlen) + 's') % f
-                progbar.update(i + 1)
+            with Progbar(target=len(allfile), name="[Dataset] Loading Archive") as prog:
+                for i, f in enumerate(allfile):
+                    zfile.extract(f, path=extract_path)
+                    prog['File'] = ('Unarchiving: %-' + str(maxlen) + 's') % f
+                    prog.add(1)
             # ====== finally set path ====== #
             self._set_path(extract_path)
         except IOError as e:
@@ -212,13 +212,12 @@ class Dataset(object):
 
         files = set([_[-1] for _ in self._data_map.itervalues()])
 
-        with progbar(target=len(files)) as prog:
-            progbar = Progbar(len(files), title='Archiving:')
+        with Progbar(target=len(files), name="[Dataset] Archiving") as prog:
             maxlen = max([len(os.path.basename(i)) for i in files])
             for i, f in enumerate(files):
                 zfile.write(f, os.path.basename(f))
-                progbar.title = ('Archiving: %-' + str(maxlen) + 's') % os.path.basename(f)
-                progbar.update(i + 1)
+                prog['title'] = ('Archiving: %-' + str(maxlen) + 's') % os.path.basename(f)
+                prog.add(i + 1)
             zfile.close()
         return path
 

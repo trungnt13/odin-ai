@@ -122,7 +122,6 @@ class FeatureProcessor(object):
             raise Exception('the Processor must has "jobs" attribute, which is '
                             'the list of all jobs.')
         njobs = len(self.jobs) if self.njobs == 0 else self.njobs
-        prog = Progbar(target=njobs)
         dataset = self.dataset
         datatype = self.datatype
         if self.ncpu is None: # auto select number of CPU
@@ -206,9 +205,10 @@ class FeatureProcessor(object):
         # ====== processing ====== #
         mpi = MPI(self.jobs, self.map, wrapped_reduce,
                   ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
-        for name in mpi:
-            prog.title = '%-20s' % name
-            prog.add(1)
+        with Progbar(target=njobs, name=self.__class__.__name__) as prog:
+            for name in mpi:
+                prog['File:'] = '%-20s' % name
+                prog.add(1)
         # ====== end, flush the last time ====== #
         for i, j in cache.iteritems():
             flush_feature(i, j)

@@ -290,7 +290,7 @@ class Feeder(MutableData):
         self.__running_iter.append(it)
         return it
 
-    def save_cache(self, path, datatype='memmap', print_progress=True):
+    def save_cache(self, path, datatype='memmap'):
         """ Save all preprocessed data to a Dataset """
         if not isinstance(path, str) or os.path.isfile(path):
             raise ValueError('path must be string path to a folder.')
@@ -300,20 +300,18 @@ class Feeder(MutableData):
 
         ds = Dataset(path)
         # ====== start caching ====== #
-        if print_progress:
-            prog = Progbar(target=self.shape[0], title='Caching:')
-        for X in self:
-            if not isinstance(X, (tuple, list)):
-                X = (X,)
-            # saving preprocessed data
-            for i, x in enumerate(X):
-                name = 'data%d' % i
-                if name in ds: ds[name].append(x)
-                else: ds[(name, datatype)] = x
-            # print progress
-            if print_progress:
+        with Progbar(target=self.shape[0], name='Caching') as prog:
+            for X in self:
+                if not isinstance(X, (tuple, list)):
+                    X = (X,)
+                # saving preprocessed data
+                for i, x in enumerate(X):
+                    name = 'data%d' % i
+                    if name in ds: ds[name].append(x)
+                    else: ds[(name, datatype)] = x
+                # print progress
                 prog.add(X[0].shape[0])
-        prog.target = prog.seen_so_far; prog.add(0)
+            # prog.target = prog.seen_so_far; prog.add(0)
         ds.flush()
         ds.close()
         # end
