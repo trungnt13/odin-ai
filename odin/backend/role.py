@@ -32,37 +32,39 @@ class Variable(Role):
     pass
 
 
+# ==================== Role for Cost and Objective ==================== #
 class Auxiliary(Variable):
     """ Variables added to the graph as annotations """
     pass
 
 
-class GradientsNorm(Auxiliary):
+# DifferentialLoss
+class DifferentialLoss(Auxiliary):
     pass
 
 
-class AccuracyValue(Auxiliary):
+class RegularizeLoss(DifferentialLoss):
     pass
 
 
-class ConfusionMatrix(Auxiliary):
+# DifferentialLoss
+class MonitoringLoss(Auxiliary):
     pass
 
 
-class EarlyStop(Auxiliary):
+class GradientsNorm(MonitoringLoss):
     pass
 
 
-# ==================== Role for Cost and Objective ==================== #
-class ObjectiveCost(Variable):
+class AccuracyValue(MonitoringLoss):
     pass
 
 
-class TrainingCost(ObjectiveCost):
+class ConfusionMatrix(MonitoringLoss):
     pass
 
 
-class RegularizeCost(ObjectiveCost):
+class EarlyStop(MonitoringLoss):
     pass
 
 

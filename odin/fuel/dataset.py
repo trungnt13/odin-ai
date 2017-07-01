@@ -212,13 +212,14 @@ class Dataset(object):
 
         files = set([_[-1] for _ in self._data_map.itervalues()])
 
-        progbar = Progbar(len(files), title='Archiving:')
-        maxlen = max([len(os.path.basename(i)) for i in files])
-        for i, f in enumerate(files):
-            zfile.write(f, os.path.basename(f))
-            progbar.title = ('Archiving: %-' + str(maxlen) + 's') % os.path.basename(f)
-            progbar.update(i + 1)
-        zfile.close()
+        with progbar(target=len(files)) as prog:
+            progbar = Progbar(len(files), title='Archiving:')
+            maxlen = max([len(os.path.basename(i)) for i in files])
+            for i, f in enumerate(files):
+                zfile.write(f, os.path.basename(f))
+                progbar.title = ('Archiving: %-' + str(maxlen) + 's') % os.path.basename(f)
+                progbar.update(i + 1)
+            zfile.close()
         return path
 
     def flush(self):

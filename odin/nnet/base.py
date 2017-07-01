@@ -29,13 +29,13 @@ import tensorflow as tf
 # Helper method for serialize NNOp
 # ===========================================================================
 def serialize(nnops, path, save_variables=True, variables=[],
-    override=False):
+              override=False):
     """ Serialize NNOp or list of NNOp and all necessary variables
     to a folder.
 
     Parameters
     ----------
-    nnops: NNOp, or list; tuple of NNOp
+    nnops: NNOp, Object, or list; tuple of NNOp and Object
     path: str
         path to a folder
     save_variables: bool
@@ -64,7 +64,7 @@ def serialize(nnops, path, save_variables=True, variables=[],
     var = []
     if save_variables:
         var = nnops.variables if isinstance(nnops, NNOp) else \
-            flatten_list([o.variables for o in nnops])
+            flatten_list([o.variables for o in nnops if isinstance(o, NNOp)])
     var = list(set(var + as_list(variables)))
     # save NNOps
     with open(nnops_path, 'w') as f:

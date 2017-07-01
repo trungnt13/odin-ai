@@ -30,6 +30,8 @@ except:
 import numpy
 import six
 
+from . import progbar
+from .progbar import Progbar
 from .mpi import SelfIterator, segment_list, SharedCounter, async
 from .profile import *
 from .path_utils import *
@@ -628,124 +630,6 @@ class queue(object):
     def __len__(self):
         return len(self._data) - self._idx
 
-
-class Progbar(object):
-
-    '''
-    This function is adpated from: https://github.com/fchollet/keras
-    Original work Copyright (c) 2014-2015 keras contributors
-    Modified work Copyright 2016-2017 TrungNT
-    '''
-
-    def __init__(self, target, title=''):
-        '''
-            @param target: total number of steps expected
-        '''
-        self.width = 39
-        self.target = target
-        self.sum_values = {}
-        self.unique_values = []
-        self.start = time.time()
-        self.total_width = 0
-        self.seen_so_far = 0
-        self.title = title
-
-    def update(self, current, values=[]):
-        '''
-            @param current: index of current step
-            @param values: list of tuples (name, value_for_last_step).
-            The progress bar will display averages for these values.
-        '''
-        for k, v in values:
-            if k not in self.sum_values:
-                self.sum_values[k] = [v * (current - self.seen_so_far), current - self.seen_so_far]
-                self.unique_values.append(k)
-            else:
-                self.sum_values[k][0] += v * (current - self.seen_so_far)
-                self.sum_values[k][1] += (current - self.seen_so_far)
-        self.seen_so_far = current
-
-        now = time.time()
-
-        prev_total_width = self.total_width
-        sys.stdout.write("\b" * prev_total_width)
-        sys.stdout.write("\r")
-
-        numdigits = int(numpy.floor(numpy.log10(self.target))) + 1
-        barstr = '%s %%%dd/%%%dd [' % (self.title, numdigits, numdigits)
-        bar = barstr % (current, self.target)
-        prog = float(current) / self.target
-        prog_width = int(self.width * prog)
-        if prog_width > 0:
-            bar += ('=' * (prog_width - 1))
-            if current < self.target:
-                bar += '>'
-            else:
-                bar += '='
-        bar += ('.' * (self.width - prog_width))
-        bar += ']'
-        sys.stdout.write(bar)
-        self.total_width = len(bar)
-
-        if current:
-            time_per_unit = (now - self.start) / current
-        else:
-            time_per_unit = 0
-        eta = time_per_unit * (self.target - current)
-        info = ''
-        if current < self.target:
-            info += ' - ETA: %ds' % eta
-        else:
-            info += ' - %ds' % (now - self.start)
-        for k in self.unique_values:
-            info += ' - %s:' % k
-            if type(self.sum_values[k]) is list:
-                avg = self.sum_values[k][0] / max(1, self.sum_values[k][1])
-                if abs(avg) > 1e-3:
-                    info += ' %.4f' % avg
-                else:
-                    info += ' %.4e' % avg
-            else:
-                info += ' %s' % self.sum_values[k]
-
-        self.total_width += len(info)
-        if prev_total_width > self.total_width:
-            info += ((prev_total_width - self.total_width) * " ")
-
-        sys.stdout.write(info)
-        if current >= self.target:
-            sys.stdout.write("\n")
-        sys.stdout.flush()
-
-    def add(self, n, values=[]):
-        self.update(self.seen_so_far + n, values)
-
-
-def progbar(list_iter_func):
-    """ Wrap any list, tuple, ndarray or func object to
-    print ProgressBar when iterating over it
-    """
-    def iter_prog(l):
-        n = len(l) if hasattr(l, '__len__') else 120
-        friction = 1.2
-        prog = Progbar(target=n)
-        for i, j in enumerate(l):
-            if i >= prog.target - 1:
-                prog.target += int(i * max(friction, 0.1))
-                friction /= 1.2
-            prog.add(1)
-            yield j
-        prog.target = i + 1
-        prog.update(i + 1)
-    # ====== create progress monitoring ====== #
-    if callable(list_iter_func):
-        from functools import wraps
-
-        @wraps(list_iter_func)
-        def wrapper(*args, **kwargs):
-            return iter_prog(list_iter_func(*args, **kwargs))
-        return wrapper
-    return iter_prog(list_iter_func)
 
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
 # urllib module, known to have issues with proxy management

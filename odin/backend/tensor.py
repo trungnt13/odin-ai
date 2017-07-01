@@ -193,38 +193,6 @@ def switch(condition, then_expression, else_expression, name='switch'):
         return x
 
 
-def confusion_matrix(y_pred, y_true, labels=None, name='ConfusionMatrix'):
-    """
-    Computes the confusion matrix of given vectors containing
-    actual observations and predicted observations.
-    Parameters
-    ----------
-    pred : 1-d or 2-d tensor variable
-    actual : 1-d or 2-d tensor variable
-    labels : array, shape = [n_classes], optional
-        List of labels to index the matrix. This may be used to reorder
-        or select a subset of labels.
-        If none is given, those that appear at least once
-        in ``y_true`` or ``y_pred`` are used in sorted order.
-
-    """
-    with tf.variable_scope(name):
-        from tensorflow.contrib.metrics import confusion_matrix
-        if y_true.get_shape().ndims == 2:
-            y_true = tf.argmax(y_true, -1)
-        elif y_true.get_shape().ndims != 1:
-            raise ValueError('actual must be 1-d or 2-d tensor variable')
-        if y_pred.get_shape().ndims == 2:
-            y_pred = tf.argmax(y_pred, -1)
-        elif y_pred.get_shape().ndims != 1:
-            raise ValueError('pred must be 1-d or 2-d tensor variable')
-        if hasattr(labels, '__len__'):
-            labels = len(labels)
-        # transpose to match the format of sklearn
-        return tf.transpose(
-            confusion_matrix(y_pred, y_true, num_classes=labels))
-
-
 def argsort(x, k=None, name='argsort'):
     """ The indices in -1 axis will be sorted by the values in
     descending order.
@@ -245,7 +213,7 @@ def argsort(x, k=None, name='argsort'):
     return tf.nn.top_k(x, k=k, sorted=True, name=name)[1]
 
 
-def one_hot_max(x, axis=-1, name="OneHotMax"):
+def one_hot(x, axis=-1, nb_classes=None, name="OneHot"):
     """
     Example
     -------
@@ -256,14 +224,19 @@ def one_hot_max(x, axis=-1, name="OneHotMax"):
     >>>         [0.0, 1.0, 0.0],
     >>>         [1.0, 0.0, 0.0]]
     """
-    dtype = x.dtype.base_dtype
-    return tf.cast(
-        tf.equal(tf.cast(tf.range(x.get_shape()[axis])[None, :], 'int32'),
-                 tf.cast(tf.expand_dims(tf.argmax(x, axis=axis), axis=axis), 'int32')
-                ),
-        dtype,
-        name=name
-    )
+    if x.get_shape().ndims == 2:
+        return tf.cast(
+            tf.equal(tf.cast(tf.range(x.get_shape()[axis])[None, :], 'int32'),
+                     tf.cast(tf.expand_dims(tf.argmax(x, axis=axis), axis=axis), 'int32')
+                    ),
+            dtype=x.dtype.base_dtype,
+            name=name
+        )
+    else:
+        if nb_classes is None:
+            nb_classes = tf.cast(tf.reduce_max(x), dtype='int32')
+        return tf.one_hot(indices=x, depth=nb_classes,
+            axis=axis, dtype=x.dtype.base_dtype, name=name)
 
 
 def apply_mask(x, mask, name="ApplyMask"):

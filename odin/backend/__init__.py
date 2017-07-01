@@ -45,7 +45,8 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
         value = np.array(value)
     #### Found cached variable, just load new value into it
     if name is not None:
-        for v in get_all_variables(name=name):
+        for v in get_all_variables(scope=tf.get_variable_scope().name,
+                                   name=name):
             v_shape = tuple(v.get_shape().as_list())
             # set new value for variable
             if (value is not None and v_shape != value.shape) or \

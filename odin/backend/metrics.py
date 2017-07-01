@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin.utils import is_number
 from odin.config import get_epsilon
 
-from .role import AccuracyValue, return_roles, ObjectiveCost
+from .role import AccuracyValue, return_roles, DifferentialLoss, ConfusionMatrix
 from .tensor import argsort, dimshuffle
 from .helpers import is_tensor
 
@@ -71,7 +71,7 @@ def LER(y_true, y_pred, return_mean=True):
 # ===========================================================================
 # Losses
 # ===========================================================================
-@return_roles(ObjectiveCost)
+@return_roles(DifferentialLoss)
 def bayes_crossentropy(y_pred, y_true, nb_classes=None, name="BayesCrossentropy"):
     with tf.variable_scope(name):
         if y_pred.get_shape().ndims == 1:
@@ -102,14 +102,14 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None, name="BayesCrossentropy"
         return - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
 
 
-@return_roles(ObjectiveCost)
+@return_roles(DifferentialLoss)
 def bayes_binary_crossentropy(y_pred, y_true):
     y_pred = tf.concat([1 - y_pred, y_pred])
     y_true = tf.one_hot(tf.cast(y_true, 'int32'), depth=2)
     return bayes_crossentropy(y_pred, y_true, nb_classes=2)
 
 
-@return_roles(ObjectiveCost)
+@return_roles(DifferentialLoss)
 def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
                       binary=True):
     """Computes the binary hinge loss between predictions and targets.
@@ -158,7 +158,7 @@ def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
     return theano.tensor.nnet.relu(delta - predictions * targets)
 
 
-@return_roles(ObjectiveCost)
+@return_roles(DifferentialLoss)
 def multiclass_hinge_loss(predictions, targets, delta=1):
     """Computes the multi-class hinge loss between predictions and targets.
     .. math:: L_i = \\max_{j \\not = p_i} (0, t_j - t_{p_i} + \\delta)
@@ -195,7 +195,8 @@ def multiclass_hinge_loss(predictions, targets, delta=1):
 
 
 @return_roles(AccuracyValue)
-def binary_accuracy(y_pred, y_true, threshold=0.5, name="BinaryAccuracy"):
+def binary_accuracy(y_pred, y_true, threshold=0.5, reduction=tf.reduce_mean,
+                    name="BinaryAccuracy"):
     """ Non-differentiable """
     with tf.variable_scope(name):
         if y_pred.get_shape().ndims > 1:
@@ -203,12 +204,15 @@ def binary_accuracy(y_pred, y_true, threshold=0.5, name="BinaryAccuracy"):
         if y_true.get_shape().ndims > 1:
             y_true = tf.reshape(y_true, (-1,))
         y_pred = tf.greater_equal(y_pred, threshold)
-        return tf.equal(tf.cast(y_pred, 'int32'),
-                        tf.cast(y_true, 'int32'))
+        match_values = tf.cast(tf.equal(tf.cast(y_pred, 'int32'),
+                                        tf.cast(y_true, 'int32')),
+                               dtype='int32')
+        return reduction(match_values)
 
 
 @return_roles(AccuracyValue)
-def categorical_accuracy(y_pred, y_true, top_k=1, name="CategoricalAccuracy"):
+def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
+                         name="CategoricalAccuracy"):
     """ Non-differentiable """
     with tf.variable_scope(name):
         if y_true.get_shape().ndims == y_pred.get_shape().ndims:
@@ -219,14 +223,52 @@ def categorical_accuracy(y_pred, y_true, top_k=1, name="CategoricalAccuracy"):
             # standard categorical accuracy
             top = tf.argmax(y_pred, axis=-1)
             y_true = tf.cast(y_true, top.dtype.base_dtype)
-            return tf.equal(top, y_true)
+            match_values = tf.equal(top, y_true)
         else:
             # top-k accuracy
             top = argsort(y_pred, k=top_k)
             y_true = tf.expand_dims(y_true, axis=-1)
-            return tf.reduce_any(
+            match_values = tf.reduce_any(
                 tf.cast(tf.equal(top, y_true), tf.bool),
                 axis=-1)
+        match_values = tf.cast(match_values, dtype='int32')
+        return reduction(match_values)
+
+
+@return_roles(ConfusionMatrix)
+def confusion_matrix(y_pred, y_true, labels=None, name='ConfusionMatrix'):
+    """
+    Computes the confusion matrix of given vectors containing
+    actual observations and predicted observations.
+    Parameters
+    ----------
+    pred : 1-d or 2-d tensor variable
+    actual : 1-d or 2-d tensor variable
+    labels : array, shape = [n_classes], int (nb_classes)
+        List of labels to index the matrix. This may be used to reorder
+        or select a subset of labels.
+        If none is given, those that appear at least once
+        in ``y_true`` or ``y_pred`` are used in sorted order.
+
+    """
+    with tf.variable_scope(name):
+        from tensorflow.contrib.metrics import confusion_matrix
+        if y_true.get_shape().ndims == 2:
+            y_true = tf.argmax(y_true, -1)
+        elif y_true.get_shape().ndims != 1:
+            raise ValueError('actual must be 1-d or 2-d tensor variable')
+        if y_pred.get_shape().ndims == 2:
+            y_pred = tf.argmax(y_pred, -1)
+        elif y_pred.get_shape().ndims != 1:
+            raise ValueError('pred must be 1-d or 2-d tensor variable')
+        # check valid labels
+        if is_number(labels):
+            labels = int(labels)
+        elif hasattr(labels, '__len__'):
+            labels = len(labels)
+        # transpose to match the format of sklearn
+        return tf.transpose(
+            confusion_matrix(y_pred, y_true, num_classes=labels))
 
 
 def to_llr(x, name="LogLikelihoodRatio"):
@@ -244,6 +286,9 @@ def to_llr(x, name="LogLikelihoodRatio"):
             return tf.log(x / (tf.cast(1., x.dtype.base_dtype) - x))
 
 
+# ===========================================================================
+# Speech task metrics
+# ===========================================================================
 def to_llh(x):
     ''' Convert a matrix of probabilities into log-likelihood
     :math:`LLH = log(prob(data|target))`

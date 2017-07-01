@@ -18,7 +18,7 @@ from odin.utils import as_tuple, is_number, uuid
 from odin.utils.cache_utils import cache_memory
 
 from .role import (add_role, Auxiliary, LearningRate, OptimizerHyperParameter,
-                    GradientsNorm, GraidentsClipping)
+                   GradientsNorm, GraidentsClipping)
 from .helpers import is_tensor, get_value
 
 floatX = CONFIG.floatX
@@ -192,7 +192,8 @@ class Optimizer(object):
                 grads = [tf.clip_by_value(g, -self.clipvalue, self.clipvalue)
                          for g in grads]
             # ====== get final norm value ====== #
-            self._norm = add_role(tf.global_norm(grads), GradientsNorm)
+            self._norm = add_role(tf.global_norm(grads, name="GradientNorm"),
+                                  GradientsNorm)
             return [(g, p) for g, p in zip(grads, params)]
 
 

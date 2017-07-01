@@ -391,6 +391,7 @@ def print_bar(f, height=20.0, bincount=None, binwidth=None, pch="o",
 
     # hist is the mean value of array with indices within bin
     for idx, (i, j) in enumerate(zip(bins, bins[1:])):
+        if i == j: j += 1
         arr = numbers[i:j]
         hist[idx] = sum(arr) / len(arr) # calculate mean
 

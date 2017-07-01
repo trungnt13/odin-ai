@@ -1,3 +1,4 @@
+# Address: {b6ba96161f8b621ce7d0424c6502c38e2f089fbc}
 from __future__ import division, absolute_import, print_function
 
 import os
@@ -9,7 +10,7 @@ import numpy as np
 
 from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import get_rng
-from odin import fuel
+from odin import fuel, backend as K, nnet as N
 from odin.fuel import Dataset, as_data
 from odin.utils import struct, as_tuple, is_number, Progbar
 
@@ -94,7 +95,6 @@ def standard_trainer(train_data, valid_data, test_data=None,
     ----
 
     """
-    from odin import backend as K
     # ====== prepare variables and cost ====== #
     # check optimizer
     if optimizer is None or optimizer == 'auto':
@@ -124,7 +124,7 @@ def standard_trainer(train_data, valid_data, test_data=None,
                        for i in cost_score]
     #  check the cost regu
     if cost_regu == 'auto':
-        cost_regu = K.ComputationGraph().get_roles(K.role.RegularizeCost)
+        cost_regu = K.ComputationGraph().get_roles(K.role.RegularizeLoss)
         if len(cost_regu) == 0:
             cost_regu = None
     cost_regu = as_tuple(cost_regu) if cost_regu is not None else tuple()
@@ -324,21 +324,24 @@ class Task(object):
     def __init__(self, func, data, epoch, p, batch_size, seed, shuffle_level,
                  name=None):
         super(Task, self).__init__()
-        if not callable(func):
-            raise ValueError('func must be instance of theano.Function or '
-                             'python function, method, or hasattr __call__.')
+        # ====== check function ====== #
+        if not isinstance(func, K.Function):
+            raise ValueError("`func` must be instance of odin.backend.Function")
+        self._func = func
+        self._output_info = [(o.name, o.get_shape().as_list())
+                             for o in self._func.outputs]
+        print(self._output_info)
+        exit()
+        # ====== check data ====== #
         if not isinstance(data, (tuple, list)):
             data = [data]
         data = [fuel.as_data(i) for i in data]
-
-        self._func = func
         self._data = data
+        # ====== assign other arguments ====== #
         self._epoch = epoch
         self._p = np.clip(p, 0., 1.)
-
         self.set_batch(batch_size, seed, shuffle_level)
         self._name = name
-
         self._created_iter = []
         self._stop_all = False
 

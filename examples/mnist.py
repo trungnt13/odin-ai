@@ -1,3 +1,7 @@
+# POSTER for the digisami datasets, for publishing the datasets (Deadline: 30 of July)
+# Detail of transportation and accomodation.
+# If there is big change in the laughter density, it is sign for changing the topic
+
 #!/usr/bin/env python
 from __future__ import print_function, division, absolute_import
 
@@ -15,7 +19,6 @@ from odin import backend as K
 from odin import nnet as N
 from odin import fuel, training
 from six.moves import cPickle
-
 
 # ===========================================================================
 # Load data
@@ -39,44 +42,37 @@ ops = N.Sequence([
     N.Dropout(level=0.5),
     N.Flatten(outdim=2),
     N.Dense(256, activation=tf.nn.relu),
-    N.Dense(10, activation=tf.nn.softmax)
+    N.Dense(10, activation=K.linear)
 ], debug=True)
-ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
 y_pred = ops(X)
-ops = cPickle.loads(cPickle.dumps(ops)) # test if the ops is pickle-able
-exit()
 
-cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
-cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
-cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
-cost_test_3 = K.confusion_matrix(y_pred_score, y, labels=range(10))
+y_onehot = K.one_hot(y, nb_classes=10)
+cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred), name='CE')
+cost_acc = K.metrics.categorical_accuracy(y_pred, y, name="Acc")
+cost_cm = K.metrics.confusion_matrix(y_pred, y, labels=10)
 
 parameters = ops.parameters
 optimizer = K.optimizers.Adadelta(lr=1.0)
-updates = optimizer(cost_train, parameters)
+updates = optimizer(cost_ce, parameters)
 print('Building training functions ...')
-f_train = K.function([X, y], [cost_train, optimizer.norm],
-                     updates=updates)
+f_train = K.function([X, y], [cost_ce, optimizer.norm, cost_cm],
+                     updates=updates, training=True)
 print('Building testing functions ...')
-f_test = K.function([X, y], [cost_test_1, cost_test_2, cost_test_3])
+f_test = K.function([X, y], [cost_ce, cost_acc, cost_cm], training=False)
 print('Building predicting functions ...')
-f_pred = K.function(X, y_pred_score)
+f_pred = K.function(X, y_pred, training=False)
+
 
 # ===========================================================================
 # Build trainer
 # ===========================================================================
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
-task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
+# task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
 task.set_callback([
-    training.ProgressMonitor(name='train', format='Results: {:.4f}-{:.4f}'),
-    training.ProgressMonitor(name='valid', format='Results: {:.4f}-{:.4f}',
-                             tracking={2: lambda x: sum(x)}),
-    training.ProgressMonitor(name='test', format='Results: {:.4f}-{:.4f}'),
-    training.History(),
     training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
     training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
 ])

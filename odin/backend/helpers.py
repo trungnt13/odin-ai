@@ -354,7 +354,7 @@ def get_all_variables(scope=None, name=None, full_name=None,
     return var
 
 
-def get_tensors(name=None, full_name=None, device=None, scope=None):
+def get_all_tensors(name=None, full_name=None, device=None, scope=None):
     """
     Parameters
     ----------
@@ -390,6 +390,7 @@ def get_tensors(name=None, full_name=None, device=None, scope=None):
 class Function(object):
     """ Two way to call this Function
     f(x1, x2, x3) or f('x1'=x1, 'x2'=x2, 'x3'=x3)
+
     Parameters
     ----------
     inputs: list of `tf.placeholder` or `tf.Variable`
@@ -399,9 +400,17 @@ class Function(object):
         real value.
     defaults: dict
         mapping from `Variable` or `placeholder` to its default values.
+    training: None, True, False
+        if `training=None`, left the training mode unchanged
+        if `training=True`, turn on training mode only when execute this
+        function.
+        if `training=False`, disable training mode only when execute this
+        function.
     """
 
-    def __init__(self, inputs, outputs, updates=[], defaults={}):
+    def __init__(self, inputs, outputs, updates=[], defaults={},
+                 training=None):
+        self.training = training
         # ====== validate input ====== #
         if isinstance(inputs, dict):
             self.inputs_name = inputs.keys()
@@ -447,6 +456,13 @@ class Function(object):
         for tensor, value in zip(self.inputs, inputs):
             feed_dict[tensor] = value
         feed_dict.update(self.defaults)
+        # check if modifying training mode
+        if self.training is None:
+            pass
+        elif self.training:
+            feed_dict.update({is_training(): True})
+        else:
+            feed_dict.update({is_training(): False})
         # ====== run the output ====== #
         session = get_session()
         updated = session.run(self.outputs + [self.updates_ops],
@@ -458,14 +474,32 @@ class Function(object):
         return outputs
 
 
-def function(inputs, outputs, updates=[], defaults={}):
+def function(inputs, outputs, updates=[], defaults={}, training=None):
+    """
+    Parameters
+    ----------
+    inputs: list of `tf.placeholder` or `tf.Variable`
+    outputs: list of `tf.Tensor`
+    updates: list, or dict
+        mapping from `Tensor` to its new value which is `Tensor` or
+        real value.
+    defaults: dict
+        mapping from `Variable` or `placeholder` to its default values.
+    training: None, True, False
+        if `training=None`, left the training mode unchanged
+        if `training=True`, turn on training mode only when execute this
+        function.
+        if `training=False`, disable training mode only when execute this
+        function.
+    """
     # ====== check inputs ====== #
     if inputs is None or len(as_tuple(inputs)) == 0:
         inputs = ComputationGraph(outputs).inputs
         print("[WARNING] inputs haven't specified, auto-inferred from Graph of "
               "outputs, graph inputs: %s" % ', '.join([str(i) for i in inputs]))
     return Function(inputs=inputs, outputs=outputs,
-                    updates=updates, defaults=defaults)
+                    updates=updates, defaults=defaults,
+                    training=training)
 
 
 # ===========================================================================
