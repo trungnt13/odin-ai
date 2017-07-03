@@ -70,14 +70,18 @@ print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
 # task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
-task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
-task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
-task.set_callback([
-    training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
-    training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
-])
-task.run()
-
+# task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
+# task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
+# task.set_callback([
+#     training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
+#     training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
+# ])
+# task.run()
+t = training.Task(f_train, (ds['X_train'], ds['y_train']), epoch=12)
+for x in t:
+    pass
+print(t._progbar._epoch_summary)
+exit()
 # ====== plot the training process ====== #
 task['History'].print_info()
 task['History'].print_batch('train')
