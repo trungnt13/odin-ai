@@ -323,8 +323,48 @@ class Task(object):
 
     def __init__(self, func, data, epoch=1, p=1.0,
                  batch_size=128, seed=None, shuffle_level=2,
-                 name=None):
+                 name=None, print_progress=True):
         super(Task, self).__init__()
+        self.set_func(func, data)
+        # this Progbar will record the history as well
+        self._progbar = Progbar(target=self.nb_samples, name=name)
+        self.print_progress = print_progress
+        # ====== assign other arguments ====== #
+        self._nb_epoch = epoch
+        self._p = np.clip(p, 0., 1.)
+        self._seed = seed
+        self.set_batch(batch_size, seed, shuffle_level)
+        self._name = name
+        # ====== current info ====== #
+        self._curr_epoch = 0
+        self._curr_iteration = 0
+        self._curr_samples = 0
+        self._curr_epoch_iteration = 0
+        self._curr_epoch_samples = 0
+        # ====== iter tracking ====== #
+        self._created_iter = None
+        self._stop = False
+
+    def __getstate__(self):
+        return (self._progbar, self._nb_epoch, self._p, self._name,
+                self._batch_size, self._rng, self._seed, self._shuffle_level,
+                self.print_progress)
+
+    def __setstate__(self, states):
+        (self._progbar, self._nb_epoch, self._p, self._name,
+         self._batch_size, self._rng, self._seed, self._shuffle_level,
+         self.print_progress) = states
+        # ====== current info ====== #
+        self._curr_epoch = 0
+        self._curr_iteration = 0
+        self._curr_samples = 0
+        self._curr_epoch_iteration = 0
+        self._curr_epoch_samples = 0
+        # ====== iter tracking ====== #
+        self._created_iter = None
+        self._stop = False
+
+    def set_func(self, func, data):
         # ====== check function ====== #
         if not isinstance(func, K.Function):
             raise ValueError("`func` must be instance of odin.backend.Function")
@@ -336,16 +376,7 @@ class Task(object):
             data = [data]
         self._data = [fuel.as_data(i) for i in data]
         self._nb_samples = min([len(d) for d in self._data])
-        # this Progbar will record the history as well
-        self._progbar = Progbar(target=self._nb_samples, name=name)
-        # ====== assign other arguments ====== #
-        self._epoch = epoch
-        self._p = np.clip(p, 0., 1.)
-        self.set_batch(batch_size, seed, shuffle_level)
-        self._name = name
-        # ====== iter tracking ====== #
-        self._created_iter = []
-        self._stop_all = False
+        return self
 
     def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
         if batch_size is not None:
@@ -361,13 +392,14 @@ class Task(object):
             self._shuffle_level = min(max(int(shuffle_level), 0), 2)
         return self
 
+    # ==================== Properties ==================== #
     @property
     def name(self):
         return str(self._name)
 
     @property
-    def epoch(self):
-        return self._epoch
+    def nb_epoch(self):
+        return self._nb_epoch
 
     @property
     def nb_samples(self):
@@ -375,18 +407,61 @@ class Task(object):
         return self._nb_samples
 
     @property
+    def probability(self):
+        """Chance that the func will be execute during iteration"""
+        return self._p
+
+    @property
     def iter_per_epoch(self):
         ''' Estimated number of iteration for each epoch '''
         return int(np.ceil(self._nb_samples / self._batch_size))
 
-    def stop_all(self):
+    @property
+    def batch_size(self):
+        return self._batch_size
+
+    @property
+    def curr_epoch(self):
+        """Total number of epoch finished since the beginning of the Task"""
+        return self._curr_epoch
+
+    @property
+    def curr_iteration(self):
+        """Total number of iteration finished since the beginning of the Task"""
+        return self._curr_iteration
+
+    @property
+    def curr_samples(self):
+        """Total number of samples finished since the beginning of the Task"""
+        return self._curr_samples
+
+    @property
+    def curr_epoch_iteration(self):
+        """Number of iteration within current epoch"""
+        return self._curr_epoch_iteration
+
+    @property
+    def curr_epoch_samples(self):
+        """Number of samples within current epoch"""
+        return self._curr_epoch_samples
+
+    # ==================== control function ==================== #
+    def stop(self):
         """ Stop all iterations running for this Task"""
-        self._stop_all = True
-        for i in self._created_iter:
-            for j in i: # just run to end of the iterators
+        if self._created_iter is not None:
+            self._stop = True
+            # just run to end of the iterators
+            for i in self._created_iter:
                 pass
-        self._stop_all = False
-        self._created_iter = []
+            self._stop = False
+            self._created_iter = None
+
+    def copy(self):
+        return Task(self._func, self._data,
+                    epoch=self.nb_epoch, p=self.probability,
+                    batch_size=self.batch_size, seed=self._seed,
+                    shuffle_level=self._shuffle_level,
+                    name=self._name, print_progress=self.print_progress)
 
     def __iter(self):
         '''
@@ -404,33 +479,29 @@ class Task(object):
         ----
         'end_task' also end of final epoch
         '''
-        nb_iter = 0
-        p = self._p
-        nb_epoch = 0
-        nb_total_samples = 0
         forced_to_terminate = False
         yield None # just for initalize the iterator
         yield 'task_start'
         # ====== start of training ====== #
-        with self._progbar.context():
-            while nb_epoch < self._epoch:
-                nb_epoch += 1
-                seed = self._rng.randint(10e8)
-                # if only 1 Data, don't need zip or we will mess up
-                if len(self._data) == 1:
-                    data_it = iter(self._data[0].set_batch(
-                        batch_size=self._batch_size, seed=seed,
-                        shuffle_level=self._shuffle_level))
-                    data = data_it
-                else:
-                    data_it = [iter(d.set_batch(batch_size=self._batch_size,
-                                                seed=seed,
-                                                shuffle_level=self._shuffle_level))
-                               for d in self._data]
-                    data = zip(*data_it)
-                yield 'epoch_start'
-                # ======  start the iteration ====== #
-                nb_samples_per_epoch = 0 # number of iteration for 1 epoch
+        while self._curr_epoch < self._nb_epoch:
+            seed = self._rng.randint(10e8)
+            # if only 1 Data, don't need zip or we will mess up
+            if len(self._data) == 1:
+                data_it = iter(self._data[0].set_batch(
+                    batch_size=self._batch_size, seed=seed,
+                    shuffle_level=self._shuffle_level))
+                data = data_it
+            else:
+                data_it = [iter(d.set_batch(batch_size=self._batch_size,
+                                            seed=seed,
+                                            shuffle_level=self._shuffle_level))
+                           for d in self._data]
+                data = zip(*data_it)
+            yield 'epoch_start'
+            # ======  start the iteration ====== #
+            self._curr_epoch_samples = 0
+            self._curr_epoch_iteration = 0
+            with self._progbar.context(print_progress=self.print_progress):
                 for i, x in enumerate(data):
                     # alread terminated, try to exhausted the iterator
                     # if forced_to_terminate: continue
@@ -439,23 +510,25 @@ class Task(object):
                         x = [x]
                     # update some info
                     shape0 = x[0].shape[0]
-                    nb_total_samples += shape0
-                    nb_samples_per_epoch += shape0
-                    nb_iter += 1
+                    self._curr_samples += shape0
+                    self._curr_iteration += 1
+                    self._curr_epoch_samples += shape0
+                    self._curr_epoch_iteration += 1
                     # apply the function
-                    if p >= 1. or (p < 1 and self._rng.rand() < p):
+                    if self.probability >= 1. or self._rng.rand() < self.probability:
                         results = self._func(*x)
                         # return results
-                        yield (results, nb_iter, shape0, nb_total_samples, nb_epoch)
+                        yield results
                         # update the progress bar
-                        for (name, shape), res in zip(self._output_info, as_tuple(results)):
+                        for (name, shape), res in zip(self._output_info,
+                                                      as_tuple(results)):
                             if len(shape) == 0: # return single value
                                 self._progbar[name] = res
                             else: # return tensor
                                 self._progbar[name] = res
                         self._progbar.add(shape0)
                     # check TERMINATE signal
-                    if self._stop_all:
+                    if self._stop:
                         forced_to_terminate = True
                         # send signal to the data iterators also
                         for i in data_it:
@@ -465,28 +538,38 @@ class Task(object):
                                 for _ in i: pass
                         # break the epoch loop
                         break
-                # ====== check if terminate ====== #
-                if forced_to_terminate:
-                    break
-                # ====== check if we got the right number for epoch iter ====== #
-                if nb_samples_per_epoch != self._nb_samples:
-                    # just for sure should not smaller than the real number
-                    self._nb_samples = nb_samples_per_epoch
-                # ======  end_epoch or task ====== #
+                # Epoch end
+                self._curr_epoch += 1
                 yield 'epoch_end'
-                if nb_epoch >= self._epoch:
-                    yield 'task_end'
-            # ====== end of iteration ====== #
+            # ====== check if terminate ====== #
+            if forced_to_terminate:
+                break
+            # ====== check if we got the right number for epoch iter ====== #
+            if self._curr_epoch_samples != self._nb_samples:
+                # just for sure should not smaller than the real number
+                self._nb_samples = self._curr_epoch_samples
+            # ======  end_epoch or task ====== #
+            if self._curr_epoch >= self._nb_epoch:
+                yield 'task_end'
+        # ====== end of iteration ====== #
+        self._created_iter = None
 
     def __iter__(self):
-        it = self.__iter()
-        # initialize the iteration
-        it.next()
-        self._created_iter.append(it)
-        return it
+        if self._created_iter is None:
+            # reset all information
+            self._curr_epoch = 0
+            self._curr_iteration = 0
+            self._curr_samples = 0
+            self._curr_epoch_iteration = 0
+            self._curr_epoch_samples = 0
+            # create new iter
+            self._created_iter = self.__iter()
+            # initialize the iteration
+            self._created_iter.next()
+        return self._created_iter
 
     def __del__(self):
-        self.stop_all()
+        self.stop()
 
 
 # ===========================================================================
@@ -496,6 +579,69 @@ def _percentage_or_number(x, n):
     if 0. <= x <= 1.:
         return int(x * n)
     return int(x)
+
+
+class Timer(object):
+    """Timer to determine when a `Task` should be start within a `MainLoop`
+
+    Note
+    ----
+    The `Task` will be commenced if any of the conditions is `True`
+    """
+
+    def __init__(self, epoch=None, iteration=None, samples=None,
+                 percentage=None):
+        super(Timer, self).__init__()
+        self._epoch = epoch
+        self._iteration = iteration
+        self._samples = samples
+        self._percentage = percentage
+        # ====== for the counter ====== #
+        self._counter_max = 0 # store maximum amount of sample
+        self._counter = 0 # store current amount of samples
+        self._last_samples_checkpoint = -1
+
+    def check(self, task):
+        # task haven't started
+        if task.curr_samples == 0:
+            return False
+        if self._epoch is not None and task.curr_epoch >= self._epoch:
+            return True
+        if self._iteration is not None and \
+        task.curr_iteration >= self._iteration:
+            return True
+        if self._samples is not None and \
+        task.curr_samples >= self._samples:
+            return True
+        if self._percentage is not None and\
+        task.curr_samples / (task.nb_epoch * task.nb_samples) >= self._percentage:
+            return True
+        return False
+
+    def set_counter(self, task):
+        nb_samples = task.nb_samples
+        batch_size = task.batch_size
+        if self._epoch is not None:
+            self._counter_max = nb_samples * self._epoch
+        elif self._iteration is not None:
+            self._counter_max = batch_size * self._iteration
+        elif self._samples is not None:
+            self._counter_max = self._samples
+        elif self._percentage is not None:
+            self._counter_max = int(self._percentage * nb_samples)
+        self._counter = self._counter_max
+        return self
+
+    def update_counter(self, task):
+        if self._last_samples_checkpoint < 0:
+            self._last_samples_checkpoint = task.curr_samples
+        else:
+            self._counter -= task.curr_samples - self._last_samples_checkpoint
+            self._last_samples_checkpoint = task.curr_samples
+            if self._counter <= 0:
+                self._counter = self._counter_max
+                return True
+        return False
 
 
 class MainLoop(object):
@@ -520,11 +666,14 @@ class MainLoop(object):
 
     """
 
-    def __init__(self, batch_size=256, seed=-1, shuffle_level=0, rollback=True):
+    def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
+                 rollback=True):
         super(MainLoop, self).__init__()
-        self._task = None
-        self._subtask = {} # run 1 epoch after given frequence
-        self._crosstask = {} # randomly run 1 iter given probability
+        self._main_task = None
+        self._task = []
+        self._subtask = []
+        self._task_when = {} # mapping from `Task` to `Timer`
+        self._task_freq = {} # mapping from `Task` to `Timer`
         self._allow_rollback = bool(rollback)
 
         # create default RNG (no randomization)
@@ -552,9 +701,9 @@ class MainLoop(object):
         self._callback = value[3]
         self._allow_rollback = value[4]
 
-        self._task = None
-        self._subtask = {} # run 1 epoch after given frequence
-        self._crosstask = {} # randomly run 1 iter given probability
+        self._task = []
+        self._subtask = []
+        self._main_task = None
 
     def __getstate__(self):
         return (self._batch_size, self._rng, self._shuffle_level,
@@ -639,16 +788,12 @@ class MainLoop(object):
             shuffle_level = min(max(int(shuffle_level), 0), 2)
             self._shuffle_level = shuffle_level
         # ====== set_batch for Tasks ====== #
-        if self._task is not None:
-            self._task.set_batch(batch_size=batch_size, seed=seed,
-                                 shuffle_level=shuffle_level)
-        for i in self._subtask.itervalues():
+        for i in self._task:
             i.set_batch(batch_size=batch_size, seed=seed,
                         shuffle_level=shuffle_level)
-        for i in self._crosstask.itervalues():
+        for i in self._subtask:
             i.set_batch(batch_size=batch_size, seed=seed,
                         shuffle_level=shuffle_level)
-
         return self
 
     @property
@@ -672,23 +817,28 @@ class MainLoop(object):
         return self._callback[key]
 
     # ==================== main ==================== #
-    def _validate_data(self, data):
-        if not isinstance(data, (list, tuple)):
-            data = [data]
-        return [fuel.as_data(i) for i in data]
-
-    def set_task(self, func, data, epoch=1, p=1., name=None):
+    def set_train_task(self, func, data, epoch=1, p=1., when=None, name="Train"):
+        ''' The progress of the first task added as train_task will
+        be used to determine Timer for all other task
         '''
-        '''
-        self._task = Task(func, self._validate_data(data), epoch, 1.,
-                          batch_size=self._batch_size,
-                          seed=self._rng.randint(10e8),
-                          shuffle_level=self._shuffle_level,
-                          name=name)
+        if len(self._task) == 0 and when is not None:
+            raise ValueError("First train task will always be executed, you cannot"
+                "specify `Timer` for this task.")
+        if when is not None and not isinstance(when, Timer):
+            raise ValueError("`when` must be instance of odin.training.Timer")
+        t = Task(func, data, epoch=epoch, p=p, batch_size=self._batch_size,
+                 seed=self._rng.randint(10e8), shuffle_level=self._shuffle_level,
+                 name=name)
+        self._task.append(t)
+        self._task_when[t] = when
+        self._task_freq[t] = Timer(samples=0)
+        # assign main task
+        if self._main_task is None:
+            self._main_task = t
         return self
 
-    def set_subtask(self, func, data, epoch=float('inf'), p=1., freq=0.5,
-                    when=0, name=None):
+    def set_valid_task(self, func, data, freq=Timer(epoch=1),
+                       when=Timer(samples=0), name="Valid"):
         ''' A subtask is a repeative Task
 
         Parameters
@@ -699,28 +849,21 @@ class MainLoop(object):
         freq: float
             percentage of epoch of main task before this task is executed
         '''
-        self._subtask[Task(func, self._validate_data(data), epoch, p,
-                           batch_size=self._batch_size,
-                           seed=self._rng.randint(10e8),
-                           shuffle_level=self._shuffle_level,
-                           name=name)] = (freq, when)
+        if not isinstance(when, Timer):
+            raise ValueError("`when` must be instance of odin.training.Timer")
+        t = Task(func, data, epoch=float('inf'), p=1., batch_size=self._batch_size,
+                 seed=None, shuffle_level=0, name=name)
+        self._subtask.append(t)
+        self._task_when[t] = when
+        self._task_freq[t] = freq
         return self
 
-    def set_crosstask(self, func, data, epoch=float('inf'), p=0.5,
-                      when=0, name=None):
-        ''' A crosstask is
-
-        Parameters
-        ----------
-        when: float
-            percentage of epoch of main task before this task is executed
-            negative value => execute after final epoch of main task
-        '''
-        self._crosstask[Task(func, self._validate_data(data), epoch, p,
-                             batch_size=self._batch_size,
-                             seed=self._rng.randint(10e8),
-                             shuffle_level=self._shuffle_level,
-                             name=name)] = when
+    def set_eval_task(self, func, data, name="Eval"):
+        t = Task(func, data, epoch=1, p=1., batch_size=self._batch_size,
+                 seed=None, shuffle_level=0, name=name)
+        self._subtask.append(t)
+        self._task_when[t] = Timer(percentage=1.)
+        self._task_freq[t] = Timer(samples=0)
         return self
 
     # ==================== logic ==================== #
@@ -754,105 +897,52 @@ class MainLoop(object):
         if self._end_func is not None:
             self._end_func()
 
-    def run(self):
-        if self._task is None:
+    def _run(self):
+        if self._main_task is None:
             raise ValueError('You must call set_task and set the main task first.')
         callback = self._callback
-        batch_size = self._batch_size
         # ====== prepare subtask ====== #
-        # iterator, is_permanent_finished=False, freq_count
-        subtask_map = {i: [iter(i), False, [0]] for i in self._subtask}
-        # iterator, is_permanent_finished=False
-        crosstask_map = {i: [iter(i), False] for i in self._crosstask}
+        finished_task = {i: False for i in self._task + self._subtask}
+        task_iter = {i: iter(i) for i in self._task + self._subtask}
+        for task, freq in self._task_freq.iteritems():
+            freq.set_counter(self._main_task)
         # ====== main logics ====== #
         msg = [] # store returned callback messages
-        for i in self._task: # each iteration is an batch
-            # return signal: start_epoch, end_epoch or end_task
-            if isinstance(i, str):
-                msg = callback.record(self._task.name, event_type=i,
-                                      nb_iter=0, nb_epoch=0,
-                                      nb_total_samples=0,
-                                      results=None,
-                                      samples_size=self._task.nb_samples)
-            # return actual results
-            else:
-                # ====== main task ====== #
-                results, nb_iter, nb_samples, nb_total_samples, nb_epoch = i
-                nb_samples_per_epoch = self._task.nb_samples
-                msg = callback.record(self._task.name, event_type='batch_end',
-                                      nb_iter=nb_iter, nb_epoch=nb_epoch,
-                                      nb_total_samples=nb_total_samples,
-                                      results=results,
-                                      samples_size=self._task.nb_samples)
-                # ====== run subtask ====== #
-                for subtask, (freq, when) in self._subtask.iteritems():
-                    subtask_iter, is_end, freq_count = subtask_map[subtask]
-                    if is_end: continue # already ended
-                    # check if it is good time to start, if when is negative,
-                    # start from last epoch.
-                    when = float(when % self._task.epoch) + 1. if when < 0 else when
-                    when = _percentage_or_number(when, nb_samples_per_epoch)
-                    freq = _percentage_or_number(freq, nb_samples_per_epoch)
-                    # ok to start counting
-                    if nb_total_samples >= when:
-                        freq_count[0] += nb_samples
-                    # OK to run
-                    if freq_count[0] >= freq:
-                        freq_count[0] = 0 # reset the frequent count
-                        for x in subtask_iter:
+        while not finished_task[self._main_task]:
+            for t in self._task:
+                # ====== execute training task first ====== #
+                if not finished_task[t]:
+                    res = task_iter[t].next()
+                    # task message
+                    if isinstance(res, str):
+                        if res == 'task_end':
+                            finished_task[t] = True
+                    else: # task result
+                        pass
+                # ====== execute valid and eval task ====== #
+                for st in self._subtask:
+                    if finished_task[st]: continue
+                    if self._task_when[st].check(self._main_task) and\
+                    self._task_freq[st].update_counter(self._main_task):
+                        # running 1 epoch of subtask
+                        for x in task_iter[st]:
                             if isinstance(x, str): # signal
-                                msg = callback.record(subtask.name, x,
-                                                      0, 0, 0, None)
-                                if x == 'task_end': # task finished
-                                    subtask_map[subtask][-1] = True
+                                if x == 'task_end': finished_task[st] = True
                                 if x == 'epoch_end': break
                             else: # results
-                                _res, _n_it, _n_sam, _n_total_sam, _n_epo = x
-                                msg = callback.record(subtask.name, 'batch_end',
-                                                nb_iter=_n_it,
-                                                nb_total_samples=_n_total_sam,
-                                                nb_epoch=_n_epo, results=_res,
-                                                samples_size=subtask.nb_samples)
-                            # process callback msg for subtasks
-                            if SIG_TRAIN_SAVE in msg: self._save()
-                            if SIG_TRAIN_ROLLBACK in msg and self._allow_rollback:
-                                self._rollback()
-                            if SIG_TRAIN_STOP in msg: break
-                # ====== run crosstask ====== #
-                callback.mode = 'crosstask'
-                for crosstask, when in self._crosstask.iteritems():
-                    (crosstask_iter, crosstask_epoch,
-                     crosstask_results, is_end) = crosstask_map[crosstask]
-                    if is_end: continue # already ended
-                    # check if it is good time to start, if when is negative,
-                    # start from last epoch.
-                    when = float(when % self._task.epoch) + 1. if when < 0 else when
-                    when = int(when * self._task.nb_samples)
-                    # OK to run
-                    if nb_samples > batch_size and nb_samples >= when:
-                        x = crosstask_iter.next()
-                        if isinstance(x, str): # signals
-                            msg = callback.record(crosstask.name, x,
-                                                  0, 0, 0, None)
-                            if x == 'task_end': # finished crosstask
-                                crosstask_map[crosstask][-1] = True
-                        else: #results
-                            _res, _n_it, _n_sam, _n_total_sam, _n_epo = x
-                            msg = callback.record(crosstask.name, 'batch_end',
-                                            nb_iter=_n_it,
-                                            nb_total_samples=_n_total_sam,
-                                            nb_epoch=_n_epo, results=_res)
-            # ====== process callback msg for main task ====== #
-            # (this is important order)
-            if SIG_TRAIN_SAVE in msg: self._save()
-            if SIG_TRAIN_ROLLBACK in msg and self._allow_rollback:
-                self._rollback()
-            if SIG_TRAIN_STOP in msg: break
+                                pass
         # ====== end main task ====== #
-        self._task.stop_all()
-        for t in self._subtask.keys():
-            t.stop_all()
-        for t in self._crosstask.keys():
-            t.stop_all()
+        for t in self._task + self._subtask:
+            t.stop()
         # everything finished
-        self._end()
+        # self._end()
+
+    def run(self):
+        try:
+            self._run()
+        finally:
+            try:
+                import curses
+                curses.endwin()
+            except Exception:
+                pass

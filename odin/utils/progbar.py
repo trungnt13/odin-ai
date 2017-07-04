@@ -99,6 +99,7 @@ _TUTORIAL_TEXT = \
 * a) Press `S` for toggle (on/off) summary of current progress               *
 * b) `i` for scroll UP and `k` for scoll DOWN, `r` for reset the scroll      *
 * c) Number from `0`, `1`, ..., `9` to show summary of the last 10 progress  *
+* d) If `confirm_exit` press <ENTER> to exit when Progress finished          *
 ******************************************************************************"""
 _PROGBAR_STACK = []
 _FINISHED_PROGBAR = []
@@ -114,7 +115,7 @@ def _show_tutorial(n_line, n_col):
 
 
 def _show_progbar_hist(n_line, n_col):
-    intro_text = "The last 10 Progbar"
+    intro_text = "The last 10 progress"
     addstr(n_line, 0, intro_text, curses.A_STANDOUT)
     curr_col = len(intro_text)
     for i, prog in enumerate(_PROGBAR_HISTORY):
@@ -182,8 +183,9 @@ class Progbar(object):
     def __iter__(self):
         return self._report.__iter__()
 
-    def context(self, print_summary=False):
-        return _progbar(self, print_summary=print_summary)
+    def context(self, print_progress=True, print_summary=False, confirm_exit=False):
+        return _progbar(self, print_progress=print_progress,
+                        print_summary=print_summary, confirm_exit=confirm_exit)
 
     @property
     def epoch_idx(self):
@@ -238,10 +240,10 @@ class Progbar(object):
         else:
             remain = " Estimate: inf(s)"
         # calculate speed
-        speed = ' [Min:%%-%d.2f  Avr:%%-%d.2f  Max:%%-%d.2f (it/s)]' % (n, n, n)
+        speed = ' [Min:%%-%d.2f  Avr:%%-%d.2f  Max:%%-%d.2f (obj/s)]' % (n, n, n)
         update_time_hist = self._update_time_hist[self.epoch_idx]
-        min_it = (1. / min(update_time_hist)) if len(update_time_hist) > 0 else 0
-        max_it = (1. / max(update_time_hist)) if len(update_time_hist) > 0 else 0
+        min_it = (1. / max(update_time_hist)) if len(update_time_hist) > 0 else 0
+        max_it = (1. / min(update_time_hist)) if len(update_time_hist) > 0 else 0
         avr_it = (1. / np.mean(update_time_hist)) if len(update_time_hist) > 0 else 0
         speed = speed % (min_it, avr_it, max_it)
         report = ' '.join([elapsed, remain, speed])
@@ -274,9 +276,9 @@ class Progbar(object):
             s += '\tElapsed: %.2f(s)\n' % total_time
             counter_epoch = counter % (seen_so_far, self.target)
             s += '\tProgress: % 3.2f%% %s\n' % (frac * 100, counter_epoch)
-            s += '\tSpeed: %.2f(it/s)\n' % it_per_sec
+            s += '\tSpeed: %.2f(obj/s)\n' % it_per_sec
             if len(update_time_hist) > 0:
-                s += "\tSpeed chart (it/s):\n"
+                s += "\tSpeed chart (obj/s):\n"
                 s += print_bar([1. / i for i in update_time_hist],
                                height=8.)
                 s += '\n'
@@ -304,9 +306,7 @@ class Progbar(object):
 
     def _flush_str(self, n_line, n_col):
         # ====== print ====== #
-        name = '/'.join([pb.name
-            for pb in _PROGBAR_STACK[:_PROGBAR_STACK.index(self) + 1]])
-
+        name = self.name
         addstr(n_line, n_col + 0, ' ' + '-' * (len(name) + 2))
         n_line += 1
         addstr(n_line, n_col + 0, '| ')
@@ -329,10 +329,7 @@ class Progbar(object):
         return n_line
 
     def _flush_summary_str(self, n_line, n_col):
-        name = '/'.join([pb.name
-            for pb in _PROGBAR_STACK[:_PROGBAR_STACK.index(self) + 1]])
-        name = "SUMMARY: " + name
-
+        name = "SUMMARY: " + self.name
         addstr(n_line, min(_NCOLS - len(name), n_col + 12), name, curses.A_STANDOUT)
         n_line += 1
         for i in range(self.nb_epoch):
@@ -363,52 +360,53 @@ class Progbar(object):
             self._update_time_hist[self.epoch_idx].append(duration / n)
             self._last_update = curr_time
         # prepare print screen
-        start_line = 0
-        start_col = 0
-        # print tutorial
-        start_line, start_col = _show_tutorial(start_line, start_col)
-        start_line, start_col = _show_progbar_hist(start_line, start_col)
-        # processing the keyboard input
-        ch = stdscr().getch()
-        if ch != curses.ERR:
-            if ch == ord('s'):
-                scrollRESET()
-                stdscr().erase()
-                if _CURRENT_PROG_SUMMARY[0] is not None:
-                    _CURRENT_PROG_SUMMARY[0] = None
-                else:
-                    _CURRENT_PROG_SUMMARY[0] = self
-            elif ch == ord('i'): # scroll UP
-                scrollUP(3)
-            elif ch == ord('k'): # scoll DOWN
-                scrollDOWN(3)
-            elif ch == ord('r'): # scoll RESET
-                scrollRESET()
-            elif ch in _NUMBERS_CH:
-                i = _NUMBERS_CH[ch]
-                if i < len(_PROGBAR_HISTORY):
+        if self in _PROGBAR_STACK:
+            start_line = 0
+            start_col = 0
+            # print tutorial
+            start_line, start_col = _show_tutorial(start_line, start_col)
+            start_line, start_col = _show_progbar_hist(start_line, start_col)
+            # processing the keyboard input
+            ch = stdscr().getch()
+            if ch != curses.ERR:
+                if ch == ord('s'): # handle toggle Summary
                     scrollRESET()
                     stdscr().erase()
-                    _CURRENT_PROG_SUMMARY[0] = _PROGBAR_HISTORY[i]
-        # Printout information
-        if self._notification_showup is not None:
-            if current_timestamp - self._notification_showup >= 0.8:
-                self._notification_showup = None
-                scrollRESET()
-            addstr(start_line, start_col, self._notification_text, curses.A_BOLD)
-        elif _CURRENT_PROG_SUMMARY[0] is not None:
-            # check summary timeout
-            _CURRENT_PROG_SUMMARY[0]._flush_summary_str(start_line, start_col)
-        else: # flush progress bar
-            # update child progress
-            for pb in _PROGBAR_STACK:
-                if pb is self:
-                    break
-                start_line = pb._flush_str(start_line, start_col) + 1
-                start_col += 2
-            # update the self progress
-            self._flush_str(start_line, start_col)
-        refresh()
+                    if _CURRENT_PROG_SUMMARY[0] is not None:
+                        _CURRENT_PROG_SUMMARY[0] = None
+                    else:
+                        _CURRENT_PROG_SUMMARY[0] = self
+                elif ch == ord('i'): # scroll UP
+                    scrollUP(3)
+                elif ch == ord('k'): # scoll DOWN
+                    scrollDOWN(3)
+                elif ch == ord('r'): # scoll RESET
+                    scrollRESET()
+                # show the summary of 1 progress in the history
+                elif ch in _NUMBERS_CH:
+                    i = _NUMBERS_CH[ch]
+                    if i < len(_PROGBAR_HISTORY):
+                        scrollRESET()
+                        stdscr().erase()
+                        _CURRENT_PROG_SUMMARY[0] = _PROGBAR_HISTORY[i]
+            # Printout information
+            if self._notification_showup is not None:
+                if current_timestamp - self._notification_showup >= 0.8:
+                    self._notification_showup = None
+                    scrollRESET()
+                addstr(start_line, start_col, self._notification_text, curses.A_BOLD)
+            elif _CURRENT_PROG_SUMMARY[0] is not None:
+                # check summary timeout
+                _CURRENT_PROG_SUMMARY[0]._flush_summary_str(start_line, start_col)
+            else: # flush progress bar
+                # update child progress
+                for pb in _PROGBAR_STACK:
+                    if pb is self:
+                        break
+                    start_line = pb._flush_str(start_line, start_col) + 1
+                # update the self progress
+                self._flush_str(start_line, start_col)
+            refresh()
         # check if finish the process, reset new epoch
         if seen_so_far == self.target:
             self.reset()
@@ -416,44 +414,76 @@ class Progbar(object):
 
 
 @contextmanager
-def _progbar(prog, print_summary):
-    # initialize window
-    stdscr()
-    if len(_PROGBAR_STACK) == 0:
-        # Turn off echoing of keys, and enter cbreak mode,
-        # where no buffering is performed on keyboard input
-        curses.noecho()
-        curses.cbreak()
-    else:
-        # pause all other progess
-        for pb in _PROGBAR_STACK:
-            if pb is not prog:
-                pb.pause()
-    # ====== run the progress ====== #
-    if prog not in _PROGBAR_STACK:
-        _PROGBAR_STACK.append(prog)
-    # record history
-    _PROGBAR_HISTORY.insert(0, prog)
-    if len(_PROGBAR_HISTORY) > 10:
-        _PROGBAR_HISTORY.pop()
-    try:
+def _progbar(prog, print_progress, print_summary, confirm_exit):
+    if not print_progress:
         yield prog
-    finally:
-        _PROGBAR_STACK.remove(prog)
-        prog.pause()
-        _FINISHED_PROGBAR.append((time.time(), prog))
-        # erase old progress
-        stdscr().erase()
-        # Set everything back to normal
-        if len(_PROGBAR_STACK) == 0:
-            curses.echo()
-            curses.nocbreak()
-            curses.endwin()
-            if print_summary:
-                summary = [p[1].summary
-                    for p in sorted(_FINISHED_PROGBAR, key=lambda x: x[0])][::-1]
-                for s in summary:
-                    sys.stdout.write(s); sys.stdout.flush()
-            # remove all old data
-            for i in range(len(_FINISHED_PROGBAR)):
-                _FINISHED_PROGBAR.pop()
+    else:
+        _exception_happend = None
+        try:
+            # initialize window
+            stdscr()
+            if len(_PROGBAR_STACK) == 0:
+                # Turn off echoing of keys, and enter cbreak mode,
+                # where no buffering is performed on keyboard input
+                curses.noecho()
+                curses.cbreak()
+            else:
+                # pause all other progess
+                for pb in _PROGBAR_STACK:
+                    if pb is not prog:
+                        pb.pause()
+            # ====== run the progress ====== #
+            if prog not in _PROGBAR_STACK:
+                _PROGBAR_STACK.append(prog)
+            # record history
+            if prog in _PROGBAR_HISTORY:
+                _PROGBAR_HISTORY.remove(prog)
+            _PROGBAR_HISTORY.insert(0, prog)
+            if len(_PROGBAR_HISTORY) > 10:
+                _PROGBAR_HISTORY.pop()
+            yield prog
+            # ====== finish the ProgBar ====== #
+            _PROGBAR_STACK.remove(prog)
+            prog.pause()
+            _FINISHED_PROGBAR.append((time.time(), prog))
+            # erase old progress
+            stdscr().erase()
+            # ====== confirm exit ====== #
+            if len(_PROGBAR_STACK) == 0 and confirm_exit:
+                scrollRESET()
+                stdscr().erase()
+                prog._flush_summary_str(*_show_progbar_hist(*_show_tutorial(0, 0)))
+                refresh()
+                while True:
+                    ch = stdscr().getch()
+                    if ch == curses.KEY_ENTER or ch == 10 or ch == 13:
+                        break
+                    # show the summary of 1 progress in the history
+                    elif ch in _NUMBERS_CH:
+                        i = _NUMBERS_CH[ch]
+                        if i < len(_PROGBAR_HISTORY):
+                            scrollRESET()
+                            stdscr().erase()
+                            _PROGBAR_HISTORY[i]._flush_summary_str(
+                                *_show_progbar_hist(*_show_tutorial(0, 0)))
+                            refresh()
+        except Exception as e:
+            _exception_happend = e
+        finally:
+            # Set everything back to normal
+            if len(_PROGBAR_STACK) == 0 or _exception_happend is not None:
+                curses.echo()
+                curses.nocbreak()
+                curses.endwin()
+                # check if exception happened
+                if _exception_happend:
+                    raise _exception_happend
+                # print summary
+                if print_summary:
+                    summary = [p[1].summary
+                        for p in sorted(_FINISHED_PROGBAR, key=lambda x: x[0])][::-1]
+                    for s in summary:
+                        sys.stdout.write(s); sys.stdout.flush()
+                # remove all old data
+                for i in range(len(_FINISHED_PROGBAR)):
+                    _FINISHED_PROGBAR.pop()

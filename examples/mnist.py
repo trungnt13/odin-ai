@@ -24,6 +24,7 @@ from six.moves import cPickle
 # Load data
 # ===========================================================================
 ds = fuel.load_mnist()
+print(ds)
 X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X')
 y = K.placeholder(shape=(None,), name='y', dtype='int32')
 
@@ -69,25 +70,13 @@ f_pred = K.function(X, y_pred, training=False)
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
 # task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
-task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=3, name='train')
-# task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
-# task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')
+task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=2, name='train')
+task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
+    freq=training.Timer(percentage=0.6), name='valid')
+task.set_eval_task(f_test, (ds['X_test'], ds['y_test']), name='test')
 # task.set_callback([
 #     training.EarlyStopGeneralizationLoss('valid', threshold=5, patience=3),
 #     training.NaNDetector(('train', 'valid'), patience=3, rollback=True)
 # ])
-# task.run()
-t = training.Task(f_train, (ds['X_train'], ds['y_train']), epoch=12)
-for x in t:
-    pass
-print(t._progbar._epoch_summary)
+task.run()
 exit()
-# ====== plot the training process ====== #
-task['History'].print_info()
-task['History'].print_batch('train')
-task['History'].print_batch('valid')
-task['History'].print_epoch('test')
-print('Benchmark TRAIN-batch:', task['History'].benchmark('train', 'batch_end').mean)
-print('Benchmark TRAIN-epoch:', task['History'].benchmark('train', 'epoch_end').mean)
-print('Benchmark PRED-batch:', task['History'].benchmark('valid', 'batch_end').mean)
-print('Benchmark PRED-epoch:', task['History'].benchmark('valid', 'epoch_end').mean)

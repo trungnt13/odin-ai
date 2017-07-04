@@ -225,13 +225,9 @@ def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
             y_true = tf.cast(y_true, top.dtype.base_dtype)
             match_values = tf.equal(top, y_true)
         else:
-            # top-k accuracy
-            top = argsort(y_pred, k=top_k)
-            y_true = tf.expand_dims(y_true, axis=-1)
-            match_values = tf.reduce_any(
-                tf.cast(tf.equal(top, y_true), tf.bool),
-                axis=-1)
-        match_values = tf.cast(match_values, dtype='int32')
+            match_values = tf.nn.in_top_k(y_pred, tf.cast(y_true, 'int32'),
+                                          k=top_k)
+        match_values = tf.cast(match_values, dtype='float32')
         return reduction(match_values)
 
 
