@@ -323,12 +323,13 @@ class Task(object):
 
     def __init__(self, func, data, epoch=1, p=1.0,
                  batch_size=128, seed=None, shuffle_level=2,
-                 name=None, print_progress=True):
+                 name=None, print_progress=True, confirm_exit=False):
         super(Task, self).__init__()
         self.set_func(func, data)
         # this Progbar will record the history as well
         self._progbar = Progbar(target=self.nb_samples, name=name)
         self.print_progress = print_progress
+        self.confirm_exit = confirm_exit
         # ====== assign other arguments ====== #
         self._nb_epoch = epoch
         self._p = np.clip(p, 0., 1.)
@@ -348,12 +349,12 @@ class Task(object):
     def __getstate__(self):
         return (self._progbar, self._nb_epoch, self._p, self._name,
                 self._batch_size, self._rng, self._seed, self._shuffle_level,
-                self.print_progress)
+                self.print_progress, self.confirm_exit)
 
     def __setstate__(self, states):
         (self._progbar, self._nb_epoch, self._p, self._name,
          self._batch_size, self._rng, self._seed, self._shuffle_level,
-         self.print_progress) = states
+         self.print_progress, self.confirm_exit) = states
         # ====== current info ====== #
         self._curr_epoch = 0
         self._curr_iteration = 0
@@ -483,25 +484,24 @@ class Task(object):
         yield None # just for initalize the iterator
         yield 'task_start'
         # ====== start of training ====== #
-        while self._curr_epoch < self._nb_epoch:
-            seed = self._rng.randint(10e8)
-            # if only 1 Data, don't need zip or we will mess up
-            if len(self._data) == 1:
-                data_it = iter(self._data[0].set_batch(
-                    batch_size=self._batch_size, seed=seed,
-                    shuffle_level=self._shuffle_level))
-                data = data_it
-            else:
-                data_it = [iter(d.set_batch(batch_size=self._batch_size,
-                                            seed=seed,
-                                            shuffle_level=self._shuffle_level))
-                           for d in self._data]
-                data = zip(*data_it)
-            yield 'epoch_start'
-            # ======  start the iteration ====== #
-            self._curr_epoch_samples = 0
-            self._curr_epoch_iteration = 0
-            with self._progbar.context(print_progress=self.print_progress):
+        with self._progbar.context(print_progress=self.print_progress,
+                                   confirm_exit=self.confirm_exit):
+            while self._curr_epoch < self._nb_epoch:
+                seed = self._rng.randint(10e8)
+                # if only 1 Data, don't need zip or we will mess up
+                if len(self._data) == 1:
+                    data_it = iter(self._data[0].set_batch(batch_size=self._batch_size,
+                                                seed=seed, shuffle_level=self._shuffle_level))
+                    data = data_it
+                else:
+                    data_it = [iter(d.set_batch(batch_size=self._batch_size, seed=seed,
+                                                shuffle_level=self._shuffle_level))
+                               for d in self._data]
+                    data = zip(*data_it)
+                yield 'epoch_start'
+                # ======  start the iteration ====== #
+                self._curr_epoch_samples = 0
+                self._curr_epoch_iteration = 0
                 for i, x in enumerate(data):
                     # alread terminated, try to exhausted the iterator
                     # if forced_to_terminate: continue
@@ -538,19 +538,19 @@ class Task(object):
                                 for _ in i: pass
                         # break the epoch loop
                         break
-                # Epoch end
+                # Epoch end signaling
                 self._curr_epoch += 1
                 yield 'epoch_end'
-            # ====== check if terminate ====== #
-            if forced_to_terminate:
-                break
-            # ====== check if we got the right number for epoch iter ====== #
-            if self._curr_epoch_samples != self._nb_samples:
-                # just for sure should not smaller than the real number
-                self._nb_samples = self._curr_epoch_samples
-            # ======  end_epoch or task ====== #
-            if self._curr_epoch >= self._nb_epoch:
-                yield 'task_end'
+                # ====== check if terminate ====== #
+                if forced_to_terminate:
+                    break
+                # ====== check if we got the right number for epoch iter ====== #
+                if self._curr_epoch_samples != self._nb_samples:
+                    # just for sure should not smaller than the real number
+                    self._nb_samples = self._curr_epoch_samples
+                # ======  end_epoch or task ====== #
+                if self._curr_epoch >= self._nb_epoch:
+                    yield 'task_end'
         # ====== end of iteration ====== #
         self._created_iter = None
 
@@ -667,7 +667,7 @@ class MainLoop(object):
     """
 
     def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
-                 rollback=True):
+                 rollback=True, print_progress=True, confirm_exit=False):
         super(MainLoop, self).__init__()
         self._main_task = None
         self._task = []
@@ -693,6 +693,9 @@ class MainLoop(object):
         self._rollback_func = None
         self._end_func = None
 
+        self.confirm_exit = confirm_exit
+        self.print_progress = print_progress
+
     # ==================== pickling ==================== #
     def __setstate__(self, value):
         self.set_batch(batch_size=value[0], shuffle_level=value[2])
@@ -700,6 +703,8 @@ class MainLoop(object):
 
         self._callback = value[3]
         self._allow_rollback = value[4]
+        self.print_progress = value[5]
+        self.confirm_exit = value[6]
 
         self._task = []
         self._subtask = []
@@ -707,7 +712,8 @@ class MainLoop(object):
 
     def __getstate__(self):
         return (self._batch_size, self._rng, self._shuffle_level,
-                self._callback, self._allow_rollback)
+                self._callback, self._allow_rollback,
+                self.print_progress, self.confirm_exit)
 
     # ==================== Signal handling ==================== #
     def set_signal_handlers(self, save=None, rollback=None, end=None):
@@ -901,6 +907,9 @@ class MainLoop(object):
         if self._main_task is None:
             raise ValueError('You must call set_task and set the main task first.')
         callback = self._callback
+        for t in self._task + self._subtask:
+            t.print_progress = self.print_progress
+            t.confirm_exit = self.confirm_exit
         # ====== prepare subtask ====== #
         finished_task = {i: False for i in self._task + self._subtask}
         task_iter = {i: iter(i) for i in self._task + self._subtask}
@@ -922,7 +931,7 @@ class MainLoop(object):
                 # ====== execute valid and eval task ====== #
                 for st in self._subtask:
                     if finished_task[st]: continue
-                    if self._task_when[st].check(self._main_task) and\
+                    if self._task_when[st].check(self._main_task) and \
                     self._task_freq[st].update_counter(self._main_task):
                         # running 1 epoch of subtask
                         for x in task_iter[st]:
@@ -943,6 +952,8 @@ class MainLoop(object):
         finally:
             try:
                 import curses
+                curses.echo()
+                curses.nocbreak()
                 curses.endwin()
             except Exception:
                 pass

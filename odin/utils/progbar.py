@@ -452,21 +452,26 @@ def _progbar(prog, print_progress, print_summary, confirm_exit):
             if len(_PROGBAR_STACK) == 0 and confirm_exit:
                 scrollRESET()
                 stdscr().erase()
-                prog._flush_summary_str(*_show_progbar_hist(*_show_tutorial(0, 0)))
-                refresh()
+                prog._flush_summary_str(*_show_progbar_hist(
+                    *_show_tutorial(0, 0))); refresh()
                 while True:
                     ch = stdscr().getch()
-                    if ch == curses.KEY_ENTER or ch == 10 or ch == 13:
+                    if ch == curses.KEY_ENTER or ch == 10 or ch == 13: # Exit
                         break
-                    # show the summary of 1 progress in the history
+                    elif ch == ord('i'): # scroll UP
+                        scrollUP(3); refresh()
+                    elif ch == ord('k'): # scoll DOWN
+                        scrollDOWN(3); refresh()
+                    elif ch == ord('r'): # scoll RESET
+                        scrollRESET(); refresh()
                     elif ch in _NUMBERS_CH:
                         i = _NUMBERS_CH[ch]
                         if i < len(_PROGBAR_HISTORY):
                             scrollRESET()
                             stdscr().erase()
                             _PROGBAR_HISTORY[i]._flush_summary_str(
-                                *_show_progbar_hist(*_show_tutorial(0, 0)))
-                            refresh()
+                                *_show_progbar_hist(
+                                    *_show_tutorial(0, 0))); refresh()
         except Exception as e:
             _exception_happend = e
         finally:

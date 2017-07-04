@@ -68,7 +68,7 @@ f_pred = K.function(X, y_pred, training=False)
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
+task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2, confirm_exit=True)
 # task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=2, name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
