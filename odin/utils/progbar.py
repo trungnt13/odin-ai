@@ -125,7 +125,31 @@ def _show_progbar_hist(n_line, n_col):
             curr_col = len(intro_text)
         addstr(n_line, curr_col, text, curses.A_NORMAL)
         curr_col += len(text)
-    return n_line + 2, n_col
+    return n_line + 1, n_col
+
+
+# ===========================================================================
+# Handling notification
+# ===========================================================================
+_NOTIFICATION_MSG = []
+
+
+def add_notification(msg):
+    _NOTIFICATION_MSG.append((datetime.now().strftime('%d/%b-%H:%M:%S '),
+                              str(msg)))
+
+
+def clear_notification():
+    global _NOTIFICATION_MSG
+    _NOTIFICATION_MSG = []
+
+
+def _show_notification(n_line, n_col):
+    for timestamp, msg in _NOTIFICATION_MSG:
+        addstr(n_line, 0, timestamp, curses.A_BOLD)
+        addstr(n_line, len(timestamp), msg, curses.A_NORMAL)
+        n_line += 1
+    return n_line, n_col
 
 
 # ===========================================================================
@@ -157,12 +181,10 @@ class Progbar(object):
         self._total_time = defaultdict(int)
         self._update_time_hist = defaultdict(list)
         # ====== recording history ====== #
+        # dictonary: {epoch_id: {key: [value1, value2, ...]}}
         self._epoch_hist = defaultdict(lambda: defaultdict(list))
         self._epoch_summary = defaultdict(dict)
         self._epoch_idx = 0
-        # ====== showing instance information ====== #
-        self._notification_showup = None
-        self._notification_text = ""
 
     def __getitem__(self, key):
         return self._report.__getitem__(key)
@@ -171,7 +193,7 @@ class Progbar(object):
         # erase old screen if update new information
         if self in _PROGBAR_STACK:
             stdscr().erase()
-        self._epoch_hist[self.epoch_idx][key].append((time.time(), val))
+        self._epoch_hist[self.epoch_idx][key].append(val)
         return self._report.__setitem__(key, val)
 
     def __delitem__(self, key):
@@ -207,7 +229,7 @@ class Progbar(object):
 
         Return
         ------
-        dictonary: {epoch_id: {key: [(timestamp, value), ...]}}
+        dictonary: {epoch_id: {key: [value1, value2, ...]}}
         """
         return self._epoch_hist
 
@@ -288,7 +310,7 @@ class Progbar(object):
     def reset(self):
         # create epoch summary
         for key, values in self._epoch_hist[self._epoch_idx].iteritems():
-            values = [v[1] for v in values]
+            values = [v for v in values]
             if isinstance(values[0], Number):
                 self._epoch_summary[self._epoch_idx][key] = np.mean(values)
             elif isinstance(values[0], np.ndarray):
@@ -296,8 +318,6 @@ class Progbar(object):
         # reset all flags
         self._last_update = None
         self._epoch_idx += 1
-        self._notification_showup = None
-        self._notification_text = ""
         return self
 
     def pause(self):
@@ -361,11 +381,9 @@ class Progbar(object):
             self._last_update = curr_time
         # prepare print screen
         if self in _PROGBAR_STACK:
-            start_line = 0
-            start_col = 0
             # print tutorial
-            start_line, start_col = _show_tutorial(start_line, start_col)
-            start_line, start_col = _show_progbar_hist(start_line, start_col)
+            start_line, start_col = _show_notification(
+                *_show_progbar_hist(*_show_tutorial(0, 0)))
             # processing the keyboard input
             ch = stdscr().getch()
             if ch != curses.ERR:
@@ -390,12 +408,7 @@ class Progbar(object):
                         stdscr().erase()
                         _CURRENT_PROG_SUMMARY[0] = _PROGBAR_HISTORY[i]
             # Printout information
-            if self._notification_showup is not None:
-                if current_timestamp - self._notification_showup >= 0.8:
-                    self._notification_showup = None
-                    scrollRESET()
-                addstr(start_line, start_col, self._notification_text, curses.A_BOLD)
-            elif _CURRENT_PROG_SUMMARY[0] is not None:
+            if _CURRENT_PROG_SUMMARY[0] is not None:
                 # check summary timeout
                 _CURRENT_PROG_SUMMARY[0]._flush_summary_str(start_line, start_col)
             else: # flush progress bar
@@ -452,8 +465,10 @@ def _progbar(prog, print_progress, print_summary, confirm_exit):
             if len(_PROGBAR_STACK) == 0 and confirm_exit:
                 scrollRESET()
                 stdscr().erase()
-                prog._flush_summary_str(*_show_progbar_hist(
-                    *_show_tutorial(0, 0))); refresh()
+                prog._flush_summary_str(
+                    *_show_notification(
+                        *_show_progbar_hist(
+                            *_show_tutorial(0, 0)))); refresh()
                 while True:
                     ch = stdscr().getch()
                     if ch == curses.KEY_ENTER or ch == 10 or ch == 13: # Exit
@@ -470,8 +485,9 @@ def _progbar(prog, print_progress, print_summary, confirm_exit):
                             scrollRESET()
                             stdscr().erase()
                             _PROGBAR_HISTORY[i]._flush_summary_str(
-                                *_show_progbar_hist(
-                                    *_show_tutorial(0, 0))); refresh()
+                                *_show_notification(
+                                    *_show_progbar_hist(
+                                        *_show_tutorial(0, 0)))); refresh()
         except Exception as e:
             _exception_happend = e
         finally:
@@ -492,3 +508,5 @@ def _progbar(prog, print_progress, print_summary, confirm_exit):
                 # remove all old data
                 for i in range(len(_FINISHED_PROGBAR)):
                     _FINISHED_PROGBAR.pop()
+                # clear notification
+                clear_notification()

@@ -969,7 +969,7 @@ def get_datasetpath(name=None, override=False, root='~'):
 
 def get_modelpath(name=None, override=False, root='~'):
     """ Default model path for saving ODIN networks """
-    return _get_managed_path('models', name, override, is_folder=False, root=root)
+    return _get_managed_path('models', name, override, is_folder=True, root=root)
 
 
 def get_logpath(name=None, override=False, root='~'):

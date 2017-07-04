@@ -53,7 +53,7 @@ cost_acc = K.metrics.categorical_accuracy(y_pred, y, name="Acc")
 cost_cm = K.metrics.confusion_matrix(y_pred, y, labels=10)
 
 parameters = ops.parameters
-optimizer = K.optimizers.Adadelta(lr=1.0)
+optimizer = K.optimizers.SGD(lr=0.01)
 updates = optimizer(cost_ce, parameters)
 print('Building training functions ...')
 f_train = K.function([X, y], [cost_ce, optimizer.norm, cost_cm],
@@ -68,9 +68,14 @@ f_pred = K.function(X, y_pred, training=False)
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2, confirm_exit=True)
-# task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
-task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=2, name='train')
+task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2,
+    print_progress=True, confirm_exit=True)
+task.set_save(get_modelpath(name='mnist_ai', override=True), ops)
+task.set_callbacks([
+    training.NaNDetector(),
+    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
+])
+task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=4, name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
     freq=training.Timer(percentage=0.6), name='valid')
 task.set_eval_task(f_test, (ds['X_test'], ds['y_test']), name='test')

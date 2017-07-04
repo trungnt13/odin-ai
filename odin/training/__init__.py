@@ -8,11 +8,10 @@ from six.moves import range, zip, cPickle
 
 import numpy as np
 
-from odin import (SIG_TRAIN_ROLLBACK, SIG_TRAIN_SAVE, SIG_TRAIN_STOP)
 from odin.config import get_rng
 from odin import fuel, backend as K, nnet as N
 from odin.fuel import Dataset, as_data
-from odin.utils import struct, as_tuple, is_number, Progbar
+from odin.utils import struct, as_tuple, is_number, Progbar, progbar
 
 from .callbacks import *
 
@@ -323,7 +322,8 @@ class Task(object):
 
     def __init__(self, func, data, epoch=1, p=1.0,
                  batch_size=128, seed=None, shuffle_level=2,
-                 name=None, print_progress=True, confirm_exit=False):
+                 callbacks=None, print_progress=True, confirm_exit=False,
+                 name=None):
         super(Task, self).__init__()
         self.set_func(func, data)
         # this Progbar will record the history as well
@@ -342,9 +342,11 @@ class Task(object):
         self._curr_samples = 0
         self._curr_epoch_iteration = 0
         self._curr_epoch_samples = 0
+        self._callback_msg = []
         # ====== iter tracking ====== #
         self._created_iter = None
         self._stop = False
+        self._callback = CallbackList(callbacks)
 
     def __getstate__(self):
         return (self._progbar, self._nb_epoch, self._p, self._name,
@@ -361,16 +363,21 @@ class Task(object):
         self._curr_samples = 0
         self._curr_epoch_iteration = 0
         self._curr_epoch_samples = 0
+        self._callback_msg = []
         # ====== iter tracking ====== #
         self._created_iter = None
         self._stop = False
+
+    def set_callbacks(self, callbacks):
+        self._callback.set_callbacks(callbacks)
+        return self
 
     def set_func(self, func, data):
         # ====== check function ====== #
         if not isinstance(func, K.Function):
             raise ValueError("`func` must be instance of odin.backend.Function")
         self._func = func
-        self._output_info = [(o.name.split(':')[0], o.get_shape().as_list())
+        self._output_info = [(o.name, o.get_shape().as_list())
                              for o in self._func.outputs]
         # ====== check data ====== #
         if not isinstance(data, (tuple, list)):
@@ -446,6 +453,10 @@ class Task(object):
         """Number of samples within current epoch"""
         return self._curr_epoch_samples
 
+    @property
+    def callback_msg(self):
+        return self._callback_msg
+
     # ==================== control function ==================== #
     def stop(self):
         """ Stop all iterations running for this Task"""
@@ -480,13 +491,15 @@ class Task(object):
         ----
         'end_task' also end of final epoch
         '''
-        forced_to_terminate = False
         yield None # just for initalize the iterator
+        self._callback_msg = self._callback.task_start(self)
         yield 'task_start'
         # ====== start of training ====== #
         with self._progbar.context(print_progress=self.print_progress,
                                    confirm_exit=self.confirm_exit):
             while self._curr_epoch < self._nb_epoch:
+                self._callback_msg = self._callback.epoch_start(self, self._data)
+                yield 'epoch_start'
                 seed = self._rng.randint(10e8)
                 # if only 1 Data, don't need zip or we will mess up
                 if len(self._data) == 1:
@@ -498,7 +511,6 @@ class Task(object):
                                                 shuffle_level=self._shuffle_level))
                                for d in self._data]
                     data = zip(*data_it)
-                yield 'epoch_start'
                 # ======  start the iteration ====== #
                 self._curr_epoch_samples = 0
                 self._curr_epoch_iteration = 0
@@ -514,9 +526,12 @@ class Task(object):
                     self._curr_iteration += 1
                     self._curr_epoch_samples += shape0
                     self._curr_epoch_iteration += 1
+                    self._callback_msg = self._callback.batch_start(self, x)
                     # apply the function
                     if self.probability >= 1. or self._rng.rand() < self.probability:
                         results = self._func(*x)
+                        # add msg from batch_end event
+                        self._callback_msg += self._callback.batch_end(self, results)
                         # return results
                         yield results
                         # update the progress bar
@@ -529,7 +544,6 @@ class Task(object):
                         self._progbar.add(shape0)
                     # check TERMINATE signal
                     if self._stop:
-                        forced_to_terminate = True
                         # send signal to the data iterators also
                         for i in data_it:
                             if hasattr(i, 'stop'):
@@ -540,17 +554,19 @@ class Task(object):
                         break
                 # Epoch end signaling
                 self._curr_epoch += 1
+                self._callback_msg = self._callback.epoch_end(
+                    self, self._progbar.history[self._curr_epoch - 1])
                 yield 'epoch_end'
-                # ====== check if terminate ====== #
-                if forced_to_terminate:
-                    break
                 # ====== check if we got the right number for epoch iter ====== #
                 if self._curr_epoch_samples != self._nb_samples:
                     # just for sure should not smaller than the real number
                     self._nb_samples = self._curr_epoch_samples
                 # ======  end_epoch or task ====== #
-                if self._curr_epoch >= self._nb_epoch:
+                if self._stop or self._curr_epoch >= self._nb_epoch:
+                    self._callback_msg = self._callback.task_end(
+                        self, self._progbar.history)
                     yield 'task_end'
+                    break
         # ====== end of iteration ====== #
         self._created_iter = None
 
@@ -562,6 +578,7 @@ class Task(object):
             self._curr_samples = 0
             self._curr_epoch_iteration = 0
             self._curr_epoch_samples = 0
+            self._callback_msg = []
             # create new iter
             self._created_iter = self.__iter()
             # initialize the iteration
@@ -575,12 +592,6 @@ class Task(object):
 # ===========================================================================
 # MainLoop
 # ===========================================================================
-def _percentage_or_number(x, n):
-    if 0. <= x <= 1.:
-        return int(x * n)
-    return int(x)
-
-
 class Timer(object):
     """Timer to determine when a `Task` should be start within a `MainLoop`
 
@@ -667,14 +678,14 @@ class MainLoop(object):
     """
 
     def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
-                 rollback=True, print_progress=True, confirm_exit=False):
+                 allow_rollback=True, print_progress=True, confirm_exit=True):
         super(MainLoop, self).__init__()
         self._main_task = None
         self._task = []
         self._subtask = []
         self._task_when = {} # mapping from `Task` to `Timer`
         self._task_freq = {} # mapping from `Task` to `Timer`
-        self._allow_rollback = bool(rollback)
+        self._allow_rollback = bool(allow_rollback)
 
         # create default RNG (no randomization)
         self._rng = struct()
@@ -688,10 +699,6 @@ class MainLoop(object):
         self._save_path = None
         self._save_hist = None
         self._save_obj = None
-
-        self._save_func = None
-        self._rollback_func = None
-        self._end_func = None
 
         self.confirm_exit = confirm_exit
         self.print_progress = print_progress
@@ -716,22 +723,7 @@ class MainLoop(object):
                 self.print_progress, self.confirm_exit)
 
     # ==================== Signal handling ==================== #
-    def set_signal_handlers(self, save=None, rollback=None, end=None):
-        """
-        Parameters
-        ----------
-        save: callable
-            a function will be execeuted when saving checkpoint.
-        rollback: callable
-            a function will be called when rollback the saved object
-        end: callable
-            a function will be called when finish running the `MainLoop`
-        """
-        self._save_func = save if callable(save) else None
-        self._rollback_func = rollback if callable(rollback) else None
-        self._end_func = end if callable(end) else None
-
-    def set_save(self, path, obj, save_hist=True):
+    def set_save(self, path, obj):
         """
         Parameters
         ----------
@@ -745,17 +737,8 @@ class MainLoop(object):
         """
         self._save_path = path
         self._save_obj = obj
-        # ====== save the first checkpoint ====== #
-        cPickle.dump(self._save_obj, open(self._save_path, 'w'),
-                     protocol=cPickle.HIGHEST_PROTOCOL)
-        # ====== infer history_path ====== #
-        if save_hist:
-            base = os.path.basename(path)
-            p = path.replace(base, ''); base = base.split('.')
-            base = '.'.join(base[:-1] if len(base) > 1 else base)
-            self._save_hist = os.path.join(p, base + '.hist')
-        else:
-            self._save_hist = None
+        # save first checkpoint
+        self._save()
 
     # ==================== properties ==================== #
     @property
@@ -809,13 +792,8 @@ class MainLoop(object):
     def __str__(self):
         return 'Task'
 
-    def set_callback(self, callback):
-        if isinstance(callback, CallbackList):
-            self._callback = callback
-        else:
-            if not isinstance(callback, (tuple, list)):
-                callback = [callback]
-            self._callback = CallbackList(*[c for c in callback if c is not None])
+    def set_callbacks(self, callbacks):
+        self._callback.set_callbacks(callbacks)
         return self
 
     def __getitem__(self, key):
@@ -874,49 +852,40 @@ class MainLoop(object):
 
     # ==================== logic ==================== #
     def _save(self):
-        if self._save_func is not None:
-            self._save_func()
-            return
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
-            cPickle.dump(self._save_obj, open(self._save_path, 'wb'),
-                         protocol=cPickle.HIGHEST_PROTOCOL)
-            # ====== save history if possible ====== #
-            if self._save_hist is not None and 'History' in self._callback:
-                cPickle.dump(self._callback['History'], open(self._save_hist, 'w'),
-                             protocol=cPickle.HIGHEST_PROTOCOL)
-            print("\nCreated checkpoint at path:", self._save_path)
+            if not os.path.exists(self._save_path):
+                os.mkdir(self._save_path)
+            elif os.path.isfile(self._save_path):
+                raise ValueError("Save path for the model must be a folder.")
+            N.serialize(self._save_obj, self._save_path, save_variables=True,
+                        override=True)
+            progbar.add_notification("Created checkpoint at:" + self._save_path)
 
     def _rollback(self):
-        if self._rollback_func is not None:
-            self._rollback_func()
-            return
+        if not self._allow_rollback: return
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
-            f = open(self._save_path, 'rb')
-            # the loading process will automatically reload shared variable
-            cPickle.load(f)
-            f.close()
+            N.deserialize(self._save_path)
+            progbar.add_notification("Rollback from:" + self._save_path)
 
     def _end(self):
         self._rollback()
-        if self._end_func is not None:
-            self._end_func()
+        progbar.add_notification("Training end")
 
     def _run(self):
         if self._main_task is None:
             raise ValueError('You must call set_task and set the main task first.')
-        callback = self._callback
         for t in self._task + self._subtask:
             t.print_progress = self.print_progress
             t.confirm_exit = self.confirm_exit
+            t.set_callbacks(self._callback)
         # ====== prepare subtask ====== #
         finished_task = {i: False for i in self._task + self._subtask}
         task_iter = {i: iter(i) for i in self._task + self._subtask}
-        for task, freq in self._task_freq.iteritems():
+        for freq in self._task_freq.itervalues():
             freq.set_counter(self._main_task)
         # ====== main logics ====== #
-        msg = [] # store returned callback messages
         while not finished_task[self._main_task]:
             for t in self._task:
                 # ====== execute training task first ====== #
@@ -928,6 +897,13 @@ class MainLoop(object):
                             finished_task[t] = True
                     else: # task result
                         pass
+                    # process callback msg for tasks
+                    msg = t.callback_msg
+                    if SIG_TRAIN_SAVE in msg: self._save()
+                    if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+                    if SIG_TRAIN_STOP in msg:
+                        finished_task[self._main_task] = True
+                        break
                 # ====== execute valid and eval task ====== #
                 for st in self._subtask:
                     if finished_task[st]: continue
@@ -940,11 +916,18 @@ class MainLoop(object):
                                 if x == 'epoch_end': break
                             else: # results
                                 pass
+                        # process callback msg for subtasks
+                        msg = st.callback_msg
+                        if SIG_TRAIN_SAVE in msg: self._save()
+                        if SIG_TRAIN_ROLLBACK in msg: self._rollback()
+                        if SIG_TRAIN_STOP in msg:
+                            finished_task[self._main_task] = True
+                            break
         # ====== end main task ====== #
         for t in self._task + self._subtask:
             t.stop()
         # everything finished
-        # self._end()
+        self._end()
 
     def run(self):
         try:
