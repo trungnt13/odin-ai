@@ -494,79 +494,85 @@ class Task(object):
         yield None # just for initalize the iterator
         self._callback_msg = self._callback.task_start(self)
         yield 'task_start'
-        # ====== start of training ====== #
-        with self._progbar.context(print_progress=self.print_progress,
-                                   confirm_exit=self.confirm_exit):
-            while self._curr_epoch < self._nb_epoch:
-                self._callback_msg = self._callback.epoch_start(self, self._data)
-                yield 'epoch_start'
-                seed = self._rng.randint(10e8)
-                # if only 1 Data, don't need zip or we will mess up
-                if len(self._data) == 1:
-                    data_it = iter(self._data[0].set_batch(batch_size=self._batch_size,
-                                                seed=seed, shuffle_level=self._shuffle_level))
-                    data = data_it
-                else:
-                    data_it = [iter(d.set_batch(batch_size=self._batch_size, seed=seed,
-                                                shuffle_level=self._shuffle_level))
-                               for d in self._data]
-                    data = zip(*data_it)
-                # ======  start the iteration ====== #
-                self._curr_epoch_samples = 0
-                self._curr_epoch_iteration = 0
-                for i, x in enumerate(data):
-                    # alread terminated, try to exhausted the iterator
-                    # if forced_to_terminate: continue
-                    # preprocessed the data
-                    if not isinstance(x, (tuple, list)):
-                        x = [x]
-                    # update some info
-                    shape0 = x[0].shape[0]
-                    self._curr_samples += shape0
-                    self._curr_iteration += 1
-                    self._curr_epoch_samples += shape0
-                    self._curr_epoch_iteration += 1
-                    self._callback_msg = self._callback.batch_start(self, x)
-                    # apply the function
-                    if self.probability >= 1. or self._rng.rand() < self.probability:
-                        results = self._func(*x)
-                        # add msg from batch_end event
-                        self._callback_msg += self._callback.batch_end(self, results)
-                        # return results
-                        yield results
-                        # update the progress bar
-                        for (name, shape), res in zip(self._output_info,
-                                                      as_tuple(results)):
-                            if len(shape) == 0: # return single value
-                                self._progbar[name] = res
-                            else: # return tensor
-                                self._progbar[name] = res
-                        self._progbar.add(shape0)
-                    # check TERMINATE signal
-                    if self._stop:
-                        # send signal to the data iterators also
-                        for i in data_it:
-                            if hasattr(i, 'stop'):
-                                i.stop()
-                            else: # just iterate all over
-                                for _ in i: pass
-                        # break the epoch loop
+        if self._stop:
+            yield 'task_end'
+        else:
+            # ====== start of training ====== #
+            with self._progbar.context(print_progress=self.print_progress,
+                                       confirm_exit=self.confirm_exit):
+                while self._curr_epoch < self._nb_epoch:
+                    self._callback_msg = self._callback.epoch_start(self, self._data)
+                    yield 'epoch_start'
+                    seed = self._rng.randint(10e8)
+                    # if only 1 Data, don't need zip or we will mess up
+                    if len(self._data) == 1:
+                        data_it = iter(self._data[0].set_batch(batch_size=self._batch_size,
+                                                               seed=seed,
+                                                               shuffle_level=self._shuffle_level))
+                        data = data_it
+                    else:
+                        data_it = [iter(d.set_batch(batch_size=self._batch_size,
+                                                    seed=seed,
+                                                    shuffle_level=self._shuffle_level))
+                                   for d in self._data]
+                        data = zip(*data_it)
+                    # ======  start the iteration ====== #
+                    self._curr_epoch_samples = 0
+                    self._curr_epoch_iteration = 0
+                    for i, x in enumerate(data):
+                        # alread terminated, try to exhausted the iterator
+                        # if forced_to_terminate: continue
+                        # preprocessed the data
+                        if not isinstance(x, (tuple, list)):
+                            x = [x]
+                        # update some info
+                        shape0 = x[0].shape[0]
+                        self._curr_samples += shape0
+                        self._curr_iteration += 1
+                        self._curr_epoch_samples += shape0
+                        self._curr_epoch_iteration += 1
+                        self._callback_msg = self._callback.batch_start(self, x)
+                        # apply the function
+                        if self.probability >= 1. or self._rng.rand() < self.probability:
+                            results = self._func(*x)
+                            # add msg from batch_end event
+                            self._callback_msg += self._callback.batch_end(self, results)
+                            # return results
+                            yield results
+                            # update the progress bar
+                            for (name, shape), res in zip(self._output_info,
+                                                          as_tuple(results)):
+                                if len(shape) == 0: # return single value
+                                    self._progbar[name] = res
+                                else: # return tensor
+                                    self._progbar[name] = res
+                            self._progbar.add(shape0)
+                        # check TERMINATE signal
+                        if self._stop:
+                            # send signal to the data iterators also
+                            for i in data_it:
+                                if hasattr(i, 'stop'):
+                                    i.stop()
+                                else: # just iterate all over
+                                    for _ in i: pass
+                            # break the epoch loop
+                            break
+                    # Epoch end signaling
+                    self._curr_epoch += 1
+                    self._callback_msg = self._callback.epoch_end(
+                        self, self._progbar.history[self._curr_epoch - 1])
+                    yield 'epoch_end'
+                    # ====== check if we got the right number for epoch iter ====== #
+                    if self._curr_epoch_samples != self._nb_samples:
+                        # just for sure should not smaller than the real number
+                        self._nb_samples = self._curr_epoch_samples
+                    # ======  end_epoch or task ====== #
+                    if self._stop or self._curr_epoch >= self._nb_epoch:
+                        self._callback_msg = self._callback.task_end(
+                            self, self._progbar.history)
+                        yield 'task_end'
+                        progbar.add_notification('Task "%s" ended!' % str(self.name))
                         break
-                # Epoch end signaling
-                self._curr_epoch += 1
-                self._callback_msg = self._callback.epoch_end(
-                    self, self._progbar.history[self._curr_epoch - 1])
-                yield 'epoch_end'
-                # ====== check if we got the right number for epoch iter ====== #
-                if self._curr_epoch_samples != self._nb_samples:
-                    # just for sure should not smaller than the real number
-                    self._nb_samples = self._curr_epoch_samples
-                # ======  end_epoch or task ====== #
-                if self._stop or self._curr_epoch >= self._nb_epoch:
-                    self._callback_msg = self._callback.task_end(
-                        self, self._progbar.history)
-                    yield 'task_end'
-                    break
         # ====== end of iteration ====== #
         self._created_iter = None
 
@@ -871,7 +877,6 @@ class MainLoop(object):
 
     def _end(self):
         self._rollback()
-        progbar.add_notification("Training end")
 
     def _run(self):
         if self._main_task is None:

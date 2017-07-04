@@ -95,8 +95,9 @@ class Callback(object):
 
     """
 
-    def __init__(self):
+    def __init__(self, log=True):
         super(Callback, self).__init__()
+        self.log = log
 
     def batch_start(self, task, batch):
         pass
@@ -117,7 +118,8 @@ class Callback(object):
         pass
 
     def send_notification(self, msg):
-        progbar.add_notification('[%s]%s' % (self.__class__.__name__, msg))
+        if self.log:
+            progbar.add_notification('[%s]%s' % (self.__class__.__name__, msg))
         return self
 
 
@@ -156,7 +158,7 @@ class CallbackList(Callback):
 
     ''' Broadcast signal to all its children'''
 
-    def __init__(self, callbacks = None):
+    def __init__(self, callbacks=None):
         super(CallbackList, self).__init__()
         self.set_callbacks(callbacks)
 
@@ -223,8 +225,8 @@ class CallbackList(Callback):
 class NaNDetector(Callback):
     """docstring for NaNDetector"""
 
-    def __init__(self, task_name=None, patience=-1):
-        super(NaNDetector, self).__init__()
+    def __init__(self, task_name=None, patience=-1, log=True):
+        super(NaNDetector, self).__init__(log)
         self._task_name = task_name
         self._patience = patience
 
@@ -237,7 +239,7 @@ class NaNDetector(Callback):
             self._patience -= 1
             if self._patience <= 0: # but if out of patience, stop
                 signal = SIG_TRAIN_STOP
-            self.send_notification("Found NaN value, task:%s" % task.name)
+            self.send_notification('Found NaN value, task:"%s"' % task.name)
             return signal
 
 
@@ -279,8 +281,8 @@ class EarlyStop(Callback):
     """
 
     def __init__(self, task_name, output_name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x)):
-        super(EarlyStop, self).__init__()
+                 get_value=lambda x: np.mean(x), log=True):
+        super(EarlyStop, self).__init__(log)
         self._task_name = str(task_name)
         self._output_name = output_name if is_string(output_name) \
             else output_name.name
@@ -303,7 +305,7 @@ class EarlyStop(Callback):
         self._history.append(self._get_value(epoch_results[self._output_name]))
         # ====== check early stop ====== #
         shouldSave, shouldStop = self.earlystop(self._history, self._threshold)
-        msg = []
+        msg = None
         if shouldSave > 0:
             msg = SIG_TRAIN_SAVE
         if shouldStop > 0:
@@ -312,6 +314,7 @@ class EarlyStop(Callback):
             self._patience -= 1
             if self._patience <= 0:
                 msg = SIG_TRAIN_STOP
+        self.send_notification('Message "%s"' % str(msg))
         return msg
 
     @abstractmethod

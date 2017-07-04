@@ -135,8 +135,9 @@ _NOTIFICATION_MSG = []
 
 
 def add_notification(msg):
-    _NOTIFICATION_MSG.append((datetime.now().strftime('%d/%b-%H:%M:%S '),
-                              str(msg)))
+    if len(_PROGBAR_STACK) > 0:
+        _NOTIFICATION_MSG.append((datetime.now().strftime('%d/%b-%H:%M:%S '),
+                                  str(msg)))
 
 
 def clear_notification():

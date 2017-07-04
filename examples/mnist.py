@@ -73,7 +73,7 @@ task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2,
 task.set_save(get_modelpath(name='mnist_ai', override=True), ops)
 task.set_callbacks([
     training.NaNDetector(),
-    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
+    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=1)
 ])
 task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=4, name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
