@@ -205,7 +205,8 @@ class FeatureProcessor(object):
         # ====== processing ====== #
         mpi = MPI(self.jobs, self.map, wrapped_reduce,
                   ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
-        with Progbar(target=njobs, name=self.__class__.__name__) as prog:
+        with Progbar(target=njobs, name=self.__class__.__name__).context(
+            print_progress=True, confirm_exit=False, print_summary=True) as prog:
             for name in mpi:
                 prog['File:'] = '%-20s' % name
                 prog.add(1)

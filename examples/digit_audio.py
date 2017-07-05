@@ -17,7 +17,6 @@ from odin.utils import ArgController
 
 # ====== parse arguments ====== #
 args = ArgController(
-).add('-bk', 'backend: tensorflow or theano', 'tensorflow'
 ).add('-dev', 'gpu or cpu', 'gpu'
 ).add('-dt', 'dtype: float32 or float16', 'float16'
 ).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
@@ -31,7 +30,7 @@ args = ArgController(
 
 # ====== import ====== #
 import os
-os.environ['ODIN'] = 'float32,%s,%s' % (args['dev'], args['bk'])
+os.environ['ODIN'] = 'float32,%s' % (args['dev'])
 
 import numpy as np
 np.random.seed(1208)
@@ -47,30 +46,26 @@ stdio(path=get_logpath('digit_audio.log', override=True))
 # Get wav and process new dataset configuration
 # ===========================================================================
 # ====== process new features ====== #
-if False:
+if True:
     datapath = F.load_digit_wav()
-    output_path = get_datasetpath(name='digit', override=True)
+    output_path = get_datasetpath(name='digit_audio', override=True)
     feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                    win=0.025, hop=0.01, nb_melfilters=40, nb_ceps=13,
-                    get_spec=True, get_mspec=True, get_mfcc=True,
-                    get_qspec=True, get_phase=True, get_pitch=True,
-                    get_vad=args['vad'], get_energy=True, get_delta=2,
-                    fmin=64, fmax=None, preemphasis=0.97,
-                    pitch_threshold=0.8, pitch_fmax=800,
-                    vad_smooth=3, vad_minlen=0.1,
-                    cqt_bins=96, pca=True, pca_whiten=False, center=True,
-                    save_stats=True, substitute_nan=None,
-                    dtype='float16', datatype='memmap',
-                    ncache=0.12, ncpu=12)
+                             win=0.025, hop=0.005, nb_melfilters=40, nb_ceps=13,
+                             get_spec=True, get_qspec=False, get_phase=False,
+                             get_pitch=True, get_f0=True,
+                             get_vad=args['vad'], get_energy=True, get_delta=2,
+                             fmin=64, fmax=None, preemphasis=None,
+                             pitch_threshold=0.3, pitch_fmax=260,
+                             vad_smooth=3, vad_minlen=0.1,
+                             pca=True, pca_whiten=False,
+                             save_stats=True, substitute_nan=None,
+                             dtype='float16', datatype='memmap',
+                             ncache=0.12, ncpu=12)
     feat.run()
     ds = F.Dataset(output_path, read_only=True)
 # ====== use online features ====== #
 else:
     ds = F.load_digit_audio()
-
-print(ds)
-nb_classes = 10 # 10 digits (0-9)
-
 # ===========================================================================
 # Create feeder
 # ===========================================================================
