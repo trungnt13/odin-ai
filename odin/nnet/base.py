@@ -51,11 +51,11 @@ def serialize(nnops, path, save_variables=True, variables=[],
         path to the folder that store NNOps and variables
     """
     # ====== checking path ====== #
-    if override:
-        shutil.rmtree(path)
     if os.path.exists(path):
         if os.path.isfile(path):
             raise ValueError("path must be path to a folder.")
+        elif override:
+            shutil.rmtree(path); os.mkdir(path)
     else:
         os.mkdir(path)
     nnops_path = os.path.join(path, 'nnops.ai')

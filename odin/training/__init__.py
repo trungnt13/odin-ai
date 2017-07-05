@@ -705,6 +705,7 @@ class MainLoop(object):
         self._save_path = None
         self._save_hist = None
         self._save_obj = None
+        self._save_variables = None
 
         self.confirm_exit = confirm_exit
         self.print_progress = print_progress
@@ -729,7 +730,7 @@ class MainLoop(object):
                 self.print_progress, self.confirm_exit)
 
     # ==================== Signal handling ==================== #
-    def set_save(self, path, obj):
+    def set_save(self, path, obj, variables=[]):
         """
         Parameters
         ----------
@@ -743,6 +744,7 @@ class MainLoop(object):
         """
         self._save_path = path
         self._save_obj = obj
+        self._save_variables = variables
         # save first checkpoint
         self._save()
 
@@ -865,7 +867,7 @@ class MainLoop(object):
             elif os.path.isfile(self._save_path):
                 raise ValueError("Save path for the model must be a folder.")
             N.serialize(self._save_obj, self._save_path, save_variables=True,
-                        override=True)
+                        variables=self._save_variables, override=True)
             progbar.add_notification("Created checkpoint at:" + self._save_path)
 
     def _rollback(self):
