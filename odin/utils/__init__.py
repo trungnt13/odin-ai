@@ -66,6 +66,26 @@ def is_bool(b):
     return isinstance(b, type(True))
 
 
+def is_primitives(x, inc_ndarray=True):
+    """Primitive types include: number, string, boolean, None
+    and numpy.ndarray (optional) and numpy.generic (optional)
+
+    Parameters
+    ----------
+    inc_ndarray: bool
+        if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
+    """
+    if isinstance(x, (tuple, list)):
+        return all(is_primitives(i) for i in x)
+    elif isinstance(x, dict):
+        return all(is_primitives(i) and is_primitives(j)
+                   for i, j in x.iteritems())
+    if is_number(x) or is_string(x) or is_bool(x) or x is None or \
+    (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
+        return True
+    return False
+
+
 def is_lambda(v):
     LAMBDA = lambda: 0
     return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__

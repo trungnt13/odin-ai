@@ -11,10 +11,28 @@ import tensorflow as tf
 
 from odin import backend as K
 from odin.utils.decorators import functionable
-from odin.utils import (is_lambda, is_number, get_module_from_path, as_tuple)
+from odin.utils import (is_lambda, is_number, get_module_from_path, as_tuple,
+                        is_primitives)
 
-from .base import (name_scope, _check_dtype, get_all_nnops,
-                   VariableDescriptor, InputDescriptor,)
+from .base import (name_scope, get_all_nnops, VariableDescriptor)
+
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _check_accepted_inputs(x, backup_name):
+    if K.is_tensor(x):
+        return VariableDescriptor(shape=x, name=x.name.split(':')[0])
+    elif isinstance(x, VariableDescriptor):
+        if x._name is None:
+            x._name = backup_name
+        return x
+    elif is_primitives(x):
+        return x
+    else:
+        raise ValueError("The input argument for ModelDescriptor can be: "
+            "`Tensor`, `odin.nnet.VariableDescriptor`, and primitive types"
+            " (string, number, boolean, None, numpy.ndarray, numpy.generic)")
 
 
 # ===========================================================================
@@ -79,8 +97,7 @@ class ModelDescriptor(object):
             raise ValueError("This decorator can be only used with function, not "
                              "method or lambda function.")
         self._func = func
-        self._input_desc = InputDescriptor()
-        self._save_kwargs = {}
+        self._input_desc = {}
         self._opID = [0] # store as reference value
         # ====== cached tensor variables ====== #
         self._last_outputs = None
@@ -88,20 +105,21 @@ class ModelDescriptor(object):
 
     @property
     def input_shape(self):
-        return self._input_desc.shape
+        return {i: j.shape for i, j in self._input_desc.iteritems()
+                if isinstance(j, VariableDescriptor)}
 
     @property
     def input_shape_ref(self):
-        return self._input_desc.shape_ref
+        return {i: j.shape_ref for i, j in self._input_desc.iteritems()
+                if isinstance(j, VariableDescriptor)}
 
     # ==================== pickle ==================== #
     def __getstate__(self):
         return [functionable(self._func), self._input_desc,
-                self._save_kwargs, self._opID, self.nnops]
+                self._opID, self.nnops]
 
     def __setstate__(self, states):
-        (self._func, self._input_desc, self._save_kwargs,
-            self._opID, nnops) = states
+        (self._func, self._input_desc, self._opID, nnops) = states
         self._func = self._func.function
 
         self._last_outputs = None
@@ -144,7 +162,8 @@ class ModelDescriptor(object):
 
     @property
     def placeholders(self):
-        return self._input_desc.placeholders
+        return {i: j.placeholder for i, j in self._input_desc.iteritems()
+                if isinstance(j, VariableDescriptor)}
 
     @property
     def last_outputs(self):
@@ -154,9 +173,8 @@ class ModelDescriptor(object):
     def f_outputs(self):
         if self._f_outputs is None:
             if self._last_outputs is None and len(self._input_desc) == 0:
-                raise ValueError("No cache value of outputs with training mode ENABLED "
-                                 "found, you must call this Descriptor with "
-                                 "InputDescriptor first.")
+                raise ValueError("No cache value of outputs found, you must "
+                    "call this ModelDescriptor with inputs descriptor first.")
             outputs = self._last_outputs
             # get number of actual inputs need for prediction
             self._f_outputs = K.function(
@@ -168,72 +186,36 @@ class ModelDescriptor(object):
         return get_all_nnops(model_scope=self.name)
 
     # ==================== decorator ==================== #
-    def __call__(self, inputs=None, **kwargs):
+    def __call__(self, *args, **kwargs):
+        spec = inspect.getargspec(self._func)
+        # preprocess all arguments
+        args = [_check_accepted_inputs(j, self.name + '/' + i)
+                for i, j in zip(spec.args, args)]
+        kwargs = {i: _check_accepted_inputs(j, self.name + '/' + i)
+                  for i, j in kwargs.iteritems()}
         # ====== check inputs ====== #
-        if inputs is not None:
-            # number
-            if is_number(inputs):
-                inputs = (inputs,)
-            # shape tuple
-            if not isinstance(inputs, (tuple, list)) or \
-            any(is_number(i) for i in inputs):
-                inputs = [inputs]
-            # get the input shape
-            input_desc = []
-            for i in inputs:
-                # TensorVariable, Shape-tuple, VariableDescriptor
-                if K.is_tensor(i) or isinstance(i, (tuple, list)) or \
-                isinstance(i, VariableDescriptor):
-                    input_desc.append(VariableDescriptor(i))
-                elif i is None: # just a empty place
-                    input_desc.append(None)
-                else:
-                    raise ValueError("input can be TensorVariable, shape tuple, or "
-                                     "odin.nnet.VariableDescriptor, but the given "
-                                     "argument has type: " + str(type(i)))
-            # check if match previous inputs
-            if len(self._input_desc) > 0:
-                for v1, v2 in zip(self._input_desc, input_desc):
-                    if v2 is not None and v1 != v2:
-                        raise ValueError('This ModelDescriptor requires input: %s '
-                                         ', but the given description is: %s' %
-                                         (str(v1), str(v2)))
-            # First time specify the input description, None is not eaccepted
-            elif any(i is None for i in input_desc):
-                raise ValueError("For the first time setting the input description, "
-                                 "None value is not accepted.")
-            # finally assign the first input description
-            else:
-                self._input_desc.set_variables(input_desc)
-                for i, j in enumerate(self._input_desc._desc):
-                    j._name = '%s_inp%.2d' % (self.name, i)
+        if len(self._input_desc) == 0:
+            # load to the save_kwargs
+            if spec.defaults is not None:
+                for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
+                    self._input_desc[key] = val
+            input_desc = self._input_desc
         else:
-            inputs = as_tuple(self.placeholders)
+            # copy to keep original input_desc
+            input_desc = dict(self._input_desc)
+        # update recent arguments
+        for key, val in zip(spec.args, args):
+            input_desc[key] = val
+        input_desc.update(kwargs)
         # ====== get inputs variable====== #
-        model_inputs = list(as_tuple(self.placeholders))
-        # override default inputs with new variable
-        for i, j in enumerate(inputs):
-            if K.is_tensor(j):
-                model_inputs[i] = j
-        print(model_inputs)
+        model_inputs = {i: j.placeholder if isinstance(j, VariableDescriptor)
+                        else j
+                        for i, j in input_desc.iteritems()}
         # ====== call the function ====== #
-        argspecs = inspect.getargspec(self._func)
-        nb_inputs = len(self._input_desc)
-        if len(argspecs.args) != nb_inputs:
-            raise ValueError("This Descriptor requires a function with %d input "
-                             "arguments, but the given function has %d arguments, "
-                             "which are: %s" % (nb_inputs + 1, nb_inputs,
-                             len(argspecs.args), str(argspecs.args)))
-        if argspecs.keywords is None:
-            kwargs = {}
-        elif len(kwargs) > 0: # override saved kwargs
-            self._save_kwargs.update(kwargs)
-        else: # get the saved kwargs
-            kwargs = self._save_kwargs
         # finally call the function to get outputs
         _ = [0]
         with name_scope(self.name, id_start=_):
-            outputs = self._func(*model_inputs, **kwargs)
+            outputs = self._func(**model_inputs)
         if _[0] > self._opID[0]:
             self._opID[0] = _[0]
         # ====== check outputs values ====== #

@@ -686,7 +686,7 @@ class ComputationGraph(object):
     @property
     def dict_of_placeholders(self):
         """Return a mapping from an input name to the input."""
-        return {var.name: var for var in self.placeholders}
+        return {var.name.split(':')[0]: var for var in self.placeholders}
 
     # ==================== Graph manipulation ==================== #
     def swap(self, dict_swap, scope="copied", replace_itself=False, copy_q=False):

@@ -26,71 +26,6 @@ import tensorflow as tf
 
 
 # ===========================================================================
-# Helper method for serialize NNOp
-# ===========================================================================
-def serialize(nnops, path, save_variables=True, variables=[],
-              override=False):
-    """ Serialize NNOp or list of NNOp and all necessary variables
-    to a folder.
-
-    Parameters
-    ----------
-    nnops: NNOp, Object, or list; tuple of NNOp and Object
-    path: str
-        path to a folder
-    save_variables: bool
-        if True, save all variables related to all given NNOps
-    variables: list of tensorflow Variables
-        additional list of variables to be saved with this model
-    override: bool
-        if True, remove existed folder to override everythin.
-
-    Return
-    ------
-    path: str
-        path to the folder that store NNOps and variables
-    """
-    # ====== checking path ====== #
-    if os.path.exists(path):
-        if os.path.isfile(path):
-            raise ValueError("path must be path to a folder.")
-        elif override:
-            shutil.rmtree(path); os.mkdir(path)
-    else:
-        os.mkdir(path)
-    nnops_path = os.path.join(path, 'nnops.ai')
-    vars_path = os.path.join(path, 'variables')
-    # ====== getting save data ====== #
-    var = []
-    if save_variables:
-        var = nnops.variables if isinstance(nnops, NNOp) else \
-            flatten_list([o.variables for o in nnops if isinstance(o, NNOp)])
-    var = list(set(var + as_list(variables)))
-    # save NNOps
-    with open(nnops_path, 'w') as f:
-        cPickle.dump(nnops, f, protocol=cPickle.HIGHEST_PROTOCOL)
-    # save Variables
-    if len(var) > 0:
-        K.save_variables(var, vars_path)
-    return path
-
-
-def deserialize(path):
-    if not (os.path.exists(path) and os.path.isdir(path)):
-        raise ValueError("path must be path to a folder.")
-    nnops_path = os.path.join(path, 'nnops.ai')
-    vars_path = os.path.join(path, 'variables')
-    # ====== load the NNOps ====== #
-    if not os.path.exists(nnops_path):
-        raise ValueError("Cannot file path to serialized NNOps at: %s" % nnops_path)
-    with open(nnops_path, 'r') as f:
-        nnops = cPickle.load(f)
-    # ====== load the Variables ====== #
-    if os.path.exists(vars_path + '.index'):
-        K.restore_variables(vars_path)
-    return nnops
-
-# ===========================================================================
 # Global NNOp manager
 # ===========================================================================
 _ALL_NNOPS = {}
@@ -323,9 +258,9 @@ class VariableDescriptor(object):
         if TensorVariable is given, shape and dtype will be taken from
         given variable. if a callable object is given, the object must
         return shape information when called without any argument.
-    dtype: str, numpy.dtype, callable, InputDescriptor
+    dtype: str, numpy.dtype, callable
         dtype of input variable
-    name: str, None, callable, InputDescriptor
+    name: str, None, callable
         specific name for the variable
 
     Note
@@ -345,9 +280,8 @@ class VariableDescriptor(object):
                 self._dtype = _check_dtype(shape.dtype)
             self._shape = shape.get_shape().as_list()
             # store the placeholder so don't have to create it again
-            if K.is_placeholder(shape):
-                self.__placeholder = shape
-        # input the InputDescriptor directly
+            self.__placeholder = shape
+        # input the VariableDescriptor directly
         elif isinstance(shape, VariableDescriptor):
             self._shape = ShapeRef(shape)
             self._dtype = DtypeRef(shape) if dtype is None else _check_dtype(dtype)
@@ -385,7 +319,7 @@ class VariableDescriptor(object):
         return self
 
     @property
-    def placeholders(self):
+    def placeholder(self):
         if self.__placeholder is None:
             self.__placeholder = K.placeholder(
                 shape=self.shape, dtype=self.dtype, name=self.name)
@@ -432,7 +366,7 @@ class VariableDescriptor(object):
             other = VariableDescriptor(
                 shape=other.get_shape().as_list(),
                 dtype=_check_dtype(other.dtype))
-        # ====== compare to a InputDescriptor ====== #
+        # ====== compare to a VariableDescriptor ====== #
         if isinstance(other, VariableDescriptor):
             if _shape_compare(self.shape, other.shape) \
             and self.dtype == other.dtype:
@@ -440,112 +374,6 @@ class VariableDescriptor(object):
         # ====== compare to a shape tuple (ignore the dtype) ====== #
         elif isinstance(other, (tuple, list)):
             return 0 if _shape_compare(self.shape, other) else 1
-        return 1
-
-
-class InputDescriptor(object):
-
-    def __init__(self):
-        super(InputDescriptor, self).__init__()
-        self._desc = []
-        # ====== create reference ====== #
-        # trick to store self in x, hence, no closure
-        self._shape_ref = ShapeRef(self)
-        self._dtype_ref = DtypeRef(self)
-
-    def set_variables(self, desc):
-        if isinstance(desc, InputDescriptor):
-            self._desc = desc._desc
-        elif desc is not None:
-            desc = as_tuple(desc)
-            # convert shape tuple to list of shape tuple
-            if any(is_number(i) or i is None for i in desc):
-                desc = (desc,)
-            self._desc = [d if isinstance(d, VariableDescriptor)
-                          else VariableDescriptor(d)
-                          for d in desc]
-        else:
-            raise ValueError("Cannot handle given description: %s " % type(desc))
-        return self
-
-    # ==================== properties ==================== #
-    def set_placeholder(self, plh):
-        plh = [i for i in as_tuple(plh)
-               if i is None or K.is_placeholder(i)]
-        if len(plh) < len(self._desc):
-            plh += [None] * len(self._desc) - len(plh)
-        elif len(plh) > len(self._desc):
-            plh = plh[:len(self._desc)]
-        for v, p in zip(self._desc, plh):
-            if p is not None:
-                v.set_placeholder(p)
-        return self
-
-    @property
-    def placeholders(self):
-        plh = [i.placeholders for i in self._desc]
-        return plh[0] if len(plh) == 1 else plh
-
-    @property
-    def name(self):
-        return ','.join([i.name for i in self._desc])
-
-    @property
-    def shape(self):
-        s = [i.shape for i in self._desc]
-        return s[0] if len(s) == 1 else s
-
-    @property
-    def shape_ref(self):
-        """ ref is callable reference to the shape information of
-        this descriptor, it will return the actual shape if you
-        call it. """
-        return self._shape_ref
-
-    @property
-    def dtype(self):
-        d = [i.dtype for i in self._desc]
-        return d[0] if len(d) == 1 else d
-
-    @property
-    def dtype_ref(self):
-        """ ref is callable reference to the dtype information of
-        this descriptor, it will return the actual dtype if you
-        call it. """
-        return self._dtype_ref
-
-    # ==================== override ==================== #
-    def __iter__(self):
-        return self._desc.__iter__()
-
-    def __len__(self):
-        return len(self._desc)
-
-    def __getitem__(self, key):
-        return self._desc.__getitem__(key)
-
-    def __setitem__(self, key, value):
-        if not isinstance(value, VariableDescriptor):
-            raise ValueError("InputDescriptor setitem only accept VariableDescriptor.")
-        return self._desc.__setitem__(key, value)
-
-    def __str__(self):
-        return "<InputDescriptor: %s" % '; '.join(
-            ['-'.join([str(i.shape), str(i.dtype)]) for i in self._desc])
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __cmp__(self, other):
-        if not isinstance(other, InputDescriptor):
-            raise ValueError("Can only compare a InputDescriptor to another "
-                             "InputDescriptor.")
-        n = 0
-        for d1, d2 in zip(self._desc, other._desc):
-            if d1 == d2:
-                n += 1
-        if n == len(self._desc):
-            return 0
         return 1
 
 
@@ -660,35 +488,25 @@ class NNOp(object):
             raise ValueError("NNOp must be given a name at __init__, or using "
                 "`_nnops_initscope` function to automatically generate name.")
         self._name = name
-        self._input_desc = InputDescriptor()
+        # list of VariableDescriptor
+        self._input_desc = []
         self._transpose_ops = None
         self._is_initialized = False
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
         self._variable_info = OrderedDict()
 
     def _check_input_desc(self, inputs):
-        inputs = as_tuple(inputs)
-        # convert shape tuple to list of shape tuple
-        if any(is_number(i) or i is None for i in inputs):
-            inputs = (inputs,)
+        inputs = [VariableDescriptor(shape=i) for i in as_tuple(inputs)]
         # first time initialized the input description
         if len(self._input_desc) == 0:
-            self._input_desc.set_variables(inputs)
-            for i, j in enumerate(self._input_desc._desc):
+            self._input_desc = inputs
+            for i, j in enumerate(self._input_desc):
                 j._name = '%s_inp%.2d' % (self.name, i)
-        # mismatch input desctiption
-        _ = InputDescriptor().set_variables(inputs)
-        if self._input_desc != _:
-            raise ValueError("This NNOp required inputs: %s, but was given: %s."
-                            % (str(self._input_desc), str(_)))
-        # automatic fetch placeholder to replace raw description
-        inputs = [i if K.is_tensor(i) else None for i in inputs]
-        # Don't create placeholders if user already gave the Input Tensor
-        if any(i is None for i in inputs):
+        else:
             inputs = [j if i is None else i
-                      for i, j in zip(inputs,
-                                as_tuple(self._input_desc.placeholders))]
-        return inputs
+                      for i, j in zip(inputs, self._input_desc)]
+            inputs = inputs + self._input_desc[len(inputs):]
+        return [i.placeholder for i in inputs]
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -841,14 +659,11 @@ class NNOp(object):
         return self._is_initialized
 
     @property
-    def input(self):
+    def placeholders(self):
         """ Create list of placeholder to represent inputs of this NNOp
         """
-        return self._input_desc.placeholders
-
-    @property
-    def input_desc(self):
-        return self._input_desc
+        x = [i.placeholder for i in self._input_desc]
+        return x[0] if len(x) == 1 else x
 
     @property
     def nb_input(self):
@@ -856,11 +671,13 @@ class NNOp(object):
 
     @property
     def input_shape(self):
-        return self._input_desc.shape
+        x = [i.shape for i in self._input_desc]
+        return x[0] if len(x) == 1 else x
 
     @property
     def input_shape_ref(self):
-        return self._input_desc.input_shape_ref
+        x = [i.shape_ref for i in self._input_desc]
+        return x[0] if len(x) == 1 else x
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
@@ -937,7 +754,7 @@ class NNOp(object):
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.rand.constant, NNOp, InputDescriptor)
+                    K.rand.constant, NNOp, VariableDescriptor)
 
 
 # ===========================================================================
