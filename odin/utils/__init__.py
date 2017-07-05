@@ -696,33 +696,33 @@ def get_file(fname, origin, untar=False):
         fpath = untar_fpath + '.tar.gz'
     else:
         fpath = os.path.join(datadir, fname)
-
+    # ====== check empty folder ====== #
+    if os.path.exists(fpath):
+        if os.path.isdir(fpath) and len(os.listdir(fpath)) == 0:
+            shutil.rmtree(fpath)
+    # ====== download package ====== #
     if not os.path.exists(fpath):
-        print('Downloading data from', origin)
-        global _progbar
-        _progbar = None
+        with Progbar(target=-1, name="Downloading: %s" % origin).context(
+            print_progress=True, print_summary=False) as prog:
 
-        def dl_progress(count, block_size, total_size):
-            global _progbar
-            if _progbar is None:
-                _progbar = Progbar(total_size)
-            else:
-                _progbar.update(count * block_size)
-
-        error_msg = 'URL fetch failure on {}: {} -- {}'
-        try:
+            def dl_progress(count, block_size, total_size):
+                if prog.target < 0:
+                    prog.target = total_size
+                else:
+                    prog.add(count * block_size - prog.seen_so_far)
+            error_msg = 'URL fetch failure on {}: {} -- {}'
             try:
-                urlretrieve(origin, fpath, dl_progress)
-            except URLError as e:
-                raise Exception(error_msg.format(origin, e.errno, e.reason))
-            except HTTPError as e:
-                raise Exception(error_msg.format(origin, e.code, e.msg))
-        except (Exception, KeyboardInterrupt) as e:
-            if os.path.exists(fpath):
-                os.remove(fpath)
-            raise
-        _progbar = None
-
+                try:
+                    urlretrieve(origin, fpath, dl_progress)
+                except URLError as e:
+                    raise Exception(error_msg.format(origin, e.errno, e.reason))
+                except HTTPError as e:
+                    raise Exception(error_msg.format(origin, e.code, e.msg))
+            except (Exception, KeyboardInterrupt) as e:
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+                raise
+    # ====== untar the package ====== #
     if untar:
         if not os.path.exists(untar_fpath):
             print('Untaring file...')

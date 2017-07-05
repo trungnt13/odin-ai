@@ -210,71 +210,73 @@ class FeatureProcessor(object):
             for name in mpi:
                 prog['File:'] = '%-20s' % name
                 prog.add(1)
-        # ====== end, flush the last time ====== #
-        for i, j in cache.iteritems():
-            flush_feature(i, j)
-        cache = None
-        dataset.flush()
-        # ====== saving indices ====== #
-        saved_primary = False
-        for n, ids in indices.iteritems():
-            if n in self.primary_indices:
-                # do not repeat saving the same indices
-                if saved_primary: continue
-                outpath = 'indices'
-                saved_primary = True
-            else:
-                outpath = 'indices_%s' % n
-            # save the indices to MmapDict
-            outpath = os.path.join(dataset.path, outpath)
-            _ = MmapDict(outpath)
-            for name, start, end in ids:
-                _[name] = (int(start), int(end))
-            _.flush(); _.close()
+            # ====== end, flush the last time ====== #
+            for i, j in cache.iteritems():
+                flush_feature(i, j)
+            cache = None
+            dataset.flush()
+            prog.add_notification("Flushed all data to disk")
+            # ====== saving indices ====== #
+            saved_primary = False
+            for n, ids in indices.iteritems():
+                if n in self.primary_indices:
+                    # do not repeat saving the same indices
+                    if saved_primary: continue
+                    outpath = 'indices'
+                    saved_primary = True
+                else:
+                    outpath = 'indices_%s' % n
+                # save the indices to MmapDict
+                outpath = os.path.join(dataset.path, outpath)
+                _ = MmapDict(outpath)
+                for name, start, end in ids:
+                    _[name] = (int(start), int(end))
+                _.flush(); _.close()
+            prog.add_notification("Saved all indices to disk")
 
-        # ====== save mean and std ====== #
-        def save_mean_std(sum1, sum2, pca, name, dataset):
-            N = dataset[name].shape[0]
-            mean = sum1 / N
-            std = np.sqrt(sum2 / N - mean**2)
-            if self.substitute_nan is not None:
-                mean = np.where(np.isnan(mean), self.substitute_nan, mean)
-                std = np.where(np.isnan(std), self.substitute_nan, std)
-            else:
-                assert not np.any(np.isnan(mean)), 'Mean contains NaN, name: %s' % name
-                assert not np.any(np.isnan(std)), 'Std contains NaN, name: %s' % name
-            dataset[name + '_sum1'] = sum1
-            dataset[name + '_sum2'] = sum2
-            dataset[name + '_mean'] = mean
-            dataset[name + '_std'] = std
-            if pca is not None and pca.is_fitted:
-                dataset[name + '_pca'] = pca
-        # save all stats
-        if self.save_stats:
-            print('Saving statistics of each data ...')
-            for n, d, s in self.features_properties:
-                if s: # save stats
-                    print(' * Name:', n)
-                    s1, s2 = sum1[n], sum2[n],
-                    if self.pca and n not in self.excluded_pca:
-                        pca_ = pca[n]
-                    else:
-                        pca_ = None
-                    save_mean_std(s1, s2, pca_, n, dataset)
-        # ====== dataset flush() ====== #
-        dataset.flush(); dataset.close()
-        # ====== all MmapDict flush() ====== #
-        for d in dicts.itervalues():
-            d.flush(); d.close()
-        # ====== saving the configuration ====== #
-        config = MmapDict(os.path.join(self.output_path, 'config'))
-        for i in dir(self):
-            if _default_module.match(i) is not None:
-                continue
-            j = getattr(self, i)
-            if isinstance(j, (Number, string_types, bool)):
-                config[i] = j
-        config.flush()
+            # ====== save mean and std ====== #
+            def save_mean_std(sum1, sum2, pca, name, dataset):
+                N = dataset[name].shape[0]
+                mean = sum1 / N
+                std = np.sqrt(sum2 / N - mean**2)
+                if self.substitute_nan is not None:
+                    mean = np.where(np.isnan(mean), self.substitute_nan, mean)
+                    std = np.where(np.isnan(std), self.substitute_nan, std)
+                else:
+                    assert not np.any(np.isnan(mean)), 'Mean contains NaN, name: %s' % name
+                    assert not np.any(np.isnan(std)), 'Std contains NaN, name: %s' % name
+                dataset[name + '_sum1'] = sum1
+                dataset[name + '_sum2'] = sum2
+                dataset[name + '_mean'] = mean
+                dataset[name + '_std'] = std
+                if pca is not None and pca.is_fitted:
+                    dataset[name + '_pca'] = pca
+            # save all stats
+            if self.save_stats:
+                for n, d, s in self.features_properties:
+                    if s: # save stats
+                        prog.add_notification('Saving statistics of: %s' % n)
+                        s1, s2 = sum1[n], sum2[n],
+                        if self.pca and n not in self.excluded_pca:
+                            pca_ = pca[n]
+                        else:
+                            pca_ = None
+                        save_mean_std(s1, s2, pca_, n, dataset)
+            # ====== dataset flush() ====== #
+            dataset.flush(); dataset.close()
+            # ====== all MmapDict flush() ====== #
+            for d in dicts.itervalues():
+                d.flush(); d.close()
+            # ====== saving the configuration ====== #
+            config = MmapDict(os.path.join(self.output_path, 'config'))
+            for i in dir(self):
+                if _default_module.match(i) is not None:
+                    continue
+                j = getattr(self, i)
+                if isinstance(j, (Number, string_types, bool)):
+                    config[i] = j
+            config.flush()
+            prog.add_notification("Saved Processor configuration. Closed all dataset.")
 
 
 # ===========================================================================

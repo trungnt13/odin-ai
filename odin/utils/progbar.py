@@ -249,6 +249,10 @@ class Progbar(object):
         return text
 
     @property
+    def seen_so_far(self):
+        return self._seen_so_far[self.epoch_idx]
+
+    @property
     def progress_bar(self):
         # ====== get information ====== #
         seen_so_far = self._seen_so_far[self.epoch_idx]
@@ -308,6 +312,10 @@ class Progbar(object):
         return s
 
     # ==================== same actions ==================== #
+    def add_notification(self, msg):
+        add_notification(msg)
+        return self
+
     def reset(self):
         # create epoch summary
         for key, values in self._epoch_hist[self._epoch_idx].iteritems():

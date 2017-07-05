@@ -22,7 +22,7 @@ args = ArgController(
 ).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
 ).add('-cnn', 'enable CNN or not', True
 ).add('-vad', 'number of GMM component for VAD', 2
-# for trainign
+# for training
 ).add('-lr', 'learning rate', 0.001
 ).add('-epoch', 'number of epoch', 5
 ).add('-bs', 'batch size', 8
@@ -46,7 +46,7 @@ stdio(path=get_logpath('digit_audio.log', override=True))
 # Get wav and process new dataset configuration
 # ===========================================================================
 # ====== process new features ====== #
-if True:
+if False:
     datapath = F.load_digit_wav()
     output_path = get_datasetpath(name='digit_audio', override=True)
     feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
@@ -66,6 +66,7 @@ if True:
 # ====== use online features ====== #
 else:
     ds = F.load_digit_audio()
+print(ds)
 # ===========================================================================
 # Create feeder
 # ===========================================================================
@@ -73,7 +74,8 @@ indices = [(name, start, end) for name, (start, end) in ds['indices'].iteritems(
 longest_utterances = max(int(end) - int(start) - 1
                          for i, start, end in indices)
 longest_vad = max(end - start
-                  for name, vad in ds['vadids'] for (start, end) in vad)
+                  for name, vad in ds['vadids']
+                  for (start, end) in vad)
 print("Longest Utterance:", longest_utterances)
 print("Longest Vad:", longest_vad)
 
@@ -86,12 +88,6 @@ print('Nb train:', len(train), stats.freqcount([int(i[0][0]) for i in train]))
 print('Nb valid:', len(valid), stats.freqcount([int(i[0][0]) for i in valid]))
 print('Nb test:', len(test), stats.freqcount([int(i[0][0]) for i in test]))
 
-# One titan X:
-# Benchmark TRAIN-batch: 0.11614914765
-# Benchmark TRAIN-epoch: 5.98400415693
-# Benchmark PRED-batch: 0.183033730263
-# Benchmark PRED-epoch: 3.5595933524
-# we need a deterministic results, hence ncpu=1
 train_feeder = F.Feeder(ds[args['feat']], train, ncpu=1)
 test_feeder = F.Feeder(ds[args['feat']], test, ncpu=2)
 valid_feeder = F.Feeder(ds[args['feat']], valid, ncpu=2)
@@ -103,14 +99,10 @@ recipes = [
         std=ds[args['feat'] + '_std'],
         local_normalize=False
     ),
-    # F.recipes.VADindex(ds['vadids'],
-    #      frame_length=longest_vad, padding=None),
-    # F.recipes.Stacking(left_context=5, right_context=5, shift=1),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
                          transcription_transform=lambda x: x[-1]),
     F.recipes.CreateBatch(),
-    # F.recipes.CreateFile()
 ]
 
 train_feeder.set_recipes(recipes)
@@ -121,7 +113,7 @@ feat_shape = (None,) + train_feeder.shape[1:]
 
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
-
+exit()
 # ===========================================================================
 # Create network
 # ===========================================================================
