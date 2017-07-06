@@ -1113,7 +1113,7 @@ def spectra(sr, y=None, S=None,
             n_fft=256, hop_length=None, window='hann',
             nb_melfilters=None, nb_ceps=None,
             fmin=64, fmax=None,
-            top_db=80.0, power=2.0, log=True,
+            top_db=80.0, center=True, power=2.0, log=True,
             preemphasis=None, backend='odin'):
     """Compute spectra information from STFT matrix or a power spectrogram,
     The extracted spectra include:
@@ -1141,6 +1141,10 @@ def spectra(sr, y=None, S=None,
     hop_length : int > 0 [scalar]
         number of samples between successive frames.
         See `librosa.core.stft`
+    center : boolean
+        - If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     power : float > 0 [scalar]
         Exponent for the magnitude melspectrogram.
         e.g., 1 for energy, 2 for power, etc.
@@ -1180,7 +1184,7 @@ def spectra(sr, y=None, S=None,
         hop_length = n_fft // 4 if hop_length is None else int(hop_length)
         # framing input signals
         y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
-                           window=window)
+                           center=center, window=window)
         log_energy = get_energy(y_frames, log=True)
         mel_spec = np.apply_along_axis(pysptk.mcep, 1, y_frames,
             order=nb_melfilters - 1 if nb_melfilters is not None else 24,
@@ -1209,7 +1213,7 @@ def spectra(sr, y=None, S=None,
         if S is None:
             S, log_energy = stft(y, n_fft=n_fft, hop_length=hop_length,
                                  window=window, preemphasis=preemphasis,
-                                 energy=True)
+                                 center=center, energy=True)
         n_fft = int(2 * (S.shape[1] - 1))
         # ====== check arguments ====== #
         power = int(power)
@@ -1312,7 +1316,8 @@ def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
     return y
 
 
-def ispec(spec, hop_length, window="hann", nb_iter=30, db=False, normalize=True):
+def ispec(spec, hop_length, window="hann", nb_iter=30, db=False,
+          normalize=True, center=True):
     """ Invert power spectrogram back to raw waveform
 
     Parameters
@@ -1339,8 +1344,9 @@ def ispec(spec, hop_length, window="hann", nb_iter=30, db=False, normalize=True)
     X_best = copy.deepcopy(spec)
     n_fft = (spec.shape[1] - 1) * 2
     for i in range(nb_iter):
-        X_t = istft(X_best, hop_length=hop_length, window=window)
-        est = stft(X_t, n_fft=n_fft, hop_length=hop_length, window=window)
+        X_t = istft(X_best, hop_length=hop_length, window=window, center=center)
+        est = stft(X_t, n_fft=n_fft, hop_length=hop_length, window=window,
+                   center=center)
         phase = est / np.maximum(1e-8, np.abs(est))
         X_best = spec * phase[:len(spec)]
     X_t = istft(X_best, hop_length=hop_length, window=window)
@@ -1382,14 +1388,19 @@ def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
         SWIPE - A Saw-tooth Waveform Inspired Pitch Estimation.
         RAPT - a robust algorithm for pitch tracking.
         avg - apply swipe and rapt at the same time, then take average.
-        Default is 'RAPT'
+        Default is 'SWIPE'
+
+    Note
+    ----
+    by default, the pitch tracking algorithm always center the signal before
+    processing
     """
     try:
         import pysptk
     except ImportError:
         raise RuntimeError("Pitch tracking requires pysptk library.")
     # ====== check arguments ====== #
-    algorithm = str(algorithm)
+    algorithm = str(algorithm).lower()
     if algorithm not in ('rapt', 'swipe', 'avg'):
         raise ValueError("'algorithm' argument must be: 'rapt', 'swipe' or 'avg'")
     otype = str(otype)

@@ -207,6 +207,8 @@ class Progbar(object):
         return self._report.__iter__()
 
     def context(self, print_progress=True, print_summary=False, confirm_exit=False):
+        # flush all stdout, curses sometimes meshes up with stdout
+        sys.stdout.flush()
         return _progbar(self, print_progress=print_progress,
                         print_summary=print_summary, confirm_exit=confirm_exit)
 

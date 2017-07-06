@@ -251,10 +251,10 @@ def speech_features(s, sr=None,
                     get_pitch=False, get_f0=False,
                     get_vad=True, get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None,
-                    pitch_threshold=0.3, pitch_fmax=260,
+                    pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
                     vad_smooth=3, vad_minlen=0.1,
                     cqt_bins=96, preemphasis=None,
-                    power=2, log=True, backend='odin'):
+                    center=True, power=2, log=True, backend='odin'):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -303,6 +303,11 @@ def speech_features(s, sr=None,
         Voice/unvoiced threshold for pitch tracking. (Default is 0.3)
     pitch_fmax: float
         maximum frequency of pitch. (Default is 260 Hz)
+    pitch_algo: 'swipe', 'rapt', 'avg'
+        SWIPE - A Saw-tooth Waveform Inspired Pitch Estimation.
+        RAPT - a robust algorithm for pitch tracking.
+        avg - apply swipe and rapt at the same time, then take average.
+        Default is 'SWIPE'
     vad_smooth: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.
@@ -311,6 +316,10 @@ def speech_features(s, sr=None,
         speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
+    center : boolean
+        - If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     power : float > 0 [scalar]
         Exponent for the magnitude spectrogram.
         e.g., 1 for energy, 2 for power, etc.
@@ -380,12 +389,12 @@ def speech_features(s, sr=None,
     if get_pitch:
         pitch_freq = pitch_track(s, sr, hop_length, fmin=fmin,
             fmax=pitch_fmax, threshold=pitch_threshold, otype='pitch',
-            algorithm='swipe').reshape(-1, 1)
+            algorithm=pitch_algo).reshape(-1, 1)
     f0_freq = None
     if get_f0:
         f0_freq = pitch_track(s, sr, hop_length, fmin=fmin,
             fmax=pitch_fmax, threshold=pitch_threshold, otype='f0',
-            algorithm='swipe').reshape(-1, 1)
+            algorithm=pitch_algo).reshape(-1, 1)
     # ====== 0: extract Constant Q-transform ====== #
     q_melspectrogram = None
     q_mfcc = None
@@ -420,7 +429,7 @@ def speech_features(s, sr=None,
     feat = spectra(sr=sr, y=s, n_fft=n_fft, hop_length=hop_length,
                    window=window, nb_melfilters=nb_melfilters,
                    nb_ceps=nb_ceps, fmin=fmin, fmax=fmax,
-                   power=power, log=log,
+                   power=power, log=log, center=center,
                    preemphasis=preemphasis, backend=backend)
     # ====== 4: extract spectrogram ====== #
     spec = feat['spec']
@@ -430,13 +439,15 @@ def speech_features(s, sr=None,
     # ====== adjust the length of pitch and f0 equal to spec ====== #
     if pitch_freq is not None:
         if len(pitch_freq) > len(spec):
-            pitch_freq = pitch_freq[:len(spec)]
+            n = len(pitch_freq) - len(spec)
+            pitch_freq = pitch_freq[n // 2:-int(np.ceil(n / 2))]
         elif len(pitch_freq) < len(spec):
             _ = len(spec) - len(pitch_freq)
             pitch_freq = np.pad(pitch_freq, ((0, _), (0, 0)), mode='constant')
     if f0_freq is not None:
         if len(f0_freq) > len(spec):
-            f0_freq = f0_freq[:len(spec)]
+            n = len(f0_freq) - len(spec)
+            f0_freq = f0_freq[n // 2:-int(np.ceil(n / 2))]
         elif len(f0_freq) < len(spec):
             _ = len(spec) - len(f0_freq)
             f0_freq = np.pad(f0_freq, ((0, _), (0, 0)), mode='constant')
@@ -494,15 +505,15 @@ def speech_features(s, sr=None,
                 [f0_freq] + compute_delta(f0_freq, order=get_delta),
                 axis=1)
     # ====== 8: make sure CQT give the same length with STFT ====== #
-    if get_qspec and qspec.shape[1] > spec.shape[1]:
-        n = qspec.shape[1] - spec.shape[1]
-        qspec = qspec[:, n // 2:-int(np.ceil(n / 2))]
+    if get_qspec and qspec.shape[0] > spec.shape[0]:
+        n = qspec.shape[0] - spec.shape[0]
+        qspec = qspec[n // 2:-int(np.ceil(n / 2))]
         if qphase is not None:
-            qphase = qphase[:, n // 2:-int(np.ceil(n / 2))]
+            qphase = qphase[n // 2:-int(np.ceil(n / 2))]
         if q_melspectrogram is not None:
-            q_melspectrogram = q_melspectrogram[:, n // 2:-int(np.ceil(n / 2))]
+            q_melspectrogram = q_melspectrogram[n // 2:-int(np.ceil(n / 2))]
         if q_mfcc is not None:
-            q_mfcc = q_mfcc[:, n // 2:-int(np.ceil(n / 2))]
+            q_mfcc = q_mfcc[n // 2:-int(np.ceil(n / 2))]
     return OrderedDict([
         ('spec', spec if get_spec else None),
         ('mspec', None if mspec is None else mspec),

@@ -13,12 +13,16 @@ matplotlib.use('Agg')
 import numpy as np
 import shutil
 import os
+import sys
 from odin import visual
 from odin import fuel as F, utils
 from collections import defaultdict
 
 backend = 'odin'
 PCA = True
+center = True
+pitch_threshold = 0.2
+pitch_algo = 'swipe'
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
@@ -29,9 +33,12 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          get_delta=2, get_energy=True, get_phase=True,
                          get_spec=True, get_pitch=True, get_f0=True,
                          get_vad=2, get_qspec=True,
-                         pitch_threshold=0.3, cqt_bins=96,
-                         vad_smooth=3, vad_minlen=0.1,
-                         preemphasis=None, power=2, log=True,
+                         pitch_threshold=pitch_threshold,
+                         pitch_fmax=260,
+                         pitch_algo=pitch_algo,
+                         cqt_bins=96, vad_smooth=3, vad_minlen=0.1,
+                         preemphasis=None,
+                         center=center, power=2, log=True,
                          backend=backend,
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
@@ -48,7 +55,6 @@ print(ds)
 print("* Configurations:")
 for i, j in ds['config'].iteritems():
     print(' ', i, ':', j)
-
 
 for n in ds.keys():
     if '_pca' in n:
@@ -76,7 +82,7 @@ ds.archive()
 print("Archive at:", ds.archive_path)
 # ====== plot the processed files ====== #
 figpath = os.path.join(utils.get_tempdir(), 'speech_features_%s.pdf' % backend)
-files = np.random.choice(ds['indices'].keys(), size=3, replace=False)
+files = np.random.choice(ds['indices'].keys(), size=8, replace=False)
 for f in files:
     with visual.figure(ncol=1, nrow=5, dpi=180,
                        show=False, tight_layout=True, title=f):
@@ -97,6 +103,12 @@ for f in files:
         visual.plot_spectrogram(mspec.T, vad=vad)
         visual.subplot(5, 1, 5)
         visual.plot_spectrogram(mfcc.T, vad=vad)
+# ====== check if any pitch or f0 allzeros ====== #
+for name, (start, end) in ds['indices']:
+    pitch = ds['pitch'][start:end][:]
+    f0 = ds['f0'][start:end][:]
+    if not np.any(pitch) or not np.any(f0):
+        print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
 if PCA:
     from sklearn.manifold import TSNE

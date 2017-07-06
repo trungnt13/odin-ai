@@ -505,10 +505,14 @@ class SpeechProcessor(FeatureProcessor):
     preemphasis: float `(0, 1)`
         pre-emphasis coefficience
     pitch_threshold: float in `(0, 1)`
-        A bin in spectrum X is considered a pitch when it is greater than
-        `threshold*X.max()`
+        Voice/unvoiced threshold. Default is 0.3.
     pitch_fmax: float
         maximum frequency of pitch
+    pitch_algo: 'swipe', 'rapt', 'avg'
+        SWIPE - A Saw-tooth Waveform Inspired Pitch Estimation.
+        RAPT - a robust algorithm for pitch tracking.
+        avg - apply swipe and rapt at the same time, then take average.
+        Default is 'SWIPE'
     vad_smooth: int, bool
         window length to smooth the vad indices.
         If True default window length is 3.
@@ -517,6 +521,10 @@ class SpeechProcessor(FeatureProcessor):
         speech.
     cqt_bins : int > 0
         Number of frequency bins for constant Q-transform, starting at `fmin`
+    center : boolean
+        - If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     power : float > 0 [scalar]
         Exponent for the magnitude spectrogram.
         e.g., 1 for energy, 2 for power, etc.
@@ -572,10 +580,10 @@ class SpeechProcessor(FeatureProcessor):
                 get_pitch=False, get_f0=False,
                 get_vad=True, get_energy=False, get_delta=False,
                 fmin=64, fmax=None, sr_new=None,
-                pitch_threshold=0.3, pitch_fmax=260,
+                pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
                 vad_smooth=3, vad_minlen=0.1,
                 cqt_bins=96, preemphasis=None,
-                power=2, log=True, backend='odin',
+                center=True, power=2, log=True, backend='odin',
                 pca=True, pca_whiten=False,
                 audio_ext=None, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
@@ -631,6 +639,7 @@ class SpeechProcessor(FeatureProcessor):
         # constraint pitch threshold in 0-1
         self.pitch_threshold = min(max(pitch_threshold, 0.), 1.)
         self.pitch_fmax = pitch_fmax
+        self.pitch_algo = pitch_algo
         self.vad_smooth = vad_smooth
         self.vad_minlen = vad_minlen
         self.cqt_bins = cqt_bins
@@ -638,6 +647,7 @@ class SpeechProcessor(FeatureProcessor):
         self.fmax = fmax
         self.sr_new = sr_new
         self.preemphasis = preemphasis
+        self.center = center
         self.power = power
         self.log = log
         self.backend = backend
@@ -700,11 +710,14 @@ class SpeechProcessor(FeatureProcessor):
                         get_pitch=self.get_pitch, get_f0=self.get_f0,
                         get_vad=self.get_vad, get_energy=self.get_energy,
                         get_delta=self.get_delta,
-                        pitch_threshold=self.pitch_threshold, pitch_fmax=self.pitch_fmax,
+                        pitch_threshold=self.pitch_threshold,
+                        pitch_fmax=self.pitch_fmax,
+                        pitch_algo=self.pitch_algo,
                         vad_smooth=self.vad_smooth, vad_minlen=self.vad_minlen,
                         cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
                         sr_new=self.sr_new, preemphasis=self.preemphasis,
-                        power=self.power, log=self.log, backend=self.backend)
+                        center=self.center, power=self.power, log=self.log,
+                        backend=self.backend)
                 if features is not None:
                     saved_features = [features[i[0]]
                         for i in self.__features_properties[:-1]]
