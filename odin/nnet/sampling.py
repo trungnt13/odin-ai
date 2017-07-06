@@ -51,7 +51,8 @@ class Pool(NNOp):
                  pad='valid', mode='max', transpose_mode='nn', **kwargs):
         super(Pool, self).__init__(**kwargs)
         self.pool_size = as_tuple(pool_size, t=int)
-        self.strides = pool_size if strides is None else as_tuple(strides, t=int)
+        self.strides = self.pool_size if strides is None \
+            else as_tuple(strides, t=int)
         self.dilation = (1,) if dilation is None else as_tuple(dilation, t=int)
         self.pad = pad.upper() if is_string(pad) else as_tuple(pad, t=int)
         self.mode = mode.upper()

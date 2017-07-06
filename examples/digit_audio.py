@@ -33,6 +33,7 @@ import os
 os.environ['ODIN'] = 'float32,%s' % (args['dev'])
 
 import numpy as np
+import tensorflow as tf
 np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
@@ -66,7 +67,7 @@ if False:
 # ====== use online features ====== #
 else:
     ds = F.load_digit_audio()
-print(ds)
+nb_classes = 10
 # ===========================================================================
 # Create feeder
 # ===========================================================================
@@ -113,11 +114,11 @@ feat_shape = (None,) + train_feeder.shape[1:]
 
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
-exit()
 # ===========================================================================
 # Create network
 # ===========================================================================
-CNN = [
+f = N.Sequence([
+    # ====== CNN ====== #
     N.Dimshuffle(pattern=(0, 1, 2, 'x')),
     N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
            activation=K.linear),
@@ -126,47 +127,54 @@ CNN = [
            activation=K.linear),
     N.BatchNorm(activation=K.relu),
     N.Pool(pool_size=2, strides=None, pad='valid', mode='max'),
-    N.Flatten(outdim=3)
-] if args['cnn'] else []
-
-f = N.Sequence(CNN + [
+    N.Flatten(outdim=3),
     # ====== RNN ====== #
-    N.AutoRNN(128, rnn_mode='lstm', num_layers=3,
-              direction_mode='bidirectional', prefer_cudnn=True),
-
+    # N.AutoRNN(128, rnn_mode='lstm', num_layers=3,
+    # direction_mode='bidirectional', prefer_cudnn=True),
     # ====== Dense ====== #
     N.Flatten(outdim=2),
     # N.Dropout(level=0.2), # adding dropout does not help
     N.Dense(num_units=1024, activation=K.relu),
     N.Dense(num_units=512, activation=K.relu),
-    N.Dense(num_units=nb_classes, activation=K.softmax)
+    N.Dense(num_units=nb_classes)
 ], debug=True)
-
-K.set_training(True); y_train = f(X)
-K.set_training(False); y_score = f(X)
-
+y_pred_logits = f(X)
+y_pred_prob = tf.nn.softmax(y_pred_logits)
+y_onehot = tf.one_hot(y, depth=nb_classes)
 # ====== create cost ====== #
-cost_train = K.mean(K.categorical_crossentropy(y_train, y), name='crossentropy')
-cost_test_1 = K.mean(K.categorical_crossentropy(y_score, y), name='crossentropy_score')
-cost_test_2 = K.mean(K.categorical_accuracy(y_score, y), name='accuracy')
-cost_test_3 = K.confusion_matrix(y_score, y, labels=range(10))
+cost_ce = tf.losses.softmax_cross_entropy(y_onehot, y_pred_logits)
+cost_acc = K.metrics.categorical_accuracy(y_pred_prob, y)
+cost_cm = K.metrics.confusion_matrix(y_pred_prob, y, labels=nb_classes)
 
 # ====== create optimizer ====== #
-parameters = [p for p in f.parameters if has_roles(p, [Weight, Bias])]
+parameters = [p for p in f.parameters
+              if K.role.has_roles(p, [K.role.Weight,
+                                      K.role.Bias])]
 optimizer = K.optimizers.Adam(lr=args['lr'])
+updates = optimizer.get_updates(cost_ce, parameters)
+
+print('Building training functions ...')
+f_train = K.function([X, y], [cost_ce, optimizer.norm, cost_cm],
+                     updates=updates, training=True)
+print('Building testing functions ...')
+f_score = K.function([X, y], [cost_ce, cost_acc, cost_cm], training=False)
+print('Building predicting functions ...')
+f_pred = K.function(X, y_pred_prob, training=False)
+
 # ===========================================================================
-# Standard trainer
+# Build trainer
 # ===========================================================================
-trainer, hist = training.standard_trainer(
-    train_data=train_feeder, valid_data=valid_feeder, test_data=test_feeder,
-    cost_train=cost_train, cost_score=[cost_test_1, cost_test_2], cost_regu=None,
-    parameters=parameters, optimizer=optimizer,
-    confusion_matrix=cost_test_3, gradient_norm=True,
-    nb_epoch=args['epoch'], batch_size=8, valid_freq=1.,
-    save_path=get_modelpath(name='digit_audio.ai', override=True),
-    save_obj=f,
-    report_path=get_logpath(name="digit_audio.pdf", override=True),
-    enable_rollback=True, stop_callback=None, save_callback=None,
-    labels=range(10)
-)
-trainer.run()
+print('Start training ...')
+task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
+                         print_progress=True, confirm_exit=True)
+task.set_save(get_modelpath(name='digit_audio_ai', override=True), f)
+task.set_callbacks([
+    training.NaNDetector(),
+    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
+])
+task.set_train_task(f_train, train_feeder, epoch=4,
+                    name='train')
+task.set_valid_task(f_score, valid_feeder, freq=training.Timer(percentage=0.6),
+                    name='valid')
+task.set_eval_task(f_score, test_feeder, name='test')
+task.run()

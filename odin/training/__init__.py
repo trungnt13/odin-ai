@@ -862,20 +862,20 @@ class MainLoop(object):
     def _save(self):
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
+            progbar.add_notification("Creating checkpoint at:" + self._save_path)
             if not os.path.exists(self._save_path):
                 os.mkdir(self._save_path)
             elif os.path.isfile(self._save_path):
                 raise ValueError("Save path for the model must be a folder.")
             N.serialize(self._save_obj, self._save_path, save_variables=True,
                         variables=self._save_variables, override=True)
-            progbar.add_notification("Created checkpoint at:" + self._save_path)
 
     def _rollback(self):
         if not self._allow_rollback: return
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
-            N.deserialize(self._save_path)
             progbar.add_notification("Rollback from:" + self._save_path)
+            N.deserialize(self._save_path)
 
     def _end(self):
         self._rollback()

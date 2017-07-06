@@ -465,9 +465,11 @@ class MPI(SelfIterator):
             return
         # terminate or join all processes
         if self.finished == SIG_TERMINATE_ITERATOR:
-            [p.terminate() for p in self.__processes if p.is_alive()]
+            [p.terminate() for p in self.__processes
+             if p._popen is not None and p.is_alive()]
         else:
-            [p.join() for p in self.__processes]
+            # only join started process which has _popen is not Noen
+            [p.join() for p in self.__processes if p._popen is not None]
         self.__results.close()
 
     def _next(self):
