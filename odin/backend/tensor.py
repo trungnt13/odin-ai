@@ -726,7 +726,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
                          (input_shape[-1], hidden_size))
     # IF we dimshuffle here, a lot of error concern GPUarray,
     # and cudnn will happen
-    batch_size = X.get_shape()[0] # native shape
+    batch_size = tf.shape(X)[0] # native shape
     if rnn_mode == 'lstm':
         rnn = cudnn_rnn.CudnnLSTM(num_layers=num_layers,
                                   num_units=hidden_size,

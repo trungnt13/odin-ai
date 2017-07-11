@@ -1,9 +1,9 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+from six.moves import cPickle
 import inspect
-from six import string_types
-from six.moves import cPickle, builtins
+from six.moves import builtins
 
 from odin.utils import is_string, is_path, as_tuple
 from odin.config import (auto_config, get_floatX, get_session,
@@ -100,34 +100,6 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
     return role.add_role(placeholder, roles)
 
 
-def _eval_single_tensor(x, feed_dict=None):
-    if hasattr(x, 'eval') and inspect.ismethod(x.eval):
-        if 'feed_dict' in inspect.getargspec(x.eval).args:
-            return x.eval(session=get_session(), feed_dict=feed_dict)
-        else:
-            return x.eval(session=get_session())
-    elif is_string(x):
-        return builtins.eval(x)
-    elif isinstance(x, tf.Operation):
-        return get_session().run(x, feed_dict=feed_dict)
-    raise ValueError("Type %s don't have the eval function." % str(x))
-
-
-def eval(x, feed_dict=None):
-    '''Evaluates the value of a tensor.
-    Parameters
-    ----------
-    x: list, tuple, dictionary, `Tensor`
-        tensorfow `Tensor` for evaluation
-    '''
-    if isinstance(x, (tuple, list)):
-        return [_eval_single_tensor(x, feed_dict=feed_dict) for tensor in x]
-    elif isinstance(x, dict):
-        return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
-            for name, tensor in x.iteritems()}
-    return _eval_single_tensor(x, feed_dict=feed_dict)
-
-
 _saver = {}
 
 
@@ -176,9 +148,8 @@ def restore_variables(path, session=None):
                 raise RuntimeError("The current variable scope is: %s, you can "
                     "only restore variables from default scope."
                     % tf.get_variable_scope().name)
-            var_list.append(tf.Variable(
-                initial_value=np.empty(shape=shape),
-                name=name, dtype=dtype))
+            var_list.append(tf.get_variable(
+                shape=shape, name=name, dtype=dtype))
     # ====== restore the variables ====== #
     name = '|'.join(sorted([v.name for v in var_list]))
     if name in _saver:
@@ -190,3 +161,31 @@ def restore_variables(path, session=None):
     # ====== restore the collections ====== #
     for v in var_list:
         role.add_role(v, collections[v.name])
+
+
+def _eval_single_tensor(x, feed_dict=None):
+    if hasattr(x, 'eval') and inspect.ismethod(x.eval):
+        if 'feed_dict' in inspect.getargspec(x.eval).args:
+            return x.eval(session=get_session(), feed_dict=feed_dict)
+        else:
+            return x.eval(session=get_session())
+    elif is_string(x):
+        return builtins.eval(x)
+    elif isinstance(x, tf.Operation):
+        return get_session().run(x, feed_dict=feed_dict)
+    raise ValueError("Type %s don't have the eval function." % str(x))
+
+
+def eval(x, feed_dict=None):
+    '''Evaluates the value of a tensor.
+    Parameters
+    ----------
+    x: list, tuple, dictionary, `Tensor`
+        tensorfow `Tensor` for evaluation
+    '''
+    if isinstance(x, (tuple, list)):
+        return [_eval_single_tensor(x, feed_dict=feed_dict) for tensor in x]
+    elif isinstance(x, dict):
+        return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
+            for name, tensor in x.iteritems()}
+    return _eval_single_tensor(x, feed_dict=feed_dict)

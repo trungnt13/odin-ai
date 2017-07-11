@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import, print_function
 
-from abc import ABCMeta, abstractmethod
+import inspect
+from abc import ABCMeta, abstractmethod, abstractproperty
 from six import add_metaclass
 from itertools import chain
 
@@ -14,7 +15,7 @@ from odin.backend.role import (InitialState, Weight, Bias, Parameter,
                         BatchNormScaleParameter,
                         BatchNormPopulationMean,
                         BatchNormPopulationInvStd)
-from odin.utils import as_tuple
+from odin.utils import as_tuple, is_string, is_number
 
 from .base import NNOp, _nnops_initscope
 from .helper import Sequence, HelperOps
@@ -86,46 +87,94 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
 # ===========================================================================
 # Dynamic RNN
 # ===========================================================================
-class DynamicRNN(NNOp):
-    # cell_fw, cell_bw, inputs, sequence_length=None,
-    # initial_state_fw=None, initial_state_bw=None,
-    # dtype=None, parallel_iterations=None,
-    # swap_memory=False, time_major=False, scope=None
+def get_cell_info(cell):
+    from tensorflow.contrib.rnn.python.ops import rnn_cell
+    found_cell = None
+    for key, val in inspect.getmembers(K.rnn_cell) + inspect.getmembers(rnn_cell):
+        if inspect.isclass(val) and issubclass(val, tf.contrib.rnn.RNNCell):
+            if (isinstance(cell, str) and (key == cell or str(val) == cell)) \
+            or cell == val:
+                found_cell = val; break
+    # ====== get cell init info ====== #
+    _ = inspect.getargspec(found_cell.__init__)
+    args = _.args[1:]
+    kwargs = {}
+    if _.defaults is not None:
+        kwargs = {i: j for i, j in zip(args[::-1], _.defaults[::-1])}
+    return found_cell, args, kwargs
+
+
+class RNN(NNOp):
+    """
+    Parameter
+    ---------
+    attention: None or `tf.contrib.seq2seq.AttentionMechanism`
+        two basic attentions: LuongAttention, BahdanauAttention
+    """
 
     @_nnops_initscope
-    def __init__(self, cell, state=None,
-                 cell_bw=None, state_bw=None,
-                 return_states=False, **kwargs):
-        super(DynamicRNN, self).__init__(**kwargs)
-        self.cell = cell
-        self.cell_bw = cell_bw
-        self.state = state
-        self.state_bw = state_bw
+    def __init__(self, cell_type, kwargs={}, attention=None,
+                 num_layers=1, dynamic=True, return_states=False,
+                 name=None):
+        super(RNN, self).__init__(name=name)
+        self.cell_type, _args, _kwargs = get_cell_info(cell_type)
+        if self.cell_type is None:
+            raise RuntimeError("Cannot find any RNNCell with given description: %s"
+                % str(cell_type))
+        _kwargs.update(kwargs)
+        if len(_kwargs) != len(_args):
+            raise RuntimeError("Missing following arguments: %s for the RNNCell "
+                "of type: %s" % (list(set(_args) - set(_kwargs.keys())),
+                                 self.cell_type.__name__))
+        self.cell_kwargs = _kwargs
+        self._num_layers = int(num_layers)
+        self.dynamic = dynamic
         self.return_states = return_states
+        self._initialize_variables = False
+        # ====== attention ====== #
+        if attention is not None and \
+        not issubclass(attention, tf.contrib.seq2seq.AttentionMechanism):
+            raise ValueError("`attention` argument must be `None` or instance "
+                "of `tensorflow.contrib.seq2seq.AttentionMechanism`.")
+        self.attention = attention
+        tf.contrib.seq2seq.embedding_attention_seq2seq
 
-    def _initialize(self):
-        pass
+    @property
+    def cell(self):
+        # ====== first time create Cell ====== #
+        if not hasattr(self, '_cell'):
+            c = self.cell_type(**self.cell_kwargs)
+            if self._num_layers > 1:
+                c = tf.contrib.rnn.MultiRNNCell([c] * self._num_layers)
+            self._cell = c
+        # ====== return Cell ====== #
+        self._cell._reuse = False if len(self.variables) == 0 else True
+        return self._cell
 
-    def _apply(self, X, state=None, state_bw=None):
+    def _apply(self, X, state=None, memory=None):
         # time_major: The shape format of the `inputs` and `outputs` Tensors.
         #   If true, these `Tensors` must be shaped `[max_time, batch_size, depth]`.
         #   If false, these `Tensors` must be shaped `[batch_size, max_time, depth]`.
-        if self.cell_bw is None:
-            outputs = rnn.dynamic_rnn(self.cell, inputs=X,
-                initial_state=state if self.state is None else self.state,
-                dtype=X.dtype.base_dtype,
-                time_major=False)
-            self.cell._reuse = True
-        else:
-            outputs = rnn.bidirectional_dynamic_rnn(
-                cell_fw=self.cell, cell_bw=self.cell_bw, inputs=X,
-                initial_state_fw=state if self.state is None else self.state,
-                initial_state_bw=state_bw if self.state_bw is None else self.state_bw,
-                time_major=False)
-            self.cell._reuse = True
-            self.cell_bw._reuse = True
-        K.eval(tf.variables_initializer(
-            tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.name)))
+        rnn_func = rnn.dynamic_rnn if self.dynamic else rnn.static_rnn
+        cell = self.cell
+        # ====== create attention if necessary ====== #
+        if self.attention is not None:
+            if not hasattr(self, "cell_with_attention"):
+                # normalize=True, probability_fn=tf.nn.softmax
+                attention_mechanism = self.attention(num_units=128, memory=memory)
+                self.cell_with_attention = tf.contrib.seq2seq.AttentionWrapper(
+                    cell, attention_mechanism,
+                    attention_layer_size=attention_mechanism._num_units)
+            cell = self.cell_with_attention
+        outputs = rnn_func(cell, inputs=X, initial_state=state,
+                           dtype=X.dtype.base_dtype)
+        # ====== initialize cell ====== #
+        if not self._initialize_variables:
+            # initialize only once, everytime you call this, the values of
+            # variables changed
+            K.eval(tf.variables_initializer(self.variables))
+            self._initialize_variables = True
+        # ====== return ====== #
         if not self.return_states:
             return outputs[0]
         return outputs
@@ -134,38 +183,69 @@ class DynamicRNN(NNOp):
         raise NotImplementedError
 
 
-# ===========================================================================
-# Static RNN
-# ===========================================================================
-class StaticRNN(NNOp):
-    # cell_fw, cell_bw, inputs, sequence_length=None,
-    # initial_state_fw=None, initial_state_bw=None,
-    # dtype=None, parallel_iterations=None,
-    # swap_memory=False, time_major=False, scope=None
+class LSTM(RNN):
 
     @_nnops_initscope
-    def __init__(self, cell_fw, cell_bw=None,
-                 state_fw=None, state_bw=None, **kwargs):
-        super(StaticRNN, self).__init__(**kwargs)
-        self.cell_fw = cell_fw
-        self.cell_bw = cell_bw
-        self.state_fw = state_fw
-        self.state_bw = state_bw
+    def __init__(self, num_units, use_peepholes=False, cell_clip=None,
+                 num_proj=None, proj_clip=None, forget_bias=1.0,
+                 activation=None, num_layers=1, attention=None,
+                 dynamic=True, return_states=False, name=None):
+        super(LSTM, self).__init__(cell_type=tf.contrib.rnn.LSTMCell,
+            kwargs={'num_units': num_units, 'use_peepholes': use_peepholes,
+                    'cell_clip': cell_clip, 'num_proj': num_proj,
+                    'proj_clip': proj_clip, 'forget_bias': forget_bias,
+                    'activation': activation},
+            num_layers=num_layers, attention=attention,
+            dynamic=dynamic, return_states=return_states,
+            name=name)
 
-    def _initialize(self):
-        if self.state_fw is not None:
-            pass
-        if self.state_bw is not None:
-            pass
 
-    def _apply(self, X, states):
-        if self.cell_bw is None:
-            rnn.static_rnn
-        else:
-            rnn.static_bidirectional_rnn
+class GRU(RNN):
 
-    def _transpose(self):
-        pass
+    @_nnops_initscope
+    def __init__(self, num_units, activation=None, attention=None,
+                 num_layers=1, dynamic=True, return_states=False, name=None):
+        super(GRU, self).__init__(cell_type=tf.contrib.rnn.GRUCell,
+            kwargs={'num_units': num_units, 'activation': activation},
+            num_layers=num_layers, attention=attention,
+            dynamic=dynamic, return_states=return_states,
+            name=name)
+
+
+class BiRNN(RNN):
+
+    @_nnops_initscope
+    def __init__(self, forward, backward, dynamic=True,
+                 return_states=False, name=None):
+        super(BiRNN, self).__init__(dynamic=dynamic, return_states=return_states,
+                                    name=name)
+        if not isinstance(forward, RNN):
+            raise ValueError("`forward` must be instance of `odin.rnn.RNN`")
+        self.forward = forward
+
+        if not isinstance(backward, RNN):
+            raise ValueError("`backward` must be instance of `odin.rnn.RNN`")
+        self.backward = backward
+
+    @property
+    def cell(self):
+        return [self.forward.cell, self.backward.cell]
+
+    def _apply(self, X, state=None, state_bw=None):
+        # time_major: The shape format of the `inputs` and `outputs` Tensors.
+        #   If true, these `Tensors` must be shaped `[max_time, batch_size, depth]`.
+        #   If false, these `Tensors` must be shaped `[batch_size, max_time, depth]`.
+        rnn_func = rnn.bidirectional_dynamic_rnn if self.dynamic \
+            else rnn.static_bidirectional_rnn
+        outputs = rnn_func(inputs=X,
+            cell_fw=self.forward.cell, cell_bw=self.backward.cell,
+            initial_state_fw=state, initial_state_bw=state_bw,
+            dtype=X.dtype.base_dtype)
+        self.forward.cell._reuse = True
+        self.backward.cell._reuse = True
+        if not self.return_states:
+            return outputs[0]
+        return outputs
 
 
 # ===========================================================================
@@ -267,11 +347,11 @@ class CudnnRNN(NNOp):
                      [self.num_units * (2 if is_bidirectional else 1),
                       self.num_units] * (self.num_layers - 1)
         if self.rnn_mode == 'lstm':
-            from odin.backend.init import lstm as init_func
+            from odin.backend.rand import lstm as init_func
         elif self.rnn_mode == 'gru':
-            from odin.backend.init import gru as init_func
+            from odin.backend.rand import gru as init_func
         else:
-            from odin.backend.init import rnn as init_func
+            from odin.backend.rand import rnn as init_func
         # initialize each parameter in params_split=True
         if self.params_split:
             with tf.variable_scope(self.name):

@@ -121,7 +121,7 @@ segments = [[os.path.basename(path).replace('.wav', ''), path, 0, -1, 0]
 if False:
     if os.path.exists(wav_ds):
         shutil.rmtree(wav_ds)
-    wave = F.WaveProcesor(segments, output_path=wav_ds, audio_ext='.wav',
+    wave = F.WaveProcessor(segments, output_path=wav_ds, audio_ext='.wav',
                           sr_new=8000, dtype='float16', datatype='memmap',
                           ncache=0.2, ncpu=12)
     wave.run()

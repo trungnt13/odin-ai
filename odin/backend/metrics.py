@@ -72,12 +72,15 @@ def LER(y_true, y_pred, return_mean=True):
 # Losses
 # ===========================================================================
 @return_roles(DifferentialLoss)
-def bayes_crossentropy(y_pred, y_true, nb_classes=None, name="BayesCrossentropy"):
+def bayes_crossentropy(y_pred, y_true, nb_classes=None, reduction=tf.reduce_mean,
+                       name="BayesCrossentropy"):
     with tf.variable_scope(name):
-        if y_pred.get_shape().ndims == 1:
-            y_pred = tf.expand_dims(y_pred, -1)
-        y_pred0 = 1. - y_pred
-        y_pred = tf.concat([y_pred0, y_pred], axis=-1)
+        y_pred_shape = y_pred.get_shape()
+        if y_pred_shape.ndims == 1 or y_pred_shape[-1].value == 1:
+            if y_pred_shape.ndims == 1:
+                y_pred = tf.expand_dims(y_pred, -1)
+            y_pred0 = 1. - y_pred
+            y_pred = tf.concat([y_pred0, y_pred], axis=-1)
         # get number of classes
         if y_true.get_shape().ndims == 1:
             if nb_classes is None:
@@ -90,16 +93,17 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None, name="BayesCrossentropy"
         y_pred = tf.clip_by_value(y_pred, EPSILON, 1.0 - EPSILON)
         # ====== check distribution ====== #
         distribution = tf.reduce_sum(y_true, axis=0)
-        # ====== init confusion info loss ====== #
-        # weighted by y_true
-        loss = y_true * tf.log(y_pred)
         # probability distribution of each class
-        prob_distribution = dimshuffle(distribution / sum(distribution),
+        prob_distribution = dimshuffle(distribution / tf.reduce_sum(distribution),
                                        ('x', 0))
         # we need to clip the prior probability distribution also
         prob_distribution = tf.clip_by_value(
             prob_distribution, EPSILON, 1.0 - EPSILON)
-        return - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
+        # ====== init confusion info loss ====== #
+        # weighted by y_true
+        loss = y_true * tf.log(y_pred)
+        loss = - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
+        return reduction(loss)
 
 
 @return_roles(DifferentialLoss)

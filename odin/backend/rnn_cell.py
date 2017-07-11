@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import collections
 import math
 
+import numpy as np
 import tensorflow as tf
 
 from tensorflow.contrib.rnn import (RNNCell, MultiRNNCell,
@@ -16,6 +17,9 @@ from tensorflow.contrib.rnn import (RNNCell, MultiRNNCell,
 from tensorflow.python.ops.rnn_cell_impl import (_linear,
     GRUCell, LSTMCell, BasicLSTMCell)
 from tensorflow.python.util import nest
+
+from .helpers import get_all_variables, get_value
+from odin.config import get_session
 
 
 class BasicRNNCell(RNNCell):

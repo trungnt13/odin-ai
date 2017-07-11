@@ -46,6 +46,8 @@ def set_training(is_training, graph=None, return_ops=False):
 def cond_training(train_fn, infer_fn,
                   train_dependencies=None, infer_dependencies=None,
                   name="ConditionalTraining"):
+    if not callable(train_fn) or not callable(infer_fn):
+        raise ValueError("`train_fn` and `infer_fn` must be callable.")
     with tf.variable_scope(name):
         if train_dependencies is not None:
             def _train_fn():

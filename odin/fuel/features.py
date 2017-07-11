@@ -30,7 +30,7 @@ from .utils import MmapDict
 _default_module = re.compile('__.*__')
 
 __all__ = [
-    'WaveProcesor',
+    'WaveProcessor',
     'SpeechProcessor',
 ]
 
@@ -351,7 +351,7 @@ def _segments_preprocessing(segments, audio_ext):
     return jobs, nb_jobs
 
 
-class WaveProcesor(FeatureProcessor):
+class WaveProcessor(FeatureProcessor):
     """ Concatenate all Waveform data into single memmap (or HDF5) file
     with its meta-data information included in the indices
 
@@ -384,12 +384,12 @@ class WaveProcesor(FeatureProcessor):
                 audio_ext=None, pcm=False, remove_dc_offset=True,
                 dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
-        super(WaveProcesor, self).__init__(output_path=output_path,
+        super(WaveProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=False, pca_whiten=False,
             save_stats=False, substitute_nan=False,
             ncache=ncache, ncpu=ncpu)
         if isinstance(segments, Dataset):
-            raise ValueError("WaveProcesor does not support segments as a Dataset.")
+            raise ValueError("WaveProcessor does not support segments as a Dataset.")
         self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         if dtype is None or (is_string(dtype) and dtype == 'auto'):
             s, _ = speech.read(self.jobs[0][0], pcm=pcm, dtype=None)

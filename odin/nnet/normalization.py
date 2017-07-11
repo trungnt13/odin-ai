@@ -223,8 +223,9 @@ class BatchNorm(NNOp):
             (gamma * K.dimshuffle(inv_std, pattern))
         # ====== applying noise if required ====== #
         if self.noise_level is not None:
-            normalized = K.apply_noise(normalized, level=self.noise_level,
-                noise_dims=self.noise_dims, noise_type='gaussian')
+            normalized = K.rand.apply_noise(normalized,
+                level=self.noise_level, noise_dims=self.noise_dims,
+                noise_type='gaussian')
         # add beta
         normalized = normalized + beta
         # activated output

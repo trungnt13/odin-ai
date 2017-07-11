@@ -327,7 +327,7 @@ class TransposeConv(Conv):
 # ===========================================================================
 class DeConv(NNTransposeOps):
 
-    def __init__(self, ops):
+    def __init__(self, ops, **kwargs):
         super(DeConv, self).__init__(ops)
         self._deconv = None
 

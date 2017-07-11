@@ -5,6 +5,7 @@ import sys
 import inspect
 import functools
 from types import FunctionType
+from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
@@ -162,8 +163,17 @@ class ModelDescriptor(object):
 
     @property
     def placeholders(self):
-        return {i: j.placeholder for i, j in self._input_desc.iteritems()
-                if isinstance(j, VariableDescriptor)}
+        """Return ordered Placeholders"""
+        args = inspect.getargspec(self._func).args
+        plh = OrderedDict()
+        for i in args:
+            j = self._input_desc[i]
+            if isinstance(j, VariableDescriptor):
+                plh[i] = j.placeholder
+        for i, j in self._input_desc.iteritems():
+            if i not in plh and isinstance(j, VariableDescriptor):
+                plh[i] = j.placeholder
+        return plh
 
     @property
     def last_outputs(self):

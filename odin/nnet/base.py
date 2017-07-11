@@ -392,7 +392,7 @@ def _create_op_name(op_class, name=None):
     # regulation for the NNOp name
     elif is_string(name):
         if '/' in name or ':' in name:
-            raise ValueError("Invalid name for NNOp:" % name)
+            raise ValueError("Invalid name for NNOp: %s" % name)
         # still add name scope
         if _NAME_SCOPE is not None:
             name = _NAME_SCOPE + '/' + name
@@ -635,19 +635,19 @@ class NNOp(object):
     @property
     def variables(self):
         """ Get all variables related to this Op"""
-        if not self._is_initialized:
-            raise Exception("This operators haven't initialized.")
-
+        # created variable from `get_variable`
         allname = [name for _, (name, t) in self._variable_info.iteritems()
                    if t == 'variable']
         allvars = [v for v in K.get_all_variables() if v.name in allname]
-
+        # related variables to all `Tensor`
         tensors = [self.get_variable(name)
                    for name, (info, t) in self._variable_info.iteritems()
                    if t == 'tensor']
         tensors = K.ComputationGraph(tensors).variables
-
-        return allvars + tensors
+        # all variables within the scope
+        scope_vars = K.get_all_variables(scope=self.name)
+        return sorted(set(allvars + tensors + scope_vars),
+                      key=lambda x: x.name)
 
     @property
     def parameters(self):
@@ -754,7 +754,7 @@ class NNOp(object):
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.rand.constant, NNOp, VariableDescriptor)
+                    K.rand.constant, NNOp, VariableDescriptor, type)
 
 
 # ===========================================================================
@@ -797,8 +797,9 @@ class NNTransposeOps(NNOp):
     Create a transposed view of the origin NNOp
     """
 
-    def __init__(self, ops):
-        super(NNTransposeOps, self).__init__(name=ops.name + '_transpose')
+    def __init__(self, ops, **kwargs):
+        name = ops.name.split("/")[-1]
+        super(NNTransposeOps, self).__init__(name=name + '_transpose')
         if not isinstance(ops, NNOp):
             raise ValueError("NNTransposeOps can only be applied for instance of "
                              "odin.nnet.NNOp, but was given type=%s" % str(type(ops)))
