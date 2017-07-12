@@ -184,7 +184,8 @@ def eval(x, feed_dict=None):
         tensorfow `Tensor` for evaluation
     '''
     if isinstance(x, (tuple, list)):
-        return [_eval_single_tensor(x, feed_dict=feed_dict) for tensor in x]
+        return [_eval_single_tensor(tensor, feed_dict=feed_dict)
+                for tensor in x]
     elif isinstance(x, dict):
         return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
             for name, tensor in x.iteritems()}
