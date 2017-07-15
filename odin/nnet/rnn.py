@@ -38,17 +38,17 @@ def _init_input2hidden(ops, rnn_mode, input_mode, W_init, input_dims, hidden_dim
         msg = '(W_input_to_inputgate, W_input_to_forgetgate, W_input_to_hidden, W_input_to_outputgate)'
     # ====== check input ====== #
     if input_mode != 'skip':
-        ops.config.create_params(W_init, shape=(input_dims, hidden_dims),
-                             name='W_in', roles=Weight, nb_params=N)
+        ops.get_variable(initializer=W_init, shape=(input_dims, hidden_dims * N),
+                         name='W_in', roles=Weight)
         if input_mode == 'norm':
-            ops.config.create_params(K.rand.constant(0.), shape=(hidden_dims * N,),
-                                 name='beta', roles=BatchNormShiftParameter)
-            ops.config.create_params(K.rand.constant(1.), shape=(hidden_dims * N,),
-                                 name='gamma', roles=BatchNormScaleParameter)
-            ops.config.create_params(K.rand.constant(0.), shape=(hidden_dims * N,),
-                                 name='mean', roles=BatchNormPopulationMean)
-            ops.config.create_params(K.rand.constant(1.), shape=(hidden_dims * N,),
-                                 name='inv_std', roles=BatchNormPopulationInvStd)
+            ops.get_variable(initializer=K.rand.constant(0.), shape=(hidden_dims * N,),
+                             name='beta', roles=BatchNormShiftParameter)
+            ops.get_variable(initializer=K.rand.constant(1.), shape=(hidden_dims * N,),
+                             name='gamma', roles=BatchNormScaleParameter)
+            ops.get_variable(initializer=K.rand.constant(0.), shape=(hidden_dims * N,),
+                             name='mean', roles=BatchNormPopulationMean)
+            ops.get_variable(initializer=K.rand.constant(1.), shape=(hidden_dims * N,),
+                             name='inv_std', roles=BatchNormPopulationInvStd)
     # skip input mode
     elif input_dims != hidden_dims and \
     input_dims != hidden_dims * N: # 3 gates + 1 hid_update
@@ -87,6 +87,21 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
 # ===========================================================================
 # Dynamic RNN
 # ===========================================================================
+def _infer_variable_role(variables):
+    for v in variables:
+        name = v.name.split(':')[0].split("/")[-1]
+        if 'kernel' in name:
+            K.role.add_role(v, K.role.Weight)
+        elif 'bias' in name:
+            K.role.add_role(v, K.role.Bias)
+        elif '_w' in name:
+            K.role.add_role(v, K.role.Weight)
+        elif '_v' in name:
+            K.role.add_role(v, K.role.Weight)
+        else:
+            raise ValueError("Unknown role for variable with name: " + name)
+
+
 def get_cell_info(cell):
     from tensorflow.contrib.rnn.python.ops import rnn_cell
     found_cell = None
@@ -137,9 +152,10 @@ class RNN(NNOp):
         # ====== attention ====== #
         if attention is True:
             attention = tf.contrib.rnn.AttentionCellWrapper
-        if attention is not None and \
+        if attention is not None and attention is not False and \
         (not issubclass(attention, tf.contrib.seq2seq.AttentionMechanism) and
-         attention is not tf.contrib.rnn.AttentionCellWrapper):
+         attention is not tf.contrib.rnn.AttentionCellWrapper and
+         attention is not K.rnn_cell.AttentionCell):
             raise ValueError("`attention` argument must be `None` or instance "
                 "of `tensorflow.contrib.seq2seq.AttentionMechanism`.")
         self.attention = attention
@@ -157,7 +173,8 @@ class RNN(NNOp):
 
     def __attention_creator(self, cell, X, memory):
         kwargs = self.attention_kwargs
-        if self.attention is tf.contrib.rnn.AttentionCellWrapper:
+        if self.attention is tf.contrib.rnn.AttentionCellWrapper or \
+        self.attention is K.rnn_cell.AttentionCell:
             # attn_length: the size of an attention window
             # attn_size: the size of an attention vector. Equal to cell.output_size by default.
             # attn_vec_size: the number of convolutional features calculated
@@ -166,7 +183,7 @@ class RNN(NNOp):
             attn_length = kwargs.get('attn_length', cell.output_size)
             attn_size = kwargs.get('attn_size', None)
             attn_vec_size = kwargs.get('attn_vec_size', None)
-            cell_with_attention = tf.contrib.rnn.AttentionCellWrapper(cell,
+            cell_with_attention = self.attention(cell,
                 attn_length=attn_length, attn_size=attn_size,
                 attn_vec_size=attn_vec_size)
         else: # seq2seq attention
@@ -208,7 +225,7 @@ class RNN(NNOp):
         if self.bidirectional:
             cell_bw = self.cell_bw
         # create attention cell
-        if self.attention is not None:
+        if self.attention:
             if not hasattr(self, "_cell_with_attention"):
                 self._cell_with_attention = self.__attention_creator(
                     cell, X=X, memory=memory)
@@ -246,7 +263,10 @@ class RNN(NNOp):
             # variables changed
             K.eval(tf.variables_initializer(self.variables))
             self._is_initialized_variables = True
+            _infer_variable_role(self.variables)
         # ====== return ====== #
+        if self.bidirectional: # concat outputs
+            outputs = (tf.concat(outputs[0], axis=-1), outputs[1])
         if not self.return_states:
             return outputs[0]
         return outputs
@@ -433,8 +453,8 @@ class CudnnRNN(NNOp):
             ndims = shapeX.ndims
             if 'rnn' in self.rnn_mode: N = 1
             elif self.rnn_mode == 'gru': N = 3
-            else: N = 4
-            newshape = [shapeX[i] for i in range(ndims - 1)] + [self.num_units, N]
+            elif self.rnn_mode == 'lstm': N = 4
+            newshape = [shapeX[i].value for i in range(ndims - 1)] + [self.num_units, N]
             X = tf.reduce_mean(K.reshape(X, newshape), axis=-1)
         # ====== hidden state ====== #
         num_layers = self.num_layers * 2 if self.bidirectional else self.num_layers

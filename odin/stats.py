@@ -90,12 +90,13 @@ def train_valid_test_split(x, train=0.6, idfunc=None, inc_test=True, seed=None):
         raise ValueError("train proportion must larger than 0 and smaller than 1.")
     valid = (N - train) // (2 if inc_test else 1)
     # ====== return splitted ====== #
-    rets = (flatten_list(x_id[i] for i in id_list[:train]),
-            flatten_list(x_id[i] for i in id_list[train: train + valid]))
+    rets = (flatten_list((x_id[i] for i in id_list[:train]), level=1),
+            flatten_list((x_id[i] for i in id_list[train: train + valid]), level=1))
     if inc_test:
-        rets += (flatten_list(x_id[i] for i in id_list[train + valid:]),)
+        rets += (flatten_list((x_id[i] for i in id_list[train + valid:]), level=1),)
     assert sum(len(r) for r in rets) == len(x), \
-        "Number of returned data inconsitent from original data, %d != %d" % (sum(len(r) for r in rets), len(x))
+        "Number of returned data inconsitent from original data, %d != %d" % \
+        (sum(len(r) for r in rets), len(x))
     return rets
 
 

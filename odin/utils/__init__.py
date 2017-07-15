@@ -490,7 +490,7 @@ def as_list(x, N=None, t=None):
     return list(as_tuple(x, N, t))
 
 
-def flatten_list(x, level=1):
+def flatten_list(x, level=None):
     """
     Parameters
     ----------

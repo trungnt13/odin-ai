@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import as_tuple, is_number
+from odin.utils import as_tuple, is_number, flatten_list
 from odin.utils.decorators import functionable
 
 from .base import NNOp, _nnops_initscope
@@ -144,7 +144,7 @@ class Sequence(HelperOps):
             # print after finnish the op
             if self.debug:
                 print(' ', op.name if isinstance(op, functionable) else str(op), '->',
-                    [i.get_shape().as_list() for i in x]
+                    [i.get_shape().as_list() for i in flatten_list(x, level=None)]
                     if isinstance(x, (tuple, list)) else x.get_shape().as_list())
         # end debug
         if self.debug:

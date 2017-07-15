@@ -1,0 +1,12 @@
+[submodule "ideas/seq2seq"]
+	path = ideas/seq2seq
+	url = https://github.com/google/seq2seq.git
+[submodule "ideas/tacotron"]
+	path = ideas/tacotron
+	url = https://github.com/Kyubyong/tacotron.git
+[submodule "ideas/tensor2tensor"]
+	path = ideas/tensor2tensor
+	url = https://github.com/tensorflow/tensor2tensor.git
+[submodule "ideas/transformer"]
+	path = ideas/transformer
+	url = https://github.com/Kyubyong/transformer.git

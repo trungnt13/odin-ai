@@ -238,6 +238,33 @@ class Filter(FeederRecipe):
 # ===========================================================================
 # Features preprocessing
 # ===========================================================================
+class Pooling(FeederRecipe):
+    """docstring for Pooling"""
+
+    def __init__(self, size=2, pool_func=np.mean, data_idx=0):
+        super(Pooling, self).__init__()
+        self.size = size
+        self.pool_func = pool_func
+        self.data_idx = as_tuple(data_idx, t=int)
+
+    def process(self, name, X, y):
+        X_pooled = []
+        for i, x in enumerate(X):
+            if i in self.data_idx:
+                shape = x.shape
+                x = x[:, 2:-2]
+                x = x.reshape(shape[0], -1, 2)
+                x = self.pool_func(x, axis=-1)
+                x = x.reshape(shape[0], -1)
+            X_pooled.append(x)
+        return name, X_pooled, y
+
+    def shape_transform(self, shapes, indices):
+        shapes = [tuple(s[:-1] + (s[-1] // self.size - 2,))
+                  if i in self.data_idx else s for i, s in enumerate(shapes)]
+        return shapes, indices
+
+
 class Normalization(FeederRecipe):
     """ Normalization
 

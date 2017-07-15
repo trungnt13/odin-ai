@@ -108,7 +108,7 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None, reduction=tf.reduce_mean
 
 @return_roles(DifferentialLoss)
 def bayes_binary_crossentropy(y_pred, y_true):
-    y_pred = tf.concat([1 - y_pred, y_pred])
+    y_pred = tf.concat([1 - y_pred, y_pred], axis=-1)
     y_true = tf.one_hot(tf.cast(y_true, 'int32'), depth=2)
     return bayes_crossentropy(y_pred, y_true, nb_classes=2)
 
