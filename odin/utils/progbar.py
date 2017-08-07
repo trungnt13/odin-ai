@@ -83,6 +83,12 @@ def _progbar(pb, print_report, print_summary):
     pb.print_summary = org_summary
 
 
+def add_notification(msg):
+    msg = _CYAN + "[%s]Notification:" % \
+        datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg
+    _tqdm.write(msg)
+
+
 # ===========================================================================
 # Progressbar
 # ===========================================================================
@@ -254,9 +260,9 @@ class Progbar(object):
 
     # ==================== same actions ==================== #
     def add_notification(self, msg):
-        self.pause()
         msg = _CYAN + "[%s][%s]Notification:" % \
-            (datetime.now().strftime('%d/%b-%H:%M:%S'), self.name) + _RESET + msg
+            (datetime.now().strftime('%d/%b-%H:%M:%S'),
+                _MAGENTA + self.name + _CYAN) + _RESET + msg
         _tqdm.write(msg)
         return self
 

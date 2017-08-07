@@ -30,7 +30,7 @@ except:
 import numpy
 import six
 
-from .progbar import Progbar
+from .progbar import Progbar, add_notification
 from .mpi import SelfIterator, segment_list, SharedCounter, async
 from .profile import *
 from .path_utils import *

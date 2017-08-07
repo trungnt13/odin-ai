@@ -11,7 +11,7 @@ import numpy as np
 from odin.config import get_rng
 from odin import fuel, backend as K, nnet as N
 from odin.fuel import Dataset, as_data
-from odin.utils import struct, as_tuple, is_number, Progbar
+from odin.utils import struct, as_tuple, is_number, Progbar, add_notification
 
 from .callbacks import *
 
@@ -849,7 +849,7 @@ class MainLoop(object):
     def _save(self):
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
-            # progbar.add_notification("Creating checkpoint at:" + self._save_path)
+            add_notification("Creating checkpoint at:" + self._save_path)
             if not os.path.exists(self._save_path):
                 os.mkdir(self._save_path)
             elif os.path.isfile(self._save_path):
@@ -861,7 +861,7 @@ class MainLoop(object):
         if not self._allow_rollback: return
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
-            # progbar.add_notification("Rollback from:" + self._save_path)
+            add_notification("Rollback from:" + self._save_path)
             N.deserialize(self._save_path)
 
     def _end(self):

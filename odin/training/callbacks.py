@@ -22,7 +22,7 @@ from six.moves import cPickle
 import numpy as np
 import scipy as sp
 
-from odin.utils import as_tuple, is_string, progbar
+from odin.utils import as_tuple, is_string, add_notification
 from odin.utils.decorators import functionable
 
 __all__ = [
@@ -119,8 +119,7 @@ class Callback(object):
 
     def send_notification(self, msg):
         if self.log:
-            # progbar.add_notification('[%s]%s' % (self.__class__.__name__, msg))
-            pass
+            add_notification('[%s]%s' % (self.__class__.__name__, msg))
         return self
 
 
