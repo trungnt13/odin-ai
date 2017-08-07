@@ -810,7 +810,7 @@ class Stacking(FeederRecipe):
         self.left_context = left_context
         self.right_context = right_context
         self.n = int(left_context) + 1 + int(right_context)
-        self.shift = self.n if shift is None else int(shift)
+        self.shift = int(right_context) if shift is None else int(shift)
 
     def _stacking(self, x):
         # x is ndarray
@@ -909,15 +909,15 @@ class Sequencing(FeederRecipe):
     def last_seen(x):
         return x[-1]
 
-    def __init__(self, frame_length=256, hop_length=128,
+    def __init__(self, frame_length=256, hop_length=None,
                  end='cut', endvalue=0., endmode='post',
                  transcription_transform=lambda x: x[-1]):
         super(Sequencing, self).__init__()
+        self.frame_length = int(frame_length)
+        self.hop_length = frame_length // 2 if hop_length is None else int(hop_length)
         if hop_length > frame_length:
             raise ValueError("hop_length=%d must be smaller than frame_length=%d"
                              % (hop_length, frame_length))
-        self.frame_length = frame_length
-        self.hop_length = hop_length
         self.end = end
         self.endvalue = endvalue
         self.endmode = endmode

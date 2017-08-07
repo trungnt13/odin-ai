@@ -30,7 +30,6 @@ except:
 import numpy
 import six
 
-from . import progbar
 from .progbar import Progbar
 from .mpi import SelfIterator, segment_list, SharedCounter, async
 from .profile import *
@@ -483,6 +482,14 @@ def as_tuple(x, N=None, t=None):
     if (t is not None) and not all(isinstance(v, t) for v in x):
         raise TypeError("expected a single value or an iterable "
                         "of {0}, got {1} instead".format(t.__name__, x))
+    return x
+
+
+def as_tuple_of_shape(x):
+    if not isinstance(x, (tuple, list)):
+        x = (x,)
+    if is_number(x[0]):
+        x = (x,)
     return x
 
 

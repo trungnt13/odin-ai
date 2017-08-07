@@ -30,14 +30,14 @@ from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, one_hot,
+from odin.utils import (segment_list, one_hot, flatten_list,
                         Progbar, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.mpi import MPI
 
 from .data import MutableData, as_data
 from .dataset import Dataset
-from .recipes import FeederList, CreateBatch, CreateFile
+from .recipes import FeederList, CreateBatch, CreateFile, FeederRecipe
 
 
 # ===========================================================================
@@ -173,7 +173,9 @@ class Feeder(MutableData):
 
     def set_recipes(self, recipes):
         # filter out None value
-        recipes = [i for i in as_tuple(recipes) if i is not None]
+        recipes = flatten_list(as_tuple(recipes))
+        recipes = [i for i in recipes if i is not None and
+                   isinstance(i, FeederRecipe)]
         if len(recipes) > 0:
             if not any(isinstance(r, (CreateFile, CreateBatch)) for r in recipes):
                 raise ValueError("The recipe CreateFile or CreateBatch must be in "
@@ -300,18 +302,18 @@ class Feeder(MutableData):
 
         ds = Dataset(path)
         # ====== start caching ====== #
-        with Progbar(target=self.shape[0], name='Caching') as prog:
-            for X in self:
-                if not isinstance(X, (tuple, list)):
-                    X = (X,)
-                # saving preprocessed data
-                for i, x in enumerate(X):
-                    name = 'data%d' % i
-                    if name in ds: ds[name].append(x)
-                    else: ds[(name, datatype)] = x
-                # print progress
-                prog.add(X[0].shape[0])
-            # prog.target = prog.seen_so_far; prog.add(0)
+        prog = Progbar(target=self.shape[0], name='Caching',
+                       print_report=True, print_summary=True)
+        for X in self:
+            if not isinstance(X, (tuple, list)):
+                X = (X,)
+            # saving preprocessed data
+            for i, x in enumerate(X):
+                name = 'data%d' % i
+                if name in ds: ds[name].append(x)
+                else: ds[(name, datatype)] = x
+            # print progress
+            prog.add(X[0].shape[0])
         ds.flush()
         ds.close()
         # end

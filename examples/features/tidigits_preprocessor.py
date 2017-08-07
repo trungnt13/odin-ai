@@ -13,7 +13,7 @@ import numpy as np
 from odin.visual import plot_save, plot_audio
 from odin.preprocessing import speech
 from odin import nnet as N, fuel as F, backend as K
-from odin.utils import Progbar, get_all_files, get_all_ext, exec_commands
+from odin.utils import get_all_files, get_all_ext, exec_commands
 
 README = \
 """

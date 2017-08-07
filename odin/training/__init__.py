@@ -11,7 +11,7 @@ import numpy as np
 from odin.config import get_rng
 from odin import fuel, backend as K, nnet as N
 from odin.fuel import Dataset, as_data
-from odin.utils import struct, as_tuple, is_number, Progbar, progbar
+from odin.utils import struct, as_tuple, is_number, Progbar
 
 from .callbacks import *
 
@@ -322,14 +322,12 @@ class Task(object):
 
     def __init__(self, func, data, epoch=1, p=1.0,
                  batch_size=128, seed=None, shuffle_level=2,
-                 callbacks=None, print_progress=True, confirm_exit=False,
-                 name=None):
+                 callbacks=None, name=None):
         super(Task, self).__init__()
         self.set_func(func, data)
         # this Progbar will record the history as well
-        self._progbar = Progbar(target=self.nb_samples, name=name)
-        self.print_progress = print_progress
-        self.confirm_exit = confirm_exit
+        self._progbar = Progbar(target=self.nb_samples, name=name,
+                                print_report=True, print_summary=True)
         # ====== assign other arguments ====== #
         self._nb_epoch = epoch
         self._p = np.clip(p, 0., 1.)
@@ -350,13 +348,11 @@ class Task(object):
 
     def __getstate__(self):
         return (self._progbar, self._nb_epoch, self._p, self._name,
-                self._batch_size, self._rng, self._seed, self._shuffle_level,
-                self.print_progress, self.confirm_exit)
+                self._batch_size, self._rng, self._seed, self._shuffle_level)
 
     def __setstate__(self, states):
         (self._progbar, self._nb_epoch, self._p, self._name,
-         self._batch_size, self._rng, self._seed, self._shuffle_level,
-         self.print_progress, self.confirm_exit) = states
+         self._batch_size, self._rng, self._seed, self._shuffle_level) = states
         # ====== current info ====== #
         self._curr_epoch = 0
         self._curr_iteration = 0
@@ -473,7 +469,7 @@ class Task(object):
                     epoch=self.nb_epoch, p=self.probability,
                     batch_size=self.batch_size, seed=self._seed,
                     shuffle_level=self._shuffle_level,
-                    name=self._name, print_progress=self.print_progress)
+                    name=self._name)
 
     def __iter(self):
         '''
@@ -498,81 +494,79 @@ class Task(object):
             yield 'task_end'
         else:
             # ====== start of training ====== #
-            with self._progbar.context(print_progress=self.print_progress,
-                                       confirm_exit=self.confirm_exit):
-                while self._curr_epoch < self._nb_epoch:
-                    self._callback_msg = self._callback.epoch_start(self, self._data)
-                    yield 'epoch_start'
-                    seed = self._rng.randint(10e8)
-                    # if only 1 Data, don't need zip or we will mess up
-                    if len(self._data) == 1:
-                        data_it = iter(self._data[0].set_batch(batch_size=self._batch_size,
-                                                               seed=seed,
-                                                               shuffle_level=self._shuffle_level))
-                        data = data_it
-                    else:
-                        data_it = [iter(d.set_batch(batch_size=self._batch_size,
-                                                    seed=seed,
-                                                    shuffle_level=self._shuffle_level))
-                                   for d in self._data]
-                        data = zip(*data_it)
-                    # ======  start the iteration ====== #
-                    self._curr_epoch_samples = 0
-                    self._curr_epoch_iteration = 0
-                    for i, x in enumerate(data):
-                        # alread terminated, try to exhausted the iterator
-                        # if forced_to_terminate: continue
-                        # preprocessed the data
-                        if not isinstance(x, (tuple, list)):
-                            x = [x]
-                        # update some info
-                        shape0 = x[0].shape[0]
-                        self._curr_samples += shape0
-                        self._curr_iteration += 1
-                        self._curr_epoch_samples += shape0
-                        self._curr_epoch_iteration += 1
-                        self._callback_msg = self._callback.batch_start(self, x)
-                        # apply the function
-                        if self.probability >= 1. or self._rng.rand() < self.probability:
-                            results = self._func(*x)
-                            # add msg from batch_end event
-                            self._callback_msg += self._callback.batch_end(self, results)
-                            # return results
-                            yield results
-                            # update the progress bar
-                            for (name, shape), res in zip(self._output_info,
-                                                          as_tuple(results)):
-                                if len(shape) == 0: # return single value
-                                    self._progbar[name] = res
-                                else: # return tensor
-                                    self._progbar[name] = res
-                            self._progbar.add(shape0)
-                        # check TERMINATE signal
-                        if self._stop:
-                            # send signal to the data iterators also
-                            for i in data_it:
-                                if hasattr(i, 'stop'):
-                                    i.stop()
-                                else: # just iterate all over
-                                    for _ in i: pass
-                            # break the epoch loop
-                            break
-                    # Epoch end signaling
-                    self._curr_epoch += 1
-                    self._callback_msg = self._callback.epoch_end(
-                        self, self._progbar.history[self._curr_epoch - 1])
-                    yield 'epoch_end'
-                    # ====== check if we got the right number for epoch iter ====== #
-                    if self._curr_epoch_samples != self._nb_samples:
-                        # just for sure should not smaller than the real number
-                        self._nb_samples = self._curr_epoch_samples
-                    # ======  end_epoch or task ====== #
-                    if self._stop or self._curr_epoch >= self._nb_epoch:
-                        self._callback_msg = self._callback.task_end(
-                            self, self._progbar.history)
-                        yield 'task_end'
-                        progbar.add_notification('Task "%s" ended!' % str(self.name))
+            while self._curr_epoch < self._nb_epoch:
+                self._callback_msg = self._callback.epoch_start(self, self._data)
+                yield 'epoch_start'
+                seed = self._rng.randint(10e8)
+                # if only 1 Data, don't need zip or we will mess up
+                if len(self._data) == 1:
+                    data_it = iter(self._data[0].set_batch(batch_size=self._batch_size,
+                                                           seed=seed,
+                                                           shuffle_level=self._shuffle_level))
+                    data = data_it
+                else:
+                    data_it = [iter(d.set_batch(batch_size=self._batch_size,
+                                                seed=seed,
+                                                shuffle_level=self._shuffle_level))
+                               for d in self._data]
+                    data = zip(*data_it)
+                # ======  start the iteration ====== #
+                self._curr_epoch_samples = 0
+                self._curr_epoch_iteration = 0
+                for i, x in enumerate(data):
+                    # alread terminated, try to exhausted the iterator
+                    # if forced_to_terminate: continue
+                    # preprocessed the data
+                    if not isinstance(x, (tuple, list)):
+                        x = [x]
+                    # update some info
+                    shape0 = x[0].shape[0]
+                    self._curr_samples += shape0
+                    self._curr_iteration += 1
+                    self._curr_epoch_samples += shape0
+                    self._curr_epoch_iteration += 1
+                    self._callback_msg = self._callback.batch_start(self, x)
+                    # apply the function
+                    if self.probability >= 1. or self._rng.rand() < self.probability:
+                        results = self._func(*x)
+                        # add msg from batch_end event
+                        self._callback_msg += self._callback.batch_end(self, results)
+                        # return results
+                        yield results
+                        # update the progress bar
+                        for (name, shape), res in zip(self._output_info,
+                                                      as_tuple(results)):
+                            if len(shape) == 0: # return single value
+                                self._progbar[name] = res
+                            else: # return tensor
+                                self._progbar[name] = res
+                        self._progbar.add(shape0)
+                    # check TERMINATE signal
+                    if self._stop:
+                        # send signal to the data iterators also
+                        for i in data_it:
+                            if hasattr(i, 'stop'):
+                                i.stop()
+                            else: # just iterate all over
+                                for _ in i: pass
+                        # break the epoch loop
                         break
+                # Epoch end signaling
+                self._curr_epoch += 1
+                self._callback_msg = self._callback.epoch_end(
+                    self, self._progbar.history[self._curr_epoch - 1])
+                yield 'epoch_end'
+                # ====== check if we got the right number for epoch iter ====== #
+                if self._curr_epoch_samples != self._nb_samples:
+                    # just for sure should not smaller than the real number
+                    self._nb_samples = self._curr_epoch_samples
+                # ======  end_epoch or task ====== #
+                if self._stop or self._curr_epoch >= self._nb_epoch:
+                    self._callback_msg = self._callback.task_end(
+                        self, self._progbar.history)
+                    yield 'task_end'
+                    self._progbar.add_notification('Task "%s" ended!' % str(self.name))
+                    break
         # ====== end of iteration ====== #
         self._created_iter = None
 
@@ -683,8 +677,7 @@ class MainLoop(object):
 
     """
 
-    def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
-                 allow_rollback=True, print_progress=True, confirm_exit=True):
+    def __init__(self, batch_size=256, seed=-1, shuffle_level=0, allow_rollback=True):
         super(MainLoop, self).__init__()
         self._main_task = None
         self._task = []
@@ -707,9 +700,6 @@ class MainLoop(object):
         self._save_obj = None
         self._save_variables = None
 
-        self.confirm_exit = confirm_exit
-        self.print_progress = print_progress
-
     # ==================== pickling ==================== #
     def __setstate__(self, value):
         self.set_batch(batch_size=value[0], shuffle_level=value[2])
@@ -717,8 +707,6 @@ class MainLoop(object):
 
         self._callback = value[3]
         self._allow_rollback = value[4]
-        self.print_progress = value[5]
-        self.confirm_exit = value[6]
 
         self._task = []
         self._subtask = []
@@ -726,8 +714,7 @@ class MainLoop(object):
 
     def __getstate__(self):
         return (self._batch_size, self._rng, self._shuffle_level,
-                self._callback, self._allow_rollback,
-                self.print_progress, self.confirm_exit)
+                self._callback, self._allow_rollback)
 
     # ==================== Signal handling ==================== #
     def set_save(self, path, obj, variables=[]):
@@ -862,7 +849,7 @@ class MainLoop(object):
     def _save(self):
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
-            progbar.add_notification("Creating checkpoint at:" + self._save_path)
+            # progbar.add_notification("Creating checkpoint at:" + self._save_path)
             if not os.path.exists(self._save_path):
                 os.mkdir(self._save_path)
             elif os.path.isfile(self._save_path):
@@ -874,7 +861,7 @@ class MainLoop(object):
         if not self._allow_rollback: return
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
-            progbar.add_notification("Rollback from:" + self._save_path)
+            # progbar.add_notification("Rollback from:" + self._save_path)
             N.deserialize(self._save_path)
 
     def _end(self):
@@ -884,8 +871,6 @@ class MainLoop(object):
         if self._main_task is None:
             raise ValueError('You must call set_task and set the main task first.')
         for t in self._task + self._subtask:
-            t.print_progress = self.print_progress
-            t.confirm_exit = self.confirm_exit
             t.set_callbacks(self._callback)
         # ====== prepare subtask ====== #
         finished_task = {i: False for i in self._task + self._subtask}

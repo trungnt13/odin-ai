@@ -43,7 +43,7 @@ class NNetTest(unittest.TestCase):
         X2 = K.placeholder(shape=(None, 12, 8, 25, 18), name='X2')
         x1 = np.random.rand(13, 12, 8, 25)
         x2 = np.random.rand(13, 12, 8, 25, 18)
-        prog = Progbar(target=2 * 2 * 2 * 3)
+        prog = Progbar(target=2 * 2 * 2 * 3, print_report=True)
 
         def check_shape(s1, s2):
             self.assertEqual(tuple(s1), tuple(s2), msg="%s != %s" % (str(s1), str(s2)))
@@ -57,7 +57,7 @@ class NNetTest(unittest.TestCase):
                 for pad in ('valid', 'same'):
                     for transpose_mode in ('nn', 'pad_margin', 'repeat'):
                         # ====== print prog ====== #
-                        prog.title = "Size:%d,Stride:%d,Pad:%s,T:%s" % \
+                        prog['test'] = "Size:%d,Stride:%d,Pad:%s,T:%s" % \
                             (pool_size, strides, pad, transpose_mode)
                         prog.add(1)
                         # ====== check ops 4D ====== #
@@ -255,7 +255,7 @@ class NNetTest(unittest.TestCase):
             shape = (np.random.randint(8, 18),) + tuple(X.get_shape().as_list()[1:])
             x = np.random.rand(*shape)
             return f(x)
-        prog = Progbar(target=2 * 3 * 3 * 2 * 2)
+        prog = Progbar(target=2 * 3 * 3 * 2 * 2, print_report=True)
         for X in (K.placeholder(shape=(None, 13, 12, 25)),
                   K.placeholder(shape=(None, 13, 12, 8, 25))):
             for strides in (1, 2, 3):
@@ -264,7 +264,7 @@ class NNetTest(unittest.TestCase):
                         for pad in ("same", "valid"):
                             for dilation in (1,):
                                 # ====== progress ====== #
-                                prog.title = "#Dim:%d;Stride:%d;Filter:%d;Channel:%d;Pad:%s" % \
+                                prog['test'] = "#Dim:%d;Stride:%d;Filter:%d;Channel:%d;Pad:%s" % \
                                     (X.get_shape().ndims, strides, filter_size, num_filters, pad)
                                 prog.add(1)
                                 # ====== test Conv ====== #

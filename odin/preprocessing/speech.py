@@ -122,7 +122,8 @@ def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
     '''
     Return
     ------
-        waveform (ndarray: [samples;channel]), sample rate (int)
+        waveform (ndarray: [samples;channel]),
+        sample rate (int)
     '''
     if pcm or (isinstance(f, str) and
                any(i in f for i in ['.pcm', '.PCM'])):
@@ -254,7 +255,8 @@ def speech_features(s, sr=None,
                     pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
                     vad_smooth=3, vad_minlen=0.1,
                     cqt_bins=96, preemphasis=None,
-                    center=True, power=2, log=True, backend='odin'):
+                    center=True, power=2, log=True,
+                    return_raw=False, backend='odin'):
     """ Automatically extract multiple acoustic representation of
     speech features
 
@@ -325,6 +327,8 @@ def speech_features(s, sr=None,
         e.g., 1 for energy, 2 for power, etc.
     log: bool
         if True, convert all power spectrogram to DB
+    return_raw: bool
+        if True, return downsampled raw signal
     backend: 'odin', 'sptk'
         support backend for calculating the spectra
 
@@ -532,4 +536,5 @@ def speech_features(s, sr=None,
 
         ('vad', vad if get_vad else None),
         ('vadids', vad_ids if get_vad else None),
+        ('raw', s if return_raw else None)
     ])

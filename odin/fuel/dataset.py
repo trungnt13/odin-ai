@@ -153,12 +153,12 @@ class Dataset(object):
             if not os.path.exists(extract_path):
                 os.mkdir(extract_path)
             maxlen = max([len(i) for i in allfile])
-            with Progbar(target=len(allfile), name="[Dataset] Loading Archive"
-                ).context(print_progress=True, print_summary=True) as prog:
-                for i, f in enumerate(allfile):
-                    zfile.extract(f, path=extract_path)
-                    prog['File'] = ('Unarchiving: %-' + str(maxlen) + 's') % f
-                    prog.add(1)
+            pb = Progbar(target=len(allfile), name="[Dataset] Loading Archive",
+                         print_summary=True, print_report=True)
+            for i, f in enumerate(allfile):
+                zfile.extract(f, path=extract_path)
+                pb['File'] = ('Unarchiving: %-' + str(maxlen) + 's') % f
+                pb.add(1)
             # ====== finally set path ====== #
             self._set_path(extract_path)
         except IOError as e:
@@ -213,15 +213,15 @@ class Dataset(object):
 
         files = set([_[-1] for _ in self._data_map.itervalues()])
 
-        with Progbar(target=len(files), name="[Dataset] Archiving"
-            ).context(print_progress=True, print_summary=True) as prog:
-            maxlen = max([len(os.path.basename(i)) for i in files])
-            for i, f in enumerate(files):
-                zfile.write(f, os.path.basename(f))
-                prog['title'] = ('Archiving: %-' + str(maxlen) + 's') \
-                    % os.path.basename(f)
-                prog.add(1)
-            zfile.close()
+        prog = Progbar(target=len(files), name="[Dataset] Archiving",
+                       print_report=True, print_summary=True)
+        maxlen = max([len(os.path.basename(i)) for i in files])
+        for i, f in enumerate(files):
+            zfile.write(f, os.path.basename(f))
+            prog['Data'] = ('Archiving: %-' + str(maxlen) + 's') \
+                % os.path.basename(f)
+            prog.add(1)
+        zfile.close()
         return path
 
     def flush(self):

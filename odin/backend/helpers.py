@@ -455,6 +455,7 @@ class Function(object):
             inputs = [kwargs[i] for i in self.inputs_name]
         # ====== create feed_dict ====== #
         feed_dict = {}
+        inputs = flatten_list(inputs, level=None)
         for tensor, value in zip(self.inputs, inputs):
             feed_dict[tensor] = value
         feed_dict.update(self.defaults)

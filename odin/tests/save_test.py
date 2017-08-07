@@ -11,7 +11,6 @@ import numpy as np
 
 from odin import backend as K
 from odin import nnet as N
-from odin.utils import Progbar
 
 
 class SaveTest(unittest.TestCase):

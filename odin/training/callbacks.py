@@ -119,7 +119,8 @@ class Callback(object):
 
     def send_notification(self, msg):
         if self.log:
-            progbar.add_notification('[%s]%s' % (self.__class__.__name__, msg))
+            # progbar.add_notification('[%s]%s' % (self.__class__.__name__, msg))
+            pass
         return self
 
 

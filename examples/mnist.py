@@ -32,15 +32,15 @@ y = K.placeholder(shape=(None,), name='y', dtype='int32')
 # Build network
 # ===========================================================================
 ops = N.Sequence([
-    N.Dimshuffle((0, 1, 2, 'x')),
-    N.BatchNorm(axes='auto'),
-    N.Conv(32, (3, 3), strides=(1, 1), pad='same',
-           activation=tf.nn.relu),
-    N.Pool(pool_size=(2, 2), strides=None),
-    N.Conv(64, (3, 3), strides=(1, 1), pad='same',
-           activation=tf.nn.relu),
-    N.Pool(pool_size=(2, 2), strides=None),
-    N.Dropout(level=0.5),
+    # N.Dimshuffle((0, 1, 2, 'x')),
+    # N.BatchNorm(axes='auto'),
+    # N.Conv(32, (3, 3), strides=(1, 1), pad='same',
+    #        activation=tf.nn.relu),
+    # N.Pool(pool_size=(2, 2), strides=None),
+    # # N.Conv(64, (3, 3), strides=(1, 1), pad='same',
+    # #        activation=tf.nn.relu),
+    # N.Pool(pool_size=(2, 2), strides=None),
+    # N.Dropout(level=0.5),
     N.Flatten(outdim=2),
     N.Dense(256, activation=tf.nn.relu),
     N.Dense(10, activation=K.linear)
@@ -68,8 +68,7 @@ f_pred = K.function(X, y_pred, training=False)
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
-                         print_progress=True, confirm_exit=True)
+task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2)
 task.set_save(get_modelpath(name='mnist_ai', override=True), ops)
 task.set_callbacks([
     training.NaNDetector(),
