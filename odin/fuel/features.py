@@ -7,8 +7,9 @@ from __future__ import print_function, division, absolute_import
 import re
 import os
 import sys
-import warnings
+import wave
 import shutil
+import warnings
 from numbers import Number
 from multiprocessing import Pool, cpu_count, Process, Queue
 from six import add_metaclass, string_types
@@ -205,7 +206,7 @@ class FeatureProcessor(object):
         # ====== processing ====== #
         mpi = MPI(self.jobs, self.map, wrapped_reduce,
                   ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
-        prog = Progbar(target=njobs, name=self.__class__.__name__,
+        prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
                        print_report=True, print_summary=True)
         for name in mpi:
             prog['File'] = '%-20s' % name
@@ -282,7 +283,14 @@ class FeatureProcessor(object):
 # ===========================================================================
 # Speech features
 # ===========================================================================
-def _segments_preprocessing(segments, audio_ext):
+def _valid_segment_name(segments):
+    for _, i in segments:
+        if '.' in i[0] or ':' in i[0]:
+            raise ValueError("Segment name cannot contain: '.' or ':', the given"
+                " name is: %s" % i[0])
+
+
+def _segments_preprocessing(segments, audio_ext, maxlen):
     """ Filter segments into map of jobs
     Return
     ------
@@ -300,6 +308,7 @@ def _segments_preprocessing(segments, audio_ext):
         if ('indices' in segments and 'raw' in segments and 'sr' in segments):
             jobs = [(segments, ((name, start, end, 0),))
                     for name, (start, end) in segments['indices'].iteritems()]
+            _valid_segment_name(jobs)
             nb_jobs = len(jobs)
             return jobs, nb_jobs
         # assume that each key in dataset is a files
@@ -345,10 +354,81 @@ def _segments_preprocessing(segments, audio_ext):
     for segment, file, start, end, channel in file_list:
         jobs[file].append((segment, float(start), float(end), int(channel)))
     jobs = sorted(jobs.items(), key=lambda x: x[0])
+    _valid_segment_name(jobs)
     # check empty jobs
     if len(jobs) == 0:
         raise Exception('NO jobs found for processing.')
+    # ====== check maxlen ====== #
+    if maxlen is not None:
+        new_jobs = defaultdict(list)
+        new_nb_jobs = 0
+        for audiopath, segments in jobs:
+            f = wave.open(audiopath, mode='r')
+            sr = f.getframerate()
+            N = f.getnframes()
+            # cut the segments
+            for name, start, end, channel in segments:
+                if 0. <= start < 1. and 0. < end <= 1.:
+                    start = int(start * N)
+                    end = int(np.ceil(end * N))
+                else:
+                    start = int(float(start) * sr)
+                    end = int(N if end <= 0 else float(end) * sr)
+                # check
+                if end - start > maxlen * sr:
+                    _ = list(range(start, end, int(sr * maxlen))) + [end]
+                    for st, en in zip(_, _[1:]):
+                        st = st / sr
+                        en = en / sr
+                        st_ = ('%f' % st).rstrip('0').rstrip('.')
+                        en_ = ('%f' % en).rstrip('0').rstrip('.')
+                        new_jobs[audiopath].append(
+                            (name + ":%s:%s" % (st_, en_), st, en, channel))
+                        new_nb_jobs += 1
+                else:
+                    new_jobs[audiopath].append((name, start, end, channel))
+                    new_nb_jobs += 1
+            f.close()
+        jobs = sorted(new_jobs.items(), key=lambda x: x[0])
+        nb_jobs = new_nb_jobs
     return jobs, nb_jobs
+
+
+def _load_audio(audio_path, segments, sr, sr_new=None, remove_dc_offset=True):
+    """ Return iterator of (name, data, sr) """
+    # iterate over a Dataset
+    if isinstance(audio_path, Dataset):
+        for name, start, end, channel in segments:
+            yield (name, audio_path['raw'][start: end][:], audio_path['sr'][name])
+    # iterate over file path
+    else:
+        s, sr_orig = speech.read(audio_path, remove_dc_offset=remove_dc_offset)
+        # check original sample rate
+        if sr_orig is not None and sr is not None and sr_orig != sr:
+            raise Exception('Given sample rate (%d Hz) is different from '
+                            'audio file sample rate (%d Hz).' %
+                            (sr, sr_orig))
+        if sr_orig is None:
+            sr_orig = sr
+        if sr_orig is None:
+            raise RuntimeError("Cannot acquire original sample rate from "
+                               "loaded utterance, or from given arguments "
+                               "of this Processor.")
+        # downsampling
+        if sr_new is not None:
+            s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
+            sr_orig = sr_new
+        N = len(s)
+        # ====== cut into segments ====== #
+        for name, start, end, channel in segments:
+            if 0. <= start < 1. and 0. < end <= 1.: # percentage
+                start = int(start * N)
+                end = int(np.ceil(end * N))
+            else: # given the duration in second
+                start = int(float(start) * sr_orig)
+                end = int(N if end <= 0 else float(end) * sr_orig)
+            data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+            yield (name, data, sr_orig)
 
 
 class WaveProcessor(FeatureProcessor):
@@ -375,6 +455,10 @@ class WaveProcessor(FeatureProcessor):
         path to output folder
     sr: int
         sample rate
+    maxlen: int
+        maximum length of an utterances in second, if any file is longer than
+        given length, it is divided into small segments and the start time and
+        end time are concatenated to the name (e.g. file:0:30)
     dtype: numpy.dtype, None, 'auto'
         if None or 'auto', keep the original dtype of audio
 
@@ -382,7 +466,7 @@ class WaveProcessor(FeatureProcessor):
 
     def __init__(self, segments, output_path, sr=None, sr_new=None,
                 audio_ext=None, pcm=False, remove_dc_offset=True,
-                dtype='float16', datatype='memmap',
+                maxlen=None, dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
         super(WaveProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=False, pca_whiten=False,
@@ -390,7 +474,8 @@ class WaveProcessor(FeatureProcessor):
             ncache=ncache, ncpu=ncpu)
         if isinstance(segments, Dataset):
             raise ValueError("WaveProcessor does not support segments as a Dataset.")
-        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
+        self.maxlen = None if maxlen is None else int(maxlen)
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext, self.maxlen)
         if dtype is None or (is_string(dtype) and dtype == 'auto'):
             s, _ = speech.read(self.jobs[0][0], pcm=pcm, dtype=None)
             dtype = s.dtype
@@ -412,41 +497,15 @@ class WaveProcessor(FeatureProcessor):
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
-            # load audio data
-            s, sr_orig = speech.read(audio_path, pcm=self.pcm,
-                remove_dc_offset=self.remove_dc_offset)
-            # check original sample rate
-            if sr_orig is not None and self.sr is not None and \
-            sr_orig != self.sr:
-                raise Exception('Given sample rate (%d Hz) is different from '
-                                'audio file sample rate (%d Hz).' %
-                                (self.sr, sr_orig))
-            if sr_orig is None:
-                sr_orig = self.sr
-            if sr_orig is None:
-                raise RuntimeError("Cannot acquire original sample rate from "
-                                   "loaded utterance, or from given arguments "
-                                   "of this Processor.")
-            # downsampling
-            if self.sr_new is not None:
-                s = speech.resample(s, sr_orig, self.sr_new, best_algorithm=True)
-                sr_orig = self.sr_new
-            N = len(s)
             # processing all segments
             ret = []
-            for name, start, end, channel in segments:
-                if 0. <= start < 1. and 0. < end <= 1.:
-                    start = int(start * N)
-                    end = int(np.ceil(end * N))
-                else:
-                    start = int(float(start) * sr_orig)
-                    end = int(N if end <= 0 else float(end) * sr_orig)
-                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                ret.append((name, [data, int(sr_orig)]))
+            for name, data, sr in _load_audio(audio_path, segments,
+            self.sr, self.sr_new, remove_dc_offset=self.remove_dc_offset):
+                ret.append((name, [data, int(sr)]))
             # return result
             return (i for i in ret)
         except Exception as e:
-            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
+            # msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             import traceback; traceback.print_exc()
             raise e
 
@@ -542,6 +601,12 @@ class SpeechProcessor(FeatureProcessor):
         (the relative variance scales of the components) but can sometimes
         improve the predictive accuracy of the downstream estimators by
         making data respect some hard-wired assumptions.
+    maxlen: int
+        maximum length of an utterances in second, if any file is longer than
+        given length, it is divided into small segments and the start time and
+        end time are concatenated to the name (e.g. file:0:30)
+    save_raw: bool
+        if True, saving the raw signal together with all the acoustic features
     save_stats: bool
         same the first order and second order statistics, standard deviation
         of all features
@@ -585,7 +650,7 @@ class SpeechProcessor(FeatureProcessor):
                 cqt_bins=96, preemphasis=None,
                 center=True, power=2, log=True, backend='odin',
                 pca=True, pca_whiten=False,
-                audio_ext=None, save_raw=False,
+                audio_ext=None, maxlen=None, save_raw=False,
                 save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
@@ -593,7 +658,9 @@ class SpeechProcessor(FeatureProcessor):
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
             save_stats=save_stats, substitute_nan=substitute_nan,
             ncache=ncache, ncpu=ncpu)
-        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
+        self.maxlen = None if maxlen is None else int(maxlen)
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext,
+            self.maxlen)
         # ====== which features to get ====== #
         features_properties = []
         if save_raw:
@@ -662,38 +729,6 @@ class SpeechProcessor(FeatureProcessor):
         """ Returnn all name of given features"""
         return self.__features_properties
 
-    def _load_audio(self, audio_path, segments):
-        """ Return iterator of (name, data, sr) """
-        # iterate over a Dataset
-        if isinstance(audio_path, Dataset):
-            for name, start, end, channel in segments:
-                yield (name, audio_path['raw'][start: end][:], audio_path['sr'][name])
-        # iterate over file path
-        else:
-            s, sr_orig = speech.read(audio_path)
-            # check original sample rate
-            if sr_orig is not None and self.sr is not None and \
-            sr_orig != self.sr:
-                raise Exception('Given sample rate (%d Hz) is different from '
-                                'audio file sample rate (%d Hz).' %
-                                (self.sr, sr_orig))
-            if sr_orig is None:
-                sr_orig = self.sr
-            if sr_orig is None:
-                raise RuntimeError("Cannot acquire original sample rate from "
-                                   "loaded utterance, or from given arguments "
-                                   "of this Processor.")
-            N = len(s)
-            for name, start, end, channel in segments:
-                if 0. <= start < 1. and 0. < end <= 1.:
-                    start = int(start * N)
-                    end = int(np.ceil(end * N))
-                else:
-                    start = int(float(start) * sr_orig)
-                    end = int(N if end <= 0 else float(end) * sr_orig)
-                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-                yield (name, data, sr_orig)
-
     def map(self, job):
         '''
         Return
@@ -703,7 +738,8 @@ class SpeechProcessor(FeatureProcessor):
         audio_path, segments = job[0] if len(job) == 1 else job
         try:
             ret = []
-            for name, data, sr_orig in self._load_audio(audio_path, segments):
+            for name, data, sr_orig in _load_audio(audio_path, segments,
+                                                   self.sr, self.sr_new):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
@@ -719,7 +755,7 @@ class SpeechProcessor(FeatureProcessor):
                         pitch_algo=self.pitch_algo,
                         vad_smooth=self.vad_smooth, vad_minlen=self.vad_minlen,
                         cqt_bins=self.cqt_bins, fmin=self.fmin, fmax=self.fmax,
-                        sr_new=self.sr_new, preemphasis=self.preemphasis,
+                        sr_new=None, preemphasis=self.preemphasis,
                         center=self.center, power=self.power, log=self.log,
                         return_raw=self.save_raw, backend=self.backend)
                 if features is not None:
