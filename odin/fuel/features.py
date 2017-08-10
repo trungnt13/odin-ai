@@ -306,14 +306,11 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
     if isinstance(segments, Dataset):
         # WAVE dataset
         if ('indices' in segments and 'raw' in segments and 'sr' in segments):
-            jobs = [(segments, ((name, start, end, 0),))
-                    for name, (start, end) in segments['indices'].iteritems()]
-            _valid_segment_name(jobs)
-            nb_jobs = len(jobs)
-            return jobs, nb_jobs
-        # assume that each key in dataset is a files
-        file_list = [(os.path.basename(segments[k]), segments[k], 0.0, -1.0)
-                     for k in segments.keys()] # segment, path, start, end
+            file_list = [(name, segments, 0., -1., 0)
+                         for name, (start, end) in segments['indices'].iteritems()]
+        else: # assume that each key in dataset is a files
+            file_list = [(os.path.basename(segments[k]), segments[k], 0.0, -1.0, 0)
+                         for k in segments.keys()] # segment, path, start, end
     # NOT loaded segments
     elif isinstance(segments, str):
         if not os.path.exists(segments):
@@ -336,36 +333,52 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
         # list of all information
         elif isinstance(segments[0], (tuple, list)):
             if len(segments[0]) == 1: # only path is given
-                segments = [(path, path, 0, -1, 0) for path in segments]
+                segments = [(path, path, 0., -1., 0) for path in segments]
             elif len(segments[0]) == 2: # name and path are given
-                segments = [(name, path, 0, -1, 0) for name, path in segments]
+                segments = [(name, path, 0., -1., 0) for name, path in segments]
             elif len(segments[0]) != 4 and len(segments[0]) != 5:
                 raise Exception('segments must contain information in following order:'
                                 '[name] [path] [start] [end] [channel]')
             file_list = segments
     # filter using support audio extension
-    file_list = [f for f in file_list if any(ext in f[1][-len(ext):]
-                 for ext in audio_ext)]
+    file_list = [f for f in file_list
+                 if ((isinstance(f[1], str) and
+                    any(ext in f[1][-len(ext):] for ext in audio_ext)) or
+                 isinstance(f[1], Dataset))]
     # if no channel is provided, append the channel
     file_list = [list(f) + [0] if len(f) == 4 else f for f in file_list]
     nb_jobs = len(file_list)
-    # convert into: audio_path -> segment(name, start, end, channel)
-    jobs = defaultdict(list)
-    for segment, file, start, end, channel in file_list:
-        jobs[file].append((segment, float(start), float(end), int(channel)))
-    jobs = sorted(jobs.items(), key=lambda x: x[0])
+    # convert into: audio_path -> list_of_segments[(name, start, end, channel), ...]
+    jobs = []
+    file_jobs = defaultdict(list)
+    for segment, path_or_ds, start, end, channel in file_list:
+        if isinstance(path_or_ds, Dataset):
+            jobs.append((path_or_ds, [(segment, start, end, channel)]))
+        else:
+            file_jobs[path_or_ds].append(
+                (segment, float(start), float(end), int(channel)))
+    file_jobs = sorted(file_jobs.items(), key=lambda x: x[0])
+    jobs += file_jobs
     _valid_segment_name(jobs)
     # check empty jobs
     if len(jobs) == 0:
         raise Exception('NO jobs found for processing.')
     # ====== check maxlen ====== #
     if maxlen is not None:
-        new_jobs = defaultdict(list)
+        new_jobs = []
         new_nb_jobs = 0
-        for audiopath, segments in jobs:
-            f = wave.open(audiopath, mode='r')
-            sr = f.getframerate()
-            N = f.getnframes()
+        # segments: list of (name, s, e, channel)
+        for path_or_ds, segments in jobs:
+            new_segments = []
+            if isinstance(path_or_ds, Dataset):
+                f = None
+                sr = path_or_ds['sr'][segments[0][0]]
+                N = path_or_ds['indices'][segments[0][0]]
+                N = N[1] - N[0]
+            else: # open wave file
+                f = wave.open(path_or_ds, mode='r')
+                sr = f.getframerate()
+                N = f.getnframes()
             # cut the segments
             for name, start, end, channel in segments:
                 if 0. <= start < 1. and 0. < end <= 1.:
@@ -382,53 +395,58 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
                         en = en / sr
                         st_ = ('%f' % st).rstrip('0').rstrip('.')
                         en_ = ('%f' % en).rstrip('0').rstrip('.')
-                        new_jobs[audiopath].append(
+                        new_segments.append(
                             (name + ":%s:%s" % (st_, en_), st, en, channel))
                         new_nb_jobs += 1
                 else:
-                    new_jobs[audiopath].append((name, start, end, channel))
+                    new_segments.append((name, start, end, channel))
                     new_nb_jobs += 1
-            f.close()
-        jobs = sorted(new_jobs.items(), key=lambda x: x[0])
+            # close the opened file
+            new_jobs.append((path_or_ds, new_segments))
+            if f is not None:
+                f.close()
+        jobs = new_jobs
         nb_jobs = new_nb_jobs
     return jobs, nb_jobs
 
 
-def _load_audio(audio_path, segments, sr, sr_new=None, remove_dc_offset=True):
+def _load_audio(path_or_ds, segments, sr, sr_new=None, remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
     # iterate over a Dataset
-    if isinstance(audio_path, Dataset):
-        for name, start, end, channel in segments:
-            yield (name, audio_path['raw'][start: end][:], audio_path['sr'][name])
+    if isinstance(path_or_ds, Dataset):
+        name = segments[0][0].split(":")[0]
+        start, end = path_or_ds['indices'][name]
+        s = path_or_ds['raw'][start:end]
+        sr_orig = path_or_ds['sr'][name]
     # iterate over file path
     else:
-        s, sr_orig = speech.read(audio_path, remove_dc_offset=remove_dc_offset)
-        # check original sample rate
-        if sr_orig is not None and sr is not None and sr_orig != sr:
-            raise Exception('Given sample rate (%d Hz) is different from '
-                            'audio file sample rate (%d Hz).' %
-                            (sr, sr_orig))
-        if sr_orig is None:
-            sr_orig = sr
-        if sr_orig is None:
-            raise RuntimeError("Cannot acquire original sample rate from "
-                               "loaded utterance, or from given arguments "
-                               "of this Processor.")
-        # downsampling
-        if sr_new is not None:
-            s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
-            sr_orig = sr_new
-        N = len(s)
-        # ====== cut into segments ====== #
-        for name, start, end, channel in segments:
-            if 0. <= start < 1. and 0. < end <= 1.: # percentage
-                start = int(start * N)
-                end = int(np.ceil(end * N))
-            else: # given the duration in second
-                start = int(float(start) * sr_orig)
-                end = int(N if end <= 0 else float(end) * sr_orig)
-            data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-            yield (name, data, sr_orig)
+        s, sr_orig = speech.read(path_or_ds, remove_dc_offset=remove_dc_offset)
+    # check original sample rate
+    if sr_orig is not None and sr is not None and sr_orig != sr:
+        raise Exception('Given sample rate (%d Hz) is different from '
+                        'audio file sample rate (%d Hz).' %
+                        (sr, sr_orig))
+    if sr_orig is None:
+        sr_orig = sr
+    if sr_orig is None:
+        raise RuntimeError("Cannot acquire original sample rate from "
+                           "loaded utterance, or from given arguments "
+                           "of this Processor.")
+    # downsampling
+    if sr_new is not None:
+        s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
+        sr_orig = sr_new
+    N = len(s)
+    # ====== cut into segments ====== #
+    for name, start, end, channel in segments:
+        if 0. <= start < 1. and 0. < end <= 1.: # percentage
+            start = int(start * N)
+            end = int(np.ceil(end * N))
+        else: # given the duration in second
+            start = int(float(start) * sr_orig)
+            end = int(N if end <= 0 else float(end) * sr_orig)
+        data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+        yield (name, data, sr_orig)
 
 
 class WaveProcessor(FeatureProcessor):
@@ -492,7 +510,9 @@ class WaveProcessor(FeatureProcessor):
         """ Return list of features' properties
         (name, dtype, statistic-able)
         """
-        return [('raw', self.dtype, False), ('sr', 'dict', False)]
+        return [('raw', self.dtype, False),
+                ('sr', 'dict', False),
+                ('dtype', 'dict', False)]
 
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
@@ -501,7 +521,7 @@ class WaveProcessor(FeatureProcessor):
             ret = []
             for name, data, sr in _load_audio(audio_path, segments,
             self.sr, self.sr_new, remove_dc_offset=self.remove_dc_offset):
-                ret.append((name, [data, int(sr)]))
+                ret.append((name, [data, int(sr), data.dtype.str]))
             # return result
             return (i for i in ret)
         except Exception as e:
@@ -759,15 +779,24 @@ class SpeechProcessor(FeatureProcessor):
                         center=self.center, power=self.power, log=self.log,
                         return_raw=self.save_raw, backend=self.backend)
                 if features is not None:
-                    saved_features = [features[i[0]]
-                        for i in self.__features_properties[:-1]]
+                    saved_features = []
+                    found_NaN = False
+                    for i in self.__features_properties[:-1]:
+                        feat = features[i[0]]
+                        if isinstance(feat, np.ndarray) and \
+                        sum(feat.shape) > 0 and np.isnan(np.min(feat)):
+                            found_NaN = True
+                        else:
+                            saved_features.append(feat)
                     # append the sample rate
-                    saved_features.append(sr_orig if self.sr_new is None
-                                          else self.sr_new)
-                    ret.append((name, saved_features))
+                    if found_NaN:
+                        warnings.warn('Ignore segments: %s, error: NaN values' % name)
+                    else:
+                        saved_features.append(sr_orig if self.sr_new is None
+                                              else self.sr_new)
+                        ret.append((name, saved_features))
                 else:
-                    msg = 'Ignore segments: %s, error: NaN values' % name
-                    warnings.warn(msg)
+                    warnings.warn('Ignore segments: %s, no features found' % name)
             # return the results as a generator
             return (i for i in ret)
         except Exception as e:

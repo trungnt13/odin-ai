@@ -322,7 +322,7 @@ class Progbar(object):
         self._last_report = None
         return self
 
-    def add(self, n):
+    def add(self, n=1):
         """ You need to call pause if
 
         """
