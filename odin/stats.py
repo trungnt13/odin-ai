@@ -11,10 +11,6 @@ from odin.utils import as_tuple, flatten_list
 from odin.config import get_rng
 
 
-def stratified_sampling(x):
-    pass
-
-
 def classification_report(y_pred, y_true, labels):
     """
     Parameters
@@ -41,36 +37,7 @@ def classification_report(y_pred, y_true, labels):
     return s
 
 
-def train_valid_test_split(x, train=0.6, idfunc=None, inc_test=True, seed=None):
-    """ Split given list into 3 dataset: for training, validating,
-    and testing.
-
-    Parameters
-    ----------
-    x: list, tuple, numpy.ndarray
-        the dataset.
-    train: float (0.0 - 1.0)
-        proportion used for training, validating and testing will be
-        half of the remain.
-    idfunc: None or callable
-        a function transform the task list into unique identity for splitting,
-        `idfunc` has to return comparable keys.
-    inc_test: bool
-        if split a proportion of data for testing also.
-    seed: int
-        random seed to produce a re-producible results.
-
-    """
-    # ====== check input ====== #
-    if isinstance(x, dict):
-        x = x.items()
-    elif isinstance(x, np.ndarray):
-        x = x.tolist()
-    # ====== check idfunc ====== #
-    if idfunc is None:
-        idfunc = lambda x: x
-    if not callable(idfunc):
-        raise ValueError("'idfunc' must be callable or None.")
+def _split_list(x, train=0.6, idfunc=None, inc_test=True, seed=None):
     # ====== shuffle input ====== #
     x_id = defaultdict(list)
     for i in x:
@@ -94,10 +61,67 @@ def train_valid_test_split(x, train=0.6, idfunc=None, inc_test=True, seed=None):
             flatten_list((x_id[i] for i in id_list[train: train + valid]), level=1))
     if inc_test:
         rets += (flatten_list((x_id[i] for i in id_list[train + valid:]), level=1),)
+    else:
+        rets += ([],)
     assert sum(len(r) for r in rets) == len(x), \
         "Number of returned data inconsitent from original data, %d != %d" % \
         (sum(len(r) for r in rets), len(x))
     return rets
+
+
+def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
+                           inc_test=True, seed=None):
+    """ Split given list into 3 dataset: for training, validating,
+    and testing.
+
+    Parameters
+    ----------
+    x: list, tuple, numpy.ndarray
+        the dataset.
+    train: float (0.0 - 1.0)
+        proportion used for training, validating and testing will be
+        half of the remain.
+    cluster_func: None or callable
+        organize data into cluster, then applying the same
+        train_valid_test split strategy for each cluster.
+    idfunc: None or callable
+        a function transform the task list into unique identity for splitting,
+        `idfunc` has to return comparable keys.
+    inc_test: bool
+        if split a proportion of data for testing also.
+    seed: int
+        random seed to produce a re-producible results.
+    """
+    # ====== check input ====== #
+    if isinstance(x, dict):
+        x = x.items()
+    elif isinstance(x, np.ndarray):
+        x = x.tolist()
+    # ====== check idfunc ====== #
+    if idfunc is None:
+        idfunc = lambda x: x
+    if not callable(idfunc):
+        raise ValueError("'idfunc' must be callable or None.")
+    # ====== clustering ====== #
+    if cluster_func is None:
+        cluster_func = lambda x: 8
+    if not callable(cluster_func):
+        raise ValueError("'cluster_func' must be callable or None.")
+    clusters = defaultdict(list)
+    for i in x:
+        clusters[cluster_func(i)].append(i)
+    # ====== applying data split for each cluster separately ====== #
+    train_list, valid_list, test_list = [], [], []
+    for name, clus in clusters.iteritems():
+        _1, _2, _3 = _split_list(clus, train=train, idfunc=idfunc,
+            inc_test=inc_test, seed=seed)
+        train_list += _1
+        valid_list += _2
+        test_list += _3
+    # ====== return the results ====== #
+    if inc_test:
+        return train_list, valid_list, test_list
+    return train_list, valid_list
 
 
 def freqcount(x, key=None, count=1, normalize=False, sort=False):

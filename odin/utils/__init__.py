@@ -41,6 +41,40 @@ from . import shape_calculation
 
 
 # ===========================================================================
+# Pretty print
+# ===========================================================================
+def ctext(s, color='red'):
+    """ Colored text support
+    * BLACK
+    * RED
+    * GREEN
+    * YELLOW
+    * BLUE
+    * MAGENTA
+    * CYAN
+    * WHITE
+    * RESET
+    * LIGHTBLACK_EX
+    * LIGHTRED_EX
+    * LIGHTGREEN_EX
+    * LIGHTYELLOW_EX
+    * LIGHTBLUE_EX
+    * LIGHTMAGENTA_EX
+    * LIGHTCYAN_EX
+    * LIGHTWHITE_EX
+    """
+    try:
+        from colorama import Fore
+        color = color.upper()
+        color = getattr(Fore, color, '')
+        return color + s + Fore.RESET
+    except ImportError:
+        pass
+    else:
+        return s
+
+
+# ===========================================================================
 # Basics
 # ===========================================================================
 def is_string(s):
@@ -709,26 +743,25 @@ def get_file(fname, origin, untar=False):
             shutil.rmtree(fpath)
     # ====== download package ====== #
     if not os.path.exists(fpath):
-        with Progbar(target=-1, name="Downloading: %s" % origin).context(
-            print_progress=True, print_summary=False) as prog:
+        prog = Progbar(target=-1, name="Downloading: %s" % origin)
 
-            def dl_progress(count, block_size, total_size):
-                if prog.target < 0:
-                    prog.target = total_size
-                else:
-                    prog.add(count * block_size - prog.seen_so_far)
-            error_msg = 'URL fetch failure on {}: {} -- {}'
+        def dl_progress(count, block_size, total_size):
+            if prog.target < 0:
+                prog.target = total_size
+            else:
+                prog.add(count * block_size - prog.seen_so_far)
+        error_msg = 'URL fetch failure on {}: {} -- {}'
+        try:
             try:
-                try:
-                    urlretrieve(origin, fpath, dl_progress)
-                except URLError as e:
-                    raise Exception(error_msg.format(origin, e.errno, e.reason))
-                except HTTPError as e:
-                    raise Exception(error_msg.format(origin, e.code, e.msg))
-            except (Exception, KeyboardInterrupt) as e:
-                if os.path.exists(fpath):
-                    os.remove(fpath)
-                raise
+                urlretrieve(origin, fpath, dl_progress)
+            except URLError as e:
+                raise Exception(error_msg.format(origin, e.errno, e.reason))
+            except HTTPError as e:
+                raise Exception(error_msg.format(origin, e.code, e.msg))
+        except (Exception, KeyboardInterrupt) as e:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+            raise
     # ====== untar the package ====== #
     if untar:
         if not os.path.exists(untar_fpath):
