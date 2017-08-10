@@ -96,8 +96,8 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
                 else:
                     return role.add_role(v, roles)
     # ====== Modify add name prefix ====== #
-    placeholder = tf.placeholder(dtype=dtype, shape=shape, name=name)
-    return role.add_role(placeholder, roles)
+    plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
+    return role.add_role(plh, roles)
 
 
 _saver = {}

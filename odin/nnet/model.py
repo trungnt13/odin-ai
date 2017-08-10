@@ -33,7 +33,8 @@ def _check_accepted_inputs(x, backup_name):
     else:
         raise ValueError("The input argument for ModelDescriptor can be: "
             "`Tensor`, `odin.nnet.VariableDescriptor`, and primitive types"
-            " (string, number, boolean, None, numpy.ndarray, numpy.generic)")
+            " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
+            " But the given type is: %s" % type(x))
 
 
 # ===========================================================================
