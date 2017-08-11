@@ -7,11 +7,12 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from collections import Counter
 from six import add_metaclass
+from six.moves import cPickle
 from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, one_hot, is_string,
+from odin.utils import (segment_list, one_hot, is_string, axis_normalize,
                         is_number, UnitTimer, get_system_status,
                         get_process_status, SharedCounter, as_tuple)
 from odin.preprocessing.signal import segment_axis, compute_delta
@@ -297,16 +298,18 @@ class Normalization(FeederRecipe):
         self.mean = mean
         self.std = std
         self.local_normalize = str(local_normalize).lower()
-        if self.local_normalize not in ('none', 'false', 'tanh', 'sigmoid', 'normal'):
+        if self.local_normalize not in ('none', 'false', 'tanh', 'sigmoid',
+                                        'normal', 'true'):
             raise ValueError("Not support for local_normalize=%s, you must specify "
                             "one of the following mode: none, false, tanh, sigmoid, "
-                            "normal." % self.local_normalize)
-        self.data_idx = as_tuple(data_idx, t=int)
+                            "normal (or true)." % self.local_normalize)
+        self.data_idx = None if data_idx is None else as_tuple(data_idx, t=int)
 
     def process(self, name, X, y):
         X_normlized = []
+        data_idx = axis_normalize(self.data_idx, ndim=len(X))
         for i, x in enumerate(X):
-            if i in self.data_idx:
+            if i in data_idx:
                 x = x.astype('float32')
                 # ====== global normalization ====== #
                 if self.mean is not None and self.std is not None:
@@ -329,7 +332,8 @@ class PCAtransform(FeederRecipe):
     Scaling data into range [0, 1]
     """
 
-    def __init__(self, pca, nb_components=0.9, whiten=False):
+    def __init__(self, pca, nb_components=0.9, whiten=False,
+                 data_idx=0):
         super(PCAtransform, self).__init__()
         self._pca = pca
         self.whiten = whiten
@@ -341,19 +345,25 @@ class PCAtransform(FeederRecipe):
         else:
             nb_components = int(nb_components)
         self.nb_components = nb_components
+        self.data_idx = None if data_idx is None else as_tuple(data_idx, t=int)
 
     def process(self, name, X, y):
         # update the whiten
+        data_idx = axis_normalize(self.data_idx, ndim=len(X))
         pca_whiten = self._pca.whiten
         self._pca.whiten = self.whiten
         X = [self._pca.transform(x, n_components=self.nb_components)
-             for x in X]
+             if i in data_idx else x
+             for i, x in enumerate(X)]
         # reset the white value
         self._pca.whiten = pca_whiten
         return name, X, y
 
     def shape_transform(self, shapes, indices):
-        shapes = [s[:-1] + (self.nb_components,) for s in shapes]
+        data_idx = axis_normalize(self.data_idx, ndim=len(shapes))
+        shapes = [s[:-1] + (self.nb_components,)
+                  if i in data_idx else s
+                  for i, s in enumerate(shapes)]
         return shapes, indices
 
 
@@ -413,7 +423,8 @@ class ComputeDelta(FeederRecipe):
 
     """
 
-    def __init__(self, delta=1, axis=-1, keep_original=True, data_idx=None):
+    def __init__(self, delta=1, axis=-1, keep_original=True,
+                 data_idx=None):
         super(ComputeDelta, self).__init__()
         delta = int(delta)
         if delta < 0:
@@ -425,19 +436,13 @@ class ComputeDelta(FeederRecipe):
 
     def process(self, name, X, y):
         if self.delta > 0:
-            if self.data_idx is None:
-                X = [np.concatenate(
-                    ([x] if self.keep_original else []) +
-                    compute_delta(x, order=self.delta, axis=self.axis),
-                    axis=self.axis)
-                for x in X]
-            else:
-                X = [x if i not in self.data_idx else
-                np.concatenate(
-                    ([x] if self.keep_original else []) +
-                    compute_delta(x, order=self.delta, axis=self.axis),
-                    axis=self.axis)
-                for i, x in enumerate(X)]
+            data_idx = axis_normalize(self.data_idx, ndim=len(X))
+            X = [x if i not in data_idx else
+                 np.concatenate(
+                     ([x] if self.keep_original else []) +
+                     compute_delta(x, order=self.delta, axis=self.axis),
+                     axis=self.axis)
+                 for i, x in enumerate(X)]
         return name, X, y
 
     def shape_transform(self, shapes, indices):
@@ -552,15 +557,26 @@ class Slice(FeederRecipe):
 class Merge(FeederRecipe):
     """Merge
     merge a list of np.ndarray into 1 np.array
+
+    Note
+    ----
+    The new value will be appended to the data list
     """
 
-    def __init__(self, merge_func=np.hstack):
+    def __init__(self, merge_func=np.hstack, data_idx=None):
         super(Merge, self).__init__()
         self.merge_func = merge_func
+        if merge_func not in (np.vstack, np.hstack):
+            raise ValueError("Support merge function include: numpy.vstack, numpy.hstack")
+        self.data_idx = None if data_idx is None \
+            else as_tuple(data_idx, t=int)
 
     def process(self, name, X, y):
         if len(X) > 1:
-            X = self.merge_func(X)
+            data_idx = axis_normalize(self.data_idx, ndim=len(X))
+            X_old = [x for i, x in enumerate(X) if i not in data_idx]
+            X_new = [x for i, x in enumerate(X) if i in data_idx]
+            X = list(as_tuple(self.merge_func(X_new))) + X_old
         return name, X, y
 
     def shape_transform(self, shapes, indices):
@@ -568,17 +584,49 @@ class Merge(FeederRecipe):
         if not isinstance(shapes[0], (tuple, list)):
             return shapes, indices
         # merge
+        data_idx = axis_normalize(self.data_idx, ndim=len(shapes))
+        old_shapes = [s for i, s in enumerate(shapes) if i not in data_idx]
+        new_shapes = [s for i, s in enumerate(shapes) if i in data_idx]
         if self.merge_func == np.hstack:
             # indices still the same
-            shapes = shapes[0][:-1] + (sum(s[-1] for s in shapes),)
-            return (shapes,), indices
+            new_shapes = new_shapes[0][:-1] + (sum(s[-1] for s in new_shapes),)
         elif self.merge_func == np.vstack:
             indices = {name: n * len(shapes) for name, n in indices.iteritems()}
-            shapes = (sum(s[0] for s in shapes),) + shapes[0][1:]
-            return (shapes,), indices
+            new_shapes = (sum(s[0] for s in new_shapes),) + new_shapes[0][1:]
         else:
             raise Exception("We haven't support shape infer for merge_func={}"
                             ".".format(self.merge_func))
+        return (new_shapes,) + tuple(old_shapes), indices
+
+
+class ExpandDims(FeederRecipe):
+    """docstring for ExpandDim"""
+
+    def __init__(self, axis, data_idx=0):
+        super(ExpandDims, self).__init__()
+        self.axis = int(axis)
+        self.data_idx = None if data_idx is None else as_tuple(data_idx, t=int)
+
+    def process(self, name, X, y):
+        data_idx = axis_normalize(self.data_idx, ndim=len(X))
+        X = [np.expand_dims(x, axis=self.axis)
+             if i in data_idx else x
+             for i, x in enumerate(X)]
+        return name, X, y
+
+    def shape_transform(self, shapes, indices):
+        data_idx = axis_normalize(self.data_idx, ndim=len(shapes))
+        new_shapes = []
+        for i, s in enumerate(shapes):
+            if i in data_idx:
+                s = list(s)
+                axis = self.axis if self.axis >= 0 else \
+                    (len(s) + 1 - self.axis)
+                s.insert(axis, 1)
+                new_shapes.append(tuple(s))
+            else:
+                new_shapes.append(s)
+        return tuple(new_shapes), indices
 
 
 # ===========================================================================

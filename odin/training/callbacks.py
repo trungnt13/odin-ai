@@ -312,7 +312,7 @@ class EarlyStop(Callback):
             msg = SIG_TRAIN_ROLLBACK
             # check patience
             self._patience -= 1
-            if self._patience <= 0:
+            if self._patience < 0:
                 msg = SIG_TRAIN_STOP
         self.send_notification('Message "%s"' % str(msg))
         return msg

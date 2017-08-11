@@ -531,6 +531,21 @@ def as_list(x, N=None, t=None):
     return list(as_tuple(x, N, t))
 
 
+def axis_normalize(axis, ndim):
+    """ Normalize the axis
+     * -1 => ndim - 1
+     * 10 => 10 % ndim
+     * None => list(range(ndim))
+    """
+    if axis is None:
+        return list(range(ndim))
+    if not hasattr(axis, '__len__'):
+        axis = int(axis)
+        return axis % ndim
+    axis = as_tuple(axis, t=int)
+    return [i % ndim for i in axis]
+
+
 def flatten_list(x, level=None):
     """
     Parameters
