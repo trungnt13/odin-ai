@@ -137,8 +137,21 @@ def iter_chunk(it, n):
 
 
 def batching(n, batch_size):
-    return [(i, min(i + batch_size, n))
-            for i in range(0, n + batch_size, batch_size) if i < n]
+    """
+    Parameters
+    ----------
+    n: int
+        number of samples
+    batch_size: int
+        number of samples for 1 single batch.
+
+    Return
+    ------
+    iteration: [(start, end), (start, end), ...]
+    """
+    return ((i, min(i + batch_size, n))
+            for i in range(0, n + batch_size, batch_size)
+            if i < n)
 
 
 def read_lines(file_path):

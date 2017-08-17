@@ -13,7 +13,7 @@ from six.moves import zip, zip_longest, range
 import numpy as np
 
 from odin.utils import (segment_list, one_hot, is_string, axis_normalize,
-                        is_number, UnitTimer, get_system_status,
+                        is_number, UnitTimer, get_system_status, batching,
                         get_process_status, SharedCounter, as_tuple)
 from odin.preprocessing.signal import segment_axis, compute_delta
 from odin.utils.decorators import functionable
@@ -1130,16 +1130,14 @@ class CreateFile(FeederRecipe):
     return_name: bool
         whether return the name specifed in the indices
 
-    Note
-    ----
-    set_batch(batch_size=1) to return each file separately, otherwise
-    all files will be mixed into mini batches.
+    Return
+    ------
+    [(name, index, data...), ...]
 
     """
 
-    def __init__(self, return_name=False):
+    def __init__(self):
         super(CreateFile, self).__init__()
-        self.return_name = return_name
 
     def prepare(self, **kwargs):
         shuffle_level = kwargs.get('shuffle_level', 0)
@@ -1155,26 +1153,13 @@ class CreateFile(FeederRecipe):
         return np.array(x)
 
     def group(self, batch):
-        results = []
-        for name, X, Y in batch:
-            ret = list(X) + list(Y)
-            # return name
-            if self.return_name:
-                ret = [name] + ret
-            results.append(tuple(ret))
-        # number of different result
-        n = len(ret)
+        # NOTE: each element in batch is one file
         # ====== shuffle ====== #
         if self.rng is not None:
-            self.rng.shuffle(results)
-        # ====== return batch ====== #
-        if self.batch_size == 1:
-            for r in results:
-                yield r
-        else:
-            # validated, all the batches are length > 0,
-            # and equal to original data
-            for i in range(0, len(results), self.batch_size):
-                r = results[i: i + self.batch_size]
-                yield [self._to_numpy_array([x[i] for x in r])
-                       for i in range(n)]
+            self.rng.shuffle(batch)
+        for name, X, Y in batch:
+            n = X[0].shape[0]
+            ret = list(X) + list(Y)
+            for i, (start, end) in enumerate(batching(n, self.batch_size)):
+                r = [name, i] + [j[start:end] for j in ret]
+                yield tuple(r)
