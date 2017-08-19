@@ -75,13 +75,12 @@ task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=1)
 ])
-task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=4,
+task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=8,
                     name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
                     freq=training.Timer(percentage=0.6), name='valid')
 task.set_eval_task(f_test, (ds['X_test'], ds['y_test']), name='test')
 task.run()
-
 # ===========================================================================
 # Evaluate
 # ===========================================================================

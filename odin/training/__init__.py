@@ -682,6 +682,7 @@ class MainLoop(object):
         self._main_task = None
         self._task = []
         self._subtask = []
+        self._evaltask = []
         self._task_when = {} # mapping from `Task` to `Timer`
         self._task_freq = {} # mapping from `Task` to `Timer`
         self._allow_rollback = bool(allow_rollback)
@@ -840,7 +841,7 @@ class MainLoop(object):
     def set_eval_task(self, func, data, name="Eval"):
         t = Task(func, data, epoch=1, p=1., batch_size=self._batch_size,
                  seed=None, shuffle_level=0, name=name)
-        self._subtask.append(t)
+        self._evaltask.append(t)
         self._task_when[t] = Timer(percentage=1.)
         self._task_freq[t] = Timer(samples=0)
         return self
@@ -864,21 +865,21 @@ class MainLoop(object):
             add_notification("Rollback from:" + self._save_path)
             N.deserialize(self._save_path)
 
-    def _end(self):
-        self._rollback()
-
     def _run(self):
-        if self._main_task is None:
-            raise ValueError('You must call set_task and set the main task first.')
-        for t in self._task + self._subtask:
+        if self._main_task is None and len(self._evaltask) == 0:
+            raise ValueError('You must call `set_task` and set the main task '
+                'first, or you can specify evaluation task using `set_eval_task`.')
+        for t in self._task + self._subtask + self._evaltask:
             t.set_callbacks(self._callback)
         # ====== prepare subtask ====== #
-        finished_task = {i: False for i in self._task + self._subtask}
-        task_iter = {i: iter(i) for i in self._task + self._subtask}
-        for freq in self._task_freq.itervalues():
-            freq.set_counter(self._main_task)
+        if self._main_task is not None:
+            finished_task = {i: False for i in self._task + self._subtask}
+            task_iter = {i: iter(i) for i in self._task + self._subtask}
+            for freq in self._task_freq.itervalues():
+                freq.set_counter(self._main_task)
         # ====== main logics ====== #
-        while not finished_task[self._main_task]:
+        while self._main_task is not None and \
+        not finished_task[self._main_task]:
             for t in self._task:
                 # ====== execute training task first ====== #
                 if not finished_task[t]:
@@ -918,8 +919,14 @@ class MainLoop(object):
         # ====== end main task ====== #
         for t in self._task + self._subtask:
             t.stop()
+        # ====== Run eval task before finishing ====== #
+        if self._allow_rollback:
+            self._rollback()
+        for et in self._evaltask:
+            for x in iter(et):
+                pass
         # everything finished
-        self._end()
+        self._evaltask = []
 
     def run(self):
         try:
