@@ -18,7 +18,8 @@ import numpy as np
 
 from odin import backend as K
 from odin.utils.decorators import functionable
-from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number, is_string, is_path,
+from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
+                        is_string, is_path, is_primitives, ctext,
                         ShapeRef, DtypeRef, flatten_list, get_all_files)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
@@ -743,9 +744,24 @@ class NNOp(object):
         return self.apply(X, **kwargs)
 
     def __str__(self):
-        ops_format = '<ops: %s, name: %s, init: %s>'
-        return ops_format % (self.__class__.__name__, self.name,
-                             self._is_initialized)
+        # ====== get all attrs ====== #
+        all_attrs = dir(self)
+        print_attrs = {}
+        for name in all_attrs:
+            if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
+            'name' != name and 'is_initialized' != name:
+                attr = getattr(self, name)
+                if is_primitives(attr):
+                    print_attrs[name] = attr
+        print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
+        # ====== format the output ====== #
+        ops_format = '<%s, name: %s, init: %s>\n'
+        ops_format = ops_format % (ctext(self.__class__.__name__, 'cyan'),
+                                   ctext(self.name, 'MAGENTA'),
+                                   self._is_initialized)
+        for i, j in print_attrs:
+            ops_format += "\t%s: %s\n" % (ctext(i, 'yellow'), str(j))
+        return ops_format[:-1]
 
     # ==================== Slicing ==================== #
     def __getitem__(self, key):

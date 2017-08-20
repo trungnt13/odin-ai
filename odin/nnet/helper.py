@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import as_tuple, is_number, flatten_list
+from odin.utils import as_tuple, is_number, flatten_list, ctext
 from odin.utils.decorators import functionable
 
 from .base import NNOp, _nnops_initscope
@@ -131,7 +131,8 @@ class Sequence(HelperOps):
                 params[self.ops[i] if is_number(i) else i] = v
         # ====== print debug ====== #
         if self.debug:
-            print('**************** Sequences: %s ****************' % self.name)
+            print('**************** Sequences: %s ****************' %
+                ctext(self.name, 'cyan'))
             print('First input:', x.get_shape().as_list())
         # ====== applying ====== #
         all_outputs = []
@@ -143,7 +144,8 @@ class Sequence(HelperOps):
             all_outputs.append(x)
             # print after finnish the op
             if self.debug:
-                print(' ', op.name if isinstance(op, functionable) else str(op), '->',
+                print(' ', op.name if isinstance(op, functionable) else str(op),
+                    '\n\t' + ctext('Output shape:', 'yellow'),
                     [i.get_shape().as_list() for i in flatten_list(x, level=None)]
                     if isinstance(x, (tuple, list)) else x.get_shape().as_list())
         # end debug
