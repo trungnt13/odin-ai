@@ -84,8 +84,8 @@ def _progbar(pb, print_report, print_summary):
 
 
 def add_notification(msg):
-    msg = _CYAN + "[%s]Notification:" % \
-        datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg
+    msg = _CYAN + "\n[%s]Notification:" % \
+        datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + '\n'
     _tqdm.write(msg)
 
 
