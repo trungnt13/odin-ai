@@ -33,6 +33,7 @@ __all__ = [
     'Debug',
     'CallbackList',
     'NaNDetector',
+    'Checkpoint',
     'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
@@ -241,6 +242,21 @@ class NaNDetector(Callback):
                 signal = SIG_TRAIN_STOP
             self.send_notification('Found NaN value, task:"%s"' % task.name)
             return signal
+
+
+class Checkpoint(Callback):
+    """docstring for NaNDetector"""
+
+    def __init__(self, task_name, epoch_percent=1., log=True):
+        super(Checkpoint, self).__init__(log)
+        self._task_name = task_name
+        self._epoch_percent = epoch_percent
+
+    def batch_end(self, task, batch_results):
+        if task.name == self._task_name:
+            if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
+                return SIG_TRAIN_SAVE
+        return None
 
 
 # ===========================================================================

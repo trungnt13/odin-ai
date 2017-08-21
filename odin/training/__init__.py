@@ -53,268 +53,6 @@ def _plot_each_epoch(name, results, task_type):
     plt.tight_layout()
 
 
-def standard_trainer(train_data, valid_data, test_data=None,
-                     cost_train='auto', cost_score='auto', cost_regu='auto',
-                     parameters='auto', optimizer='auto',
-                     confusion_matrix=None, gradient_norm=True,
-                     batch_size=64, nb_epoch=3, valid_freq=1.,
-                     seed=1208, shuffle_level=2, patience=3, earlystop=5,
-                     save_path=None, save_obj=None, report_path=None,
-                     enable_rollback=True, stop_callback=None, save_callback=None,
-                     labels=None):
-    """
-    Parameters
-    ----------
-    cost_train: list of callable, or TensorVariable
-        if a function is given, each function will be apply to pair of
-        `y_train` and `y_target` (i.e. `zip(y_train, y_target)`)
-    cost_score: list of callable, or TensorVariable
-        if a function is given, each function will be apply to pair of
-        `y_score` and `y_target` (i.e. `zip(y_score, y_target)`)
-    cost_regu: list of TensorVariable
-        list of all additional cost (for regularization) to add to `cost_train`.
-    confusion_matrix: int, list or tuple
-        If int is given, it is the number of different classes.
-        If a list or tuple is given, it contains all the labels.
-    gradient_norm: bool
-        if True, record the L2-norm of gradients from all parameters for
-        each iteration.
-    patience: int
-        number of failures detected by earlystopping before terminating the
-        training.
-    earlystop: int or None
-        if None, turn-off early-stopping. Otherwise, it is percentage of
-        generalization loss.
-
-    Return
-    ------
-    MainLoop, and History
-
-    Note
-    ----
-
-    """
-    # ====== prepare variables and cost ====== #
-    # check optimizer
-    if optimizer is None or optimizer == 'auto':
-        print("[WARNING] No optimizer is given, use default Adam optimizer.")
-        optimizer = K.optimizers.Adam()
-    elif not isinstance(optimizer, K.optimizers.Optimizer) and \
-    not hasattr(optimizer, "get_updates"):
-        raise ValueError("Invalid optimizer, the optimizer must be instance of "
-                         "backend.optimizers.Optimizer or having function "
-                         "get_updates(self, loss_or_grads, params).")
-    #  check the cost train
-    if cost_train == 'auto':
-        cost_train = K.ComputationGraph().get_roles(K.role.TrainingCost)
-    cost_train = as_tuple(cost_train) if cost_train is not None else tuple()
-    if len(cost_train) == 0:
-        raise ValueError("You must specify cost_train.")
-    cost_train = [cost for cost in cost_train if K.is_tensor(cost)]
-    cost_train_name = [i.name if K.is_tensor(i) else i.__name__
-                       for i in cost_train]
-    #  check the cost score
-    if cost_score == 'auto':
-        graph = K.ComputationGraph()
-        cost_score = graph.get_roles(K.role.EarlyStop)
-    cost_score = as_tuple(cost_score) if cost_score is not None else tuple()
-    cost_score = [cost for cost in cost_score if K.is_tensor(cost)]
-    cost_score_name = [i.name if K.is_tensor(i) else i.__name__
-                       for i in cost_score]
-    #  check the cost regu
-    if cost_regu == 'auto':
-        cost_regu = K.ComputationGraph().get_roles(K.role.RegularizeLoss)
-        if len(cost_regu) == 0:
-            cost_regu = None
-    cost_regu = as_tuple(cost_regu) if cost_regu is not None else tuple()
-    # check parameters
-    if parameters == 'auto':
-        parameters = K.ComputationGraph().parameters
-    parameters = as_tuple(parameters) if parameters is not None else tuple()
-    # ====== get the updates ====== #
-    training_cost = cost_train[0]
-    if len(cost_regu) > 0:
-        training_cost += sum(c for c in cost_regu)
-    updates = optimizer.get_updates(training_cost, parameters)
-    # ====== add gradient norm ====== #
-    grad_norm = [] if not gradient_norm or not hasattr(optimizer, 'norm') else \
-        [optimizer.norm]
-    if len(grad_norm) > 0:
-        cost_train_name.append('gradient_norm')
-    cost_train = [training_cost] + cost_train[1:] + grad_norm
-    # ====== add confusion matrix ====== #
-    if confusion_matrix is not None and K.is_tensor(confusion_matrix):
-        cost_score.append(confusion_matrix)
-        confusion_matrix = True
-    else:
-        confusion_matrix = False
-    # ====== create function ====== #
-    print('Building training functions ...')
-    train_inputs = K.ComputationGraph(cost_train).placeholders
-    f_train = K.function(inputs=train_inputs, outputs=cost_train, updates=updates)
-    print('Building scoring functions ...')
-    f_score = None
-    if valid_data is not None:
-        if len(cost_score) == 0:
-            print("[WARNING] No scoring cost is specified, using training "
-                  "cost for validating!")
-            cost_score = cost_train[:-1] if gradient_norm else cost_train
-        score_inputs = K.ComputationGraph(cost_score).placeholders
-        f_score = K.function(inputs=score_inputs, outputs=cost_score)
-
-    # ====== evaluation ====== #
-    def evaluation():
-        if test_data is not None:
-            test = as_data(test_data)
-            test.set_batch(batch_size=batch_size, seed=None)
-            prog = Progbar(target=len(test), title="Evaluating:")
-            _ = []
-            for t in test:
-                if not isinstance(t, (tuple, list)):
-                    t = (t,)
-                _.append(f_score(*t))
-                prog.add(len(t[0]))
-            test = _
-            # just 1 result returned
-            if not isinstance(test[0], (tuple, list)):
-                test = np.mean(test)
-            elif confusion_matrix:
-                test_cm = sum(i[-1] for i in test)
-                test = [np.mean([j[i] for j in test])
-                        for i in range(len(test[0]) - 1)]
-                test.append(test_cm)
-            else:
-                test_cm = None
-                test = [np.mean([j[i] for j in test])
-                        for i in range(len(test[0]))]
-            # record the result to history
-            history.record('test', 'epoch_end', nb_iter=1, nb_epoch=1,
-                nb_samples=test_data.shape[0], results=test)
-            print("[Evaluaton] scores:", test[:-1] if confusion_matrix else test)
-            if confusion_matrix:
-                print("[Evaluaton] confusion matrix:")
-                print(test[-1])
-        # ====== create report ====== #
-        if report_path is None:
-            return
-        from odin import visual
-        from matplotlib import pyplot as plt
-        # get train results
-        train_epochs = history.get_epoch('train')
-        train_results = defaultdict(list)
-        for i, name in enumerate(cost_train_name):
-            for epoch in train_epochs:
-                train_results[name].append([r[i] for r in epoch])
-        # get valid results
-        valid_epochs = history.get_epoch('valid')
-        valid_results = defaultdict(list)
-        for i, name in enumerate(cost_score_name):
-            for epoch in valid_epochs:
-                valid_results[name].append([r[i] for r in epoch])
-        # visualize the trianing process
-        plt.figure()
-        legends = []
-        plotted_valid = []
-        for name, x in train_results.iteritems():
-            x = np.array([np.mean(i) for i in x]).ravel()
-            x = (x - x.min()) / (x.max() - x.min())
-            nb_train_epoch = len(x)
-            legends.append(
-                (plt.plot(range(1, nb_train_epoch + 1), x, '-', linewidth=1.2)[0],
-                 "[train]" + name))
-            recent_color = legends[-1][0].get_color()
-            if name in valid_results:
-                y = np.array([np.mean(i) for i in valid_results[name]]).ravel()
-                y = (y - y.min()) / (y.max() - y.min())
-                x = np.linspace(1, nb_train_epoch, num=len(y))
-                legends.append(
-                    (plt.plot(x, y, '--', linewidth=1.5, color=recent_color)[0],
-                     "[valid]" + name))
-                plotted_valid.append(name)
-        for name, y in valid_results.iteritems(): # plot the remain valid
-            if name not in plotted_valid:
-                y = np.array([np.mean(i) for i in y]).ravel()
-                y = (y - y.min()) / (y.max() - y.min())
-                x = np.linspace(1, nb_train_epoch, num=len(y))
-                legends.append(
-                    (plt.plot(x, y, '--', linewidth=1.5)[0],
-                     "[valid]" + name))
-        plt.ylim([-0.05, 1.2])
-        plt.xlabel("Epoch"); plt.ylabel("Normalized cost")
-        plt.legend([i[0] for i in legends], [i[1] for i in legends],
-                   loc='upper right', ncol=2, fontsize=8)
-        # visualize each training epoch
-        for name, X in train_results.iteritems():
-            _plot_each_epoch(name, X, "[Train]")
-        for name, X in valid_results.iteritems():
-            _plot_each_epoch(name, X, "[Valid]")
-        # visualize the confusion matrix
-        if confusion_matrix:
-            # First the validation confusion matrix
-            confusion = [sum(i[-1] for i in epoch)
-                         for epoch in valid_epochs]
-            confusion_labels = labels
-            if labels is None:
-                confusion_labels = [str(i) for i in range(confusion[0].shape[0])]
-            ncol = 3; nrow = int(np.ceil(len(confusion) / ncol))
-            with visual.figure(nrow=nrow, ncol=ncol, dpi=180):
-                for i, cm in enumerate(confusion):
-                    ax = plt.subplot(nrow, ncol, i + 1)
-                    visual.plot_confusion_matrix(cm, confusion_labels,
-                        axis=ax, fontsize=10, colorbar=False)
-                    ax.set_xlabel('[Epoch%d]Prediction' % (i + 1), fontsize=10)
-                plt.suptitle("[Valid] Confustion matrices", fontsize=12)
-                plt.tight_layout()
-                # The test confusion matrix
-                if test_data is not None and test_cm is not None:
-                    plt.figure(figsize=(8, 9), dpi=180)
-                    visual.plot_confusion_matrix(test_cm, confusion_labels,
-                        axis=None, fontsize=18, colorbar=False)
-                    plt.suptitle("[Eval] Confustion matrices", fontsize=20)
-                    plt.tight_layout()
-        # save all the plot
-        if report_path == 'show':
-            plt.show()
-        else:
-            visual.plot_save(path=report_path, dpi=180, clear_all=True)
-        if save_path is not None:
-            print("Best checkpoint saved at:", save_path)
-    # ====== Create trainer ====== #
-    task = MainLoop(batch_size=batch_size, seed=seed, shuffle_level=shuffle_level,
-        rollback=enable_rollback)
-    if save_path is not None and save_obj is not None:
-        task.set_save(save_path, save_obj, save_hist=True)
-    # set task
-    task.set_task(f_train, train_data, epoch=nb_epoch, name='train')
-    if f_score is not None:
-        task.set_subtask(f_score, valid_data, freq=valid_freq, p=1.,
-                         when=0, name='valid')
-        # format for score
-        score_format = 'Results:' + __format_string(len(cost_score) -
-            (1 if confusion_matrix else 0))
-        if confusion_matrix:
-            score_tracking = {(len(cost_score) - 1): lambda x: sum(x)}
-        else:
-            score_tracking = []
-    task.set_signal_handlers(end=evaluation)
-    # set the callback
-    history = History()
-    task.set_callback([
-        history,
-        ProgressMonitor(name='train',
-            format='Results:' + __format_string(len(cost_train))),
-        NaNDetector(('train', 'valid'), patience=patience, rollback=True)
-    ] + ([ProgressMonitor(name='valid', format=score_format, tracking=score_tracking),
-        EarlyStopGeneralizationLoss('valid', threshold=earlystop, patience=patience,
-                 get_value=lambda x: np.mean([i[0] for i in x]
-                                             if isinstance(x[0], (tuple, list))
-                                             else x),
-                 stop_callback=stop_callback, save_callback=save_callback
-        ) if earlystop is not None else None,
-    ] if f_score is not None else []))
-    return task, history
-
-
 # ===========================================================================
 # Tasks
 # ===========================================================================
@@ -336,9 +74,9 @@ class Task(object):
         self._name = name
         # ====== current info ====== #
         self._curr_epoch = 0
-        self._curr_iteration = 0
+        self._curr_iter = 0
         self._curr_samples = 0
-        self._curr_epoch_iteration = 0
+        self._curr_epoch_iter = 0
         self._curr_epoch_samples = 0
         self._callback_msg = []
         # ====== iter tracking ====== #
@@ -355,9 +93,9 @@ class Task(object):
          self._batch_size, self._rng, self._seed, self._shuffle_level) = states
         # ====== current info ====== #
         self._curr_epoch = 0
-        self._curr_iteration = 0
+        self._curr_iter = 0
         self._curr_samples = 0
-        self._curr_epoch_iteration = 0
+        self._curr_epoch_iter = 0
         self._curr_epoch_samples = 0
         self._callback_msg = []
         # ====== iter tracking ====== #
@@ -430,9 +168,9 @@ class Task(object):
         return self._curr_epoch
 
     @property
-    def curr_iteration(self):
+    def curr_iter(self):
         """Total number of iteration finished since the beginning of the Task"""
-        return self._curr_iteration
+        return self._curr_iter
 
     @property
     def curr_samples(self):
@@ -440,9 +178,9 @@ class Task(object):
         return self._curr_samples
 
     @property
-    def curr_epoch_iteration(self):
+    def curr_epoch_iter(self):
         """Number of iteration within current epoch"""
-        return self._curr_epoch_iteration
+        return self._curr_epoch_iter
 
     @property
     def curr_epoch_samples(self):
@@ -512,7 +250,7 @@ class Task(object):
                     data = zip(*data_it)
                 # ======  start the iteration ====== #
                 self._curr_epoch_samples = 0
-                self._curr_epoch_iteration = 0
+                self._curr_epoch_iter = 0
                 for i, x in enumerate(data):
                     # alread terminated, try to exhausted the iterator
                     # if forced_to_terminate: continue
@@ -522,9 +260,9 @@ class Task(object):
                     # update some info
                     shape0 = x[0].shape[0]
                     self._curr_samples += shape0
-                    self._curr_iteration += 1
+                    self._curr_iter += 1
                     self._curr_epoch_samples += shape0
-                    self._curr_epoch_iteration += 1
+                    self._curr_epoch_iter += 1
                     self._callback_msg = self._callback.batch_start(self, x)
                     # apply the function
                     if self.probability >= 1. or self._rng.rand() < self.probability:
@@ -574,9 +312,9 @@ class Task(object):
         if self._created_iter is None:
             # reset all information
             self._curr_epoch = 0
-            self._curr_iteration = 0
+            self._curr_iter = 0
             self._curr_samples = 0
-            self._curr_epoch_iteration = 0
+            self._curr_epoch_iter = 0
             self._curr_epoch_samples = 0
             self._callback_msg = []
             # create new iter
@@ -619,7 +357,7 @@ class Timer(object):
         if self._epoch is not None and task.curr_epoch >= self._epoch:
             return True
         if self._iteration is not None and \
-        task.curr_iteration >= self._iteration:
+        task.curr_iter >= self._iteration:
             return True
         if self._samples is not None and \
         task.curr_samples >= self._samples:
