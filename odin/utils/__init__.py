@@ -70,8 +70,7 @@ def ctext(s, color='red'):
         return color + s + Fore.RESET
     except ImportError:
         pass
-    else:
-        return s
+    return s
 
 
 # ===========================================================================

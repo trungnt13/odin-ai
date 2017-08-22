@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 import tensorflow as tf
 
 from odin import backend as K
-from .base import NNOp, _nnops_initscope
+from .base import NNOp
 
 
 class Embedding(NNOp):
@@ -22,7 +22,6 @@ class Embedding(NNOp):
         which has size (input_szie, output_size)
     """
 
-    @_nnops_initscope
     def __init__(self, input_size, output_size,
                  W_init=K.rand.uniform, **kwargs):
         super(Embedding, self).__init__(**kwargs)

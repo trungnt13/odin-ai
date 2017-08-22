@@ -4,7 +4,7 @@ import tensorflow as tf
 
 from odin import backend as K
 
-from .base import NNOp, NNTransposeOps, _nnops_initscope
+from .base import NNOp, NNTransposeOps
 
 
 # ===========================================================================
@@ -15,7 +15,6 @@ class Flatten(NNOp):
     i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
     """
 
-    @_nnops_initscope
     def __init__(self, outdim=2, **kwargs):
         super(Flatten, self).__init__(**kwargs)
         self.outdim = outdim
@@ -32,7 +31,6 @@ class Flatten(NNOp):
 # ===========================================================================
 class Reshape(NNOp):
 
-    @_nnops_initscope
     def __init__(self, shape, **kwargs):
         super(Reshape, self).__init__(**kwargs)
         self.shape = shape
@@ -46,7 +44,6 @@ class Reshape(NNOp):
 
 class Dimshuffle(NNOp):
 
-    @_nnops_initscope
     def __init__(self, pattern, **kwargs):
         super(Dimshuffle, self).__init__(**kwargs)
         self.pattern = pattern
@@ -60,7 +57,6 @@ class Dimshuffle(NNOp):
 
 class Squeeze(NNOp):
 
-    @_nnops_initscope
     def __init__(self, axis, **kwargs):
         super(Squeeze, self).__init__(**kwargs)
         self.axis = axis

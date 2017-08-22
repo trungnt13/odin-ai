@@ -7,7 +7,7 @@ from odin import backend as K
 from odin.utils import is_number, is_string, as_tuple
 from odin.utils.decorators import functionable
 
-from .base import NNOp, _nnops_initscope
+from .base import NNOp
 
 
 def _preprocess_windows(window, ndims):
@@ -46,7 +46,6 @@ class Pool(NNOp):
     This pooling algorithm has non-deterministic behaviour on cuDNN
     """
 
-    @_nnops_initscope
     def __init__(self, pool_size=2, strides=None, dilation=1,
                  pad='valid', mode='max', transpose_mode='nn', **kwargs):
         super(Pool, self).__init__(**kwargs)
@@ -89,7 +88,6 @@ class Upsample(NNOp):
 
     """
 
-    @_nnops_initscope
     def __init__(self, size=2, axes='auto', mode='nn', transpose_mode='max',
                  output_shape=None, **kwargs):
         super(Upsample, self).__init__(**kwargs)

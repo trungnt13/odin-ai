@@ -8,7 +8,7 @@ import numbers
 import warnings
 from itertools import chain
 from functools import wraps
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from abc import ABCMeta, abstractmethod
 from six.moves import zip, range, cPickle
@@ -62,28 +62,13 @@ def _assign_new_nnop(nnops):
 # ===========================================================================
 # Context manager
 # ===========================================================================
-__ARGS_SCOPE_STACK = [{}]
-
-
-def _get_current_arg_scope(nnops, ops_name):
-    ops = __ARGS_SCOPE_STACK[-1]
-    for name, scope in ops.iteritems():
-        # first case, name is string
-        if is_string(name):
-            if ops_name in name or name == nnops.__class__.__name__ or \
-            name == str(type(nnops)):
-                return scope
-        # specified a type
-        elif isinstance(name, type) and name in inspect.getmro(type(nnops)):
-            return scope
-        # specified an object
-        elif isinstance(name, NNOp) and type(name) == type(nnops):
-            return scope
-    return {}
+__ARGS_SCOPE_STACK = [defaultdict(dict)]
+_NAME_SCOPE = ''
+_NNOP_ID = defaultdict(int)
 
 
 @contextmanager
-def arg_scope(applied_nnops, **kwargs):
+def nnop_scope(scope=None, id_start=None, ops=[], **kwargs):
     """Stores the default arguments for the given set of applied_nnops.
 
     For usage, please see examples at top of the file.
@@ -105,108 +90,50 @@ def arg_scope(applied_nnops, **kwargs):
     ------
     TypeError: if list_ops is not a list or a tuple.
     ValueError: if any op in list_ops has not be decorated with @add_arg_scope.
-    """
-    if isinstance(applied_nnops, dict):
-        applied_nnops = applied_nnops.items()
-    else:
-        applied_nnops = as_tuple(applied_nnops)
-    # ====== assign scope for each Ops ====== #
-    nnops_scope = {}
-    for ops in applied_nnops:
-        scope = kwargs.copy()
-        if is_string(ops) or isinstance(ops, type):
-            nnops_scope[ops] = scope
-        elif isinstance(ops, (tuple, list)) and len(ops) == 2:
-            ops, add_scope = ops
-            scope.update(dict(add_scope))
-            nnops_scope[ops] = scope
-        elif isinstance(ops, dict):
-            if len(ops) > 1:
-                raise ValueError("No Support for length > 1, in ops argument specification.")
-            ops, add_scope = ops.items()[0]
-            scope.update(dict(add_scope))
-            nnops_scope[ops] = scope
-        else:
-            raise ValueError("Cannot parsing arguments scope for ops: %s" % str(ops))
-    # ====== yield then reset ====== #
-    __ARGS_SCOPE_STACK.append(nnops_scope)
-    yield None
-    __ARGS_SCOPE_STACK.pop()
 
-
-def _nnops_initscope(func):
-    """ Add this decorator to __init__ of any NNet Op """
-    if not callable(func) or func.__name__ != '__init__':
-        raise ValueError("_nnops_initscope can be only applied to __init__ "
-                         "of NNOp instance.")
-    # getting the default arguments to check user intentionally override
-    # default argument.
-    spec = inspect.getargspec(func)
-    if 'self' != spec.args[0]:
-        raise RuntimeError("'self' argument must be the first argument of __init__.")
-    default_args = OrderedDict([(i, '__no_argument__') for i in spec.args])
-    if spec.defaults is not None:
-        for name, value in zip(spec.args[::-1], spec.defaults[::-1]):
-            default_args[name] = value
-
-    @wraps(func)
-    def _wrap_init(*args, **kwargs):
-        self_arg = kwargs['self'] if 'self' in kwargs else args[0]
-        if not isinstance(self_arg, NNOp):
-            raise ValueError("_nnops_initscope can be only applied to __init__ "
-                             "of NNOp instance.")
-        # get name of the NNOp
-        ops_name = kwargs.get('name', None)
-        # update the new arguments into default arguments
-        new_args = OrderedDict([(name, args[i]) if i < len(args)
-            else (name, default)
-            for i, (name, default) in enumerate(default_args.iteritems())])
-        new_args.update(kwargs)
-        new_args['name'] = ops_name
-        # get current scope
-        current_scope = _get_current_arg_scope(self_arg, ops_name)
-        final_args = {}
-        for name, val in new_args.iteritems():
-            # override default argument by current scope
-            if name in current_scope and \
-            (name not in default_args or default_args[name] == val):
-                final_args[name] = current_scope[name]
-            else:
-                final_args[name] = val
-        # check if all arguments is specified
-        if any(i == '__no_argument__' for i in final_args.itervalues()):
-            raise RuntimeError("The argument with name '%s' hasn't been specified."
-                % str([i for i, j in final_args.iteritems() if j == '__no_argument__']))
-        return func(**final_args)
-    return _wrap_init
-
-
-_NAME_SCOPE = None
-_NNOP_ID = [0]
-
-
-@contextmanager
-def name_scope(name_prefix, id_start=0):
-    """ Name scope that are prepended to all NNOp name
     Note
     ----
     if the name scope is given, an increasement ID is generated for
     duplicated NNOp instead of UUID.
     """
+    # ====== prepare Name Scope ====== #
     global _NAME_SCOPE, _NNOP_ID
-    if _NAME_SCOPE is not None:
-        raise ValueError("Current NNOp name scope is: %s, cannot override by "
-            "new name scope: %s" % (_NAME_SCOPE, name_prefix))
-    if not is_string(name_prefix):
-        raise ValueError("name_prefix must be string types, but given %s" % type(name_prefix))
-    # ====== assign name scope and start ID for NNOp ====== #
-    _NAME_SCOPE = name_prefix
-    _NNOP_ID[0] = id_start if is_number(id_start) else id_start[0]
+    # name scope
+    if is_string(scope):
+        if scope not in _NAME_SCOPE:
+            _NAME_SCOPE = str(scope) if len(_NAME_SCOPE) == 0 else \
+                _NAME_SCOPE + '/' + str(scope)
+    # name scope
+    if is_number(id_start):
+        _NNOP_ID[_NAME_SCOPE] = int(id_start)
+    elif isinstance(id_start, list) and is_number(id_start[0]):
+        _NNOP_ID[_NAME_SCOPE] = int(id_start[0])
+    # ====== update Arguments Scope ====== #
+    ops = as_tuple(ops)
+    # copy prevous scopes
+    args_scope = defaultdict(dict)
+    for i, j in __ARGS_SCOPE_STACK[-1].iteritems():
+        args_scope[i] = j.copy()
+    # update new scopes
+    for o in ops:
+        args_scope[o].update(kwargs)
+    __ARGS_SCOPE_STACK.append(args_scope)
+    # ====== return the scope ====== #
     with tf.variable_scope(_NAME_SCOPE):
-        yield name_prefix
-    _NAME_SCOPE = None
+        yield scope
+    # ====== reset everything ====== #
+    __ARGS_SCOPE_STACK.pop()
+    _NAME_SCOPE = '/'.join(_NAME_SCOPE.split('/')[:-1])
     if isinstance(id_start, list):
         id_start[0] = _NNOP_ID[0]
+
+
+def get_name_scope():
+    return _NAME_SCOPE
+
+
+def get_args_scope():
+    return __ARGS_SCOPE_STACK[-1].copy()
 
 
 # ===========================================================================
@@ -381,55 +308,40 @@ class VariableDescriptor(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-def _create_op_name(op_class, name=None):
-    # automatic generate name
-    if name is None:
-        name = op_class.__name__
-        if _NAME_SCOPE is not None:
-            name = _NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[0])
-            _NNOP_ID[0] += 1
-        else:
-            name = name + "_" + str(uuid())
-    # regulation for the NNOp name
-    elif is_string(name):
-        if '/' in name or ':' in name:
-            raise ValueError("Invalid name for NNOp: %s" % name)
-        # still add name scope
-        if _NAME_SCOPE is not None:
-            name = _NAME_SCOPE + '/' + name
-            _NNOP_ID[0] += 1
-    else:
-        raise ValueError("name for NNOp must be string, but given name "
-                         "has type: %s" % (name))
-    return name
-
-
 class _NNOp_Meta(ABCMeta):
-    """ This Meta return the same instance if found a duplicated NNOp
-    created before with the same name
+    """ arguments scope for the NNOp
 
-    Example
-    -------
-    >>> f1 = N.Dense(name="dense")
-    >>> f2 = N.Dense(name="dense")
-    >>> print(f1 == f2) # True
+    Note
+    ----
+    you can only modify the arguments and kwarguments using __call__
+    from MetaClass, not __new__ of instance class.
     """
-
-    # def __new__(clazz, *args, **kwargs):
-    #     return super(_NNOp_Meta, self).__new__(clazz, *args, **kwargs)
-
     def __call__(clazz, *args, **kwargs):
-        ops_name = kwargs.get('name', None)
-        ops_name = _create_op_name(clazz, ops_name)
-        kwargs.update({'name': ops_name})
-        if ops_name in _ALL_NNOPS:
-            old_clazz = _ALL_NNOPS[ops_name].__class__
-            if clazz != old_clazz:
-                raise RuntimeError("Found predefined NNOp with type: %s, but "
-                    "the new NNOp has type: %s" % (old_clazz, clazz))
-            return _ALL_NNOPS[ops_name]
-        # not found old instance
-        return super(_NNOp_Meta, clazz).__call__(*args, **kwargs)
+        NO_ARGUMENT = '[__no_argument__]'
+        # getting the default arguments to check user intentionally override
+        # default argument.
+        spec = inspect.getargspec(clazz.__init__)
+        # ignore the self argument
+        default_args = OrderedDict([(i, NO_ARGUMENT) for i in spec.args[1:]])
+        if spec.defaults is not None:
+            for name, value in zip(spec.args[::-1], spec.defaults[::-1]):
+                default_args[name] = value
+        # ====== add args and kwargs ====== #
+        # update the new arguments into default arguments
+        new_args = OrderedDict([(name, args[i]) if i < len(args) else
+                                (name, default)
+                                for i, (name, default) in enumerate(default_args.iteritems())])
+        new_args.update(kwargs)
+        # ====== upate the current argument scope ====== #
+        # get current scope
+        name = [clazz, str(clazz), clazz.__name__]
+        if 'name' in new_args:
+            name.append(str(new_args['name']))
+        current_scope = get_args_scope()
+        for n in name:
+            if n in current_scope:
+                new_args.update(current_scope[n])
+        return super(_NNOp_Meta, clazz).__call__(*[], **new_args)
 
 
 @add_metaclass(_NNOp_Meta)
@@ -468,9 +380,9 @@ class NNOp(object):
     """
 
     def __new__(clazz, *args, **kwargs):
-        # pickle call __new__
-        if len(args) == 1 and len(kwargs) == 0 and is_string(args[0]) and \
-        '[__name__]' in args[0]:
+        # cPickle call __new__
+        if len(args) == 1 and len(kwargs) == 0 and \
+        (is_string(args[0]) and '[__name__]' in args[0]):
             name = args[0].replace('[__name__]', '')
             if name in _ALL_NNOPS:
                 instance = _ALL_NNOPS[name]
@@ -479,16 +391,45 @@ class NNOp(object):
                         "which is different from pickled type: '%s'" %
                         (type(instance), clazz))
                 return instance
-        # instantiate object
-        return super(NNOp, clazz).__new__(clazz, *args, **kwargs)
+        # New for first time create instance
+        # ====== update Op name if it is None ====== #
+        name = kwargs.get('name', None)
+        # automatic generate name
+        if name is None:
+            name = clazz.__name__
+            if len(_NAME_SCOPE) > 0:
+                name = _NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[_NAME_SCOPE])
+                _NNOP_ID[_NAME_SCOPE] += 1
+            else:
+                name = name + "_" + str(uuid())
+        # regulation for the NNOp name
+        elif is_string(name):
+            if '/' in name or ':' in name:
+                raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
+            # add name scope
+            if _NAME_SCOPE is not None:
+                name = _NAME_SCOPE + '/' + name
+                _NNOP_ID[0] += 1
+        else:
+            raise ValueError("name for NNOp must be string, but given name "
+                             "has type: %s" % (name))
+        # ====== check duplicated Op name ====== #
+        if name in _ALL_NNOPS:
+            old_clazz = _ALL_NNOPS[name].__class__
+            if clazz != old_clazz:
+                raise RuntimeError("Found predefined NNOp with type: %s, but "
+                    "the new NNOp has type: %s" % (old_clazz, clazz))
+            return _ALL_NNOPS[name]
+        # ====== allocate new Op ====== #
+        new_op = super(NNOp, clazz).__new__(clazz, *args, **kwargs)
+        new_op._name = name
+        return new_op
 
-    def __init__(self, name=None, **kwargs):
-        self._save_states = {}
+    def __init__(self, **kwargs):
         # ====== create default NNOp name ====== #
-        if not is_string(name):
-            raise ValueError("NNOp must be given a name at __init__, or using "
-                "`_nnops_initscope` function to automatically generate name.")
-        self._name = name
+        if not hasattr(self, '_name'):
+            raise ValueError("NNOp must be given a name when initialized")
+        self._save_states = {'_name': self._name}
         # list of VariableDescriptor
         self._input_desc = []
         self._transpose_ops = None
@@ -523,6 +464,8 @@ class NNOp(object):
             if type(_ALL_NNOPS[name]) != type(self):
                 raise RuntimeError("Found duplicated NNOp with name: '%s' and type: '%s'"
                     % (name, str(type(_ALL_NNOPS[name]))))
+            # cannot find '[__name__]' due to not specify protocol
+            # hence the __getnewargs__ is not called
             elif _ALL_NNOPS[name] != self:
                 raise RuntimeError("You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
                     "when using `pickle` or `cPickle` to be able pickling NNOp.")
@@ -843,7 +786,6 @@ class NNTransposeOps(NNOp):
 # ===========================================================================
 class Dense(NNOp):
 
-    @_nnops_initscope
     def __init__(self, num_units,
                  W_init=K.rand.glorot_uniform,
                  b_init=K.rand.constant(0),
@@ -940,7 +882,6 @@ class ParametricRectifier(NNOp):
     (3, 28)
     """
 
-    @_nnops_initscope
     def __init__(self, alpha_init=K.rand.constant(0.25),
                  shared_axes='auto', **kwargs):
         super(ParametricRectifier, self).__init__(**kwargs)

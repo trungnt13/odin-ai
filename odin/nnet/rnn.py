@@ -17,7 +17,7 @@ from odin.backend.role import (InitialState, Weight, Bias, Parameter,
                         BatchNormPopulationInvStd)
 from odin.utils import as_tuple, is_string, is_number
 
-from .base import NNOp, _nnops_initscope
+from .base import NNOp
 from .helper import Sequence, HelperOps
 from .normalization import BatchNorm
 
@@ -128,7 +128,6 @@ class RNN(NNOp):
         or `tf.contrib.rnn.AttentionCellWrapper`
     """
 
-    @_nnops_initscope
     def __init__(self, cell_type, kwargs={},
                  attention=None, attention_kwargs={},
                  num_layers=1, bidirectional=False, dynamic=True,
@@ -277,7 +276,6 @@ class RNN(NNOp):
 
 class LSTM(RNN):
 
-    @_nnops_initscope
     def __init__(self, num_units, use_peepholes=False, cell_clip=None,
                  num_proj=None, proj_clip=None, forget_bias=1.0,
                  activation=None, num_layers=1, bidirectional=False,
@@ -296,7 +294,6 @@ class LSTM(RNN):
 
 class GRU(RNN):
 
-    @_nnops_initscope
     def __init__(self, num_units, activation=None,
                  attention=None, attention_kwargs={},
                  num_layers=1, bidirectional=False, dynamic=True,
@@ -362,7 +359,6 @@ class CudnnRNN(NNOp):
 
     """
 
-    @_nnops_initscope
     def __init__(self, num_units,
             W_init=K.rand.glorot_uniform,
             b_init=K.rand.constant(0.),

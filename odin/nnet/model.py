@@ -12,10 +12,10 @@ import tensorflow as tf
 
 from odin import backend as K
 from odin.utils.decorators import functionable
-from odin.utils import (is_lambda, is_number, get_module_from_path, as_tuple,
-                        is_primitives)
+from odin.utils import (is_lambda, get_module_from_path,
+                        is_primitives, ctext)
 
-from .base import (name_scope, get_all_nnops, VariableDescriptor)
+from .base import (nnop_scope, get_all_nnops, VariableDescriptor)
 
 
 # ===========================================================================
@@ -225,7 +225,7 @@ class ModelDescriptor(object):
         # ====== call the function ====== #
         # finally call the function to get outputs
         _ = [0]
-        with name_scope(self.name, id_start=_):
+        with nnop_scope(self.name, id_start=_):
             outputs = self._func(**model_inputs)
         if _[0] > self._opID[0]:
             self._opID[0] = _[0]
@@ -242,17 +242,35 @@ class ModelDescriptor(object):
             return getattr(self._func, name)
 
     def __repr__(self):
-        return self._func.__repr__()
+        return self.__str__()
 
     def __str__(self):
-        return self._func.__str__()
+        s = "<%s, name: %s, init: %s>\n" % (
+            ctext('ModelDescriptor', 'cyan'),
+            ctext(self.name, 'MAGENTA'),
+            len(self._input_desc) > 0)
+        s += '\t%s: %s\n' % (ctext('Core function', 'yellow'),
+                           str(self._func))
+        s += '\t%s: %s\n' % (ctext('#Parameters', 'yellow'),
+                           self.nb_parameters)
+        s += '\t%s: %s\n' % (ctext('Size(MB)', 'yellow'),
+                           self.nb_parameters * 4 / 1024 / 1024)
+        # ====== print input desc info ====== #
+        s += '\t%s:\n' % ctext('Input description', 'yellow')
+        for i, j in self._input_desc.iteritems():
+            s += '\t\t%s: %s\n' % (ctext(str(i), 'red'), str(j))
+        # ====== print nnop info ====== #
+        s += '\t%s:\n' % ctext('NNOp info', 'yellow')
+        for o in self.nnops:
+            s += '\n'.join(['\t\t' + i for i in str(o).split('\n')]) + '\n'
+        return s
 
     def __get__(self, obj, objtype):
         '''Support instance methods.'''
         return functools.partial(self.__call__, obj)
 
 
-def get_model_descriptor(name, path=None, prefix='model'):
+def get_model_descriptor(name, path = None, prefix = 'model'):
     """ A function is called a model creator when it satisfying 2 conditions:
     * It takes arguments include: input_shape, output_shape
     * It return:
@@ -278,7 +296,7 @@ def get_model_descriptor(name, path=None, prefix='model'):
                          "model script.")
     # ====== search for model ====== #
     for p in path:
-        model_func = get_module_from_path(name, path=p, prefix=prefix)
+        model_func = get_module_from_path(name, path = p, prefix = prefix)
         model_func = [f for f in model_func if isinstance(f, ModelDescriptor)]
     if len(model_func) == 0:
         raise ValueError("Cannot find any model creator function with name=%s "

@@ -1,7 +1,3 @@
-# POSTER for the digisami datasets, for publishing the datasets (Deadline: 30 of July)
-# Detail of transportation and accomodation.
-# If there is big change in the laughter density, it is sign for changing the topic
-
 #!/usr/bin/env python
 from __future__ import print_function, division, absolute_import
 

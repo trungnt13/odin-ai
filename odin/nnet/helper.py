@@ -10,7 +10,7 @@ from odin import backend as K
 from odin.utils import as_tuple, is_number, flatten_list, ctext
 from odin.utils.decorators import functionable
 
-from .base import NNOp, _nnops_initscope
+from .base import NNOp
 
 
 def _shrink_kwargs(op, kwargs):
@@ -66,7 +66,6 @@ class Merge(HelperOps):
         function that convert a list of variables into 1 variable
     """
 
-    @_nnops_initscope
     def __init__(self, ops, merge_function=None, **kwargs):
         super(Merge, self).__init__(ops, **kwargs)
         self.merge_function = merge_function
@@ -109,7 +108,6 @@ class Sequence(HelperOps):
     -------
     """
 
-    @_nnops_initscope
     def __init__(self, ops, all_layers=False,
                  strict_transpose=False, debug=False, **kwargs):
         super(Sequence, self).__init__(ops, **kwargs)

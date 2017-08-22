@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin import backend as K
 from odin.utils import as_tuple, is_string
 from odin.backend.role import ConvKernel, Bias
-from .base import NNOp, NNTransposeOps, _nnops_initscope
+from .base import NNOp, NNTransposeOps
 
 
 # ===========================================================================
@@ -177,7 +177,6 @@ class Conv(NNOp):
     Only support float32 on CPU
     """
 
-    @_nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
                  W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
                  untie_biases=False, activation=K.linear,
@@ -270,7 +269,6 @@ class Conv(NNOp):
 # ===========================================================================
 class TransposeConv(Conv):
 
-    @_nnops_initscope
     def __init__(self, num_filters, filter_size, strides=1, pad='valid',
                  W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
                  untie_biases=False, activation=K.linear,
