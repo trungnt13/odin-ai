@@ -410,7 +410,8 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
     return jobs, nb_jobs
 
 
-def _load_audio(path_or_ds, segments, sr, sr_new=None, remove_dc_offset=True):
+def _load_audio(path_or_ds, segments,
+                sr, sr_info={}, sr_new=None, remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
     # iterate over a Dataset
     if isinstance(path_or_ds, Dataset):
@@ -426,12 +427,17 @@ def _load_audio(path_or_ds, segments, sr, sr_new=None, remove_dc_offset=True):
         raise Exception('Given sample rate (%d Hz) is different from '
                         'audio file sample rate (%d Hz).' %
                         (sr, sr_orig))
+    # get given sr
     if sr_orig is None:
         sr_orig = sr
+    # get from sr_info
+    if sr_orig is None and is_string(path_or_ds):
+        sr_orig = sr_info.get(path_or_ds, None)
+    # still None, then exception
     if sr_orig is None:
         raise RuntimeError("Cannot acquire original sample rate from "
                            "loaded utterance, or from given arguments "
-                           "of this Processor.")
+                           "of this Processor (file: '%s')." % str(path_or_ds))
     # downsampling
     if sr_new is not None:
         s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
@@ -473,6 +479,11 @@ class WaveProcessor(FeatureProcessor):
         path to output folder
     sr: int
         sample rate
+    sr_info: dict
+        mapping audio_file_path -> sampling_rate for each segment
+        if provided.
+    sr_new: int or None
+        new sample rate (if you want to down or up sampling)
     maxlen: int
         maximum length of an utterances in second, if any file is longer than
         given length, it is divided into small segments and the start time and
@@ -482,7 +493,8 @@ class WaveProcessor(FeatureProcessor):
 
     """
 
-    def __init__(self, segments, output_path, sr=None, sr_new=None,
+    def __init__(self, segments, output_path,
+                sr=None, sr_info={}, sr_new=None,
                 audio_ext=None, pcm=False, remove_dc_offset=True,
                 maxlen=None, dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
@@ -499,6 +511,7 @@ class WaveProcessor(FeatureProcessor):
             dtype = s.dtype
             del s
         self.sr = sr
+        self.sr_info = sr_info
         self.sr_new = sr_new
         self.dtype = dtype
         self.pcm = pcm
@@ -520,7 +533,8 @@ class WaveProcessor(FeatureProcessor):
             # processing all segments
             ret = []
             for name, data, sr in _load_audio(audio_path, segments,
-            self.sr, self.sr_new, remove_dc_offset=self.remove_dc_offset):
+                                              self.sr, self.sr_info, self.sr_new,
+                                              remove_dc_offset=self.remove_dc_offset):
                 ret.append((name, [data, int(sr), data.dtype.str]))
             # return result
             return (i for i in ret)
@@ -550,6 +564,11 @@ class SpeechProcessor(FeatureProcessor):
         path to output folder
     sr: int
         sample rate
+    sr_info: dict
+        mapping audio_file_path -> sampling_rate for each segment
+        if provided.
+    sr_new: int or None
+        new sample rate (if you want to down or up sampling)
     win: float
         window length in millisecond
     hop: float
@@ -579,8 +598,6 @@ class SpeechProcessor(FeatureProcessor):
         lower frequency cutoff.
     fmax : float > 0 [scalar]
         upper frequency cutoff.
-    sr_new: int or None
-        new sample rate
     preemphasis: float `(0, 1)`
         pre-emphasis coefficience
     pitch_threshold: float in `(0, 1)`
@@ -658,13 +675,14 @@ class SpeechProcessor(FeatureProcessor):
     >>> feat.run()
     '''
 
-    def __init__(self, segments, output_path, sr=None,
+    def __init__(self, segments, output_path,
+                sr=None, sr_info={}, sr_new=None,
                 win=0.02, hop=0.01, window='hann',
                 nb_melfilters=None, nb_ceps=None,
                 get_spec=True, get_qspec=False, get_phase=False,
                 get_pitch=False, get_f0=False,
                 get_vad=True, get_energy=False, get_delta=False,
-                fmin=64, fmax=None, sr_new=None,
+                fmin=64, fmax=None,
                 pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
                 vad_smooth=3, vad_minlen=0.1,
                 cqt_bins=96, preemphasis=None,
@@ -722,6 +740,8 @@ class SpeechProcessor(FeatureProcessor):
         self.excluded_pca = ['energy', 'vad']
         # ====== feature information ====== #
         self.sr = sr
+        self.sr_new = sr_new
+        self.sr_info = sr_info
         self.win = win
         self.hop = hop
         self.window = window
@@ -736,7 +756,6 @@ class SpeechProcessor(FeatureProcessor):
         self.cqt_bins = cqt_bins
         self.fmin = fmin
         self.fmax = fmax
-        self.sr_new = sr_new
         self.preemphasis = preemphasis
         self.center = center
         self.power = power
@@ -759,7 +778,7 @@ class SpeechProcessor(FeatureProcessor):
         try:
             ret = []
             for name, data, sr_orig in _load_audio(audio_path, segments,
-                                                   self.sr, self.sr_new):
+                                                   self.sr, self.sr_info, self.sr_new):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
