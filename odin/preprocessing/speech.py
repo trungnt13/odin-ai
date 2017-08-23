@@ -129,8 +129,9 @@ def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
                any(i in f for i in ['.pcm', '.PCM'])):
         s, fs = (np.memmap(f, dtype=np.int16, mode='r'), None)
     else:
-        from soundfile import read
-        s, fs = read(f)
+        import soundfile
+        with open(f, 'r') as f:
+            s, fs = soundfile.read(f)
     # ====== copy new array with given dtype ====== #
     if dtype is None:
         dtype = s.dtype
