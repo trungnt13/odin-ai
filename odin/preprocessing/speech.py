@@ -118,27 +118,36 @@ def timit_phonemes(phn, map39=False, blank=False):
 # ===========================================================================
 # Audio helper
 # ===========================================================================
-def read(f, pcm=False, remove_dc_offset=True, dtype='float32'):
+def read(path_or_file, pcm=False, remove_dc_offset=True, dtype='float32'):
     '''
     Return
     ------
         waveform (ndarray: [samples;channel]),
         sample rate (int)
     '''
-    if pcm or (isinstance(f, str) and
-               any(i in f for i in ['.pcm', '.PCM'])):
-        s, fs = (np.memmap(f, dtype=np.int16, mode='r'), None)
+    if pcm or \
+    (is_string(path_or_file) and '.pcm' in path_or_file.lower()) or \
+    (isinstance(path_or_file, file) and '.pcm' in path_or_file.name.lower()):
+        s, sr = (np.memmap(path_or_file, dtype=np.int16, mode='r'), None)
     else:
         import soundfile
-        with open(f, 'r') as f:
-            s, fs = soundfile.read(f)
+        f = open(path_or_file, 'r') if is_string(path_or_file) else path_or_file
+        try:
+            s, sr = soundfile.read(f)
+        except Exception as e:
+            if '.sph' in f.name.lower():
+                f.seek(0)
+                s, sr = (np.memmap(f, dtype=np.int16, mode='r'), None)
+            else:
+                raise e
+        f.close()
     # ====== copy new array with given dtype ====== #
     if dtype is None:
         dtype = s.dtype
     s = s.astype(dtype)
     if remove_dc_offset:
         s -= np.mean(s, 0, dtype=dtype)
-    return s, fs
+    return s, sr
 
 
 def audio_duration(fpath, sr=None, bitdepth=None):
