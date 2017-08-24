@@ -1097,7 +1097,7 @@ def exec_commands(cmds, print_progress=True):
     processes_map = {}
     failed = []
     if print_progress:
-        prog = Progbar(target=len(cmds), title="Execute command:")
+        prog = Progbar(target=len(cmds), name="Execute Commands")
     while True:
         while cmds and len(processes) < max_task:
             task = cmds.pop()
