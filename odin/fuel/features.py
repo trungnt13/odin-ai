@@ -365,6 +365,9 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
         raise Exception('NO jobs found for processing.')
     # ====== check maxlen ====== #
     if maxlen is not None:
+        prog = Progbar(target=sum(len(segs) for _, segs in jobs),
+                       print_report=True, interval=0,
+                       name='Split segment into %d(s) chunks' % int(maxlen))
         new_jobs = []
         new_nb_jobs = 0
         # segments: list of (name, s, e, channel)
@@ -381,6 +384,10 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
                 N = f.getnframes()
             # cut the segments
             for name, start, end, channel in segments:
+                # updating progress
+                prog['Segment'] = name
+                prog.add(1)
+                # infer relevant start and end of segments
                 if 0. <= start < 1. and 0. < end <= 1.:
                     start = int(start * N)
                     end = int(np.ceil(end * N))
