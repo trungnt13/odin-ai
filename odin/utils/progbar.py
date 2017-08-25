@@ -111,14 +111,33 @@ class Progbar(object):
         print epoch summary after each epoch
     name: str or None
         specific name for the progress bar
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from odin.utils import Progbar
+    >>> x = list(range(10))
+    >>> for i in Progbar(target=x):
+    ...     pass
     """
     FP = sys.stderr
 
     def __init__(self, target, interval=0.1, keep=False,
                  print_report=False, print_summary=False,
                  name=None):
-        self.__pb = None
-        self.target = int(target)
+        self.__pb = None # tqdm object
+        self.__count_func = lambda x: len(x) # used when target is iterable
+        self.__report_func = lambda x: None # used when target is iterable
+        if isinstance(target, Number):
+            self.target = int(target)
+            self.__iter_obj = None
+        elif hasattr(target, '__len__'):
+            self.target = len(target)
+            self.__iter_obj = target
+        else:
+            raise ValueError("Unsupport for `target` type: %s" %
+                             str(target.__class__))
+
         self._seen_so_far = defaultdict(int) # mapping: epoch_idx -> seen_so_far
 
         n = len(str(self.target))
@@ -154,8 +173,46 @@ class Progbar(object):
     def __delitem__(self, key):
         return self._report.__delitem__(key)
 
+    def set_iter_info(self, count_func=None, report_func=None):
+        """
+        Parameters
+        ----------
+        count_func: callable
+            a function takes the returned batch and return an integer for upating
+            progress.
+        report_func: callable
+            a function takes the returned batch and a collection of pair
+            (key, value) for constructing the report.
+
+        Return
+        ------
+        Progbar (self) for chaining method
+        """
+        if count_func is not None:
+            if not callable(count_func):
+                raise ValueError("`count_func` must be callable or None.")
+            self.__count_func = count_func
+        if report_func is not None:
+            if not callable(report_func):
+                raise ValueError("`report_func` must be callable or None.")
+            self.__report_func = report_func
+        return self
+
     def __iter__(self):
-        return self._report.__iter__()
+        if self.__iter_obj is None:
+            raise RuntimeError("This Progbar cannot be iterated, "
+                               "the set `target` must be iterable.")
+        for X in self.__iter_obj:
+            count = self.__count_func(X)
+            report = self.__report_func(X)
+            if report is not None:
+                for key, val in report:
+                    self[key] = val
+            self.add(int(count))
+            yield X
+        del self.__iter_obj
+        del self.__count_func
+        del self.__report_func
 
     # ==================== screen control ==================== #
     def interactive(self, print_report=None, print_summary=None):
