@@ -9,7 +9,7 @@ from collections import OrderedDict
 import numpy as np
 
 from odin.config import get_rng
-from odin.utils import UnitTimer, async
+from odin.utils import async, is_string
 
 
 class MmapDict(dict):
@@ -35,6 +35,9 @@ class MmapDict(dict):
         path = kwargs.get('path', None)
         if path is None:
             path = args[0]
+        if not is_string(path):
+            raise ValueError("`path` for MmapDict must be string, but given "
+                             "object with type: %s" % type(path))
         path = os.path.abspath(path)
         # Found old instance
         if path in MmapDict.__INSTANCES:
@@ -48,6 +51,7 @@ class MmapDict(dict):
         super(MmapDict, self).__init__()
         self.__init(path, read_only)
         self.read_only = read_only
+        self._is_closed = False
 
     def __init(self, path, read_only):
         self._path = path
@@ -113,10 +117,18 @@ class MmapDict(dict):
         return True
 
     @property
+    def is_closed(self):
+        return self._is_closed
+
+    @property
     def path(self):
         return self._path
 
     def flush(self):
+        # check if closed
+        if self._is_closed:
+            return
+        # check if in read only mode
         if self.read_only:
             raise Exception('Cannot flush to path:"%s" in read-only mode' % self._path)
         # ====== flush the data ====== #
@@ -152,13 +164,22 @@ class MmapDict(dict):
         del self._new_dict; self._new_dict = {}
 
     def close(self):
+        # check if closed
+        if self._is_closed:
+            return
+        # check if in read only mode
         if not self.read_only:
             self.flush()
+        # remove global instance
         del MmapDict.__INSTANCES[os.path.abspath(self.path)]
         self._mmap.close()
         self._file.close()
+        self._is_closed = True
 
     def __del__(self):
+        # check if closed
+        if self._is_closed:
+            return
         if hasattr(self, '_mmap') and self._mmap is not None and \
         self._file is not None:
             path = os.path.abspath(self.path)

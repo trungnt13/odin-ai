@@ -240,6 +240,7 @@ class FeatureProcessor(object):
             _ = MmapDict(indices_path, read_only=False)
             for name, start, end in ids:
                 _[name] = (int(start), int(end))
+            _.flush()
             _.close()
         prog.add_notification("Saved all indices to disk")
 
