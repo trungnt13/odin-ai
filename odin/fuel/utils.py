@@ -15,7 +15,12 @@ from odin.utils import UnitTimer, async
 class MmapDict(dict):
     """ MmapDict
     Handle enormous dictionary (up to thousand terabytes of data) in
-    memory mapped dictionary, extremely fast to load, and randomly access.
+    memory mapped dictionary, extremely fast to load, and for randomly access.
+    The alignment of saved files:
+        |'mmapdict'|48-bytes(max_pos)|48-bytes(dict_size)|MmapData|indices-dict
+    * The first 48-bytes number: is ending position of the Mmmap
+    * The next 48-bytes number: is length of pickled indices (i.e. the
+    indices start from max_pos to max_pos + dict_size)
 
     Note
     ----
@@ -24,6 +29,20 @@ class MmapDict(dict):
     """
     HEADER = 'mmapdict'
     SIZE_BYTES = 48
+    __INSTANCES = {}
+
+    def __new__(clazz, *args, **kwargs):
+        path = kwargs.get('path', None)
+        if path is None:
+            path = args[0]
+        path = os.path.abspath(path)
+        # Found old instance
+        if path in MmapDict.__INSTANCES:
+            return MmapDict.__INSTANCES[path]
+        # new MmapDict
+        new_instance = super(MmapDict, clazz).__new__(clazz, *args, **kwargs)
+        MmapDict.__INSTANCES[path] = new_instance
+        return new_instance
 
     def __init__(self, path, read_only=False):
         super(MmapDict, self).__init__()
@@ -31,6 +50,7 @@ class MmapDict(dict):
         self.read_only = read_only
 
     def __init(self, path, read_only):
+        self._path = path
         # ====== already exist ====== #
         if os.path.exists(path) and os.path.getsize(path) > 0:
             file = open(str(path), mode='r+')
@@ -56,12 +76,13 @@ class MmapDict(dict):
             file = open(str(path), mode='w+')
             file.write(MmapDict.HEADER) # just write the header
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-            _ = cPickle.dumps(self._indices_dict, protocol=cPickle.HIGHEST_PROTOCOL)
+            _ = cPickle.dumps(self._indices_dict,
+                              protocol=cPickle.HIGHEST_PROTOCOL)
             # write the length of Pickled indices dictionary
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
             file.write(_)
             file.flush()
-        self._path = path
+        # ====== create Mmap from offset file ====== #
         self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
                                # access=mmap.ACCESS_READ,
                                flags=mmap.MAP_SHARED)
@@ -127,20 +148,23 @@ class MmapDict(dict):
                                flags=mmap.MAP_SHARED)
         # reset some values
         self._max_position = old_position + len(self._write_value)
-        del self._write_value
-        self._write_value = ''
-        del self._new_dict
-        self._new_dict = {}
+        del self._write_value; self._write_value = ''
+        del self._new_dict; self._new_dict = {}
 
     def close(self):
         if not self.read_only:
             self.flush()
+        del MmapDict.__INSTANCES[os.path.abspath(self.path)]
         self._mmap.close()
         self._file.close()
 
     def __del__(self):
         if hasattr(self, '_mmap') and self._mmap is not None and \
         self._file is not None:
+            path = os.path.abspath(self.path)
+            if path in MmapDict.__INSTANCES and \
+            id(self) == id(MmapDict.__INSTANCES[path]):
+                del MmapDict.__INSTANCES[path]
             self._mmap.close()
             self._file.close()
 
@@ -153,7 +177,8 @@ class MmapDict(dict):
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
         if key in self.indices:
-            raise Exception('This dictionary do not support update.')
+            raise Exception('This dictionary do not support update, i.e. cannot '
+                            'update the value of key: %s' % key)
         # we using marshal so this only support primitive value
         value = marshal.dumps(value)
         self.indices[key] = (self._max_position, len(value))

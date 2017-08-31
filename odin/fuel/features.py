@@ -8,6 +8,7 @@ import re
 import os
 import sys
 import wave
+import time
 import shutil
 import warnings
 from numbers import Number
@@ -82,9 +83,6 @@ class FeatureProcessor(object):
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
-        if os.path.exists(output_path):
-            print('[WARNING] Remove existed dataset at path:', output_path)
-            shutil.rmtree(output_path)
         self.dataset = Dataset(output_path)
         self.output_path = output_path
         # PCA
@@ -137,6 +135,7 @@ class FeatureProcessor(object):
             if 'dict' in str(dtype).lower():
                 dicts[name] = MmapDict(os.path.join(dataset.path, name))
         # ====== statistic ====== #
+        # mapping: feature_name -> able-to-calculate-statistics
         statistic_able = {i[0]: i[-1] for i in self.features_properties}
         sum1 = defaultdict(int)
         sum2 = defaultdict(int)
@@ -144,6 +143,15 @@ class FeatureProcessor(object):
         pca = defaultdict(lambda *args, **kwargs:
             MiniBatchPCA(n_components=None, whiten=self.pca_whiten,
                          copy=True, batch_size=None) if self.pca else None)
+        # load old statistics and PCA if found
+        for name, is_stats in statistic_able.iteritems():
+            if is_stats:
+                if name + '_sum1' in dataset:
+                    sum1[name] = dataset[name + '_sum1'][:]
+                if name + '_sum2' in dataset:
+                    sum2[name] = dataset[name + '_sum2'][:]
+                if name + '_pca' in dataset:
+                    pca[name] = dataset[name + '_pca']
         # all data are cached for periodically flushed
         cache = defaultdict(list)
         if self.ncache <= 1:
@@ -228,11 +236,11 @@ class FeatureProcessor(object):
             else:
                 outpath = 'indices_%s' % n
             # save the indices to MmapDict
-            outpath = os.path.join(dataset.path, outpath)
-            _ = MmapDict(outpath)
+            indices_path = os.path.join(dataset.path, outpath)
+            _ = MmapDict(indices_path, read_only=False)
             for name, start, end in ids:
                 _[name] = (int(start), int(end))
-            _.flush(); _.close()
+            _.close()
         prog.add_notification("Saved all indices to disk")
 
         # ====== save mean and std ====== #
@@ -269,7 +277,18 @@ class FeatureProcessor(object):
         for d in dicts.itervalues():
             d.flush(); d.close()
         # ====== saving the configuration ====== #
-        config = MmapDict(os.path.join(self.output_path, 'config'))
+        config_path = os.path.join(self.output_path, 'config')
+        # if found exist config, increase the count
+        if os.path.exists(config_path):
+            config_count = 1
+            while True:
+                if not os.path.exists(config_path + str(config_count)):
+                    config_path = config_path + str(config_count)
+                    break
+                config_count += 1
+        # save the new configuration
+        config = MmapDict(config_path)
+        config['__configuration_time__'] = time.time()
         for i in dir(self):
             if _default_module.match(i) is not None:
                 continue
@@ -740,7 +759,7 @@ class SpeechProcessor(FeatureProcessor):
         self.get_phase = get_phase
         self.get_vad = get_vad
         self.get_energy = get_energy
-        self.get_delta = int(get_delta)
+        self.get_delta = 0 if get_delta is None else int(get_delta)
         self.save_raw = save_raw
         # control FeatureProcessor behaviour
         self.primary_indices = ['mfcc', 'spec', 'mfcc', 'vad']

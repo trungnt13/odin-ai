@@ -27,7 +27,7 @@ datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
-                         sr_new=None,
+                         sr=None, sr_new=None, sr_info={},
                          win=0.02, hop=0.01, window='hann',
                          nb_melfilters=40, nb_ceps=13,
                          get_delta=2, get_energy=True, get_phase=True,
