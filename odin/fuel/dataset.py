@@ -250,7 +250,7 @@ class Dataset(object):
                     cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
     def close(self, name=None):
-        # close all Data
+        # ====== close all Data ====== #
         if name is None: # close all files
             for name, (dtype, shape, data, path) in self._data_map.items():
                 if hasattr(data, 'close'):
@@ -260,7 +260,8 @@ class Dataset(object):
             # Check if exist global instance
             if self.path in Dataset.__INSTANCES:
                 del Dataset.__INSTANCES[self.path]
-        elif name in self._data_map: # close a particular file
+        # ====== close a particular file ====== #
+        elif name in self._data_map:
             (dtype, shape, data, path) = self._data_map[name]
             if hasattr(data, 'close'):
                 data.close()

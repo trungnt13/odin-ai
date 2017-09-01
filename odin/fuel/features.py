@@ -102,8 +102,9 @@ class FeatureProcessor(object):
         # be excluded during pca calculation
         self.excluded_pca = []
 
-    def validate_integrity(self):
-        pass
+    def validate(self):
+        """Validating the integrity and soundness of extracted features"""
+        raise NotImplementedError
 
     # ==================== Abstract properties ==================== #
     @abstractproperty

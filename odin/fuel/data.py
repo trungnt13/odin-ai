@@ -14,7 +14,7 @@ from six.moves import range, zip, zip_longest
 import numpy as np
 
 from odin.utils.decorators import autoattr
-from odin.utils import queue, struct, as_tuple, cache_memory
+from odin.utils import queue, struct, as_tuple, cache_memory, is_string
 
 __all__ = [
     'as_data',
@@ -23,7 +23,7 @@ __all__ = [
     'get_all_hdf_dataset',
 
     'Data',
-    'ArrayData',
+    'NdarrayData',
     'MmapData',
     'Hdf5Data',
     'DataIterator',
@@ -44,7 +44,7 @@ def as_data(x):
     if isinstance(x, Data):
         return x
     if isinstance(x, np.ndarray):
-        return ArrayData(x)
+        return NdarrayData(x)
     if isinstance(x, (tuple, list)):
         return DataIterator(x)
     raise ValueError('Cannot create Data object from given object:{}'.format(x))
@@ -629,11 +629,11 @@ class MutableData(Data):
 # ===========================================================================
 # Array Data
 # ===========================================================================
-class ArrayData(Data):
-    """docstring for ArrayData"""
+class NdarrayData(Data):
+    """docstring for NdarrayData"""
 
     def __init__(self, array):
-        super(ArrayData, self).__init__()
+        super(NdarrayData, self).__init__()
         if not isinstance(array, np.ndarray):
             raise ValueError('array must be instance of numpy ndarray')
         self._data = array
@@ -753,20 +753,9 @@ class MmapData(Data):
     memmap's are array-like objects.  This differs from Python's ``mmap``
     module, which uses file-like objects.
 
-    This subclass of ndarray has some unpleasant interactions with
-    some operations, because it doesn't quite fit properly as a subclass.
-    An alternative to using this subclass is to create the ``mmap``
-    object yourself, then create an ndarray with ndarray.__new__ directly,
-    passing the object created in its 'buffer=' parameter.
-
-    This class may at some point be turned into a factory function
-    which returns a view into an mmap buffer.
-
-    Delete the memmap instance to close.
-
     Parameters
     ----------
-    filename : str or file-like object
+    path : str
         The file name or file object to be used as the array data buffer.
     dtype : data-type, optional
         The data-type used to interpret the file contents.
@@ -782,8 +771,7 @@ class MmapData(Data):
     ----
     This class always read MmapData with mode=r+
     """
-
-    # name.float32.(8,12)
+    __INSTANCES = {}
     HEADER = 'mmapdata'
     MAXIMUM_HEADER_SIZE = 486
     COUNT = 0
@@ -804,6 +792,22 @@ class MmapData(Data):
             raise Exception('Error reading memmap data file: %s' % str(e))
         f.close()
         return dtype, shape
+
+    def __new__(clazz, *args, **kwargs):
+        path = kwargs.get('path', None)
+        if path is None:
+            path = args[0]
+        if not is_string(path):
+            raise ValueError("`path` for MmapData must be string, but given "
+                             "object with type: %s" % type(path))
+        path = os.path.abspath(path)
+        # Found old instance
+        if path in MmapData.__INSTANCES:
+            return MmapData.__INSTANCES[path]
+        # new Dataset
+        new_instance = super(MmapData, clazz).__new__(clazz, *args, **kwargs)
+        MmapData.__INSTANCES[path] = new_instance
+        return new_instance
 
     def __init__(self, path, dtype=None, shape=None, read_only=False):
         super(MmapData, self).__init__()
@@ -850,6 +854,9 @@ class MmapData(Data):
 
     def close(self):
         MmapData.COUNT -= 1
+        # Check if exist global instance
+        if os.path.abspath(self.path) in MmapData.__INSTANCES:
+            del MmapData.__INSTANCES[self.path]
         if hasattr(self, '_data') and self._data is not None:
             self._data._mmap.close()
             del self._data
