@@ -66,7 +66,7 @@ if False:
     ds = F.Dataset(output_path, read_only=True)
 # ====== use online features ====== #
 else:
-    ds = F.load_digit_audio()
+    ds = F.load_digit_feat()
 nb_classes = 10
 # ===========================================================================
 # Create feeder

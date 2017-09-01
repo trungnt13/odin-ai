@@ -22,7 +22,7 @@ __all__ = [
     'load_mspec_test',
     'load_imdb',
     'load_iris',
-    'load_digit_audio',
+    'load_digit_feat',
     'load_tiwave',
 ]
 
@@ -515,7 +515,7 @@ def load_iris():
     return _load_data_from_path(datapath)
 
 
-def load_digit_audio():
+def load_digit_feat():
     path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
     name = 'digit'
     datapath = get_file(name, path)

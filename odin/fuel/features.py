@@ -65,14 +65,18 @@ class FeatureProcessor(object):
         list of all jobs for processing
     njobs: int
         number of jobs, if njobs is 0, then njobs = len(jobs)
-    features_properties: tuple, list
+
+    By overriding this class, these three properties must be carefully
+    defined:
+    _features_properties: tuple, list
         list of (name-str, dtype-dtype, save_statistics-bool),
         this list determines which features will be processed and saved.
-    primary_indices: tuple, list
-        list of string contains the name of data that will be treated as
-        primary indices (i.e. indices of this data will only be named
-        as `indices.csv`), for other data, the indices will be
-        `indices_[name].csv`.
+    _external_indices: tuple, list
+        Return a list of feature names that have separated indices
+        file.
+    _excluded_pca: list
+        All feature properties with name given in this list will
+        be excluded during pca calculation.
     """
 
     def __init__(self, output_path, datatype='memmap',
@@ -96,23 +100,59 @@ class FeatureProcessor(object):
         # defaults
         self.jobs = []
         self.njobs = 0
-        # list for internal control of FeatureProcessor behaviour
-        self.primary_indices = []
-        # all feature properties with name given in this list will
-        # be excluded during pca calculation
-        self.excluded_pca = []
+        # ====== internal control for feature processor ====== #
+        # list of (name, dtype, static-able)
+        self._features_properties = []
+        # list of features name
+        self._external_indices = []
+        self._excluded_pca = []
 
-    def validate(self):
+    def validate(self, nb_samples=8):
         """Validating the integrity and soundness of extracted features"""
         raise NotImplementedError
 
     # ==================== Abstract properties ==================== #
-    @abstractproperty
+    @property
     def features_properties(self):
         """ Return list of features' properties
         [(name, dtype, statistic-able), ...]
+        Note
+        ----
+        A statistic-able feature will also be calculated and stored
+        the sum1, sum2, and PCA
         """
-        pass
+        if len(self._features_properties) == 0:
+            raise ValueError("`_features_properties` must be defined and length>0 "
+                             "when overriding FeatureProcessor.")
+        for name, dtype, static_able in self._features_properties:
+            if not is_string(name) or \
+            not (is_string(dtype) or isinstance(dtype, np.dtype)) or \
+            not (isinstance(bool(static_able), type(True))):
+                raise ValueError("features_properties is list of 3 elements, "
+                    "includes: name (string), dtype (string or numpy.dtype), "
+                    "and statistic-able (bool), but given element is: %s" %
+                    str([name, dtype, static_able]))
+        return self._features_properties
+
+    @property
+    def external_indices(self):
+        """Return a list of feature names that have separated indices
+        file """
+        for feature_name in self._external_indices:
+            if not is_string(feature_name):
+                raise ValueError('external_indices is list of feature_name which '
+                    'is string type.')
+        return self._external_indices
+
+    @property
+    def excluded_pca(self):
+        """ All feature properties with name given in this list will
+        be excluded during pca calculation"""
+        for feature_name in self._excluded_pca:
+            if not is_string(feature_name):
+                raise ValueError('_excluded_pca is list of feature_name which '
+                    'is string type.')
+        return self._excluded_pca
 
     @abstractmethod
     def map(self, job):
@@ -140,7 +180,8 @@ class FeatureProcessor(object):
                 dicts[name] = MmapDict(os.path.join(dataset.path, name))
         # ====== statistic ====== #
         # mapping: feature_name -> able-to-calculate-statistics
-        statistic_able = {i[0]: i[-1] for i in self.features_properties}
+        statistic_able = {name: stats_able
+                          for name, dtype, stats_able in self.features_properties}
         sum1 = defaultdict(int)
         sum2 = defaultdict(int)
         # init PCA
@@ -162,6 +203,7 @@ class FeatureProcessor(object):
             cache_limit = max(2, int(0.12 * njobs))
         else:
             cache_limit = int(self.ncache)
+        # ref_vars[start]
         ref_vars = {'start': defaultdict(int), 'processed_count': 0}
 
         # ====== helper ====== #
@@ -180,32 +222,36 @@ class FeatureProcessor(object):
                 else:
                     dataset[(name, datatype)] = cache_data
 
+        # ====== repeated for each result returned ====== #
         def wrapped_reduce(result):
             name, data = result
             ref_vars['processed_count'] += 1
             # check data
             if not isinstance(data, (tuple, list)):
                 data = (data,)
-            length = [] # store length of all data for validation
             # processing
             for prop, d in zip(self.features_properties, data):
-                n, t, s = prop # data-type-name, dtype, stats
+                # feature-type-name, dtype, stats-able
+                feat_name, feat_type, feat_stat = prop
                 # mmapdict type:
-                if 'dict' in str(t).lower():
-                    dicts[n][name] = d.tolist() if isinstance(d, np.ndarray) else d
-                    del d; continue
+                if 'dict' in str(feat_type).lower():
+                    dicts[feat_name][name] = (d.tolist() if isinstance(d, np.ndarray)
+                                              else d)
+                    del d
+                    continue
                 # auto-create new indices
-                if len(d) not in length:
-                    length.append(len(d))
-                    indices[n].append([name, ref_vars['start'][n],
-                                       ref_vars['start'][n] + len(d)])
-                    ref_vars['start'][n] += len(d)
+                ids_name = feat_name if feat_name in self.external_indices else\
+                    '__primary_indices__'
+                indices[ids_name].append([name,
+                                          ref_vars['start'][ids_name],
+                                          ref_vars['start'][ids_name] + len(d)])
+                ref_vars['start'][ids_name] += len(d)
                 # cache data, only if we have more than 0 sample
                 if len(d) > 0:
-                    cache[n].append(d.astype(t))
-                    if self.save_stats and s: # save stats
-                        sum1[n] += np.sum(d, axis=0, dtype='float64')
-                        sum2[n] += np.sum(np.power(d, 2), axis=0, dtype='float64')
+                    cache[feat_name].append(d.astype(feat_type))
+                    if self.save_stats and feat_stat: # save stats
+                        sum1[feat_name] += np.sum(d, axis=0, dtype='float64')
+                        sum2[feat_name] += np.sum(np.power(d, 2), axis=0, dtype='float64')
                 del d
             # ====== flush cache ====== #
             if ref_vars['processed_count'] % cache_limit == 0: # 12 + 8
@@ -230,22 +276,18 @@ class FeatureProcessor(object):
         dataset.flush()
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
-        saved_primary = False
-        for n, ids in indices.iteritems():
-            if n in self.primary_indices:
-                # do not repeat saving the same indices
-                if saved_primary: continue
+        for ids_name, ids in indices.iteritems():
+            if ids_name == '__primary_indices__':
                 outpath = 'indices'
-                saved_primary = True
             else:
-                outpath = 'indices_%s' % n
+                outpath = 'indices_%s' % ids_name
             # save the indices to MmapDict
-            indices_path = os.path.join(dataset.path, outpath)
-            _ = MmapDict(indices_path, read_only=False)
+            ids_dict = MmapDict(os.path.join(dataset.path, outpath),
+                                read_only=False)
             for name, start, end in ids:
-                _[name] = (int(start), int(end))
-            _.flush()
-            _.close()
+                ids_dict[name] = (int(start), int(end))
+            ids_dict.flush()
+            ids_dict.close()
         prog.add_notification("Saved all indices to disk")
 
         # ====== save mean and std ====== #
@@ -499,9 +541,9 @@ class WaveProcessor(FeatureProcessor):
     ----------
     segments : path, list
         if path, directory of all audio file, or segment csv file in
-        following format (channel can be omitted), `start` and `end` is in second
-        (if `start`, or `end` is smaller than 1. then they are understand as
-        percentage)
+        following format (channel can be omitted), `start` and `end`
+        is in second (if `start`, or `end` is smaller than 1.0, then they
+        are understand as percentage)
             name                |     path             |start|end |channel
         ------------------------|----------------------|-----|----|---
         sw02001-A_000098-001156 | /path/to/sw02001.sph | 0.0 | -1 | 0
@@ -547,16 +589,9 @@ class WaveProcessor(FeatureProcessor):
         self.dtype = dtype
         self.pcm = pcm
         self.remove_dc_offset = remove_dc_offset
-        self.primary_indices = ['raw']
-
-    @property
-    def features_properties(self):
-        """ Return list of features' properties
-        (name, dtype, statistic-able)
-        """
-        return [('raw', self.dtype, False),
-                ('sr', 'dict', False),
-                ('dtype', 'dict', False)]
+        self._features_properties = [('raw', self.dtype, False),
+                                     ('sr', 'dict', False),
+                                     ('dtype', 'dict', False)]
 
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
@@ -768,7 +803,7 @@ class SpeechProcessor(FeatureProcessor):
         self.save_raw = save_raw
         # control FeatureProcessor behaviour
         self.primary_indices = ['mfcc', 'spec', 'mfcc', 'vad']
-        self.excluded_pca = ['energy', 'vad']
+        self._excluded_pca = ['energy', 'vad']
         # ====== feature information ====== #
         self.sr = sr
         self.sr_new = sr_new

@@ -24,7 +24,7 @@ stdio(path=get_logpath('digit_audio.log', override=True))
 # ===========================================================================
 # Get wav and process new dataset configuration
 # ===========================================================================
-ds = F.load_digit_audio()
+ds = F.load_digit_feat()
 nb_classes = 10
 indices = [(name, start, end)
            for name, (start, end) in ds['indices'].items(True)]
