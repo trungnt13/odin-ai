@@ -66,7 +66,6 @@ def _parse_data_descriptor(path, read_only):
     return [(name, ('unknown', 'unknown', None, path))]
 
 
-@singleton
 class Dataset(object):
     """ This Dataset can automatically parse memmap (created by MmapData),
     MmapDict, pickled dictionary and hdf5 files and keep tracking the changes.
@@ -79,6 +78,24 @@ class Dataset(object):
     for developer: _data_map contains: name -> (dtype, shape, Data or pathtoData)
     readme included with the dataset should contain license information
     """
+
+    __INSTANCES = {}
+
+    def __new__(clazz, *args, **kwargs):
+        path = kwargs.get('path', None)
+        if path is None:
+            path = args[0]
+        if not is_string(path):
+            raise ValueError("`path` for Dataset must be string, but given "
+                             "object with type: %s" % type(path))
+        path = os.path.abspath(path)
+        # Found old instance
+        if path in Dataset.__INSTANCES:
+            return Dataset.__INSTANCES[path]
+        # new Dataset
+        new_instance = super(Dataset, clazz).__new__(clazz, *args, **kwargs)
+        Dataset.__INSTANCES[path] = new_instance
+        return new_instance
 
     def __init__(self, path, read_only=False, override=False):
         path = os.path.abspath(path)
@@ -233,13 +250,16 @@ class Dataset(object):
                     cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
     def close(self, name=None):
+        # close all Data
         if name is None: # close all files
             for name, (dtype, shape, data, path) in self._data_map.items():
                 if hasattr(data, 'close'):
                     data.close()
                 del data
                 del self._data_map[name]
-            self.dispose() # Singleton class to dispose an instance
+            # Check if exist global instance
+            if self.path in Dataset.__INSTANCES:
+                del Dataset.__INSTANCES[self.path]
         elif name in self._data_map: # close a particular file
             (dtype, shape, data, path) = self._data_map[name]
             if hasattr(data, 'close'):
