@@ -43,7 +43,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=0.12, ncpu=12)
+                         ncache=0.12, ncpu=8)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
@@ -81,7 +81,7 @@ if PCA:
 ds.archive()
 print("Archive at:", ds.archive_path)
 # ====== plot the processed files ====== #
-figpath = os.path.join(utils.get_tempdir(), 'speech_features_%s.pdf' % backend)
+figpath = '/tmp/speech_features_%s.pdf' % backend
 files = np.random.choice(ds['indices'].keys(), size=8, replace=False)
 for f in files:
     with visual.figure(ncol=1, nrow=5, dpi=180,

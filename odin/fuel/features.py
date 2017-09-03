@@ -229,6 +229,7 @@ class FeatureProcessor(object):
             # check data
             if not isinstance(data, (tuple, list)):
                 data = (data,)
+            saved_indices = []
             # processing
             for prop, d in zip(self.features_properties, data):
                 # feature-type-name, dtype, stats-able
@@ -240,12 +241,16 @@ class FeatureProcessor(object):
                     del d
                     continue
                 # auto-create new indices
-                ids_name = feat_name if feat_name in self.external_indices else\
-                    '__primary_indices__'
-                indices[ids_name].append([name,
-                                          ref_vars['start'][ids_name],
-                                          ref_vars['start'][ids_name] + len(d)])
-                ref_vars['start'][ids_name] += len(d)
+                if feat_name in self.external_indices:
+                    ids_name = feat_name
+                else:
+                    ids_name = '__primary_indices__'
+                if ids_name not in saved_indices:
+                    indices[ids_name].append([name,
+                                              ref_vars['start'][ids_name],
+                                              ref_vars['start'][ids_name] + len(d)])
+                    saved_indices.append(ids_name)
+                    ref_vars['start'][ids_name] += len(d)
                 # cache data, only if we have more than 0 sample
                 if len(d) > 0:
                     cache[feat_name].append(d.astype(feat_type))
@@ -278,11 +283,11 @@ class FeatureProcessor(object):
         # ====== saving indices ====== #
         for ids_name, ids in indices.iteritems():
             if ids_name == '__primary_indices__':
-                outpath = 'indices'
+                file_name = 'indices'
             else:
-                outpath = 'indices_%s' % ids_name
+                file_name = 'indices_%s' % ids_name
             # save the indices to MmapDict
-            ids_dict = MmapDict(os.path.join(dataset.path, outpath),
+            ids_dict = MmapDict(os.path.join(dataset.path, file_name),
                                 read_only=False)
             for name, start, end in ids:
                 ids_dict[name] = (int(start), int(end))
@@ -790,8 +795,11 @@ class SpeechProcessor(FeatureProcessor):
             features_properties.append(('vadids', 'dict', False))
         # store the sample rate of each file also
         features_properties.append(('sr', 'dict', False))
-        self.__features_properties = features_properties
-
+        self._features_properties = features_properties
+        # control FeatureProcessor behaviour
+        self._external_indices = ['vadids']
+        self._excluded_pca = ['energy', 'vad']
+        # ====== local variable ====== #
         self.get_spec = get_spec
         self.get_pitch = get_pitch
         self.get_f0 = get_f0
@@ -801,9 +809,6 @@ class SpeechProcessor(FeatureProcessor):
         self.get_energy = get_energy
         self.get_delta = 0 if get_delta is None else int(get_delta)
         self.save_raw = save_raw
-        # control FeatureProcessor behaviour
-        self.primary_indices = ['mfcc', 'spec', 'mfcc', 'vad']
-        self._excluded_pca = ['energy', 'vad']
         # ====== feature information ====== #
         self.sr = sr
         self.sr_new = sr_new
@@ -829,11 +834,6 @@ class SpeechProcessor(FeatureProcessor):
         self.backend = backend
 
     # ==================== Abstract properties ==================== #
-    @property
-    def features_properties(self):
-        """ Returnn all name of given features"""
-        return self.__features_properties
-
     def map(self, job):
         '''
         Return
@@ -866,7 +866,7 @@ class SpeechProcessor(FeatureProcessor):
                 if features is not None:
                     saved_features = []
                     found_NaN = False
-                    for i in self.__features_properties[:-1]:
+                    for i in self.features_properties[:-1]:
                         feat = features[i[0]]
                         if isinstance(feat, np.ndarray) and \
                         sum(feat.shape) > 0 and np.isnan(np.min(feat)):
