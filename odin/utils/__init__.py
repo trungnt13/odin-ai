@@ -36,6 +36,7 @@ from .profile import *
 from .path_utils import *
 from .cache_utils import *
 from .python_utils import *
+from .np_utils import *
 from . import mpi
 from . import shape_calculation
 
@@ -460,25 +461,6 @@ class ArgController(object):
 # ===========================================================================
 # Simple math and processing
 # ===========================================================================
-def one_hot(y, n_classes=None):
-    '''Convert class vector (integers from 0 to nb_classes)
-    to binary class matrix, for use with categorical_crossentropy
-
-    Note
-    ----
-    if any class index in y is smaller than 0, then all of its one-hot
-    values is 0.
-    '''
-    y = numpy.asarray(y, dtype='int32')
-    if not n_classes:
-        n_classes = numpy.max(y) + 1
-    Y = numpy.zeros((len(y), n_classes), dtype='int32')
-    for i, j in enumerate(y):
-        if j >= 0:
-            Y[i, j] = 1
-    return Y
-
-
 def as_tuple(x, N=None, t=None):
     """
     Coerce a value to a tuple of given length (and possibly given type).

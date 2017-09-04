@@ -7,7 +7,7 @@ from collections import defaultdict, Iterator, OrderedDict
 
 import numpy as np
 
-from odin.utils import as_tuple, flatten_list
+from odin.utils import as_tuple, flatten_list, ctext
 from odin.config import get_rng
 
 
@@ -37,17 +37,17 @@ def classification_report(y_pred, y_true, labels):
     return s
 
 
-def _split_list(x, train=0.6, idfunc=None, inc_test=True, seed=None):
+def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
     # ====== shuffle input ====== #
-    x_id = defaultdict(list)
-    for i in x:
-        x_id[idfunc(i)].append(i)
-    id_list = x_id.keys()
-    if seed is not None:
-        np.random.seed(seed)
-        np.random.shuffle(id_list)
+    if idfunc is not None:
+        x_id = defaultdict(list)
+        for i in x:
+            x_id[idfunc(i)].append(i)
     else:
-        get_rng().shuffle(id_list)
+        x_id = {i: [j] for i, j in enumerate(x)}
+    # shuffle ID(s)
+    id_list = x_id.keys()
+    rng.shuffle(id_list)
     # ====== split ====== #
     N = len(id_list)
     if N == 1:
@@ -98,23 +98,25 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     elif isinstance(x, np.ndarray):
         x = x.tolist()
     # ====== check idfunc ====== #
-    if idfunc is None:
-        idfunc = lambda x: x
     if not callable(idfunc):
-        raise ValueError("'idfunc' must be callable or None.")
+        idfunc = None
     # ====== clustering ====== #
     if cluster_func is None:
-        cluster_func = lambda x: 8
+        cluster_func = lambda x: x # lucky number
     if not callable(cluster_func):
         raise ValueError("'cluster_func' must be callable or None.")
     clusters = defaultdict(list)
     for i in x:
         clusters[cluster_func(i)].append(i)
     # ====== applying data split for each cluster separately ====== #
+    if seed is not None:
+        rng = np.random.seed(seed)
+    else:
+        rng = get_rng()
     train_list, valid_list, test_list = [], [], []
     for name, clus in clusters.iteritems():
-        _1, _2, _3 = _split_list(clus, train=train, idfunc=idfunc,
-            inc_test=inc_test, seed=seed)
+        _1, _2, _3 = _split_list(clus, rng, train=train, idfunc=idfunc,
+                                 inc_test=inc_test)
         train_list += _1
         valid_list += _2
         test_list += _3
@@ -124,7 +126,8 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     return train_list, valid_list
 
 
-def freqcount(x, key=None, count=1, normalize=False, sort=False):
+def freqcount(x, key=None, count=1, normalize=False, sort=False,
+              pretty_return=False):
     """ x: list, iterable
 
     Parameters
@@ -138,10 +141,13 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False):
         which sum up to 1. in total).
     sort: boolean
         if True, the list will be sorted in ascent order.
+    pretty_return: boolean
+        if True, return pretty formatted text.
 
     Return
     ------
     dict: x(obj) -> freq(int)
+    if `pretty_return` is `True`, return pretty formatted string.
     """
     freq = defaultdict(int)
     if key is None:
@@ -159,8 +165,15 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False):
     s = float(sum(v for v in freq.values()))
     freq = OrderedDict([(k, freq[k] / s if normalize else freq[k])
                         for k in sorted(freq.keys())])
+    # check sort
     if sort:
         freq = OrderedDict(sorted(freq.items(), key=lambda x: x[1]))
+    # check pretty return
+    if pretty_return:
+        s = ''
+        for name, value in freq.iteritems():
+            s += ' %s: %d\n' % (ctext(name, 'yellow'), value)
+        return s
     return freq
 
 

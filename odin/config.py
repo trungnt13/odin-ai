@@ -23,7 +23,7 @@ import warnings
 from six import string_types
 from multiprocessing import cpu_count
 
-import numpy
+import numpy as np
 
 
 # ===========================================================================
@@ -93,6 +93,7 @@ class AttributeDict(dict):
 # ===========================================================================
 CONFIG = None
 _SESSION = None
+_RNG_GENERATOR = None
 
 
 def set_session(session):
@@ -203,7 +204,7 @@ def auto_config(config=None):
                    'cnmem': cnmem, 'seed': seed,
                    'debug': debug})
     global _RNG_GENERATOR
-    _RNG_GENERATOR = numpy.random.RandomState(seed=seed)
+    _RNG_GENERATOR = np.random.RandomState(seed=seed)
     # ====== initialize tensorflow session ====== #
     import tensorflow as tf
     global _SESSION
@@ -234,6 +235,9 @@ def __validate_config():
 
 def get_rng():
     """return the numpy random state as a Randomness Generator"""
+    if _RNG_GENERATOR is None:
+        global _RNG_GENERATOR
+        _RNG_GENERATOR = np.random.RandomState(seed=120825)
     return _RNG_GENERATOR
 
 

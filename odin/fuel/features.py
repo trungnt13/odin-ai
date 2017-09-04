@@ -234,7 +234,7 @@ class FeatureProcessor(object):
             for prop, d in zip(self.features_properties, data):
                 # feature-type-name, dtype, stats-able
                 feat_name, feat_type, feat_stat = prop
-                # mmapdict type:
+                # specal case: mmapdict type
                 if 'dict' in str(feat_type).lower():
                     dicts[feat_name][name] = (d.tolist() if isinstance(d, np.ndarray)
                                               else d)

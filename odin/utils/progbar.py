@@ -109,6 +109,12 @@ class Progbar(object):
         print updated report along with the progress bar for each update
     print_summary: bool
         print epoch summary after each epoch
+    count_func: callable
+        a function takes the returned batch and return an integer for upating
+        progress.
+    report_func: callable
+        a function takes the returned batch and a collection of pair
+        (key, value) for constructing the report.
     name: str or None
         specific name for the progress bar
 
@@ -124,6 +130,7 @@ class Progbar(object):
 
     def __init__(self, target, interval=0.1, keep=False,
                  print_report=False, print_summary=False,
+                 count_func=None, report_func=None,
                  name=None):
         self.__pb = None # tqdm object
         self.__count_func = lambda x: len(x) # used when target is iterable
@@ -161,6 +168,19 @@ class Progbar(object):
         self._epoch_summary = defaultdict(dict)
         self._epoch_idx = 0
         self._epoch_start_time = None
+        # ====== iter information ====== #
+        if self.__iter_obj is None and \
+        (count_func is not None or report_func is not None):
+            raise RuntimeError("`count_func` and `report_func` can only be used "
+                               "when `target` is an iterator with specific length.")
+        if count_func is not None:
+            if not callable(count_func):
+                raise ValueError("`count_func` must be callable or None.")
+            self.__count_func = count_func
+        if report_func is not None:
+            if not callable(report_func):
+                raise ValueError("`report_func` must be callable or None.")
+            self.__report_func = report_func
 
     # ==================== History management ==================== #
     def __getitem__(self, key):
@@ -172,31 +192,6 @@ class Progbar(object):
 
     def __delitem__(self, key):
         return self._report.__delitem__(key)
-
-    def set_iter_info(self, count_func=None, report_func=None):
-        """
-        Parameters
-        ----------
-        count_func: callable
-            a function takes the returned batch and return an integer for upating
-            progress.
-        report_func: callable
-            a function takes the returned batch and a collection of pair
-            (key, value) for constructing the report.
-
-        Return
-        ------
-        Progbar (self) for chaining method
-        """
-        if count_func is not None:
-            if not callable(count_func):
-                raise ValueError("`count_func` must be callable or None.")
-            self.__count_func = count_func
-        if report_func is not None:
-            if not callable(report_func):
-                raise ValueError("`report_func` must be callable or None.")
-            self.__report_func = report_func
-        return self
 
     def __iter__(self):
         if self.__iter_obj is None:
@@ -263,7 +258,8 @@ class Progbar(object):
             self.__pb = _tqdm(iterable=it, desc="Epoch %d" % self.epoch_idx,
                               leave=self.__keep,
                               total=self.target, file=Progbar.FP, unit='obj',
-                              mininterval=self.__interval, position=0)
+                              mininterval=self.__interval, maxinterval=10,
+                              miniters=0, position=0)
             self.__pb.clear()
             self._epoch_start_time = time.time()
         return self.__pb
