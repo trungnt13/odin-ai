@@ -10,15 +10,6 @@
 [submodule "ideas/transformer"]
 	path = ideas/transformer
 	url = https://github.com/Kyubyong/transformer.git
-[submodule "ideas/residual"]
-    path = ideas/residual
-    url = https://github.com/KaimingHe/deep-residual-networks.git
-[submodule "ideas/residual-1k"]
-    path = ideas/residual-1k
-    url = https://github.com/KaimingHe/resnet-1k-layers.git
-[submodule "ideas/decoupled-multimodal"]
-    path = ideas/decoupled-multimodal
-    url = https://github.com/Jakobovski/decoupled-multimodal-learning.git
-[submodule "ideas/deep-reconstruction"]
-    path = ideas/deep-reconstruction
-    url = https://github.com/ghif/drcn.git
+[submodule "ideas/drcn"]
+	path = ideas/drcn
+	url = https://github.com/ghif/drcn.git
