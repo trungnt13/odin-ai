@@ -937,7 +937,7 @@ class Sequencing(FeederRecipe):
     endmode: 'pre', 'post'
         if "pre", padding or wrapping at the beginning of the array.
         if "post", padding or wrapping at the ending of the array.
-    transcription_transform: callable
+    label_transform: callable
         a function transform a sequence of transcription value into
         desire value for 1 sample.
 
@@ -959,7 +959,7 @@ class Sequencing(FeederRecipe):
 
     def __init__(self, frame_length=256, hop_length=None,
                  end='cut', endvalue=0., endmode='post',
-                 transcription_transform=lambda x: x[-1]):
+                 label_transform=lambda x: x[-1]):
         super(Sequencing, self).__init__()
         self.frame_length = int(frame_length)
         self.hop_length = frame_length // 2 if hop_length is None else int(hop_length)
@@ -969,7 +969,7 @@ class Sequencing(FeederRecipe):
         self.end = end
         self.endvalue = endvalue
         self.endmode = endmode
-        self.__transcription_transform = functionable(transcription_transform)
+        self.__label_transform = functionable(label_transform)
 
     def process(self, name, X, y):
         # not enough data points for sequencing
@@ -982,23 +982,23 @@ class Sequencing(FeederRecipe):
                     end=self.end, endvalue=self.endvalue, endmode=self.endmode)
              for x in X]
         # ====== transforming the transcription ====== #
-        trans_transform = self.__transcription_transform
-        if trans_transform is not None:
-            _ = []
-            for a in y:
-                original_dtype = a.dtype
-                a = segment_axis(np.asarray(a, dtype='str'),
+        labs_transform = self.__label_transform
+        if labs_transform is not None:
+            label_list = []
+            for labels in y:
+                original_dtype = labels.dtype
+                labels = segment_axis(np.asarray(labels, dtype='str'),
                                 self.frame_length, self.hop_length,
                                 axis=0, end=self.end,
                                 endvalue='__end__', endmode=self.endmode)
                 # need to remove padded value
-                a = np.asarray(
-                    [trans_transform([j for j in i if '__end__' not in j])
-                     for i in a],
+                labels = np.asarray(
+                    [labs_transform([j for j in i if '__end__' not in j])
+                     for i in labels],
                     dtype=original_dtype
                 )
-                _.append(a)
-            y = _
+                label_list.append(labels)
+            y = label_list
         return name, X, y
 
     def shape_transform(self, shapes, indices):

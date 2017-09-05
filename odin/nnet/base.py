@@ -31,7 +31,7 @@ import tensorflow as tf
 # ===========================================================================
 def get_all_nnops(model_scope=None, op_type=None):
     """ Return a dictionary of (name, nnops) for all created NNOp """
-    allops = NNOp.__ALL_NNOPS.values()
+    allops = NNOp._ALL_NNOPS.values()
     if model_scope is not None:
         if not is_string(model_scope): model_scope = model_scope.name
         allops = [o for o in allops if o.name[:len(model_scope)] == model_scope]
@@ -50,10 +50,10 @@ def _assign_new_nnop(nnops):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
                          ", but the given object has type: %s" % str(type(nnops)))
     name = nnops.name
-    if name in NNOp.__ALL_NNOPS:
+    if name in NNOp._ALL_NNOPS:
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
-                           "already existed." % (type(NNOp.__ALL_NNOPS[name]), name))
-    NNOp.__ALL_NNOPS[name] = nnops
+                           "already existed." % (type(NNOp._ALL_NNOPS[name]), name))
+    NNOp._ALL_NNOPS[name] = nnops
 
 
 # ===========================================================================
@@ -375,15 +375,15 @@ class NNOp(object):
     You must use: protocol=cPickle.HIGHEST_PROTOCOL when dump NNOp.
     if NNOp is applied to a list of inputs, it will process each input seperated.
     """
-    __ALL_NNOPS = {}
+    _ALL_NNOPS = {}
 
     def __new__(clazz, *args, **kwargs):
         # cPickle call __new__
         if len(args) == 1 and len(kwargs) == 0 and \
         (is_string(args[0]) and '[__name__]' in args[0]):
             name = args[0].replace('[__name__]', '')
-            if name in NNOp.__ALL_NNOPS:
-                instance = NNOp.__ALL_NNOPS[name]
+            if name in NNOp._ALL_NNOPS:
+                instance = NNOp._ALL_NNOPS[name]
                 if not isinstance(instance, clazz):
                     raise RuntimeError("Found duplicated NNOp with type: '%s', "
                         "which is different from pickled type: '%s'" %
@@ -412,12 +412,12 @@ class NNOp(object):
             raise ValueError("name for NNOp must be string, but given name "
                              "has type: %s" % (name))
         # ====== check duplicated Op name ====== #
-        if name in NNOp.__ALL_NNOPS:
-            old_clazz = NNOp.__ALL_NNOPS[name].__class__
+        if name in NNOp._ALL_NNOPS:
+            old_clazz = NNOp._ALL_NNOPS[name].__class__
             if clazz != old_clazz:
                 raise RuntimeError("Found predefined NNOp with type: %s, but "
                     "the new NNOp has type: %s" % (old_clazz, clazz))
-            return NNOp.__ALL_NNOPS[name]
+            return NNOp._ALL_NNOPS[name]
         # ====== allocate new Op ====== #
         new_op = super(NNOp, clazz).__new__(clazz, *args, **kwargs)
         new_op._name = name
@@ -458,13 +458,13 @@ class NNOp(object):
             setattr(self, key, val)
         # # ====== check exist NNOp ====== #
         name = self.name
-        if name in NNOp.__ALL_NNOPS:
-            if type(NNOp.__ALL_NNOPS[name]) != type(self):
+        if name in NNOp._ALL_NNOPS:
+            if type(NNOp._ALL_NNOPS[name]) != type(self):
                 raise RuntimeError("Found duplicated NNOp with name: '%s' and type: '%s'"
-                    % (name, str(type(NNOp.__ALL_NNOPS[name]))))
+                    % (name, str(type(NNOp._ALL_NNOPS[name]))))
             # cannot find '[__name__]' due to not specify protocol
             # hence the __getnewargs__ is not called
-            elif NNOp.__ALL_NNOPS[name] != self:
+            elif NNOp._ALL_NNOPS[name] != self:
                 raise RuntimeError("You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
                     "when using `pickle` or `cPickle` to be able pickling NNOp.")
 

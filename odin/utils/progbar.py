@@ -133,8 +133,6 @@ class Progbar(object):
                  count_func=None, report_func=None,
                  name=None):
         self.__pb = None # tqdm object
-        self.__count_func = lambda x: len(x) # used when target is iterable
-        self.__report_func = lambda x: None # used when target is iterable
         if isinstance(target, Number):
             self.target = int(target)
             self.__iter_obj = None
@@ -173,14 +171,20 @@ class Progbar(object):
         (count_func is not None or report_func is not None):
             raise RuntimeError("`count_func` and `report_func` can only be used "
                                "when `target` is an iterator with specific length.")
+        #
         if count_func is not None:
             if not callable(count_func):
                 raise ValueError("`count_func` must be callable or None.")
             self.__count_func = count_func
+        else:
+            self.__count_func = lambda x: len(x)
+        #
         if report_func is not None:
             if not callable(report_func):
                 raise ValueError("`report_func` must be callable or None.")
             self.__report_func = report_func
+        else:
+            self.__report_func = lambda x: None
 
     # ==================== History management ==================== #
     def __getitem__(self, key):

@@ -74,6 +74,20 @@ def ctext(s, color='red'):
     return s
 
 
+def ctext_confusion_matrix(arr, labels=None):
+    n = max(len(str(i)) for i in arr.ravel())
+    n_labels = 0 if labels is None else max(len(str(i)) for i in labels)
+    fmt = '%' + str(n) + 'd'
+    fmt_labels = '%' + str(n_labels) + 's'
+    s = ''
+    for i, row in enumerate(arr):
+        if labels is not None:
+            s_row = ctext((fmt_labels % str(labels[i])) + ':', 'red')
+        s_row += ctext(' '.join([fmt % x for x in row]), 'yellow') + '\n'
+        s += s_row
+    return s
+
+
 # ===========================================================================
 # Basics
 # ===========================================================================
