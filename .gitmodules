@@ -13,3 +13,15 @@
 [submodule "ideas/drcn"]
 	path = ideas/drcn
 	url = https://github.com/ghif/drcn.git
+[submodule "ideas/decoupled-multimodal-learning"]
+	path = ideas/decoupled-multimodal-learning
+	url = https://github.com/Jakobovski/decoupled-multimodal-learning.git
+[submodule "ideas/resnet-1k-layers"]
+	path = ideas/resnet-1k-layers
+	url = https://github.com/KaimingHe/resnet-1k-layers.git
+[submodule "ideas/deep-residual-networks"]
+	path = ideas/deep-residual-networks
+	url = https://github.com/KaimingHe/deep-residual-networks.git
+[submodule "ideas/overcoming-catastrophic"]
+	path = ideas/overcoming-catastrophic
+	url = https://github.com/ariseff/overcoming-catastrophic.git
