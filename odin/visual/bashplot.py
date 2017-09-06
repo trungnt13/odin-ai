@@ -237,23 +237,41 @@ def print_confusion(arr, labels=None):
         raise ValueError("Can only process 2-D confusion matrixf")
     if arr.shape[0] != arr.shape[1]:
         raise ValueError("`arr` must be square matrix.")
+    nb_classes = arr.shape[0]
     if labels is None:
-        labels = ['#%d' % i for i in range(arr.shape[0])]
+        labels = ['%d' % i for i in range(nb_classes)]
     max_label_length = max(len(i) for i in labels)
     lab_fmt = '%' + str(max_label_length) + 's '
+    # calculate precision, recall, f1
+    arr_sum_row = arr.sum(-1).astype('int64')
+    total_samples = np.sum(arr_sum_row)
+    arr_sum_col = arr.sum(0).astype('int64')
+    info = {}
+    for i in range(nb_classes):
+        TP = arr[i, i] # True positive
+        FN = arr_sum_row[i] - arr[i, i] # False negative
+        FP = arr_sum_col[i] - arr[i, i] # False positive
+        precision = TP / (TP + FP)
+        recall = TP / (TP + FN)
+        f1 = 2 / (1 / precision + 1 / recall)
+        fa = FP / (total_samples - arr_sum_row[i]) # False alarm
+        info[i] = (precision, recall, f1, fa, arr_sum_row[i])
     # normalize the confusion
-    arr_sum = arr.sum(-1).astype('int64')
-    arr = arr.astype('float64') / arr_sum[:, None]
-    fig = ""
+    arr = arr.astype('float64') / arr_sum_row[:, None]
+    # print title
+    fig = " " * ((3 + 1) * nb_classes + max_label_length + 3)
+    fig += ctext('   '.join(['Prec', 'Rec ', ' F1 ', ' FA ', ' Σ']), 'red') + '\n'
+    # confusion matrix
     for i, row in enumerate(arr):
         row_text = lab_fmt % ctext(labels[i], LABEL_COLOR)
         for j, col in enumerate(row):
             row_text += ctext(('%.2f' % col)[1:],
                               color='yellow' if i != j else 'cyan') + ' '
         # new line
-        fig += row_text + ' Σ=%d\n' % arr_sum[i]
+        fig += row_text + '  %.2f | %.2f | %.2f | %.2f | %d \n' % info[i]
     # draw labels at the bottom
-    labels = [[c for c in i[::-1]] for i in labels]
+    labels = [[c for c in i.replace('-', '|').replace('_', '|')[::-1]]
+              for i in labels]
     for i in range(max_label_length):
         fig += ' ' * (max_label_length + 1)
         for l in labels:

@@ -42,10 +42,6 @@ class FeederRecipe(object):
     This class should not store big amount of data, or the data
     will be replicated to all processes
     """
-
-    def prepare(self, **kwargs):
-        pass
-
     def shape_transform(self, shapes, indices):
         """
         Parameters
@@ -61,9 +57,6 @@ class FeederRecipe(object):
         if len(kwargs) == 0:
             return name, X, y
         return name, X, y, kwargs
-
-    def group(self, batch):
-        return batch
 
 
 class FeederList(FeederRecipe):
@@ -82,10 +75,6 @@ class FeederList(FeederRecipe):
         for i in self.recipes:
             s.append(i.__class__.__name__)
         return '<FeederList: ' + ', '.join(s) + '>'
-
-    def prepare(self, **kwargs):
-        for i in self.recipes:
-            i.prepare(**kwargs)
 
     def process(self, name, X, y, **kwargs):
         for i, f in enumerate(self.recipes):
@@ -109,11 +98,6 @@ class FeederList(FeederRecipe):
             name, X, y = args[:3]
             kwargs = kwargs if len(args) == 3 else args[-1]
         return name, X, y, kwargs
-
-    def group(self, x):
-        for f in self.recipes:
-            x = f.group(x)
-        return x
 
     def shape_transform(self, shapes, indices):
         """
@@ -1147,19 +1131,3 @@ class CreateFile(FeederRecipe):
             self.rng = np.random.RandomState(seed=seed)
         self.batch_size = kwargs.get('batch_size', 1)
 
-    def _to_numpy_array(self, x):
-        if not is_string(x[0]) and len(set(i.shape[1:] for i in x)) == 1:
-            return np.concatenate(x, axis=0)
-        return np.array(x)
-
-    def group(self, batch):
-        # NOTE: each element in batch is one file
-        # ====== shuffle ====== #
-        if self.rng is not None:
-            self.rng.shuffle(batch)
-        for name, X, Y in batch:
-            n = X[0].shape[0]
-            ret = list(X) + list(Y)
-            for i, (start, end) in enumerate(batching(n, self.batch_size)):
-                r = [name, i] + [j[start:end] for j in ret]
-                yield tuple(r)

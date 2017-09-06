@@ -30,8 +30,8 @@ from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, one_hot, flatten_list,
-                        Progbar, UnitTimer, get_system_status,
+from odin.utils import (segment_list, one_hot, flatten_list, is_string,
+                        Progbar, UnitTimer, get_system_status, batching,
                         get_process_status, SharedCounter, as_tuple)
 from odin.utils.mpi import MPI
 
@@ -39,6 +39,87 @@ from .data import MutableData, as_data
 from .dataset import Dataset
 from .recipes import FeederList, CreateBatch, CreateFile, FeederRecipe
 
+
+# ===========================================================================
+# Helper for grouping
+# ===========================================================================
+def _to_numpy_array(self, x):
+    if not is_string(x[0]) and len(set(i.shape[1:] for i in x)) == 1:
+        return np.concatenate(x, axis=0)
+    return np.array(x)
+
+
+def _batch_grouping(batch, batch_size, rng, batch_filter):
+    """ batch: contains
+        [
+            (name, [list of data], [list of others]),
+            (name, [list of data], [list of others]),
+            (name, [list of data], [list of others]),
+            ...
+        ]
+
+    Note
+    ----
+    We assume the shape[0] (or length) of all "data" and "others" are
+    the same
+    """
+    if len(batch) == 0:
+        yield None
+    else:
+        # create batch of indices for each file (indices is the start
+        # index of each batch)
+        indices = [list(range(0, X[0].shape[0], batch_size))
+                   for name, X, y in batch]
+        # shuffle if possible
+        if rng is not None:
+            [rng.shuffle(i) for i in indices]
+        # ====== create batch of data ====== #
+        for idx in zip_longest(*indices):
+            ret = []
+            for start, (name, X, y) in zip(idx, batch):
+                # skip if the one data that is not enough
+                if start is None: continue
+                # pick data from each given input
+                end = start + batch_size
+                _ = [x[start:end] for x in X] + [i[start:end] for i in y]
+                ret.append(_)
+            ret = [np.concatenate(x, axis=0) for x in zip(*ret)]
+            # shuffle 1 more time
+            N = list(set([r.shape[0] for r in ret]))
+            if len(N) > 1:
+                raise ValueError("The shape[0] of Data is different, found "
+                                 "%d different length: %s" % (len(N), str(N)))
+            N = N[0]
+            if rng is not None:
+                permutation = rng.permutation(N)
+                ret = [r[permutation] for r in ret]
+            # return the batches
+            for start in range(0, N, batch_size):
+                end = start + batch_size
+                _ = batch_filter([x[start:end] for x in ret])
+                # always return tuple or list
+                if _ is not None:
+                    yield _ if isinstance(_, (tuple, list)) else (ret,)
+
+
+def _file_grouping(batch, batch_size, rng, batch_filter):
+    """ Return: [(name, index, data...), ...]
+        NOTE: each element in batch is one file
+    """
+    # ====== shuffle the file ====== #
+    if rng is not None:
+        rng.shuffle(batch)
+    # ====== return batched files with index for ordering ====== #
+    for name, X, Y in batch:
+        n = X[0].shape[0]
+        ret = list(X) + list(Y)
+        for i, (start, end) in enumerate(batching(n, batch_size)):
+            r = [name, i] + [j[start:end] for j in ret]
+            yield tuple(batch_filter(r))
+
+
+def _weird_grouping(batch):
+    pass
 
 # ===========================================================================
 # Multiprocessing Feeders
@@ -75,6 +156,18 @@ class Feeder(MutableData):
     indices: path(csv file), list, ndarray, dict
         indices represent following information: [name, start_id, end_id]
         if indices is dictionary, it must in the form: {name: (start, end)}
+    dtype: string or numpy.dtype
+        all data return from this feeder are converted to given dtype
+        if None, original dtype is kept
+    batch_filter: callable
+        must be a function has take a list of np.ndarray as first arguments
+        ([X]) or ([X, y]), you can return None to ignore given batch, return the
+        data for accepting the batch
+    batch_mode: 'batch' or 'file' (string type)
+        'batch' mode return shuffling and return everything in small batches
+        'file' mode return [(file_name, order_index, data...), ...]
+    ncpu: int
+        number of CPU used for multiprocessing
     buffer_size: int
         A process will perform processing on a group of `buffer_size` number of
         data points, then, a list of results are returned to the main process.
@@ -111,6 +204,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data, indices, dtype=None,
+                 batch_filter=lambda x: x, batch_mode='batch',
                  ncpu=1, buffer_size=8, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
@@ -147,6 +241,18 @@ class Feeder(MutableData):
         self.__cache_indices_id = id(self._indices)
         self.__cache_shape = None
         self.__running_iter = []
+        # ====== batch mode ====== #
+        if batch_filter is None:
+            batch_filter = lambda args: args
+        elif not callable(batch_filter):
+            raise ValueError('batch_filter must be a function has 1 or 2 '
+                             'parameters (X) or (X, y).')
+        self._batch_filter = batch_filter
+        batch_mode = str(batch_mode).lower()
+        if batch_mode not in ("batch", 'file'):
+            raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
+                             "given value: '%s'" % batch_mode)
+        self._batch_mode = batch_mode
 
     def __getstate__(self):
         return (_dump_data_info(self._data), self._indices, self._outtype,
@@ -246,14 +352,10 @@ class Feeder(MutableData):
             indices = indices[rng.permutation(indices.shape[0])]
             # reset the seed
             self._seed = None
-        # ====== create iter and its identity ====== #
+        batch_size = self._batch_size
+        batch_filter = self._batch_filter
+        shuffle_level = self._shuffle_level
         process_func = self._recipes.process
-        group_func = self._recipes.group
-        self._recipes.prepare(
-            batch_size=self._batch_size,
-            seed=rng.randint(10e6) if rng is not None else None,
-            shuffle_level=self._shuffle_level,
-        )
 
         # ====== create wrapped functions ====== #
         def map_func(jobs):
@@ -270,7 +372,11 @@ class Feeder(MutableData):
                 if x is not None:
                     # not care about return kwargs (only: name, X, y)
                     batch.append(x[:3])
-            return group_func(batch)
+            # choose grouping function
+            if self._batch_mode == 'batch':
+                return _batch_grouping(batch, batch_size, rng, batch_filter)
+            elif self._batch_mode == 'file':
+                return _file_grouping(batch, batch_size, rng, batch_filter)
 
         def reduce_func(results):
             # perform batch level permutation
