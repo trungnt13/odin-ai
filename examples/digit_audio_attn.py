@@ -55,7 +55,7 @@ recipes = [
     ),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
-                         transcription_transform=lambda x: x[-1]),
+                         label_transform=lambda x: x[-1]),
 ]
 
 train_feeder.set_recipes(recipes + [F.recipes.CreateBatch()])

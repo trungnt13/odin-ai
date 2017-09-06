@@ -25,3 +25,9 @@
 [submodule "ideas/overcoming-catastrophic"]
 	path = ideas/overcoming-catastrophic
 	url = https://github.com/ariseff/overcoming-catastrophic.git
+[submodule "ideas/semisupervised_vae"]
+	path = ideas/semisupervised_vae
+	url = https://github.com/saemundsson/semisupervised_vae.git
+[submodule "ideas/glas"]
+	path = ideas/glas
+	url = https://github.com/dojoteef/glas.git

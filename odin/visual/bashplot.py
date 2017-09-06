@@ -11,6 +11,8 @@ import math
 import numpy as np
 
 __all__ = [
+    'print_dist',
+    'print_confusion',
     'print_hist',
     'print_bar',
     'print_scatter',
@@ -64,6 +66,17 @@ def printcolour(text, sameline=False, colour=get_colour("ENDC")):
     if colour == 'default' or colour == 'ENDC' or colour is None:
         return print_return_str(text, sep)
     return print_return_str(get_colour(colour) + text + bcolours["ENDC"], sep)
+
+
+def ctext(s, color='red'):
+    try:
+        from colorama import Fore
+        color = color.upper()
+        color = getattr(Fore, color, '')
+        return color + s + Fore.RESET
+    except ImportError:
+        pass
+    return s
 
 
 def drange(start, stop, step=1.0, include_stop=False):
@@ -143,6 +156,114 @@ def read_numbers(numbers):
 # ===========================================================================
 # Main
 # ===========================================================================
+def print_dist(d, height=12, pch="o"):
+    """ Printing a figure of given distribution
+
+    Parameters
+    ----------
+    d: dict, list
+        a dictionary or a list, contains pairs of: "key" -> "count_value"
+    height: int
+        number of maximum lines for the graph
+    pch : str
+        shape of the bars in the plot, e.g 'o'
+
+    Return
+    ------
+    str
+
+    """
+    LABEL_COLOR = ['cyan', 'yellow', 'blue', 'magenta', 'green']
+    MAXIMUM_YLABEL = 4
+    try:
+        if isinstance(d, dict):
+            d = d.items()
+        d = [(str(name)[::-1].replace('-', '|').replace('_', '|'), int(count))
+             for name, count in d]
+        labels = [[c for c in name] for name, count in d]
+        max_labels = max(len(name) for name, count in d)
+        max_count = max(count for name, count in d)
+        min_count = min(count for name, count in d)
+    except Exception as e:
+        raise ValueError('`d` must be distribution dictionary contains pair of: '
+                         'label_name -> disitribution_count, error: "%s"' % str(e))
+    # ====== create figure ====== #
+    # draw height, 1 line for minimum bar, 1 line for padding the label,
+    # then the labels
+    nb_lines = int(height) + 1 + 1 + max_labels
+    unit = (max_count - min_count) / height
+    # add unit and total
+    fig = ctext("Unit: ", 'red') + \
+        '10^%d' % max(len(str(max_count)) - MAXIMUM_YLABEL, 0) + '  '
+    fig += ctext("Total: ", 'red') + \
+        str(sum(count for name, count in d)) + '\n'
+    # add the figure
+    for line in range(nb_lines):
+        value = max_count - unit * line
+        # draw the y_label
+        if line % 2 == 0 and line <= int(height): # value
+            fig += ctext(
+                ('%' + str(MAXIMUM_YLABEL) + 's') % str(int(value))[:MAXIMUM_YLABEL],
+                color='red')
+        else: # blank
+            fig += ' ' * MAXIMUM_YLABEL
+        fig += '|' if line <= int(height) else ' '
+        # draw default line
+        if line == int(height):
+            fig += ''.join([ctext(pch + ' ',
+                                  color=LABEL_COLOR[i % len(LABEL_COLOR)])
+                            for i in range(len(d))])
+        # draw seperator for the label
+        elif line == int(height) + 1:
+            fig += '-' * (len(d) * 2)
+        # draw the labels
+        elif line > int(height) + 1:
+            for i, lab in enumerate(labels):
+                fig += ctext(' ' if len(lab) == 0 else lab.pop(),
+                             LABEL_COLOR[i % len(LABEL_COLOR)]) + ' '
+        # draw the histogram
+        else:
+            for i, (name, count) in enumerate(d):
+                fig += ctext(pch if count - value >= 0 else ' ',
+                             LABEL_COLOR[i % len(LABEL_COLOR)]) + ' '
+        # new line
+        fig += '\n'
+    return fig[:-1]
+
+
+def print_confusion(arr, labels=None):
+    LABEL_COLOR = 'magenta'
+    if arr.ndim != 2:
+        raise ValueError("Can only process 2-D confusion matrixf")
+    if arr.shape[0] != arr.shape[1]:
+        raise ValueError("`arr` must be square matrix.")
+    if labels is None:
+        labels = ['#%d' % i for i in range(arr.shape[0])]
+    max_label_length = max(len(i) for i in labels)
+    lab_fmt = '%' + str(max_label_length) + 's '
+    # normalize the confusion
+    arr_sum = arr.sum(-1).astype('int64')
+    arr = arr.astype('float64') / arr_sum[:, None]
+    fig = ""
+    for i, row in enumerate(arr):
+        row_text = lab_fmt % ctext(labels[i], LABEL_COLOR)
+        for j, col in enumerate(row):
+            row_text += ctext(('%.2f' % col)[1:],
+                              color='yellow' if i != j else 'cyan') + ' '
+        # new line
+        fig += row_text + ' Σ=%d\n' % arr_sum[i]
+    # draw labels at the bottom
+    labels = [[c for c in i[::-1]] for i in labels]
+    for i in range(max_label_length):
+        fig += ' ' * (max_label_length + 1)
+        for l in labels:
+            fig += ' '
+            fig += ctext(l.pop(), LABEL_COLOR) if len(l) > 0 else ' '
+            fig += '  '
+        fig += '\n'
+    return fig[:-1]
+
+
 def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
     colour="default", title="", xlab=None, showSummary=False,
     regular=False):
