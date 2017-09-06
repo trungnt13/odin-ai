@@ -42,6 +42,7 @@ class FeederRecipe(object):
     This class should not store big amount of data, or the data
     will be replicated to all processes
     """
+
     def shape_transform(self, shapes, indices):
         """
         Parameters
@@ -64,8 +65,6 @@ class FeederList(FeederRecipe):
     def __init__(self, *recipes):
         super(FeederList, self).__init__()
         self.recipes = recipes
-        if len(recipes) == 0:
-            raise Exception('FeederList must contains >= 1 recipe(s).')
 
     def __len__(self):
         return len(self.recipes)
@@ -1007,127 +1006,3 @@ class Sequencing(FeederRecipe):
             mid_shape = tuple(shape[1:-1])
             _.append((n, self.frame_length,) + mid_shape + features_shape)
         return tuple(_), indices_new
-
-
-# ===========================================================================
-# Returning results
-# ===========================================================================
-class CreateBatch(FeederRecipe):
-    """ Batching
-    Parameters
-    ----------
-    batch_filter: callable
-        must be a function has take a list of np.ndarray as first arguments
-        ([X]) or ([X, y]), you can return None to ignore given batch, return the
-        data for accepting the batch
-
-    Example
-    -------
-    >>> feeder = F.Feeder(ds['mfcc'], ds.path, ncpu=12, buffer_size=12)
-    >>> feeder.set_batch(256, seed=12082518, shuffle_level=2)
-    >>> feeder.set_recipes([
-    >>>     F.recipes.CreateBatch(lambda x: (x[0], x[1]) if len(set(x[1])) > 1 else None)
-    >>> ])
-
-    """
-
-    def __init__(self, batch_filter=None):
-        super(CreateBatch, self).__init__()
-        self.rng = None
-        self.batch_size = 256
-        if batch_filter is None:
-            batch_filter = lambda args: args
-        elif not callable(batch_filter):
-            raise ValueError('batch_filter must be a function has 1 or 2 '
-                             'parameters (X) or (X, y).')
-        self.__batch_filter = functionable(batch_filter)
-
-    def prepare(self, **kwargs):
-        shuffle_level = kwargs.get('shuffle_level', 0)
-        seed = kwargs.get('seed', None)
-        self.rng = None
-        if seed is not None and shuffle_level >= 1:
-            self.rng = np.random.RandomState(seed=seed)
-        self.batch_size = kwargs.get('batch_size', 64)
-
-    def group(self, batch):
-        """ batch: contains
-            [
-                (name, [list of data], [list of others]),
-                (name, [list of data], [list of others]),
-                (name, [list of data], [list of others]),
-                ...
-            ]
-        Note
-        ----
-        We assume the shape[0] (or length) of all "data" and "others" are
-        the same
-        """
-        if len(batch) == 0:
-            yield None
-        else:
-            rng = self.rng
-            batch_size = self.batch_size
-            batch_filter = self.__batch_filter
-            # create batch of indices for each file (indices is the start
-            # index of each batch)
-            indices = [list(range(0, X[0].shape[0], batch_size))
-                       for name, X, y in batch]
-            # shuffle if possible
-            if rng is not None:
-                [rng.shuffle(i) for i in indices]
-            # ====== create batch of data ====== #
-            for idx in zip_longest(*indices):
-                ret = []
-                for start, (name, X, y) in zip(idx, batch):
-                    # skip if the one data that is not enough
-                    if start is None: continue
-                    # pick data from each given input
-                    end = start + batch_size
-                    _ = [x[start:end] for x in X] + [i[start:end] for i in y]
-                    ret.append(_)
-                ret = [np.concatenate(x, axis=0) for x in zip(*ret)]
-                # shuffle 1 more time
-                N = list(set([r.shape[0] for r in ret]))
-                if len(N) > 1:
-                    raise ValueError("The shape[0] of Data is different, found "
-                                     "%d different length: %s" % (len(N), str(N)))
-                N = N[0]
-                if rng is not None:
-                    permutation = rng.permutation(N)
-                    ret = [r[permutation] for r in ret]
-                # return the batches
-                for start in range(0, N, batch_size):
-                    end = start + batch_size
-                    _ = batch_filter([x[start:end] for x in ret])
-                    # always return tuple or list
-                    if _ is not None:
-                        yield _ if isinstance(_, (tuple, list)) else (ret,)
-
-
-class CreateFile(FeederRecipe):
-    """ CreateFile
-    Instead of divide a file into batches, return the whole file
-
-    Parameters
-    ----------
-    return_name: bool
-        whether return the name specifed in the indices
-
-    Return
-    ------
-    [(name, index, data...), ...]
-
-    """
-
-    def __init__(self):
-        super(CreateFile, self).__init__()
-
-    def prepare(self, **kwargs):
-        shuffle_level = kwargs.get('shuffle_level', 0)
-        seed = kwargs.get('seed', None)
-        self.rng = None
-        if seed is not None and shuffle_level >= 1:
-            self.rng = np.random.RandomState(seed=seed)
-        self.batch_size = kwargs.get('batch_size', 1)
-

@@ -37,7 +37,7 @@ from odin.utils.mpi import MPI
 
 from .data import MutableData, as_data
 from .dataset import Dataset
-from .recipes import FeederList, CreateBatch, CreateFile, FeederRecipe
+from .recipes import FeederList, FeederRecipe
 
 
 # ===========================================================================
@@ -234,7 +234,7 @@ class Feeder(MutableData):
         # ====== desire dtype ====== #
         self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
         # ====== Set default recipes ====== #
-        self._recipes = FeederList(CreateBatch())
+        self._recipes = FeederList()
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         # ====== cache shape information ====== #
         # store first dimension
@@ -277,16 +277,31 @@ class Feeder(MutableData):
             self.maximum_queue_size = maximum_queue_size
         return self
 
+    def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
+                  seed=-1, start=None, end=None, shuffle_level=None):
+        # ====== check batch_filter ====== #
+        if batch_filter is not None:
+            if not callable(batch_filter):
+                raise ValueError('batch_filter must be a function has 1 or 2 '
+                                 'parameters (X) or (X, y).')
+            self._batch_filter = batch_filter
+        # ====== chec batch_mode ====== #
+        if batch_mode is not None:
+            batch_mode = str(batch_mode).lower()
+            if batch_mode not in ("batch", 'file'):
+                raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
+                                 "given value: '%s'" % batch_mode)
+            self._batch_mode = batch_mode
+        return super(Feeder, self).set_batch(batch_size=batch_size, seed=seed,
+                                             start=start, end=end,
+                                             shuffle_level=shuffle_level)
+
     def set_recipes(self, recipes):
         # filter out None value
         recipes = flatten_list(as_tuple(recipes))
-        recipes = [i for i in recipes if i is not None and
-                   isinstance(i, FeederRecipe)]
+        recipes = [i for i in recipes
+                   if i is not None and isinstance(i, FeederRecipe)]
         if len(recipes) > 0:
-            if not any(isinstance(r, (CreateFile, CreateBatch)) for r in recipes):
-                raise ValueError("The recipe CreateFile or CreateBatch must be in "
-                                 "the recipes list, so the data can be grouped "
-                                 "and returned from the Feeder.")
             self._recipes = FeederList(*recipes)
         return self
 
@@ -347,14 +362,16 @@ class Feeder(MutableData):
         outtype = self._outtype
         # ====== shuffle the indices ====== #
         rng = None
+        shuffle_level = self._shuffle_level
         if self._seed is not None:
             rng = np.random.RandomState(self._seed)
             indices = indices[rng.permutation(indices.shape[0])]
+            if shuffle_level < 1:
+                rng = None
             # reset the seed
             self._seed = None
         batch_size = self._batch_size
         batch_filter = self._batch_filter
-        shuffle_level = self._shuffle_level
         process_func = self._recipes.process
 
         # ====== create wrapped functions ====== #
