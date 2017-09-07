@@ -1,17 +1,6 @@
 # -*- coding: utf-8 -*-
 ##################################################################
-# # Example of usage:
-# with Progbar(target=50, name="Prog1").context() as p1:
-#     for i in range(200):
-#         time.sleep(0.2)
-#         p1['value1'] = i
-#         p1.add(1)
-#         if i == 30:
-#             with Progbar(target=20, name="Prog2").context() as p2:
-#                 for j in range(60):
-#                     time.sleep(0.2)
-#                     p2['value2'] = j
-#                     p2.add(1)
+# Example of usage:
 ##################################################################
 from __future__ import print_function, division, absolute_import
 
@@ -69,20 +58,6 @@ _NUMBERS_CH = {
 _LAST_UPDATED_PROG = [None]
 
 
-@contextmanager
-def _progbar(pb, print_report, print_summary):
-    org_report = pb.print_report
-    org_summary = pb.print_summary
-    if print_report is not None:
-        pb.print_report = print_report
-    if print_summary is not None:
-        pb.print_summary = print_summary
-    yield pb
-    pb.pause()
-    pb.print_report = org_report
-    pb.print_summary = org_summary
-
-
 def add_notification(msg):
     msg = _CYAN + "\n[%s]Notification:" % \
         datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + '\n'
@@ -125,6 +100,13 @@ class Progbar(object):
     >>> x = list(range(10))
     >>> for i in Progbar(target=x):
     ...     pass
+
+    Note
+    ----
+    Some special case:
+        * any report key contain "confusionmatrix" will be printed out using
+        `print_confusion`
+        * any report key
     """
     FP = sys.stderr
 
@@ -214,9 +196,6 @@ class Progbar(object):
         del self.__report_func
 
     # ==================== screen control ==================== #
-    def interactive(self, print_report=None, print_summary=None):
-        return _progbar(self, print_report, print_summary)
-
     @property
     def epoch_idx(self):
         return self._epoch_idx
@@ -241,6 +220,7 @@ class Progbar(object):
         return self._epoch_hist
 
     def formatted_report(self, report_dict, margin='', inc_name=True):
+        """ Convert a dictionary of key -> value to well formatted string."""
         if inc_name:
             text = _MAGENTA + "\t%s" % self.name + _RESET + '\n'
         else:
@@ -249,14 +229,18 @@ class Progbar(object):
         for i, (key, value) in enumerate(report_dict):
             # ====== check value of key and value ====== #
             key = margin + str(key).replace('\n', ' ')
+            # ====== special cases ====== #
             if "confusionmatrix" in key.lower():
                 value = print_confusion(value)
             else:
                 value = str(value)
-            value = '\n'.join([s if _ == 0 else
-                               ' ' * (len(key) + 2) + s
-                               for _, s in enumerate(value.split('\n'))])
-            text += _YELLOW + key + _RESET + ": " + value + "\n"
+            # ====== multiple lines or not ====== #
+            if '\n' in value:
+                text += _YELLOW + key + _RESET + ":\n"
+                for line in value.split('\n'):
+                    text += margin + ' ' + line + '\n'
+            else:
+                text += _YELLOW + key + _RESET + ": " + value + "\n"
         return text[:-1]
 
     @property

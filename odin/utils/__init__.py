@@ -63,6 +63,13 @@ def ctext(s, color='red'):
     * LIGHTMAGENTA_EX
     * LIGHTCYAN_EX
     * LIGHTWHITE_EX
+
+    Note
+    ----
+    * colored text is longer in length and can overlength the screen
+    (i.e. make the progress-bar ugly).
+    * ctext(x + y + z) is BETTER than ctext(x) + ctext(y) + ctext(z)
+    because it save more space.
     """
     try:
         from colorama import Fore

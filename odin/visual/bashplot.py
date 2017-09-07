@@ -241,7 +241,13 @@ def print_dist(d, height=12, pch="o", show_number=False):
     return fig[:-1]
 
 
-def print_confusion(arr, labels=None):
+def print_confusion(arr, labels=None, inc_stats=True):
+    """
+    Parameters
+    ----------
+    inc_stats: bool
+        if True, include Precision, Recall, F1 ,False Alarm
+    """
     LABEL_COLOR = 'magenta'
     if arr.ndim != 2:
         raise ValueError("Can only process 2-D confusion matrixf")
@@ -257,42 +263,54 @@ def print_confusion(arr, labels=None):
     total_samples = np.sum(arr_sum_row)
     arr_sum_col = arr.sum(0).astype('int64')
     info = {}
-    for i in range(nb_classes):
-        TP = arr[i, i] # True positive
-        FN = arr_sum_row[i] - arr[i, i] # False negative
-        FP = arr_sum_col[i] - arr[i, i] # False positive
-        precision = 0. if (TP + FP) == 0 else TP / (TP + FP)
-        recall = 0. if (TP + FN) == 0 else TP / (TP + FN)
-        f1 = 0. if precision == 0. or recall == 0. else \
-            2 / (1 / precision + 1 / recall)
-        fa = 0. if (total_samples - arr_sum_row[i]) == 0 else \
-            FP / (total_samples - arr_sum_row[i]) # False alarm
-        info[i] = (precision, recall, f1, fa, arr_sum_row[i])
+    info_fmt = ['%.2f', '%.2f', '%.2f', '%.2f', '%d']
+    if inc_stats:
+        for i in range(nb_classes):
+            TP = arr[i, i] # True positive
+            FN = arr_sum_row[i] - arr[i, i] # False negative
+            FP = arr_sum_col[i] - arr[i, i] # False positive
+            precision = 0. if (TP + FP) == 0 else TP / (TP + FP)
+            recall = 0. if (TP + FN) == 0 else TP / (TP + FN)
+            f1 = 0. if precision == 0. or recall == 0. else \
+                2 / (1 / precision + 1 / recall)
+            fa = 0. if (total_samples - arr_sum_row[i]) == 0 else \
+                FP / (total_samples - arr_sum_row[i]) # False alarm
+            info[i] = (precision, recall, f1, fa, arr_sum_row[i])
     # normalize the confusion
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         arr = np.nan_to_num(arr.astype('float64') / arr_sum_row[:, None])
     # print title
-    fig = " " * ((3 + 1) * nb_classes + max_label_length + 3)
-    fig += ctext('   '.join(['Prec', 'Rec ', ' F1 ', ' FA ', ' Σ']), 'red') + '\n'
+    if inc_stats:
+        fig = " " * ((3 + 1) * nb_classes + max_label_length + 2)
+        fig += ctext('|'.join(['Pre', 'Rec', ' F1', ' FA', 'Σ']), 'red') + '\n'
+    else:
+        fig = ""
     # confusion matrix
     for i, row in enumerate(arr):
         row_text = ctext(lab_fmt % labels[i], LABEL_COLOR)
         for j, col in enumerate(row):
-            row_text += ctext(('%.2f' % col)[1:],
-                              color='yellow' if i != j else 'cyan') + ' '
+            col = ('%.2f' % col)[1:]
+            if i == j:
+                row_text += ctext(col, color='cyan') + ' '
+            else:
+                row_text += col + ' '
         # new line
-        fig += row_text + '  %.2f | %.2f | %.2f | %.2f | %d \n' % info[i]
+        if inc_stats:
+            info_str = [(fmt % val)[1:] if _ < (len(info_fmt) - 1) else (fmt % val)
+                        for _, (fmt, val) in enumerate(zip(info_fmt, info[i]))]
+            fig += row_text + ' ' + '|'.join(info_str) + '\n'
+        else:
+            fig += row_text + '\n'
     # draw labels at the bottom
     labels = [[c for c in i.replace('-', '|').replace('_', '|')[::-1]]
               for i in labels]
     for i in range(max_label_length):
         fig += ' ' * (max_label_length + 1)
+        row = ''
         for l in labels:
-            fig += ' '
-            fig += ctext(l.pop(), LABEL_COLOR) if len(l) > 0 else ' '
-            fig += '  '
-        fig += '\n'
+            row += ' ' + (l.pop() if len(l) > 0 else ' ') + '  '
+        fig += ctext(row, 'magenta') + '\n'
     return fig[:-1]
 
 
