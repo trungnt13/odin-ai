@@ -81,6 +81,14 @@ class Merge(HelperOps):
             return results
 
 
+class Residual(HelperOps):
+    pass
+
+
+class StochasticDepth(HelperOps):
+    pass
+
+
 class Sequence(HelperOps):
 
     """ Sequence of Operators

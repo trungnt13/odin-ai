@@ -8,6 +8,8 @@
 from __future__ import print_function, absolute_import, division
 
 import math
+import warnings
+
 import numpy as np
 
 __all__ = [
@@ -156,7 +158,7 @@ def read_numbers(numbers):
 # ===========================================================================
 # Main
 # ===========================================================================
-def print_dist(d, height=12, pch="o"):
+def print_dist(d, height=12, pch="o", show_number=False):
     """ Printing a figure of given distribution
 
     Parameters
@@ -178,7 +180,9 @@ def print_dist(d, height=12, pch="o"):
     try:
         if isinstance(d, dict):
             d = d.items()
-        d = [(str(name)[::-1].replace('-', '|').replace('_', '|'), int(count))
+        orig_d = [(str(name), int(count))
+                  for name, count in d]
+        d = [(name[::-1].replace('-', '|').replace('_', '|'), count)
              for name, count in d]
         labels = [[c for c in name] for name, count in d]
         max_labels = max(len(name) for name, count in d)
@@ -192,8 +196,14 @@ def print_dist(d, height=12, pch="o"):
     # then the labels
     nb_lines = int(height) + 1 + 1 + max_labels
     unit = (max_count - min_count) / height
+    fig = ""
+    # add actual number of necessary
+    if show_number:
+        name_fmt = '%' + str(max_labels) + 's'
+        for name, count in orig_d:
+            fig += ctext(name_fmt % name, 'red') + ': %d' % count + '\n'
     # add unit and total
-    fig = ctext("Unit: ", 'red') + \
+    fig += ctext("Unit: ", 'red') + \
         '10^%d' % max(len(str(max_count)) - MAXIMUM_YLABEL, 0) + '  '
     fig += ctext("Total: ", 'red') + \
         str(sum(count for name, count in d)) + '\n'
@@ -241,7 +251,7 @@ def print_confusion(arr, labels=None):
     if labels is None:
         labels = ['%d' % i for i in range(nb_classes)]
     max_label_length = max(len(i) for i in labels)
-    lab_fmt = '%' + str(max_label_length) + 's '
+    lab_fmt = '%-' + str(max_label_length) + 's '
     # calculate precision, recall, f1
     arr_sum_row = arr.sum(-1).astype('int64')
     total_samples = np.sum(arr_sum_row)
@@ -251,19 +261,23 @@ def print_confusion(arr, labels=None):
         TP = arr[i, i] # True positive
         FN = arr_sum_row[i] - arr[i, i] # False negative
         FP = arr_sum_col[i] - arr[i, i] # False positive
-        precision = TP / (TP + FP)
-        recall = TP / (TP + FN)
-        f1 = 2 / (1 / precision + 1 / recall)
-        fa = FP / (total_samples - arr_sum_row[i]) # False alarm
+        precision = 0. if (TP + FP) == 0 else TP / (TP + FP)
+        recall = 0. if (TP + FN) == 0 else TP / (TP + FN)
+        f1 = 0. if precision == 0. or recall == 0. else \
+            2 / (1 / precision + 1 / recall)
+        fa = 0. if (total_samples - arr_sum_row[i]) == 0 else \
+            FP / (total_samples - arr_sum_row[i]) # False alarm
         info[i] = (precision, recall, f1, fa, arr_sum_row[i])
     # normalize the confusion
-    arr = arr.astype('float64') / arr_sum_row[:, None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        arr = np.nan_to_num(arr.astype('float64') / arr_sum_row[:, None])
     # print title
     fig = " " * ((3 + 1) * nb_classes + max_label_length + 3)
     fig += ctext('   '.join(['Prec', 'Rec ', ' F1 ', ' FA ', ' Σ']), 'red') + '\n'
     # confusion matrix
     for i, row in enumerate(arr):
-        row_text = lab_fmt % ctext(labels[i], LABEL_COLOR)
+        row_text = ctext(lab_fmt % labels[i], LABEL_COLOR)
         for j, col in enumerate(row):
             row_text += ctext(('%.2f' % col)[1:],
                               color='yellow' if i != j else 'cyan') + ' '
@@ -426,6 +440,7 @@ def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
         summary = "|" + ("observations: %d" % n).center(center) + "|\n"
         summary += "|" + ("min value: %f" % np.min(f)).center(center) + "|\n"
         summary += "|" + ("mean : %f" % np.mean(f)).center(center) + "|\n"
+        summary += "|" + ("median: %f" % np.median(f)).center(center) + "|\n"
         summary += "|" + ("sd : %f" % np.std(f)).center(center) + "|\n"
         summary += "|" + ("max value: %f" % np.max(f)).center(center) + "|\n"
         summary += "-" * (2 + center)

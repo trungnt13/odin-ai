@@ -24,7 +24,7 @@ from collections import OrderedDict, defaultdict
 
 import numpy as np
 
-from odin.visual.bashplot import print_bar
+from odin.visual.bashplot import print_bar, print_confusion
 
 try:
     from tqdm import __version__ as tqdm_version
@@ -128,7 +128,7 @@ class Progbar(object):
     """
     FP = sys.stderr
 
-    def __init__(self, target, interval=0.1, keep=False,
+    def __init__(self, target, interval=0., keep=False,
                  print_report=False, print_summary=False,
                  count_func=None, report_func=None,
                  name=None):
@@ -249,9 +249,13 @@ class Progbar(object):
         for i, (key, value) in enumerate(report_dict):
             # ====== check value of key and value ====== #
             key = margin + str(key).replace('\n', ' ')
+            if "confusionmatrix" in key.lower():
+                value = print_confusion(value)
+            else:
+                value = str(value)
             value = '\n'.join([s if _ == 0 else
                                ' ' * (len(key) + 2) + s
-                               for _, s in enumerate(str(value).split('\n'))])
+                               for _, s in enumerate(value.split('\n'))])
             text += _YELLOW + key + _RESET + ": " + value + "\n"
         return text[:-1]
 

@@ -92,6 +92,10 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     seed: int
         random seed to produce a re-producible results.
     """
+    if seed is not None:
+        rng = np.random.RandomState(seed)
+    else:
+        rng = get_rng()
     # ====== check input ====== #
     if isinstance(x, dict):
         x = x.items()
@@ -102,17 +106,13 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
         idfunc = None
     # ====== clustering ====== #
     if cluster_func is None:
-        cluster_func = lambda x: x # lucky number
+        cluster_func = lambda x: 8 # lucky number
     if not callable(cluster_func):
         raise ValueError("'cluster_func' must be callable or None.")
     clusters = defaultdict(list)
     for i in x:
         clusters[cluster_func(i)].append(i)
     # ====== applying data split for each cluster separately ====== #
-    if seed is not None:
-        rng = np.random.seed(seed)
-    else:
-        rng = get_rng()
     train_list, valid_list, test_list = [], [], []
     for name, clus in clusters.iteritems():
         _1, _2, _3 = _split_list(clus, rng, train=train, idfunc=idfunc,

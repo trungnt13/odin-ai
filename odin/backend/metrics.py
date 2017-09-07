@@ -236,7 +236,7 @@ def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
 
 
 @return_roles(ConfusionMatrix)
-def confusion_matrix(y_pred, y_true, labels=None, name='ConfusionMatrix'):
+def confusion_matrix(y_pred, y_true, labels, name='ConfusionMatrix'):
     """
     Computes the confusion matrix of given vectors containing
     actual observations and predicted observations.

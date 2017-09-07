@@ -692,7 +692,7 @@ class NNOp(object):
             if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
             'name' != name and 'is_initialized' != name:
                 attr = getattr(self, name)
-                if is_primitives(attr):
+                if is_primitives(attr) or inspect.isfunction(attr):
                     print_attrs[name] = attr
         print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
         # ====== format the output ====== #
