@@ -64,7 +64,7 @@ def set_vad_mode(mode):
         __current_vad_mode = float(mode)
 
 
-def vad_energy(log_energy, distrib_nb=3, nb_train_it=24):
+def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
     """ Fitting Gaussian mixture model on the log-energy and the voice
     activity is the component with highest energy.
 
@@ -73,6 +73,7 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24):
     vad: array of 0, 1
     threshold: scalar
     """
+    from sklearn.exceptions import ConvergenceWarning
     from sklearn.mixture import GaussianMixture
     # center and normalize the energy
     log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
@@ -87,7 +88,9 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=24):
         precisions_init=np.ones((distrib_nb, 1)),
     )
     try:
-        world.fit(log_energy)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            world.fit(log_energy)
     except (ValueError, IndexError): # index error because of float32 cumsum
         if distrib_nb - 1 >= 2:
             return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
@@ -153,7 +156,7 @@ def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
     frames = segment_axis(s, frame_length, frame_length,
                           axis=0, end='pad', endvalue=0.)
     energy = get_energy(frames, log=True)
-    vad = vad_energy(energy, distrib_nb=nb_mixtures, nb_train_it=24)[0]
+    vad = vad_energy(energy, distrib_nb=nb_mixtures, nb_train_it=33)[0]
     vad = smooth(vad, win=frame_length, window='flat')
     # ====== get all possible sliences ====== #
     indices = np.where(vad <= np.percentile(vad, q=threshold * 100))[0].tolist()

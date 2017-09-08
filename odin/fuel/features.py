@@ -20,7 +20,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from collections import defaultdict
 import numpy as np
 
-from odin.preprocessing import speech, video, image
+from odin.preprocessing import speech, video, image, signal
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
                         get_all_files, get_tempdir, is_string)
 from odin.utils.decorators import autoinit
@@ -224,7 +224,7 @@ class FeatureProcessor(object):
 
         # ====== repeated for each result returned ====== #
         def wrapped_reduce(result):
-            name, data = result
+            name, job_count, data = result
             ref_vars['processed_count'] += 1
             # check data
             if not isinstance(data, (tuple, list)):
@@ -264,16 +264,16 @@ class FeatureProcessor(object):
                     flush_feature(i, j)
                 cache.clear()
             # ====== update progress ====== #
-            return name
+            return name, job_count
 
         # ====== processing ====== #
         mpi = MPI(self.jobs, self.map, wrapped_reduce,
                   ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
         prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
                        print_report=True, print_summary=True)
-        for name in mpi:
+        for name, job_count in mpi:
             prog['File'] = '%-20s' % name
-            prog.add(1)
+            prog.add(job_count)
         # ====== end, flush the last time ====== #
         for i, j in cache.iteritems():
             flush_feature(i, j)
@@ -361,7 +361,7 @@ def _valid_segment_name(segments):
                 " name is: %s" % i[0])
 
 
-def _segments_preprocessing(segments, audio_ext, maxlen):
+def _segments_preprocessing(segments, audio_ext):
     """ Filter segments into map of jobs
     Return
     ------
@@ -434,62 +434,13 @@ def _segments_preprocessing(segments, audio_ext, maxlen):
     # check empty jobs
     if len(jobs) == 0:
         raise Exception('NO jobs found for processing.')
-    # ====== check maxlen ====== #
-    if maxlen is not None:
-        prog = Progbar(target=sum(len(segs) for _, segs in jobs),
-                       print_report=True, interval=0,
-                       name='Split segment into %d(s) chunks' % int(maxlen))
-        new_jobs = []
-        new_nb_jobs = 0
-        # segments: list of (name, s, e, channel)
-        for path_or_ds, segments in jobs:
-            new_segments = []
-            if isinstance(path_or_ds, Dataset):
-                f = None
-                sr = path_or_ds['sr'][segments[0][0]]
-                N = path_or_ds['indices'][segments[0][0]]
-                N = N[1] - N[0]
-            else: # open wave file
-                f = wave.open(path_or_ds, mode='r')
-                sr = f.getframerate()
-                N = f.getnframes()
-            # cut the segments
-            for name, start, end, channel in segments:
-                # updating progress
-                prog['Segment'] = name
-                prog.add(1)
-                # infer relevant start and end of segments
-                if 0. <= start < 1. and 0. < end <= 1.:
-                    start = int(start * N)
-                    end = int(np.ceil(end * N))
-                else:
-                    start = int(float(start) * sr)
-                    end = int(N if end <= 0 else float(end) * sr)
-                # check
-                if end - start > maxlen * sr:
-                    _ = list(range(start, end, int(sr * maxlen))) + [end]
-                    for st, en in zip(_, _[1:]):
-                        st = st / sr
-                        en = en / sr
-                        st_ = ('%f' % st).rstrip('0').rstrip('.')
-                        en_ = ('%f' % en).rstrip('0').rstrip('.')
-                        new_segments.append(
-                            (name + ":%s:%s" % (st_, en_), st, en, channel))
-                        new_nb_jobs += 1
-                else:
-                    new_segments.append((name, start, end, channel))
-                    new_nb_jobs += 1
-            # close the opened file
-            new_jobs.append((path_or_ds, new_segments))
-            if f is not None:
-                f.close()
-        jobs = new_jobs
-        nb_jobs = new_nb_jobs
     return jobs, nb_jobs
 
 
 def _load_audio(path_or_ds, segments,
-                sr, sr_info={}, sr_new=None, remove_dc_offset=True):
+                sr, sr_info={}, sr_new=None,
+                maxlen=None, vad_split=False, vad_split_args={},
+                remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
     # iterate over a Dataset
     if isinstance(path_or_ds, Dataset):
@@ -521,6 +472,10 @@ def _load_audio(path_or_ds, segments,
         s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
         sr_orig = sr_new
     N = len(s)
+    # vad_split_audio kwargs
+    frame_length = vad_split_args.get('frame_length', 256)
+    nb_mixtures = vad_split_args.get('nb_mixtures', 3)
+    threshold = vad_split_args.get('threshold', 0.4)
     # ====== cut into segments ====== #
     for name, start, end, channel in segments:
         if 0. <= start < 1. and 0. < end <= 1.: # percentage
@@ -529,8 +484,36 @@ def _load_audio(path_or_ds, segments,
         else: # given the duration in second
             start = int(float(start) * sr_orig)
             end = int(N if end <= 0 else float(end) * sr_orig)
-        data = s[start:end, channel] if s.ndim > 1 else s[start:end]
-        yield (name, data, sr_orig)
+        # check maxlen
+        if maxlen is not None and (end - start > maxlen * sr_orig):
+            # using VAD information to split the audio
+            if vad_split:
+                data = s[start:end, channel] if s.ndim > 1 else s[start:end]
+                data = signal.vad_split_audio(data, sr=sr_orig,
+                    maximum_duration=maxlen, frame_length=frame_length,
+                    nb_mixtures=nb_mixtures, threshold=threshold)
+                accum_length = np.cumsum([0] + [len(i) for i in data[:-1]])
+                for st, d in zip(accum_length, data):
+                    st_ = ('%f' % (st / sr_orig)).rstrip('0').rstrip('.')
+                    en_ = ('%f' % ((st + len(d)) / sr_orig)).rstrip('0').rstrip('.')
+                    yield (name + ":%s:%s" % (st_, en_),
+                           d,
+                           sr_orig)
+            # just cut into small segments
+            else:
+                maxlen = int(maxlen * sr_orig)
+                _ = list(range(start, end, maxlen)) + [end]
+                for st, en in zip(_, _[1:]):
+                    st_ = ('%f' % (st / sr_orig)).rstrip('0').rstrip('.')
+                    en_ = ('%f' % (en / sr_orig)).rstrip('0').rstrip('.')
+                    yield (name + ":%s:%s" % (st_, en_),
+                           s[st:en, channel] if s.ndim > 1 else s[st:en],
+                           sr_orig)
+        # return normally
+        else:
+            yield (name,
+                   s[start:end, channel] if s.ndim > 1 else s[start:end],
+                   sr_orig)
 
 
 class WaveProcessor(FeatureProcessor):
@@ -566,6 +549,11 @@ class WaveProcessor(FeatureProcessor):
         maximum length of an utterances in second, if any file is longer than
         given length, it is divided into small segments and the start time and
         end time are concatenated to the name (e.g. file:0:30)
+    vad_split: boolean (default: False)
+        using VAD information to split the audio in most likely silence part.
+    vad_split_args: dict
+        kwargs for `odin.preprocessing.signal.vad_split_audio`, includes:
+        (frame_length, nb_mixtures, threshold)
     dtype: numpy.dtype, None, 'auto'
         if None or 'auto', keep the original dtype of audio
 
@@ -574,7 +562,8 @@ class WaveProcessor(FeatureProcessor):
     def __init__(self, segments, output_path,
                 sr=None, sr_info={}, sr_new=None,
                 audio_ext=None, pcm=False, remove_dc_offset=True,
-                maxlen=None, dtype='float16', datatype='memmap',
+                maxlen=None, vad_split=False, vad_split_args={},
+                dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
         super(WaveProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=False, pca_whiten=False,
@@ -583,7 +572,9 @@ class WaveProcessor(FeatureProcessor):
         if isinstance(segments, Dataset):
             raise ValueError("WaveProcessor does not support segments as a Dataset.")
         self.maxlen = None if maxlen is None else int(maxlen)
-        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext, self.maxlen)
+        self.vad_split = bool(vad_split)
+        self.vad_split_args = vad_split_args
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         if dtype is None or (is_string(dtype) and dtype == 'auto'):
             s, _ = speech.read(self.jobs[0][0], pcm=pcm, dtype=None)
             dtype = s.dtype
@@ -600,19 +591,23 @@ class WaveProcessor(FeatureProcessor):
 
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
+        nb_jobs = len(segments)
         try:
             # processing all segments
             ret = []
             for name, data, sr in _load_audio(audio_path, segments,
-                                              self.sr, self.sr_info, self.sr_new,
-                                              remove_dc_offset=self.remove_dc_offset):
-                ret.append((name, [data, int(sr), data.dtype.str]))
+                                self.sr, self.sr_info, self.sr_new,
+                                self.maxlen, self.vad_split, self.vad_split_args,
+                                remove_dc_offset=self.remove_dc_offset):
+                ret.append([name, 0, [data, int(sr), data.dtype.str]])
+            # a hack to return proper amount of processed jobs
+            ret[-1][1] = nb_jobs
             # return result
             return (i for i in ret)
         except Exception as e:
-            # msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
+            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             import traceback; traceback.print_exc()
-            raise e
+            raise RuntimeError(msg)
 
 
 class SpeechProcessor(FeatureProcessor):
@@ -713,6 +708,11 @@ class SpeechProcessor(FeatureProcessor):
         maximum length of an utterances in second, if any file is longer than
         given length, it is divided into small segments and the start time and
         end time are concatenated to the name (e.g. file:0:30)
+    vad_split: boolean (default: False)
+        using VAD information to split the audio in most likely silence part.
+    vad_split_args: dict
+        kwargs for `odin.preprocessing.signal.vad_split_audio`, includes:
+        (frame_length, nb_mixtures, threshold)
     save_raw: bool
         if True, saving the raw signal together with all the acoustic features
     save_stats: bool
@@ -759,8 +759,9 @@ class SpeechProcessor(FeatureProcessor):
                 cqt_bins=96, preemphasis=None,
                 center=True, power=2, log=True, backend='odin',
                 pca=True, pca_whiten=False,
-                audio_ext=None, maxlen=None, save_raw=False,
-                save_stats=True, substitute_nan=None,
+                audio_ext=None,
+                maxlen=None, vad_split=False, vad_split_args={},
+                save_raw=False, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
                 ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
@@ -768,8 +769,9 @@ class SpeechProcessor(FeatureProcessor):
             save_stats=save_stats, substitute_nan=substitute_nan,
             ncache=ncache, ncpu=ncpu)
         self.maxlen = None if maxlen is None else int(maxlen)
-        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext,
-            self.maxlen)
+        self.vad_split = bool(vad_split)
+        self.vad_split_args = vad_split_args
+        self.jobs, self.njobs = _segments_preprocessing(segments, audio_ext)
         # ====== which features to get ====== #
         features_properties = []
         if save_raw:
@@ -841,10 +843,12 @@ class SpeechProcessor(FeatureProcessor):
         [(name, spec, mspec, mfcc, pitch, vad), ...]
         '''
         audio_path, segments = job[0] if len(job) == 1 else job
+        nb_jobs = len(segments)
         try:
             ret = []
             for name, data, sr_orig in _load_audio(audio_path, segments,
-                                                   self.sr, self.sr_info, self.sr_new):
+                                self.sr, self.sr_info, self.sr_new,
+                                self.maxlen, self.vad_split, self.vad_split_args):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     features = speech.speech_features(data.ravel(), sr=sr_orig,
@@ -879,15 +883,17 @@ class SpeechProcessor(FeatureProcessor):
                     else:
                         saved_features.append(sr_orig if self.sr_new is None
                                               else self.sr_new)
-                        ret.append((name, saved_features))
+                        ret.append([name, 0, saved_features])
                 else:
                     warnings.warn('Ignore segments: %s, no features found' % name)
+            # a hack to return proper amount of processed jobs
+            ret[-1][1] = nb_jobs
             # return the results as a generator
             return (i for i in ret)
         except Exception as e:
             msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
             import traceback; traceback.print_exc()
-            raise e
+            raise RuntimeError(msg)
 
 
 # ===========================================================================
