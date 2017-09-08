@@ -42,6 +42,149 @@ MAX_MEM_BLOCK = 2**8 * 2**11
 
 
 # ===========================================================================
+# VAD
+# ===========================================================================
+VAD_MODE_STRICT = 1.2
+VAD_MODE_STANDARD = 2.
+VAD_MODE_SENSITIVE = 2.4
+__current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
+
+
+def set_vad_mode(mode):
+    """
+    Paramters
+    ---------
+    mode: float
+        a number from 1.0 to 2.4, the higher the number, the more
+        sensitive it is to any high-energy segments.
+    """
+    if isinstance(mode, Number):
+        global __current_vad_mode
+        mode = min(max(mode, 1.), 2.4)
+        __current_vad_mode = float(mode)
+
+
+def vad_energy(log_energy, distrib_nb=3, nb_train_it=24):
+    """ Fitting Gaussian mixture model on the log-energy and the voice
+    activity is the component with highest energy.
+
+    Return
+    ------
+    vad: array of 0, 1
+    threshold: scalar
+    """
+    from sklearn.mixture import GaussianMixture
+    # center and normalize the energy
+    log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
+    if log_energy.ndim == 1:
+        log_energy = log_energy[:, np.newaxis]
+    # create mixture model: diag, spherical
+    world = GaussianMixture(
+        n_components=distrib_nb, covariance_type='diag',
+        init_params='kmeans', max_iter=nb_train_it,
+        weights_init=np.ones(distrib_nb) / distrib_nb,
+        means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
+        precisions_init=np.ones((distrib_nb, 1)),
+    )
+    try:
+        world.fit(log_energy)
+    except (ValueError, IndexError): # index error because of float32 cumsum
+        if distrib_nb - 1 >= 2:
+            return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
+                              nb_train_it=nb_train_it)
+        return np.zeros(shape=(log_energy.shape[0],)), 0
+    # Compute threshold
+    threshold = world.means_.max() - \
+        __current_vad_mode * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
+    # Apply frame selection with the current threshold
+    label = log_energy.ravel() > threshold
+    return label, threshold
+
+
+def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
+                    nb_mixtures=3, threshold=0.4):
+    """ Splitting an audio based on VAD indicator.
+    * The audio is segmented into multiple with length given by `frame_length`
+    * Log-energy is calculated for each frames
+    * Gaussian mixtures with `nb_mixtures` is fitted, and output vad indicator
+      for each frames.
+    * A flat window (ones-window) of `frame_length` is convolved with the
+      vad indices.
+    * All frames within the percentile <= `threshold` is treated as silence.
+    * The splitting process is greedy, frames is grouped until reaching the
+      maximum duration
+
+    Parameters
+    ----------
+    s: 1-D numpy.ndarray
+        loaded audio array
+    sr: int
+        sample rate
+    maximum_duration: float (second)
+        maximum duration of each segments in seconds
+    frame_length: int
+        number of frames for windowing
+    nb_mixtures: int
+        number of Gaussian mixture for energy-based VAD (the higher
+        the more overfitting).
+    threshold: float (0. - 1.)
+        The higher the values, the more silence points are taken into
+        account for splitting the audio
+        (with 1. mean that you are sure every frames are SILIENCE,
+        and 0. mean that most of the frame are voiced.)
+
+    Return
+    ------
+    list of audio arrays
+
+    Note
+    ----
+    this function does not guarantee the output audio length is always
+    smaller than `maximum_duration`, the higher the threshold, the better
+    chance you get everything smaller than `maximum_duration`
+    """
+    frame_length = int(frame_length)
+    maximum_duration = maximum_duration * sr
+    # ====== check if audio long enough ====== #
+    if len(s) < maximum_duration:
+        return [s]
+    # ====== start spliting ====== #
+    maximum_duration /= frame_length
+    frames = segment_axis(s, frame_length, frame_length,
+                          axis=0, end='pad', endvalue=0.)
+    energy = get_energy(frames, log=True)
+    vad = vad_energy(energy, distrib_nb=nb_mixtures, nb_train_it=24)[0]
+    vad = smooth(vad, win=frame_length, window='flat')
+    # ====== get all possible sliences ====== #
+    indices = np.where(vad <= np.percentile(vad, q=threshold * 100))[0].tolist()
+    if len(vad) - 1 not in indices:
+        indices.append(len(vad) - 1)
+    # ====== spliting the audio ====== #
+    segments = []
+    start = 0
+    prev_end = 0
+    # greedy adding new frames to reach desire maximum length
+    for end in indices:
+        # over-reach the maximum length
+        if end - start > maximum_duration:
+            segments.append((start, prev_end))
+            start = prev_end
+        # exact maximum length
+        elif end - start == maximum_duration:
+            segments.append((start, end))
+            start = end
+        prev_end = end
+    # add ending index if necessary
+    if indices[-1] != segments[-1][-1]:
+        segments.append((start, indices[-1]))
+    # ====== convert everythng to raw signal index ====== #
+    segments = [[i * frame_length, j * frame_length]
+                for i, j in segments]
+    segments[-1][-1] = s.shape[0]
+    return [s[i:j] for i, j in segments]
+
+
+# ===========================================================================
 #
 # ===========================================================================
 def hz2mel(frequencies):
@@ -471,55 +614,6 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
         all_deltas = _
 
     return all_deltas
-
-
-VAD_MODE_STRICT = 1.2
-VAD_MODE_STANDARD = 2.
-VAD_MODE_SENSITIVE = 2.4
-__current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
-
-
-def set_vad_mode(mode):
-    """
-    Paramters
-    ---------
-    mode: float
-        a number from 1.0 to 2.4, the higher the number, the more
-        sensitive it is to any high-energy segments.
-    """
-    if isinstance(mode, Number):
-        global __current_vad_mode
-        mode = min(max(mode, 1.), 2.4)
-        __current_vad_mode = float(mode)
-
-
-def vad_energy(log_energy, distrib_nb=2, nb_train_it=24):
-    from sklearn.mixture import GaussianMixture
-    # center and normalize the energy
-    log_energy = (log_energy - np.mean(log_energy)) / np.std(log_energy)
-    if log_energy.ndim == 1:
-        log_energy = log_energy[:, np.newaxis]
-    # create mixture model: diag, spherical
-    world = GaussianMixture(
-        n_components=distrib_nb, covariance_type='diag',
-        init_params='kmeans', max_iter=nb_train_it,
-        weights_init=np.ones(distrib_nb) / distrib_nb,
-        means_init=(-2 + 4.0 * np.arange(distrib_nb) / (distrib_nb - 1))[:, np.newaxis],
-        precisions_init=np.ones((distrib_nb, 1)),
-    )
-    try:
-        world.fit(log_energy)
-    except (ValueError, IndexError): # index error because of float32 cumsum
-        if distrib_nb - 1 >= 2:
-            return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
-                              nb_train_it=nb_train_it)
-        return np.zeros(shape=(log_energy.shape[0],)), 0
-    # Compute threshold
-    threshold = world.means_.max() - \
-        __current_vad_mode * np.sqrt(1.0 / world.precisions_[world.means_.argmax(), 0])
-    # Apply frame selection with the current threshold
-    label = log_energy.ravel() > threshold
-    return label, threshold
 
 
 @cache_memory('__strict__')
