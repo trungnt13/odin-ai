@@ -556,7 +556,8 @@ class WaveProcessor(FeatureProcessor):
         (frame_length, nb_mixtures, threshold)
     dtype: numpy.dtype, None, 'auto'
         if None or 'auto', keep the original dtype of audio
-
+    ignore_error: boolean (default: False)
+        if True, ignore error files during processing
     """
 
     def __init__(self, segments, output_path,
@@ -564,7 +565,7 @@ class WaveProcessor(FeatureProcessor):
                 audio_ext=None, pcm=False, remove_dc_offset=True,
                 maxlen=None, vad_split=False, vad_split_args={},
                 dtype='float16', datatype='memmap',
-                ncache=0.12, ncpu=1):
+                ignore_error=False, ncache=0.12, ncpu=1):
         super(WaveProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=False, pca_whiten=False,
             save_stats=False, substitute_nan=False,
@@ -588,6 +589,7 @@ class WaveProcessor(FeatureProcessor):
         self._features_properties = [('raw', self.dtype, False),
                                      ('sr', 'dict', False),
                                      ('dtype', 'dict', False)]
+        self.ignore_error = bool(ignore_error)
 
     def map(self, job):
         audio_path, segments = job[0] if len(job) == 1 else job
@@ -605,9 +607,12 @@ class WaveProcessor(FeatureProcessor):
             # return result
             return (i for i in ret)
         except Exception as e:
-            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
+            msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             import traceback; traceback.print_exc()
-            raise RuntimeError(msg)
+            if self.ignore_error:
+                print(msg)
+            else:
+                raise RuntimeError(msg)
 
 
 class SpeechProcessor(FeatureProcessor):
@@ -725,6 +730,8 @@ class SpeechProcessor(FeatureProcessor):
         the dtype of saved features
     datatype: 'memmap', 'hdf5'
         store processed features in memmap or hdf5
+    ignore_error: boolean (default: False)
+        if True, ignore error files during processing
     ncache: float or int
         number of samples are kept until flush to the disk.
     ncpu: int
@@ -763,7 +770,7 @@ class SpeechProcessor(FeatureProcessor):
                 maxlen=None, vad_split=False, vad_split_args={},
                 save_raw=False, save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
-                ncache=0.12, ncpu=1):
+                ignore_error=False, ncache=0.12, ncpu=1):
         super(SpeechProcessor, self).__init__(output_path=output_path,
             datatype=datatype, pca=pca, pca_whiten=pca_whiten,
             save_stats=save_stats, substitute_nan=substitute_nan,
@@ -834,6 +841,7 @@ class SpeechProcessor(FeatureProcessor):
         self.power = power
         self.log = log
         self.backend = backend
+        self.ignore_error = bool(ignore_error)
 
     # ==================== Abstract properties ==================== #
     def map(self, job):
@@ -891,9 +899,12 @@ class SpeechProcessor(FeatureProcessor):
             # return the results as a generator
             return (i for i in ret)
         except Exception as e:
-            msg = 'Ignore file: %s, error: %s' % (audio_path, str(e))
+            msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             import traceback; traceback.print_exc()
-            raise RuntimeError(msg)
+            if self.ignore_error:
+                print(msg)
+            else:
+                raise RuntimeError(msg)
 
 
 # ===========================================================================
