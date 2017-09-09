@@ -31,3 +31,6 @@
 [submodule "ideas/glas"]
 	path = ideas/glas
 	url = https://github.com/dojoteef/glas.git
+[submodule "ideas/sact"]
+	path = ideas/sact
+	url = https://github.com/mfigurnov/sact.git

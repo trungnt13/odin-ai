@@ -473,9 +473,10 @@ def _load_audio(path_or_ds, segments,
         sr_orig = sr_new
     N = len(s)
     # vad_split_audio kwargs
+    minimum_duration = vad_split_args.get('minimum_duration', None)
     frame_length = vad_split_args.get('frame_length', 256)
     nb_mixtures = vad_split_args.get('nb_mixtures', 3)
-    threshold = vad_split_args.get('threshold', 0.4)
+    threshold = vad_split_args.get('threshold', 0.3)
     # ====== cut into segments ====== #
     for name, start, end, channel in segments:
         if 0. <= start < 1. and 0. < end <= 1.: # percentage
@@ -490,8 +491,9 @@ def _load_audio(path_or_ds, segments,
             if vad_split:
                 data = s[start:end, channel] if s.ndim > 1 else s[start:end]
                 data = signal.vad_split_audio(data, sr=sr_orig,
-                    maximum_duration=maxlen, frame_length=frame_length,
-                    nb_mixtures=nb_mixtures, threshold=threshold)
+                    maximum_duration=maxlen, minimum_duration=minimum_duration,
+                    frame_length=frame_length, nb_mixtures=nb_mixtures,
+                    threshold=threshold)
                 accum_length = np.cumsum([0] + [len(i) for i in data[:-1]])
                 for st, d in zip(accum_length, data):
                     st_ = ('%f' % (st / sr_orig)).rstrip('0').rstrip('.')
@@ -553,7 +555,7 @@ class WaveProcessor(FeatureProcessor):
         using VAD information to split the audio in most likely silence part.
     vad_split_args: dict
         kwargs for `odin.preprocessing.signal.vad_split_audio`, includes:
-        (frame_length, nb_mixtures, threshold)
+        (minimum_duration, frame_length, nb_mixtures, threshold)
     dtype: numpy.dtype, None, 'auto'
         if None or 'auto', keep the original dtype of audio
     ignore_error: boolean (default: False)
@@ -608,11 +610,11 @@ class WaveProcessor(FeatureProcessor):
             return (i for i in ret)
         except Exception as e:
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
-            import traceback; traceback.print_exc()
             if self.ignore_error:
                 print(msg)
             else:
                 raise RuntimeError(msg)
+            import traceback; traceback.print_exc()
 
 
 class SpeechProcessor(FeatureProcessor):
@@ -717,7 +719,7 @@ class SpeechProcessor(FeatureProcessor):
         using VAD information to split the audio in most likely silence part.
     vad_split_args: dict
         kwargs for `odin.preprocessing.signal.vad_split_audio`, includes:
-        (frame_length, nb_mixtures, threshold)
+        (minimum_duration, frame_length, nb_mixtures, threshold)
     save_raw: bool
         if True, saving the raw signal together with all the acoustic features
     save_stats: bool
@@ -900,11 +902,11 @@ class SpeechProcessor(FeatureProcessor):
             return (i for i in ret)
         except Exception as e:
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
-            import traceback; traceback.print_exc()
             if self.ignore_error:
                 print(msg)
             else:
                 raise RuntimeError(msg)
+            import traceback; traceback.print_exc()
 
 
 # ===========================================================================

@@ -27,6 +27,7 @@ import numpy as np
 import scipy as sp
 from scipy import linalg, fftpack, signal
 from numpy.lib.stride_tricks import as_strided
+# try to make this script independent from O.D.I.N
 try:
     from odin.utils import cache_memory, cache_disk
 except ImportError:
@@ -36,11 +37,8 @@ except ImportError:
     def cache_disk(func):
         return func
 
-
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
-
-
 # ===========================================================================
 # VAD
 # ===========================================================================
@@ -104,8 +102,9 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
     return label, threshold
 
 
-def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
-                    nb_mixtures=3, threshold=0.4):
+def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
+                    frame_length=256, nb_mixtures=3, threshold=0.3,
+                    return_vad=False, return_voices=False, return_cut=False):
     """ Splitting an audio based on VAD indicator.
     * The audio is segmented into multiple with length given by `frame_length`
     * Log-energy is calculated for each frames
@@ -113,7 +112,7 @@ def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
       for each frames.
     * A flat window (ones-window) of `frame_length` is convolved with the
       vad indices.
-    * All frames within the percentile <= `threshold` is treated as silence.
+    * All frames within the percentile >= `threshold` is treated as voiced.
     * The splitting process is greedy, frames is grouped until reaching the
       maximum duration
 
@@ -125,20 +124,31 @@ def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
         sample rate
     maximum_duration: float (second)
         maximum duration of each segments in seconds
+    minimum_duration: None, or float (second)
+        all segments below this length will be merged into longer segments,
+        if None, any segments with half of the `maximum_duration`
+        are considered.
     frame_length: int
         number of frames for windowing
     nb_mixtures: int
         number of Gaussian mixture for energy-based VAD (the higher
         the more overfitting).
-    threshold: float (0. - 1.)
-        The higher the values, the more silence points are taken into
-        account for splitting the audio
-        (with 1. mean that you are sure every frames are SILIENCE,
-        and 0. mean that most of the frame are voiced.)
+    threshold: float (0. to 1.)
+        The higher the values, the more frames are considered as voiced,
+        this value is the lower percentile of voiced frames.
+    return_vad: bool
+        if True, return VAD confident values
+    return_voices: bool
+        if True, return the voices frames indices
+    return_cut: bool
+        if True, return the cut points of the audio.
 
     Return
     ------
-    list of audio arrays
+    segments: list of audio arrays
+    vad (optional): list of 0, 1 for VAD indices
+    voices (optional): list of thresholded VAD for more precise voices frames.
+    cut (optional): list of indicator 0, 1 (1 for the cut point)
 
     Note
     ----
@@ -148,20 +158,39 @@ def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
     """
     frame_length = int(frame_length)
     maximum_duration = maximum_duration * sr
+    results = []
     # ====== check if audio long enough ====== #
     if len(s) < maximum_duration:
+        if return_cut or return_vad or return_voices:
+            raise ValueError("Cannot return `cut` points, `vad` or `voices` since"
+                        "the original audio is shorter than `maximum_duration`, "
+                        "hence, no need for splitting.")
         return [s]
-    # ====== start spliting ====== #
     maximum_duration /= frame_length
+    if minimum_duration is None:
+        minimum_duration = maximum_duration // 2
+    else:
+        minimum_duration = minimum_duration * sr / frame_length
+        minimum_duration = np.clip(minimum_duration, 0., 0.99 * maximum_duration)
+    # ====== start spliting ====== #
     frames = segment_axis(s, frame_length, frame_length,
                           axis=0, end='pad', endvalue=0.)
     energy = get_energy(frames, log=True)
     vad = vad_energy(energy, distrib_nb=nb_mixtures, nb_train_it=33)[0]
     vad = smooth(vad, win=frame_length, window='flat')
+    # explicitly return VAD
+    if return_vad:
+        results.append(vad)
     # ====== get all possible sliences ====== #
-    indices = np.where(vad <= np.percentile(vad, q=threshold * 100))[0].tolist()
+    # all voice indices
+    indices = np.where(vad >= np.percentile(vad, q=threshold * 100))[0].tolist()
     if len(vad) - 1 not in indices:
         indices.append(len(vad) - 1)
+    # explicitly return voiced frames
+    if return_voices:
+        tmp = np.zeros(shape=(len(vad),))
+        tmp[indices] = 1
+        results.append(tmp)
     # ====== spliting the audio ====== #
     segments = []
     start = 0
@@ -177,14 +206,40 @@ def vad_split_audio(s, sr, maximum_duration=30, frame_length=256,
             segments.append((start, end))
             start = end
         prev_end = end
+    # still no segments found
+    if len(segments) == 0:
+        segments = [(indices[0], indices[-1])]
     # add ending index if necessary
     if indices[-1] != segments[-1][-1]:
         segments.append((start, indices[-1]))
+    # re-fining, short segments will be merged into bigger onces
+    found_under_length = True
+    while found_under_length and len(segments) > 1:
+        new_segments = []
+        found_under_length = False
+        for (s1, e1), (s2, e2) in zip(segments, segments[1:]):
+            if (e1 - s1) < minimum_duration or (e2 - s2) < minimum_duration:
+                new_segments.append((s1, e2))
+                found_under_length = True
+            # keep both of the segments
+            else:
+                new_segments.append((s1, e1))
+                new_segments.append((s2, e2))
+        segments = new_segments
+    # explicitly return cut points
+    if return_cut:
+        tmp = np.zeros(shape=(segments[-1][-1] + 1,))
+        for i, j in segments:
+            tmp[i] = 1; tmp[j] = 1
+        results.append(tmp)
     # ====== convert everythng to raw signal index ====== #
     segments = [[i * frame_length, j * frame_length]
                 for i, j in segments]
     segments[-1][-1] = s.shape[0]
-    return [s[i:j] for i, j in segments]
+    # cut segments out of raw audio array
+    segments = [s[i:j] for i, j in segments]
+    results = [segments] + results
+    return results[0] if len(results) == 1 else results
 
 
 # ===========================================================================

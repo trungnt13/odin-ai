@@ -118,12 +118,20 @@ def timit_phonemes(phn, map39=False, blank=False):
 # ===========================================================================
 # Audio helper
 # ===========================================================================
-def read(path_or_file, pcm=False, remove_dc_offset=True, dtype='float32'):
+def read(path_or_file, pcm=False, remove_dc_offset=True, remove_zeros=True,
+         dtype='float32'):
     '''
+    Parameters
+    ----------
+    remove_dc_offset: bool
+        if True, substract the mean of the audio array
+    remove_zeros: bool
+        if True, remove all zeros values in the audio array
+
     Return
     ------
-        waveform (ndarray: [samples;channel]),
-        sample rate (int)
+    waveform (ndarray: [samples;channel]),
+    sample rate (int)
     '''
     if pcm or \
     (is_string(path_or_file) and '.pcm' in path_or_file.lower()) or \
@@ -145,6 +153,8 @@ def read(path_or_file, pcm=False, remove_dc_offset=True, dtype='float32'):
     if dtype is None:
         dtype = s.dtype
     s = s.astype(dtype)
+    if remove_zeros: # aggressively remove zeros
+        s = s[s != 0.]
     if remove_dc_offset:
         s -= np.mean(s, 0, dtype=dtype)
     return s, sr
