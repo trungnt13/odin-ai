@@ -618,6 +618,7 @@ class WaveProcessor(FeatureProcessor):
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
                 print(msg)
+                return (i for i in range(0)) # return zero-length-iterator
             else:
                 raise RuntimeError(msg)
 
@@ -910,6 +911,7 @@ class SpeechProcessor(FeatureProcessor):
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
                 print(msg)
+                return (i for i in range(0)) # return zero-length-iterator
             else:
                 raise RuntimeError(msg)
 
