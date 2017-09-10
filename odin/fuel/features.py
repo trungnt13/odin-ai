@@ -442,43 +442,48 @@ def _load_audio(path_or_ds, segments,
                 maxlen=None, vad_split=False, vad_split_args={},
                 remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
-    # iterate over a Dataset
-    if isinstance(path_or_ds, Dataset):
-        name = segments[0][0].split(":")[0]
-        start, end = path_or_ds['indices'][name]
-        s = path_or_ds['raw'][start:end]
-        sr_orig = path_or_ds['sr'][name]
     # iterate over file path
-    else:
+    if is_string(path_or_ds) or isinstance(path_or_ds, file):
         s, sr_orig = speech.read(path_or_ds, remove_dc_offset=remove_dc_offset)
-    # check original sample rate
-    if sr_orig is not None and sr is not None and sr_orig != sr:
-        raise Exception('Given sample rate (%d Hz) is different from '
-                        'audio file sample rate (%d Hz).' %
-                        (sr, sr_orig))
-    # get given sr
-    if sr_orig is None:
-        sr_orig = sr
-    # get from sr_info
-    if sr_orig is None and is_string(path_or_ds):
-        sr_orig = sr_info.get(path_or_ds, None)
-    # still None, then exception
-    if sr_orig is None:
-        raise RuntimeError("Cannot acquire original sample rate from "
-                           "loaded utterance, or from given arguments "
-                           "of this Processor (file: '%s')." % str(path_or_ds))
-    # downsampling
-    if sr_new is not None:
-        s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
-        sr_orig = sr_new
-    N = len(s)
+        # check original sample rate
+        if sr_orig is not None and sr is not None and sr_orig != sr:
+            raise RuntimeError('Given sample rate (%d Hz) is different from '
+                               'audio file sample rate (%d Hz).' %
+                               (sr, sr_orig))
+        # get given sr
+        if sr_orig is None:
+            sr_orig = sr
+        # get from sr_info
+        if sr_orig is None and is_string(path_or_ds):
+            sr_orig = sr_info.get(path_or_ds, None)
+        # still None, then exception
+        if sr_orig is None:
+            raise RuntimeError("Cannot acquire original sample rate from "
+                               "loaded utterance, or from given arguments "
+                               "of this Processor (file: '%s')." % str(path_or_ds))
+        # check if audio file is not long enough, ignore it
+        if len(s) < 25:
+            raise RuntimeError("Audio at path: '%s' is too short, length: %f(s)"
+                               % (str(path_or_ds), len(s) / sr_orig))
+        # downsampling
+        if sr_new is not None:
+            s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
+            sr_orig = sr_new
+        N = len(s)
     # vad_split_audio kwargs
     minimum_duration = vad_split_args.get('minimum_duration', None)
-    frame_length = vad_split_args.get('frame_length', 256)
+    frame_length = vad_split_args.get('frame_length', 128)
     nb_mixtures = vad_split_args.get('nb_mixtures', 3)
     threshold = vad_split_args.get('threshold', 0.3)
     # ====== cut into segments ====== #
     for name, start, end, channel in segments:
+        # iterate over dataset
+        if isinstance(path_or_ds, Dataset):
+            st, en = path_or_ds['indices'][name]
+            s = path_or_ds['raw'][st:en]
+            N = len(s)
+            sr_orig = path_or_ds['sr'][name]
+        # start processing
         if 0. <= start < 1. and 0. < end <= 1.: # percentage
             start = int(start * N)
             end = int(np.ceil(end * N))
@@ -609,12 +614,12 @@ class WaveProcessor(FeatureProcessor):
             # return result
             return (i for i in ret)
         except Exception as e:
+            import traceback; traceback.print_exc()
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
                 print(msg)
             else:
                 raise RuntimeError(msg)
-            import traceback; traceback.print_exc()
 
 
 class SpeechProcessor(FeatureProcessor):
@@ -901,12 +906,12 @@ class SpeechProcessor(FeatureProcessor):
             # return the results as a generator
             return (i for i in ret)
         except Exception as e:
+            import traceback; traceback.print_exc()
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
                 print(msg)
             else:
                 raise RuntimeError(msg)
-            import traceback; traceback.print_exc()
 
 
 # ===========================================================================

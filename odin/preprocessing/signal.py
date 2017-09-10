@@ -103,7 +103,7 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
 
 
 def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
-                    frame_length=256, nb_mixtures=3, threshold=0.3,
+                    frame_length=128, nb_mixtures=3, threshold=0.3,
                     return_vad=False, return_voices=False, return_cut=False):
     """ Splitting an audio based on VAD indicator.
     * The audio is segmented into multiple with length given by `frame_length`

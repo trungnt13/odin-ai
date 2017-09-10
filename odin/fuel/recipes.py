@@ -628,7 +628,7 @@ class LabelOneHot(FeederRecipe):
             # transform into one-label y
             if i in self.label_idx:
                 y = np.array([int(i) for i in y])
-                y = one_hot(y, n_classes=self._nb_classes)
+                y = one_hot(y, nb_classes=self._nb_classes)
             _.append(y)
         return name, X, _
 

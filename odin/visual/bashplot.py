@@ -284,6 +284,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
     if inc_stats:
         fig = " " * ((3 + 1) * nb_classes + max_label_length + 2)
         fig += ctext('|'.join(['Pre', 'Rec', ' F1', ' FA', 'Σ']), 'red') + '\n'
+        longest_line = len(fig) - 1
     else:
         fig = ""
     # confusion matrix
@@ -311,6 +312,19 @@ def print_confusion(arr, labels=None, inc_stats=True):
         for l in labels:
             row += ' ' + (l.pop() if len(l) > 0 else ' ') + '  '
         fig += ctext(row, 'magenta') + '\n'
+    # Add the average values
+    if inc_stats:
+        n = 0
+        for i, name in enumerate(['Pre', 'Rec', ' F1', ' FA', '  Σ']):
+            avr = np.mean([stats[i] for stats in info.values()])
+            avr = ctext('%s:' % name, 'red') + '%.4f' % avr
+            if n + len(avr) >= longest_line: # new line
+                avr += '\n'
+                n = 0
+            else: # same line
+                avr += '\t'
+            n += len(avr) + len('\t')
+            fig += avr
     return fig[:-1]
 
 

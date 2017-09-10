@@ -367,6 +367,12 @@ class EarlyStopGeneralizationLoss(EarlyStop):
     value for evaluation.
     """
 
+    def __init__(self, task_name, output_name, threshold, patience=1,
+                 get_value=lambda x: np.mean(x), log=True):
+        super(EarlyStopGeneralizationLoss, self).__init__(
+            task_name, output_name, threshold, patience,
+            get_value, log)
+
     def earlystop(self, history, threshold):
         gl_exit_threshold = threshold
         longest_remain_performance = int(gl_exit_threshold + 1)
@@ -439,6 +445,12 @@ class EarlyStopPatience(EarlyStop):
         for example, lambda x: np.mean(x)
 
     """
+
+    def __init__(self, task_name, output_name, threshold, patience=1,
+                 get_value=lambda x: np.mean(x), log=True):
+        super(EarlyStopPatience, self).__init__(
+            task_name, output_name, threshold, patience,
+            get_value, log)
 
     def earlystop(self, history, threshold):
         if not hasattr(self, 'wait'): self.wait = 0

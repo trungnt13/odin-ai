@@ -155,7 +155,7 @@ def read(path_or_file, pcm=False, remove_dc_offset=True, remove_zeros=True,
     s = s.astype(dtype)
     if remove_zeros: # aggressively remove zeros
         s = s[s != 0.]
-    if remove_dc_offset:
+    if len(s) > 0 and remove_dc_offset:
         s -= np.mean(s, 0, dtype=dtype)
     return s, sr
 

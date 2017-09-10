@@ -244,7 +244,7 @@ def confusion_matrix(y_pred, y_true, labels, name='ConfusionMatrix'):
     ----------
     pred : 1-d or 2-d tensor variable
     actual : 1-d or 2-d tensor variable
-    labels : array, shape = [n_classes], int (nb_classes)
+    labels : array, shape = [nb_classes], int (nb_classes)
         List of labels to index the matrix. This may be used to reorder
         or select a subset of labels.
         If none is given, those that appear at least once

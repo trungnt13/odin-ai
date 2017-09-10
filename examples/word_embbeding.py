@@ -75,7 +75,7 @@ X = tk.transform(texts, mode='seq', maxlen=MAX_SEQ_LEN,
                  end_document=None, token_not_found='ignore')
 
 y = [labels_set.index(i) for i in labels]
-y = one_hot(np.array(y, dtype='int32'), n_classes=nb_labels)
+y = one_hot(np.array(y, dtype='int32'), nb_classes=nb_labels)
 
 n = X.shape[0]
 np.random.seed(1208)

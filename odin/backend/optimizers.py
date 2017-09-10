@@ -13,7 +13,7 @@ from six import add_metaclass
 import numpy as np
 import tensorflow as tf
 
-from odin.config import CONFIG
+from odin.config import CONFIG, get_session
 from odin.utils import as_tuple, is_number, uuid
 from odin.utils.cache_utils import cache_memory
 
@@ -46,6 +46,7 @@ def _as_variable(x, name, roles=None):
     # create variable
     if not is_tensor(x):
         x = tf.Variable(x, dtype=floatX, name=name)
+        get_session().run(x.initializer)
     return add_role(x, roles)
 
 

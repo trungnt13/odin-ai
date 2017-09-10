@@ -17,7 +17,7 @@ from .cache_utils import cache_memory
 # ===========================================================================
 # Main
 # ===========================================================================
-def one_hot(y, n_classes=None):
+def one_hot(y, nb_classes=None):
     '''Convert class vector (integers from 0 to nb_classes)
     to binary class matrix, for use with categorical_crossentropy
 
@@ -27,9 +27,9 @@ def one_hot(y, n_classes=None):
     values is 0.
     '''
     y = np.asarray(y, dtype='int32')
-    if not n_classes:
-        n_classes = np.max(y) + 1
-    Y = np.zeros((len(y), n_classes), dtype='int32')
+    if not nb_classes:
+        nb_classes = np.max(y) + 1
+    Y = np.zeros((len(y), nb_classes), dtype='int32')
     for i, j in enumerate(y):
         if j >= 0:
             Y[i, j] = 1
