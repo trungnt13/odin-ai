@@ -434,7 +434,7 @@ class MPI(SelfIterator):
                     ret = (ret,)
                 nb_returned = 0
                 for r in ret:
-                    if r is not None:
+                    if r is not None: # ignore None values
                         return_queue.put(r)
                         nb_returned += 1
                         # sometime 1 batch get too big, and we need to stop

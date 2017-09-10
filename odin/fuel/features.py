@@ -289,8 +289,14 @@ class FeatureProcessor(object):
             # save the indices to MmapDict
             ids_dict = MmapDict(os.path.join(dataset.path, file_name),
                                 read_only=False)
+            # progbar for saving inices
+            prog = Progbar(target=len(ids),
+                           name='Save "%s" to path: %s' % (file_name, dataset.path),
+                           print_report=True, print_summary=True)
             for name, start, end in ids:
+                prog['Name'] = str(name)
                 ids_dict[name] = (int(start), int(end))
+                prog.add(1)
             ids_dict.flush()
             ids_dict.close()
         prog.add_notification("Saved all indices to disk")
