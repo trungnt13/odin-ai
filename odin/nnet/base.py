@@ -323,21 +323,19 @@ class _NNOp_Meta(ABCMeta):
         if spec.defaults is not None:
             for name, value in zip(spec.args[::-1], spec.defaults[::-1]):
                 default_args[name] = value
-        # ====== add args and kwargs ====== #
+        # ====== upate the current argument scope ====== #
+        # get current scope
+        key_name = [clazz, str(clazz), clazz.__name__]
+        current_scope = get_args_scope()
+        for n in key_name:
+            if n in current_scope:
+                default_args.update(current_scope[n])
+        # ====== update user specified args and kwargs ====== #
         # update the new arguments into default arguments
         new_args = OrderedDict([(name, args[i]) if i < len(args) else
                                 (name, default)
                                 for i, (name, default) in enumerate(default_args.iteritems())])
         new_args.update(kwargs)
-        # ====== upate the current argument scope ====== #
-        # get current scope
-        name = [clazz, str(clazz), clazz.__name__]
-        if 'name' in new_args:
-            name.append(str(new_args['name']))
-        current_scope = get_args_scope()
-        for n in name:
-            if n in current_scope:
-                new_args.update(current_scope[n])
         return super(_NNOp_Meta, clazz).__call__(*[], **new_args)
 
 
@@ -518,8 +516,10 @@ class NNOp(object):
         # 0. initializing function.
         if callable(initializer):
             var = initializer(shape)
+        # is a scalar
         elif is_number(initializer):
             var = np.full(shape=shape, fill_value=initializer)
+        # else actual tensor
         else:
             var = initializer
         #####################################
