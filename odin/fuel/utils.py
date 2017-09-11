@@ -6,6 +6,7 @@ import marshal
 import sqlite3
 from six.moves import cPickle
 from collections import OrderedDict, Iterator
+import io
 
 import numpy as np
 
@@ -286,10 +287,61 @@ class MmapDict(dict):
         raise NotImplementedError
 
 
+# ===========================================================================
+# SQLiteDict
+# ===========================================================================
+def _adapt_array(arr):
+    """ Converts np.array to TEXT when inserting
+    http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
+    """
+    out = io.BytesIO()
+    np.save(out, arr)
+    out.seek(0)
+    return sqlite3.Binary(out.read())
+
+
+def _convert_array(text):
+    """ Converts TEXT to np.array when selecting """
+    out = io.BytesIO(text)
+    out.seek(0)
+    return np.load(out)
+
+
 class SQLiteDict(dict):
     """ Using SQLite in key-value pair manner
+
+    Example
+    -------
+    >>> path = '/tmp/tmp.db'
+    >>> db = SQLiteDict(path)
+    >>> db1 = SQLiteDict(path)
+    >>> print(id(db) == id(db1)) # True
+    >>> def sett(i):
+    ...     db = SQLiteDict(path)
+    ...     db[i] = 'Process%d' % i
+    ...     db.close()
+    >>> def get(i):
+    ...     db = SQLiteDict(path)
+    ...     print("Get", db[i])
+    >>> pros = [Process(target=sett, args=(i,))
+    ...         for i in range(10)]
+    >>> [p.start() for p in pros]
+    >>> [p.join() for p in pros]
+    ...
+    >>> db = SQLiteDict(path)
+    >>> print(db.items())
+    >>> print(db[0])
+    ...
+    >>> pros = [Process(target=get, args=(i,))
+    ...         for i in range(10)]
+    >>> [p.start() for p in pros]
+    >>> [p.join() for p in pros]
+
     Note
-    ---
+    ----
+    numpy.ndarray will be converted to list before dumped to the database,
+    hence, the speed of serialize and deserialize ndarray is extremely slow.
+
     """
 
     _DEFAULT_TABLE = '_default_'
@@ -321,7 +373,8 @@ class SQLiteDict(dict):
         self._cache_size = int(cache_size)
         self._cache = {}
         # ====== db manager ====== #
-        self._conn = sqlite3.connect(path)
+        self._conn = sqlite3.connect(path,
+                                     detect_types=sqlite3.PARSE_DECLTYPES)
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
         # ====== create default table ====== #
@@ -421,6 +474,8 @@ class SQLiteDict(dict):
 
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
+        if self.read_only:
+            raise RuntimeError("Cannot __setitem__ for this Dict in read_only mode.")
         key = str(key)
         self._cache[key] = value
         if len(self._cache) >= self._cache_size:
@@ -555,7 +610,7 @@ class SQLiteDict(dict):
     def clear(self):
         if self.read_only:
             return
-        self.cursor.execute("""DELETE FROM {tb};""".format(tb=self._current_table))
+        self.cursor.execute("""TRUNCATE TABLE {tb};""".format(tb=self._current_table))
         self.connection.commit()
         self._cache.clear()
         return self

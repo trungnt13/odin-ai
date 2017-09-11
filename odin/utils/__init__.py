@@ -31,7 +31,7 @@ import numpy
 import six
 
 from .progbar import Progbar, add_notification
-from .mpi import SelfIterator, segment_list, SharedCounter, async
+from .mpi import SelfIterator, segment_list, SharedCounter, async, MPI
 from .profile import *
 from .path_utils import *
 from .cache_utils import *

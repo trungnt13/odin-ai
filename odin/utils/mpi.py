@@ -11,8 +11,7 @@ from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_proc
 
 import numpy as np
 
-from odin import SIG_TERMINATE_ITERATOR
-
+_SIG_TERMINATE_ITERATOR = '__THE_TERMINATOR__'
 # ===========================================================================
 # Threading
 # ===========================================================================
@@ -275,7 +274,7 @@ class SelfIterator(object):
     def stop(self):
         # call finalize if everything is running
         need_to_finalize = not self._is_finished
-        self._is_finished = SIG_TERMINATE_ITERATOR
+        self._is_finished = _SIG_TERMINATE_ITERATOR
         if need_to_finalize:
             self._finalize()
 
@@ -326,6 +325,15 @@ class MPI(SelfIterator):
         maximum number of batch will be cached in Queue before main process
         get it and feed to the GPU (if there are too many results in Queue, a
         deadlock will happen)
+    chunk_scheduler: bool
+        if True, jobs are grouped into small chunks of `buffer_size`, then each
+        chunk will be feed to each process until the jobs are exhausted, hence,
+        this approach guarantee that all processes will run until the end, but
+        the execution speed will be lower since each processes need to
+        continuously receives chunks from main process.
+        if False, jobs are splited into equal size for each process at the
+        beginning.
+
 
 
     Notes
@@ -388,9 +396,11 @@ class MPI(SelfIterator):
     """
 
     def __init__(self, jobs, map_func, reduce_func=None,
-                 ncpu=1, buffer_size=1, maximum_queue_size=144):
+                 ncpu=1, buffer_size=1, maximum_queue_size=144,
+                 chunk_scheduler=True):
         super(MPI, self).__init__()
         self._jobs = jobs
+        self._chunk_scheduler = bool(chunk_scheduler)
         # ====== check map_func ====== #
         if not callable(map_func):
             raise Exception('"map_func" must be callable')
@@ -401,7 +411,7 @@ class MPI(SelfIterator):
             raise Exception('"reduce_func" must be callable or None')
         self._reduce_func = reduce_func
         # ====== MPI parameters ====== #
-        self._length = SharedCounter(len(jobs))
+        self._remain_jobs = SharedCounter(len(jobs))
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
@@ -412,21 +422,36 @@ class MPI(SelfIterator):
         self.__processes_started = False
         self.__shared_counter = SharedCounter()
         self.__results = Queue(maxsize=0)
+        if self._chunk_scheduler:
+            self.__tasks_queue = Queue(maxsize=0)
+        else:
+            self.__tasks_queue = None
         self.__nb_working_processes = self._ncpu
 
     def _copy(self):
         return MPI(self._jobs, self._map_func, self._reduce_func,
-                   self._ncpu, self._buffer_size, self._maximum_queue_size)
+                   self._ncpu, self._buffer_size, self._maximum_queue_size,
+                   self._chunk_scheduler)
 
     def _init(self):
-        jobs = segment_list(self._jobs, n_seg=self._ncpu)
-
-        def wrapped_map(tasks, return_queue, counter, length):
+        def wrapped_map(tasks_or_queue, return_queue, counter, remain_jobs):
             maximum_queue_size = self._maximum_queue_size
             minimum_queue_size = max(maximum_queue_size // self._ncpu, 1)
-            for i in range(0, len(tasks), self._buffer_size):
-                t = tasks[i:i + self._buffer_size]
-                length.add(-len(t)) # monitor current length
+            # ====== create task iterator for chunk scheduler ====== #
+            if self._chunk_scheduler: # chunk-scheduler
+                def _func():
+                    while True:
+                        t = tasks_or_queue.get()
+                        if t is None: # end of task queue
+                            break
+                        yield t
+                task_iterator = _func()
+            else: # one-split-do-it-all
+                task_iterator = (tasks_or_queue[i:i + self._buffer_size]
+                    for i in range(0, len(tasks_or_queue), self._buffer_size))
+            # ====== Doing the jobs ====== #
+            for t in task_iterator:
+                remain_jobs.add(-len(t)) # monitor current number of remain jobs
                 ret = self._map_func(t)
                 # if a generator is return, traverse through the
                 # iterator and return each result
@@ -455,21 +480,35 @@ class MPI(SelfIterator):
             # ending signal
             return_queue.put(None)
         # ====== multiprocessing variables ====== #
+        # Equally split for all processes
+        if not self._chunk_scheduler:
+            the_jobs = segment_list(self._jobs, n_seg=self._ncpu)
+        # small chunks for round-robin
+        else:
+            the_jobs = segment_list(self._jobs, size=self._buffer_size)
+            for j in the_jobs: # small chunks
+                self.__tasks_queue.put_nowait(j)
+            for i in range(self._ncpu): # ending signal
+                self.__tasks_queue.put_nowait(None)
+            the_jobs = [self.__tasks_queue] * self._ncpu
         self.__processes = [Process(target=wrapped_map,
-                                    args=(j, self.__results, self.__shared_counter, self._length))
-                           for i, j in enumerate(jobs)]
+                                    args=(tasks, self.__results,
+                                          self.__shared_counter, self._remain_jobs))
+                            for i, tasks in enumerate(the_jobs)]
 
     def _finalize(self):
         self.__nb_working_processes = 0
         if not self.__processes_started:
             return
         # terminate or join all processes
-        if self.finished == SIG_TERMINATE_ITERATOR:
+        if self.finished == _SIG_TERMINATE_ITERATOR:
             [p.terminate() for p in self.__processes
              if p._popen is not None and p.is_alive()]
         else:
             # only join started process which has _popen is not Noen
             [p.join() for p in self.__processes if p._popen is not None]
+        if self.__tasks_queue is not None:
+            self.__tasks_queue.close()
         self.__results.close()
 
     def _next(self):
@@ -494,7 +533,8 @@ class MPI(SelfIterator):
         return self._reduce_func(r)
 
     def __len__(self):
-        return max(self._length.value, 0)
+        """ Return the number of remain jobs """
+        return max(self._remain_jobs.value, 0)
 
     def run(self):
         """"""
