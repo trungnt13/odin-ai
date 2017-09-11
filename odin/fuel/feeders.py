@@ -411,7 +411,8 @@ class Feeder(MutableData):
         it = MPI(indices, map_func, reduce_func,
                  ncpu=self.ncpu,
                  buffer_size=self.buffer_size,
-                 maximum_queue_size=self.maximum_queue_size)
+                 maximum_queue_size=self.maximum_queue_size,
+                 chunk_scheduler=True)
         self.__running_iter.append(it)
         return it
 

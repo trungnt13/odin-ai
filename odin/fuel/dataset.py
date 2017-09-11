@@ -8,7 +8,7 @@ from six.moves import zip, range, cPickle
 import numpy as np
 
 from .data import MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset, MAX_OPEN_MMAP, Data
-from .utils import MmapDict
+from .utils import MmapDict, SQLiteDict
 
 from odin.utils import get_file, Progbar, is_string
 from odin.utils.decorators import singleton
@@ -34,7 +34,6 @@ def _parse_data_descriptor(path, read_only):
     """ Return mapping: name -> (dtype, shape, Data, path) """
     if not os.path.isfile(path):
         return None
-
     # ====== check if a file is Data ====== #
     try:
         dtype, shape = MmapData.read_header(path)
@@ -63,6 +62,13 @@ def _parse_data_descriptor(path, read_only):
         return [(name, ('memdict', len(data), data, path))]
     except:
         pass
+    # ====== load SQLiteDict ====== #
+    try:
+        db = SQLiteDict(path)
+        return [(tab, ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
+                for tab in db.get_all_tables()]
+    except:
+        pass
     return [(name, ('unknown', 'unknown', None, path))]
 
 
@@ -77,6 +83,7 @@ class Dataset(object):
     ----
     for developer: _data_map contains: name -> (dtype, shape, Data or pathtoData)
     readme included with the dataset should contain license information
+    All the file with `.db` extension will be treat as SQLite data
     """
 
     __INSTANCES = {}
@@ -245,7 +252,7 @@ class Dataset(object):
         for dtype, shape, data, path in self._data_map.itervalues():
             if hasattr(data, 'flush'):
                 data.flush()
-            elif data is not None:
+            elif data is not None: # Flush pickling data
                 with open(path, 'wb') as f:
                     cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
@@ -263,7 +270,9 @@ class Dataset(object):
         # ====== close a particular file ====== #
         elif name in self._data_map:
             (dtype, shape, data, path) = self._data_map[name]
-            if hasattr(data, 'close'):
+            if dtype == 'sqlite':
+                data.sqlite.close()
+            elif hasattr(data, 'close'):
                 data.close()
             del data
             del self._data_map[name]

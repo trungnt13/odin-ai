@@ -27,7 +27,7 @@ from odin.utils.decorators import autoinit
 from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
-from .utils import MmapDict
+from .utils import MmapDict, SQLiteDict
 
 _default_module = re.compile('__.*__')
 
@@ -172,12 +172,11 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        indices = defaultdict(list)
-        # ====== MmapDict ====== #
-        dicts = {}
+        metaDB = SQLiteDict(path=os.path.join(dataset.path, 'meta.db'),
+                        cache_size=10000)
         for name, dtype, stats in self.features_properties:
             if 'dict' in str(dtype).lower():
-                dicts[name] = MmapDict(os.path.join(dataset.path, name))
+                metaDB.set_table(name)
         # ====== statistic ====== #
         # mapping: feature_name -> able-to-calculate-statistics
         statistic_able = {name: stats_able
@@ -234,22 +233,20 @@ class FeatureProcessor(object):
             for prop, d in zip(self.features_properties, data):
                 # feature-type-name, dtype, stats-able
                 feat_name, feat_type, feat_stat = prop
-                # specal case: mmapdict type
+                # specal case: dict type
                 if 'dict' in str(feat_type).lower():
-                    dicts[feat_name][name] = (d.tolist() if isinstance(d, np.ndarray)
-                                              else d)
+                    metaDB.set_table(feat_name)[name] = \
+                        (d.tolist() if isinstance(d, np.ndarray) else d)
                     del d
                     continue
                 # auto-create new indices
                 if feat_name in self.external_indices:
-                    ids_name = feat_name
+                    ids_name = 'indices_%s' % feat_name
                 else:
-                    ids_name = '__primary_indices__'
+                    ids_name = 'indices'
                 if ids_name not in saved_indices:
-                    indices[ids_name].append([name,
-                                              ref_vars['start'][ids_name],
-                                              ref_vars['start'][ids_name] + len(d)])
-                    saved_indices.append(ids_name)
+                    metaDB.set_table(ids_name)[name] = (ref_vars['start'][ids_name],
+                                                    ref_vars['start'][ids_name] + len(d))
                     ref_vars['start'][ids_name] += len(d)
                 # cache data, only if we have more than 0 sample
                 if len(d) > 0:
@@ -268,7 +265,8 @@ class FeatureProcessor(object):
 
         # ====== processing ====== #
         mpi = MPI(self.jobs, self.map, wrapped_reduce,
-                  ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3)
+                  ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3,
+                  chunk_scheduler=True)
         prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
                        print_report=True, print_summary=True)
         for name, job_count in mpi:
@@ -281,25 +279,9 @@ class FeatureProcessor(object):
         dataset.flush()
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
-        for ids_name, ids in indices.iteritems():
-            if ids_name == '__primary_indices__':
-                file_name = 'indices'
-            else:
-                file_name = 'indices_%s' % ids_name
-            # save the indices to MmapDict
-            ids_dict = MmapDict(os.path.join(dataset.path, file_name),
-                                read_only=False)
-            # progbar for saving inices
-            prog = Progbar(target=len(ids),
-                           name='Save "%s" to path: %s' % (file_name, dataset.path),
-                           print_report=True, print_summary=True)
-            for name, start, end in ids:
-                prog['Name'] = str(name)
-                ids_dict[name] = (int(start), int(end))
-                prog.add(1)
-            ids_dict.flush()
-            ids_dict.close()
-        prog.add_notification("Saved all indices to disk")
+        metaDB.flush(all_tables=True)
+        metaDB.close()
+        prog.add_notification("Flush meta.db to disk")
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):
@@ -331,9 +313,6 @@ class FeatureProcessor(object):
                     save_mean_std(s1, s2, pca_, n, dataset)
         # ====== dataset flush() ====== #
         dataset.flush(); dataset.close()
-        # ====== all MmapDict flush() ====== #
-        for d in dicts.itervalues():
-            d.flush(); d.close()
         # ====== saving the configuration ====== #
         config_path = os.path.join(self.output_path, 'config')
         # if found exist config, increase the count
@@ -444,7 +423,7 @@ def _segments_preprocessing(segments, audio_ext):
 
 
 def _load_audio(path_or_ds, segments,
-                sr, sr_info={}, sr_new=None,
+                sr, sr_info={}, sr_new=None, best_resample=True,
                 maxlen=None, vad_split=False, vad_split_args={},
                 remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
@@ -473,7 +452,7 @@ def _load_audio(path_or_ds, segments,
                                % (str(path_or_ds), len(s) / sr_orig))
         # downsampling
         if sr_new is not None:
-            s = speech.resample(s, sr_orig, sr_new, best_algorithm=True)
+            s = speech.resample(s, sr_orig, sr_new, best_algorithm=best_resample)
             sr_orig = sr_new
         N = len(s)
     # vad_split_audio kwargs
@@ -558,6 +537,8 @@ class WaveProcessor(FeatureProcessor):
         if provided.
     sr_new: int or None
         new sample rate (if you want to down or up sampling)
+    best_resample: bool
+        if True, use the best but slow algorithm for resampling
     maxlen: int
         maximum length of an utterances in second, if any file is longer than
         given length, it is divided into small segments and the start time and
@@ -574,7 +555,7 @@ class WaveProcessor(FeatureProcessor):
     """
 
     def __init__(self, segments, output_path,
-                sr=None, sr_info={}, sr_new=None,
+                sr=None, sr_info={}, sr_new=None, best_resample=True,
                 audio_ext=None, pcm=False, remove_dc_offset=True,
                 maxlen=None, vad_split=False, vad_split_args={},
                 dtype='float16', datatype='memmap',
@@ -596,6 +577,7 @@ class WaveProcessor(FeatureProcessor):
         self.sr = sr
         self.sr_info = sr_info
         self.sr_new = sr_new
+        self.best_resample = bool(best_resample)
         self.dtype = dtype
         self.pcm = pcm
         self.remove_dc_offset = remove_dc_offset
@@ -611,7 +593,7 @@ class WaveProcessor(FeatureProcessor):
             # processing all segments
             ret = []
             for name, data, sr in _load_audio(audio_path, segments,
-                                self.sr, self.sr_info, self.sr_new,
+                                self.sr, self.sr_info, self.sr_new, self.best_resample,
                                 self.maxlen, self.vad_split, self.vad_split_args,
                                 remove_dc_offset=self.remove_dc_offset):
                 ret.append([name, 0, [data, int(sr), data.dtype.str]])

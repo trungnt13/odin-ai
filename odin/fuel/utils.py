@@ -5,13 +5,14 @@ import mmap
 import marshal
 import sqlite3
 from six.moves import cPickle
-from collections import OrderedDict, Iterator
+from contextlib import contextmanager
+from collections import OrderedDict, Iterator, defaultdict
 import io
 
 import numpy as np
 
 from odin.config import get_rng
-from odin.utils import async, is_string
+from odin.utils import async, is_string, ctext
 
 
 class MmapDict(dict):
@@ -280,9 +281,6 @@ class MmapDict(dict):
     def copy(self):
         raise NotImplementedError
 
-    def has_key(self, key):
-        return key in self.indices
-
     def update(*args, **kwargs):
         raise NotImplementedError
 
@@ -305,6 +303,135 @@ def _convert_array(text):
     out = io.BytesIO(text)
     out.seek(0)
     return np.load(out)
+
+
+class TableDict(dict):
+
+    def __init__(self, sqlite, table_name):
+        if not isinstance(sqlite, SQLiteDict):
+            raise ValueError("`sqlite` must be instance of SQLiteDict")
+        self._sqlite = sqlite
+        self._table_name = str(table_name)
+
+    @contextmanager
+    def table_context(self):
+        """Return temporary context that switch the SQLite to given table"""
+        curr_tab = self._sqlite.current_table
+        self._sqlite.set_table(self._table_name)
+        yield None
+        self._sqlite.set_table(curr_tab)
+
+    @property
+    def sqlite(self):
+        return self._sqlite
+
+    @property
+    def name(self):
+        return self._table_name
+
+    def set_cache_size(self, cache_size):
+        self._sqlite.set_cache_size(cache_size)
+        return self
+
+    def flush(self):
+        with self.table_context():
+            self._sqlite.flush()
+
+    # ==================== pickling and properties ==================== #
+    def __setstate__(self, states):
+        raise NotImplementedError
+
+    def __getstate__(self):
+        return self.path
+
+    def __str__(self):
+        return '<' + ctext('TableDict:', 'red') + ' "%s" db:%d cache:%d>' % \
+        (self.path, len(self), len(self.sqlite._cache[self.name]))
+
+    def __repr__(self):
+        return str(self)
+
+    @property
+    def connection(self):
+        return self._sqlite.connection
+
+    @property
+    def cursor(self):
+        return self._sqlite.cursor
+
+    @property
+    def path(self):
+        return self._sqlite.path
+
+    @property
+    def is_closed(self):
+        return self._sqlite.is_closed
+
+    # ==================== Dictionary ==================== #
+    def set(self, key, value):
+        self.__setitem__(key, value)
+        return self
+
+    def __setitem__(self, key, value):
+        with self.table_context():
+            return self._sqlite.__setitem__(key, value)
+
+    def __getitem__(self, key):
+        with self.table_context():
+            return self._sqlite.__getitem__(key)
+
+    def update(self, items):
+        with self.table_context():
+            self._sqlite.update(items)
+        return self
+
+    def __iter__(self):
+        with self.table_context():
+            return self._sqlite.__iter__()
+
+    def __contains__(self, key):
+        with self.table_context():
+            return self._sqlite.__contains__(key)
+
+    def __len__(self):
+        with self.table_context():
+            return self._sqlite.__len__()
+
+    def __delitem__(self, key):
+        with self.table_context():
+            return self._sqlite.__delitem__(key)
+
+    def __cmp__(self, dict):
+        if isinstance(dict, TableDict):
+            return self._sqlite is dict._sqlite and \
+                self._table_name == dict._table_name
+        return False
+
+    def keys(self):
+        return list(self.iterkeys())
+
+    def iterkeys(self):
+        with self.table_context():
+            return self._sqlite.iterkeys()
+
+    def values(self):
+        return list(self.itervalues())
+
+    def itervalues(self):
+        with self.table_context():
+            return self._sqlite.itervalues()
+
+    def items(self):
+        return list(self.iteritems())
+
+    def iteritems(self):
+        with self.table_context():
+            return self._sqlite.items()
+
+    def clear(self):
+        with self.table_context():
+            self._sqlite.clear()
+        return self
 
 
 class SQLiteDict(dict):
@@ -371,27 +498,23 @@ class SQLiteDict(dict):
         self._is_closed = False
         # ====== cache mechanism ====== #
         self._cache_size = int(cache_size)
-        self._cache = {}
+        self._cache = defaultdict(dict)
         # ====== db manager ====== #
         self._conn = sqlite3.connect(path,
                                      detect_types=sqlite3.PARSE_DECLTYPES)
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
         # ====== create default table ====== #
-        self.set_table(SQLiteDict._DEFAULT_TABLE)
         self._current_table = SQLiteDict._DEFAULT_TABLE
+        self.set_table(SQLiteDict._DEFAULT_TABLE)
 
-    @property
-    def connection(self):
-        return self._conn
-
-    @property
-    def cursor(self):
-        return self._cursor
-
-    def set_cache_size(self, cache):
-        self._cache = int(cache)
+    # ==================== DB manager ==================== #
+    def set_cache_size(self, cache_size):
+        self._cache_size = int(cache_size)
         return self
+
+    def as_table(self, table_name):
+        return TableDict(self, table_name)
 
     def set_table(self, table_name):
         table_name = str(table_name)
@@ -402,11 +525,25 @@ class SQLiteDict(dict):
                             PRIMARY KEY (key)
                         );"""
             self.cursor.execute(query.format(tb=table_name))
-            query = """CREATE UNIQUE INDEX IX_fast ON {tb} (key);"""
+            query = """CREATE UNIQUE INDEX IX_{tb} ON {tb} (key);"""
             self.cursor.execute(query.format(tb=table_name))
             self.connection.commit()
+        # set the new table
         self._current_table = table_name
         return self
+
+    @property
+    def current_table(self):
+        return self._current_table
+
+    @property
+    def current_cache(self):
+        return self._cache[self.current_table]
+
+    def get_all_tables(self):
+        query = """SELECT name FROM sqlite_master where type='table';"""
+        self.cursor.execute(query)
+        return [table[0] for table in self.cursor.fetchall()]
 
     def drop_table(self, table_name=None):
         if self.read_only:
@@ -432,15 +569,20 @@ class SQLiteDict(dict):
                 raise e
         return True
 
-    def flush(self):
-        if not self.read_only and len(self._cache) > 0:
-            self.cursor.executemany(
-                "INSERT INTO {tb} VALUES (?, ?)".format(tb=self._current_table),
-                [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
-                  else marshal.dumps(v))
-                 for k, v in self._cache.iteritems()])
-            self.connection.commit()
-        return self
+    def flush(self, all_tables=False):
+        curr_tab = self.current_table
+        tables = self.get_all_tables() if all_tables else [curr_tab]
+        for tab in tables:
+            self.set_table(tab)
+            if not self.read_only and len(self.current_cache) > 0:
+                self.cursor.executemany(
+                    "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
+                    [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
+                      else marshal.dumps(v))
+                     for k, v in self.current_cache.iteritems()])
+                self.connection.commit()
+                self.current_cache.clear()
+        return self.set_table(curr_tab)
 
     def close(self):
         # check if closed
@@ -457,12 +599,35 @@ class SQLiteDict(dict):
     def __del__(self):
         self.close()
 
-    # ==================== pickling ==================== #
+    # ==================== pickling and properties ==================== #
     def __setstate__(self, states):
         raise NotImplementedError
 
     def __getstate__(self):
-        return self._path, self._cache, self.read_only
+        return self._path
+
+    def __str__(self):
+        curr_tab = self.current_table
+        s = '<' + ctext('SQLiteDB:', 'red') + '%s>\n' % self.path
+        all_tables = self.get_all_tables()
+        name_fmt = '%' + str(max(len(i) for i in all_tables)) + 's'
+        for tab in all_tables:
+            self.set_table(tab)
+            s += ' ' + ctext(name_fmt % tab, 'yellow') + ': db=%d cache=%d\n' % \
+                (len(self), len(self.current_cache))
+        self.set_table(curr_tab) # back to original table
+        return s[:-1]
+
+    def __repr__(self):
+        return str(self)
+
+    @property
+    def connection(self):
+        return self._conn
+
+    @property
+    def cursor(self):
+        return self._cursor
 
     @property
     def path(self):
@@ -473,21 +638,25 @@ class SQLiteDict(dict):
         return self._is_closed
 
     # ==================== Dictionary ==================== #
+    def set(self, key, value):
+        self.__setitem__(key, value)
+        return self
+
     def __setitem__(self, key, value):
         if self.read_only:
             raise RuntimeError("Cannot __setitem__ for this Dict in read_only mode.")
         key = str(key)
-        self._cache[key] = value
-        if len(self._cache) >= self._cache_size:
+        self.current_cache[key] = value
+        if len(self.current_cache) >= self._cache_size:
             self.flush()
-            self._cache.clear()
+            self.current_cache.clear()
 
     def __getitem__(self, key):
         # ====== multiple keys select ====== #
         if isinstance(key, (tuple, list, np.ndarray)):
             query = """SELECT value FROM {tb}
                        WHERE key IN {keyval};"""
-            keyval = '(' + ', '.join([str(k) for k in key]) + ')'
+            keyval = '(' + ', '.join(['"%s"' % str(k) for k in key]) + ')'
             self.cursor.execute(
                 query.format(tb=self._current_table, keyval=keyval))
             results = self.cursor.fetchall()
@@ -499,9 +668,9 @@ class SQLiteDict(dict):
         # ====== single key select ====== #
         else:
             key = str(key)
-            if key in self._cache:
-                return self._cache[key]
-            query = """SELECT value FROM {tb} WHERE key={keyval} LIMIT 1;"""
+            if key in self.current_cache:
+                return self.current_cache[key]
+            query = """SELECT value FROM {tb} WHERE key="{keyval}" LIMIT 1;"""
             self.cursor.execute(
                 query.format(tb=self._current_table, keyval=key))
             results = self.cursor.fetchone()
@@ -513,15 +682,15 @@ class SQLiteDict(dict):
     def update(self, items):
         if self.read_only:
             return
-        query = """UPDATE {tb} SET value=(?) WHERE key=(?);"""
+        query = """UPDATE {tb} SET value=(?) WHERE key=("?");"""
         if isinstance(items, dict):
             items = items.iteritems()
         # ====== check if update is in cache ====== #
         db_update = []
         for key, value in items:
             key = str(key)
-            if key in self._cache:
-                self._cache[key] = value
+            if key in self.current_cache:
+                self.current_cache[key] = value
             else:
                 db_update.append((marshal.dumps(value), key))
         # ====== perform DB update ====== #
@@ -535,24 +704,21 @@ class SQLiteDict(dict):
     def __contains__(self, key):
         key = str(key)
         # check in cache
-        if key in self._cache:
+        if key in self.current_cache:
             return True
         # check in database
-        query = """SELECT 1 FROM {tb} WHERE key={keyval} LIMIT 1;"""
+        query = """SELECT 1 FROM {tb} WHERE key="{keyval}" LIMIT 1;"""
         self.cursor.execute(
             query.format(tb=self._current_table, keyval=key))
         if self.cursor.fetchone() is None:
             return False
         return True
 
-    def has_key(self, key):
-        return self.__contains__(key)
-
     def __len__(self):
         query = """SELECT COUNT(1) FROM {tb}""".format(tb=self._current_table)
         self.cursor.execute(query)
         n = self.cursor.fetchone()[0]
-        return n + len(self._cache)
+        return n + len(self.current_cache)
 
     def __delitem__(self, key):
         if self.read_only:
@@ -565,13 +731,14 @@ class SQLiteDict(dict):
         # ====== check if key in cache ====== #
         db_key = []
         for k in key:
-            if k in self._cache:
-                del self._cache[k]
+            if k in self.current_cache:
+                del self.current_cache[k]
             else:
                 db_key.append(k)
         # ====== remove key from db ====== #
         self.cursor.execute(
-            query.format(tb=self._current_table, cond='key IN (%s)' % ', '.join(db_key)))
+            query.format(tb=self._current_table,
+                         cond='key IN ("%s")' % ', '.join(db_key)))
         self.connection.commit()
 
     def __cmp__(self, dict):
@@ -580,11 +747,11 @@ class SQLiteDict(dict):
     def keys(self):
         return list(self.iterkeys())
 
-    def iterkeys(self, shuffle=False):
+    def iterkeys(self):
         for k in self.cursor.execute(
             """SELECT key from {tb};""".format(tb=self._current_table)):
             yield k[0]
-        for k in self._cache.iterkeys():
+        for k in self.current_cache.iterkeys():
             yield k
 
     def values(self):
@@ -594,7 +761,7 @@ class SQLiteDict(dict):
         for val in self.cursor.execute(
             """SELECT value from {tb};""".format(tb=self._current_table)):
             yield marshal.loads(val[0])
-        for v in self._cache.itervalues():
+        for v in self.current_cache.itervalues():
             yield v
 
     def items(self):
@@ -604,7 +771,7 @@ class SQLiteDict(dict):
         for item in self.cursor.execute(
             """SELECT key, value from {tb};""".format(tb=self._current_table)):
             yield (item[0], marshal.loads(item[1]))
-        for k, v in self._cache.iteritems():
+        for k, v in self.current_cache.iteritems():
             yield k, v
 
     def clear(self):
@@ -612,7 +779,7 @@ class SQLiteDict(dict):
             return
         self.cursor.execute("""TRUNCATE TABLE {tb};""".format(tb=self._current_table))
         self.connection.commit()
-        self._cache.clear()
+        self.current_cache.clear()
         return self
 
     def copy(self):
