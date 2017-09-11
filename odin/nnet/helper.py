@@ -82,7 +82,16 @@ class Merge(HelperOps):
 
 
 class Residual(HelperOps):
-    pass
+
+    def __init__(self, ops, **kwargs):
+        super(Residual, self).__init__(ops, **kwargs)
+
+    def _initialize(self, **kwargs):
+        print(self.input_shape, kwargs)
+        exit()
+
+    def _apply(self, x, **kwargs):
+        pass
 
 
 class StochasticDepth(HelperOps):

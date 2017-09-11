@@ -1,7 +1,2 @@
 numpy>=1.10.4
 six>=1.10.0
-
---allow-external theano
---allow-unverified theano
-git+https://github.com/Theano/Theano.git#egg=theano
-

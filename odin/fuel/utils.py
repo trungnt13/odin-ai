@@ -3,8 +3,9 @@ from __future__ import print_function, division, absolute_import
 import os
 import mmap
 import marshal
+import sqlite3
 from six.moves import cPickle
-from collections import OrderedDict
+from collections import OrderedDict, Iterator
 
 import numpy as np
 
@@ -285,9 +286,279 @@ class MmapDict(dict):
         raise NotImplementedError
 
 
-class MmapList(object):
-    """docstring for MmapList"""
+class SQLiteDict(dict):
+    """ Using SQLite in key-value pair manner
+    Note
+    ---
+    """
 
-    def __init__(self, arg):
-        super(MmapList, self).__init__()
-        self.arg = arg
+    _DEFAULT_TABLE = '_default_'
+    __INSTANCES = {}
+
+    def __new__(clazz, *args, **kwargs):
+        path = kwargs.get('path', None)
+        if path is None:
+            path = args[0]
+        if not is_string(path):
+            raise ValueError("`path` for MmapDict must be string, but given "
+                             "object with type: %s" % type(path))
+        path = os.path.abspath(path)
+        # Found old instance
+        if path in SQLiteDict.__INSTANCES:
+            return SQLiteDict.__INSTANCES[path]
+        # new MmapDict
+        new_instance = super(SQLiteDict, clazz).__new__(clazz, *args, **kwargs)
+        SQLiteDict.__INSTANCES[path] = new_instance
+        return new_instance
+
+    def __init__(self, path, cache_size=250, read_only=False):
+        super(SQLiteDict, self).__init__()
+        path = os.path.abspath(path)
+        self._path = path
+        self.read_only = read_only
+        self._is_closed = False
+        # ====== cache mechanism ====== #
+        self._cache_size = int(cache_size)
+        self._cache = {}
+        # ====== db manager ====== #
+        self._conn = sqlite3.connect(path)
+        self._conn.text_factory = str
+        self._cursor = self._conn.cursor()
+        # ====== create default table ====== #
+        self.set_table(SQLiteDict._DEFAULT_TABLE)
+        self._current_table = SQLiteDict._DEFAULT_TABLE
+
+    @property
+    def connection(self):
+        return self._conn
+
+    @property
+    def cursor(self):
+        return self._cursor
+
+    def set_cache_size(self, cache):
+        self._cache = int(cache)
+        return self
+
+    def set_table(self, table_name):
+        table_name = str(table_name)
+        if not self.is_table_exist(table_name):
+            query = """CREATE TABLE {tb} (
+                            key text NOT NULL,
+                            value text NOT NULL,
+                            PRIMARY KEY (key)
+                        );"""
+            self.cursor.execute(query.format(tb=table_name))
+            query = """CREATE UNIQUE INDEX IX_fast ON {tb} (key);"""
+            self.cursor.execute(query.format(tb=table_name))
+            self.connection.commit()
+        self._current_table = table_name
+        return self
+
+    def drop_table(self, table_name=None):
+        if self.read_only:
+            return
+        if table_name is None:
+            table_name = self._current_table
+            self._current_table = SQLiteDict._DEFAULT_TABLE
+        else:
+            table_name = str(table_name)
+        if table_name == SQLiteDict._DEFAULT_TABLE:
+            raise ValueError("Cannot drop default table.")
+        self.cursor.execute("""DROP TABLE {tb};""".format(tb=table_name))
+        return self
+
+    def is_table_exist(self, table_name):
+        try:
+            self.cursor.execute('SELECT 1 FROM %s LIMIT 1;' % table_name)
+            self.cursor.fetchone()
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                return False
+            else:
+                raise e
+        return True
+
+    def flush(self):
+        if not self.read_only and len(self._cache) > 0:
+            self.cursor.executemany(
+                "INSERT INTO {tb} VALUES (?, ?)".format(tb=self._current_table),
+                [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
+                  else marshal.dumps(v))
+                 for k, v in self._cache.iteritems()])
+            self.connection.commit()
+        return self
+
+    def close(self):
+        # check if closed
+        if self._is_closed:
+            return
+        # check if in read only model
+        if not self.read_only:
+            self.flush()
+        # remove global instance
+        del SQLiteDict.__INSTANCES[self.path]
+        self._conn.close()
+        self._is_closed = True
+
+    def __del__(self):
+        self.close()
+
+    # ==================== pickling ==================== #
+    def __setstate__(self, states):
+        raise NotImplementedError
+
+    def __getstate__(self):
+        return self._path, self._cache, self.read_only
+
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def is_closed(self):
+        return self._is_closed
+
+    # ==================== Dictionary ==================== #
+    def __setitem__(self, key, value):
+        key = str(key)
+        self._cache[key] = value
+        if len(self._cache) >= self._cache_size:
+            self.flush()
+            self._cache.clear()
+
+    def __getitem__(self, key):
+        # ====== multiple keys select ====== #
+        if isinstance(key, (tuple, list, np.ndarray)):
+            query = """SELECT value FROM {tb}
+                       WHERE key IN {keyval};"""
+            keyval = '(' + ', '.join([str(k) for k in key]) + ')'
+            self.cursor.execute(
+                query.format(tb=self._current_table, keyval=keyval))
+            results = self.cursor.fetchall()
+            # check if any not found keys
+            if len(results) != len(key):
+                raise KeyError("Cannot find all `key`='%s' in the dictionary." % keyval)
+            # load binary data
+            results = [marshal.loads(r[0]) for r in results]
+        # ====== single key select ====== #
+        else:
+            key = str(key)
+            if key in self._cache:
+                return self._cache[key]
+            query = """SELECT value FROM {tb} WHERE key={keyval} LIMIT 1;"""
+            self.cursor.execute(
+                query.format(tb=self._current_table, keyval=key))
+            results = self.cursor.fetchone()
+            if results is None:
+                raise KeyError("Cannot find `key`='%s' in the dictionary." % key)
+            results = marshal.loads(results[0])
+        return results
+
+    def update(self, items):
+        if self.read_only:
+            return
+        query = """UPDATE {tb} SET value=(?) WHERE key=(?);"""
+        if isinstance(items, dict):
+            items = items.iteritems()
+        # ====== check if update is in cache ====== #
+        db_update = []
+        for key, value in items:
+            key = str(key)
+            if key in self._cache:
+                self._cache[key] = value
+            else:
+                db_update.append((marshal.dumps(value), key))
+        # ====== perform DB update ====== #
+        self.cursor.executemany(query.format(tb=self._current_table), db_update)
+        self.connection.commit()
+        return self
+
+    def __iter__(self):
+        return self.iteritems()
+
+    def __contains__(self, key):
+        key = str(key)
+        # check in cache
+        if key in self._cache:
+            return True
+        # check in database
+        query = """SELECT 1 FROM {tb} WHERE key={keyval} LIMIT 1;"""
+        self.cursor.execute(
+            query.format(tb=self._current_table, keyval=key))
+        if self.cursor.fetchone() is None:
+            return False
+        return True
+
+    def has_key(self, key):
+        return self.__contains__(key)
+
+    def __len__(self):
+        query = """SELECT COUNT(1) FROM {tb}""".format(tb=self._current_table)
+        self.cursor.execute(query)
+        n = self.cursor.fetchone()[0]
+        return n + len(self._cache)
+
+    def __delitem__(self, key):
+        if self.read_only:
+            return
+        query = """DELETE FROM {tb} WHERE {cond};"""
+        if isinstance(key, (tuple, list, Iterator, np.ndarray)):
+            key = [str(k) for k in key]
+        else:
+            key = [str(key)]
+        # ====== check if key in cache ====== #
+        db_key = []
+        for k in key:
+            if k in self._cache:
+                del self._cache[k]
+            else:
+                db_key.append(k)
+        # ====== remove key from db ====== #
+        self.cursor.execute(
+            query.format(tb=self._current_table, cond='key IN (%s)' % ', '.join(db_key)))
+        self.connection.commit()
+
+    def __cmp__(self, dict):
+        raise NotImplementedError
+
+    def keys(self):
+        return list(self.iterkeys())
+
+    def iterkeys(self, shuffle=False):
+        for k in self.cursor.execute(
+            """SELECT key from {tb};""".format(tb=self._current_table)):
+            yield k[0]
+        for k in self._cache.iterkeys():
+            yield k
+
+    def values(self):
+        return list(self.itervalues())
+
+    def itervalues(self):
+        for val in self.cursor.execute(
+            """SELECT value from {tb};""".format(tb=self._current_table)):
+            yield marshal.loads(val[0])
+        for v in self._cache.itervalues():
+            yield v
+
+    def items(self):
+        return list(self.iteritems())
+
+    def iteritems(self):
+        for item in self.cursor.execute(
+            """SELECT key, value from {tb};""".format(tb=self._current_table)):
+            yield (item[0], marshal.loads(item[1]))
+        for k, v in self._cache.iteritems():
+            yield k, v
+
+    def clear(self):
+        if self.read_only:
+            return
+        self.cursor.execute("""DELETE FROM {tb};""".format(tb=self._current_table))
+        self.connection.commit()
+        self._cache.clear()
+        return self
+
+    def copy(self):
+        raise NotImplementedError
