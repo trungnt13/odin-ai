@@ -17,6 +17,7 @@ import sys
 from odin import visual
 from odin import fuel as F, utils
 from collections import defaultdict
+from odin.ml import MiniBatchPCA
 
 backend = 'odin'
 PCA = True
@@ -78,8 +79,6 @@ if PCA:
             assert vad_end > vad_start
             assert not np.any(
                 np.isnan(ds['spec_pca'].transform(ds['spec'][vad_start:vad_end], n_components=2)))
-ds.archive()
-print("Archive at:", ds.archive_path)
 # ====== plot the processed files ====== #
 figpath = '/tmp/speech_features_%s.pdf' % backend
 files = np.random.choice(ds['indices'].keys(), size=8, replace=False)
@@ -104,7 +103,9 @@ for f in files:
         visual.subplot(5, 1, 5)
         visual.plot_spectrogram(mfcc.T, vad=vad)
 # ====== check if any pitch or f0 allzeros ====== #
-for name, (start, end) in ds['indices']:
+indices = sorted([(name, s, e) for name, (s, e) in ds['indices']],
+                 key=lambda x: x[1])
+for name, start, end in indices:
     pitch = ds['pitch'][start:end][:]
     f0 = ds['f0'][start:end][:]
     if not np.any(pitch) or not np.any(f0):
@@ -134,3 +135,5 @@ if PCA:
 # ====== save all the figure ====== #
 visual.plot_save(figpath, tight_plot=True)
 print("Figure saved to:", figpath)
+ds.archive()
+print("Archive at:", ds.archive_path)

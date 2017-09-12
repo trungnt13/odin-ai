@@ -20,11 +20,11 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from collections import defaultdict
 import numpy as np
 
+from odin.ml import MiniBatchPCA
+from odin.utils.mpi import MPI
 from odin.preprocessing import speech, video, image, signal
 from odin.utils import (queue, Progbar, segment_list, as_tuple,
                         get_all_files, get_tempdir, is_string)
-from odin.utils.decorators import autoinit
-from odin.utils.mpi import MPI
 from .dataset import Dataset
 from .recipes import FeederRecipe
 from .utils import MmapDict, SQLiteDict
@@ -154,13 +154,17 @@ class FeatureProcessor(object):
                     'is string type.')
         return self._excluded_pca
 
+    def _map_multiple_works(self, jobs):
+        for j in jobs:
+            for result in self.map(j):
+                yield result
+
     @abstractmethod
     def map(self, job):
+        """This function return an iterator of results"""
         pass
 
     def run(self):
-        if self.pca:
-            from odin.ml import MiniBatchPCA
         if not hasattr(self, 'jobs'):
             raise Exception('the Processor must has "jobs" attribute, which is '
                             'the list of all jobs.')
@@ -174,6 +178,7 @@ class FeatureProcessor(object):
         # ====== indices ====== #
         metaDB = SQLiteDict(path=os.path.join(dataset.path, 'meta.db'),
                         cache_size=10000)
+        # initiate table for 'dictionary' data type
         for name, dtype, stats in self.features_properties:
             if 'dict' in str(dtype).lower():
                 metaDB.set_table(name)
@@ -244,10 +249,13 @@ class FeatureProcessor(object):
                     ids_name = 'indices_%s' % feat_name
                 else:
                     ids_name = 'indices'
+                # do not save and increase the count of one indices multiple time
                 if ids_name not in saved_indices:
-                    metaDB.set_table(ids_name)[name] = (ref_vars['start'][ids_name],
-                                                    ref_vars['start'][ids_name] + len(d))
+                    metaDB.set_table(ids_name)[name] = (
+                        ref_vars['start'][ids_name],
+                        ref_vars['start'][ids_name] + len(d))
                     ref_vars['start'][ids_name] += len(d)
+                    saved_indices.append(ids_name)
                 # cache data, only if we have more than 0 sample
                 if len(d) > 0:
                     cache[feat_name].append(d.astype(feat_type))
@@ -262,10 +270,11 @@ class FeatureProcessor(object):
                 cache.clear()
             # ====== update progress ====== #
             return name, job_count
-
         # ====== processing ====== #
-        mpi = MPI(self.jobs, self.map, wrapped_reduce,
-                  ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 3,
+        mpi = MPI(jobs=self.jobs,
+                  map_func=self._map_multiple_works,
+                  reduce_func=wrapped_reduce,
+                  ncpu=ncpu, buffer_size=8, maximum_queue_size=ncpu * 3,
                   chunk_scheduler=True)
         prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
                        print_report=True, print_summary=True)
@@ -408,8 +417,10 @@ def _segments_preprocessing(segments, audio_ext):
     jobs = []
     file_jobs = defaultdict(list)
     for segment, path_or_ds, start, end, channel in file_list:
+        # Dataset related jobs
         if isinstance(path_or_ds, Dataset):
             jobs.append((path_or_ds, [(segment, start, end, channel)]))
+        # audio files jobs
         else:
             file_jobs[path_or_ds].append(
                 (segment, float(start), float(end), int(channel)))
@@ -427,9 +438,13 @@ def _load_audio(path_or_ds, segments,
                 maxlen=None, vad_split=False, vad_split_args={},
                 remove_dc_offset=True):
     """ Return iterator of (name, data, sr) """
+    # directory path for Dataset
+    if is_string(path_or_ds) and os.path.isdir(path_or_ds):
+        path_or_ds = Dataset(path_or_ds)
     # iterate over file path
     if is_string(path_or_ds) or isinstance(path_or_ds, file):
-        s, sr_orig = speech.read(path_or_ds, remove_dc_offset=remove_dc_offset)
+        s, sr_orig = speech.read(path_or_ds,
+                                 remove_dc_offset=remove_dc_offset)
         # check original sample rate
         if sr_orig is not None and sr is not None and sr_orig != sr:
             raise RuntimeError('Given sample rate (%d Hz) is different from '
@@ -636,6 +651,8 @@ class SpeechProcessor(FeatureProcessor):
         if provided.
     sr_new: int or None
         new sample rate (if you want to down or up sampling)
+    best_resample: bool
+        if True, use the best but slow algorithm for resampling
     win: float
         window length in millisecond
     hop: float
@@ -750,7 +767,7 @@ class SpeechProcessor(FeatureProcessor):
     '''
 
     def __init__(self, segments, output_path,
-                sr=None, sr_info={}, sr_new=None,
+                sr=None, sr_info={}, sr_new=None, best_resample=True,
                 win=0.02, hop=0.01, window='hann',
                 nb_melfilters=None, nb_ceps=None,
                 get_spec=True, get_qspec=False, get_phase=False,
@@ -818,6 +835,7 @@ class SpeechProcessor(FeatureProcessor):
         self.sr = sr
         self.sr_new = sr_new
         self.sr_info = sr_info
+        self.best_resample = bool(best_resample)
         self.win = win
         self.hop = hop
         self.window = window
@@ -851,7 +869,7 @@ class SpeechProcessor(FeatureProcessor):
         try:
             ret = []
             for name, data, sr_orig in _load_audio(audio_path, segments,
-                                self.sr, self.sr_info, self.sr_new,
+                                self.sr, self.sr_info, self.sr_new, self.best_resample,
                                 self.maxlen, self.vad_split, self.vad_split_args):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
@@ -1070,7 +1088,6 @@ class VideoFeature(FeederRecipe):
     -------
     '''
 
-    @autoinit
     def __init__(self, segments, output, size=None,
                  boundingbox=None, video_ext=None,
                  datatype='memmap', robust=True):

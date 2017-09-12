@@ -434,6 +434,7 @@ class MPI(SelfIterator):
                    self._chunk_scheduler)
 
     def _init(self):
+        # tasks_or_queue only return the indices, need to get it from self._jobs
         def wrapped_map(tasks_or_queue, return_queue, counter, remain_jobs):
             maximum_queue_size = self._maximum_queue_size
             minimum_queue_size = max(maximum_queue_size // self._ncpu, 1)
@@ -444,10 +445,11 @@ class MPI(SelfIterator):
                         t = tasks_or_queue.get()
                         if t is None: # end of task queue
                             break
-                        yield t
+                        yield [self._jobs[idx] for idx in t]
                 task_iterator = _func()
             else: # one-split-do-it-all
-                task_iterator = (tasks_or_queue[i:i + self._buffer_size]
+                task_iterator = (
+                    [self._jobs[idx] for idx in tasks_or_queue[i:i + self._buffer_size]]
                     for i in range(0, len(tasks_or_queue), self._buffer_size))
             # ====== Doing the jobs ====== #
             for t in task_iterator:
@@ -482,10 +484,14 @@ class MPI(SelfIterator):
         # ====== multiprocessing variables ====== #
         # Equally split for all processes
         if not self._chunk_scheduler:
-            the_jobs = segment_list(self._jobs, n_seg=self._ncpu)
+            the_jobs = segment_list(
+                np.arange(len(self._jobs), dtype='int32'),
+                n_seg=self._ncpu)
         # small chunks for round-robin
         else:
-            the_jobs = segment_list(self._jobs, size=self._buffer_size)
+            the_jobs = segment_list(
+                np.arange(len(self._jobs), dtype='int32'),
+                size=self._buffer_size)
             for j in the_jobs: # small chunks
                 self.__tasks_queue.put_nowait(j)
             for i in range(self._ncpu): # ending signal
