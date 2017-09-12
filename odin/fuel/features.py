@@ -88,7 +88,6 @@ class FeatureProcessor(object):
         if datatype not in ('memmap', 'hdf5'):
             raise ValueError('datatype must be "memmap", or "hdf5"')
         self.datatype = datatype
-        self.dataset = Dataset(output_path)
         self.output_path = output_path
         # PCA
         self.pca = bool(pca)
@@ -193,14 +192,15 @@ class FeatureProcessor(object):
             raise Exception('the Processor must has "jobs" attribute, which is '
                             'the list of all jobs.')
         njobs = len(self.jobs) if self.njobs == 0 else self.njobs
-        dataset = self.dataset
+        dataset = Dataset(self.output_path)
         datatype = self.datatype
         if self.ncpu is None: # auto select number of CPU
             ncpu = min(njobs, int(1.2 * cpu_count()))
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        pathDB = os.path.join(dataset.path, 'meta.db')
+        pathDB = os.path.join(self.output_path, 'meta.db')
+        print(pathDB)
         metaDB = SQLiteDict(path=pathDB, cache_size=10000)
         # initiate table for 'dictionary' data type
         for name, dtype, stats in self.features_properties:

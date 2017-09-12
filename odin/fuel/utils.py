@@ -356,10 +356,6 @@ class TableDict(dict):
         return self._sqlite.connection
 
     @property
-    def cursor(self):
-        return self._sqlite.cursor
-
-    @property
     def path(self):
         return self._sqlite.path
 
@@ -503,7 +499,6 @@ class SQLiteDict(dict):
         # detect_types=sqlite3.PARSE_DECLTYPES
         self._conn = sqlite3.connect(path)
         self._conn.text_factory = str
-        self._cursor = self._conn.cursor()
         # ====== create default table ====== #
         self._current_table = SQLiteDict._DEFAULT_TABLE
         self.set_table(SQLiteDict._DEFAULT_TABLE)
@@ -524,9 +519,9 @@ class SQLiteDict(dict):
                             value text NOT NULL,
                             PRIMARY KEY (key)
                         );"""
-            self.cursor.execute(query.format(tb=table_name))
+            self.connection.execute(query.format(tb=table_name))
             query = """CREATE UNIQUE INDEX IX_{tb} ON {tb} (key);"""
-            self.cursor.execute(query.format(tb=table_name))
+            self.connection.execute(query.format(tb=table_name))
             self.connection.commit()
         # set the new table
         self._current_table = table_name
@@ -542,8 +537,8 @@ class SQLiteDict(dict):
 
     def get_all_tables(self):
         query = """SELECT name FROM sqlite_master where type='table';"""
-        self.cursor.execute(query)
-        return [table[0] for table in self.cursor.fetchall()]
+        self.connection.execute(query)
+        return [table[0] for table in self.connection.fetchall()]
 
     def drop_table(self, table_name=None):
         if self.read_only:
@@ -555,13 +550,13 @@ class SQLiteDict(dict):
             table_name = str(table_name)
         if table_name == SQLiteDict._DEFAULT_TABLE:
             raise ValueError("Cannot drop default table.")
-        self.cursor.execute("""DROP TABLE {tb};""".format(tb=table_name))
+        self.connection.execute("""DROP TABLE {tb};""".format(tb=table_name))
         return self
 
     def is_table_exist(self, table_name):
         try:
-            self.cursor.execute('SELECT 1 FROM %s LIMIT 1;' % table_name)
-            self.cursor.fetchone()
+            self.connection.execute('SELECT 1 FROM %s LIMIT 1;' % table_name)
+            self.connection.fetchone()
         except sqlite3.OperationalError as e:
             if "no such table" in str(e):
                 return False
@@ -575,7 +570,7 @@ class SQLiteDict(dict):
         for tab in tables:
             self.set_table(tab)
             if not self.read_only and len(self.current_cache) > 0:
-                self.cursor.executemany(
+                self.connection.executemany(
                     "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
                     [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
                       else marshal.dumps(v))
@@ -626,10 +621,6 @@ class SQLiteDict(dict):
         return self._conn
 
     @property
-    def cursor(self):
-        return self._cursor
-
-    @property
     def path(self):
         return self._path
 
@@ -657,9 +648,9 @@ class SQLiteDict(dict):
             query = """SELECT value FROM {tb}
                        WHERE key IN {keyval};"""
             keyval = '(' + ', '.join(['"%s"' % str(k) for k in key]) + ')'
-            self.cursor.execute(
+            self.connection.execute(
                 query.format(tb=self._current_table, keyval=keyval))
-            results = self.cursor.fetchall()
+            results = self.connection.fetchall()
             # check if any not found keys
             if len(results) != len(key):
                 raise KeyError("Cannot find all `key`='%s' in the dictionary." % keyval)
@@ -671,9 +662,9 @@ class SQLiteDict(dict):
             if key in self.current_cache:
                 return self.current_cache[key]
             query = """SELECT value FROM {tb} WHERE key="{keyval}" LIMIT 1;"""
-            self.cursor.execute(
+            self.connection.execute(
                 query.format(tb=self._current_table, keyval=key))
-            results = self.cursor.fetchone()
+            results = self.connection.fetchone()
             if results is None:
                 raise KeyError("Cannot find `key`='%s' in the dictionary." % key)
             results = marshal.loads(results[0])
@@ -694,7 +685,7 @@ class SQLiteDict(dict):
             else:
                 db_update.append((marshal.dumps(value), key))
         # ====== perform DB update ====== #
-        self.cursor.executemany(query.format(tb=self._current_table), db_update)
+        self.connection.executemany(query.format(tb=self._current_table), db_update)
         self.connection.commit()
         return self
 
@@ -708,16 +699,16 @@ class SQLiteDict(dict):
             return True
         # check in database
         query = """SELECT 1 FROM {tb} WHERE key="{keyval}" LIMIT 1;"""
-        self.cursor.execute(
+        self.connection.execute(
             query.format(tb=self._current_table, keyval=key))
-        if self.cursor.fetchone() is None:
+        if self.connection.fetchone() is None:
             return False
         return True
 
     def __len__(self):
         query = """SELECT COUNT(1) FROM {tb}""".format(tb=self._current_table)
-        self.cursor.execute(query)
-        n = self.cursor.fetchone()[0]
+        self.connection.execute(query)
+        n = self.connection.fetchone()[0]
         return n + len(self.current_cache)
 
     def __delitem__(self, key):
@@ -736,7 +727,7 @@ class SQLiteDict(dict):
             else:
                 db_key.append(k)
         # ====== remove key from db ====== #
-        self.cursor.execute(
+        self.connection.execute(
             query.format(tb=self._current_table,
                          cond='key IN ("%s")' % ', '.join(db_key)))
         self.connection.commit()
@@ -748,7 +739,7 @@ class SQLiteDict(dict):
         return list(self.iterkeys())
 
     def iterkeys(self):
-        for k in self.cursor.execute(
+        for k in self.connection.execute(
             """SELECT key from {tb};""".format(tb=self._current_table)):
             yield k[0]
         for k in self.current_cache.iterkeys():
@@ -758,7 +749,7 @@ class SQLiteDict(dict):
         return list(self.itervalues())
 
     def itervalues(self):
-        for val in self.cursor.execute(
+        for val in self.connection.execute(
             """SELECT value from {tb};""".format(tb=self._current_table)):
             yield marshal.loads(val[0])
         for v in self.current_cache.itervalues():
@@ -768,7 +759,7 @@ class SQLiteDict(dict):
         return list(self.iteritems())
 
     def iteritems(self):
-        for item in self.cursor.execute(
+        for item in self.connection.execute(
             """SELECT key, value from {tb};""".format(tb=self._current_table)):
             yield (item[0], marshal.loads(item[1]))
         for k, v in self.current_cache.iteritems():
@@ -777,7 +768,7 @@ class SQLiteDict(dict):
     def clear(self):
         if self.read_only:
             return
-        self.cursor.execute("""TRUNCATE TABLE {tb};""".format(tb=self._current_table))
+        self.connection.execute("""TRUNCATE TABLE {tb};""".format(tb=self._current_table))
         self.connection.commit()
         self.current_cache.clear()
         return self
