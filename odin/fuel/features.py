@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ===========================================================================
 # Parallel features processing using multi-core CPU and multiprocessing
 # Copyright 2016-2017 TrungNT
@@ -161,15 +162,19 @@ class FeatureProcessor(object):
         pass
 
     @abstractmethod
-    def _validate(self, ds, path, nb_samples):
+    def _validate(self, ds, path, nb_samples, logger):
         """
         ds: Dataset (in read_only mode, auto opened and closed)
         """
         pass
 
     def validate(self, path, nb_samples=8):
+        def logger(title, check):
+            print(ctext('   *', 'cyan'),
+                  ctext(title, 'yellow'),
+                  "✓" if bool(check) else "✗")
         print(ctext('[%s]Validating dataset:' % self.__class__.__name__, 'red'),
-              self.output_path)
+              '"%s"' % self.output_path)
         ds = Dataset(self.output_path, read_only=True)
         path = str(path)
         nb_samples = int(nb_samples)
@@ -177,7 +182,10 @@ class FeatureProcessor(object):
             os.mkdir(path)
         elif os.path.isfile(path):
             raise ValueError("`path` must be a path to folder.")
-        self._validate(ds, path, nb_samples)
+        else:
+            shutil.rmtree(path)
+            os.mkdir(path)
+        self._validate(ds, path, nb_samples, logger)
         ds.close()
 
     def run(self):
@@ -192,8 +200,8 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        metaDB = SQLiteDict(path=os.path.join(dataset.path, 'meta.db'),
-                        cache_size=10000)
+        pathDB = os.path.join(dataset.path, 'meta.db')
+        metaDB = SQLiteDict(path=pathDB, cache_size=10000)
         # initiate table for 'dictionary' data type
         for name, dtype, stats in self.features_properties:
             if 'dict' in str(dtype).lower():
@@ -643,7 +651,12 @@ class WaveProcessor(FeatureProcessor):
             else:
                 raise RuntimeError(msg)
 
-    def _validate(self, ds, path, nb_samples=8):
+    def _validate(self, ds, path, nb_samples, logger):
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib import pyplot as plt
+        from odin.visual import plot_save
+        from scipy.io.wavfile import write
         # ====== checking indices ====== #
         indices = sorted([(name, start, end)
                          for name, (start, end) in ds['indices'].iteritems()],
@@ -652,7 +665,45 @@ class WaveProcessor(FeatureProcessor):
             assert prev[2] == now[1] # non-zero length
             assert prev[2] - prev[1] > 0 # non-zero length
             assert now[2] - now[1] > 0 # non-zero length
-        assert now[-1] == len(ds['raw'])
+        assert now[-1] == len(ds['raw']) # length match length of raw
+        logger("Checked all indices", True)
+        # ====== check sample rate ====== #
+        for name, _, _ in indices:
+            sr = ds['sr'][name]
+            dtype = ds['dtype']
+            assert sr > 0 and dtype
+        logger("Checked all sample rate and data type", True)
+        # ====== checking raw signal ====== #
+        samples = np.random.choice(
+            np.arange(len(indices)), size=nb_samples, replace=False)
+        saved_samples = {}
+        figure_path = os.path.join(path, 'raw.pdf')
+        for i, (name, start, end) in enumerate(Progbar(indices,
+                                                count_func=lambda x: 1,
+                                                report_func=lambda x: [('Name', x[0])],
+                                                print_report=True)):
+            raw = ds['raw'][start:end]
+            assert not np.any(np.isnan(raw)) # No NaN value
+            assert not np.all(np.isclose(raw, 0.)) # not all value closed to zeros
+            # saving audio
+            if i in samples:
+                _ = os.path.join(path, 'tmp%d.wav' % i)
+                raw = raw[:].astype('float32')
+                raw = (raw - raw.mean()) / raw.std()
+                write(_, rate=ds['sr'][name], data=raw)
+                saved_samples[name] = _
+                # saving figure
+                plt.figure(figsize=(10, 4))
+                plt.plot(speech.resample(raw, ds['sr'][name], 8000,
+                                         best_algorithm=False))
+                plt.title(name)
+        plot_save(figure_path, dpi=80, log=False)
+        logger("Checked all raw signal", True)
+        for name, save_path in saved_samples.iteritems():
+            logger('Saved "%s" at path: %s' % (name, save_path), True)
+        logger("Checked all raw signal", True)
+        logger("Saved figure at path: %s" % figure_path, True)
+        logger("All reports at folder: %s" % path, True)
 
 
 class SpeechProcessor(FeatureProcessor):
@@ -949,6 +1000,35 @@ class SpeechProcessor(FeatureProcessor):
                 return (i for i in range(0)) # return zero-length-iterator
             else:
                 raise RuntimeError(msg)
+
+    def _validate(self, ds, path, nb_samples, logger):
+        print(ds)
+        import matplotlib
+        matplotlib.use('Agg')
+        from matplotlib import pyplot as plt
+        from odin.visual import plot_save
+        from scipy.io.wavfile import write
+        # ====== get all saved features ====== #
+        features_check = []
+        stats_check = []
+        for name, dtype, stats in self.features_properties:
+            pass
+        # ====== checking indices ====== #
+        indices = sorted([(name, start, end)
+                         for name, (start, end) in ds['indices'].iteritems()],
+                         key=lambda x: x[1])
+        for prev, now in zip(indices, indices[1:]):
+            assert prev[2] == now[1] # non-zero length
+            assert prev[2] - prev[1] > 0 # non-zero length
+            assert now[2] - now[1] > 0 # non-zero length
+        assert now[-1] == len(ds['raw']) # length match length of raw
+        logger("Checked all indices", True)
+        # ====== check sample rate ====== #
+        for name, _, _ in indices:
+            sr = ds['sr'][name]
+            assert sr > 0
+        logger("Checked all sample rate and data type", True)
+        logger("All reports at folder: %s" % path, True)
 
 
 # ===========================================================================

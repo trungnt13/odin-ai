@@ -500,8 +500,8 @@ class SQLiteDict(dict):
         self._cache_size = int(cache_size)
         self._cache = defaultdict(dict)
         # ====== db manager ====== #
-        self._conn = sqlite3.connect(path,
-                                     detect_types=sqlite3.PARSE_DECLTYPES)
+        # detect_types=sqlite3.PARSE_DECLTYPES
+        self._conn = sqlite3.connect(path)
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
         # ====== create default table ====== #

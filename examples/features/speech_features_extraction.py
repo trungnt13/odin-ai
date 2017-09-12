@@ -27,6 +27,7 @@ pitch_algo = 'swipe'
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
+output_path = '/Users/trungnt13/tmp/digit_odin'
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          sr=None, sr_new=None, sr_info={},
                          win=0.02, hop=0.01, window='hann',

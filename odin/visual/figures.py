@@ -979,7 +979,7 @@ def plot_close():
     plt.close('all')
 
 
-def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True):
+def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True, log=True):
     """
     Parameters
     ----------
@@ -1000,7 +1000,8 @@ def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True):
         for fig in figs:
             fig.savefig(pp, format='pdf', bbox_inches="tight")
         pp.close()
-        sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
+        if log:
+            sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
         if clear_all:
             plt.close('all')
     except Exception as e:
