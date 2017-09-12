@@ -199,8 +199,7 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        pathDB = os.path.join(self.output_path, 'meta.db')
-        print(pathDB)
+        pathDB = os.path.join(dataset.path, 'meta.db')
         metaDB = SQLiteDict(path=pathDB, cache_size=10000)
         # initiate table for 'dictionary' data type
         for name, dtype, stats in self.features_properties:

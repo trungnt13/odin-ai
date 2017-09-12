@@ -63,12 +63,14 @@ def _parse_data_descriptor(path, read_only):
     except:
         pass
     # ====== load SQLiteDict ====== #
-    try:
-        db = SQLiteDict(path, read_only=read_only)
-        return [(tab, ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
-                for tab in db.get_all_tables()]
-    except:
-        pass
+    if '.db' in os.path.splitext(path)[1]:
+        try:
+            db = SQLiteDict(path, read_only=read_only)
+            return [(tab, ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
+                    for tab in db.get_all_tables()]
+        except:
+            pass
+    # ====== unknown datatype ====== #
     return [(name, ('unknown', 'unknown', None, path))]
 
 
@@ -116,7 +118,7 @@ class Dataset(object):
                 print('Overrided old dataset at path:', path)
             if os.path.isfile(path) and '.zip' in os.path.basename(path):
                 self._load_archive(path,
-                                   extract_path=path.replace(os.path.basename(path), ''))
+                    extract_path=path.replace(os.path.basename(path), ''))
             else:
                 self._set_path(path)
         else:
@@ -134,7 +136,7 @@ class Dataset(object):
         elif not os.path.isdir(path):
             raise ValueError('Dataset path must be a folder.')
 
-        # ====== load all Data ====== #
+        # # ====== load all Data ====== #
         files = os.listdir(path)
         for fname in files:
             # found README
