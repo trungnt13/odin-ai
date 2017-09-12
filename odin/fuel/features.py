@@ -23,8 +23,8 @@ import numpy as np
 from odin.ml import MiniBatchPCA
 from odin.utils.mpi import MPI
 from odin.preprocessing import speech, video, image, signal
-from odin.utils import (queue, Progbar, segment_list, as_tuple,
-                        get_all_files, get_tempdir, is_string)
+from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
+                        get_tempdir, is_string, batching)
 from .dataset import Dataset
 from .recipes import FeederRecipe
 from .utils import MmapDict, SQLiteDict
@@ -107,10 +107,6 @@ class FeatureProcessor(object):
         self._external_indices = []
         self._excluded_pca = []
 
-    def validate(self, nb_samples=8):
-        """Validating the integrity and soundness of extracted features"""
-        raise NotImplementedError
-
     # ==================== Abstract properties ==================== #
     @property
     def features_properties(self):
@@ -163,6 +159,26 @@ class FeatureProcessor(object):
     def map(self, job):
         """This function return an iterator of results"""
         pass
+
+    @abstractmethod
+    def _validate(self, ds, path, nb_samples):
+        """
+        ds: Dataset (in read_only mode, auto opened and closed)
+        """
+        pass
+
+    def validate(self, path, nb_samples=8):
+        print(ctext('[%s]Validating dataset:' % self.__class__.__name__, 'red'),
+              self.output_path)
+        ds = Dataset(self.output_path, read_only=True)
+        path = str(path)
+        nb_samples = int(nb_samples)
+        if not os.path.exists(path):
+            os.mkdir(path)
+        elif os.path.isfile(path):
+            raise ValueError("`path` must be a path to folder.")
+        self._validate(ds, path, nb_samples)
+        ds.close()
 
     def run(self):
         if not hasattr(self, 'jobs'):
@@ -274,7 +290,9 @@ class FeatureProcessor(object):
         mpi = MPI(jobs=self.jobs,
                   map_func=self._map_multiple_works,
                   reduce_func=wrapped_reduce,
-                  ncpu=ncpu, buffer_size=8, maximum_queue_size=ncpu * 3,
+                  ncpu=ncpu,
+                  buffer_size=min(8, max(len(self.jobs) // ncpu, 1)),
+                  maximum_queue_size=ncpu * 3,
                   chunk_scheduler=True)
         prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
                        print_report=True, print_summary=True)
@@ -608,9 +626,9 @@ class WaveProcessor(FeatureProcessor):
             # processing all segments
             ret = []
             for name, data, sr in _load_audio(audio_path, segments,
-                                self.sr, self.sr_info, self.sr_new, self.best_resample,
-                                self.maxlen, self.vad_split, self.vad_split_args,
-                                remove_dc_offset=self.remove_dc_offset):
+                        self.sr, self.sr_info, self.sr_new, self.best_resample,
+                        self.maxlen, self.vad_split, self.vad_split_args,
+                        remove_dc_offset=self.remove_dc_offset):
                 ret.append([name, 0, [data, int(sr), data.dtype.str]])
             # a hack to return proper amount of processed jobs
             ret[-1][1] = nb_jobs
@@ -624,6 +642,17 @@ class WaveProcessor(FeatureProcessor):
                 return (i for i in range(0)) # return zero-length-iterator
             else:
                 raise RuntimeError(msg)
+
+    def _validate(self, ds, path, nb_samples=8):
+        # ====== checking indices ====== #
+        indices = sorted([(name, start, end)
+                         for name, (start, end) in ds['indices'].iteritems()],
+                         key=lambda x: x[1])
+        for prev, now in zip(indices, indices[1:]):
+            assert prev[2] == now[1] # non-zero length
+            assert prev[2] - prev[1] > 0 # non-zero length
+            assert now[2] - now[1] > 0 # non-zero length
+        assert now[-1] == len(ds['raw'])
 
 
 class SpeechProcessor(FeatureProcessor):

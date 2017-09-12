@@ -58,13 +58,13 @@ def _parse_data_descriptor(path, read_only):
         pass
     # ====== load memmap dict ====== #
     try:
-        data = MmapDict(path)
+        data = MmapDict(path, read_only=read_only)
         return [(name, ('memdict', len(data), data, path))]
     except:
         pass
     # ====== load SQLiteDict ====== #
     try:
-        db = SQLiteDict(path)
+        db = SQLiteDict(path, read_only=read_only)
         return [(tab, ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
                 for tab in db.get_all_tables()]
     except:
