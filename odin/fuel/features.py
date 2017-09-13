@@ -200,9 +200,9 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        databases = keydefaultdict(lambda name: SQLiteDict(
-            path=os.path.join(dataset.path, name + '.db'),
-            cache_size=10000))
+        databases = keydefaultdict(lambda name: MmapDict(
+            path=os.path.join(dataset.path, name),
+            cache_size=10000, read_only=False))
         # ====== statistic ====== #
         # mapping: feature_name -> able-to-calculate-statistics
         statistic_able = {name: stats_able
@@ -311,9 +311,10 @@ class FeatureProcessor(object):
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
         for name, db in databases.iteritems():
-            db.flush(all_tables=True)
+            db.flush(save_indices=True)
             db.close()
-            prog.add_notification("Flush %s.db to disk" % name)
+            prog.add_notification('Flush MmapDict "%s" to disk' %
+                                  ctext(name, 'yellow'))
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):
@@ -344,7 +345,8 @@ class FeatureProcessor(object):
                         pca_ = None
                     save_mean_std(s1, s2, pca_, n, dataset)
         # ====== dataset flush() ====== #
-        dataset.flush(); dataset.close()
+        dataset.flush()
+        dataset.close()
         # ====== saving the configuration ====== #
         config_path = os.path.join(self.output_path, 'config')
         # if found exist config, increase the count
@@ -364,8 +366,10 @@ class FeatureProcessor(object):
             j = getattr(self, i)
             if isinstance(j, (Number, string_types, bool)):
                 config[i] = j
-        config.flush()
-        prog.add_notification("Saved Processor configuration. Closed all dataset.")
+        config.flush(save_indices=True)
+        config.close()
+        prog.add_notification("Saved Processor configuration.")
+        prog.add_notification("Closed all dataset.")
 
 
 # ===========================================================================

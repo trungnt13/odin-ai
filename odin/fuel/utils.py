@@ -5,6 +5,7 @@ import mmap
 import marshal
 import sqlite3
 from six.moves import cPickle
+from itertools import chain
 from contextlib import contextmanager
 from collections import OrderedDict, Iterator, defaultdict
 import io
@@ -15,23 +16,33 @@ from odin.config import get_rng
 from odin.utils import async, is_string, ctext
 
 
+# ===========================================================================
+# MmapDict
+# ===========================================================================
 class MmapDict(dict):
     """ MmapDict
     Handle enormous dictionary (up to thousand terabytes of data) in
     memory mapped dictionary, extremely fast to load, and for randomly access.
     The alignment of saved files:
-        |'mmapdict'|48-bytes(max_pos)|48-bytes(dict_size)|MmapData|indices-dict
-    * The first 48-bytes number: is ending position of the Mmmap
+
+    ==> |'mmapdict'|48-bytes(max_pos)|48-bytes(dict_size)|MmapData|indices-dict|
+
+    * The first 48-bytes number: is ending position of the Mmmap, start from
+    the (8 + 48 + 48) bytes.
+
     * The next 48-bytes number: is length of pickled indices (i.e. the
     indices start from max_pos to max_pos + dict_size)
 
     Note
     ----
     Only support (key, value) types = (str, primitive_type)
-
+    MmapDict read speed is double faster than SQLiteDict.
+    MmapDict also support multiprocessing
     """
     HEADER = 'mmapdict'
     SIZE_BYTES = 48
+    # the indices are flushed after it is increased this amount of size
+    MAX_INDICES_SIZE = 25 # in megabyte
     __INSTANCES = {}
 
     def __new__(clazz, *args, **kwargs):
@@ -50,14 +61,15 @@ class MmapDict(dict):
         MmapDict.__INSTANCES[path] = new_instance
         return new_instance
 
-    def __init__(self, path, read_only=False):
+    def __init__(self, path, cache_size=250, read_only=False):
         super(MmapDict, self).__init__()
-        self.__init(path, read_only)
-        self.read_only = read_only
-        self._is_closed = False
+        self.__init(path, cache_size, read_only)
 
-    def __init(self, path, read_only):
+    def __init(self, path, cache_size, read_only):
+        path = os.path.abspath(path)
         self._path = path
+        self.read_only = bool(read_only)
+        self.cache_size = int(cache_size)
         # ====== already exist ====== #
         if os.path.exists(path) and os.path.getsize(path) > 0:
             file = open(str(path), mode='r+')
@@ -65,11 +77,11 @@ class MmapDict(dict):
                 raise Exception('Given file is not in the right format '
                                 'for MmapDict.')
             # 48 bytes for the file size
-            self._max_position = int(file.read(MmapDict.SIZE_BYTES))
+            max_position = int(file.read(MmapDict.SIZE_BYTES))
             # length of pickled indices dictionary
             dict_size = int(file.read(MmapDict.SIZE_BYTES))
             # read dictionary
-            file.seek(self._max_position)
+            file.seek(max_position)
             pickled_indices = file.read(dict_size)
             self._indices_dict = async(lambda: cPickle.loads(pickled_indices))()
         # ====== create new file from scratch ====== #
@@ -77,34 +89,31 @@ class MmapDict(dict):
             if read_only:
                 raise Exception('File at path:"%s" does not exist '
                                 '(read-only mode).' % path)
-            self._indices_dict = OrderedDict()
-            # max position is header, include start and length of indices dict
-            self._max_position = len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2
             file = open(str(path), mode='w+')
-            file.write(MmapDict.HEADER) # just write the header
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-            _ = cPickle.dumps(self._indices_dict,
-                              protocol=cPickle.HIGHEST_PROTOCOL)
+            file.write(MmapDict.HEADER)
+            # just write the header
+            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') %
+                       (len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2))
             # write the length of Pickled indices dictionary
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
-            file.write(_)
+            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % 0)
             file.flush()
+            # init indices dict
+            self._indices_dict = {}
         # ====== create Mmap from offset file ====== #
-        self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
-                               # access=mmap.ACCESS_READ,
-                               flags=mmap.MAP_SHARED)
-        # ignore the header
         self._file = file
-        self._write_value = ''
-        self._new_dict = {}# store all the (key, value) recently added
+        self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
+                               flags=mmap.MAP_SHARED)
+        # store all the (key, value) recently added
+        self._cache_dict = {}
+        self._increased_indices_size = 0.
+        self._is_closed = False
 
     # ==================== pickling ==================== #
     def __setstate__(self, states):
-        path, read_only = states
-        self.__init(path, read_only)
+        raise NotImplementedError
 
     def __getstate__(self):
-        return self._path, self.read_only
+        return self.path
 
     # ==================== I/O methods ==================== #
     @property
@@ -114,7 +123,9 @@ class MmapDict(dict):
         return self._indices_dict
 
     @property
-    def loaded(self):
+    def is_loaded(self):
+        if self.is_closed:
+            return False
         if not isinstance(self._indices_dict, dict):
             return self._indices_dict.finished
         return True
@@ -127,44 +138,58 @@ class MmapDict(dict):
     def path(self):
         return self._path
 
-    def flush(self):
-        # check if closed
-        if self._is_closed:
+    def flush(self, save_indices=False):
+        """
+        Parameters
+        ----------
+        save_indices: bool
+            force the indices dictionary to be saved, even though,
+            its increased hasn't reach the maximum.
+        """
+        # check if closed or in read only mode
+        if self.is_closed or self.read_only:
             return
-        # check if in read only mode
-        if self.read_only:
-            raise Exception('Cannot flush to path:"%s" in read-only mode' % self._path)
-        # ====== flush the data ====== #
-        self._mmap.flush()
-        self._mmap.close()
-        self._file.close()
         # ====== write new data ====== #
-        # save new data
-        file = open(self._path, mode='r+')
         # get old position
+        file = self._file
+        # start from header (i.e. "mmapdict")
         file.seek(len(MmapDict.HEADER))
-        old_position = int(file.read(MmapDict.SIZE_BYTES))
+        max_position = int(file.read(MmapDict.SIZE_BYTES))
+        # ====== serialize the data ====== #
+        # start from old_max_position, append new values
+        file.seek(max_position)
+        for key, value in self._cache_dict.iteritems():
+            value = marshal.dumps(value)
+            self.indices[key] = (max_position, len(value))
+            max_position += len(value)
+            file.write(value)
+            # increase indices size (in MegaBytes)
+            self._increased_indices_size += (8 + 8 + len(key)) / 1024. / 1024.
+        # ====== write the dumped indices ====== #
+        indices_length = 0
+        if save_indices or \
+        self._increased_indices_size > MmapDict.MAX_INDICES_SIZE:
+            indices_dump = cPickle.dumps(self.indices,
+                                         protocol=cPickle.HIGHEST_PROTOCOL)
+            indices_length = len(indices_dump)
+            file.write(indices_dump)
+            self._increased_indices_size = 0.
+        # ====== update the position ====== #
         # write new max size
         file.seek(len(MmapDict.HEADER))
-        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % self._max_position)
-        # length of Pickled indices dictionary
-        _ = cPickle.dumps(self.indices, protocol=cPickle.HIGHEST_PROTOCOL)
-        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % len(_))
-        # write new values
-        file.seek(old_position)
-        file.write(self._write_value)
-        # write the indices dictionary
-        file.write(_)
+        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % max_position)
+        # update length of pickled indices dictionary
+        if indices_length > 0:
+            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % indices_length)
+        # flush everything
         file.flush()
-        # store new information
-        self._file = file
-        self._mmap = mmap.mmap(self._file.fileno(),
-                               length=0, offset=0,
+        # upate the mmap
+        self._mmap.close(); del self._mmap
+        self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
                                flags=mmap.MAP_SHARED)
         # reset some values
-        self._max_position = old_position + len(self._write_value)
-        del self._write_value; self._write_value = ''
-        del self._new_dict; self._new_dict = {}
+        del self._cache_dict
+        self._cache_dict = {}
 
     def close(self):
         # check if closed
@@ -172,117 +197,122 @@ class MmapDict(dict):
             return
         # check if in read only mode
         if not self.read_only:
-            self.flush()
+            self.flush(save_indices=True)
         # remove global instance
-        del MmapDict.__INSTANCES[os.path.abspath(self.path)]
+        del MmapDict.__INSTANCES[self.path]
         self._mmap.close()
         self._file.close()
         self._is_closed = True
+        del self._indices_dict
+        del self._cache_dict
 
     def __del__(self):
-        # check if closed
-        if self._is_closed:
-            return
-        if hasattr(self, '_mmap') and self._mmap is not None and \
-        self._file is not None:
-            path = os.path.abspath(self.path)
-            if path in MmapDict.__INSTANCES and \
-            id(self) == id(MmapDict.__INSTANCES[path]):
-                del MmapDict.__INSTANCES[path]
-            self._mmap.close()
-            self._file.close()
+        self.close()
 
     def __str__(self):
-        return str(self.__class__) + ':' + self._path + ':' + str(len(self.indices))
+        length = None if self.is_closed else \
+            str(len(self.indices) + len(self._cache_dict))
+        cache_length = 'None' if self.is_closed else \
+            str(len(self._cache_dict))
+        fmt = '<MmapDict path:"%s", length:%s/%s, loaded:%s, closed:%s>'
+        return fmt % (self.path, length, cache_length,
+                      self.is_loaded, self.is_closed)
 
     def __repr__(self):
         return str(self)
 
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
+        if self.read_only:
+            return
+        key = str(key)
         if key in self.indices:
-            raise Exception('This dictionary do not support update, i.e. cannot '
-                            'update the value of key: %s' % key)
-        # we using marshal so this only support primitive value
-        value = marshal.dumps(value)
-        self.indices[key] = (self._max_position, len(value))
-        self._max_position += len(value)
-        self._write_value += value
+            raise Exception('MmapDict do NOT support update, i.e. cannot '
+                            'update the value of key: "%s"' % key)
         # store newly added value for fast query
-        self._new_dict[key] = value
-        if len(self._write_value) > 48000:
+        self._cache_dict[key] = value
+        if len(self._cache_dict) > self.cache_size:
             self.flush()
 
     def __iter__(self):
         return self.iteritems()
 
     def __getitem__(self, key):
-        if key in self._new_dict:
-            return marshal.loads(self._new_dict[key])
+        if key in self._cache_dict:
+            return self._cache_dict[key]
+        # ====== load from mmap ====== #
         start, size = self.indices[key]
         self._mmap.seek(start)
         return marshal.loads(self._mmap.read(size))
 
     def __contains__(self, key):
-        return key in self.indices
+        return key in self.indices or key in self._cache_dict
 
     def __len__(self):
-        return len(self.indices)
+        return len(self.indices) + len(self._cache_dict)
 
     def __delitem__(self, key):
-        del self.indices[key]
-
-    def __cmp__(self, dict):
-        if isinstance(dict, MmapDict):
-            return cmp(self.indices, dict._dict)
+        if self.read_only:
+            return
+        if key in self._cache_dict:
+            del self._cache_dict
         else:
-            return cmp(self.indices, dict)
+            del self.indices[key]
 
-    def keys(self, shuffle=False):
-        k = self.indices.keys()
-        if shuffle:
-            get_rng().shuffle(k)
-        return k
+    def __cmp__(self, d):
+        if isinstance(d, MmapDict):
+            return (self.indices == d.indices and
+                    self._cache_dict == d._cache_dict)
+        else:
+            for key, value in self.iteritems():
+                if key not in d or d[key] != value:
+                    return False
+            return True
 
-    def iterkeys(self, shuffle=False):
-        if shuffle:
-            return (k for k in self.keys(shuffle))
-        return self.indices.iterkeys()
+    def keys(self):
+        return list(self.iterkeys())
 
-    def values(self, shuffle=False):
-        return list(self.itervalues(shuffle))
+    def iterkeys(self):
+        return chain(self.indices.iterkeys(), self._cache_dict.iterkeys())
+
+    def values(self):
+        return list(self.itervalues())
 
     def itervalues(self, shuffle=False):
-        for k in self.iterkeys(shuffle):
-            yield self[k]
+        for name, (start, size) in self.indices.iteritems():
+            self._mmap.seek(start)
+            yield marshal.loads(self._mmap.read(size))
+        for val in self._cache_dict.itervalues():
+            yield val
 
-    def items(self, shuffle=False):
-        return list(self.iteritems(shuffle))
+    def items(self):
+        return list(self.iteritems())
 
-    def iteritems(self, shuffle=False):
-        # ====== shuffling if required ====== #
-        if shuffle:
-            it = self.indices.items()
-            get_rng().shuffle(it)
-        else:
-            it = self.indices.iteritems()
-        # ====== iter over items ====== #
-        for key, (start, size) in it:
-            if key in self._new_dict:
-                value = self._new_dict[key]
-            else:
-                self._mmap.seek(start)
-                value = self._mmap.read(size)
-            yield key, marshal.loads(value)
+    def iteritems(self):
+        for name, (start, size) in self.indices.iteritems():
+            self._mmap.seek(start)
+            yield name, marshal.loads(self._mmap.read(size))
+        for key, val in self._cache_dict.itervalues():
+            yield key, val
 
     def clear(self):
+        if self.read_only:
+            return
         self.indices.clear()
+        self._cache_dict.clear()
+        return self
 
     def copy(self):
         raise NotImplementedError
 
-    def update(*args, **kwargs):
-        raise NotImplementedError
+    def update(self, items):
+        if self.read_only:
+            return
+        if isinstance(items, dict):
+            items = items.iteritems()
+        # ====== check if update is in cache ====== #
+        for key, value in items:
+            self.__setitem__(key, value)
 
 
 # ===========================================================================
@@ -345,8 +375,9 @@ class TableDict(dict):
         return self.path
 
     def __str__(self):
-        return '<' + ctext('TableDict:', 'red') + ' "%s" db:%d cache:%d>' % \
-        (self.path, len(self), len(self.sqlite._cache[self.name]))
+        return
+        '<' + ctext('TableDict: ', 'red') + 'name:"%s" path:"%s" db:%d cache:%d>' % \
+        (self.name, self.path, len(self), len(self.sqlite._cache[self.name]))
 
     def __repr__(self):
         return str(self)
@@ -468,7 +499,7 @@ class SQLiteDict(dict):
     ----
     numpy.ndarray will be converted to list before dumped to the database,
     hence, the speed of serialize and deserialize ndarray is extremely slow.
-
+    This dict is purely performing in multiprocessing
     """
 
     _DEFAULT_TABLE = '_default_'
@@ -505,8 +536,11 @@ class SQLiteDict(dict):
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
         # adjust pragma
-        self._cursor.execute("PRAGMA synchronous = OFF;")
-        self._cursor.execute("PRAGMA journal_mode = MEMORY;")
+        # SQLITE_OPEN_EXCLUSIVE
+        self.connection.execute('PRAGMA main.locking_mode = EXCLUSIVE;')
+        self.connection.execute("PRAGMA main.synchronous = 0;")
+        self.connection.execute("PRAGMA journal_mode = MEMORY;")
+        self.connection.commit()
         # ====== create default table ====== #
         self._current_table = SQLiteDict._DEFAULT_TABLE
         self.set_table(SQLiteDict._DEFAULT_TABLE)
@@ -530,8 +564,6 @@ class SQLiteDict(dict):
                             PRIMARY KEY (key)
                         );"""
             self.cursor.execute(query.format(tb=table_name))
-            # query = """CREATE UNIQUE INDEX IX_{tb} ON {tb} (key);"""
-            # self.cursor.execute(query.format(tb=table_name))
             self.connection.commit()
         # set the new table
         self._current_table = table_name
@@ -676,9 +708,9 @@ class SQLiteDict(dict):
             if key in self.current_cache:
                 return self.current_cache[key]
             query = """SELECT value FROM {tb} WHERE key="{keyval}" LIMIT 1;"""
-            self.cursor.execute(
-                query.format(tb=self._current_table, keyval=key))
-            results = self.cursor.fetchone()
+            results = self.connection.execute(
+                query.format(tb=self._current_table, keyval=key)).fetchone()
+            # results = self.cursor.fetchone()
             if results is None:
                 raise KeyError("Cannot find `key`='%s' in the dictionary." % key)
             results = marshal.loads(results[0])
