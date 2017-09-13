@@ -504,6 +504,9 @@ class SQLiteDict(dict):
         self._conn = sqlite3.connect(path)
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
+        # adjust pragma
+        self._cursor.execute("PRAGMA synchronous = OFF;")
+        self._cursor.execute("PRAGMA journal_mode = MEMORY;")
         # ====== create default table ====== #
         self._current_table = SQLiteDict._DEFAULT_TABLE
         self.set_table(SQLiteDict._DEFAULT_TABLE)
@@ -517,6 +520,8 @@ class SQLiteDict(dict):
         return TableDict(self, table_name)
 
     def set_table(self, table_name):
+        if table_name is None:
+            table_name = SQLiteDict._DEFAULT_TABLE
         table_name = str(table_name)
         if not self.is_table_exist(table_name):
             query = """CREATE TABLE {tb} (
@@ -525,8 +530,8 @@ class SQLiteDict(dict):
                             PRIMARY KEY (key)
                         );"""
             self.cursor.execute(query.format(tb=table_name))
-            query = """CREATE UNIQUE INDEX IX_{tb} ON {tb} (key);"""
-            self.cursor.execute(query.format(tb=table_name))
+            # query = """CREATE UNIQUE INDEX IX_{tb} ON {tb} (key);"""
+            # self.cursor.execute(query.format(tb=table_name))
             self.connection.commit()
         # set the new table
         self._current_table = table_name

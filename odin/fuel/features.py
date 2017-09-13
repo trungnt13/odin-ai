@@ -25,7 +25,8 @@ from odin.ml import MiniBatchPCA
 from odin.utils.mpi import MPI
 from odin.preprocessing import speech, video, image, signal
 from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
-                        get_tempdir, is_string, batching)
+                        get_tempdir, is_string, batching,
+                        add_notification, keydefaultdict)
 from .dataset import Dataset
 from .recipes import FeederRecipe
 from .utils import MmapDict, SQLiteDict
@@ -199,12 +200,9 @@ class FeatureProcessor(object):
         else:
             ncpu = self.ncpu
         # ====== indices ====== #
-        pathDB = os.path.join(dataset.path, 'meta.db')
-        metaDB = SQLiteDict(path=pathDB, cache_size=10000)
-        # initiate table for 'dictionary' data type
-        for name, dtype, stats in self.features_properties:
-            if 'dict' in str(dtype).lower():
-                metaDB.set_table(name)
+        databases = keydefaultdict(lambda name: SQLiteDict(
+            path=os.path.join(dataset.path, name + '.db'),
+            cache_size=10000))
         # ====== statistic ====== #
         # mapping: feature_name -> able-to-calculate-statistics
         statistic_able = {name: stats_able
@@ -263,7 +261,7 @@ class FeatureProcessor(object):
                 feat_name, feat_type, feat_stat = prop
                 # specal case: dict type
                 if 'dict' in str(feat_type).lower():
-                    metaDB.set_table(feat_name)[name] = \
+                    databases[feat_name][name] = \
                         (d.tolist() if isinstance(d, np.ndarray) else d)
                     del d
                     continue
@@ -274,9 +272,8 @@ class FeatureProcessor(object):
                     ids_name = 'indices'
                 # do not save and increase the count of one indices multiple time
                 if ids_name not in saved_indices:
-                    metaDB.set_table(ids_name)[name] = (
-                        ref_vars['start'][ids_name],
-                        ref_vars['start'][ids_name] + len(d))
+                    databases[ids_name][name] = (ref_vars['start'][ids_name],
+                                                 ref_vars['start'][ids_name] + len(d))
                     ref_vars['start'][ids_name] += len(d)
                     saved_indices.append(ids_name)
                 # cache data, only if we have more than 0 sample
@@ -313,9 +310,10 @@ class FeatureProcessor(object):
         dataset.flush()
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
-        metaDB.flush(all_tables=True)
-        metaDB.close()
-        prog.add_notification("Flush meta.db to disk")
+        for name, db in databases.iteritems():
+            db.flush(all_tables=True)
+            db.close()
+            prog.add_notification("Flush %s.db to disk" % name)
 
         # ====== save mean and std ====== #
         def save_mean_std(sum1, sum2, pca, name, dataset):
@@ -645,8 +643,7 @@ class WaveProcessor(FeatureProcessor):
             import traceback; traceback.print_exc()
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
-                print(msg)
-                return (i for i in range(0)) # return zero-length-iterator
+                add_notification(msg)
             else:
                 raise RuntimeError(msg)
 
@@ -660,16 +657,21 @@ class WaveProcessor(FeatureProcessor):
         indices = sorted([(name, start, end)
                          for name, (start, end) in ds['indices'].iteritems()],
                          key=lambda x: x[1])
+        prog = Progbar(target=len(indices) // 2)
         for prev, now in zip(indices, indices[1:]):
+            prog.add(1)
             assert prev[2] == now[1] # non-zero length
             assert prev[2] - prev[1] > 0 # non-zero length
             assert now[2] - now[1] > 0 # non-zero length
         assert now[-1] == len(ds['raw']) # length match length of raw
-        logger("Checked all indices", True)
+        print(); logger("Checked all indices", True)
         # ====== check sample rate ====== #
-        for name, _, _ in indices:
+        for name, _, _ in Progbar(indices,
+                                  print_report=True,
+                                  report_func=lambda x: [('Name', x[0])],
+                                  count_func=lambda x: 1):
             sr = ds['sr'][name]
-            dtype = ds['dtype']
+            dtype = ds['dtype'][name]
             assert sr > 0 and dtype
         logger("Checked all sample rate and data type", True)
         # ====== checking raw signal ====== #
@@ -692,10 +694,12 @@ class WaveProcessor(FeatureProcessor):
                 write(_, rate=ds['sr'][name], data=raw)
                 saved_samples[name] = _
                 # saving figure
-                plt.figure(figsize=(10, 4))
-                plt.plot(speech.resample(raw, ds['sr'][name], 8000,
-                                         best_algorithm=False))
-                plt.title(name)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    plt.figure(figsize=(10, 4))
+                    plt.plot(speech.resample(raw, ds['sr'][name], 8000,
+                                             best_algorithm=False))
+                    plt.title(name)
         plot_save(figure_path, dpi=80, log=False)
         logger("Checked all raw signal", True)
         for name, save_path in saved_samples.iteritems():
@@ -750,8 +754,10 @@ class SpeechProcessor(FeatureProcessor):
         if True, return phase components of STFT
     get_pitch:
         if True, include the Pitch frequency (F0)
-    get_vad: bool
-        if True, include the indicators of voice activities detection
+    get_vad: int, bool
+        if True, include the indicators of voice activities detection.
+        if int, `get_vad` is the number of Gaussian mixture components for VAD.
+        by default, use 2 distribution.
     get_energy: bool
         if True, include the log energy of each frames
     get_delta: bool or int
@@ -995,8 +1001,7 @@ class SpeechProcessor(FeatureProcessor):
             import traceback; traceback.print_exc()
             msg = '\n[Error file]: %s, [Exception]: %s\n' % (audio_path, str(e))
             if self.ignore_error:
-                print(msg)
-                return (i for i in range(0)) # return zero-length-iterator
+                add_notification(msg)
             else:
                 raise RuntimeError(msg)
 

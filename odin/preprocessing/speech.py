@@ -305,8 +305,9 @@ def speech_features(s, sr=None,
     get_pitch:
         if True, include the Pitch frequency (F0)
     get_vad: int, bool
-        if True, include the indicators of voice activities detection
-        if int, `get_vad` is the number of Gaussian mixture components for VAD
+        if True, include the indicators of voice activities detection.
+        if int, `get_vad` is the number of Gaussian mixture components for VAD.
+        by default, use 2 distribution.
     get_energy: bool
         if True, include the log energy of each frames
     get_delta: bool or int
@@ -479,7 +480,7 @@ def speech_features(s, sr=None,
     vad = None
     vad_ids = None
     if get_vad:
-        distribNb, nbTrainIt = 2, 24
+        distribNb, nbTrainIt = 3, 24
         if is_number(get_vad) and get_vad >= 2:
             distribNb = int(get_vad)
         vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,

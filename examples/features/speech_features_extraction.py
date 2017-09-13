@@ -44,7 +44,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=0.12, ncpu=8)
+                         ncache=250, ncpu=8)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),

@@ -66,7 +66,9 @@ def _parse_data_descriptor(path, read_only):
     if '.db' in os.path.splitext(path)[1]:
         try:
             db = SQLiteDict(path, read_only=read_only)
-            return [(tab, ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
+            name = os.path.basename(path).replace('.db', '')
+            return [(tab if tab != SQLiteDict._DEFAULT_TABLE else name,
+                     ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
                     for tab in db.get_all_tables()]
         except:
             pass
