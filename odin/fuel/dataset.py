@@ -36,7 +36,7 @@ def _parse_data_descriptor(path, read_only):
         return None
     # ====== check if a file is Data ====== #
     try:
-        dtype, shape = MmapData.read_header(path)
+        dtype, shape = MmapData.read_header(path, mode='r', return_file=False)
         # shape[1:], because first dimension can be resize afterward
         return [(os.path.basename(path), (dtype, shape, None, path))]
     except: # cannot read the header of MmapData, maybe Hdf5

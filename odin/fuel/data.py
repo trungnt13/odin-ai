@@ -10,6 +10,7 @@ from math import ceil
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 from six.moves import range, zip, zip_longest
+from collections import OrderedDict
 
 import numpy as np
 
@@ -771,17 +772,18 @@ class MmapData(Data):
     ----
     This class always read MmapData with mode=r+
     """
-    __INSTANCES = {}
+    _INSTANCES = OrderedDict()
     HEADER = 'mmapdata'
     MAXIMUM_HEADER_SIZE = 486
-    COUNT = 0
 
     @staticmethod
-    def read_header(path):
+    def read_header(path, mode, return_file):
         """ return: dtype, shape
         Necessary information to create numpy.memmap
         """
-        f = open(path, 'r')
+        if mode not in ('r', 'r+'):
+            raise ValueError("Only support 2 modes: 'r' and 'r+'.")
+        f = open(path, mode)
         if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
             raise Exception('Invalid header for MmapData.')
         # 8 bytes for size of info
@@ -790,6 +792,10 @@ class MmapData(Data):
             dtype, shape = marshal.loads(f.read(size))
         except Exception as e:
             raise Exception('Error reading memmap data file: %s' % str(e))
+        # return file object
+        if return_file:
+            return dtype, shape, f
+        # only return header info
         f.close()
         return dtype, shape
 
@@ -802,36 +808,38 @@ class MmapData(Data):
                              "object with type: %s" % type(path))
         path = os.path.abspath(path)
         # Found old instance
-        if path in MmapData.__INSTANCES:
-            return MmapData.__INSTANCES[path]
-        # new Dataset
+        if path in MmapData._INSTANCES:
+            return MmapData._INSTANCES[path]
+        # new MmapData
+        # ====== increase memmap count ====== #
+        if len(MmapData._INSTANCES) + 1 > MAX_OPEN_MMAP:
+            raise ValueError('Only allowed to open maximum of {} memmap file'.format(MAX_OPEN_MMAP))
+        # ====== create new instance ====== #
         new_instance = super(MmapData, clazz).__new__(clazz, *args, **kwargs)
-        MmapData.__INSTANCES[path] = new_instance
+        MmapData._INSTANCES[path] = new_instance
         return new_instance
 
-    def __init__(self, path, dtype=None, shape=None, read_only=False):
+    def __init__(self, path, dtype='float32', shape=None, read_only=False):
         super(MmapData, self).__init__()
+        # validate path
+        path = os.path.abspath(path)
+        mode = 'r' if read_only else 'r+'
         self.read_only = read_only
-        # ====== increase memmap count ====== #
-        if MmapData.COUNT > MAX_OPEN_MMAP:
-            raise ValueError('Only allowed to open maximum of {} memmap file'.format(MAX_OPEN_MMAP))
-        MmapData.COUNT += 1
         # ====== check shape info ====== #
         if shape is not None:
             if not isinstance(shape, (tuple, list, np.ndarray)):
                 shape = (shape,)
             shape = tuple([0 if i is None or i < 0 else i for i in shape])
-        # validate path
-        path = os.path.abspath(path)
-        mode = 'r' if read_only else 'r+'
         # read exist file
         if os.path.exists(path):
-            dtype, shape = MmapData.read_header(path)
+            dtype, shape, f = MmapData.read_header(path, mode=mode,
+                                                   return_file=True)
         # create new file
         else:
             if dtype is None or shape is None:
-                raise Exception('dtype and shape must not be None.')
-            f = open(path, 'w')
+                raise Exception("First created this MmapData, `dtype` and "
+                                "`shape` must NOT be None.")
+            f = open(path, 'w+')
             f.write(MmapData.HEADER)
             dtype = str(np.dtype(dtype))
             if isinstance(shape, np.ndarray):
@@ -845,26 +853,30 @@ class MmapData(Data):
                                 '(%d bytes).' % MmapData.MAXIMUM_HEADER_SIZE)
             f.write('%8d' % size)
             f.write(_)
-            f.close()
         # store variables
         # print(_aligned_memmap_offset(dtype), shape, dtype)
-        self._data = np.memmap(path, dtype=dtype, shape=shape, mode=mode,
+        f.seek(0) # reset the file
+        self._file = f
+        self._data = np.memmap(f, dtype=dtype, shape=shape, mode=mode,
                                offset=_aligned_memmap_offset(dtype))
         self._path = path
 
     def close(self):
-        MmapData.COUNT -= 1
         # Check if exist global instance
-        if os.path.abspath(self.path) in MmapData.__INSTANCES:
-            del MmapData.__INSTANCES[self.path]
-        if hasattr(self, '_data') and self._data is not None:
+        if self.path in MmapData._INSTANCES:
+            del MmapData._INSTANCES[self.path]
+            # flush in read-write mode
+            if not self.read_only:
+                self.flush()
+            # close mmap and file
             self._data._mmap.close()
             del self._data
+            self._file.close()
 
     # ==================== properties ==================== #
     @property
     def path(self):
-        return self._data.filename
+        return self._path
 
     @property
     def name(self):
@@ -995,10 +1007,11 @@ class MmapData(Data):
     # ==================== Save ==================== #
     def resize(self, shape):
         if self.read_only:
-            raise Exception('Cannot resize MmapData at path: %s in read-only mode.'
-                            % self.path)
+            return
+        # ====== local files ====== #
+        f = self._file
         mmap = self._data
-
+        # ====== check new shape ====== #
         if not isinstance(shape, (tuple, list)):
             shape = (shape,)
         if any(i != j for i, j in zip(shape[1:], mmap.shape[1:])):
@@ -1008,24 +1021,28 @@ class MmapData(Data):
             raise ValueError('Only support extend memmap, and do not shrink the memory')
         elif shape[0] == self._data.shape[0]: # nothing to resize
             return self
-        mmap.flush()
+        # ====== flush previous changes ====== #
         # resize by create new memmap and also rename old file
         shape = (shape[0],) + tuple(mmap.shape[1:])
         dtype = str(mmap.dtype)
         # rewrite the header
-        f = open(self._path, 'r+')
         f.seek(len(MmapData.HEADER))
-        _ = marshal.dumps([dtype, shape])
-        size = len(_)
+        meta = marshal.dumps([dtype, shape])
+        size = len(meta)
         f.write('%8d' % size)
-        f.write(_)
-        f.flush(); f.close()
+        f.write(meta)
+        f.flush()
         # extend the memmap
-        self._data = np.memmap(self._path, dtype=dtype, mode='r+', shape=shape,
-                               offset=_aligned_memmap_offset(dtype))
+        mmap.flush()
+        mmap._mmap.close()
+        del self._data
+        self._data = np.memmap(self._path, dtype=dtype, shape=shape,
+                               mode='r+', offset=_aligned_memmap_offset(dtype))
         return self
 
     def flush(self):
+        if self.read_only:
+            return
         self._data.flush()
 
 
