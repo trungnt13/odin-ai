@@ -298,8 +298,8 @@ class FeatureProcessor(object):
                   buffer_size=min(8, max(len(self.jobs) // ncpu, 1)),
                   maximum_queue_size=ncpu * 3,
                   chunk_scheduler=True)
-        prog = Progbar(target=njobs, name=self.__class__.__name__, interval=0.,
-                       print_report=True, print_summary=True)
+        prog = Progbar(target=njobs, name=self.__class__.__name__,
+                       interval=0.1, print_report=True, print_summary=True)
         for name, job_count in mpi:
             prog['File'] = '%-20s' % name
             prog.add(job_count)
@@ -661,7 +661,7 @@ class WaveProcessor(FeatureProcessor):
         indices = sorted([(name, start, end)
                          for name, (start, end) in ds['indices'].iteritems()],
                          key=lambda x: x[1])
-        prog = Progbar(target=len(indices) // 2)
+        prog = Progbar(target=len(indices) // 2, interval=0.1)
         for prev, now in zip(indices, indices[1:]):
             prog.add(1)
             assert prev[2] == now[1] # non-zero length
@@ -670,7 +670,7 @@ class WaveProcessor(FeatureProcessor):
         assert now[-1] == len(ds['raw']) # length match length of raw
         print(); logger("Checked all indices", True)
         # ====== check sample rate ====== #
-        for name, _, _ in Progbar(indices,
+        for name, _, _ in Progbar(indices, interval=0.1,
                                   print_report=True,
                                   report_func=lambda x: [('Name', x[0])],
                                   count_func=lambda x: 1):
@@ -683,7 +683,7 @@ class WaveProcessor(FeatureProcessor):
             np.arange(len(indices)), size=nb_samples, replace=False)
         saved_samples = {}
         figure_path = os.path.join(path, 'raw.pdf')
-        for i, (name, start, end) in enumerate(Progbar(indices,
+        for i, (name, start, end) in enumerate(Progbar(indices, interval=0.1,
                                                 count_func=lambda x: 1,
                                                 report_func=lambda x: [('Name', x[0])],
                                                 print_report=True)):
@@ -884,7 +884,7 @@ class SpeechProcessor(FeatureProcessor):
         # ====== which features to get ====== #
         features_properties = []
         if save_raw:
-            features_properties.append(('raw', dtype, True))
+            features_properties.append(('raw', dtype, False))
         if get_spec: features_properties.append(('spec', dtype, True))
         if get_energy: features_properties.append(('energy', dtype, True))
         if nb_melfilters is not None:

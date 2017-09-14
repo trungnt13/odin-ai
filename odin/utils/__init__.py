@@ -1039,17 +1039,25 @@ def _get_managed_path(folder, name, override, is_folder=False, root='~'):
     return datadir
 
 
-def get_datasetpath(name=None, override=False, root='~'):
-    return _get_managed_path('datasets', name, override, is_folder=True, root=root)
+def get_datasetpath(name=None, override=False, is_folder=True, root='~'):
+    return _get_managed_path('datasets', name, override,
+                             is_folder=is_folder, root=root)
 
 
 def get_modelpath(name=None, override=False, root='~'):
     """ Default model path for saving ODIN networks """
-    return _get_managed_path('models', name, override, is_folder=True, root=root)
+    return _get_managed_path('models', name, override,
+                             is_folder=True, root=root)
 
 
 def get_logpath(name=None, override=False, root='~'):
-    return _get_managed_path('logs', name, override, is_folder=False, root=root)
+    return _get_managed_path('logs', name, override,
+                             is_folder=False, root=root)
+
+
+def get_resultpath(name=None, override=False, root='~'):
+    return _get_managed_path('results', name, override,
+                             is_folder=True, root=root)
 
 
 # ===========================================================================

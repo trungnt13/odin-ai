@@ -61,8 +61,13 @@ class MmapDict(dict):
         MmapDict.__INSTANCES[path] = new_instance
         return new_instance
 
-    def __init__(self, path, cache_size=250, read_only=False):
+    def __init__(self, path, cache_size=250,
+                 read_only=False, override=False):
         super(MmapDict, self).__init__()
+        # ====== check override ====== #
+        if override and os.path.exists(path):
+            os.remove(path)
+        # ====== init ====== #
         self.__init(path, cache_size, read_only)
 
     def __init(self, path, cache_size, read_only):
@@ -226,9 +231,6 @@ class MmapDict(dict):
         if self.read_only:
             return
         key = str(key)
-        if key in self.indices:
-            raise Exception('MmapDict do NOT support update, i.e. cannot '
-                            'update the value of key: "%s"' % key)
         # store newly added value for fast query
         self._cache_dict[key] = value
         if len(self._cache_dict) > self.cache_size:
@@ -521,9 +523,12 @@ class SQLiteDict(dict):
         SQLiteDict.__INSTANCES[path] = new_instance
         return new_instance
 
-    def __init__(self, path, cache_size=250, read_only=False):
+    def __init__(self, path, cache_size=250, read_only=False, override=False):
         super(SQLiteDict, self).__init__()
         path = os.path.abspath(path)
+        # ====== check override ====== #
+        if override and os.path.exists(path):
+            os.remove(path)
         self._path = path
         self.read_only = read_only
         self._is_closed = False

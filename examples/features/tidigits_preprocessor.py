@@ -120,8 +120,6 @@ def get_name(path):
 # Convert all SPHERE to wav using sph2pipe
 # ===========================================================================
 # ====== convert all compress audio to .wav using sph2pipe ====== #
-if args.reset and os.path.exists(wav_path):
-    shutil.rmtree(wav_path)
 if not os.path.exists(wav_path):
     os.mkdir(wav_path)
     cmds = ["sph2pipe %s %s -f rif" % (path, os.path.join(wav_path, get_name(path)))
@@ -137,11 +135,12 @@ if args.reset and os.path.exists(wav_ds):
     shutil.rmtree(wav_ds)
 if not os.path.exists(wav_ds):
     wave = F.WaveProcessor(segments, output_path=wav_ds,
-                           sr=None, sr_info={}, sr_new=16000,
+                           sr=None, sr_info={}, sr_new=16000, best_resample=True,
                            audio_ext='.wav', pcm=False, remove_dc_offset=True,
                            maxlen=None, dtype='float16', datatype='memmap',
-                           ncache=0.2, ncpu=8)
+                           ncache=0.2, ncpu=10)
     wave.run()
+    wave.validate('/tmp/tidigits_report', nb_samples=25)
     with open(os.path.join(wav_ds, 'README'), 'w') as f:
         f.write(README)
 # ===========================================================================
@@ -150,27 +149,13 @@ if not os.path.exists(wav_ds):
 # ====== plot sampling of files ====== #
 ds = F.Dataset(wav_ds, read_only=True)
 print(ds)
-print("Saving processed sample files ...")
-nb_samples = 3
-samples_file = [i for i in ds['indices'].keys(shuffle=True)[:nb_samples]]
-for backend in ('odin', 'sptk'):
-    for f in samples_file:
-        start, end = ds['indices'][f]
-        s = ds['raw'][start:end]
-        print(" * ", f, s.shape)
-        plot_audio(s, sr=8000, win=0.02, hop=0.01, window='hann',
-            nb_melfilters=40, nb_ceps=13,
-            get_qspec=True, get_vad=2, fmin=64, fmax=None,
-            sr_new=None, preemphasis=None,
-            pitch_threshold=0.3, pitch_fmax=260,
-            vad_smooth=8, vad_minlen=0.01, cqt_bins=96,
-            power=2, log=True, backend=backend,
-            title=os.path.basename(f))
-    plot_save('/tmp/tmp_%s.pdf' % backend, dpi=180, clear_all=True)
 # ====== processing ====== #
+if os.path.exists(outpath):
+    print("Remove old dataset at path:", outpath)
+    shutil.rmtree(outpath)
 acous = F.SpeechProcessor(ds, outpath,
-                sr=None, sr_info={}, sr_new=None,
-                win=0.03, hop=0.01, window='hann',
+                sr=16000, sr_info={}, sr_new=None,
+                win=0.02, hop=0.005, window='hann',
                 nb_melfilters=40, nb_ceps=13,
                 get_spec=True, get_qspec=False, get_phase=False,
                 get_pitch=True, get_f0=True,
@@ -181,10 +166,10 @@ acous = F.SpeechProcessor(ds, outpath,
                 cqt_bins=96, preemphasis=0.97,
                 center=True, power=2, log=True, backend='odin',
                 pca=True, pca_whiten=False,
-                audio_ext=None, maxlen=None, save_raw=True,
+                audio_ext=None, save_raw=True,
                 save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
-                ncache=120, ncpu=8)
+                ncache=250, ncpu=10)
 acous.run()
 # copy README
 with open(os.path.join(outpath, 'README'), 'w') as f:
