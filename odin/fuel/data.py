@@ -855,7 +855,6 @@ class MmapData(Data):
             f.write(_)
         # store variables
         # print(_aligned_memmap_offset(dtype), shape, dtype)
-        f.seek(0) # reset the file
         self._file = f
         self._data = np.memmap(f, dtype=dtype, shape=shape, mode=mode,
                                offset=_aligned_memmap_offset(dtype))
@@ -1033,7 +1032,6 @@ class MmapData(Data):
         f.write(meta)
         f.flush()
         # extend the memmap
-        mmap.flush()
         mmap._mmap.close()
         del self._data
         self._data = np.memmap(self._path, dtype=dtype, shape=shape,

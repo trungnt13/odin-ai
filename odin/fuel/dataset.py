@@ -284,7 +284,7 @@ class Dataset(object):
     # ==================== Some info ==================== #
     def _validate_memmap_max_open(self, name):
         # ====== check if MmapData excess limit, close 1 files ====== #
-        if MmapData.COUNT > MAX_OPEN_MMAP:
+        if len(MmapData._INSTANCES) + 1 >= MAX_OPEN_MMAP:
             for i, (_dtype, _shape, _data, _path) in self._data_map.iteritems():
                 if isinstance(_data, MmapData) and i != name:
                     self.close(name=i)
