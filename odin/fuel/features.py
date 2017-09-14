@@ -501,7 +501,7 @@ def _load_audio(path_or_ds, segments,
     minimum_duration = vad_split_args.get('minimum_duration', None)
     frame_length = vad_split_args.get('frame_length', 128)
     nb_mixtures = vad_split_args.get('nb_mixtures', 3)
-    threshold = vad_split_args.get('threshold', 0.3)
+    threshold = vad_split_args.get('threshold', 0.6)
     # ====== cut into segments ====== #
     for name, start, end, channel in segments:
         # iterate over dataset

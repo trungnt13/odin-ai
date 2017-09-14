@@ -407,8 +407,8 @@ class Progbar(object):
                     self.progress_bar.moveto(-i - 1)
                 fp.write(report)
                 fp.flush()
-                self.progress_bar.moveto(1)
                 self._last_report = report
+                self.progress_bar.moveto(1)
         # ====== show progress ====== #
         self.progress_bar.update(n=n)
         # ====== end of epoch ====== #
