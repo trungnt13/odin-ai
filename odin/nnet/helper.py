@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import types
 import inspect
+from collections import Mapping
 
 import numpy as np
 import tensorflow as tf
@@ -140,7 +141,8 @@ class Sequence(HelperOps):
             if isinstance(v, (tuple, list)):
                 try: v = dict(v)
                 except Exception: pass
-            if not isinstance(v, dict): continue
+            if not isinstance(v, Mapping):
+                continue
             # check valid keywords
             for i in as_tuple(k):
                 params[self.ops[i] if is_number(i) else i] = v

@@ -19,20 +19,20 @@ from multiprocessing.pool import ThreadPool
 from decorator import decorator
 
 _async_function_counter = defaultdict(int)
-_nb_threads = 2
+_NB_THREADS = 2
 _thread_pool = None
 
 
 def set_nb_threads(n):
     """ Set number of Threads for the ThreadPool that execute async_task. """
-    global _nb_threads
-    if _nb_threads != n:
-        _nb_threads = n
+    global _NB_THREADS
+    if _NB_THREADS != n:
+        _NB_THREADS = n
         global _thread_pool
         if _thread_pool is not None:
             _thread_pool.join()
             _thread_pool.close()
-        _thread_pool = ThreadPool(processes=_nb_threads)
+        _thread_pool = ThreadPool(processes=_NB_THREADS)
 
 
 class _async_task(object):
@@ -63,9 +63,10 @@ class _async_task(object):
         # check initialized thread pool
         global _thread_pool
         if _thread_pool is None:
-            _thread_pool = ThreadPool(processes=_nb_threads)
+            _thread_pool = ThreadPool(processes=_NB_THREADS)
         # create asyn task
-        self._async_task = _thread_pool.apply_async(func=func, args=args, kwds=kw,
+        self._async_task = _thread_pool.apply_async(
+            func=func, args=args, kwds=kw,
             callback=lambda result: self.__callback(result))
 
     def __str__(self):
@@ -100,6 +101,14 @@ def async(func=None, callback=None):
     """ This create and Asynchronized result using Threading instead of
     multiprocessing, you can take advantage from share memory in threading
     for async-IO using this decorator.
+
+    Parameters
+    ----------
+    func: callable
+        main workload executed in this function and return the
+        results.
+    callback: callable
+        a callback function triggered when the task finished
     """
     @decorator
     def _decorator_func_(func, *args, **kwargs):

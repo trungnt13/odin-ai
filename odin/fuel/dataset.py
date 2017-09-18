@@ -2,7 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-from collections import OrderedDict
+from collections import OrderedDict, Mapping
 from six.moves import zip, range, cPickle
 
 import numpy as np
@@ -333,7 +333,7 @@ class Dataset(object):
             return
         # ====== dict ====== #
         path = os.path.join(self.path, key)
-        if isinstance(value, dict):
+        if isinstance(value, Mapping):
             if os.path.exists(path):
                 raise Exception('File with path=%s already exist.' % path)
             d = MmapDict(path)
@@ -369,7 +369,7 @@ class Dataset(object):
 
     def __iter__(self):
         for name, (dtype, shape, data) in self._data_map.iteritems():
-            if isinstance(data, (Data, dict, MmapDict)):
+            if isinstance(data, (Data, NoSQL)):
                 yield data
             else:
                 yield self[name]

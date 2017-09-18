@@ -11,7 +11,7 @@ from __future__ import print_function, division, absolute_import
 
 import timeit
 import string
-from collections import OrderedDict, Iterator, Iterable, defaultdict
+from collections import OrderedDict, Iterator, Iterable, defaultdict, Mapping
 from abc import abstractmethod, ABCMeta
 from six import add_metaclass, string_types
 
@@ -710,7 +710,7 @@ class Tokenizer(object):
               token_not_found='ignore'):
         """Any word not found in the vocabulary will be set to all-zeros"""
         # ====== check vocab ======= #
-        if not isinstance(vocabulary, dict):
+        if not isinstance(vocabulary, Mapping):
             raise ValueError('"vocabulary" must be any instance of dict.')
         # ====== check token_not_found ====== #
         if not is_number(token_not_found) and \

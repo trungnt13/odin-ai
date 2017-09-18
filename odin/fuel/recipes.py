@@ -5,7 +5,7 @@ import types
 import inspect
 import warnings
 from abc import ABCMeta, abstractmethod
-from collections import Counter
+from collections import Counter, Mapping
 from six import add_metaclass
 from six.moves import cPickle
 from six.moves import zip, zip_longest, range
@@ -91,7 +91,7 @@ class FeederList(FeederRecipe):
                 raise ValueError("The return value of process must contain "
                                  "name, X, y, and a dictionary represent "
                                  "additional kwargs (optional).")
-            elif len(args) == 4 and not isinstance(args[-1], dict):
+            elif len(args) == 4 and not isinstance(args[-1], Mapping):
                 raise ValueError("If process function returns 4 values "
                                  "the last value must be a dictionary.")
             name, X, y = args[:3]
@@ -112,7 +112,7 @@ class FeederList(FeederRecipe):
         the new shape that transformed by this Recipe
         """
         for i in self.recipes:
-            if not isinstance(indices, dict):
+            if not isinstance(indices, Mapping):
                 raise ValueError('"indices" return in "shape_transform" of '
                                  'FeederRecipe must be a dictionary.')
             shapes, indices = i.shape_transform(shapes, indices)
@@ -152,7 +152,7 @@ class TransLoader(FeederRecipe):
         share_dict = None
         if isinstance(transcription, (list, tuple)):
             share_dict = {i: j for i, j in transcription}
-        elif isinstance(transcription, dict):
+        elif isinstance(transcription, Mapping):
             share_dict = transcription
         elif isinstance(transcription, str) and os.path.isfile(transcription):
             share_dict = MmapDict(transcription)
@@ -166,7 +166,7 @@ class TransLoader(FeederRecipe):
         # ====== label dict if available ====== #
         if label_dict is None:
             label_func = lambda x: x
-        elif isinstance(label_dict, dict):
+        elif isinstance(label_dict, Mapping):
             label_func = lambda x: label_dict[x]
         elif callable(label_dict):
             label_func = label_dict
@@ -698,7 +698,7 @@ class VADindex(FeederRecipe):
                        for name, start, end in indices}
             else: # a list contain all information is given
                 vad = {name: segments for name, segments in vad}
-        elif not isinstance(vad, dict):
+        elif not isinstance(vad, Mapping):
             raise ValueError('Unsupport "vad" type: %s' % type(vad).__name__)
         self.vad = vad
         self.padding = padding

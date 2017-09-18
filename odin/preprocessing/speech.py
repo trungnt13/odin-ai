@@ -270,10 +270,10 @@ def speech_features(s, sr=None,
                     nb_melfilters=None, nb_ceps=None,
                     get_spec=True, get_qspec=False, get_phase=False,
                     get_pitch=False, get_f0=False,
-                    get_vad=True, get_energy=False, get_delta=False,
+                    get_vad=True, vad_smooth=3, vad_minlen=0.1,
+                    get_energy=False, get_delta=False,
                     fmin=64, fmax=None, sr_new=None,
                     pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
-                    vad_smooth=3, vad_minlen=0.1,
                     cqt_bins=96, preemphasis=None,
                     center=True, power=2, log=True,
                     return_raw=False, backend='odin'):
@@ -368,7 +368,6 @@ def speech_features(s, sr=None,
         'phase': np.ndarray (txd) - float32,
         'pitch': np.ndarray (txd) - float32,
         'vad': np.ndarray (t,) - uint8
-        'vadids': np.ndarray [(start, end), ...] - uint8
     }
     (txd): time x features
     """
@@ -478,7 +477,6 @@ def speech_features(s, sr=None,
             f0_freq = np.pad(f0_freq, ((0, _), (0, 0)), mode='constant')
     # ====== 3: extract VAD ====== #
     vad = None
-    vad_ids = None
     if get_vad:
         distribNb, nbTrainIt = 3, 24
         if is_number(get_vad) and get_vad >= 2:
@@ -491,10 +489,6 @@ def speech_features(s, sr=None,
             # at least 2 voice frames
             vad = smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
             vad = vad.astype('uint8')
-        vad_ids = np.array(__to_separated_indices(vad.nonzero()[0],
-                                                  min_distance=1,
-                                                  min_length=int(vad_minlen / hop)),
-                           dtype='int32')
     # ====== 7: compute delta ====== #
     if get_delta and get_delta > 0:
         get_delta = int(get_delta)
@@ -556,6 +550,5 @@ def speech_features(s, sr=None,
         ('pitch', pitch_freq if get_pitch else None),
 
         ('vad', vad if get_vad else None),
-        ('vadids', vad_ids if get_vad else None),
         ('raw', s if return_raw else None)
     ])

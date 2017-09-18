@@ -15,7 +15,7 @@ import contextlib
 import platform
 import argparse
 from multiprocessing import cpu_count, Lock, current_process
-from collections import OrderedDict, deque, Iterable, Iterator
+from collections import OrderedDict, deque, Iterable, Iterator, Mapping
 from itertools import islice, tee, chain
 
 from six import string_types
@@ -117,7 +117,7 @@ def is_primitives(x, inc_ndarray=True):
     """
     if isinstance(x, (tuple, list)):
         return all(is_primitives(i) for i in x)
-    elif isinstance(x, dict):
+    elif isinstance(x, Mapping):
         return all(is_primitives(i) and is_primitives(j)
                    for i, j in x.iteritems())
     if is_number(x) or is_string(x) or is_bool(x) or x is None or \

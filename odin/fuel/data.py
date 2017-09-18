@@ -10,12 +10,14 @@ from math import ceil
 from abc import ABCMeta, abstractmethod
 from six import add_metaclass
 from six.moves import range, zip, zip_longest
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import numpy as np
+from numpy import ndarray
 
 from odin.utils.decorators import autoattr
-from odin.utils import queue, struct, as_tuple, cache_memory, is_string
+from odin.utils import (queue, struct, as_tuple,
+                        cache_memory, is_string)
 
 __all__ = [
     'as_data',
@@ -31,11 +33,6 @@ __all__ = [
     'DataMerge'
 ]
 
-# ===========================================================================
-# Const
-# ===========================================================================
-BLOCK_SIZE = 300 * 1024 * 1024 # in bytes
-
 
 # ===========================================================================
 # Helper function
@@ -49,47 +46,6 @@ def as_data(x):
     if isinstance(x, (tuple, list)):
         return DataIterator(x)
     raise ValueError('Cannot create Data object from given object:{}'.format(x))
-
-
-def _estimate_shape(shape, func):
-    ''' This method cannot estimate the shape accurately if you use slice '''
-    shape0 = (12 + 8) // 10 * 13
-    # func on 1 array
-    if not isinstance(shape[0], (list, tuple)):
-        if len(shape) > 0:
-            n = int(min(shape0, shape[0])) # lucky number :D
-            tmp = np.empty((n,) + shape[1:])
-        else:
-            tmp = np.empty(shape)
-        old_shape = tmp.shape
-        new_shape = func(tmp).shape
-    else: # func on multiple-array
-        tmp = []
-        for s in shape:
-            if len(s) > 0:
-                n = int(min(shape0, s[0])) # lucky number :D
-                tmp.append(np.empty((n,) + s[1:]))
-            else:
-                tmp.append(np.empty(s))
-        old_shape = tmp[0].shape
-        new_shape = func(tmp).shape
-        shape = shape[0] # list of shape to a shape
-
-    # ====== omitted the some dimensions ====== #
-    if len(new_shape) == 0:
-        return new_shape
-    elif len(new_shape) < len(old_shape):
-        if old_shape[0] != new_shape[0]: # first dimension omitted
-            old_shape = old_shape[1:]
-            shape = shape[1:]
-        else: # other dimension omitted (no problem because we already know all of them)
-            pass
-
-    zip_func = zip if len(new_shape) <= len(old_shape) else zip_longest
-    new_shape_ratio = [i / j if j is not None and j > 0 else i
-                       for i, j in zip_func(new_shape, old_shape)]
-    return tuple([int(round(i * j)) if i is not None else j
-                  for i, j in zip_func(shape, new_shape_ratio)])
 
 
 def _get_chunk_size(shape, size):
@@ -123,6 +79,11 @@ _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 @add_metaclass(ABCMeta)
 class Data(object):
 
+    """ Note for overriding `Data` class:
+    * If `_new_args` is not None it will be return at __getnewargs__
+      during unpickling.
+    * `_new_args` must be picklable, and also be pickled.
+    """
     def __init__(self):
         # batch information
         self._batch_size = 256
@@ -130,17 +91,78 @@ class Data(object):
         self._end = 1.
         self._seed = None
         self._shuffle_level = 0
-        self._status = 0 # flag show that array valued changed
-        # main data object that have shape, dtype ...
+        # ====== main data ====== #
+        # object that have shape, dtype ...
         self._data = None
+        self._path = None
+        # ====== special flags ====== #
+        # to detect if cPickle called with protocol >= 2
+        self._new_args_called = False
+        self._new_args = None
+        # flag show that array valued changed
+        self._status = 0
 
-        self._transformer = lambda x: x
+    # ==================== basic properties ==================== #
+    @property
+    def batch_size(self):
+        return self._batch_size
 
-    # ====== transformer ====== #
-    def transform(self, transformer):
-        if callable(transformer):
-            self._transformer = transformer
-        return self
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def array(self):
+        if isinstance(self._data, (tuple, list)):
+            return [dat[:] for dat in self._data]
+        return self._data[:]
+
+    def tolist(self):
+        array = self.array
+        if isinstance(array, (tuple, list)):
+            array = [i.tolist() for i in array]
+        else:
+            array = array.tolist()
+        return array
+
+    @property
+    def path(self):
+        if is_string(self._path):
+            return os.path.abspath(self._path)
+        return self._path
+
+    # ==================== For pickling ==================== #
+    @abstractmethod
+    def restore_data(self):
+        raise NotImplementedError
+
+    def __getstate__(self):
+        if not self._new_args_called:
+            raise RuntimeError(
+                "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
+                "when using `pickle` or `cPickle` to be able pickling NNOp.")
+        self._new_args_called = False
+        return (self._batch_size, self._start, self._end, self._seed,
+                self._shuffle_level, self._new_args, self._path)
+
+    def __setstate__(self, states):
+        (self._batch_size, self._start, self._end, self._seed,
+         self._shuffle_level, self._new_args, self._path) = states
+        self._status = 0
+        self._new_args_called = False
+        # ====== restore data ====== #
+        self.restore_data()
+        if not hasattr(self, '_data') or self._data is None:
+            raise RuntimeError("The `_data` attribute is None, and have not "
+                               "been restored after pickling, you must properly "
+                               "implement function `restore_data` for class '%s'"
+                               % self.__class__.__name__)
+
+    def __getnewargs__(self):
+        self._new_args_called = True
+        if self._new_args is not None:
+            return as_tuple(self._new_args)
+        return ()
 
     # ==================== internal utilities ==================== #
     ''' BigData instance store large dataset that need to be iterate over to
@@ -167,7 +189,7 @@ class Data(object):
             old_start = self._start
             old_end = self._end
             # less than million data points, not a big deal
-            it = self.set_batch(start=0., end=1., seed=None)._iter(); it.next()
+            it = iter(self.set_batch(start=0., end=1., seed=None))
             for X in it:
                 if s is None:
                     # list of results for each ops
@@ -229,9 +251,8 @@ class Data(object):
     def shape(self):
         # auto infer new shape
         if isinstance(self._data, (tuple, list)):
-            return [_estimate_shape(dat.shape, self._transformer)
-                   for dat in self._data]
-        return _estimate_shape(self._data.shape, self._transformer)
+            return tuple([dat.shape for dat in self._data])
+        return self._data.shape
 
     def __len__(self):
         """ len always return 1 number """
@@ -252,28 +273,6 @@ class Data(object):
         if isinstance(self._data, (tuple, list)):
             return [dat.dtype for dat in self._data]
         return self._data.dtype
-
-    @property
-    def array(self):
-        if isinstance(self._data, (tuple, list)):
-            return [self._transformer(dat[:]) for dat in self._data]
-        return self._transformer(self._data[:])
-
-    def tolist(self):
-        array = self.array
-        if isinstance(array, (tuple, list)):
-            array = [i.tolist() for i in array]
-        else:
-            array = array.tolist()
-        return array
-
-    @property
-    def batch_size(self):
-        return self._batch_size
-
-    @property
-    def data(self):
-        return self._data
 
     def set_batch(self, batch_size=None, seed=-1, start=None, end=None,
                   shuffle_level=None):
@@ -311,9 +310,8 @@ class Data(object):
     # ==================== Slicing methods ==================== #
     def __getitem__(self, y):
         if isinstance(self._data, (tuple, list)):
-            return [self._transformer(dat.__getitem__(y))
-                    for dat in self._data]
-        return self._transformer(self._data.__getitem__(y))
+            return [dat.__getitem__(y) for dat in self._data]
+        return self._data.__getitem__(y)
 
     @autoattr(_status=lambda x: x + 1)
     def __setitem__(self, x, y):
@@ -324,37 +322,42 @@ class Data(object):
         return self._data.__setitem__(x, y)
 
     # ==================== iteration ==================== #
-    def _iter(self):
-        # TODO: iter support _data is a list of Data
-        batch_size = self._batch_size
-        seed = self._seed; self._seed = None
-        shape = self._data.shape
-
-        # custom batch_size
-        start = _apply_approx(shape[0], self._start)
-        end = _apply_approx(shape[0], self._end)
-        if start > shape[0] or end > shape[0]:
-            raise ValueError('start={} or end={} excess data_size={}'
-                             ''.format(start, end, shape[0]))
-
-        idx = list(range(start, end, batch_size))
-        if idx[-1] < end:
-            idx.append(end)
-        idx = list(zip(idx, idx[1:]))
-
-        rand = None if seed is None else np.random.RandomState(seed=seed)
-        if rand is not None:
-            rand.shuffle(idx)
-
-        yield None # this dummy return to make everything initialized
-        for start, end in idx:
-            x = self._transformer(self._data[start:end])
-            if rand is not None and self._shuffle_level > 0:
-                x = x[rand.permutation(x.shape[0])]
-            yield x
-
     def __iter__(self):
-        it = self._iter()
+        def create_iteration():
+            # TODO: iter support _data is a list of Data
+            batch_size = int(self._batch_size)
+            shape = self.shape
+            seed = self._seed
+            shuffle_level = int(self._shuffle_level)
+            self._seed = None
+            # custom batch_size
+            start = _apply_approx(shape[0], self._start)
+            end = _apply_approx(shape[0], self._end)
+            if start > shape[0] or end > shape[0]:
+                raise ValueError('`start`={} or `end`={} excess `data_size`={}'
+                                 ''.format(start, end, shape[0]))
+            # ====== create batch ====== #
+            idx = list(range(start, end, batch_size))
+            if idx[-1] < end:
+                idx.append(end)
+            idx = list(zip(idx, idx[1:]))
+            # ====== shuffling the batch ====== #
+            if seed is None:
+                permutation_func = lambda x: x
+            else:
+                rand = np.random.RandomState(seed=seed)
+                rand.shuffle(idx)
+                if shuffle_level > 0: # shuffle with higher level
+                    permutation_func = lambda x: x[rand.permutation(x.shape[0])]
+                else: # no need for higher level shuffling
+                    permutation_func = lambda x: x
+            # this dummy return to make everything initialized
+            yield None
+            for start, end in idx:
+                x = self._data[start:end]
+                yield permutation_func(x)
+        # ====== create, init, and return the iteration ====== #
+        it = create_iteration()
         it.next()
         return it
 
@@ -477,14 +480,12 @@ class MutableData(Data):
     def __setitem__(self, x, y):
         raise NotImplementedError
 
-    # ==================== manipulation ==================== #
     def append(self, *arrays):
         raise NotImplementedError
 
     def prepend(self, *arrays):
         raise NotImplementedError
 
-    # ==================== abstract ==================== #
     def resize(self, shape):
         raise NotImplementedError
 
@@ -638,6 +639,11 @@ class NdarrayData(Data):
         if not isinstance(array, np.ndarray):
             raise ValueError('array must be instance of numpy ndarray')
         self._data = array
+        self._path = None
+        self._new_args = array
+
+    def restore_data(self):
+        self._data = self._new_args
 
     # ==================== abstract ==================== #
     def resize(self, shape):
@@ -853,12 +859,18 @@ class MmapData(Data):
                                 '(%d bytes).' % MmapData.MAXIMUM_HEADER_SIZE)
             f.write('%8d' % size)
             f.write(_)
-        # store variables
-        # print(_aligned_memmap_offset(dtype), shape, dtype)
         self._file = f
         self._data = np.memmap(f, dtype=dtype, shape=shape, mode=mode,
                                offset=_aligned_memmap_offset(dtype))
         self._path = path
+        self._new_args = path
+
+    def restore_data(self):
+        dtype, shape, f = MmapData.read_header(self.path, mode='r+',
+                                               return_file=True)
+        self._file = f
+        self._data = np.memmap(f, dtype=dtype, shape=shape, mode='r+',
+                               offset=_aligned_memmap_offset(dtype))
 
     def close(self):
         # Check if exist global instance
@@ -1128,7 +1140,7 @@ class Hdf5Data(Data):
 
     def __init__(self, dataset, hdf=None, dtype=None, shape=None):
         super(Hdf5Data, self).__init__()
-
+        raise Exception("Hdf5Data is under-maintanance!")
         # default chunks size is 32 (reduce complexity of the works)
         self._chunk_size = 32
         if isinstance(hdf, str):
@@ -1376,8 +1388,7 @@ class DataIterator(MutableData):
     # ==================== properties ==================== #
     @property
     def shape(self):
-        orig_shape = (len(self),) + self._data[0].shape[1:]
-        return _estimate_shape(orig_shape, self._transformer)
+        return (len(self),) + self._data[0].shape[1:]
 
     @property
     def array(self):
@@ -1387,8 +1398,7 @@ class DataIterator(MutableData):
                for i in self._data]
         idx = [(j[0], int(round(j[0] + i * (j[1] - j[0]))))
                for i, j in zip(self._distribution, idx)]
-        return self._transformer(
-            np.vstack([i[j[0]:j[1]] for i, j in zip(self._data, idx)]))
+        return np.vstack([i[j[0]:j[1]] for i, j in zip(self._data, idx)])
 
     def __len__(self):
         start = self._start
@@ -1474,104 +1484,109 @@ class DataIterator(MutableData):
         return self
 
     # ==================== main logic of batch iterator ==================== #
-    def _iter(self):
-        seed = self._seed; self._seed = None
-        if seed is not None:
-            rng = np.random.RandomState(seed)
-        else: # deterministic RandomState
-            rng = struct()
-            rng.randint = lambda x: None
-            rng.permutation = lambda x: slice(None, None)
-        # ====== easy access many private variables ====== #
-        sequential = self._sequential
-        start, end = self._start, self._end
-        batch_size = self._batch_size
-        distribution = np.asarray(self._distribution)
-        # shuffle order of data (good for sequential mode)
-        idx = rng.permutation(len(self._data))
-        data = self._data[idx] if isinstance(idx, slice) else [self._data[i] for i in idx]
-        distribution = distribution[idx]
-        shape = [i.shape[0] for i in data]
-        # ====== prepare distribution information ====== #
-        # number of sample should be traversed
-        n = np.asarray([i * (_apply_approx(j, end) - _apply_approx(j, start))
-                        for i, j in zip(distribution, shape)])
-        n = np.round(n).astype(int)
-        # normalize the distribution (base on new sample n of each data)
-        distribution = n / n.sum()
-        distribution = _approximate_continuos_by_discrete(distribution)
-        # somehow heuristic, rescale distribution to get more benifit from cache
-        if distribution.sum() <= len(data):
-            distribution = distribution * 3
-        # distribution now the actual batch size of each data
-        distribution = (batch_size * distribution).astype(int)
-        assert distribution.sum() % batch_size == 0, 'wrong distribution size!'
-        # predefined (start,end) pair of each batch (e.g (0,256), (256,512))
-        idx = list(range(0, batch_size + distribution.sum(), batch_size))
-        idx = list(zip(idx, idx[1:]))
-        # Dummy return to initialize everything
-        yield None
-        #####################################
-        # 1. optimized parallel code.
-        if not sequential:
-            # first iterators
-            it = [iter(dat.set_batch(bs, seed=rng.randint(10e8),
-                                     start=start, end=end,
-                                     shuffle_level=self._shuffle_level))
-                  for bs, dat in zip(distribution, data)]
-            # iterator
-            while sum(n) > 0:
-                batch = []
-                for i, x in enumerate(it):
-                    if n[i] <= 0:
-                        continue
+    def __iter__(self):
+        def create_iteration():
+            seed = self._seed; self._seed = None
+            if seed is not None:
+                rng = np.random.RandomState(seed)
+            else: # deterministic RandomState
+                rng = struct()
+                rng.randint = lambda x: None
+                rng.permutation = lambda x: slice(None, None)
+            # ====== easy access many private variables ====== #
+            sequential = self._sequential
+            start, end = self._start, self._end
+            batch_size = self._batch_size
+            distribution = np.asarray(self._distribution)
+            # shuffle order of data (good for sequential mode)
+            idx = rng.permutation(len(self._data))
+            data = self._data[idx] if isinstance(idx, slice) else [self._data[i] for i in idx]
+            distribution = distribution[idx]
+            shape = [i.shape[0] for i in data]
+            # ====== prepare distribution information ====== #
+            # number of sample should be traversed
+            n = np.asarray([i * (_apply_approx(j, end) - _apply_approx(j, start))
+                            for i, j in zip(distribution, shape)])
+            n = np.round(n).astype(int)
+            # normalize the distribution (base on new sample n of each data)
+            distribution = n / n.sum()
+            distribution = _approximate_continuos_by_discrete(distribution)
+            # somehow heuristic, rescale distribution to get more benifit from cache
+            if distribution.sum() <= len(data):
+                distribution = distribution * 3
+            # distribution now the actual batch size of each data
+            distribution = (batch_size * distribution).astype(int)
+            assert distribution.sum() % batch_size == 0, 'wrong distribution size!'
+            # predefined (start,end) pair of each batch (e.g (0,256), (256,512))
+            idx = list(range(0, batch_size + distribution.sum(), batch_size))
+            idx = list(zip(idx, idx[1:]))
+            # Dummy return to initialize everything
+            yield None
+            #####################################
+            # 1. optimized parallel code.
+            if not sequential:
+                # first iterators
+                it = [iter(dat.set_batch(bs, seed=rng.randint(10e8),
+                                         start=start, end=end,
+                                         shuffle_level=self._shuffle_level))
+                      for bs, dat in zip(distribution, data)]
+                # iterator
+                while sum(n) > 0:
+                    batch = []
+                    for i, x in enumerate(it):
+                        if n[i] <= 0:
+                            continue
+                        try:
+                            x = x.next()[:n[i]]
+                            n[i] -= x.shape[0]
+                            batch.append(x)
+                        except StopIteration: # one iterator stopped
+                            it[i] = iter(data[i].set_batch(distribution[i],
+                                seed=rng.randint(10e8), start=start, end=end,
+                                shuffle_level=self._shuffle_level))
+                            x = it[i].next()[:n[i]]
+                            n[i] -= x.shape[0]
+                            batch.append(x)
+                    # got final batch
+                    batch = np.vstack(batch)
+                    # no idea why random permutation is much faster than shuffle
+                    if self._shuffle_level > 0:
+                        batch = batch[rng.permutation(batch.shape[0])]
+                    # return the iterations
+                    for i, j in idx[:int(ceil(batch.shape[0] / batch_size))]:
+                        yield batch[i:j]
+            #####################################
+            # 2. optimized sequential code.
+            else:
+                # first iterators
+                batch_size = distribution.sum()
+                it = [iter(dat.set_batch(batch_size, seed=rng.randint(10e8),
+                                         start=start, end=end,
+                                         shuffle_level=self._shuffle_level))
+                      for dat in data]
+                current_data = 0
+                # iterator
+                while sum(n) > 0:
+                    if n[current_data] <= 0:
+                        current_data += 1
                     try:
-                        x = x.next()[:n[i]]
-                        n[i] -= x.shape[0]
-                        batch.append(x)
+                        x = it[current_data].next()[:n[current_data]]
+                        n[current_data] -= x.shape[0]
                     except StopIteration: # one iterator stopped
-                        it[i] = iter(data[i].set_batch(distribution[i],
-                            seed=rng.randint(10e8), start=start, end=end,
-                            shuffle_level=self._shuffle_level))
-                        x = it[i].next()[:n[i]]
-                        n[i] -= x.shape[0]
-                        batch.append(x)
-                # got final batch
-                batch = np.vstack(batch)
-                # no idea why random permutation is much faster than shuffle
-                if self._shuffle_level > 0:
-                    batch = batch[rng.permutation(batch.shape[0])]
-                # return the iterations
-                for i, j in idx[:int(ceil(batch.shape[0] / batch_size))]:
-                    yield self._transformer(batch[i:j])
-        #####################################
-        # 2. optimized sequential code.
-        else:
-            # first iterators
-            batch_size = distribution.sum()
-            it = [iter(dat.set_batch(batch_size, seed=rng.randint(10e8),
-                                     start=start, end=end,
-                                     shuffle_level=self._shuffle_level))
-                  for dat in data]
-            current_data = 0
-            # iterator
-            while sum(n) > 0:
-                if n[current_data] <= 0:
-                    current_data += 1
-                try:
-                    x = it[current_data].next()[:n[current_data]]
-                    n[current_data] -= x.shape[0]
-                except StopIteration: # one iterator stopped
-                    it[current_data] = iter(data[current_data].set_batch(batch_size, seed=rng.randint(10e8),
-                                        start=start, end=end,
-                                        shuffle_level=self._shuffle_level))
-                    x = it[current_data].next()[:n[current_data]]
-                    n[current_data] -= x.shape[0]
-                # shuffle x
-                if self._shuffle_level > 0:
-                    x = x[rng.permutation(x.shape[0])]
-                for i, j in idx[:int(ceil(x.shape[0] / self._batch_size))]:
-                    yield self._transformer(x[i:j])
+                        it[current_data] = iter(data[current_data].set_batch(batch_size, seed=rng.randint(10e8),
+                                            start=start, end=end,
+                                            shuffle_level=self._shuffle_level))
+                        x = it[current_data].next()[:n[current_data]]
+                        n[current_data] -= x.shape[0]
+                    # shuffle x
+                    if self._shuffle_level > 0:
+                        x = x[rng.permutation(x.shape[0])]
+                    for i, j in idx[:int(ceil(x.shape[0] / self._batch_size))]:
+                        yield x[i:j]
+        # ====== create and return the iteration ====== #
+        it = create_iteration()
+        it.next()
+        return it
 
     # ==================== Slicing methods ==================== #
     def __getitem__(self, y):
@@ -1635,8 +1650,8 @@ class DataMerge(MutableData):
     @property
     def shape(self):
         shape = [i.shape for i in self._data]
-        return _estimate_shape(shape,
-                               lambda x: self._transformer(self._merge_func(x)))
+        raise NotImplementedError
+        return shape, self._merge_func(x)
 
     @property
     def dtype(self):
@@ -1646,7 +1661,7 @@ class DataMerge(MutableData):
 
     @property
     def array(self):
-        return self._transformer(self._merge_func([i[:] for i in self._data]))
+        return self._merge_func([i[:] for i in self._data])
 
     # ==================== Slicing methods ==================== #
     def __getitem__(self, y):
@@ -1654,7 +1669,7 @@ class DataMerge(MutableData):
         data = [i.__getitem__(y) if len(i.shape) > 0 and i.shape[0] == n else i
                 for i in self._data]
         x = self._merge_func(data)
-        return self._transformer(x)
+        return x
 
     # ==================== iteration ==================== #
     def _iter(self):
@@ -1692,4 +1707,4 @@ class DataMerge(MutableData):
             data = self._merge_func([i[j] for i, j in zip(self._data, b)])
             if self._shuffle_level > 0 and rng is not None:
                 data = data[rng.permutation(data.shape[0])]
-            yield self._transformer(data)
+            yield data

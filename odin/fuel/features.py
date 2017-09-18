@@ -18,7 +18,7 @@ from six import add_metaclass, string_types
 from six.moves import zip, zip_longest, range, cPickle
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-from collections import defaultdict
+from collections import defaultdict, Mapping
 import numpy as np
 
 from odin.ml import MiniBatchPCA
@@ -337,7 +337,8 @@ class FeatureProcessor(object):
         if self.save_stats:
             for n, d, s in self.features_properties:
                 if s: # save stats
-                    prog.add_notification('Saving statistics of: %s' % n)
+                    prog.add_notification('Saving statistics of: %s' %
+                                          ctext(n, 'yellow'))
                     s1, s2 = sum1[n], sum2[n],
                     if self.pca and n not in self.excluded_pca:
                         pca_ = pca[n]
@@ -903,12 +904,11 @@ class SpeechProcessor(FeatureProcessor):
         if get_f0: features_properties.append(('f0', dtype, True))
         if get_vad:
             features_properties.append(('vad', 'uint8', False))
-            features_properties.append(('vadids', 'dict', False))
         # store the sample rate of each file also
         features_properties.append(('sr', 'dict', False))
         self._features_properties = features_properties
         # control FeatureProcessor behaviour
-        self._external_indices = ['vadids']
+        self._external_indices = []
         self._excluded_pca = ['energy', 'vad']
         # ====== local variable ====== #
         self.get_spec = get_spec
@@ -1248,7 +1248,7 @@ class VideoFeature(FeederRecipe):
         self.jobs = sorted(self.jobs.items(), key=lambda x: x[0])
         # ====== load bounding box ====== #
         if self.boundingbox is not None:
-            if not isinstance(self.boundingbox, dict):
+            if not isinstance(self.boundingbox, Mapping):
                 raise ValueError('Bounding box must be a dictionary')
             if set(names) != set(self.boundingbox.keys()):
                 raise Exception('Segments names and boundingbox keys mismatch.')

@@ -42,25 +42,17 @@ indices = ds['indices'].items()
 K.get_rng().shuffle(indices)
 # ====== gender and single digit distribution ====== #
 gender_digits = defaultdict(int)
-spk = []
-dia = []
-age = []
 for name, (start, end) in indices:
     name = name.split('_')
     if len(name[-1]) == 1:
         gender_digits[name[1] + '-' + name[-1]] += 1
-        age.append(name[2])
-        dia.append(name[3])
-        spk.append(name[4])
 gender_digits = sorted(gender_digits.items(), key=lambda x: x[0][0])
 print(print_dist(gender_digits, show_number=True))
-print(len(set(spk)), len(set(dia)), len(set(age)))
-print(set(age))
-exit()
 # ====== length ====== #
 length = [(end - start) / ds['sr'][_] for _, (start, end) in indices]
-print(print_hist(length, bincount=30, showSummary=True, title="Duration"))
+print(print_hist(length, bincount=30, showSummary=True, title="Duration (s)"))
 length = max(length)
+
 # ====== genders ====== #
 f_gender, genders = unique_labels([i[0] for i in indices],
                                   lambda x: x.split('_')[1], True)
@@ -88,16 +80,19 @@ print("#File test:", len(test))
 recipes = [
     F.recipes.Name2Trans(converter_func=f_gender),
     F.recipes.LabelOneHot(nb_classes=len(genders)),
-    F.recipes.Sequencing(frame_length=length, hop_length=1,
+    F.recipes.Sequencing(frame_length=400, hop_length=1,
                          end='pad', endmode='post', endvalue=0)
 ]
-feeder_train = F.Feeder(ds[FEAT], indices=train, ncpu=6, batch_mode='batch')
+feeder_train = F.Feeder(ds[FEAT], indices=train, ncpu=1, batch_mode='batch')
 feeder_valid = F.Feeder(ds[FEAT], indices=valid, ncpu=6, batch_mode='batch')
 feeder_test = F.Feeder(ds[FEAT], indices=test, ncpu=4, batch_mode='file')
 
 feeder_train.set_recipes(recipes)
 feeder_valid.set_recipes(recipes)
 feeder_test.set_recipes(recipes)
+for X, y in feeder_train:
+    print(X.shape, y.shape)
+exit()
 # ===========================================================================
 # Create model
 # ===========================================================================

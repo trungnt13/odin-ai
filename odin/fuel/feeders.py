@@ -27,17 +27,19 @@ from __future__ import print_function, division, absolute_import
 import os
 import shutil
 from six.moves import zip, zip_longest, range
+from collections import Mapping
 
 import numpy as np
 
 from odin.utils import (segment_list, one_hot, flatten_list, is_string,
                         Progbar, UnitTimer, get_system_status, batching,
-                        get_process_status, SharedCounter, as_tuple)
-from odin.utils.mpi import MPI
+                        get_process_status, SharedCounter, as_tuple, ctext)
+from odin.utils.mpi import MPI, async
 
 from .data import MutableData, as_data
 from .dataset import Dataset
 from .recipes import FeederList, FeederRecipe
+from .utils import NoSQL
 
 
 # ===========================================================================
@@ -122,19 +124,166 @@ def _weird_grouping(batch):
     pass
 
 # ===========================================================================
-# Multiprocessing Feeders
+# DataDescriptor
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
+_indices_dtype = [('name', 'object'), ('start', 'i4'), ('end', 'i4')]
 
 
-def _dump_data_info(data):
-    raise NotImplementedError
+def _preprocessing_indices(indices):
+    """ Three different kind of indices:
+    * file: load from csv file with ' ' (i.e. space as separator)
+    * array: numpy array
+    * nosql: instance of NoSQL
+    """
+    # store information for reloading the indices
+    indices_info = None
+    # indices always sorted in [(name, start, end), ...]
+    if isinstance(indices, str) and os.path.isfile(indices):
+        indices = np.genfromtxt(indices, dtype=_indices_dtype, delimiter=' ')
+        indices_info = ('file', str(indices))
+    # list or tuple form: (name, (start, end))
+    elif isinstance(indices, (tuple, list, np.ndarray)):
+        if len(indices[0]) == 2:
+            indices = [(name, start, end) for name, (start, end) in indices]
+        indices = np.array(indices, dtype=_indices_dtype)
+        indices_info = ('array', indices)
+    # dictionary: name -> (start, end) or (name, start, end)
+    elif isinstance(indices, Mapping):
+        if isinstance(indices, NoSQL):
+            indices_info = ('nosql', indices)
+        indices = np.array([i if len(i) == 3 else (i[0], i[1][0], i[1][1])
+                            for i in indices.iteritems()],
+                           dtype=_indices_dtype)
+        if indices_info is None:
+            indices_info = ('array', indices)
+    else:
+        raise ValueError('Unsupport `indices` type: "%s".' % type(indices))
+    return indices, indices_info
 
 
-def _load_data_info(info):
-    raise NotImplementedError
+class DataDescriptor(MutableData):
+
+    def __init__(self, data, indices):
+        super(DataDescriptor, self).__init__()
+        # ====== load indices ====== #
+        self._indices_loader = async(_preprocessing_indices,
+            callback=lambda result: self._loaded_callback())(indices)
+        self._indices_info = None
+        self._indices = None
+        # ====== Load data ====== #
+        if not isinstance(data, (tuple, list)):
+            data = (data,)
+        data = tuple([as_data(d) for d in data])
+        # check all data have the same shape[0]
+        length = len(data[0])
+        if any(d.shape[0] != length for d in data):
+            raise ValueError('All Data must have the same length '
+                             '(i.e. shape[0]), the given data have '
+                             'shape: %s' % str([d.shape for d in data]))
+        self._data = data
+        # ====== states variables ====== #
+        self._length = None
+        # if True return name during __iter__
+        self._return_name = False
+
+    # ==================== specials ==================== #
+    def merge(self, *desc):
+        """Merge multiple DataDescriptor into 1"""
+        desc = [d for d in desc if isinstance(d, DataDescriptor)]
+        # ====== get all data ====== #
+        all_data = []
+        for d in desc:
+            all_data += d.data
+        # ====== merge indces ====== #
+        new_indices = []
+        return DataDescriptor(data=all_data, indices=new_indices)
+
+    # ==================== Properties ==================== #
+    @property
+    def indices_info(self):
+        if self._indices_info is None:
+            self._indices, self._indices_info = self._indices_loader.get()
+        return self._indices_info
+
+    @property
+    def indices(self):
+        if self._indices is None:
+            self._indices, self._indices_info = self._indices_loader.get()
+        return self._indices
+
+    @property
+    def nb_files(self):
+        return len(self._indices)
+
+    # ==================== pickling ==================== #
+    def _loaded_callback(self):
+        self._new_args = (self.indices_info, self.data)
+
+    def restore_data(self):
+        if self._new_args is None:
+            raise RuntimeError("Indices have not been loaded before calling "
+                               "cPickle.dump on this class.")
+        self._indices_info, self._data = self._new_args
+        # deserialize indices
+        ids_type, info = self._indices_info
+        if ids_type == 'array':
+            self._indices = info
+        elif ids_type == 'file':
+            self._indices = np.genfromtxt(info, dtype=_indices_dtype,
+                                          delimiter=' ')
+        elif ids_type == 'nosql':
+            self._indices = info
+
+    # ==================== override from Data ==================== #
+    @property
+    def shape(self):
+        """ This is just an "UPPER" estimation, some data points might be lost
+        during preprocessing each indices by recipes.
+        """
+        if self._length is None:
+            self._length = sum((end - start)
+                               for name, start, end in self.indices)
+        ret_shape = [(self._length,) + d.shape[1:]
+                     for d in self.data]
+        return ret_shape[0] if len(ret_shape) == 1 else tuple(ret_shape)
+
+    def __str__(self):
+        name = ctext('DataDescriptor', 'cyan')
+        s = '<%s: Indices(type:"%s" length:%d)>\n' % \
+            (name, self.indices_info[0], len(self.indices))
+        for dat in self.data:
+            s += '   (%s)%s: %s %s\n' % \
+                (dat.__class__.__name__,
+                    ctext(str(dat.path), 'yellow'),
+                    dat.shape, str(dat.dtype))
+        return s[:-1]
+
+    # ==================== Strings ==================== #
+    def set_return_name(self, return_name):
+        self._return_name = bool(return_name)
+        return self
+
+    def __iter__(self):
+        def _create_iter():
+            ret_name = bool(self._return_name)
+            yield None # just return for initialize the iteration
+            for name, start, end in self.indices:
+                dat = [d[start: end] for d in self.data]
+                if ret_name:
+                    dat = [name] + dat
+                yield dat[0] if len(dat) == 1 else dat
+        it = _create_iter()
+        it.next()
+        return it
+
+    def __del__(self):
+        pass
 
 
+# ===========================================================================
+# Multiprocessing Feeder
+# ===========================================================================
 class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
@@ -217,7 +366,7 @@ class Feeder(MutableData):
             self._indices = np.asarray(indices)
         elif isinstance(indices, np.ndarray):
             self._indices = indices
-        elif isinstance(indices, dict): # name -> (start, end)
+        elif isinstance(indices, Mapping): # name -> (start, end)
             self._indices = np.asarray([as_tuple(i) + as_tuple(j)
                                         for i, j in indices.iteritems()])
         else:
@@ -239,7 +388,7 @@ class Feeder(MutableData):
         # ====== cache shape information ====== #
         # store first dimension
         self.__cache_indices_id = id(self._indices)
-        self.__cache_shape = None
+        self._cache_shape = None
         self.__running_iter = []
         # ====== batch mode ====== #
         if batch_filter is None:
@@ -254,6 +403,7 @@ class Feeder(MutableData):
                              "given value: '%s'" % batch_mode)
         self._batch_mode = batch_mode
 
+    # ==================== pickling ==================== #
     def __getstate__(self):
         return (_dump_data_info(self._data), self._indices, self._outtype,
                 self._recipes, self.ncpu, self.buffer_size,
@@ -265,9 +415,10 @@ class Feeder(MutableData):
          self.maximum_queue_size) = states
         self._data = _load_data_info(data)
         self.__cache_indices_id = id(self._indices)
-        self.__cache_shape = None
+        self._cache_shape = None
         self.__running_iter = []
 
+    # ==================== multiprocessing ==================== #
     def set_multiprocessing(self, ncpu=None, buffer_size=None, maximum_queue_size=None):
         if ncpu is not None:
             self.ncpu = ncpu
@@ -324,7 +475,7 @@ class Feeder(MutableData):
         during preprocessing each indices by recipes.
         """
         # ====== first time calculate the shape ====== #
-        if self.__cache_shape is None or id(self._indices) != self.__cache_indices_id:
+        if self._cache_shape is None or id(self._indices) != self.__cache_indices_id:
             indices = {name: int(end) - int(start)
                        for name, start, end in self._indices}
             n = sum(indices.itervalues())
@@ -333,10 +484,10 @@ class Feeder(MutableData):
             if len(shape) == 1:
                 shape = shape[0]
             self.__cache_indices_id = id(self._indices)
-            self.__cache_shape = shape
+            self._cache_shape = shape
         # ====== get the cached shape ====== #
         else:
-            shape = self.__cache_shape
+            shape = self._cache_shape
         return tuple(shape)
 
     def __str__(self):

@@ -12,7 +12,7 @@ from array import array
 from six.moves import builtins
 
 from collections import OrderedDict, defaultdict
-from collections import MutableMapping
+from collections import MutableMapping, Mapping
 from functools import wraps, partial
 from six.moves import zip, zip_longest, cPickle
 import types
@@ -324,8 +324,8 @@ def str_to_func(s, sandbox=None):
         raise ValueError("Unsupport str_to_func for type:%s" % type(s))
     code = marshal.loads(cPickle.loads(code).tostring())
     func = types.FunctionType(code=code, name=code.co_name,
-                              globals=sandbox if isinstance(sandbox, dict) else globals(),
-                              closure=closure, argdefs=defaults)
+                globals=sandbox if isinstance(sandbox, Mapping) else globals(),
+                closure=closure, argdefs=defaults)
     return func
 
 
@@ -376,9 +376,9 @@ def _serialize_function_sandbox(function, source):
             elif val is None:
                 val = None
                 typ = 'None'
-            elif isinstance(val, dict) and 'MmapDict' in typ.__name__:
+            elif isinstance(val, Mapping):
                 val = cPickle.dumps(val, protocol=cPickle.HIGHEST_PROTOCOL)
-                typ = 'MmapDict'
+                typ = 'Mapping'
             elif inspect.isfunction(val): # special case: function
                 # function might nested, so cannot find it in globals()
                 if val == function:
@@ -429,7 +429,7 @@ def _deserialize_function_sandbox(sandbox):
                 # exec("from edward.models import %s as %s" % (val, name))
             elif typ == 'function_type':
                 val = types.FunctionType
-            elif typ == 'MmapDict':
+            elif typ == 'Mapping':
                 val = cPickle.loads(val)
             elif typ == 'ndarray':
                 val = np.fromstring(val[0], dtype=val[1])

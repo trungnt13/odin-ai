@@ -432,6 +432,8 @@ class NNOp(object):
         self._is_initialized = False
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
         self._variable_info = OrderedDict()
+        # special flags to detect if cPickle called with protocol >= 2
+        self._new_args_called = False
 
     def _check_input_desc(self, inputs):
         inputs = [VariableDescriptor(shape=i) for i in as_tuple(inputs)]
@@ -448,9 +450,15 @@ class NNOp(object):
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
+        if not self._new_args_called:
+            raise RuntimeError(
+                "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
+                "when using `pickle` or `cPickle` to be able pickling NNOp.")
+        self._new_args_called = False
         return self._save_states
 
     def __setstate__(self, states):
+        self._new_args_called = False
         self._save_states = states
         for key, val in self._save_states.iteritems():
             setattr(self, key, val)
@@ -463,10 +471,12 @@ class NNOp(object):
             # cannot find '[__name__]' due to not specify protocol
             # hence the __getnewargs__ is not called
             elif NNOp._ALL_NNOPS[name] != self:
-                raise RuntimeError("You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
-                    "when using `pickle` or `cPickle` to be able pickling NNOp.")
+                raise RuntimeError("Mismatch NNOp, two NNOps with the same name "
+                                   "are initizlied:\n%s\nis different from:\n%s" %
+                                   (str(NNOp._ALL_NNOPS[name]), str(self)))
 
     def __getnewargs__(self):
+        self._new_args_called = True
         return ('[__name__]' + self.name,)
 
     # ==================== properties ==================== #

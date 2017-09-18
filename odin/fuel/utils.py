@@ -1,25 +1,205 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import io
 import mmap
 import marshal
 import sqlite3
-from six.moves import cPickle
 from itertools import chain
+from six import add_metaclass
+from six.moves import cPickle
 from contextlib import contextmanager
-from collections import OrderedDict, Iterator, defaultdict
-import io
+from abc import ABCMeta, abstractmethod, abstractproperty
+from collections import OrderedDict, Iterator, defaultdict, MutableMapping, Mapping
 
 import numpy as np
 
 from odin.config import get_rng
-from odin.utils import async, is_string, ctext
+from odin.utils import async, is_string, ctext, as_tuple
+
+
+@add_metaclass(ABCMeta)
+class NoSQL(MutableMapping):
+    _INSTANCES = defaultdict(dict)
+
+    def __new__(subclass, path, read_only=False, cache_size=250,
+                *args, **kwargs):
+        if not is_string(path):
+            raise ValueError("`path` for MmapDict must be string, but given "
+                             "object with type: %s" % type(path))
+        path = os.path.abspath(path)
+        read_only = bool(read_only)
+        cache_size = int(cache_size)
+        # get stored instances
+        all_instances = NoSQL._INSTANCES[subclass.__name__]
+        # ====== Found pre-defined instance ====== #
+        if path in all_instances:
+            return all_instances[path]
+        # ====== Create new instance ====== #
+        new_instance = super(NoSQL, subclass).__new__(
+            subclass, path, read_only, cache_size, *args, **kwargs)
+        all_instances[path] = new_instance
+        # some pre-defined attribute
+        new_instance._cache_size = cache_size
+        new_instance._read_only = read_only
+        new_instance._new_args_called = False
+        new_instance._path = path
+        new_instance._is_closed = False
+        return new_instance
+
+    def __init__(self, path, read_only=False, cache_size=250,
+                 override=False):
+        super(NoSQL, self).__init__()
+        # ====== check override ====== #
+        if override and os.path.exists(path) and os.path.isfile(path):
+            os.remove(path)
+        # ====== init ====== #
+        self._restore_dict(self.path, self.read_only, self.cache_size)
+
+    # ==================== abstract methods ==================== #
+    @abstractmethod
+    def _restore_dict(self, path, read_only, cache_size):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _close(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _flush(self, save_all):
+        raise NotImplementedError
+
+    # ==================== pickling ==================== #
+    def __getstate__(self):
+        if not self._new_args_called:
+            raise RuntimeError(
+                "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
+                "when using `pickle` or `cPickle` to be able pickling NNOp.")
+        self._new_args_called = False
+        return self.path, self.read_only, self.cache_size
+
+    def __setstate__(self, states):
+        path, read_only, cache_size = states
+        if not os.path.exists(path):
+            raise ValueError("Cannot find store NoSQL database at path: %s."
+                             "If you have moved the database, the dumps from "
+                             "cannot restore the previous intance." % path)
+        self._restore_dict(path, read_only, cache_size)
+        self._path = path
+        self._read_only = read_only
+        self._cache_size = cache_size
+
+    def __getnewargs__(self):
+        self._new_args_called = True
+        return (self.path,)
+
+    # ==================== Abstract properties ==================== #
+    @property
+    def cache_size(self):
+        return self._cache_size
+
+    @property
+    def read_only(self):
+        return self._read_only
+
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def is_closed(self):
+        return self._is_closed
+
+    def close(self):
+        if self._is_closed:
+            return
+        self._is_closed = True
+        # check if in read only mode
+        if not self.read_only:
+            self.flush(save_all=True)
+        # delete Singleton instance
+        del NoSQL._INSTANCES[self.__class__.__name__][self.path]
+        self._close()
+
+    def flush(self, save_all=False):
+        if self.read_only or self.is_closed:
+            return
+        self._flush(save_all=bool(save_all))
+        return self
+
+    # ==================== dictionary methods ==================== #
+    def set(self, key, value):
+        self.__setitem__(key, value)
+        return self
+
+    @abstractmethod
+    def __setitem__(self, key, value):
+        raise NotImplementedError
+
+    @abstractmethod
+    def __getitem__(self, key):
+        raise NotImplementedError
+
+    @abstractmethod
+    def __delitem__(self, key):
+        raise NotImplementedError
+
+    @abstractmethod
+    def __len__(self):
+        raise NotImplementedError
+
+    def __iter__(self):
+        return self.iteritems()
+
+    def keys(self):
+        return list(self.iterkeys())
+
+    @abstractmethod
+    def iterkeys(self):
+        raise NotImplementedError
+
+    def values(self):
+        return list(self.itervalues())
+
+    @abstractmethod
+    def itervalues(self):
+        raise NotImplementedError
+
+    def items(self):
+        return list(self.iteritems())
+
+    @abstractmethod
+    def iteritems(self):
+        raise NotImplementedError
+
+    def __del__(self):
+        self.close()
+
+    def __repr__(self):
+        return str(self)
+
+    def update(*args, **kwargs):
+        self = args[0]
+        if self.read_only:
+            return self
+        return super(NoSQL, self).update(*args, **kwargs)
+
+    def clear(self):
+        if self.read_only:
+            return self
+        return super(NoSQL, self).clear()
+
+    def __cmp__(self, d):
+        if isinstance(d, NoSQL):
+            return self.path == d.path
+        raise ValueError("Cannot compare NoSQL to other type (i.e. %s)"
+                         % d.__class__.__name__)
 
 
 # ===========================================================================
 # MmapDict
 # ===========================================================================
-class MmapDict(dict):
+class MmapDict(NoSQL):
     """ MmapDict
     Handle enormous dictionary (up to thousand terabytes of data) in
     memory mapped dictionary, extremely fast to load, and for randomly access.
@@ -43,38 +223,8 @@ class MmapDict(dict):
     SIZE_BYTES = 48
     # the indices are flushed after it is increased this amount of size
     MAX_INDICES_SIZE = 25 # in megabyte
-    __INSTANCES = {}
 
-    def __new__(clazz, *args, **kwargs):
-        path = kwargs.get('path', None)
-        if path is None:
-            path = args[0]
-        if not is_string(path):
-            raise ValueError("`path` for MmapDict must be string, but given "
-                             "object with type: %s" % type(path))
-        path = os.path.abspath(path)
-        # Found old instance
-        if path in MmapDict.__INSTANCES:
-            return MmapDict.__INSTANCES[path]
-        # new MmapDict
-        new_instance = super(MmapDict, clazz).__new__(clazz, *args, **kwargs)
-        MmapDict.__INSTANCES[path] = new_instance
-        return new_instance
-
-    def __init__(self, path, cache_size=250,
-                 read_only=False, override=False):
-        super(MmapDict, self).__init__()
-        # ====== check override ====== #
-        if override and os.path.exists(path):
-            os.remove(path)
-        # ====== init ====== #
-        self.__init(path, cache_size, read_only)
-
-    def __init(self, path, cache_size, read_only):
-        path = os.path.abspath(path)
-        self._path = path
-        self.read_only = bool(read_only)
-        self.cache_size = int(cache_size)
+    def _restore_dict(self, path, read_only, cache_size):
         # ====== already exist ====== #
         if os.path.exists(path) and os.path.getsize(path) > 0:
             file = open(str(path), mode='r+')
@@ -108,42 +258,17 @@ class MmapDict(dict):
         self._file = file
         self._mmap = mmap.mmap(file.fileno(), length=0, offset=0,
                                flags=mmap.MAP_SHARED)
+        self._increased_indices_size = 0. # in MB
         # store all the (key, value) recently added
         self._cache_dict = {}
-        self._increased_indices_size = 0.
-        self._is_closed = False
 
-    # ==================== pickling ==================== #
-    def __setstate__(self, states):
-        raise NotImplementedError
+    def _close(self):
+        self._mmap.close()
+        self._file.close()
+        del self._indices_dict
+        del self._cache_dict
 
-    def __getstate__(self):
-        return self.path
-
-    # ==================== I/O methods ==================== #
-    @property
-    def indices(self):
-        if not isinstance(self._indices_dict, dict):
-            self._indices_dict = self._indices_dict.get()
-        return self._indices_dict
-
-    @property
-    def is_loaded(self):
-        if self.is_closed:
-            return False
-        if not isinstance(self._indices_dict, dict):
-            return self._indices_dict.finished
-        return True
-
-    @property
-    def is_closed(self):
-        return self._is_closed
-
-    @property
-    def path(self):
-        return self._path
-
-    def flush(self, save_indices=False):
+    def _flush(self, save_all=False):
         """
         Parameters
         ----------
@@ -172,7 +297,7 @@ class MmapDict(dict):
             self._increased_indices_size += (8 + 8 + len(key)) / 1024. / 1024.
         # ====== write the dumped indices ====== #
         indices_length = 0
-        if save_indices or \
+        if save_all or \
         self._increased_indices_size > MmapDict.MAX_INDICES_SIZE:
             indices_dump = cPickle.dumps(self.indices,
                                          protocol=cPickle.HIGHEST_PROTOCOL)
@@ -196,35 +321,29 @@ class MmapDict(dict):
         del self._cache_dict
         self._cache_dict = {}
 
-    def close(self):
-        # check if closed
-        if self._is_closed:
-            return
-        # check if in read only mode
-        if not self.read_only:
-            self.flush(save_indices=True)
-        # remove global instance
-        del MmapDict.__INSTANCES[self.path]
-        self._mmap.close()
-        self._file.close()
-        self._is_closed = True
-        del self._indices_dict
-        del self._cache_dict
+    # ==================== I/O methods ==================== #
+    @property
+    def indices(self):
+        if not isinstance(self._indices_dict, Mapping):
+            self._indices_dict = self._indices_dict.get()
+        return self._indices_dict
 
-    def __del__(self):
-        self.close()
+    @property
+    def is_loaded(self):
+        if self.is_closed:
+            return False
+        if not isinstance(self._indices_dict, Mapping):
+            return self._indices_dict.finished
+        return True
 
     def __str__(self):
         length = None if self.is_closed else \
             str(len(self.indices) + len(self._cache_dict))
         cache_length = 'None' if self.is_closed else \
             str(len(self._cache_dict))
-        fmt = '<MmapDict path:"%s", length:%s/%s, loaded:%s, closed:%s>'
+        fmt = '<MmapDict path:"%s", length:%s/%s, loaded:%s, closed:%s, read_only:%s>'
         return fmt % (self.path, length, cache_length,
-                      self.is_loaded, self.is_closed)
-
-    def __repr__(self):
-        return str(self)
+                      self.is_loaded, self.is_closed, self.read_only)
 
     # ==================== Dictionary ==================== #
     def __setitem__(self, key, value):
@@ -235,9 +354,6 @@ class MmapDict(dict):
         self._cache_dict[key] = value
         if len(self._cache_dict) > self.cache_size:
             self.flush()
-
-    def __iter__(self):
-        return self.iteritems()
 
     def __getitem__(self, key):
         if key in self._cache_dict:
@@ -261,34 +377,15 @@ class MmapDict(dict):
         else:
             del self.indices[key]
 
-    def __cmp__(self, d):
-        if isinstance(d, MmapDict):
-            return (self.indices == d.indices and
-                    self._cache_dict == d._cache_dict)
-        else:
-            for key, value in self.iteritems():
-                if key not in d or d[key] != value:
-                    return False
-            return True
-
-    def keys(self):
-        return list(self.iterkeys())
-
     def iterkeys(self):
         return chain(self.indices.iterkeys(), self._cache_dict.iterkeys())
 
-    def values(self):
-        return list(self.itervalues())
-
-    def itervalues(self, shuffle=False):
+    def itervalues(self):
         for name, (start, size) in self.indices.iteritems():
             self._mmap.seek(start)
             yield marshal.loads(self._mmap.read(size))
         for val in self._cache_dict.itervalues():
             yield val
-
-    def items(self):
-        return list(self.iteritems())
 
     def iteritems(self):
         for name, (start, size) in self.indices.iteritems():
@@ -296,25 +393,6 @@ class MmapDict(dict):
             yield name, marshal.loads(self._mmap.read(size))
         for key, val in self._cache_dict.itervalues():
             yield key, val
-
-    def clear(self):
-        if self.read_only:
-            return
-        self.indices.clear()
-        self._cache_dict.clear()
-        return self
-
-    def copy(self):
-        raise NotImplementedError
-
-    def update(self, items):
-        if self.read_only:
-            return
-        if isinstance(items, dict):
-            items = items.iteritems()
-        # ====== check if update is in cache ====== #
-        for key, value in items:
-            self.__setitem__(key, value)
 
 
 # ===========================================================================
@@ -337,13 +415,13 @@ def _convert_array(text):
     return np.load(out)
 
 
-class TableDict(dict):
+class TableDict(MutableMapping):
 
     def __init__(self, sqlite, table_name):
         if not isinstance(sqlite, SQLiteDict):
             raise ValueError("`sqlite` must be instance of SQLiteDict")
         self._sqlite = sqlite
-        self._table_name = str(table_name)
+        self._name = str(table_name)
 
     @contextmanager
     def table_context(self):
@@ -359,30 +437,11 @@ class TableDict(dict):
 
     @property
     def name(self):
-        return self._table_name
-
-    def set_cache_size(self, cache_size):
-        self._sqlite.set_cache_size(cache_size)
-        return self
+        return self._name
 
     def flush(self):
         with self.table_context():
             self._sqlite.flush()
-
-    # ==================== pickling and properties ==================== #
-    def __setstate__(self, states):
-        raise NotImplementedError
-
-    def __getstate__(self):
-        return self.path
-
-    def __str__(self):
-        return
-        '<' + ctext('TableDict: ', 'red') + 'name:"%s" path:"%s" db:%d cache:%d>' % \
-        (self.name, self.path, len(self), len(self.sqlite._cache[self.name]))
-
-    def __repr__(self):
-        return str(self)
 
     @property
     def connection(self):
@@ -399,6 +458,21 @@ class TableDict(dict):
     @property
     def is_closed(self):
         return self._sqlite.is_closed
+
+    # ==================== pickling and properties ==================== #
+    def __setstate__(self, states):
+        self._sqlite, self._name = states
+
+    def __getstate__(self):
+        return self.sqlite, self.name
+
+    def __str__(self):
+        return
+        '<' + ctext('TableDict: ', 'red') + 'name:"%s" path:"%s" db:%d cache:%d>' % \
+        (self.name, self.path, len(self), len(self.sqlite._cache[self.name]))
+
+    def __repr__(self):
+        return str(self)
 
     # ==================== Dictionary ==================== #
     def set(self, key, value):
@@ -467,7 +541,7 @@ class TableDict(dict):
         return self
 
 
-class SQLiteDict(dict):
+class SQLiteDict(NoSQL):
     """ Using SQLite in key-value pair manner
 
     Example
@@ -505,39 +579,12 @@ class SQLiteDict(dict):
     """
 
     _DEFAULT_TABLE = '_default_'
-    __INSTANCES = {}
 
-    def __new__(clazz, *args, **kwargs):
-        path = kwargs.get('path', None)
-        if path is None:
-            path = args[0]
-        if not is_string(path):
-            raise ValueError("`path` for MmapDict must be string, but given "
-                             "object with type: %s" % type(path))
-        path = os.path.abspath(path)
-        # Found old instance
-        if path in SQLiteDict.__INSTANCES:
-            return SQLiteDict.__INSTANCES[path]
-        # new MmapDict
-        new_instance = super(SQLiteDict, clazz).__new__(clazz, *args, **kwargs)
-        SQLiteDict.__INSTANCES[path] = new_instance
-        return new_instance
-
-    def __init__(self, path, cache_size=250, read_only=False, override=False):
-        super(SQLiteDict, self).__init__()
-        path = os.path.abspath(path)
-        # ====== check override ====== #
-        if override and os.path.exists(path):
-            os.remove(path)
-        self._path = path
-        self.read_only = read_only
-        self._is_closed = False
-        # ====== cache mechanism ====== #
-        self._cache_size = int(cache_size)
+    def _restore_dict(self, path, read_only, cache_size):
+        # specific cache dictionary for each table
         self._cache = defaultdict(dict)
         # ====== db manager ====== #
-        # detect_types=sqlite3.PARSE_DECLTYPES
-        self._conn = sqlite3.connect(path)
+        self._conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
         self._conn.text_factory = str
         self._cursor = self._conn.cursor()
         # adjust pragma
@@ -550,11 +597,26 @@ class SQLiteDict(dict):
         self._current_table = SQLiteDict._DEFAULT_TABLE
         self.set_table(SQLiteDict._DEFAULT_TABLE)
 
-    # ==================== DB manager ==================== #
-    def set_cache_size(self, cache_size):
-        self._cache_size = int(cache_size)
-        return self
+    def _flush(self, save_all=False):
+        curr_tab = self.current_table
+        tables = self.get_all_tables() if save_all else [curr_tab]
+        for tab in tables:
+            self.set_table(tab)
+            if len(self.current_cache) > 0:
+                self.cursor.executemany(
+                    "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
+                    [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
+                      else marshal.dumps(v))
+                     for k, v in self.current_cache.iteritems()])
+                self.connection.commit()
+                self.current_cache.clear()
+        # restore the last table
+        return self.set_table(curr_tab)
 
+    def _close(self):
+        self._conn.close()
+
+    # ==================== DB manager ==================== #
     def as_table(self, table_name):
         return TableDict(self, table_name)
 
@@ -611,43 +673,7 @@ class SQLiteDict(dict):
                 raise e
         return True
 
-    def flush(self, all_tables=False):
-        curr_tab = self.current_table
-        tables = self.get_all_tables() if all_tables else [curr_tab]
-        for tab in tables:
-            self.set_table(tab)
-            if not self.read_only and len(self.current_cache) > 0:
-                self.cursor.executemany(
-                    "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
-                    [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
-                      else marshal.dumps(v))
-                     for k, v in self.current_cache.iteritems()])
-                self.connection.commit()
-                self.current_cache.clear()
-        return self.set_table(curr_tab)
-
-    def close(self):
-        # check if closed
-        if self._is_closed:
-            return
-        # check if in read only model
-        if not self.read_only:
-            self.flush()
-        # remove global instance
-        del SQLiteDict.__INSTANCES[self.path]
-        self._conn.close()
-        self._is_closed = True
-
-    def __del__(self):
-        self.close()
-
     # ==================== pickling and properties ==================== #
-    def __setstate__(self, states):
-        raise NotImplementedError
-
-    def __getstate__(self):
-        return self._path
-
     def __str__(self):
         curr_tab = self.current_table
         s = '<' + ctext('SQLiteDB:', 'red') + '%s>\n' % self.path
@@ -660,9 +686,6 @@ class SQLiteDict(dict):
         self.set_table(curr_tab) # back to original table
         return s[:-1]
 
-    def __repr__(self):
-        return str(self)
-
     @property
     def connection(self):
         return self._conn
@@ -671,19 +694,7 @@ class SQLiteDict(dict):
     def cursor(self):
         return self._cursor
 
-    @property
-    def path(self):
-        return self._path
-
-    @property
-    def is_closed(self):
-        return self._is_closed
-
     # ==================== Dictionary ==================== #
-    def set(self, key, value):
-        self.__setitem__(key, value)
-        return self
-
     def __setitem__(self, key, value):
         if self.read_only:
             raise RuntimeError("Cannot __setitem__ for this Dict in read_only mode.")
@@ -720,28 +731,6 @@ class SQLiteDict(dict):
                 raise KeyError("Cannot find `key`='%s' in the dictionary." % key)
             results = marshal.loads(results[0])
         return results
-
-    def update(self, items):
-        if self.read_only:
-            return
-        query = """UPDATE {tb} SET value=(?) WHERE key=("?");"""
-        if isinstance(items, dict):
-            items = items.iteritems()
-        # ====== check if update is in cache ====== #
-        db_update = []
-        for key, value in items:
-            key = str(key)
-            if key in self.current_cache:
-                self.current_cache[key] = value
-            else:
-                db_update.append((marshal.dumps(value), key))
-        # ====== perform DB update ====== #
-        self.cursor.executemany(query.format(tb=self._current_table), db_update)
-        self.connection.commit()
-        return self
-
-    def __iter__(self):
-        return self.iteritems()
 
     def __contains__(self, key):
         key = str(key)
@@ -783,21 +772,12 @@ class SQLiteDict(dict):
                          cond='key IN ("%s")' % ', '.join(db_key)))
         self.connection.commit()
 
-    def __cmp__(self, dict):
-        raise NotImplementedError
-
-    def keys(self):
-        return list(self.iterkeys())
-
     def iterkeys(self):
         for k in self.cursor.execute(
             """SELECT key from {tb};""".format(tb=self._current_table)):
             yield k[0]
         for k in self.current_cache.iterkeys():
             yield k
-
-    def values(self):
-        return list(self.itervalues())
 
     def itervalues(self):
         for val in self.cursor.execute(
@@ -806,15 +786,31 @@ class SQLiteDict(dict):
         for v in self.current_cache.itervalues():
             yield v
 
-    def items(self):
-        return list(self.iteritems())
-
     def iteritems(self):
         for item in self.cursor.execute(
             """SELECT key, value from {tb};""".format(tb=self._current_table)):
             yield (item[0], marshal.loads(item[1]))
         for k, v in self.current_cache.iteritems():
             yield k, v
+
+    def update(self, items):
+        if self.read_only:
+            return
+        query = """UPDATE {tb} SET value=(?) WHERE key=("?");"""
+        if isinstance(items, Mapping):
+            items = items.iteritems()
+        # ====== check if update is in cache ====== #
+        db_update = []
+        for key, value in items:
+            key = str(key)
+            if key in self.current_cache:
+                self.current_cache[key] = value
+            else:
+                db_update.append((marshal.dumps(value), key))
+        # ====== perform DB update ====== #
+        self.cursor.executemany(query.format(tb=self._current_table), db_update)
+        self.connection.commit()
+        return self
 
     def clear(self):
         if self.read_only:
@@ -823,6 +819,3 @@ class SQLiteDict(dict):
         self.connection.commit()
         self.current_cache.clear()
         return self
-
-    def copy(self):
-        raise NotImplementedError

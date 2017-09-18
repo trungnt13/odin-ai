@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 
 from numbers import Number
 from itertools import chain
-from collections import defaultdict, Iterator, OrderedDict
+from collections import defaultdict, Iterator, OrderedDict, Mapping
 
 import numpy as np
 
@@ -97,7 +97,7 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     else:
         rng = get_rng()
     # ====== check input ====== #
-    if isinstance(x, dict):
+    if isinstance(x, Mapping):
         x = x.items()
     elif isinstance(x, np.ndarray):
         x = x.tolist()
@@ -211,7 +211,7 @@ def KLdivergence(P, Q):
     """ KL(P||Q) = ∑_i • p_i • log(p_i/q_i)
     The smaller this number, the better P match Q distribution
     """
-    if isinstance(P, dict) and isinstance(Q, dict):
+    if isinstance(P, Mapping) and isinstance(Q, Mapping):
         keys = sorted(P.keys())
         P = [P[k] for k in keys]
         Q = [Q[k] for k in keys]

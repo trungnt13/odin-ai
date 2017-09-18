@@ -22,8 +22,8 @@ from odin.ml import MiniBatchPCA
 backend = 'odin'
 PCA = True
 center = True
-pitch_threshold = 0.2
-pitch_algo = 'swipe'
+pitch_threshold = 0.8
+pitch_algo = 'rapt'
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
@@ -35,7 +35,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          get_spec=True, get_pitch=True, get_f0=True,
                          get_vad=2, get_qspec=True,
                          pitch_threshold=pitch_threshold,
-                         pitch_fmax=260,
+                         pitch_fmax=280,
                          pitch_algo=pitch_algo,
                          cqt_bins=96, vad_smooth=3, vad_minlen=0.1,
                          preemphasis=None,
@@ -44,7 +44,7 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          pca=PCA, pca_whiten=False,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=1000, ncpu=8)
+                         ncache=250, ncpu=8)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
@@ -68,17 +68,6 @@ for n in ds.keys():
             print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
-for name, segs in ds['vadids'].iteritems():
-    if len(segs) == 0:
-        start, end = ds['indices'][name]
-        vad = ds['vad'][start:end].tolist()
-        print("NO vadids for", name, np.sum(vad), vad)
-if PCA:
-    for name, (start, end) in ds['indices'].iteritems():
-        for vad_start, vad_end in ds['vadids'][name]:
-            assert vad_end > vad_start
-            assert not np.any(
-                np.isnan(ds['spec_pca'].transform(ds['spec'][vad_start:vad_end], n_components=2)))
 # ====== plot the processed files ====== #
 figpath = '/tmp/speech_features_%s.pdf' % backend
 files = np.random.choice(ds['indices'].keys(), size=8, replace=False)
@@ -113,7 +102,7 @@ for name, start, end in indices:
 # ====== Visual cluster ====== #
 if PCA:
     from sklearn.manifold import TSNE
-    feat = 'mspec'
+    feat = 'spec'
     X = []; y = []
     feat_pca = ds[feat + '_pca']
     for f, (start, end) in ds['indices']:

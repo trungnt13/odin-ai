@@ -4,7 +4,7 @@ from __future__ import print_function, absolute_import, division
 import re
 from six import string_types
 from contextlib import contextmanager
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, Mapping
 
 import numpy as np
 
@@ -414,7 +414,7 @@ class Function(object):
                  training=None):
         self.training = training
         # ====== validate input ====== #
-        if isinstance(inputs, dict):
+        if isinstance(inputs, Mapping):
             self.inputs_name = inputs.keys()
             inputs = inputs.values()
         elif not isinstance(inputs, (tuple, list)):
@@ -433,7 +433,7 @@ class Function(object):
         self.outputs = flatten_list(list(outputs), level=None)
         self.return_list = return_list
         # ====== validate updates ====== #
-        if isinstance(updates, dict):
+        if isinstance(updates, Mapping):
             updates = updates.items()
         with tf.control_dependencies(self.outputs):
             # create updates ops

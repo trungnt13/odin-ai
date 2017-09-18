@@ -1,9 +1,9 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-from six.moves import cPickle
 import inspect
-from six.moves import builtins
+from collections import Mapping
+from six.moves import cPickle, builtins
 
 from odin.utils import is_string, is_path, as_tuple
 from odin.config import (auto_config, get_floatX, get_session,
@@ -186,7 +186,7 @@ def eval(x, feed_dict=None):
     if isinstance(x, (tuple, list)):
         return [_eval_single_tensor(tensor, feed_dict=feed_dict)
                 for tensor in x]
-    elif isinstance(x, dict):
+    elif isinstance(x, Mapping):
         return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
             for name, tensor in x.iteritems()}
     return _eval_single_tensor(x, feed_dict=feed_dict)

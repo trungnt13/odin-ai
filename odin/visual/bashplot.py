@@ -9,6 +9,7 @@ from __future__ import print_function, absolute_import, division
 
 import math
 import warnings
+from collections import Mapping
 
 import numpy as np
 
@@ -178,7 +179,7 @@ def print_dist(d, height=12, pch="o", show_number=False):
     LABEL_COLOR = ['cyan', 'yellow', 'blue', 'magenta', 'green']
     MAXIMUM_YLABEL = 4
     try:
-        if isinstance(d, dict):
+        if isinstance(d, Mapping):
             d = d.items()
         orig_d = [(str(name), int(count))
                   for name, count in d]
@@ -197,17 +198,12 @@ def print_dist(d, height=12, pch="o", show_number=False):
     nb_lines = int(height) + 1 + 1 + max_labels
     unit = (max_count - min_count) / height
     fig = ""
-    # add actual number of necessary
-    if show_number:
-        name_fmt = '%' + str(max_labels) + 's'
-        for name, count in orig_d:
-            fig += ctext(name_fmt % name, 'red') + ': %d' % count + '\n'
-    # add unit and total
+    # ====== add unit and total ====== #
     fig += ctext("Unit: ", 'red') + \
         '10^%d' % max(len(str(max_count)) - MAXIMUM_YLABEL, 0) + '  '
     fig += ctext("Total: ", 'red') + \
         str(sum(count for name, count in d)) + '\n'
-    # add the figure
+    # ====== add the figure ====== #
     for line in range(nb_lines):
         value = max_count - unit * line
         # draw the y_label
@@ -238,6 +234,20 @@ def print_dist(d, height=12, pch="o", show_number=False):
                              LABEL_COLOR[i % len(LABEL_COLOR)]) + ' '
         # new line
         fig += '\n'
+    # ====== add actual number of necessary ====== #
+    if show_number:
+        maximum_fig_length = MAXIMUM_YLABEL + 1 + len(orig_d) * 2
+        line_length = 0
+        name_fmt = '%' + str(max_labels) + 's'
+        for name, count in orig_d:
+            n = len(name) + len(str(count)) + 4
+            text = ctext(name_fmt % name, 'red') + ': %d ' % count
+            if line_length + n >= maximum_fig_length:
+                fig += '\n'
+                line_length = n
+            else:
+                line_length += n
+            fig += text
     return fig[:-1]
 
 
