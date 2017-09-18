@@ -204,6 +204,10 @@ class DataDescriptor(MutableData):
     def nb_files(self):
         return len(self._indices)
 
+    @property
+    def nb_data(self):
+        return len(self._data)
+
     # ==================== pickling ==================== #
     def _loaded_callback(self):
         self._new_args = (self.indices_info, self.data)
@@ -346,11 +350,19 @@ class Feeder(MutableData):
         self._data = as_tuple(data_desc, t=DataDescriptor)
         # find intersection of all indices in DataDescriptor
         self._indices_keys = async(
-            lambda: list(set.intersection(*[set(dat.indices.keys())
-                                            for dat in self._data])))()
+            lambda: np.array(
+                list(set.intersection(*[set(dat.indices.keys())
+                                        for dat in self._data])),
+                dtype=str)
+        )()
         # ====== desire dtype ====== #
-        self._outtype = (None if dtype is None else
-                         as_tuple(dtype, N=len(self._data)))
+        if dtype is None:
+            self._output_types = ()
+            for dat in self._data:
+                self._output_types += as_tuple(dat.dtype)
+        else:
+            self._output_types = tuple(
+                [np.dtype(t) for t in as_tuple(dtype, N=self.nb_data)])
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
@@ -374,12 +386,6 @@ class Feeder(MutableData):
             raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
                              "given value: '%s'" % batch_mode)
         self._batch_mode = batch_mode
-
-    @property
-    def indices_keys(self):
-        if not isinstance(self._indices_keys, list):
-            self._indices_keys = self._indices_keys.get()
-        return self._indices_keys
 
     # ==================== pickling ==================== #
     def _restore_data(self):
@@ -428,7 +434,21 @@ class Feeder(MutableData):
     # ==================== override from Data ==================== #
     @property
     def nb_files(self):
-        return len(self._indices)
+        return len(self.indices_keys)
+
+    @property
+    def nb_data(self):
+        return sum(dat.nb_data for dat in self._data)
+
+    @property
+    def indices_keys(self):
+        if not isinstance(self._indices_keys, np.ndarray):
+            self._indices_keys = self._indices_keys.get()
+        return self._indices_keys
+
+    @property
+    def dtype(self):
+        return self._output_types
 
     @property
     def shape(self):
@@ -460,10 +480,12 @@ class Feeder(MutableData):
         return tuple(self._cache_shape)
 
     def __str__(self):
-        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:%s dtype:%s>\n' % \
+        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:"%s" dtype:%s>\n' % \
             (ctext('Feeder', 'cyan'), len(self.indices_keys),
                 len(self._running_iter), self.ncpu, self.buffer_size,
-                self._batch_mode, str(self.dtype))
+                self._batch_mode,
+                '|'.join((str(dt) for dt in self.dtype))
+            )
         # ====== print recipes ====== #
         s += '   ' + ctext('Recipes:', 'magenta') + '\n'
         for recipe in self._recipes:
@@ -478,21 +500,16 @@ class Feeder(MutableData):
 
     # ==================== Strings ==================== #
     def __iter__(self):
-        # ====== check ====== #
-        if self._recipes is None:
-            raise ValueError('You must "set_recipes" first')
         # ====== get start and end for indices ====== #
-        n = self._indices.shape[0]
-        start = _apply_approx(n, self._start)
-        end = _apply_approx(n, self._end)
-        indices = self._indices[start:end]
-        outtype = self._outtype
+        start = _apply_approx(self.nb_files, self._start)
+        end = _apply_approx(self.nb_files, self._end)
+        all_keys = self.indices_keys[start:end]
         # ====== shuffle the indices ====== #
         rng = None
         shuffle_level = self._shuffle_level
         if self._seed is not None:
             rng = np.random.RandomState(self._seed)
-            indices = indices[rng.permutation(indices.shape[0])]
+            all_keys = all_keys[rng.permutation(self.nb_files)]
             if shuffle_level < 1:
                 rng = None
             # reset the seed
@@ -500,22 +517,30 @@ class Feeder(MutableData):
         batch_size = self._batch_size
         batch_filter = self._batch_filter
         process_func = self._recipes.process
-
         # ====== create wrapped functions ====== #
+        data_indices_dtype = []
+        i = 0
+        for dat in self._data:
+            for d in dat._data:
+                data_indices_dtype.append(
+                    (d, dat.indices, self.dtype[i]))
+                i += 1
+
         def map_func(jobs):
             batch = []
-            for name, start, end in jobs:
-                start = int(start)
-                end = int(end)
-                # data can be list of Data, or just 1 Data
-                if outtype is not None:
-                    x = [np.array(d[start:end], dtype=t) for d, t in zip(self._data, outtype)]
-                else:
-                    x = [np.array(d[start:end]) for d in self._data]
-                x = process_func(name, x, [])
-                if x is not None:
-                    # not care about return kwargs (only: name, X, y)
-                    batch.append(x[:3])
+            for name in jobs:
+                X = []
+                for dat, ids, dtype in data_indices_dtype:
+                    start, end = ids[name]
+                    # data can be list of Data, or just 1 Data
+                    dat = dat[start:end]
+                    if dat.dtype != dtype:
+                        dat = dat.astype(dtype)
+                    X.append(dat)
+                X = process_func(name, X, [])
+                # ignore None returned result
+                if X is not None:
+                    batch.append(X)
             # choose grouping function
             if self._batch_mode == 'batch':
                 return _batch_grouping(batch, batch_size, rng, batch_filter)
@@ -535,7 +560,7 @@ class Feeder(MutableData):
                 results = tuple(results)
             return results
         # ====== track and return ====== #
-        it = MPI(indices, map_func, reduce_func,
+        it = MPI(all_keys, map_func, reduce_func,
                  ncpu=self.ncpu,
                  buffer_size=self.buffer_size,
                  maximum_queue_size=self.maximum_queue_size,

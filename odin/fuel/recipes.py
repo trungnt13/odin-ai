@@ -54,10 +54,19 @@ class FeederRecipe(object):
         """
         return shapes, indices
 
-    def process(self, name, X, y, **kwargs):
-        if len(kwargs) == 0:
-            return name, X, y
-        return name, X, y, kwargs
+    @abstractmethod
+    def process(self, name, X, y):
+        """
+        Parameters
+        ----------
+        name: string
+            the name of file in indices
+        X: list of data
+            list of all features given in DataDescriptor(s)
+        y: list of labels
+            list of all labels extracted or provided
+        """
+        raise NotImplementedError
 
 
 class RecipeList(FeederRecipe):
@@ -81,25 +90,13 @@ class RecipeList(FeederRecipe):
     def process(self, name, X, y, **kwargs):
         for i, f in enumerate(self._recipes):
             # return iterator (iterate over all of them)
-            if inspect.getargspec(f.process).keywords is None:
-                args = f.process(name, X, y)
-            else:
-                args = f.process(name, X, y, **kwargs)
+            args = f.process(name, X, y)
             # break the chain if one of the recipes get error,
             # and return None
             if args is None:
                 return None
-            # ====== otherwise keep updating arguments ====== #
-            if not (3 <= len(args) <= 4):
-                raise ValueError("The return value of process must contain "
-                                 "name, X, y, and a dictionary represent "
-                                 "additional kwargs (optional).")
-            elif len(args) == 4 and not isinstance(args[-1], Mapping):
-                raise ValueError("If process function returns 4 values "
-                                 "the last value must be a dictionary.")
-            name, X, y = args[:3]
-            kwargs = kwargs if len(args) == 3 else args[-1]
-        return name, X, y, kwargs
+            name, X, y = args
+        return name, X, y
 
     def shape_transform(self, shapes, indices):
         """
