@@ -26,7 +26,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
-from six.moves import zip, zip_longest, range
+from six.moves import zip, zip_longest, range, cPickle
 from collections import Mapping
 
 import numpy as np
@@ -210,13 +210,15 @@ class DataDescriptor(MutableData):
 
     # ==================== pickling ==================== #
     def _loaded_callback(self):
-        self._new_args = (self.indices_info, self.data)
+        self._new_args = (self.indices_info, self.data,
+                          self._length, self._return_name)
 
     def _restore_data(self):
         if self._new_args is None:
             raise RuntimeError("Indices have not been loaded before calling "
                                "cPickle.dump on this class.")
-        self._indices_info, self._data = self._new_args
+        (self._indices_info, self._data,
+            self._length, self._return_name) = self._new_args
         # deserialize indices
         ids_type, info = self._indices_info
         if ids_type == 'mapping':
@@ -274,6 +276,10 @@ class DataDescriptor(MutableData):
 # ===========================================================================
 # Multiprocessing Feeder
 # ===========================================================================
+def _dummy_batch_filter(x):
+    return x
+
+
 class Feeder(MutableData):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
@@ -375,10 +381,17 @@ class Feeder(MutableData):
         self._running_iter = []
         # ====== batch mode ====== #
         if batch_filter is None:
-            batch_filter = lambda args: args
+            batch_filter = _dummy_batch_filter
         elif not callable(batch_filter):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')
+        # check if batch_filter Picklable
+        try:
+            cPickle.dumps(batch_filter, protocol=2)
+        except Exception:
+            raise ValueError("`batch_filter` must be pickle-able, which must be "
+                             "top-level function.")
+
         self._batch_filter = batch_filter
         # check batch_mode
         batch_mode = str(batch_mode).lower()
@@ -386,10 +399,28 @@ class Feeder(MutableData):
             raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
                              "given value: '%s'" % batch_mode)
         self._batch_mode = batch_mode
+        # ====== for pickling ====== #
+        self._new_args = (self._data, self._recipes,
+                          self._output_types, self._cache_shape,
+                          self._batch_mode, self._batch_filter,
+                          self.ncpu, self.buffer_size, self.maximum_queue_size)
 
     # ==================== pickling ==================== #
     def _restore_data(self):
-        pass
+        (self._data, self._recipes,
+         self._output_types, self._cache_shape,
+         self._batch_mode, self._batch_filter,
+         self.ncpu, self.buffer_size, self.maximum_queue_size) = self._new_args
+        # find intersection of all indices in DataDescriptor
+        self._indices_keys = async(
+            lambda: np.array(
+                list(set.intersection(*[set(dat.indices.keys())
+                                        for dat in self._data])),
+                dtype=str)
+        )()
+        # ====== basic attributes ====== #
+        self._recipes_changed = False
+        self._running_iter = []
 
     # ==================== multiprocessing ==================== #
     def set_multiprocessing(self, ncpu=None, buffer_size=None,
@@ -517,7 +548,7 @@ class Feeder(MutableData):
         batch_size = self._batch_size
         batch_filter = self._batch_filter
         process_func = self._recipes.process
-        # ====== create wrapped functions ====== #
+        # ====== prepare data, indices and dtype ====== #
         data_indices_dtype = []
         i = 0
         for dat in self._data:
@@ -526,6 +557,7 @@ class Feeder(MutableData):
                     (d, dat.indices, self.dtype[i]))
                 i += 1
 
+        # ====== create wrapped functions ====== #
         def map_func(jobs):
             batch = []
             for name in jobs:
@@ -549,9 +581,8 @@ class Feeder(MutableData):
 
         def reduce_func(results):
             # perform batch level permutation
-            if rng is not None and self._shuffle_level > 1:
+            if rng is not None:
                 permutation = rng.permutation(results[0].shape[0])
-                # different shape NO shuffle
                 results = [r[permutation] for r in results]
             # convert batch to tuple object if possible
             if isinstance(results, (tuple, list)) and len(results) == 1:

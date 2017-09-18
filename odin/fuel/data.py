@@ -151,7 +151,7 @@ class Data(object):
         self._status = 0
         self._new_args_called = False
         # ====== restore data ====== #
-        self.restore_data()
+        self._restore_data()
         if not hasattr(self, '_data') or self._data is None:
             raise RuntimeError("The `_data` attribute is None, and have not "
                                "been restored after pickling, you must properly "
