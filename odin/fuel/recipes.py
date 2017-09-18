@@ -12,9 +12,9 @@ from six.moves import zip, zip_longest, range
 
 import numpy as np
 
-from odin.utils import (segment_list, one_hot, is_string, axis_normalize,
-                        is_number, UnitTimer, get_system_status, batching,
-                        get_process_status, SharedCounter, as_tuple)
+from odin.utils import (segment_list, one_hot, is_string, axis_normalize, ctext,
+                        is_number, is_primitives, UnitTimer, get_system_status,
+                        batching, get_process_status, SharedCounter, as_tuple)
 from odin.preprocessing.signal import segment_axis, compute_delta
 from odin.utils.decorators import functionable
 
@@ -67,6 +67,27 @@ class FeederRecipe(object):
             list of all labels extracted or provided
         """
         raise NotImplementedError
+
+    def __str__(self):
+        # ====== get all attrs ====== #
+        all_attrs = dir(self)
+        print_attrs = {}
+        for name in all_attrs:
+            if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]):
+                attr = getattr(self, name)
+                if is_primitives(attr):
+                    print_attrs[name] = str(attr)
+                elif inspect.isfunction(attr):
+                    print_attrs[name] = "(f)" + attr.func_name
+        print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
+        print_attrs = ' '.join(["%s:%s" % (ctext(key, 'yellow'), val)
+                                for key, val in print_attrs])
+        # ====== format the output ====== #
+        s = '<%s %s>' % (ctext(self.__class__.__name__, 'cyan'), print_attrs)
+        return s
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class RecipeList(FeederRecipe):

@@ -458,8 +458,9 @@ class Feeder(MutableData):
         recipes = flatten_list(as_tuple(recipes))
         recipes = [i for i in recipes
                    if i is not None and isinstance(i, FeederRecipe)]
+        # ====== set the new recipes ====== #
         if len(recipes) > 0:
-            self._recipes = RecipeList(*recipes)
+            self._recipes._recipes = recipes
         return self
 
     # ==================== override from Data ==================== #
