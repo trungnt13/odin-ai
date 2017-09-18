@@ -133,7 +133,7 @@ class Data(object):
 
     # ==================== For pickling ==================== #
     @abstractmethod
-    def restore_data(self):
+    def _restore_data(self):
         raise NotImplementedError
 
     def __getstate__(self):
@@ -642,7 +642,7 @@ class NdarrayData(Data):
         self._path = None
         self._new_args = array
 
-    def restore_data(self):
+    def _restore_data(self):
         self._data = self._new_args
 
     # ==================== abstract ==================== #
@@ -865,7 +865,7 @@ class MmapData(Data):
         self._path = path
         self._new_args = path
 
-    def restore_data(self):
+    def _restore_data(self):
         dtype, shape, f = MmapData.read_header(self.path, mode='r+',
                                                return_file=True)
         self._file = f

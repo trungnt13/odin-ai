@@ -34,3 +34,9 @@
 [submodule "ideas/sact"]
 	path = ideas/sact
 	url = https://github.com/mfigurnov/sact.git
+[submodule "ideas/sru"]
+	path = ideas/sru
+	url = https://github.com/taolei87/sru.git
+[submodule "ideas/drn"]
+	path = ideas/drn
+	url = https://github.com/fyu/drn.git

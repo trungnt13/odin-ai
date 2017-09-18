@@ -49,8 +49,8 @@ class FeederRecipe(object):
         ----------
         shapes: list of shape
             list of shape tuple
-        indices: dict
-            {name: nb_samples}
+        indices: list
+            [(name, nb_samples), (name, nb_samples), ...]
         """
         return shapes, indices
 
@@ -60,23 +60,26 @@ class FeederRecipe(object):
         return name, X, y, kwargs
 
 
-class FeederList(FeederRecipe):
+class RecipeList(FeederRecipe):
 
     def __init__(self, *recipes):
-        super(FeederList, self).__init__()
-        self.recipes = recipes
+        super(RecipeList, self).__init__()
+        self._recipes = recipes
+
+    def __iter__(self):
+        return self._recipes.__iter__()
 
     def __len__(self):
-        return len(self.recipes)
+        return len(self._recipes)
 
     def __str__(self):
         s = []
-        for i in self.recipes:
+        for i in self._recipes:
             s.append(i.__class__.__name__)
-        return '<FeederList: ' + ', '.join(s) + '>'
+        return '<RecipeList: ' + ', '.join(s) + '>'
 
     def process(self, name, X, y, **kwargs):
-        for i, f in enumerate(self.recipes):
+        for i, f in enumerate(self._recipes):
             # return iterator (iterate over all of them)
             if inspect.getargspec(f.process).keywords is None:
                 args = f.process(name, X, y)
@@ -104,18 +107,25 @@ class FeederList(FeederRecipe):
         ----------
         shapes: list of shape
             list of shape tuple
-        indices: dict
-            {name: nb_samples}
+        indices: list
+            [(name, nb_samples), (name, nb_samples), ...]
 
         Return
         ------
-        the new shape that transformed by this Recipe
+        new shape that transformed by this Recipe
+        new indices
         """
-        for i in self.recipes:
-            if not isinstance(indices, Mapping):
-                raise ValueError('"indices" return in "shape_transform" of '
-                                 'FeederRecipe must be a dictionary.')
+        for i in self._recipes:
             shapes, indices = i.shape_transform(shapes, indices)
+            # ====== check returned ====== #
+            if not isinstance(shapes, (tuple, list)):
+                raise RuntimeError("Returned `shape` must be instance of tuple "
+                                   "or list, error with recipe: %s" %
+                                   i.__class__.__name__)
+            if not isinstance(indices, (tuple, list)):
+                raise RuntimeError('`indices` return in `shape_transform` of '
+                                   'recipe: %s must be a tuple or list' %
+                                   i.__class__.__name__)
         return shapes, indices
 
 
@@ -519,9 +529,8 @@ class Slice(FeederRecipe):
     def shape_transform(self, shapes, indices):
         # ====== check if first dimension is sliced ====== #
         if self.axis == 0:
-            indices = {name: self._from_indices(n)
-                       for name, n in indices.iteritems()}
-            n = sum(indices.itervalues())
+            indices = [(name, self._from_indices(n)) for name, n in indices]
+            n = sum(i[1] for i in indices)
             return tuple([(n,) + s[1:] for s in shapes]), indices
         # ====== process other dimensions ====== #
         results = []
@@ -574,7 +583,7 @@ class Merge(FeederRecipe):
             # indices still the same
             new_shapes = new_shapes[0][:-1] + (sum(s[-1] for s in new_shapes),)
         elif self.merge_func == np.vstack:
-            indices = {name: n * len(shapes) for name, n in indices.iteritems()}
+            indices = [(name, n * len(shapes)) for name, n in indices]
             new_shapes = (sum(s[0] for s in new_shapes),) + new_shapes[0][1:]
         else:
             raise Exception("We haven't support shape infer for merge_func={}"
@@ -804,17 +813,21 @@ class VADindex(FeederRecipe):
             n_func = lambda start, end: self._estimate_number_of_sample(start, end)
             shape_func = lambda n, shape: (n, self.frame_length) + shape[1:]
         # ====== processing ====== #
-        indices_new = {}
+        indices_new = []
         n = 0
-        for name, segments in self.vad.iteritems():
+        indices = []
+        self.vad.iteritems()
+        for name, length in indices:
             # not found find in original indices
-            if name not in indices: continue
+            if name not in self.vad:
+                continue
             # found the name, and update its indices
             n_file = 0
+            segments = self.vad[name]
             for start, end in segments:
                 if self.filter_vad(start, end):
                     n_file += n_func(start, end)
-            indices_new[name] = n_file
+            indices_new.append((name, n_file))
             n += n_file
         shapes = tuple([shape_func(n, s) for s in shapes])
         return shapes, indices_new
@@ -872,10 +885,10 @@ class Stacking(FeederRecipe):
     def shape_transform(self, shapes, indices):
         # ====== update the indices ====== #
         n = 0
-        indices_new = {}
-        for name, nb_samples in indices.iteritems():
+        indices_new = []
+        for name, nb_samples in indices:
             nb_samples = 1 + (nb_samples - self.n) // self.shift
-            indices_new[name] = nb_samples
+            indices_new.append((name, nb_samples))
             n += nb_samples
         # ====== do the shape infer ====== #
         _ = []
@@ -987,8 +1000,8 @@ class Sequencing(FeederRecipe):
     def shape_transform(self, shapes, indices):
         # ====== update the indices ====== #
         n = 0
-        indices_new = {}
-        for name, nb_samples in indices.iteritems():
+        indices_new = []
+        for name, nb_samples in indices:
             if nb_samples < self.frame_length:
                 nb_samples = 0 if self.end == 'cut' else 1
             else:
@@ -997,7 +1010,7 @@ class Sequencing(FeederRecipe):
                 else:
                     nb_samples = np.floor((nb_samples - self.frame_length) / self.hop_length)
                 nb_samples = int(nb_samples) + 1
-            indices_new[name] = nb_samples
+            indices_new.append((name, nb_samples))
             n += nb_samples
         # ====== shape inference ====== #
         _ = []

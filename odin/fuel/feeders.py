@@ -33,12 +33,13 @@ import numpy as np
 
 from odin.utils import (segment_list, one_hot, flatten_list, is_string,
                         Progbar, UnitTimer, get_system_status, batching,
-                        get_process_status, SharedCounter, as_tuple, ctext)
+                        get_process_status, SharedCounter, as_tuple, ctext,
+                        is_number)
 from odin.utils.mpi import MPI, async
 
 from .data import MutableData, as_data
 from .dataset import Dataset
-from .recipes import FeederList, FeederRecipe
+from .recipes import RecipeList, FeederRecipe
 from .utils import NoSQL
 
 
@@ -140,25 +141,24 @@ def _preprocessing_indices(indices):
     indices_info = None
     # indices always sorted in [(name, start, end), ...]
     if isinstance(indices, str) and os.path.isfile(indices):
-        indices = np.genfromtxt(indices, dtype=_indices_dtype, delimiter=' ')
+        indices = {str(name): (start, end) for name, start, end in
+                   np.genfromtxt(indices, dtype=_indices_dtype, delimiter=' ')}
         indices_info = ('file', str(indices))
-    # list or tuple form: (name, (start, end))
-    elif isinstance(indices, (tuple, list, np.ndarray)):
-        if len(indices[0]) == 2:
-            indices = [(name, start, end) for name, (start, end) in indices]
-        indices = np.array(indices, dtype=_indices_dtype)
-        indices_info = ('array', indices)
-    # dictionary: name -> (start, end) or (name, start, end)
-    elif isinstance(indices, Mapping):
-        if isinstance(indices, NoSQL):
-            indices_info = ('nosql', indices)
-        indices = np.array([i if len(i) == 3 else (i[0], i[1][0], i[1][1])
-                            for i in indices.iteritems()],
-                           dtype=_indices_dtype)
-        if indices_info is None:
-            indices_info = ('array', indices)
+    # list or tuple form: (name, (start, end)) or dictionary
     else:
-        raise ValueError('Unsupport `indices` type: "%s".' % type(indices))
+        if isinstance(indices, (tuple, list, np.ndarray)):
+            if len(indices[0]) == 2:
+                indices = {name: (int(start), int(end))
+                           for name, (start, end) in indices}
+            else:
+                indices = {name: (int(start), int(end))
+                           for name, start, end in indices}
+        # dictionary: name -> (start, end) or (name, start, end)
+        elif isinstance(indices, Mapping):
+            pass
+        else:
+            raise ValueError('Unsupport `indices` type: "%s".' % type(indices))
+        indices_info = ('mapping', indices)
     return indices, indices_info
 
 
@@ -187,18 +187,6 @@ class DataDescriptor(MutableData):
         # if True return name during __iter__
         self._return_name = False
 
-    # ==================== specials ==================== #
-    def merge(self, *desc):
-        """Merge multiple DataDescriptor into 1"""
-        desc = [d for d in desc if isinstance(d, DataDescriptor)]
-        # ====== get all data ====== #
-        all_data = []
-        for d in desc:
-            all_data += d.data
-        # ====== merge indces ====== #
-        new_indices = []
-        return DataDescriptor(data=all_data, indices=new_indices)
-
     # ==================== Properties ==================== #
     @property
     def indices_info(self):
@@ -220,20 +208,18 @@ class DataDescriptor(MutableData):
     def _loaded_callback(self):
         self._new_args = (self.indices_info, self.data)
 
-    def restore_data(self):
+    def _restore_data(self):
         if self._new_args is None:
             raise RuntimeError("Indices have not been loaded before calling "
                                "cPickle.dump on this class.")
         self._indices_info, self._data = self._new_args
         # deserialize indices
         ids_type, info = self._indices_info
-        if ids_type == 'array':
+        if ids_type == 'mapping':
             self._indices = info
         elif ids_type == 'file':
             self._indices = np.genfromtxt(info, dtype=_indices_dtype,
                                           delimiter=' ')
-        elif ids_type == 'nosql':
-            self._indices = info
 
     # ==================== override from Data ==================== #
     @property
@@ -243,9 +229,9 @@ class DataDescriptor(MutableData):
         """
         if self._length is None:
             self._length = sum((end - start)
-                               for name, start, end in self.indices)
-        ret_shape = [(self._length,) + d.shape[1:]
-                     for d in self.data]
+                               for name, (start, end) in self.indices)
+        ret_shape = [(self._length,) + dat.shape[1:]
+                     for dat in self.data]
         return ret_shape[0] if len(ret_shape) == 1 else tuple(ret_shape)
 
     def __str__(self):
@@ -268,7 +254,7 @@ class DataDescriptor(MutableData):
         def _create_iter():
             ret_name = bool(self._return_name)
             yield None # just return for initialize the iteration
-            for name, start, end in self.indices:
+            for name, (start, end) in self.indices:
                 dat = [d[start: end] for d in self.data]
                 if ret_name:
                     dat = [name] + dat
@@ -352,44 +338,29 @@ class Feeder(MutableData):
 
     """
 
-    def __init__(self, data, indices, dtype=None,
+    def __init__(self, data_desc, dtype=None,
                  batch_filter=lambda x: x, batch_mode='batch',
                  ncpu=1, buffer_size=8, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
-        # indices always sorted in [(name, start, end), ...]
-        if isinstance(indices, str) and os.path.isfile(indices):
-            self._indices = np.genfromtxt(indices, dtype=str, delimiter=' ')
-        elif isinstance(indices, (tuple, list)):
-            if len(indices[0]) == 2: # form: (name, (start, end))
-                indices = [(name, start, end) for name, (start, end) in indices]
-            self._indices = np.asarray(indices)
-        elif isinstance(indices, np.ndarray):
-            self._indices = indices
-        elif isinstance(indices, Mapping): # name -> (start, end)
-            self._indices = np.asarray([as_tuple(i) + as_tuple(j)
-                                        for i, j in indices.iteritems()])
-        else:
-            raise ValueError('Unsupport indices type: "%s".' % type(indices))
-        # ====== Load data ====== #
-        if not isinstance(data, (tuple, list)):
-            data = (data,)
-        data = tuple([as_data(d) for d in data])
-        length = len(data[0])
-        if any(len(d) != length for d in data):
-            raise ValueError('All Data must have the same length '
-                             '(i.e. shape[0]).')
-        self._data = data
+        self._data = as_tuple(data_desc, t=DataDescriptor)
+        # find intersection of all indices in DataDescriptor
+        self._indices_keys = async(
+            lambda: list(set.intersection(*[set(dat.indices.keys())
+                                            for dat in self._data])))()
         # ====== desire dtype ====== #
-        self._outtype = None if dtype is None else as_tuple(dtype, N=len(self._data))
+        self._outtype = (None if dtype is None else
+                         as_tuple(dtype, N=len(self._data)))
         # ====== Set default recipes ====== #
-        self._recipes = FeederList()
+        self._recipes = RecipeList()
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         # ====== cache shape information ====== #
         # store first dimension
-        self.__cache_indices_id = id(self._indices)
         self._cache_shape = None
-        self.__running_iter = []
+        # if the recipes changed the shape need to be recalculated
+        self._recipes_changed = False
+        # ====== Iteration information ====== #
+        self._running_iter = []
         # ====== batch mode ====== #
         if batch_filter is None:
             batch_filter = lambda args: args
@@ -397,35 +368,32 @@ class Feeder(MutableData):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')
         self._batch_filter = batch_filter
+        # check batch_mode
         batch_mode = str(batch_mode).lower()
         if batch_mode not in ("batch", 'file'):
             raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
                              "given value: '%s'" % batch_mode)
         self._batch_mode = batch_mode
 
-    # ==================== pickling ==================== #
-    def __getstate__(self):
-        return (_dump_data_info(self._data), self._indices, self._outtype,
-                self._recipes, self.ncpu, self.buffer_size,
-                self.maximum_queue_size)
+    @property
+    def indices_keys(self):
+        if not isinstance(self._indices_keys, list):
+            self._indices_keys = self._indices_keys.get()
+        return self._indices_keys
 
-    def __setstate__(self, states):
-        (data, self._indices, self._outtype,
-         self._recipes, self.ncpu, self.buffer_size,
-         self.maximum_queue_size) = states
-        self._data = _load_data_info(data)
-        self.__cache_indices_id = id(self._indices)
-        self._cache_shape = None
-        self.__running_iter = []
+    # ==================== pickling ==================== #
+    def _restore_data(self):
+        pass
 
     # ==================== multiprocessing ==================== #
-    def set_multiprocessing(self, ncpu=None, buffer_size=None, maximum_queue_size=None):
+    def set_multiprocessing(self, ncpu=None, buffer_size=None,
+                            maximum_queue_size=None):
         if ncpu is not None:
-            self.ncpu = ncpu
+            self.ncpu = int(ncpu)
         if buffer_size is not None:
-            self.buffer_size = buffer_size
+            self.buffer_size = int(buffer_size)
         if maximum_queue_size is not None:
-            self.maximum_queue_size = maximum_queue_size
+            self.maximum_queue_size = int(maximum_queue_size)
         return self
 
     def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
@@ -436,7 +404,7 @@ class Feeder(MutableData):
                 raise ValueError('batch_filter must be a function has 1 or 2 '
                                  'parameters (X) or (X, y).')
             self._batch_filter = batch_filter
-        # ====== chec batch_mode ====== #
+        # ====== check batch_mode ====== #
         if batch_mode is not None:
             batch_mode = str(batch_mode).lower()
             if batch_mode not in ("batch", 'file'):
@@ -448,21 +416,14 @@ class Feeder(MutableData):
                                              shuffle_level=shuffle_level)
 
     def set_recipes(self, recipes):
+        self._recipes_changed = True
         # filter out None value
         recipes = flatten_list(as_tuple(recipes))
         recipes = [i for i in recipes
                    if i is not None and isinstance(i, FeederRecipe)]
         if len(recipes) > 0:
-            self._recipes = FeederList(*recipes)
+            self._recipes = RecipeList(*recipes)
         return self
-
-    def stop_all(self):
-        """ Call this method to stop all processes in case you
-        spamming to many iteration
-        """
-        for i in self.__running_iter:
-            i.stop()
-        self.__running_iter = []
 
     # ==================== override from Data ==================== #
     @property
@@ -475,30 +436,45 @@ class Feeder(MutableData):
         during preprocessing each indices by recipes.
         """
         # ====== first time calculate the shape ====== #
-        if self._cache_shape is None or id(self._indices) != self.__cache_indices_id:
-            indices = {name: int(end) - int(start)
-                       for name, start, end in self._indices}
-            n = sum(indices.itervalues())
-            shape = [(n,) + d.shape[1:] for d in self._data]
-            shape, indices = self._recipes.shape_transform(shape, indices)
-            if len(shape) == 1:
-                shape = shape[0]
-            self.__cache_indices_id = id(self._indices)
-            self._cache_shape = shape
+        if self._cache_shape is None or self._recipes_changed:
+            get_length = lambda start, end: end - start
+            # for each Descriptor, create dictionary: name -> length
+            indices = [[(name, get_length(*dat.indices[name]))
+                        for name in self.indices_keys]
+                       for dat in self._data]
+            length = [sum(i[1] for i in ids) for ids in indices]
+            # convert everything to tuple of shape
+            shape = [(dat.shape,) if is_number(dat.shape[0]) else dat.shape
+                     for dat in self._data]
+            shape = [[(l,) + s[1:] for s in shape_list]
+                     for l, shape_list in zip(length, shape)]
+            # recipes transform
+            new_shape = []
+            for shp, ids in zip(shape, indices):
+                shapes, _ = self._recipes.shape_transform(shp, ids)
+                new_shape += shapes
+            self._cache_shape = new_shape[0] if len(new_shape) == 1 \
+                else new_shape
+            self._recipes_changed = False
         # ====== get the cached shape ====== #
-        else:
-            shape = self._cache_shape
-        return tuple(shape)
+        return tuple(self._cache_shape)
 
     def __str__(self):
-        if self._data is None:
-            name = 'None'
-            dtype = 'unknown'
-        else:
-            name = ' '.join([i.name for i in self._data])
-            dtype = self.dtype
-        return '<Feeders dataset: %s, shape: %s, type: %s, #iter: %d>' % \
-        (name, self.shape, dtype, len(self.__running_iter))
+        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:%s dtype:%s>\n' % \
+            (ctext('Feeder', 'cyan'), len(self.indices_keys),
+                len(self._running_iter), self.ncpu, self.buffer_size,
+                self._batch_mode, str(self.dtype))
+        # ====== print recipes ====== #
+        s += '   ' + ctext('Recipes:', 'magenta') + '\n'
+        for recipe in self._recipes:
+            s += '\n'.join(['\t' + i for i in str(recipe).split('\n')])
+            s += '\n'
+        # ====== print data descriptor ====== #
+        s += '   ' + ctext('Descriptor:', 'magenta') + '\n'
+        for desc in self._data:
+            s += '\n'.join(['\t' + i for i in str(desc).split('\n')])
+            s += '\n'
+        return s[:-1]
 
     # ==================== Strings ==================== #
     def __iter__(self):
@@ -564,7 +540,7 @@ class Feeder(MutableData):
                  buffer_size=self.buffer_size,
                  maximum_queue_size=self.maximum_queue_size,
                  chunk_scheduler=True)
-        self.__running_iter.append(it)
+        self._running_iter.append(it)
         return it
 
     def save_cache(self, path, datatype='memmap'):
@@ -593,6 +569,14 @@ class Feeder(MutableData):
         ds.close()
         # end
         return self
+
+    def stop_all(self):
+        """ Call this method to stop all processes in case you
+        spamming to many iteration
+        """
+        for i in self._running_iter:
+            i.stop()
+        self._running_iter = []
 
     def __del__(self):
         self.stop_all()
