@@ -26,6 +26,9 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
+import inspect
+from abc import ABCMeta, abstractmethod
+from six import add_metaclass
 from six.moves import zip, zip_longest, range, cPickle
 from collections import Mapping
 
@@ -34,13 +37,184 @@ import numpy as np
 from odin.utils import (segment_list, one_hot, flatten_list, is_string,
                         Progbar, UnitTimer, get_system_status, batching,
                         get_process_status, SharedCounter, as_tuple, ctext,
-                        is_number)
+                        is_number, is_primitives)
 from odin.utils.mpi import MPI, async
 
 from .data import MutableData, as_data
 from .dataset import Dataset
-from .recipes import RecipeList, FeederRecipe
-from .utils import NoSQL
+
+
+# ===========================================================================
+# Recipes
+# ===========================================================================
+@add_metaclass(ABCMeta)
+class FeederRecipe(object):
+    """ All method of this function a called in following order
+    preprocess_indices(indices): return new_indices
+    init(ntasks, batch_size, seed): right before create the iter
+
+    [multi-process] process(*x): x->(name, data)
+                                 return (if iterator, it will be iterated to
+                                         get a list of results)
+    [multi-process] group(x): x->(object from group(x))
+                              return iterator
+
+    Note
+    ----
+    This class should not store big amount of data, or the data
+    will be replicated to all processes
+    """
+
+    def __init__(self):
+        super(FeederRecipe, self).__init__()
+        self._nb_data = 0
+        self._nb_desc = 0
+
+    # ==================== basic properties ==================== #
+    def set_feeder_info(self, nb_data=None, nb_desc=None):
+        if nb_data is not None:
+            self._nb_data = int(nb_data)
+        if nb_desc is not None:
+            self._nb_desc = int(nb_desc)
+        return self
+
+    @property
+    def nb_data(self):
+        if self._nb_data == 0:
+            raise RuntimeError("`nb_data` have not been set, using method "
+                               "`set_feeder_info` to set operating information "
+                               "for this recipe.")
+        return self._nb_data
+
+    @property
+    def nb_desc(self):
+        if self._nb_desc == 0:
+            raise RuntimeError("`nb_data` have not been set, using method "
+                               "`set_feeder_info` to set operating information "
+                               "for this recipe.")
+        return self._nb_desc
+
+    # ==================== abstract ==================== #
+    def shape_transform(self, shapes):
+        """
+        Parameters
+        ----------
+        shapes: list of [(shape0, indices0), (shape1, indices1), ...]
+            list of data shape tuple and indices, the indices is list
+            of tuple (name, length)
+
+        Return
+        ------
+        new shape that transformed by this Recipe
+        new indices
+        """
+        return shapes
+
+    @abstractmethod
+    def process(self, name, X, y):
+        """
+        Parameters
+        ----------
+        name: string
+            the name of file in indices
+        X: list of data
+            list of all features given in DataDescriptor(s)
+        y: list of labels
+            list of all labels extracted or provided
+        """
+        raise NotImplementedError
+
+    def __str__(self):
+        # ====== get all attrs ====== #
+        all_attrs = dir(self)
+        print_attrs = {}
+        for name in all_attrs:
+            if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
+            name not in ('nb_data', 'nb_desc'):
+                attr = getattr(self, name)
+                if is_primitives(attr):
+                    print_attrs[name] = str(attr)
+                elif inspect.isfunction(attr):
+                    print_attrs[name] = "(f)" + attr.func_name
+        print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
+        print_attrs = [('#data', self.nb_data), ('#desc', self.nb_desc)] + print_attrs
+        print_attrs = ' '.join(["%s:%s" % (ctext(key, 'yellow'), val)
+                                for key, val in print_attrs])
+        # ====== format the output ====== #
+        s = '<%s %s>' % (ctext(self.__class__.__name__, 'cyan'), print_attrs)
+        return s
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class RecipeList(FeederRecipe):
+
+    def __init__(self, *recipes):
+        super(RecipeList, self).__init__()
+        self._recipes = recipes
+
+    # ==================== List methods ==================== #
+    def __iter__(self):
+        return self._recipes.__iter__()
+
+    def __len__(self):
+        return len(self._recipes)
+
+    # ==================== Override ==================== #
+    def set_recipes(self, *recipes):
+        # filter out None value
+        recipes = flatten_list(as_tuple(recipes))
+        recipes = [rcp for rcp in recipes
+                   if rcp is not None and isinstance(rcp, FeederRecipe)]
+        # ====== set the new recipes ====== #
+        if len(recipes) > 0:
+            self._recipes = recipes
+            for rcp in self._recipes:
+                rcp.set_feeder_info(self.nb_data, self.nb_desc)
+        return self
+
+    def set_feeder_info(self, nb_data=None, nb_desc=None):
+        super(RecipeList, self).set_feeder_info(nb_data, nb_desc)
+        for rcp in self._recipes:
+            rcp.set_feeder_info(nb_data, nb_desc)
+        return self
+
+    def process(self, name, X, y, **kwargs):
+        for i, f in enumerate(self._recipes):
+            # return iterator (iterate over all of them)
+            args = f.process(name, X, y)
+            # break the chain if one of the recipes get error,
+            # and return None
+            if args is None:
+                return None
+            name, X, y = args
+        return name, X, y
+
+    def shape_transform(self, shapes):
+        """
+        Parameters
+        ----------
+        shapes: list of [(shape0, indices0), (shape1, indices1), ...]
+            list of data shape tuple and indices, the indices is list
+            of tuple (name, length)
+
+        Return
+        ------
+        new shape that transformed by this Recipe
+        new indices
+        """
+        for i in self._recipes:
+            shapes = i.shape_transform(shapes)
+            # ====== check returned ====== #
+            if not all((isinstance(shp, (tuple, list)) and
+                        all(is_number(s) for s in shp) and
+                        is_string(ids[0][0]) and is_number(ids[0][1]))
+                       for shp, ids in shapes):
+                raise RuntimeError("Returned `shapes` must be the list of pair "
+                                   "`(shape, indices)`, where `indices` is the "
+                                   "list of (name, length(int)).")
+        return shapes
 
 
 # ===========================================================================
@@ -371,6 +545,7 @@ class Feeder(MutableData):
                 [np.dtype(t) for t in as_tuple(dtype, N=self.nb_data)])
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
+        self._recipes.set_feeder_info(self.nb_data, len(self._data))
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         # ====== cache shape information ====== #
         # store first dimension
@@ -452,15 +627,9 @@ class Feeder(MutableData):
                                              start=start, end=end,
                                              shuffle_level=shuffle_level)
 
-    def set_recipes(self, recipes):
+    def set_recipes(self, *recipes):
         self._recipes_changed = True
-        # filter out None value
-        recipes = flatten_list(as_tuple(recipes))
-        recipes = [i for i in recipes
-                   if i is not None and isinstance(i, FeederRecipe)]
-        # ====== set the new recipes ====== #
-        if len(recipes) > 0:
-            self._recipes._recipes = recipes
+        self._recipes.set_recipes(recipes)
         return self
 
     # ==================== override from Data ==================== #
@@ -489,24 +658,30 @@ class Feeder(MutableData):
         """
         # ====== first time calculate the shape ====== #
         if self._cache_shape is None or self._recipes_changed:
-            get_length = lambda start, end: end - start
-            # for each Descriptor, create dictionary: name -> length
-            indices = [[(name, get_length(*dat.indices[name]))
-                        for name in self.indices_keys]
-                       for dat in self._data]
-            length = [sum(i[1] for i in ids) for ids in indices]
-            # convert everything to tuple of shape
-            shape = [(dat.shape,) if is_number(dat.shape[0]) else dat.shape
-                     for dat in self._data]
-            shape = [[(l,) + s[1:] for s in shape_list]
-                     for l, shape_list in zip(length, shape)]
-            # recipes transform
-            new_shape = []
-            for shp, ids in zip(shape, indices):
-                shapes, _ = self._recipes.shape_transform(shp, ids)
-                new_shape += shapes
-            self._cache_shape = new_shape[0] if len(new_shape) == 1 \
-                else new_shape
+            # for each Descriptor, create list of pairs: (name, length)
+            shapes_indices = []
+            for dat in self._data:
+                indices = []
+                length = 0
+                for name in self.indices_keys:
+                    start, end = dat.indices[name]
+                    lng = end - start
+                    length += lng
+                    indices.append((name, lng))
+                # modify shapes by estimted length from indices
+                shapes = (dat.shape,) if is_number(dat.shape[0]) \
+                    else dat.shape
+                # NOTE: the indices is copy for each shape (i.e. data),
+                # hence, it will create some overhead in shape_transform
+                for shp in [(length,) + shp[1:] for shp in shapes]:
+                    shapes_indices.append((shp, list(indices)))
+            # Recipes shape_transform
+            shapes = tuple([
+                shp for shp, ids in self._recipes.shape_transform(shapes_indices)
+            ])
+            del shapes_indices
+            self._cache_shape = shapes[0] if len(shapes) == 1 \
+                else shapes
             self._recipes_changed = False
         # ====== get the cached shape ====== #
         return tuple(self._cache_shape)

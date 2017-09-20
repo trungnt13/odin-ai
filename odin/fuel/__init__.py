@@ -2,9 +2,10 @@ from .utils import *
 from .data import *
 from .dataset import *
 from .features import *
-from .feeders import *
+from .feeder import *
 
 import recipes
+
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from odin.utils import get_file, get_script_path

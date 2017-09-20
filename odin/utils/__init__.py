@@ -8,27 +8,27 @@ import types
 import signal
 import shutil
 import timeit
+import tarfile
 import numbers
-import subprocess
 import tempfile
-import contextlib
 import platform
 import argparse
+import subprocess
+import contextlib
 from multiprocessing import cpu_count, Lock, current_process
 from collections import OrderedDict, deque, Iterable, Iterator, Mapping
 from itertools import islice, tee, chain
 
 from six import string_types
+from six.moves import cPickle
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
-import tarfile
 
 try:
     from numba import jit, autojit, vectorize, guvectorize
 except:
     pass
 import numpy
-import six
 
 from .progbar import Progbar, add_notification
 from .mpi import SelfIterator, segment_list, SharedCounter, async, MPI
@@ -129,6 +129,14 @@ def is_primitives(x, inc_ndarray=True):
 def is_lambda(v):
     LAMBDA = lambda: 0
     return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
+
+
+def is_pickleable(x):
+    try:
+        cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
+        return True
+    except PickleError:
+        return False
 
 
 def iter_chunk(it, n):
@@ -532,19 +540,28 @@ def as_list(x, N=None, t=None):
     return list(as_tuple(x, N, t))
 
 
-def axis_normalize(axis, ndim):
+def axis_normalize(axis, ndim,
+                   return_tuple=False):
     """ Normalize the axis
      * -1 => ndim - 1
      * 10 => 10 % ndim
      * None => list(range(ndim))
+
+    Parameters
+    ----------
+    return_tuple: bool
+        if True, always return a tuple of normalized axis
     """
-    if axis is None:
+    if ndim == 0:
+        return ()
+    if axis is None or \
+    (isinstance(axis, (tuple, list)) and len(axis) == 1 and axis[0] is None):
         return list(range(ndim))
     if not hasattr(axis, '__len__'):
-        axis = int(axis)
-        return axis % ndim
+        axis = int(axis) % ndim
+        return (axis,) if return_tuple else axis
     axis = as_tuple(axis, t=int)
-    return [i % ndim for i in axis]
+    return tuple([i % ndim for i in axis])
 
 
 def flatten_list(x, level=None):
