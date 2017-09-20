@@ -234,8 +234,7 @@ class Progbar(object):
             "confusion_matrix" in key.lower() or \
             "confusion-matrix" in key.lower() or \
             "confusion matrix" in key.lower():
-                value = str(value)
-                # value = print_confusion(value)
+                value = print_confusion(value)
             else:
                 value = str(value)
             # ====== multiple lines or not ====== #
