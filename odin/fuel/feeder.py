@@ -344,7 +344,7 @@ class DataDescriptor(MutableData):
         self._indices_loader = async(_preprocessing_indices,
             callback=lambda result: self._loaded_callback())(indices)
         self._indices_info = None
-        self._indices = None
+        self._indices = None # dictionary: name -> (start, end)
         # ====== Load data ====== #
         if not isinstance(data, (tuple, list)):
             data = (data,)
@@ -409,7 +409,7 @@ class DataDescriptor(MutableData):
         """
         if self._length is None:
             self._length = sum((end - start)
-                               for name, (start, end) in self.indices)
+                            for name, (start, end) in self.indices.iteritems())
         ret_shape = [(self._length,) + dat.shape[1:]
                      for dat in self.data]
         return ret_shape[0] if len(ret_shape) == 1 else tuple(ret_shape)
@@ -434,7 +434,7 @@ class DataDescriptor(MutableData):
         def _create_iter():
             ret_name = bool(self._return_name)
             yield None # just return for initialize the iteration
-            for name, (start, end) in self.indices:
+            for name, (start, end) in self.indices.iteritems():
                 dat = [d[start: end] for d in self.data]
                 if ret_name:
                     dat = [name] + dat
@@ -523,7 +523,7 @@ class Feeder(MutableData):
     """
 
     def __init__(self, data_desc, dtype=None,
-                 batch_filter=lambda x: x, batch_mode='batch',
+                 batch_filter=None, batch_mode='batch',
                  ncpu=1, buffer_size=8, maximum_queue_size=66):
         super(Feeder, self).__init__()
         # ====== load indices ====== #

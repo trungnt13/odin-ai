@@ -375,8 +375,8 @@ class Dataset(object):
                 yield self[name]
 
     def __str__(self):
-        s = ['==========  Dataset:%s Total:%d  ==========' %
-             (self.path, len(self._data_map))]
+        s = ['==========  Dataset:%s Total:%d Size:%.2f(MB) ==========' %
+             (self.path, len(self._data_map), self.size)]
         s += self._readme_info
         s += ['Data:', '----']
         # ====== Find longest string ====== #

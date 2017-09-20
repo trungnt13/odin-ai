@@ -141,7 +141,7 @@ class Data(object):
         if not self._new_args_called:
             raise RuntimeError(
                 "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
-                "when using `pickle` or `cPickle` to be able pickling NNOp.")
+                "when using `pickle` or `cPickle` to be able pickling Data.")
         self._new_args_called = False
         return (self._batch_size, self._start, self._end, self._seed,
                 self._shuffle_level, self._new_args, self._path)

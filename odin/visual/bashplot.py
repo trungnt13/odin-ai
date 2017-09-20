@@ -183,7 +183,7 @@ def print_dist(d, height=12, pch="o", show_number=False):
             d = d.items()
         orig_d = [(str(name), int(count))
                   for name, count in d]
-        d = [(name[::-1].replace('-', '|').replace('_', '|'), count)
+        d = [(str(name)[::-1].replace('-', '|').replace('_', '|'), count)
              for name, count in d]
         labels = [[c for c in name] for name, count in d]
         max_labels = max(len(name) for name, count in d)

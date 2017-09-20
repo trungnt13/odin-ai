@@ -13,131 +13,134 @@ from __future__ import print_function, absolute_import, division
 import matplotlib
 matplotlib.use("Agg")
 
-from odin.utils import ArgController
-
-# ====== parse arguments ====== #
-args = ArgController(
-).add('-dev', 'gpu or cpu', 'gpu'
-).add('-dt', 'dtype: float32 or float16', 'float16'
-).add('-feat', 'feature type: mfcc, mspec, spec, qspec, qmspec, qmfcc', 'mspec'
-).add('-cnn', 'enable CNN or not', True
-).add('-vad', 'number of GMM component for VAD', 2
-# for training
-).add('-lr', 'learning rate', 0.001
-).add('-epoch', 'number of epoch', 5
-).add('-bs', 'batch size', 8
-).parse()
-
-# ====== import ====== #
 import os
-os.environ['ODIN'] = 'float32,%s' % (args['dev'])
+os.environ['ODIN'] = 'float32,%s' % ('gpu')
+from six.moves import cPickle
 
 import numpy as np
 import tensorflow as tf
 np.random.seed(1208)
 
 from odin import nnet as N, backend as K, fuel as F, stats
+from odin.stats import train_valid_test_split
 from odin.utils import get_modelpath, stdio, get_logpath, get_datasetpath
 from odin import training
+from odin.visual import print_dist
 
 # set log path
 stdio(path=get_logpath('digit_audio.log', override=True))
 
 # ===========================================================================
+# Fun constant
+# ===========================================================================
+nb_vad_mixture = 3
+nb_classes = 10
+hop_length = 0.005
+features = ['mspec']
+
+# ===========================================================================
 # Get wav and process new dataset configuration
 # ===========================================================================
 # ====== process new features ====== #
-if False:
-    datapath = F.load_digit_wav()
-    output_path = get_datasetpath(name='digit_audio', override=True)
-    feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', sr_new=8000,
-                             win=0.025, hop=0.005, nb_melfilters=40, nb_ceps=13,
-                             get_spec=True, get_qspec=False, get_phase=False,
-                             get_pitch=True, get_f0=True,
-                             get_vad=args['vad'], get_energy=True, get_delta=2,
-                             fmin=64, fmax=None, preemphasis=None,
-                             pitch_threshold=0.3, pitch_fmax=260,
-                             vad_smooth=3, vad_minlen=0.1,
-                             pca=True, pca_whiten=False,
-                             save_stats=True, substitute_nan=None,
-                             dtype='float16', datatype='memmap',
-                             ncache=0.12, ncpu=12)
-    feat.run()
-    ds = F.Dataset(output_path, read_only=True)
-# ====== use online features ====== #
-else:
-    ds = F.load_digit_feat()
-nb_classes = 10
+datapath = F.load_digit_wav()
+output_path = get_datasetpath(name='digit_feat', override=False)
+# feat = F.SpeechProcessor(datapath, output_path,
+#                          audio_ext='.wav',
+#                          sr=None, sr_info={}, sr_new=None, best_resample=True,
+#                          win=0.025, hop=hop_length,
+#                          nb_melfilters=40, nb_ceps=13,
+#                          get_spec=True, get_qspec=True, get_phase=True,
+#                          get_pitch=True, get_f0=True,
+#                          get_vad=nb_vad_mixture,
+#                          get_energy=True, get_delta=2,
+#                          fmin=64, fmax=None, preemphasis=0.97,
+#                          pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
+#                          vad_smooth=3, vad_minlen=0.05,
+#                          pca=True, pca_whiten=False,
+#                          save_stats=True, substitute_nan=None,
+#                          dtype='float16', datatype='memmap',
+#                          ncache=600, ncpu=12)
+# feat.run()
+ds = F.Dataset(output_path, read_only=True)
+print(ds)
+
 # ===========================================================================
 # Create feeder
 # ===========================================================================
-indices = [(name, start, end) for name, (start, end) in ds['indices'].iteritems(True)]
+indices = ds['indices'].items()
 longest_utterances = max(int(end) - int(start) - 1
-                         for i, start, end in indices)
-longest_vad = max(end - start
-                  for name, vad in ds['vadids']
-                  for (start, end) in vad)
+                         for _, (start, end) in indices)
 print("Longest Utterance:", longest_utterances)
-print("Longest Vad:", longest_vad)
-
 np.random.shuffle(indices)
 n = len(indices)
-train = indices[:int(0.6 * n)]
-valid = indices[int(0.6 * n):int(0.8 * n)]
-test = indices[int(0.8 * n):]
-print('Nb train:', len(train), stats.freqcount([int(i[0][0]) for i in train]))
-print('Nb valid:', len(valid), stats.freqcount([int(i[0][0]) for i in valid]))
-print('Nb test:', len(test), stats.freqcount([int(i[0][0]) for i in test]))
+train, valid, test = train_valid_test_split(indices, train=0.6, inc_test=True,
+                                            cluster_func=lambda x: x[0][0],
+                                            seed=12082518)
+print("Traning set")
+print(print_dist(stats.freqcount([int(i[0][0]) for i in train]), show_number=True))
+print("Validation set")
+print(print_dist(stats.freqcount([int(i[0][0]) for i in valid]), show_number=True))
+print("Test set")
+print(print_dist(stats.freqcount([int(i[0][0]) for i in test]), show_number=True))
 
-train_feeder = F.Feeder(ds[args['feat']], train, ncpu=1)
-test_feeder = F.Feeder(ds[args['feat']], test, ncpu=2)
-valid_feeder = F.Feeder(ds[args['feat']], valid, ncpu=2)
+# ===========================================================================
+# Create feeders
+# ===========================================================================
+data = [ds[i] for i in features]
+train = F.Feeder(F.DataDescriptor(data=data, indices=train),
+                 ncpu=4)
+valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
+                 ncpu=2)
+test = F.Feeder(F.DataDescriptor(data=data, indices=test),
+                ncpu=2)
 
 recipes = [
     F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
     F.recipes.Normalization(
-        mean=ds[args['feat'] + '_mean'],
-        std=ds[args['feat'] + '_std'],
-        local_normalize=False
+        local_normalize=True,
+        data_idx=None
     ),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
-                         label_transform=lambda x: x[-1]),
-    F.recipes.CreateBatch(),
+                         label_transform=F.recipes.last_seen),
 ]
+train.set_recipes(recipes)
+test.set_recipes(recipes)
+valid.set_recipes(recipes)
+print('Feature shape:', train.shape)
+feat_shape = (None,) + train.shape[1:]
 
-train_feeder.set_recipes(recipes)
-test_feeder.set_recipes(recipes)
-valid_feeder.set_recipes(recipes)
-print('Feature shape:', train_feeder.shape)
-feat_shape = (None,) + train_feeder.shape[1:]
-
+with open('/tmp/test_feeder', 'w') as f:
+    cPickle.dump(test, f, protocol=2)
 X = K.placeholder(shape=feat_shape, name='X')
 y = K.placeholder(shape=(None,), dtype='int32', name='y')
+
 # ===========================================================================
 # Create network
 # ===========================================================================
-f = N.Sequence([
-    # ====== CNN ====== #
-    N.Dimshuffle(pattern=(0, 1, 2, 'x')),
-    N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
-           activation=K.linear),
-    N.BatchNorm(activation=K.relu),
-    N.Conv(num_filters=64, filter_size=3, pad='same', strides=1,
-           activation=K.linear),
-    N.BatchNorm(activation=K.relu),
-    N.Pool(pool_size=2, strides=None, pad='valid', mode='max'),
-    N.Flatten(outdim=3),
-    # ====== RNN ====== #
-    # N.AutoRNN(128, rnn_mode='lstm', num_layers=3,
-    # direction_mode='bidirectional', prefer_cudnn=True),
-    # ====== Dense ====== #
-    N.Flatten(outdim=2),
-    # N.Dropout(level=0.2), # adding dropout does not help
-    N.Dense(num_units=1024, activation=K.relu),
-    N.Dense(num_units=512, activation=K.relu),
-    N.Dense(num_units=nb_classes)
-], debug=True)
+with N.nnop_scope(ops=['Pool'], mode='max', pool_size=2):
+    f = N.Sequence([
+        # ====== CNN ====== #
+        N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+        N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
+               b_init=None, activation=K.linear),
+        N.BatchNorm(activation=K.relu),
+
+        N.Conv(num_filters=64, filter_size=3, pad='same', strides=1,
+               b_init=None, activation=K.linear),
+        N.BatchNorm(activation=K.relu),
+        N.Pool(strides=None, pad='valid'),
+        # ====== RNN ====== #
+        N.Flatten(outdim=3),
+        N.CudnnRNN(128, rnn_mode='lstm', num_layers=1,
+                   bidirectional=True),
+        # ====== Dense ====== #
+        N.Flatten(outdim=2),
+        N.Dense(num_units=1024, activation=K.relu),
+        N.Dropout(level=0.5), # adding dropout does not help
+        N.Dense(num_units=512, activation=K.relu),
+        N.Dense(num_units=nb_classes)
+    ], debug=True)
 y_pred_logits = f(X)
 y_pred_prob = tf.nn.softmax(y_pred_logits)
 y_onehot = tf.one_hot(y, depth=nb_classes)
@@ -150,7 +153,7 @@ cost_cm = K.metrics.confusion_matrix(y_pred_prob, y, labels=nb_classes)
 parameters = [p for p in f.parameters
               if K.role.has_roles(p, [K.role.Weight,
                                       K.role.Bias])]
-optimizer = K.optimizers.Adam(lr=args['lr'])
+optimizer = K.optimizers.Adam(lr=0.0001)
 updates = optimizer.get_updates(cost_ce, parameters)
 
 print('Building training functions ...')
@@ -165,16 +168,14 @@ f_pred = K.function(X, y_pred_prob, training=False)
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
-                         print_progress=True, confirm_exit=True)
+task = training.MainLoop(batch_size=8, seed=12, shuffle_level=2)
 task.set_save(get_modelpath(name='digit_audio_ai', override=True), f)
 task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
 ])
-task.set_train_task(f_train, train_feeder, epoch=4,
-                    name='train')
-task.set_valid_task(f_score, valid_feeder, freq=training.Timer(percentage=0.6),
+task.set_train_task(f_train, train, epoch=4, name='train')
+task.set_valid_task(f_score, valid, freq=training.Timer(percentage=0.6),
                     name='valid')
-task.set_eval_task(f_score, test_feeder, name='test')
+task.set_eval_task(f_score, test, name='test')
 task.run()

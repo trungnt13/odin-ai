@@ -311,7 +311,7 @@ class FeatureProcessor(object):
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
         for name, db in databases.iteritems():
-            db.flush(save_indices=True)
+            db.flush(save_all=True)
             db.close()
             prog.add_notification('Flush MmapDict "%s" to disk' %
                                   ctext(name, 'yellow'))
@@ -367,7 +367,7 @@ class FeatureProcessor(object):
             j = getattr(self, i)
             if isinstance(j, (Number, string_types, bool)):
                 config[i] = j
-        config.flush(save_indices=True)
+        config.flush(save_all=True)
         config.close()
         prog.add_notification("Saved Processor configuration.")
         prog.add_notification("Closed all dataset.")

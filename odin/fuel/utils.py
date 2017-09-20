@@ -74,7 +74,7 @@ class NoSQL(MutableMapping):
         if not self._new_args_called:
             raise RuntimeError(
                 "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
-                "when using `pickle` or `cPickle` to be able pickling NNOp.")
+                "when using `pickle` or `cPickle` to be able pickling NoSQL.")
         self._new_args_called = False
         return self.path, self.read_only, self.cache_size
 
