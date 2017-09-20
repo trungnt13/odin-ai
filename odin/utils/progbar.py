@@ -230,8 +230,12 @@ class Progbar(object):
             # ====== check value of key and value ====== #
             key = margin + str(key).replace('\n', ' ')
             # ====== special cases ====== #
-            if "confusionmatrix" in key.lower():
-                value = print_confusion(value)
+            if "confusionmatrix" in key.lower() or \
+            "confusion_matrix" in key.lower() or \
+            "confusion-matrix" in key.lower() or \
+            "confusion matrix" in key.lower():
+                value = str(value)
+                # value = print_confusion(value)
             else:
                 value = str(value)
             # ====== multiple lines or not ====== #

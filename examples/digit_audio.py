@@ -174,7 +174,7 @@ task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
 ])
-task.set_train_task(f_train, train, epoch=4, name='train')
+task.set_train_task(f_train, train, epoch=2, name='train')
 task.set_valid_task(f_score, valid, freq=training.Timer(percentage=0.6),
                     name='valid')
 task.set_eval_task(f_score, test, name='test')

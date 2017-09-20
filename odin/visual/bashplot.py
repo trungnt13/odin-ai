@@ -251,6 +251,10 @@ def print_dist(d, height=12, pch="o", show_number=False):
     return fig[:-1]
 
 
+def _float2str(x):
+    return ('%.2f' % x)[1:] if x < 1.0 else '1.0'
+
+
 def print_confusion(arr, labels=None, inc_stats=True):
     """
     Parameters
@@ -273,7 +277,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
     total_samples = np.sum(arr_sum_row)
     arr_sum_col = arr.sum(0).astype('int64')
     info = {}
-    info_fmt = ['%.2f', '%.2f', '%.2f', '%.2f', '%d']
+    nb_info = 5 # Precision, Recall, F1, FA, Sum
     if inc_stats:
         for i in range(nb_classes):
             TP = arr[i, i] # True positive
@@ -301,15 +305,17 @@ def print_confusion(arr, labels=None, inc_stats=True):
     for i, row in enumerate(arr):
         row_text = ctext(lab_fmt % labels[i], LABEL_COLOR)
         for j, col in enumerate(row):
-            col = ('%.2f' % col)[1:]
+            col = _float2str(col)
             if i == j:
                 row_text += ctext(col, color='cyan') + ' '
             else:
                 row_text += col + ' '
         # new line
         if inc_stats:
-            info_str = [(fmt % val)[1:] if _ < (len(info_fmt) - 1) else (fmt % val)
-                        for _, (fmt, val) in enumerate(zip(info_fmt, info[i]))]
+            # print float, except the last one is int
+            info_str = [_float2str(val) if i < (nb_info - 1) else
+                        ('%d' % val)
+                        for i, val in enumerate(info[i])]
             fig += row_text + ' ' + '|'.join(info_str) + '\n'
         else:
             fig += row_text + '\n'
