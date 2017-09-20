@@ -775,31 +775,76 @@ class Feeder(MutableData):
         self._running_iter.append(it)
         return it
 
-    def save_cache(self, path, datatype='memmap'):
-        """ Save all preprocessed data to a Dataset """
-        if not isinstance(path, str) or os.path.isfile(path):
-            raise ValueError('path must be string path to a folder.')
-        if os.path.exists(path):
-            print('Remove old dataset at path:', path)
-            shutil.rmtree(path)
+    def save_cache(self, path, name=None, dtype=None, batch_size=1024):
+        """ Save all preprocessed data to a Dataset
 
-        ds = Dataset(path)
+        Parameters
+        ----------
+        path: string
+            path to a folder
+        name: None, or list of string
+            specific name for each returned `numpy.ndarray` during iteration
+        dtype: None, or list of dtype, or single dtype
+            specific dtype for all or each of returned `numpy.ndarray`
+            during iteration
+        batch_size: int
+            amount of samples for each batch (higher the faster iteration)
+
+        Note
+        ----
+        Only returned `numpy.ndarray` are saved
+        """
+        if not is_string(path):
+            raise ValueError("`path` must be string path to a folder.")
+        if os.path.exists(path) and os.path.isfile(path):
+            raise ValueError("`path` is a file, required a folder for "
+                             "saving all cache data.")
         # ====== start caching ====== #
-        prog = Progbar(target=self.shape[0], name='Caching',
+        prog = Progbar(target=len(self),
+                       name='Saving cache of preprocessed data',
                        print_report=True, print_summary=True)
-        for X in self:
-            if not isinstance(X, (tuple, list)):
-                X = (X,)
-            # saving preprocessed data
-            for i, x in enumerate(X):
-                name = 'data%d' % i
-                if name in ds: ds[name].append(x)
-                else: ds[(name, datatype)] = x
-            # print progress
-            prog.add(X[0].shape[0])
+        ds = Dataset(path, override=True)
+        with self.set_batch_context(batch_size=int(batch_size), seed=None,
+                                    start=0, end=-1, shuffle_level=0):
+            for X in self:
+                if not isinstance(X, (tuple, list)):
+                    X = (X,)
+                n = 0
+                i = 0
+                # saving preprocessed data
+                for x in X:
+                    if isinstance(x, np.ndarray):
+                        # checking name
+                        if name is None:
+                            x_name = 'X%d' % i
+                        else:
+                            x_name = name[i]
+                        # checking dtype
+                        if isinstance(dtype, (tuple, list)):
+                            x = x.astype(dtype[i])
+                        elif dtype is not None:
+                            x = x.astype(dtype)
+                        # saving to the dataset
+                        if x_name in ds:
+                            ds[x_name].append(x)
+                        else:
+                            ds[(x_name, 'memmap')] = x
+                        # update samples count, and data count
+                        n = x.shape[0]
+                        i += 1
+                # print progress
+                prog.add(n)
+        # ====== flush and close everything ====== #
         ds.flush()
         ds.close()
+        with open(os.path.join(path, 'README'), 'w') as f:
+            f.write(str(self))
         # end
+        # ====== check one more time ====== #
+        ds = Dataset(path, read_only=True)
+        print(ds)
+        print(ctext("Dataset size:", 'cyan'), ds.size, '(MB)')
+        ds.close()
         return self
 
     def stop_all(self):

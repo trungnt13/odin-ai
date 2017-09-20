@@ -7,8 +7,9 @@ import os
 import re
 import marshal
 from math import ceil
-from abc import ABCMeta, abstractmethod
 from six import add_metaclass
+from contextlib import contextmanager
+from abc import ABCMeta, abstractmethod
 from six.moves import range, zip, zip_longest
 from collections import OrderedDict, defaultdict
 
@@ -273,6 +274,26 @@ class Data(object):
         if isinstance(self._data, (tuple, list)):
             return [dat.dtype for dat in self._data]
         return self._data.dtype
+
+    @contextmanager
+    def set_batch_context(self, batch_size=None, seed=-1, start=None, end=None,
+                          shuffle_level=None):
+        _batch_size = self._batch_size
+        _seed = self._seed
+        _start = self._start
+        _end = self._end
+        _shuffle_level = self._shuffle_level
+        # temporary batch configuration
+        self.set_batch(batch_size=_batch_size if batch_size is None else batch_size,
+            seed=_seed if seed == -1 else seed,
+            start=_start if start is None else start,
+            end=_end if end is None else end,
+            shuffle_level=_shuffle_level if shuffle_level is None else shuffle_level)
+        yield self
+        # reset batch to original batch configuration
+        self.set_batch(batch_size=_batch_size, seed=_seed,
+                       start=_start, end=_end,
+                       shuffle_level=_shuffle_level)
 
     def set_batch(self, batch_size=None, seed=-1, start=None, end=None,
                   shuffle_level=None):

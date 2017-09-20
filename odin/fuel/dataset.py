@@ -127,11 +127,11 @@ class Dataset(object):
             raise ValueError('Invalid path for Dataset: %s' % path)
 
     def _set_path(self, path):
+        MAXIMUM_README_LINE = 25
         # all files are opened with default_mode=r+
         self._data_map = OrderedDict()
         self._path = os.path.abspath(path)
         self._default_hdf5 = os.path.basename(self._path) + '_default.h5'
-
         if not os.path.exists(path):
             os.mkdir(path)
             return # not thing to do more
@@ -145,7 +145,7 @@ class Dataset(object):
             if 'readme' == fname[:6].lower():
                 readme_path = os.path.join(path, fname)
                 with open(readme_path, 'r') as readme_file:
-                    readme = readme_file.readlines()[:3]
+                    readme = readme_file.readlines()[:MAXIMUM_README_LINE]
                     readme = [' ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
                     readme.append(' For more information: ' + readme_path)
                     self._readme_info = ['README:', '------'] + readme
@@ -324,7 +324,7 @@ class Dataset(object):
         datatype = 'memmap' # default datatype
         if isinstance(key, (tuple, list)):
             key, datatype = key
-            datatype = datatype.lower()
+            datatype = str(datatype).lower()
             if datatype not in ('memmap', 'hdf5'):
                 raise ValueError('datatype can only be "memmap" or "hdf5", but '
                                  'the given data type is "%s"' % datatype)
