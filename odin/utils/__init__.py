@@ -135,7 +135,7 @@ def is_pickleable(x):
     try:
         cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
         return True
-    except PickleError:
+    except cPickle.PickleError:
         return False
 
 
@@ -188,6 +188,9 @@ def raise_return(e):
     raise e
 
 
+_CURRENT_STDIO = None
+
+
 class _LogWrapper():
 
     def __init__(self, stream):
@@ -209,6 +212,10 @@ class _LogWrapper():
             pass
 
 
+def get_stdio_path():
+    return _CURRENT_STDIO
+
+
 def stdio(path=None, suppress=False, stderr=True):
     """
     Parameters
@@ -221,16 +228,30 @@ def stdio(path=None, suppress=False, stderr=True):
     stderr:
         apply output file with stderr also
 
+    NOTE
+    ----
+    Redirect the system logging can slightly decrease the
+    performance in logging intensive application.
     """
     # turn off stdio
     if suppress:
         f = open(os.devnull, "w")
+        path = None
     # reset
     elif path is None:
         f = None
     # redirect to a file
-    else:
+    elif is_string(path):
         f = _LogWrapper(open(path, "w"))
+    elif isinstance(path, file):
+        f = path
+        path = f.name
+    else:
+        raise ValueError("Unsupport for path=`%s` in `stdio`." %
+            str(type(path)))
+    # ====== set current stdio path ====== #
+    global _CURRENT_STDIO
+    _CURRENT_STDIO = path
     # ====== assign stdio ====== #
     if f is None: # reset
         if isinstance(sys.stdout, _LogWrapper):
@@ -244,6 +265,10 @@ def stdio(path=None, suppress=False, stderr=True):
         if stderr:
             sys.stderr = f
 
+
+# ===========================================================================
+# Universal ID
+# ===========================================================================
 _uuid_chars = list(chain(map(chr, range(65, 91)),  # ABCD
                          map(chr, range(97, 123)),  # abcd
                          map(chr, range(48, 57)))) # 0123

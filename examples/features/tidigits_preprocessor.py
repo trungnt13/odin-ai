@@ -155,7 +155,7 @@ if os.path.exists(outpath):
     shutil.rmtree(outpath)
 acous = F.SpeechProcessor(ds, outpath,
                 sr=16000, sr_info={}, sr_new=None,
-                win=0.02, hop=0.005, window='hann',
+                win=0.025, hop=0.01, window='hann',
                 nb_melfilters=40, nb_ceps=13,
                 get_spec=True, get_qspec=False, get_phase=False,
                 get_pitch=True, get_f0=True,
@@ -169,7 +169,7 @@ acous = F.SpeechProcessor(ds, outpath,
                 audio_ext=None, save_raw=True,
                 save_stats=True, substitute_nan=None,
                 dtype='float16', datatype='memmap',
-                ncache=250, ncpu=10)
+                ncache=800, ncpu=10)
 acous.run()
 # copy README
 with open(os.path.join(outpath, 'README'), 'w') as f:

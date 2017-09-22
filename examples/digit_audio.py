@@ -44,23 +44,23 @@ features = ['mspec']
 # ====== process new features ====== #
 datapath = F.load_digit_wav()
 output_path = get_datasetpath(name='digit_feat', override=False)
-# feat = F.SpeechProcessor(datapath, output_path,
-#                          audio_ext='.wav',
-#                          sr=None, sr_info={}, sr_new=None, best_resample=True,
-#                          win=0.025, hop=hop_length,
-#                          nb_melfilters=40, nb_ceps=13,
-#                          get_spec=True, get_qspec=True, get_phase=True,
-#                          get_pitch=True, get_f0=True,
-#                          get_vad=nb_vad_mixture,
-#                          get_energy=True, get_delta=2,
-#                          fmin=64, fmax=None, preemphasis=0.97,
-#                          pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
-#                          vad_smooth=3, vad_minlen=0.05,
-#                          pca=True, pca_whiten=False,
-#                          save_stats=True, substitute_nan=None,
-#                          dtype='float16', datatype='memmap',
-#                          ncache=600, ncpu=12)
-# feat.run()
+feat = F.SpeechProcessor(datapath, output_path,
+                         audio_ext='.wav',
+                         sr=None, sr_info={}, sr_new=None, best_resample=True,
+                         win=0.025, hop=hop_length,
+                         nb_melfilters=40, nb_ceps=13,
+                         get_spec=True, get_qspec=True, get_phase=True,
+                         get_pitch=True, get_f0=True,
+                         get_vad=nb_vad_mixture,
+                         get_energy=True, get_delta=2,
+                         fmin=64, fmax=None, preemphasis=0.97,
+                         pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
+                         vad_smooth=3, vad_minlen=0.05,
+                         pca=True, pca_whiten=False,
+                         save_stats=True, substitute_nan=None,
+                         dtype='float16', datatype='memmap',
+                         ncache=600, ncpu=12)
+feat.run()
 ds = F.Dataset(output_path, read_only=True)
 print(ds)
 
@@ -174,7 +174,7 @@ task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
 ])
-task.set_train_task(f_train, train, epoch=2, name='train')
+task.set_train_task(f_train, train, epoch=6, name='train')
 task.set_valid_task(f_score, valid, freq=training.Timer(percentage=0.6),
                     name='valid')
 task.set_eval_task(f_score, test, name='test')

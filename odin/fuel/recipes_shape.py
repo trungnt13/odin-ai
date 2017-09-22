@@ -355,8 +355,10 @@ class Sequencing(FeederRecipe):
         label_idx = axis_normalize(axis=self.label_idx, ndim=len(y),
                                   return_tuple=True)
         # ====== segnments X ====== #
+        print(name, [x.shape for x in X], self.frame_length, self.hop_length)
         X = [segment_axis(x, self.frame_length, self.hop_length, axis=0,
-                          end=self.end, endvalue=self.endvalue, endmode=self.endmode)
+                          end=self.end, endvalue=self.endvalue,
+                          endmode=self.endmode)
              if idx in data_idx else x
              for idx, x in enumerate(X)]
         # ====== transforming the transcription ====== #

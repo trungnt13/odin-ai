@@ -7,11 +7,11 @@ from six.moves import zip, range, cPickle
 
 import numpy as np
 
-from .data import MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset, MAX_OPEN_MMAP, Data
-from .utils import MmapDict, SQLiteDict
+from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
+                   MAX_OPEN_MMAP, Data)
+from .utils import MmapDict, SQLiteDict, NoSQL
 
-from odin.utils import get_file, Progbar, is_string
-from odin.utils.decorators import singleton
+from odin.utils import get_file, Progbar, is_string, ctext
 
 
 __all__ = [
@@ -111,7 +111,9 @@ class Dataset(object):
     def __init__(self, path, read_only=False, override=False):
         path = os.path.abspath(path)
         self.read_only = read_only
-        self._readme_info = ['README:', '------', ' No information!']
+        self._readme_info = [ctext('README:', 'yellow'),
+                             '------',
+                             ' No information!']
         self._readme_path = None
         # parse all data from path
         if path is not None:
@@ -147,8 +149,9 @@ class Dataset(object):
                 with open(readme_path, 'r') as readme_file:
                     readme = readme_file.readlines()[:MAXIMUM_README_LINE]
                     readme = [' ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
-                    readme.append(' For more information: ' + readme_path)
-                    self._readme_info = ['README:', '------'] + readme
+                    readme.append(' * For more information: ' + readme_path)
+                    self._readme_info = [ctext('README:', 'yellow'),
+                                         '------'] + readme
                     self._readme_path = readme_path
             # parse data
             data = _parse_data_descriptor(os.path.join(path, fname), self.read_only)
@@ -375,10 +378,13 @@ class Dataset(object):
                 yield self[name]
 
     def __str__(self):
-        s = ['==========  Dataset:%s Total:%d Size:%.2f(MB) ==========' %
-             (self.path, len(self._data_map), self.size)]
+        s = ['==========  ' +
+             ctext('Dataset:%s Total:%d Size:%.2f(MB)', 'magenta') %
+             (self.path, len(self._data_map), self.size) +
+             '  ==========']
         s += self._readme_info
-        s += ['Data:', '----']
+        s += [ctext('DATA:', 'yellow'),
+              '----']
         # ====== Find longest string ====== #
         longest_name = 0
         longest_shape = 0

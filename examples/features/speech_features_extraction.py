@@ -19,6 +19,15 @@ from odin import fuel as F, utils
 from collections import defaultdict
 from odin.ml import MiniBatchPCA
 
+# ===========================================================================
+# set LOG path
+# ===========================================================================
+LOG_PATH = utils.get_logpath('speech_features_extraction.log',
+                             override=True)
+utils.stdio(LOG_PATH)
+# ===========================================================================
+# Const
+# ===========================================================================
 backend = 'odin'
 PCA = True
 center = True
@@ -27,6 +36,9 @@ pitch_algo = 'rapt'
 datapath = F.load_digit_wav()
 output_path = utils.get_datasetpath(name='digit_%s' % backend,
                                     override=True)
+# ===========================================================================
+# Processor
+# ===========================================================================
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          sr=None, sr_new=None, sr_info={},
                          win=0.02, hop=0.01, window='hann',
@@ -42,9 +54,9 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          center=center, power=2, log=True,
                          backend=backend,
                          pca=PCA, pca_whiten=False,
-                         save_stats=True, substitute_nan=None,
+                         save_raw=True, save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=250, ncpu=8)
+                         ncache=251, ncpu=10)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
@@ -53,6 +65,8 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 ds = F.Dataset(output_path, read_only=True)
 print('Output path:', output_path)
 print(ds)
+F.validate_features(feat, '/tmp/tmp', override=True)
+exit()
 print("* Configurations:")
 for i, j in ds['config'].iteritems():
     print(' ', i, ':', j)

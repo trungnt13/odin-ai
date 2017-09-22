@@ -159,7 +159,8 @@ def read_numbers(numbers):
 # ===========================================================================
 # Main
 # ===========================================================================
-def print_dist(d, height=12, pch="o", show_number=False):
+def print_dist(d, height=12, pch="o", show_number=False,
+               title=None):
     """ Printing a figure of given distribution
 
     Parameters
@@ -235,8 +236,8 @@ def print_dist(d, height=12, pch="o", show_number=False):
         # new line
         fig += '\n'
     # ====== add actual number of necessary ====== #
+    maximum_fig_length = MAXIMUM_YLABEL + 1 + len(orig_d) * 2
     if show_number:
-        maximum_fig_length = MAXIMUM_YLABEL + 1 + len(orig_d) * 2
         line_length = 0
         name_fmt = '%' + str(max_labels) + 's'
         for name, count in orig_d:
@@ -248,6 +249,12 @@ def print_dist(d, height=12, pch="o", show_number=False):
             else:
                 line_length += n
             fig += text
+    # ====== add title ====== #
+    if title is not None:
+        title = ctext('"%s"' % str(title), 'red')
+        padding = '  '
+        n = (maximum_fig_length - len(title) // 2) // 2 - len(padding) * 3
+        fig = '=' * n + padding + title + padding + '=' * n + '\n' + fig
     return fig[:-1]
 
 
@@ -345,7 +352,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
 
 
 def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
-    colour="default", title="", xlab=None, showSummary=False,
+    colour="default", title="", xlab=True, showSummary=False,
     regular=False):
     ''' Plot histogram.
      1801|       oo

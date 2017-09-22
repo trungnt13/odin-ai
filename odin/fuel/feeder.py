@@ -136,6 +136,9 @@ class FeederRecipe(object):
                     print_attrs[name] = str(attr)
                 elif inspect.isfunction(attr):
                     print_attrs[name] = "(f)" + attr.func_name
+                elif isinstance(attr, np.ndarray):
+                    print_attrs[name] = ("(%s)" % str(attr.dtype)) + \
+                        str(attr.shape)
         print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
         print_attrs = [('#data', self.nb_data), ('#desc', self.nb_desc)] + print_attrs
         print_attrs = ' '.join(["%s:%s" % (ctext(key, 'yellow'), val)
@@ -687,19 +690,24 @@ class Feeder(MutableData):
         return tuple(self._cache_shape)
 
     def __str__(self):
-        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:"%s" dtype:%s>\n' % \
+        padding = '   '
+        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:"%s">\n' % \
             (ctext('Feeder', 'cyan'), len(self.indices_keys),
                 len(self._running_iter), self.ncpu, self.buffer_size,
-                self._batch_mode,
-                '|'.join((str(dt) for dt in self.dtype))
-            )
+                self._batch_mode)
+        # ====== Shape and dtype ====== #
+        shape = (self.shape,) if is_number(self.shape[0]) else self.shape
+        s += padding + ctext("Shape: ", 'magenta') + \
+            ', '.join((str(s) for s in shape)) + '\n'
+        s += padding + ctext("Dtype: ", 'magenta') + \
+            ', '.join((str(dt) for dt in self.dtype)) + '\n'
         # ====== print recipes ====== #
-        s += '   ' + ctext('Recipes:', 'magenta') + '\n'
+        s += padding + ctext('Recipes:', 'magenta') + '\n'
         for recipe in self._recipes:
             s += '\n'.join(['\t' + i for i in str(recipe).split('\n')])
             s += '\n'
         # ====== print data descriptor ====== #
-        s += '   ' + ctext('Descriptor:', 'magenta') + '\n'
+        s += padding + ctext('Descriptor:', 'magenta') + '\n'
         for desc in self._data:
             s += '\n'.join(['\t' + i for i in str(desc).split('\n')])
             s += '\n'

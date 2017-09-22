@@ -15,6 +15,37 @@ from .cache_utils import cache_memory
 
 
 # ===========================================================================
+# Helper
+# ===========================================================================
+class LabelsIndexing(object):
+    """ LabelsIndexing
+
+    Parameters
+    ----------
+    key_func: callabe
+        a function transform each element of `y` into unique ID
+        for labeling.
+    fast_index: dict
+        mapping from label -> index
+    sorted_labels: list
+        list of all labels, sorted for unique order
+    """
+
+    def __init__(self, key_func, fast_index, sorted_labels):
+        super(LabelsIndexing, self).__init__()
+        self._key_func = key_func
+        self._fast_index = fast_index
+        self._sorted_labels = sorted_labels
+
+    def __call__(self, x):
+        x = self._key_func(x)
+        if x in self._fast_index:
+            return self._fast_index[x]
+        raise ValueError("Cannot find key: '%s' in %s" %
+                         (str(x), str(self._sorted_labels)))
+
+
+# ===========================================================================
 # Main
 # ===========================================================================
 def one_hot(y, nb_classes=None):
@@ -60,16 +91,13 @@ def unique_labels(y, key_func=None, return_labels=False):
         key_func = lambda _: str(_)
     sorted_labels = list(sorted(set(key_func(i) for i in y)))
     fast_index = {j: i for i, j in enumerate(sorted_labels)}
-
-    def labels_index_func(x):
-        x = key_func(x)
-        if x in fast_index:
-            return fast_index[x]
-        raise ValueError("Cannot find key: '%s' in %s" %
-                         (str(x), str(sorted_labels)))
+    # ====== create label indexing object ====== #
+    labels_indexing = LabelsIndexing(key_func,
+                                     fast_index,
+                                     sorted_labels)
     if return_labels:
-        return labels_index_func, tuple(sorted_labels)
-    return labels_index_func
+        return labels_indexing, tuple(sorted_labels)
+    return labels_indexing
 
 
 # def replace(array, value, new_value):

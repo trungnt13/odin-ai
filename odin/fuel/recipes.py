@@ -11,7 +11,8 @@ from six.moves import zip, zip_longest, range
 import numpy as np
 
 from odin.utils import (one_hot, is_string, ctext, is_number,
-                        is_primitives, as_tuple, flatten_list)
+                        is_primitives, as_tuple, flatten_list,
+                        is_pickleable)
 from odin.utils.decorators import functionable
 
 from .utils import MmapDict
@@ -168,7 +169,9 @@ class Name2Trans(FeederRecipe):
         super(Name2Trans, self).__init__()
         if not callable(converter_func):
             raise ValueError('"converter_func" must be callable.')
-        self.converter_func = functionable(converter_func)
+        if not is_pickleable(converter_func):
+            raise ValueError('"converter_func" must be pickle-able.')
+        self.converter_func = converter_func
 
     def process(self, name, X, y):
         # X: is a list of ndarray
