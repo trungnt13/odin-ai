@@ -112,7 +112,7 @@ print(ctext("#File test:", 'yellow'), len(test))
 recipes = [
     F.recipes.Name2Trans(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits)),
-    F.recipes.Sequencing(frame_length=100, hop_length=50,
+    F.recipes.Sequencing(frame_length=length, hop_length=1,
                          end='pad', endmode='post', endvalue=0,
                          label_transform=F.recipes.last_seen)
 ]
@@ -127,14 +127,15 @@ test = F.Feeder(F.DataDescriptor(data=data, indices=test), dtype='float32',
 train.set_recipes(recipes)
 valid.set_recipes(recipes)
 test.set_recipes(recipes)
-print(train)
-exit()
+print(ctext("Train:", 'yellow'), train.shape)
+print(ctext("Valid:", 'yellow'), valid.shape)
+print(ctext("Test:", 'yellow'), test.shape)
 # ===========================================================================
 # Create model
 # ===========================================================================
 X = [K.placeholder(shape=(None,) + shape[1:], dtype='float32', name='input%d' % i)
-     for i, shape in enumerate(as_tuple_of_shape(feeder_train.shape))]
-y = K.placeholder(shape=(None, len(genders)), name='y', dtype='float32')
+     for i, shape in enumerate(as_tuple_of_shape(train.shape))]
+y = K.placeholder(shape=(None, len(digits)), name='y', dtype='float32')
 print("Inputs:", X)
 print("Outputs:", y)
 
@@ -150,19 +151,16 @@ with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
             N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
             N.Pool(pool_size=(3, 2), strides=2),
             N.Flatten(outdim=2),
-            N.Dense(1024), N.BatchNorm(),
-            N.Dense(128),
-            N.Dense(512), N.BatchNorm(),
-            N.Dense(len(genders))
+            N.Dense(1024, b_init=0, activation=K.relu),
+            N.Dropout(0.5),
+            N.Dense(len(digits))
         ], debug=True)
-
-y_logit = f(X)
+y_logit = f(X[0])
 y_prob = tf.nn.softmax(y_logit)
-
 # ====== create loss ====== #
 ce = tf.losses.softmax_cross_entropy(y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_prob, y)
-cm = K.metrics.confusion_matrix(y_prob, y, labels=len(genders))
+cm = K.metrics.confusion_matrix(y_prob, y, labels=len(digits))
 # ====== params and optimizing ====== #
 params = [p for p in f.parameters
          if K.role.has_roles(p, K.role.Parameter)]
@@ -191,8 +189,8 @@ task.set_callbacks([
     training.EarlyStopGeneralizationLoss('valid', ce,
                                          threshold=5, patience=5)
 ])
-task.set_train_task(f_train, feeder_train, epoch=25, name='train')
-task.set_valid_task(f_test, feeder_valid,
+task.set_train_task(f_train, train, epoch=25, name='train')
+task.set_valid_task(f_test, valid,
                     freq=training.Timer(percentage=0.5), name='valid')
 task.run()
 # ===========================================================================
@@ -200,14 +198,14 @@ task.run()
 # ===========================================================================
 y_true = []
 y_pred = []
-for outputs in Progbar(feeder_test, name="Evaluating",
+for outputs in Progbar(test, name="Evaluating",
                        count_func=lambda x: x[-1].shape[0]):
     name = str(outputs[0])
     idx = int(outputs[1])
     data = outputs[2:]
     if idx >= 1:
         raise ValueError("NOPE")
-    y_true.append(f_gender(name))
+    y_true.append(f_digits(name))
     y_pred.append(f_pred(*data))
 y_true = np.array(y_true, dtype='int32')
 y_pred = np.argmax(np.array(y_pred, dtype='float32'), -1)
@@ -216,5 +214,5 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 print()
 print("Acc:", accuracy_score(y_true, y_pred))
 print("Confusion matrix:")
-print(print_confusion(confusion_matrix(y_true, y_pred), genders))
+print(print_confusion(confusion_matrix(y_true, y_pred), digits))
 print(LOG_PATH)

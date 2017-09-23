@@ -41,7 +41,7 @@ output_path = utils.get_datasetpath(name='digit_%s' % backend,
 # ===========================================================================
 feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          sr=None, sr_new=None, sr_info={},
-                         win=0.02, hop=0.01, window='hann',
+                         win=0.02, hop=0.005, window='hann',
                          nb_melfilters=40, nb_ceps=13,
                          get_delta=2, get_energy=True, get_phase=True,
                          get_spec=True, get_pitch=True, get_f0=True,
@@ -64,9 +64,9 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 # ====== check the preprocessed dataset ====== #
 ds = F.Dataset(output_path, read_only=True)
 print('Output path:', output_path)
+# F.validate_features(feat, '/tmp/tmp', override=True)
 print(ds)
-F.validate_features(feat, '/tmp/tmp', override=True)
-exit()
+
 print("* Configurations:")
 for i, j in ds['config'].iteritems():
     print(' ', i, ':', j)

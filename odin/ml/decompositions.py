@@ -310,6 +310,17 @@ class MiniBatchPCA(IncrementalPCA):
         return self
 
     def transform(self, X, y=None, n_components=None):
+        # ====== check number of components ====== #
+        # specified percentage of explained variance
+        if n_components is not None:
+            # percentage of variances
+            if n_components < 1.:
+                _ = np.cumsum(self.explained_variance_ratio_)
+                n_components = (_ > n_components).nonzero()[0][0] + 1
+            # specific number of components
+            else:
+                n_components = int(n_components)
+        # ====== other info ====== #
         n = X.shape[0]
         if self.batch_size is None:
             batch_size = 12 * len(self.mean_)

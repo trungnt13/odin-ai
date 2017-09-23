@@ -103,6 +103,14 @@ class Normalization(FeederRecipe):
 class PCAtransform(FeederRecipe):
     """ FeatureScaling
     Scaling data into range [0, 1]
+
+    Parameters
+    ----------
+    pca: odin.ml.MiniBatchPCA
+        instance of MiniBatchPCA
+    nb_components: int, or float (0.0 - 1.0)
+        number of components, or percentage of explained variance
+        in case of float.
     """
 
     def __init__(self, pca, nb_components=0.9, whiten=False,

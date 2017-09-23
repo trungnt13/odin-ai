@@ -1492,7 +1492,8 @@ def ispec(spec, hop_length, window="hann", nb_iter=30, db=False,
         normalize output raw signal to have mean=0., and std=1.
 
     """
-    if db: spec = db2power(spec)
+    if db:
+        spec = db2power(spec)
     X_best = copy.deepcopy(spec)
     n_fft = (spec.shape[1] - 1) * 2
     for i in range(nb_iter):

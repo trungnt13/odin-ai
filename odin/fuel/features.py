@@ -60,41 +60,66 @@ def _append_energy_and_deltas(s, energy, delta_order):
     return s
 
 
-def _raw_plot():
-    samples = np.random.choice(
-        np.arange(len(indices)), size=nb_samples, replace=False)
-    saved_samples = {}
-    figure_path = os.path.join(path, 'raw.pdf')
-    for i, (name, start, end) in enumerate(Progbar(indices, interval=0.1,
-                                            count_func=lambda x: 1,
-                                            report_func=lambda x: [('Name', x[0])],
-                                            print_report=True)):
-        raw = ds['raw'][start:end]
-        assert not np.any(np.isnan(raw)) # No NaN value
-        assert not np.all(np.isclose(raw, 0.)) # not all value closed to zeros
-        # saving audio
-        if i in samples:
-            _ = os.path.join(path, 'tmp%d.wav' % i)
-            raw = raw[:].astype('float32')
-            raw = (raw - raw.mean()) / raw.std()
-            write(_, rate=ds['sr'][name], data=raw)
-            saved_samples[name] = _
+def _plot_data(data, feat_name, file_name,
+               dataset, processor, outpath):
+    from matplotlib import pyplot as plt
+    from odin.visual import plot_save, plot_spectrogram
+    from scipy.io.wavfile import write
+    # ====== Audio signals ====== #
+    if processor in (SpeechProcessor, WaveProcessor):
+        # ====== raw  ====== #
+        if feat_name == 'raw':
+            path = os.path.join(outpath, file_name.split('.')[0] + '.wav')
+            data = data[:].astype('float32')
+            data = (data - data.mean()) / data.std()
+            write(path, rate=dataset['sr'][file_name], data=data)
             # saving figure
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 plt.figure(figsize=(10, 4))
-                plt.plot(speech.resample(raw, ds['sr'][name], 8000,
-                                         best_algorithm=False))
-                plt.title(name)
-    plot_save(figure_path, dpi=80, log=False)
-    logger("Checked all raw signal", True)
-    for name, save_path in saved_samples.iteritems():
-        logger('Saved "%s" at path: %s' % (name, save_path), True)
-    logger("Checked all raw signal", True)
-    logger("Saved figure at path: %s" % figure_path, True)
+                data = speech.resample(data, dataset['sr'][file_name], 8000,
+                                       best_algorithm=True)
+                if 'vad' in dataset:
+                    plt.subplot(2, 1, 1)
+                    plt.plot(data)
+                    start, end = dataset['indices'][file_name]
+                    plt.subplot(2, 1, 2)
+                    plt.plot(dataset['vad'][start:end][:])
+                else:
+                    plt.plot(data)
+                plt.suptitle(file_name)
+        # ====== speech features ====== #
+        elif feat_name in ('spec', 'mspec', 'mfcc', 'qspec', 'qmspec', 'qmfcc'):
+            data = data[:].astype('float32')
+            # saving figure
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                plt.figure(figsize=(10, 4))
+                if 'vad' in dataset:
+                    start, end = dataset['indices'][file_name]
+                    plot_spectrogram(data.T, vad=dataset['vad'][start:end][:])
+                else:
+                    plot_spectrogram(data.T)
+                plt.suptitle(file_name)
+            # invert spectrogram
+            if feat_name == 'spec':
+                sr = dataset['sr'][file_name]
+                hop = dataset['config']['hop']
+                raw = signal.ispec(data, hop_length=hop * sr, nb_iter=48,
+                                   db=dataset['config']['log'],
+                                   normalize=True,
+                                   center=dataset['config']['center'])
+                path = os.path.join(outpath, file_name.split('.')[0] + '-ispec.wav')
+                write(path, rate=sr, data=raw)
+        # ====== energy, f0, pitch ====== #
+        elif feat_name in ('energy', 'f0', 'pitch'):
+            data = data[:].astype('float32')
+            plt.figure(figsize=(10, 4))
+            plt.plot(data)
+            plt.suptitle(file_name)
 
 
-def validate_features(ds_or_processor, path, nb_samples=8,
+def validate_features(ds_or_processor, path, nb_samples=25,
                       override=False):
     def logger(title, tag, check):
         print(ctext('   *', 'cyan'),
@@ -103,9 +128,10 @@ def validate_features(ds_or_processor, path, nb_samples=8,
               "✓" if bool(check) else "✗")
     import matplotlib
     matplotlib.use('Agg')
+    matplotlib.rcParams['xtick.labelsize'] = 6
+    matplotlib.rcParams['ytick.labelsize'] = 6
     from matplotlib import pyplot as plt
     from odin.visual import plot_save
-    from scipy.io.wavfile import write
     # ====== check path to dataset ====== #
     if isinstance(ds_or_processor, FeatureProcessor):
         ds = Dataset(ds_or_processor.output_path, read_only=True)
@@ -184,43 +210,66 @@ def validate_features(ds_or_processor, path, nb_samples=8,
                 assert checking_func(val)
             logger("Checked dictionary type: ", name, True)
     # ====== checking each type of data ====== #
-    for name, dtype, stats_able in features_properties:
-        if dtype is not 'dict':
-            figure_path = os.path.join(path, '%s.pdf' % name)
-            # checking all data
-            indices = ds['indices'] if name not in external_indices else \
-                ds['indices_%s' % name]
-            prog = Progbar(target=len(indices), interval=0.1,
-                           print_report=True,
-                           name='Checking: %s(%s)' % (name, dtype))
-            # start iterating over all data file
-            plt.figure(figsize=(10, 4))
-            selected_samples = 0
-            for file_name, (start, end) in indices:
-                dat = ds[name][start:end]
-                # picking sample for visualization
-                if selected_samples < nb_samples and bool(random.getrandbits(1)):
-                    selected_samples += 1
-                # No NaN value
-                assert not np.any(np.isnan(dat))
-                # not all value closed to zeros
-                assert not np.all(np.isclose(dat, 0.))
-                prog['Name'] = file_name
-                prog.add(1)
-            logger("Check data incredibility for: ", name, True)
-            # checking statistics
-            if stats_able:
-                for stats in ['_mean', '_std', '_sum1', '_sum2']:
-                    stats = ds[name + stats][:]
-                    assert not np.any(np.isnan(stats))
-                    assert not np.all(np.isclose(stats, 0.))
-                logger("Check statistics for: ", name, True)
-                # check PCA
-                if name not in excluded_pca:
-                    logger("Check PCA for: ", name, True)
-            # saving all the figures
-            plot_save(figure_path, dpi=80, log=False)
-            logger("Figure save at: ", figure_path, True)
+    sampled_name = np.random.choice(ds['indices'].keys(),
+                                    size=nb_samples,
+                                    replace=False)
+    for feat_name, dtype, stats_able in features_properties:
+        if feat_name == 'vad' or dtype == 'dict':
+            continue
+        figure_path = os.path.join(path, '%s.pdf' % feat_name)
+        # checking all data
+        indices = ds['indices'] if feat_name not in external_indices else \
+            ds['indices_%s' % feat_name]
+        prog = Progbar(target=len(indices), interval=0.1,
+                       print_report=True,
+                       name='Checking: %s(%s)' % (feat_name, dtype))
+        # start iterating over all data file
+        for file_name, (start, end) in indices:
+            dat = ds[feat_name][start:end]
+            # picking sample for visualization
+            if file_name in sampled_name:
+                _plot_data(data=dat, feat_name=feat_name, file_name=file_name,
+                           dataset=ds, processor=processor, outpath=path)
+            # No NaN value
+            assert not np.any(np.isnan(dat))
+            # not all value closed to zeros
+            assert not np.all(np.isclose(dat, 0.))
+            prog['Name'] = file_name
+            prog.add(1)
+        logger("Check data incredibility for: ", feat_name, True)
+        # checking statistics
+        if stats_able:
+            plt.figure()
+            for i, stats in enumerate(['_mean', '_std', '_sum1', '_sum2']):
+                stats_name = stats[1:]
+                stats = ds[feat_name + stats][:]
+                assert not np.any(np.isnan(stats))
+                assert not np.all(np.isclose(stats, 0.))
+                plt.subplot(4, 2, i * 2 + 1)
+                plt.plot(stats)
+                plt.ylabel(stats_name)
+                plt.subplot(4, 2, i * 2 + 2)
+                plt.scatter(np.arange(len(stats)), stats, s=1.)
+            plt.suptitle('"%s" Statistics' % feat_name)
+            logger("Check statistics for: ", feat_name, True)
+            # check PCA
+            if feat_name not in excluded_pca and \
+            feat_name + '_pca' in ds:
+                pca = ds[feat_name + '_pca']
+                n = len(ds[feat_name])
+                nb_feats = ds[feat_name].shape[-1]
+                # performing PCA on random samples
+                for i in range(nb_samples):
+                    start = np.random.randint(0, n - nb_samples - 1)
+                    X = pca.transform(
+                        ds[feat_name][start:(start + nb_samples)],
+                        n_components=max(nb_feats // 2, 1))
+                    assert not np.any(np.isnan(X))
+                    assert not np.all(np.isclose(X, 0.))
+                logger("Check PCA for: ", feat_name, True)
+        # saving all the figures
+        plot_save(figure_path, dpi=80, log=False, clear_all=True)
+        logger("Figure save at: ", figure_path, True)
     logger("All reports at folder: ", os.path.abspath(path), True)
     # ====== cleaning ====== #
     stdio(path=prev_stdio)
@@ -516,7 +565,6 @@ class FeatureProcessor(object):
             j = getattr(self, i)
             if isinstance(j, (Number, string_types, bool)):
                 config[i] = j
-        print(config.keys())
         config.flush(save_all=True)
         config.close()
         prog.add_notification("Saved Processor configuration.")
@@ -933,6 +981,11 @@ class SpeechProcessor(FeatureProcessor):
     ------
     spec, mspec, mfcc, pitch, vad_idx
 
+    Note
+    ----
+    For using invert-spectrogram, smaller hop (e.g. 0.005) creates much much
+    better voices.
+
     Example
     -------
     >>> feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav', fs=8000,
@@ -1097,35 +1150,6 @@ class SpeechProcessor(FeatureProcessor):
                 add_notification(msg)
             else:
                 raise RuntimeError(msg)
-
-    def _validate(self, ds, path, nb_samples, logger):
-        print(ds)
-        import matplotlib
-        matplotlib.use('Agg')
-        from matplotlib import pyplot as plt
-        from odin.visual import plot_save
-        from scipy.io.wavfile import write
-        # ====== get all saved features ====== #
-        features_check = []
-        stats_check = []
-        for name, dtype, stats in self.features_properties:
-            pass
-        # ====== checking indices ====== #
-        indices = sorted([(name, start, end)
-                         for name, (start, end) in ds['indices'].iteritems()],
-                         key=lambda x: x[1])
-        for prev, now in zip(indices, indices[1:]):
-            assert prev[2] == now[1] # non-zero length
-            assert prev[2] - prev[1] > 0 # non-zero length
-            assert now[2] - now[1] > 0 # non-zero length
-        assert now[-1] == len(ds['raw']) # length match length of raw
-        logger("Checked all indices", True)
-        # ====== check sample rate ====== #
-        for name, _, _ in indices:
-            sr = ds['sr'][name]
-            assert sr > 0
-        logger("Checked all sample rate and data type", True)
-        logger("All reports at folder: %s" % path, True)
 
 
 # ===========================================================================
