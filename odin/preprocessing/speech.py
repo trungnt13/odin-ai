@@ -118,7 +118,8 @@ def timit_phonemes(phn, map39=False, blank=False):
 # ===========================================================================
 # Audio helper
 # ===========================================================================
-def read(path_or_file, pcm=False, remove_dc_offset=True, remove_zeros=True,
+def read(path_or_file, pcm=False,
+         remove_dc_offset=True, remove_zeros=True,
          dtype='float32'):
     '''
     Parameters
@@ -149,12 +150,30 @@ def read(path_or_file, pcm=False, remove_dc_offset=True, remove_zeros=True,
             else:
                 raise e
         f.close()
+    # ====== check valid channels ====== #
+    if s.ndim == 2:
+        if s.shape[0] == 1 or s.shape[1] == 1:
+            s = s.ravel()
+        elif s.shape[0] == 2:
+            s = s.T
+        elif s.shape[1] == 2:
+            pass
+        else:
+            raise ValueError("No support for signal shape=%s" % str(s))
+    elif s.ndim > 2:
+        raise ValueError("Loaded signal has %d-channels, only "
+                         "support maximum 2 channels." % s.ndim)
     # ====== copy new array with given dtype ====== #
     if dtype is None:
         dtype = s.dtype
     s = s.astype(dtype)
-    if remove_zeros: # aggressively remove zeros
-        s = s[s != 0.]
+    # aggressively remove zeros
+    if remove_zeros:
+        if s.ndim == 1:
+            s = s[s != 0.]
+        else: # remove where both channel is zeros
+            s = s[np.sum(s, axis=1) != 0., :]
+    # make zero mean
     if len(s) > 0 and remove_dc_offset:
         s -= np.mean(s, 0, dtype=dtype)
     return s, sr

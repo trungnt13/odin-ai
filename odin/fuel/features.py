@@ -570,7 +570,9 @@ class FeatureProcessor(object):
         config = MmapDict(config_path)
         config['__configuration_time__'] = time.time()
         config['__processor__'] = self.__class__.__name__
-        config['features_properties'] = self.features_properties
+        config['features_properties'] = [
+            (str(name), str(dtype), bool(statable))
+            for name, dtype, statable, in self.features_properties]
         config['external_indices'] = self.external_indices
         config['excluded_pca'] = self.excluded_pca
         for i in dir(self):
@@ -676,7 +678,7 @@ def _segments_preprocessing(segments, audio_ext):
 def _load_audio(path_or_ds, segments,
                 sr, sr_info={}, sr_new=None, best_resample=True,
                 maxlen=None, vad_split=False, vad_split_args={},
-                remove_dc_offset=True):
+                remove_dc_offset=True, remove_zeros=True):
     """ Return iterator of (name, data, sr) """
     # directory path for Dataset
     if is_string(path_or_ds) and os.path.isdir(path_or_ds):
@@ -730,7 +732,7 @@ def _load_audio(path_or_ds, segments,
         else: # given the duration in second
             start = int(float(start) * sr_orig)
             end = int(N if end <= 0 else float(end) * sr_orig)
-        # check maxlen
+        # check maxlen (maxlen is in duration second now)
         if maxlen is not None and (end - start > maxlen * sr_orig):
             # using VAD information to split the audio
             if vad_split:
@@ -746,11 +748,17 @@ def _load_audio(path_or_ds, segments,
                     yield (name + ":%s:%s" % (st_, en_),
                            d,
                            sr_orig)
-            # just cut into small segments
+            # greedy cut into small segments
             else:
-                maxlen = int(maxlen * sr_orig)
-                _ = list(range(start, end, maxlen)) + [end]
-                for st, en in zip(_, _[1:]):
+                max_frames = int(maxlen * sr_orig)
+                sectors = list(range(start, end, max_frames)) + [end]
+                # list with start and end
+                sectors = [(i, j) for i, j in zip(sectors, sectors[1:])]
+                # merge the very short last sector into previous one.
+                if sectors[-1][1] - sectors[-1][0] < max_frames // 2:
+                    sectors = sectors[:-2] + [(sectors[-2][0], sectors[-1][1])]
+                # return sector-by-sector
+                for st, en in sectors:
                     st_ = ('%f' % (st / sr_orig)).rstrip('0').rstrip('.')
                     en_ = ('%f' % (en / sr_orig)).rstrip('0').rstrip('.')
                     yield (name + ":%s:%s" % (st_, en_),
@@ -794,6 +802,10 @@ class WaveProcessor(FeatureProcessor):
         new sample rate (if you want to down or up sampling)
     best_resample: bool
         if True, use the best but slow algorithm for resampling
+    remove_dc_offset: bool
+        if True, substract the mean of the audio array
+    remove_zeros: bool
+        if True, remove all zeros values in the audio array
     maxlen: int
         maximum length of an utterances in second, if any file is longer than
         given length, it is divided into small segments and the start time and
@@ -811,7 +823,8 @@ class WaveProcessor(FeatureProcessor):
 
     def __init__(self, segments, output_path,
                 sr=None, sr_info={}, sr_new=None, best_resample=True,
-                audio_ext=None, pcm=False, remove_dc_offset=True,
+                audio_ext=None, pcm=False,
+                remove_dc_offset=True, remove_zeros=True,
                 maxlen=None, vad_split=False, vad_split_args={},
                 dtype='float16', datatype='memmap',
                 ignore_error=False, ncache=0.12, ncpu=1):
@@ -836,6 +849,7 @@ class WaveProcessor(FeatureProcessor):
         self.dtype = dtype
         self.pcm = pcm
         self.remove_dc_offset = remove_dc_offset
+        self.remove_zeros = remove_zeros
         self._features_properties = [('raw', self.dtype, False),
                                      ('sr', 'dict', False),
                                      ('dtype', 'dict', False)]
@@ -850,7 +864,8 @@ class WaveProcessor(FeatureProcessor):
             for name, data, sr in _load_audio(audio_path, segments,
                         self.sr, self.sr_info, self.sr_new, self.best_resample,
                         self.maxlen, self.vad_split, self.vad_split_args,
-                        remove_dc_offset=self.remove_dc_offset):
+                        remove_dc_offset=self.remove_dc_offset,
+                        remove_zeros=self.remove_zeros):
                 ret.append([name, 0, [data, int(sr), data.dtype.str]])
             # a hack to return proper amount of processed jobs
             ret[-1][1] = nb_jobs

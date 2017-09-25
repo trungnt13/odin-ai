@@ -289,7 +289,10 @@ class MmapDict(NoSQL):
         # start from old_max_position, append new values
         file.seek(max_position)
         for key, value in self._cache_dict.iteritems():
-            value = marshal.dumps(value)
+            try:
+                value = marshal.dumps(value)
+            except ValueError:
+                raise RuntimeError("Cannot marshal.dump %s" % str(value))
             self.indices[key] = (max_position, len(value))
             max_position += len(value)
             file.write(value)
