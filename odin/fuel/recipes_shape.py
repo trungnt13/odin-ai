@@ -68,9 +68,11 @@ class Slice(FeederRecipe):
         # ====== validate target_data ====== #
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         X_new = []
-        data_idx = axis_normalize(self._data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self._data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         for _, x in enumerate(X):
             # apply the indices if _ in target_data
             if _ in data_idx:
@@ -89,7 +91,7 @@ class Slice(FeederRecipe):
                                               for i in range(ndim)]))
                     x = np.concatenate([x[i] for i in indices], axis=self.axis)
             X_new.append(x)
-        return name, X_new, y
+        return name, X_new
 
     def _from_indices(self, n):
         """ This function estimates number of sample given indices """
@@ -102,7 +104,9 @@ class Slice(FeederRecipe):
         return count
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(self._data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self._data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
         new_shapes = []
         # ====== check if first dimension is sliced ====== #
         for idx, (shp, ids) in enumerate(shapes):
@@ -136,16 +140,20 @@ class HStack(FeederRecipe):
         super(HStack, self).__init__()
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+    def process(self, name, X):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         if len(X) > 1 and len(data_idx) > 1:
             X_old = [x for i, x in enumerate(X) if i not in data_idx]
             X_new = [x for i, x in enumerate(X) if i in data_idx]
             X = list(as_tuple(np.hstack(X_new))) + X_old
-        return name, X, y
+        return name, X
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
         # just 1 shape, nothing to merge
         if len(shapes) <= 1 or len(data_idx) <= 1:
             return shapes
@@ -171,15 +179,19 @@ class ExpandDims(FeederRecipe):
         self.axis = int(axis)
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+    def process(self, name, X):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         X = [np.expand_dims(x, axis=self.axis)
              if i in data_idx else x
              for i, x in enumerate(X)]
-        return name, X, y
+        return name, X
 
-    def shape_transform(self, shapes, indices):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+    def shape_transform(self, shapes):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
         new_shapes = []
         for idx, (shp, ids) in enumerate(shapes):
             if idx in data_idx:
@@ -189,7 +201,7 @@ class ExpandDims(FeederRecipe):
                 shp.insert(axis, 1)
                 shp = tuple(shp)
             new_shapes.append((shp, ids))
-        return new_shapes, indices
+        return new_shapes
 
 
 # ===========================================================================
@@ -206,10 +218,16 @@ class Stacking(FeederRecipe):
     shift: int, None
         if None, shift = right_context
         else amount of frames will be shifted
+    data_idx: int, list of int, or None
+    label_idx: int, list of int, None, or empty list, tuple
+
+    Note
+    ----
+    Stacking recipe transforms the data and labels in different way
     """
 
     def __init__(self, left_context=10, right_context=10, shift=None,
-                 data_idx=None, label_idx=None):
+                 data_idx=None, label_idx=()):
         super(Stacking, self).__init__()
         self.left_context = left_context
         self.right_context = right_context
@@ -231,43 +249,59 @@ class Stacking(FeederRecipe):
         # only take the middle labelobject
         trans = np.asarray(
             [trans[i + self.left_context + 1]
-             for i in idx if (i + self.n) <= len(trans)])
+             for i in idx
+             if (i + self.n) <= len(trans)])
         return trans
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         if X[0].shape[0] < self.n: # not enough data points for stacking
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
                           'into %d features.' % (name, X[0].shape[0], self.n))
             return None
-        data_idx = axis_normalize(axis=self.data_idx, ndim=self.nb_data,
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
                                   return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx, ndim=len(y),
+        label_idx = axis_normalize(axis=self.label_idx,
+                                   ndim=len(X),
                                    return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
         # ====== stacking  ====== #
         X = [self._stacking(x) if idx in data_idx else x
              for idx, x in enumerate(X)]
-        y = [self._middle_label(i) if idx in label_idx else i
-             for idx, i in y]
-        return name, X, y
+        X = [self._middle_label(x) if idx in label_idx else x
+             for idx, x in enumerate(X)]
+        return name, X
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(axis=self.data_idx, ndim=self.nb_data,
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
                                   return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx,
+                                   ndim=len(shapes),
+                                   return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
         # ====== update the shape and indices ====== #
         new_shapes = []
         for idx, (shp, ids) in enumerate(shapes):
-            if idx in data_idx:
+            if idx in data_idx or idx in label_idx:
                 # calculate new number of samples
                 n = 0; ids_new = []
                 for name, nb_samples in ids:
                     nb_samples = 1 + (nb_samples - self.n) // self.shift
                     ids_new.append((name, nb_samples))
                     n += nb_samples
-                # calculate new number of features
-                if len(shp) > 2:
-                    raise Exception('Stacking only support 2D array.')
-                nb_features = shp[-1] * self.n if len(shp) == 2 else self.n
-                shp = (n, nb_features)
+                # for label_idx, number of features kept as original
+                if idx in label_idx:
+                    shp = (n,) + shp[1:]
+                # for data_idx, only apply for 2D
+                elif idx in data_idx:
+                    if len(shp) > 2:
+                        raise Exception('Stacking only support 2D array.')
+                    nb_features = shp[-1] * self.n if len(shp) == 2 else \
+                        self.n
+                    shp = (n, nb_features)
             new_shapes.append((shp, ids))
         # ====== do the shape infer ====== #
         return new_shapes
@@ -309,6 +343,10 @@ class Sequencing(FeederRecipe):
     label_transform: callable
         a function transform a sequence of transcription value into
         desire value for 1 sample.
+    data_idx: int, list of int, None, or empty list, tuple
+        list of index of all data will be applied
+    label_idx: int, list of int, None, or empty list, tuple
+        list of all label will be sequenced and applied the `label_transform`
 
     Return
     ------
@@ -322,7 +360,7 @@ class Sequencing(FeederRecipe):
     def __init__(self, frame_length=256, hop_length=None,
                  end='cut', endvalue=0., endmode='post',
                  label_transform=last_seen,
-                 data_idx=None, label_idx=None):
+                 data_idx=None, label_idx=()):
         super(Sequencing, self).__init__()
         self.frame_length = int(frame_length)
         self.hop_length = frame_length // 2 if hop_length is None else int(hop_length)
@@ -344,50 +382,62 @@ class Sequencing(FeederRecipe):
         self.data_idx = data_idx
         self.label_idx = label_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         # ====== not enough data points for sequencing ====== #
         if X[0].shape[0] < self.frame_length and self.end == 'cut':
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
                           'into %d features.' % (name, X[0].shape[0], self.frame_length))
             return None
-        data_idx = axis_normalize(axis=self.data_idx, ndim=self.nb_data,
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
                                   return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx, ndim=len(y),
-                                  return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx,
+                                   ndim=len(X),
+                                   return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
         # ====== segnments X ====== #
-        X = [segment_axis(x, self.frame_length, self.hop_length, axis=0,
-                          end=self.end, endvalue=self.endvalue,
-                          endmode=self.endmode)
-             if idx in data_idx else x
-             for idx, x in enumerate(X)]
-        # ====== transforming the transcription ====== #
-        if self.label_transform is not None:
-            y_new = []
-            for idx, labels in enumerate(y):
-                if idx in label_idx:
-                    org_dtype = labels.dtype
-                    labels = segment_axis(np.asarray(labels, dtype='str'),
-                                          self.frame_length, self.hop_length,
-                                          axis=0, end=self.end,
-                                          endvalue='__end__', endmode=self.endmode)
-                    # need to remove padded value
-                    labels = np.asarray(
-                        [self.label_transform([j for j in i
-                                               if '__end__' not in j])
-                         for i in labels],
-                        dtype=org_dtype
-                    )
-                y_new.append(labels)
-            y = y_new
-        return name, X, y
+        X_new = []
+        for idx, x in enumerate(X):
+            # for data
+            if idx in data_idx:
+                x = segment_axis(a=x,
+                                 frame_length=self.frame_length,
+                                 hop_length=self.hop_length, axis=0,
+                                 end=self.end, endvalue=self.endvalue,
+                                 endmode=self.endmode)
+            # for label
+            elif idx in label_idx:
+                org_dtype = x.dtype
+                x = segment_axis(a=np.asarray(x, dtype='str'),
+                                 frame_length=self.frame_length,
+                                 hop_length=self.hop_length,
+                                 axis=0, end=self.end,
+                                 endvalue='__end__',
+                                 endmode=self.endmode)
+                # need to remove padded value
+                x = np.asarray(
+                    [self.label_transform([j for j in i
+                                           if '__end__' not in j])
+                     for i in x],
+                    dtype=org_dtype
+                )
+            X_new.append(x)
+        return name, X_new
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(axis=self.data_idx, ndim=self.nb_data,
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
                                   return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx,
+                                   ndim=len(shapes),
+                                   return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
         # ====== update the indices ====== #
         new_shapes = []
         for idx, (shp, ids) in enumerate(shapes):
-            if idx in data_idx:
+            if idx in data_idx or idx in label_idx:
                 # transoform the indices
                 n = 0; ids_new = []
                 for name, nb_samples in ids:
@@ -403,9 +453,13 @@ class Sequencing(FeederRecipe):
                         nb_samples = int(nb_samples) + 1
                     ids_new.append((name, nb_samples))
                     n += nb_samples
-                # transoform the shape
-                feat_shape = (shp[-1],) if len(shp) >= 2 else ()
-                mid_shape = tuple(shp[1:-1])
-                shp = (n, self.frame_length,) + mid_shape + feat_shape
+                # transoform the shape for data
+                if idx in data_idx:
+                    feat_shape = (shp[-1],) if len(shp) >= 2 else ()
+                    mid_shape = tuple(shp[1:-1])
+                    shp = (n, self.frame_length,) + mid_shape + feat_shape
+                # for labels.
+                elif idx in label_idx:
+                    shp = (n,)
             new_shapes.append((shp, ids))
         return new_shapes

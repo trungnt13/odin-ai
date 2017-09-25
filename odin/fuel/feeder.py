@@ -67,24 +67,13 @@ class FeederRecipe(object):
 
     def __init__(self):
         super(FeederRecipe, self).__init__()
-        self._nb_data = 0
         self._nb_desc = 0
 
     # ==================== basic properties ==================== #
-    def set_feeder_info(self, nb_data=None, nb_desc=None):
-        if nb_data is not None:
-            self._nb_data = int(nb_data)
+    def set_feeder_info(self, nb_desc=None):
         if nb_desc is not None:
             self._nb_desc = int(nb_desc)
         return self
-
-    @property
-    def nb_data(self):
-        if self._nb_data == 0:
-            raise RuntimeError("`nb_data` have not been set, using method "
-                               "`set_feeder_info` to set operating information "
-                               "for this recipe.")
-        return self._nb_data
 
     @property
     def nb_desc(self):
@@ -111,7 +100,7 @@ class FeederRecipe(object):
         return shapes
 
     @abstractmethod
-    def process(self, name, X, y):
+    def process(self, name, X):
         """
         Parameters
         ----------
@@ -119,8 +108,6 @@ class FeederRecipe(object):
             the name of file in indices
         X: list of data
             list of all features given in DataDescriptor(s)
-        y: list of labels
-            list of all labels extracted or provided
         """
         raise NotImplementedError
 
@@ -132,15 +119,21 @@ class FeederRecipe(object):
             if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
             name not in ('nb_data', 'nb_desc'):
                 attr = getattr(self, name)
-                if is_primitives(attr):
+                if name == 'data_idx':
                     print_attrs[name] = str(attr)
                 elif inspect.isfunction(attr):
                     print_attrs[name] = "(f)" + attr.func_name
                 elif isinstance(attr, np.ndarray):
                     print_attrs[name] = ("(%s)" % str(attr.dtype)) + \
                         str(attr.shape)
+                elif isinstance(attr, (tuple, list)):
+                    print_attrs[name] = "(list)" + str(len(attr))
+                elif isinstance(attr, Mapping):
+                    print_attrs[name] = "(map)" + str(len(attr))
+                elif is_primitives(attr):
+                    print_attrs[name] = str(attr)
         print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
-        print_attrs = [('#data', self.nb_data), ('#desc', self.nb_desc)] + print_attrs
+        print_attrs = [('#desc', self.nb_desc)] + print_attrs
         print_attrs = ' '.join(["%s:%s" % (ctext(key, 'yellow'), val)
                                 for key, val in print_attrs])
         # ====== format the output ====== #
@@ -174,25 +167,32 @@ class RecipeList(FeederRecipe):
         if len(recipes) > 0:
             self._recipes = recipes
             for rcp in self._recipes:
-                rcp.set_feeder_info(self.nb_data, self.nb_desc)
+                rcp.set_feeder_info(self.nb_desc)
         return self
 
-    def set_feeder_info(self, nb_data=None, nb_desc=None):
-        super(RecipeList, self).set_feeder_info(nb_data, nb_desc)
+    def set_feeder_info(self, nb_desc=None):
+        super(RecipeList, self).set_feeder_info(nb_desc)
         for rcp in self._recipes:
-            rcp.set_feeder_info(nb_data, nb_desc)
+            rcp.set_feeder_info(nb_desc)
         return self
 
-    def process(self, name, X, y, **kwargs):
+    def process(self, name, X, **kwargs):
         for i, f in enumerate(self._recipes):
             # return iterator (iterate over all of them)
-            args = f.process(name, X, y)
+            args = f.process(name, X)
             # break the chain if one of the recipes get error,
             # and return None
             if args is None:
                 return None
-            name, X, y = args
-        return name, X, y
+            if not isinstance(args, (tuple, list)) or \
+            len(args) != 2 or \
+            not is_string(args[0]) or \
+            not isinstance(args[1], (tuple, list)):
+                raise ValueError("The returned from `process` must be tuple or "
+                    "list, of length 2 which contains (name, [x1, x2, x3,...])."
+                    "`name` must string type, and [x1, x2, ...] is tuple or list.")
+            name, X = args
+        return name, X
 
     def shape_transform(self, shapes):
         """
@@ -232,9 +232,9 @@ def _to_numpy_array(self, x):
 def _batch_grouping(batch, batch_size, rng, batch_filter):
     """ batch: contains
         [
-            (name, [list of data], [list of others]),
-            (name, [list of data], [list of others]),
-            (name, [list of data], [list of others]),
+            (name, [list of data]),
+            (name, [list of data]),
+            (name, [list of data]),
             ...
         ]
 
@@ -249,19 +249,19 @@ def _batch_grouping(batch, batch_size, rng, batch_filter):
         # create batch of indices for each file (indices is the start
         # index of each batch)
         indices = [list(range(0, X[0].shape[0], batch_size))
-                   for name, X, y in batch]
+                   for name, X in batch]
         # shuffle if possible
         if rng is not None:
             [rng.shuffle(i) for i in indices]
         # ====== create batch of data ====== #
         for idx in zip_longest(*indices):
             ret = []
-            for start, (name, X, y) in zip(idx, batch):
+            for start, (name, X) in zip(idx, batch):
                 # skip if the one data that is not enough
                 if start is None: continue
                 # pick data from each given input
                 end = start + batch_size
-                _ = [x[start:end] for x in X] + [i[start:end] for i in y]
+                _ = [x[start:end] for x in X]
                 ret.append(_)
             ret = [np.concatenate(x, axis=0) for x in zip(*ret)]
             # shuffle 1 more time
@@ -283,16 +283,16 @@ def _batch_grouping(batch, batch_size, rng, batch_filter):
 
 
 def _file_grouping(batch, batch_size, rng, batch_filter):
-    """ Return: [(name, index, data...), ...]
+    """ Return: [(name, index, data1, data2, ...), ...]
         NOTE: each element in batch is one file
     """
     # ====== shuffle the file ====== #
     if rng is not None:
         rng.shuffle(batch)
     # ====== return batched files with index for ordering ====== #
-    for name, X, Y in batch:
+    for name, X in batch:
         n = X[0].shape[0]
-        ret = list(X) + list(Y)
+        ret = list(X)
         for i, (start, end) in enumerate(batching(n, batch_size)):
             r = [name, i] + [j[start:end] for j in ret]
             yield tuple(batch_filter(r))
@@ -548,7 +548,7 @@ class Feeder(MutableData):
                 [np.dtype(t) for t in as_tuple(dtype, N=self.nb_data)])
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
-        self._recipes.set_feeder_info(self.nb_data, len(self._data))
+        self._recipes.set_feeder_info(nb_desc=len(self._data))
         self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
         # ====== cache shape information ====== #
         # store first dimension
@@ -616,8 +616,8 @@ class Feeder(MutableData):
         # ====== check batch_filter ====== #
         if batch_filter is not None:
             if not callable(batch_filter):
-                raise ValueError('batch_filter must be a function has 1 or 2 '
-                                 'parameters (X) or (X, y).')
+                raise ValueError(
+                    'batch_filter must be a function has 1 arguments (X)')
             self._batch_filter = batch_filter
         # ====== check batch_mode ====== #
         if batch_mode is not None:
@@ -753,7 +753,7 @@ class Feeder(MutableData):
                     if dat.dtype != dtype:
                         dat = dat.astype(dtype)
                     X.append(dat)
-                X = process_func(name, X, [])
+                X = process_func(name, X)
                 # ignore None returned result
                 if X is not None:
                     batch.append(X)

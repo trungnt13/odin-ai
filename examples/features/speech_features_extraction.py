@@ -56,16 +56,15 @@ feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
                          pca=PCA, pca_whiten=False,
                          save_raw=True, save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=251, ncpu=10)
+                         ncache=600, ncpu=10)
 with utils.UnitTimer():
     feat.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
             os.path.join(output_path, 'README.md'))
 # ====== check the preprocessed dataset ====== #
-ds = F.Dataset(output_path, read_only=True)
 print('Output path:', output_path)
-# F.validate_features(feat, '/tmp/tmp', override=True)
-print(ds)
+F.validate_features(feat, '/tmp/digit_audio', override=True)
+ds = F.Dataset(output_path, read_only=True)
 
 print("* Configurations:")
 for i, j in ds['config'].iteritems():

@@ -60,6 +60,10 @@ def _append_energy_and_deltas(s, energy, delta_order):
     return s
 
 
+def _escape_filename(file_name):
+    return file_name.replace('/', '-')
+
+
 def _plot_data(data, feat_name, file_name,
                dataset, processor, outpath):
     from matplotlib import pyplot as plt
@@ -69,7 +73,8 @@ def _plot_data(data, feat_name, file_name,
     if processor in (SpeechProcessor, WaveProcessor):
         # ====== raw  ====== #
         if feat_name == 'raw':
-            path = os.path.join(outpath, file_name.split('.')[0] + '.wav')
+            path = os.path.join(outpath,
+                    _escape_filename(file_name.split('.')[0] + '.wav'))
             data = data[:].astype('float32')
             data = (data - data.mean()) / data.std()
             write(path, rate=dataset['sr'][file_name], data=data)
@@ -109,7 +114,8 @@ def _plot_data(data, feat_name, file_name,
                                    db=dataset['config']['log'],
                                    normalize=True,
                                    center=dataset['config']['center'])
-                path = os.path.join(outpath, file_name.split('.')[0] + '-ispec.wav')
+                path = os.path.join(outpath,
+                        _escape_filename(file_name.split('.')[0] + '-ispec.wav'))
                 write(path, rate=sr, data=raw)
         # ====== energy, f0, pitch ====== #
         elif feat_name in ('energy', 'f0', 'pitch'):
@@ -183,16 +189,17 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                       for name, (start, end) in ds[ids_name].iteritems()],
                      key=lambda x: x[1])
         for prev, now in zip(ids, ids[1:]):
-            assert prev[2] == now[1] # non-zero length
-            assert prev[2] - prev[1] > 0 # non-zero length
-            assert now[2] - now[1] > 0 # non-zero length
+            assert prev[2] == now[1], "Zero length in indices"
+            assert prev[2] - prev[1] > 0, "Zero length in indices"
+            assert now[2] - now[1] > 0, "Zero length in indices"
         # final length match length of Dat
         if ids_name != 'indices':
             assert now[-1] == len(ds[ids_name.split('_')[-1]]), ids_name
         else:
             for name, dtype, _ in features_properties:
                 if name not in external_indices and dtype != 'dict':
-                    assert now[-1] == len(ds[name]), ids_name + ':' + name
+                    assert now[-1] == len(ds[name]), \
+                    "Length of indices and actual data mismatch, " + ids_name + ':' + name
         # logging
         logger("Checked all:", ids_name, True)
     # ====== check all dictionary types ====== #
@@ -206,7 +213,8 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 checking_func = lambda x: True
             # check
             for key, val in data.iteritems():
-                assert key in main_indices
+                assert key in main_indices, \
+                "Dictionary key not found in indices (dict:%s dtype:%s)" % (name, str(dtype))
                 assert checking_func(val)
             logger("Checked dictionary type: ", name, True)
     # ====== checking each type of data ====== #
@@ -231,9 +239,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 _plot_data(data=dat, feat_name=feat_name, file_name=file_name,
                            dataset=ds, processor=processor, outpath=path)
             # No NaN value
-            assert not np.any(np.isnan(dat))
+            assert not np.any(np.isnan(dat)), \
+                "NaN values in file: %s, feat: %s" % (file_name, feat_name)
             # not all value closed to zeros
-            assert not np.all(np.isclose(dat, 0.))
+            assert not np.all(np.isclose(dat, 0.)),\
+                "All-zeros values in file: %s, feat: %s" % (file_name, feat_name)
             prog['Name'] = file_name
             prog.add(1)
         logger("Check data incredibility for: ", feat_name, True)
@@ -243,8 +253,10 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             for i, stats in enumerate(['_mean', '_std', '_sum1', '_sum2']):
                 stats_name = stats[1:]
                 stats = ds[feat_name + stats][:]
-                assert not np.any(np.isnan(stats))
-                assert not np.all(np.isclose(stats, 0.))
+                assert not np.any(np.isnan(stats)),\
+                    "NaN values in stat: %s, feat: %s" % (stats_name, feat_name)
+                assert not np.all(np.isclose(stats, 0.)),\
+                    "All-zeros values in stats: %s, feat: %s" % (stats_name, feat_name)
                 plt.subplot(4, 2, i * 2 + 1)
                 plt.plot(stats)
                 plt.ylabel(stats_name)
@@ -264,8 +276,10 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                     X = pca.transform(
                         ds[feat_name][start:(start + nb_samples)],
                         n_components=max(nb_feats // 2, 1))
-                    assert not np.any(np.isnan(X))
-                    assert not np.all(np.isclose(X, 0.))
+                    assert not np.any(np.isnan(X)),\
+                        "NaN values in PCA of feat: %s" % feat_name
+                    assert not np.all(np.isclose(X, 0.)),\
+                        "All-zeros values in PCA of feat: %s" % feat_name
                 logger("Check PCA for: ", feat_name, True)
         # saving all the figures
         plot_save(figure_path, dpi=80, log=False, clear_all=True)

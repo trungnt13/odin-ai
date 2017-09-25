@@ -18,23 +18,29 @@ class Pooling(FeederRecipe):
         super(Pooling, self).__init__()
         self.size = size
         self.pool_func = pool_func
-        self.data_idx = as_tuple(data_idx, t=int)
+        self.data_idx = data_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         X_pooled = []
         for i, x in enumerate(X):
-            if i in self.data_idx:
+            if i in data_idx:
                 shape = x.shape
                 x = x[:, 2:-2]
                 x = x.reshape(shape[0], -1, 2)
                 x = self.pool_func(x, axis=-1)
                 x = x.reshape(shape[0], -1)
             X_pooled.append(x)
-        return name, X_pooled, y
+        return name, X_pooled
 
     def shape_transform(self, shapes):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
         shapes = [(tuple(shp[:-1] + (shp[-1] // self.size - 2,)), ids)
-                  if i in self.data_idx else (shp, ids)
+                  if i in data_idx else (shp, ids)
                   for i, (shp, ids) in enumerate(shapes)]
         return shapes
 
@@ -76,11 +82,13 @@ class Normalization(FeederRecipe):
             raise ValueError("Not support for local_normalize=%s, you must specify "
                             "one of the following mode: none, false, tanh, sigmoid, "
                             "normal (or true)." % self.local_normalize)
-        self.data_idx = None if data_idx is None else as_tuple(data_idx, t=int)
+        self.data_idx = data_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         X_normlized = []
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         for i, x in enumerate(X):
             if i in data_idx:
                 x = x.astype('float32')
@@ -97,7 +105,7 @@ class Normalization(FeederRecipe):
                     min_, max_ = np.min(x), np.max(x)
                     x = 2 * (x - min_) / (max_ - min_) - 1
             X_normlized.append(x)
-        return name, X_normlized, y
+        return name, X_normlized
 
 
 class PCAtransform(FeederRecipe):
@@ -128,9 +136,11 @@ class PCAtransform(FeederRecipe):
         self.nb_components = nb_components
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         # update the whiten
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         pca_whiten = self._pca.whiten
         self._pca.whiten = self.whiten
         X = [self._pca.transform(x, n_components=self.nb_components)
@@ -138,10 +148,12 @@ class PCAtransform(FeederRecipe):
              for i, x in enumerate(X)]
         # reset the white value
         self._pca.whiten = pca_whiten
-        return name, X, y
+        return name, X
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
         shapes = [(shp[:-1] + (self.nb_components,), ids)
                   if i in data_idx else (shp, ids)
                   for i, (shp, ids) in enumerate(shapes)]
@@ -157,8 +169,10 @@ class FeatureScaling(FeederRecipe):
         super(FeatureScaling, self).__init__()
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
-        data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+    def process(self, name, X):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
         # ====== scaling features to [0, 1] ====== #
         X_new = []
         for i, x in enumerate(X):
@@ -167,7 +181,7 @@ class FeatureScaling(FeederRecipe):
                 min_ = x.min(); max_ = x.max()
                 x = (x - min_) / (max_ - min_)
                 X_new.append(x)
-        return name, X_new, y
+        return name, X_new
 
 
 class Whitening(FeederRecipe):
@@ -217,20 +231,24 @@ class ComputeDelta(FeederRecipe):
         self.keep_original = keep_original
         self.data_idx = data_idx
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         if self.delta > 0:
-            data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+            data_idx = axis_normalize(axis=self.data_idx,
+                                      ndim=len(X),
+                                      return_tuple=True)
             X = [x if i not in data_idx else
                  np.concatenate(
                      ([x] if self.keep_original else []) +
                      compute_delta(x, order=self.delta, axis=self.axis),
                      axis=self.axis)
                  for i, x in enumerate(X)]
-        return name, X, y
+        return name, X
 
     def shape_transform(self, shapes):
         if self.delta > 0:
-            data_idx = axis_normalize(self.data_idx, self.nb_data, True)
+            data_idx = axis_normalize(axis=self.data_idx,
+                                      ndim=len(shapes),
+                                      return_tuple=True)
             n = (self.delta + 1) if self.keep_original else self.delta
             axis = self.axis
             shapes = [(shp, ids) if i not in data_idx else

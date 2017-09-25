@@ -49,6 +49,7 @@ class TransLoader(FeederRecipe):
     def __init__(self, transcription, dtype, delimiter=' ', label_dict=None,
                  ignore_not_found=True):
         super(TransLoader, self).__init__()
+        raise NotImplementedError
         self.ignore_not_found = ignore_not_found
         # ====== transcription ====== #
         share_dict = None
@@ -76,7 +77,7 @@ class TransLoader(FeederRecipe):
             raise ValueError('label_dict must be a dictionary, function or None.')
         self.label_dict = label_func
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         if name not in self._transcription and self.ignore_not_found:
             return None
         trans = self._transcription[name]
@@ -89,8 +90,11 @@ class TransLoader(FeederRecipe):
             trans = [self.label_dict(i) for i in trans]
         trans = np.asarray(trans, dtype=self.dtype)
         # append to trans list
-        y.append(trans)
-        return name, X, y
+        X.append(trans)
+        return name, X
+
+    def shape_transform(self, shapes):
+        pass
 
 
 # ===========================================================================
@@ -101,23 +105,23 @@ class Filter(FeederRecipe):
     """
     Parameters
     ----------
-    filter_func: function, method
+    filter_func: function(name, X)
         return True if the given data is accepted for further processing
-        otherwise False.
+        otherwise False
 
     """
 
     def __init__(self, filter_func):
         super(Filter, self).__init__()
-        if not isinstance(filter_func, (types.FunctionType, types.MethodType)):
-            raise Exception('filter_func must be FunctionType or MethodType, '
-                            'but given type is: %s' % str(type(filter_func)))
-        self._filter_func = functionable(filter_func)
+        if not callable(filter_func):
+            raise ValueError('"filter_func" must be callable.')
+        if not is_pickleable(filter_func):
+            raise ValueError('"filter_func" must be pickle-able.')
+        self.filter_func = filter_func
 
-    def process(self, name, X, y):
-        is_ok = self._filter_func(name)
-        if is_ok:
-            return name, X, y
+    def process(self, name, X):
+        if self.filter_func(name, X):
+            return name, X
         return None
 
 
@@ -126,20 +130,31 @@ class Filter(FeederRecipe):
 # ===========================================================================
 class LabelOneHot(FeederRecipe):
 
-    def __init__(self, nb_classes, label_idx=0):
+    def __init__(self, nb_classes, data_idx=0):
         super(LabelOneHot, self).__init__()
-        self._nb_classes = int(nb_classes)
-        self.label_idx = as_tuple(label_idx, t=int)
+        self.nb_classes = int(nb_classes)
+        self.data_idx = data_idx
 
-    def process(self, name, X, Y):
-        _ = []
-        for i, y in enumerate(Y):
+    def process(self, name, X):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
+        X_new = []
+        for idx, x in enumerate(X):
             # transform into one-label y
-            if i in self.label_idx:
-                y = np.array([int(i) for i in y])
-                y = one_hot(y, nb_classes=self._nb_classes)
-            _.append(y)
-        return name, X, _
+            if idx in data_idx:
+                x = np.array(x, dtype='int32')
+                x = one_hot(x, nb_classes=self.nb_classes)
+            X_new.append(x)
+        return name, X
+
+    def shape_transform(self, shapes):
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
+        return [((shp[0], self.nb_classes), ids) if idx in data_idx else
+                (shp, ids)
+                for idx, (shp, ids) in enumerate(shapes)]
 
 
 class Name2Trans(FeederRecipe):
@@ -152,6 +167,9 @@ class Name2Trans(FeederRecipe):
         for example, lambda name: 1 if 'true' in name else 0
         the return label then is duplicated for all data points in 1 file.
         (e.g. X.shape = (1208, 13), then, transcription=[ret] * 1208)
+    ref_idx: int
+        the new label will be duplicated based on the length of data
+        at given idx
 
     Example
     -------
@@ -165,21 +183,32 @@ class Name2Trans(FeederRecipe):
 
     """
 
-    def __init__(self, converter_func):
+    def __init__(self, converter_func, ref_idx=0):
         super(Name2Trans, self).__init__()
         if not callable(converter_func):
             raise ValueError('"converter_func" must be callable.')
         if not is_pickleable(converter_func):
             raise ValueError('"converter_func" must be pickle-able.')
         self.converter_func = converter_func
+        self.ref_idx = int(ref_idx)
 
-    def process(self, name, X, y):
+    def process(self, name, X):
         # X: is a list of ndarray
-        label = self.converter_func(name)
-        labels = [label] * X[0].shape[0]
-        transcription = np.array(labels)
-        y.append(transcription)
-        return name, X, y
+        ref_idx = axis_normalize(axis=self.ref_idx, ndim=len(X),
+                                 return_tuple=False)
+        y = self.converter_func(name)
+        y = np.array([y] * X[ref_idx].shape[0])
+        X.append(y)
+        return name, X
+
+    def shape_transform(self, shapes):
+        ref_idx = axis_normalize(axis=self.ref_idx, ndim=len(shapes),
+                                 return_tuple=False)
+        ref_shp, ref_ids = shapes[ref_idx]
+        ids = list(ref_ids)
+        n = int(ref_shp[0])
+        shapes.append(((n,), ids))
+        return shapes
 
 
 class VADindex(FeederRecipe):
@@ -200,6 +229,7 @@ class VADindex(FeederRecipe):
 
     def __init__(self, vad, frame_length, padding=None, filter_vad=None):
         super(VADindex, self).__init__()
+        raise NotImplementedError
         if isinstance(vad, (list, tuple)):
             if len(vad) == 2:
                 indices, data = vad
@@ -307,7 +337,6 @@ class VADindex(FeederRecipe):
         return name, X, y
 
     def shape_transform(self, shapes):
-        raise NotImplementedError
         # ====== init ====== #
         if self.frame_length == 1:
             n_func = lambda start, end: end - start
