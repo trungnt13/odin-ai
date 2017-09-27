@@ -171,7 +171,7 @@ acc = K.metrics.categorical_accuracy(y_prob, y)
 cm = K.metrics.confusion_matrix(y_prob, y, labels=len(digits))
 # ====== params and optimizing ====== #
 params = [p for p in f.parameters
-         if K.role.has_roles(p, K.role.Parameter)]
+          if K.role.has_roles(p, K.role.Parameter)]
 print("Parameters:", params)
 optz = K.optimizers.RMSProp(lr=0.0001)
 updates = optz.get_updates(ce, params)
@@ -220,8 +220,8 @@ for outputs in Progbar(test, name="Evaluating",
     y_true.append(f_digits(name))
     y_pred.append(f_pred(*data))
 y_true = np.array(y_true, dtype='int32')
-y_pred = np.argmax(np.array(y_pred, dtype='float32'), -1)
-
+y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
+# ====== Acc ====== #
 from sklearn.metrics import confusion_matrix, accuracy_score
 print()
 print("Acc:", accuracy_score(y_true, y_pred))

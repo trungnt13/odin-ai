@@ -43,3 +43,6 @@
 [submodule "ideas/SSGAN-Tensorflow"]
 	path = ideas/SSGAN-Tensorflow
 	url = https://github.com/gitlimlab/SSGAN-Tensorflow.git
+[submodule "ideas/tensorflow-wavenet"]
+	path = ideas/tensorflow-wavenet
+	url = https://github.com/ibab/tensorflow-wavenet.git
