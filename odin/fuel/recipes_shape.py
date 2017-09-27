@@ -460,6 +460,6 @@ class Sequencing(FeederRecipe):
                     shp = (n, self.frame_length,) + mid_shape + feat_shape
                 # for labels.
                 elif idx in label_idx:
-                    shp = (n,)
+                    shp = (n,) + shp[1:]
             new_shapes.append((shp, ids))
         return new_shapes

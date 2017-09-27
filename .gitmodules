@@ -40,3 +40,6 @@
 [submodule "ideas/drn"]
 	path = ideas/drn
 	url = https://github.com/fyu/drn.git
+[submodule "ideas/SSGAN-Tensorflow"]
+	path = ideas/SSGAN-Tensorflow
+	url = https://github.com/gitlimlab/SSGAN-Tensorflow.git

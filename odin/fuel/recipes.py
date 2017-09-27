@@ -130,7 +130,7 @@ class Filter(FeederRecipe):
 # ===========================================================================
 class LabelOneHot(FeederRecipe):
 
-    def __init__(self, nb_classes, data_idx=0):
+    def __init__(self, nb_classes, data_idx=()):
         super(LabelOneHot, self).__init__()
         self.nb_classes = int(nb_classes)
         self.data_idx = data_idx
@@ -146,7 +146,7 @@ class LabelOneHot(FeederRecipe):
                 x = np.array(x, dtype='int32')
                 x = one_hot(x, nb_classes=self.nb_classes)
             X_new.append(x)
-        return name, X
+        return name, X_new
 
     def shape_transform(self, shapes):
         data_idx = axis_normalize(axis=self.data_idx,

@@ -111,33 +111,40 @@ print(ctext("#File test:", 'yellow'), len(test))
 
 recipes = [
     F.recipes.Name2Trans(converter_func=f_digits),
-    F.recipes.LabelOneHot(nb_classes=len(digits)),
+    F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
     F.recipes.Sequencing(frame_length=length, hop_length=1,
                          end='pad', endmode='post', endvalue=0,
-                         label_transform=F.recipes.last_seen)
+                         label_transform=F.recipes.last_seen,
+                         data_idx=None, label_idx=-1)
 ]
 data = [ds[f] for f in FEAT]
-train = F.Feeder(F.DataDescriptor(data=data, indices=train), dtype='float32',
-                 ncpu=1, buffer_size=len(digits), batch_mode='batch')
-valid = F.Feeder(F.DataDescriptor(data=data, indices=valid), dtype='float32',
-                 ncpu=6, buffer_size=len(digits), batch_mode='batch')
-test = F.Feeder(F.DataDescriptor(data=data, indices=test), dtype='float32',
-                ncpu=6, buffer_size=len(digits), batch_mode='file')
-
+train = F.Feeder(F.DataDescriptor(data=data, indices=train),
+                 dtype='float32', ncpu=1,
+                 buffer_size=len(digits),
+                 batch_mode='batch')
+valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
+                 dtype='float32', ncpu=6,
+                 buffer_size=len(digits),
+                 batch_mode='batch')
+test = F.Feeder(F.DataDescriptor(data=data, indices=test),
+                dtype='float32', ncpu=6,
+                buffer_size=len(digits),
+                batch_mode='file')
 train.set_recipes(recipes)
 valid.set_recipes(recipes)
 test.set_recipes(recipes)
+print(train)
 print(ctext("Train:", 'yellow'), train.shape)
 print(ctext("Valid:", 'yellow'), valid.shape)
 print(ctext("Test:", 'yellow'), test.shape)
 # ===========================================================================
 # Create model
 # ===========================================================================
-X = [K.placeholder(shape=(None,) + shape[1:], dtype='float32', name='input%d' % i)
-     for i, shape in enumerate(as_tuple_of_shape(train.shape))]
-y = K.placeholder(shape=(None, len(digits)), name='y', dtype='float32')
-print("Inputs:", X)
-print("Outputs:", y)
+inputs = [K.placeholder(shape=(None,) + shape[1:],
+                        dtype='float32',
+                        name='input%d' % i)
+          for i, shape in enumerate(as_tuple_of_shape(train.shape))]
+print("Inputs:", inputs)
 
 with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
                   pad='same'):
@@ -155,9 +162,10 @@ with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
             N.Dropout(0.5),
             N.Dense(len(digits))
         ], debug=True)
-y_logit = f(X[0])
+y_logit = f(inputs[0])
 y_prob = tf.nn.softmax(y_logit)
 # ====== create loss ====== #
+y = inputs[-1]
 ce = tf.losses.softmax_cross_entropy(y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_prob, y)
 cm = K.metrics.confusion_matrix(y_prob, y, labels=len(digits))
@@ -169,19 +177,23 @@ optz = K.optimizers.RMSProp(lr=0.0001)
 updates = optz.get_updates(ce, params)
 # ====== Functions ====== #
 print('Building training functions ...')
-f_train = K.function(X + [y], [ce, acc, optz.norm, cm], updates=updates,
+f_train = K.function(inputs=inputs,
+                     outputs=[ce, acc, optz.norm, cm],
+                     updates=updates,
                      training=True)
 print('Building testing functions ...')
-f_test = K.function(X + [y], [ce, acc, cm],
+f_test = K.function(inputs=inputs,
+                    outputs=[ce, acc, cm],
                     training=False)
 print('Building predicting functions ...')
-f_pred = K.function(X + [y], y_prob, training=False)
-
+f_pred = K.function(inputs=inputs,
+                    outputs=y_prob,
+                    training=False)
 # ===========================================================================
 # Training
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=8, seed=120825, shuffle_level=2,
+task = training.MainLoop(batch_size=16, seed=120825, shuffle_level=2,
                          allow_rollback=True)
 task.set_save(MODEL_PATH, f)
 task.set_callbacks([
