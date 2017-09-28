@@ -57,15 +57,46 @@ def _plot_each_epoch(name, results, task_type):
 # Tasks
 # ===========================================================================
 class Task(object):
+    """
+    Parameters
+    ----------
+    func: callable
+        function will be executed for each iteration
+    data: single or list of odin.fuel.Data, numpy.ndarray
+        iterate over all these data and execute function on
+        the data.
+    epoch: int
+        how many epoch will be repeated
+    p: float (0.0 - 1.0)
+        probability the `func` will be execute for each iteration
+    batch_size: int (> 0)
+        number of samples for each iteration
+    seed: int
+        random seed for shuffling the data
+    shuffle_level: int (0, 1, 2)
+        if 0, shuffle the file lists
+        if 1, shuffle the buffer (i.e. list of processing files) and
+            all the previous
+        if 2, shuffle the returned batch and all the previous
+    callbacks: None, or list of `odin.training.Callback`
+        callback will be promoted during the execution of the task
+    labels: None, or list of string
+        labels for printing the confusion matrix in `odin.utils.Progbar`
+    name: None or string
+        unique name for Task identity.
+    """
 
     def __init__(self, func, data, epoch=1, p=1.0,
                  batch_size=128, seed=None, shuffle_level=2,
-                 callbacks=None, name=None):
+                 callbacks=None, labels=None, name=None):
         super(Task, self).__init__()
         self.set_func(func, data)
         # this Progbar will record the history as well
+        self._labels = [str(l) for l in labels] \
+            if labels is not None else None
         self._progbar = Progbar(target=self.nb_samples, name=name,
                                 print_report=True, print_summary=True)
+        self._progbar.set_labels(self._labels)
         # ====== assign other arguments ====== #
         self._nb_epoch = epoch
         self._p = np.clip(p, 0., 1.)
@@ -138,6 +169,10 @@ class Task(object):
     @property
     def name(self):
         return str(self._name)
+
+    @property
+    def labels(self):
+        return self._labels
 
     @property
     def nb_epoch(self):
@@ -535,7 +570,8 @@ class MainLoop(object):
         return self._callback[key]
 
     # ==================== main ==================== #
-    def set_train_task(self, func, data, epoch=1, p=1., when=None, name="Train"):
+    def set_train_task(self, func, data, epoch=1, p=1., when=None,
+                       name="Train", labels=None):
         ''' The progress of the first task added as train_task will
         be used to determine Timer for all other task
         '''
@@ -546,7 +582,7 @@ class MainLoop(object):
             raise ValueError("`when` must be instance of odin.training.Timer")
         t = Task(func, data, epoch=epoch, p=p, batch_size=self._batch_size,
                  seed=self._rng.randint(10e8), shuffle_level=self._shuffle_level,
-                 name=name)
+                 labels=labels, name=name)
         self._task.append(t)
         self._task_when[t] = when
         self._task_freq[t] = Timer(samples=0)
@@ -555,8 +591,9 @@ class MainLoop(object):
             self._main_task = t
         return self
 
-    def set_valid_task(self, func, data, freq=Timer(epoch=1),
-                       when=Timer(samples=0), name="Valid"):
+    def set_valid_task(self, func, data,
+                       freq=Timer(epoch=1), when=Timer(samples=0),
+                       name="Valid", labels=None):
         ''' A subtask is a repeative Task
 
         Parameters
@@ -570,15 +607,15 @@ class MainLoop(object):
         if not isinstance(when, Timer):
             raise ValueError("`when` must be instance of odin.training.Timer")
         t = Task(func, data, epoch=float('inf'), p=1., batch_size=self._batch_size,
-                 seed=None, shuffle_level=0, name=name)
+                 seed=None, shuffle_level=0, labels=labels, name=name)
         self._subtask.append(t)
         self._task_when[t] = when
         self._task_freq[t] = freq
         return self
 
-    def set_eval_task(self, func, data, name="Eval"):
+    def set_eval_task(self, func, data, name="Eval", labels=None):
         t = Task(func, data, epoch=1, p=1., batch_size=self._batch_size,
-                 seed=None, shuffle_level=0, name=name)
+                 seed=None, shuffle_level=0, labels=labels, name=name)
         self._evaltask.append(t)
         self._task_when[t] = Timer(percentage=1.)
         self._task_freq[t] = Timer(samples=0)

@@ -119,16 +119,16 @@ recipes = [
 ]
 data = [ds[f] for f in FEAT]
 train = F.Feeder(F.DataDescriptor(data=data, indices=train),
-                 dtype='float32', ncpu=1,
+                 dtype='float32', ncpu=8,
                  buffer_size=len(digits),
                  batch_mode='batch')
 valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
-                 dtype='float32', ncpu=6,
+                 dtype='float32', ncpu=4,
                  buffer_size=len(digits),
                  batch_mode='batch')
 test = F.Feeder(F.DataDescriptor(data=data, indices=test),
-                dtype='float32', ncpu=6,
-                buffer_size=len(digits),
+                dtype='float32', ncpu=4,
+                buffer_size=1,
                 batch_mode='file')
 train.set_recipes(recipes)
 valid.set_recipes(recipes)
@@ -137,6 +137,7 @@ print(train)
 print(ctext("Train:", 'yellow'), train.shape)
 print(ctext("Valid:", 'yellow'), valid.shape)
 print(ctext("Test:", 'yellow'), test.shape)
+
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -157,6 +158,8 @@ with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
             N.Pool(pool_size=(3, 2), strides=2),
             N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
             N.Pool(pool_size=(3, 2), strides=2),
+            N.Conv(num_filters=128, filter_size=(3, 3)), N.BatchNorm(),
+            N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
             N.Flatten(outdim=2),
             N.Dense(1024, b_init=0, activation=K.relu),
             N.Dropout(0.5),
@@ -201,9 +204,11 @@ task.set_callbacks([
     training.EarlyStopGeneralizationLoss('valid', ce,
                                          threshold=5, patience=5)
 ])
-task.set_train_task(f_train, train, epoch=25, name='train')
+task.set_train_task(f_train, train, epoch=25, name='train',
+                    labels=digits)
 task.set_valid_task(f_test, valid,
-                    freq=training.Timer(percentage=0.5), name='valid')
+                    freq=training.Timer(percentage=0.5),
+                    name='valid', labels=digits)
 task.run()
 # ===========================================================================
 # Prediction

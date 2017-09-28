@@ -167,6 +167,8 @@ class Progbar(object):
             self.__report_func = report_func
         else:
             self.__report_func = lambda x: None
+        # ====== other ====== #
+        self._labels = None # labels for printing the confusion matrix
 
     # ==================== History management ==================== #
     def __getitem__(self, key):
@@ -209,6 +211,11 @@ class Progbar(object):
         return self._name
 
     @property
+    def labels(self):
+        """ Special labels for printing the confusion matrix. """
+        return self._labels
+
+    @property
     def history(self):
         """ Return history recording all add item (timestamp, key, value)
         to this progress
@@ -218,6 +225,11 @@ class Progbar(object):
         dictonary: {epoch_id: {key: [value1, value2, ...]}}
         """
         return self._epoch_hist
+
+    def set_labels(self, labels):
+        if labels is not None:
+            self._labels = tuple([str(l) for l in labels])
+        return self
 
     def formatted_report(self, report_dict, margin='', inc_name=True):
         """ Convert a dictionary of key -> value to well formatted string."""
@@ -234,7 +246,9 @@ class Progbar(object):
             "confusion_matrix" in key.lower() or \
             "confusion-matrix" in key.lower() or \
             "confusion matrix" in key.lower():
-                value = print_confusion(value)
+                value = print_confusion(value, labels=self.labels,
+                                        inc_stats=True)
+            # just print out string representation
             else:
                 value = str(value)
             # ====== multiple lines or not ====== #

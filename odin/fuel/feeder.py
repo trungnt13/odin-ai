@@ -527,7 +527,7 @@ class Feeder(MutableData):
 
     def __init__(self, data_desc, dtype=None,
                  batch_filter=None, batch_mode='batch',
-                 ncpu=1, buffer_size=8, maximum_queue_size=66):
+                 ncpu=1, buffer_size=8, maximum_queue_size=86):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         self._data = as_tuple(data_desc, t=DataDescriptor)
