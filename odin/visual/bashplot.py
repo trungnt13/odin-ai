@@ -3,6 +3,8 @@
 # This module is adpated from: https://github.com/glamp/bashplotlib
 # Original work Copyright (c) 2013 Greg Lamp
 # Modified work Copyright 2016-2017 TrungNT
+# NOTE: the module is intentionally made for self-efficient, hence,
+#       no need for external libraries
 # ===========================================================================
 
 from __future__ import print_function, absolute_import, division
@@ -309,12 +311,23 @@ def print_confusion(arr, labels=None, inc_stats=True):
     else:
         fig = ""
     # confusion matrix
-    for i, row in enumerate(arr):
-        row_text = ctext(lab_fmt % labels[i], LABEL_COLOR)
-        for j, col in enumerate(row):
+    for row_id, row in enumerate(arr):
+        row_text = ctext(lab_fmt % labels[row_id], LABEL_COLOR)
+        # get the worst performed point
+        most_misclassified = np.argsort(row, kind='quicksort').tolist()
+        most_misclassified.remove(row_id)
+        most_misclassified = most_misclassified[-1]
+        if row[most_misclassified] == 0.:
+            most_misclassified = None
+        # iterate over each column value
+        for col_id, col in enumerate(row):
             col = _float2str(col)
-            if i == j:
-                row_text += ctext(col, color='cyan') + ' '
+            if col_id == row_id:
+                row_text += ctext(col,
+                                  color='blue' if col == '1.0' else 'cyan') + ' '
+            elif most_misclassified is not None and \
+            col_id == most_misclassified:
+                row_text += ctext(col, color='red') + ' '
             else:
                 row_text += col + ' '
         # new line

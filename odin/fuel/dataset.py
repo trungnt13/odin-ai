@@ -139,8 +139,7 @@ class Dataset(object):
             return # not thing to do more
         elif not os.path.isdir(path):
             raise ValueError('Dataset path must be a folder.')
-
-        # # ====== load all Data ====== #
+        # ====== Load all Data ====== #
         files = os.listdir(path)
         for fname in files:
             # found README
@@ -162,6 +161,9 @@ class Dataset(object):
                                      '{}'.format(key))
                 else:
                     self._data_map[key] = d
+        # ====== Load stored recipes ====== #
+        pass
+        # ====== load stored indices ====== #
 
     # ==================== archive loading ==================== #
     def _load_archive(self, path, extract_path):
@@ -255,6 +257,17 @@ class Dataset(object):
         zfile.close()
         return path
 
+    # ==================== Feeder management ==================== #
+    def add_indices(self, name, indices):
+        pass
+
+    def add_recipes(self, name, recipes):
+        pass
+
+    def create_feeder(self, data, recipes, indices=None):
+        pass
+
+    # ==================== Data management ==================== #
     def flush(self):
         for dtype, shape, data, path in self._data_map.itervalues():
             if hasattr(data, 'flush'):

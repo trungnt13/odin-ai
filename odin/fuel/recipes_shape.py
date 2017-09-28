@@ -44,33 +44,36 @@ class Slice(FeederRecipe):
         in case Feeders is given multiple Data, target_data is
         the index of Data that will be applied given indices.
         if None is given, the Slice is applied to all Data
+
+    Note
+    ----
+    Docs for python `slice` as reference: `slice(stop)`,
+    `slice(start, stop[, step])`. Create a slice object.
+    This is used for extended slicing (e.g. a[0:10:2]).
     """
 
-    def __init__(self, indices, axis, data_idx=None):
+    def __init__(self, slices, axis, data_idx=None):
         super(Slice, self).__init__()
         # ====== validate axis ====== #
-        if not isinstance(axis, int):
+        if not is_number(axis):
             raise ValueError('axis for Slice must be an integer.')
-        if axis == 0 and data_idx is not None:
-            raise ValueError("You can only apply Slice on axis=0 for all Data, "
-                             "(i.e. 'target_data' must be None when axis=0)")
-        self.axis = axis
+        self.axis = int(axis)
         # ====== validate indices ====== #
-        if is_number(indices):
-            indices = slice(int(indices), int(indices + 1))
-        elif isinstance(indices, (tuple, list)):
-            indices = [i if isinstance(i, slice) else slice(int(i), int(i + 1))
-                       for i in indices
-                       if isinstance(i, slice) or is_number(i)]
-        elif not isinstance(indices, slice):
+        if is_number(slices):
+            slices = slice(int(slices), int(slices + 1))
+        elif isinstance(slices, (tuple, list)):
+            slices = [i if isinstance(i, slice) else slice(int(i), int(i + 1))
+                      for i in slices
+                      if isinstance(i, slice) or is_number(i)]
+        elif not isinstance(slices, slice):
             raise ValueError('indices must be int, slice, or list of int and slice.')
-        self.indices = indices
+        self.slices = slices
         # ====== validate target_data ====== #
         self.data_idx = data_idx
 
     def process(self, name, X):
         X_new = []
-        data_idx = axis_normalize(axis=self._data_idx,
+        data_idx = axis_normalize(axis=self.data_idx,
                                   ndim=len(X),
                                   return_tuple=True)
         for _, x in enumerate(X):
@@ -79,24 +82,27 @@ class Slice(FeederRecipe):
                 ndim = x.ndim
                 axis = self.axis % ndim
                 # just one index given
-                if isinstance(self.indices, (slice, int)):
-                    indices = tuple([slice(None) if i != axis else self.indices
+                if isinstance(self.slices, (slice, int)):
+                    indices = tuple([slice(None) if i != axis else self.slices
                                      for i in range(ndim)])
                     x = x[indices]
                 # multiple indices are given
                 else:
                     indices = []
-                    for idx in self.indices:
+                    for idx in self.slices:
                         indices.append(tuple([slice(None) if i != axis else idx
                                               for i in range(ndim)]))
                     x = np.concatenate([x[i] for i in indices], axis=self.axis)
+                # check if array still contigous
+                x = np.ascontiguousarray(x)
             X_new.append(x)
         return name, X_new
 
     def _from_indices(self, n):
         """ This function estimates number of sample given indices """
         # slice indices
-        indices = (self.indices,) if isinstance(self.indices, slice) else self.indices
+        indices = (self.slices,) if isinstance(self.slices, slice) \
+            else self.slices
         count = 0
         for idx in indices:
             idx = idx.indices(n)
@@ -104,7 +110,7 @@ class Slice(FeederRecipe):
         return count
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(axis=self._data_idx,
+        data_idx = axis_normalize(axis=self.data_idx,
                                   ndim=len(shapes),
                                   return_tuple=True)
         new_shapes = []
@@ -367,9 +373,9 @@ class Sequencing(FeederRecipe):
         if hop_length > frame_length:
             raise ValueError("hop_length=%d must be smaller than frame_length=%d"
                              % (hop_length, frame_length))
-        self.end = end
+        self.end = str(end)
         self.endvalue = endvalue
-        self.endmode = endmode
+        self.endmode = str(endmode)
         # ====== transform function ====== #
         if label_transform is not None and not callable(label_transform):
             raise ValueError("`label_transform` must be callable object, but "

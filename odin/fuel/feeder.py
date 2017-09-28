@@ -121,6 +121,8 @@ class FeederRecipe(object):
                 attr = getattr(self, name)
                 if name == 'data_idx':
                     print_attrs[name] = str(attr)
+                elif isinstance(attr, slice):
+                    print_attrs[name] = str(attr)
                 elif inspect.isfunction(attr):
                     print_attrs[name] = "(f)" + attr.func_name
                 elif isinstance(attr, np.ndarray):
@@ -691,10 +693,10 @@ class Feeder(MutableData):
 
     def __str__(self):
         padding = '   '
-        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d mode:"%s">\n' % \
+        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d #Queue:%d mode:"%s">\n' % \
             (ctext('Feeder', 'cyan'), len(self.indices_keys),
                 len(self._running_iter), self.ncpu, self.buffer_size,
-                self._batch_mode)
+                self.maximum_queue_size, self._batch_mode)
         # ====== Shape and dtype ====== #
         shape = (self.shape,) if is_number(self.shape[0]) else self.shape
         s += padding + ctext("Shape: ", 'magenta') + \

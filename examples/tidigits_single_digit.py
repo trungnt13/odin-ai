@@ -34,6 +34,7 @@ from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
 # ===========================================================================
 FEAT = ['mspec', 'vad']
 DS_PATH = '/home/trung/data/tidigits'
+BATCH_SIZE = 32
 
 MODEL_PATH = get_modelpath('tidigit', override=True)
 LOG_PATH = get_logpath('tidigit.log', override=True)
@@ -90,7 +91,6 @@ length = [(end - start) for name, (start, end) in train.iteritems()]
 length += [(end - start) for name, (start, end) in test.iteritems()]
 print(print_hist(length, bincount=30, showSummary=True, title="#Frames"))
 length = max(length)
-
 # ====== genders ====== #
 f_digits, digits = unique_labels([i[0] for i in train.items() + test.items()],
                                  extract_digit, True)
@@ -100,7 +100,7 @@ print(ctext("All digits:", 'yellow'), digits)
 # ===========================================================================
 # split by speaker ID
 train, valid = train_valid_test_split(
-    train.items(), train=0.8,
+    train.items(), train=0.6,
     cluster_func=lambda x: extract_digit(x[0]),
     idfunc=lambda x: extract_spk(x[0]),
     inc_test=False)
@@ -108,8 +108,8 @@ test = test.items()
 print(ctext("#File train:", 'yellow'), len(train))
 print(ctext("#File valid:", 'yellow'), len(valid))
 print(ctext("#File test:", 'yellow'), len(test))
-
 recipes = [
+    F.recipes.Slice(slices=slice(80), axis=-1, data_idx=0),
     F.recipes.Name2Trans(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
     F.recipes.Sequencing(frame_length=length, hop_length=1,
@@ -123,7 +123,7 @@ train = F.Feeder(F.DataDescriptor(data=data, indices=train),
                  buffer_size=len(digits),
                  batch_mode='batch')
 valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
-                 dtype='float32', ncpu=4,
+                 dtype='float32', ncpu=1,
                  buffer_size=len(digits),
                  batch_mode='batch')
 test = F.Feeder(F.DataDescriptor(data=data, indices=test),
@@ -134,10 +134,24 @@ train.set_recipes(recipes)
 valid.set_recipes(recipes)
 test.set_recipes(recipes)
 print(train)
-print(ctext("Train:", 'yellow'), train.shape)
-print(ctext("Valid:", 'yellow'), valid.shape)
-print(ctext("Test:", 'yellow'), test.shape)
+print(valid)
+print(test)
+# just to evaluate if we correctly estimate the right amount
+# of data in the FeederRecipes
+n = 0
+for X, vad, y in train:
+    n += X.shape[0]
+assert n == len(train)
 
+n = 0
+for name, idx, X, vad, y in test:
+    n += X.shape[0]
+assert n == len(test)
+
+n = 0
+for X, vad, y in valid:
+    n += X.shape[0]
+assert n == len(valid)
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -146,7 +160,6 @@ inputs = [K.placeholder(shape=(None,) + shape[1:],
                         name='input%d' % i)
           for i, shape in enumerate(as_tuple_of_shape(train.shape))]
 print("Inputs:", inputs)
-
 with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
                   pad='same'):
     with N.nnop_scope(ops=['BatchNorm'], activation=K.relu):
@@ -159,7 +172,7 @@ with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
             N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
             N.Pool(pool_size=(3, 2), strides=2),
             N.Conv(num_filters=128, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
+            # N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
             N.Flatten(outdim=2),
             N.Dense(1024, b_init=0, activation=K.relu),
             N.Dropout(0.5),
@@ -196,13 +209,15 @@ f_pred = K.function(inputs=inputs,
 # Training
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=16, seed=120825, shuffle_level=2,
+task = training.MainLoop(batch_size=BATCH_SIZE,
+                         seed=120825,
+                         shuffle_level=2,
                          allow_rollback=True)
 task.set_save(MODEL_PATH, f)
 task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', ce,
-                                         threshold=5, patience=5)
+                                         threshold=5, patience=12)
 ])
 task.set_train_task(f_train, train, epoch=25, name='train',
                     labels=digits)
