@@ -109,7 +109,7 @@ print(ctext("#File train:", 'yellow'), len(train))
 print(ctext("#File valid:", 'yellow'), len(valid))
 print(ctext("#File test:", 'yellow'), len(test))
 recipes = [
-    F.recipes.Slice(slices=slice(80), axis=-1, data_idx=0),
+    # F.recipes.Slice(slices=slice(80), axis=-1, data_idx=0),
     F.recipes.Name2Trans(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
     F.recipes.Sequencing(frame_length=length, hop_length=1,
@@ -208,43 +208,53 @@ f_pred = K.function(inputs=inputs,
 # ===========================================================================
 # Training
 # ===========================================================================
-print('Start training ...')
-task = training.MainLoop(batch_size=BATCH_SIZE,
-                         seed=120825,
-                         shuffle_level=2,
-                         allow_rollback=True)
-task.set_save(MODEL_PATH, f)
-task.set_callbacks([
-    training.NaNDetector(),
-    training.EarlyStopGeneralizationLoss('valid', ce,
-                                         threshold=5, patience=12)
-])
-task.set_train_task(f_train, train, epoch=25, name='train',
-                    labels=digits)
-task.set_valid_task(f_test, valid,
-                    freq=training.Timer(percentage=0.5),
-                    name='valid', labels=digits)
-task.run()
+# print('Start training ...')
+# task = training.MainLoop(batch_size=BATCH_SIZE,
+#                          seed=120825,
+#                          shuffle_level=2,
+#                          allow_rollback=True)
+# task.set_save(MODEL_PATH, f)
+# task.set_callbacks([
+#     training.NaNDetector(),
+#     training.EarlyStopGeneralizationLoss('valid', ce,
+#                                          threshold=5, patience=12)
+# ])
+# task.set_train_task(f_train, train, epoch=25, name='train',
+#                     labels=digits)
+# task.set_valid_task(f_test, valid,
+#                     freq=training.Timer(percentage=0.5),
+#                     name='valid', labels=digits)
+# task.run()
+# # ===========================================================================
+# # Prediction
+# # ===========================================================================
+# y_true = []
+# y_pred = []
+# for outputs in Progbar(test, name="Evaluating",
+#                        count_func=lambda x: x[-1].shape[0]):
+#     name = str(outputs[0])
+#     idx = int(outputs[1])
+#     data = outputs[2:]
+#     if idx >= 1:
+#         raise ValueError("NOPE")
+#     y_true.append(f_digits(name))
+#     y_pred.append(f_pred(*data))
+# y_true = np.array(y_true, dtype='int32')
+# y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
+# # ====== Acc ====== #
+# from sklearn.metrics import confusion_matrix, accuracy_score
+# print()
+# print("Acc:", accuracy_score(y_true, y_pred))
+# print("Confusion matrix:")
+# print(print_confusion(confusion_matrix(y_true, y_pred), digits))
+# print(LOG_PATH)
+
 # ===========================================================================
-# Prediction
+# Evaluate on digit audio dataset
 # ===========================================================================
-y_true = []
-y_pred = []
-for outputs in Progbar(test, name="Evaluating",
-                       count_func=lambda x: x[-1].shape[0]):
-    name = str(outputs[0])
-    idx = int(outputs[1])
-    data = outputs[2:]
-    if idx >= 1:
-        raise ValueError("NOPE")
-    y_true.append(f_digits(name))
-    y_pred.append(f_pred(*data))
-y_true = np.array(y_true, dtype='int32')
-y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
-# ====== Acc ====== #
-from sklearn.metrics import confusion_matrix, accuracy_score
-print()
-print("Acc:", accuracy_score(y_true, y_pred))
-print("Confusion matrix:")
-print(print_confusion(confusion_matrix(y_true, y_pred), digits))
-print(LOG_PATH)
+ds = F.load_digit_feat()
+print(ds)
+test = F.Feeder(F.DataDescriptor(data=data, indices=test),
+                dtype='float32', ncpu=4,
+                buffer_size=1,
+                batch_mode='file')

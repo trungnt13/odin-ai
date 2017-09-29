@@ -12,6 +12,7 @@ from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
 from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import get_file, Progbar, is_string, ctext
+from .recipe_basic import FeederRecipe
 
 
 __all__ = [
@@ -162,8 +163,23 @@ class Dataset(object):
                 else:
                     self._data_map[key] = d
         # ====== Load stored recipes ====== #
-        pass
+        recipes_path = os.path.join(self.path, 'recipes')
+        if os.path.exists(recipes_path) and os.path.isfile(recipes_path):
+            raise RuntimeError("Found a file at path: '%s', which supposed to "
+                               "be a folder used for saving `recipes`"
+                               % recipes_path)
+        if not os.path.exists(recipes_path):
+            os.mkdir(recipes_path)
+        self._saved_recipes = {}
         # ====== load stored indices ====== #
+        index_path = os.path.join(self.path, 'index')
+        if os.path.exists(recipes_path) and os.path.isfile(recipes_path):
+            raise RuntimeError("Found a file at path: '%s', which supposed to "
+                               "be a folder used for saving `recipes`"
+                               % recipes_path)
+        if not os.path.exists(recipes_path):
+            os.mkdir(recipes_path)
+        self._saved_indices = {}
 
     # ==================== archive loading ==================== #
     def _load_archive(self, path, extract_path):
@@ -264,7 +280,22 @@ class Dataset(object):
     def add_recipes(self, name, recipes):
         pass
 
-    def create_feeder(self, data, recipes, indices=None):
+    def create_feeder(self, data, recipes, indices=None, name=None):
+        """
+        Parameters
+        ----------
+        data: list of str
+            list of name for all data used, the order of this
+            list is the order of returned data.
+        recipes: list or single odin.fuel.FeederRecipe
+            the list of recipes defining the rule of transforming
+            the data
+        indices: None, string, dict, list
+            pass
+        name: None, or string
+            if name is provided, the feeder information will be saved,
+            which include the `indices`, `recipes`
+        """
         pass
 
     # ==================== Data management ==================== #

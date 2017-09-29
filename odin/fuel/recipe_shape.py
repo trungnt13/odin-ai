@@ -5,7 +5,7 @@ from collections import Counter
 
 import numpy as np
 
-from .feeder import FeederRecipe
+from .recipe_basic import FeederRecipe
 from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number)
 from odin.preprocessing.signal import segment_axis
 

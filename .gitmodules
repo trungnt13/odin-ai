@@ -46,3 +46,6 @@
 [submodule "ideas/tensorflow-wavenet"]
 	path = ideas/tensorflow-wavenet
 	url = https://github.com/ibab/tensorflow-wavenet.git
+[submodule "variational-dropout-sparsifies-dnn"]
+	path = variational-dropout-sparsifies-dnn
+	url = https://github.com/ars-ashuha/variational-dropout-sparsifies-dnn.git

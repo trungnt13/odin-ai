@@ -154,12 +154,12 @@ if os.path.exists(outpath):
     print("Remove old dataset at path:", outpath)
     shutil.rmtree(outpath)
 acous = F.SpeechProcessor(ds, outpath,
-                sr=16000, sr_info={}, sr_new=None,
+                sr=16000, sr_info={}, sr_new=8000,
                 win=0.02, hop=0.005, window='hann',
                 nb_melfilters=40, nb_ceps=13,
                 get_spec=True, get_qspec=False, get_phase=False,
                 get_pitch=True, get_f0=True,
-                get_vad=True, get_energy=True, get_delta=2,
+                get_vad=3, get_energy=True, get_delta=2,
                 fmin=64, fmax=None,
                 pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
                 vad_smooth=3, vad_minlen=0.1,
