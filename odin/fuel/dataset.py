@@ -8,10 +8,11 @@ from six.moves import zip, range, cPickle
 import numpy as np
 
 from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
-                   MAX_OPEN_MMAP, Data)
+                   MAX_OPEN_MMAP, Data, as_data)
 from .utils import MmapDict, SQLiteDict, NoSQL
 
-from odin.utils import get_file, Progbar, is_string, ctext
+from odin.utils import (get_file, Progbar, is_string,
+                        ctext, as_tuple)
 from .recipe_basic import FeederRecipe
 
 
@@ -280,7 +281,9 @@ class Dataset(object):
     def add_recipes(self, name, recipes):
         pass
 
-    def create_feeder(self, data, recipes, indices=None, name=None):
+    def create_feeder(self, data, recipes, indices=None,
+                      batch_filter=None, batch_mode='batch',
+                      name=None):
         """
         Parameters
         ----------
@@ -292,11 +295,40 @@ class Dataset(object):
             the data
         indices: None, string, dict, list
             pass
+        batch_filter: callable
+            must be a function has take a list of np.ndarray as first arguments
+            ([X]) or ([X, y]), you can return None to ignore given batch, return the
+            data for accepting the batch
+        batch_mode: 'batch' or 'file' (string type)
+            'batch' mode return shuffling and return everything in small batches
+            'file' mode return [(file_name, order_index, data...), ...]
         name: None, or string
             if name is provided, the feeder information will be saved,
             which include the `indices`, `recipes`
+
+        Note
+        ----
+        by defaults, the Feeder is created using only 1 CPU with `buffer_size=1`
+        using the method `set_multiprocessing(ncpu=None, buffer_size=None,
+        maximum_queue_size=None)` for changing this information.
         """
-        pass
+        from .feeder import Feeder, DataDescriptor
+        # check data
+        data = [self.__getitem__(dat) if is_string(dat) else as_data(dat)
+                for dat in as_tuple(data)]
+        # check recipes
+        recipes = as_tuple(recipes, t=FeederRecipe)
+        # check indices
+        if indices is None:
+            indices = self.__getitem__('indices')
+        # ====== saving recipes and indices, if name is not None ====== #
+        if name is not None:
+            pass
+        # ====== create Feeder ====== #
+        feeder = Feeder(DataDescriptor(data=data, indices=indices),
+                        batch_filter=None, batch_mode='batch',
+                        ncpu=1, buffer_size=1)
+        return feeder.set_recipes(recipes)
 
     # ==================== Data management ==================== #
     def flush(self):

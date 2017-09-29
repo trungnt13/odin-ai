@@ -109,7 +109,7 @@ print(ctext("#File train:", 'yellow'), len(train))
 print(ctext("#File valid:", 'yellow'), len(valid))
 print(ctext("#File test:", 'yellow'), len(test))
 recipes = [
-    # F.recipes.Slice(slices=slice(80), axis=-1, data_idx=0),
+    F.recipes.Slice(slices=slice(40), axis=-1, data_idx=0),
     F.recipes.Name2Trans(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
     F.recipes.Sequencing(frame_length=length, hop_length=1,
@@ -138,20 +138,21 @@ print(valid)
 print(test)
 # just to evaluate if we correctly estimate the right amount
 # of data in the FeederRecipes
-n = 0
-for X, vad, y in train:
-    n += X.shape[0]
-assert n == len(train)
-
-n = 0
-for name, idx, X, vad, y in test:
-    n += X.shape[0]
-assert n == len(test)
-
-n = 0
-for X, vad, y in valid:
-    n += X.shape[0]
-assert n == len(valid)
+if False:
+    n = 0
+    for X, vad, y in train:
+        n += X.shape[0]
+    assert n == len(train)
+    #
+    n = 0
+    for name, idx, X, vad, y in test:
+        n += X.shape[0]
+    assert n == len(test)
+    #
+    n = 0
+    for X, vad, y in valid:
+        n += X.shape[0]
+    assert n == len(valid)
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -172,7 +173,7 @@ with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
             N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
             N.Pool(pool_size=(3, 2), strides=2),
             N.Conv(num_filters=128, filter_size=(3, 3)), N.BatchNorm(),
-            # N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
+            N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
             N.Flatten(outdim=2),
             N.Dense(1024, b_init=0, activation=K.relu),
             N.Dropout(0.5),
@@ -254,7 +255,7 @@ f_pred = K.function(inputs=inputs,
 # ===========================================================================
 ds = F.load_digit_feat()
 print(ds)
-test = F.Feeder(F.DataDescriptor(data=data, indices=test),
-                dtype='float32', ncpu=4,
-                buffer_size=1,
-                batch_mode='file')
+test = ds.create_feeder(FEAT, recipes)
+print(test)
+for X, vad, y in test:
+    print(X.shape, vad.shape, y.shape)
