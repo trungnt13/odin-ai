@@ -23,6 +23,8 @@ from collections import defaultdict
 import numpy as np
 import tensorflow as tf
 
+from sklearn.metrics import confusion_matrix, accuracy_score
+
 from odin import backend as K, nnet as N, fuel as F
 from odin.stats import train_valid_test_split, freqcount
 from odin import training
@@ -57,6 +59,8 @@ def extract_gender(x):
 
 
 def extract_digit(x):
+    if '.wav' in x:
+        return x[0] if x[0] != '0' else 'z'
     return x.split('_')[6]
 
 # ===========================================================================
@@ -218,7 +222,7 @@ f_pred = K.function(inputs=inputs,
 # task.set_callbacks([
 #     training.NaNDetector(),
 #     training.EarlyStopGeneralizationLoss('valid', ce,
-#                                          threshold=5, patience=12)
+#                                          threshold=5, patience=5)
 # ])
 # task.set_train_task(f_train, train, epoch=25, name='train',
 #                     labels=digits)
@@ -226,36 +230,49 @@ f_pred = K.function(inputs=inputs,
 #                     freq=training.Timer(percentage=0.5),
 #                     name='valid', labels=digits)
 # task.run()
-# # ===========================================================================
-# # Prediction
-# # ===========================================================================
-# y_true = []
-# y_pred = []
-# for outputs in Progbar(test, name="Evaluating",
-#                        count_func=lambda x: x[-1].shape[0]):
-#     name = str(outputs[0])
-#     idx = int(outputs[1])
-#     data = outputs[2:]
-#     if idx >= 1:
-#         raise ValueError("NOPE")
-#     y_true.append(f_digits(name))
-#     y_pred.append(f_pred(*data))
-# y_true = np.array(y_true, dtype='int32')
-# y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
-# # ====== Acc ====== #
-# from sklearn.metrics import confusion_matrix, accuracy_score
-# print()
-# print("Acc:", accuracy_score(y_true, y_pred))
-# print("Confusion matrix:")
-# print(print_confusion(confusion_matrix(y_true, y_pred), digits))
-# print(LOG_PATH)
+# ===========================================================================
+# Prediction
+# ===========================================================================
+y_true = []
+y_pred = []
+for outputs in Progbar(test, name="Evaluating",
+                       count_func=lambda x: x[-1].shape[0]):
+    name = str(outputs[0])
+    idx = int(outputs[1])
+    data = outputs[2:]
+    assert idx == 0
+    y_true.append(f_digits(name))
+    y_pred.append(f_pred(*data))
+y_true = np.array(y_true, dtype='int32')
+y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
+# ====== Acc ====== #
+print()
+print("Acc:", accuracy_score(y_true, y_pred))
+print("Confusion matrix:")
+print(print_confusion(confusion_matrix(y_true, y_pred), digits))
+print(LOG_PATH)
 
 # ===========================================================================
 # Evaluate on digit audio dataset
 # ===========================================================================
 ds = F.load_digit_feat()
-print(ds)
-test = ds.create_feeder(FEAT, recipes)
+test = ds.create_feeder(FEAT, recipes, batch_mode='file'
+    ).set_multiprocessing(ncpu=4, buffer_size=1)
 print(test)
-for X, vad, y in test:
-    print(X.shape, vad.shape, y.shape)
+y_true = []
+y_pred = []
+for outputs in test:
+    name = str(outputs[0])
+    idx = int(outputs[1])
+    data = outputs[2:]
+    assert idx == 0
+    y_pred.append(f_pred(*data))
+    y_true.append(f_digits(name))
+y_true = np.array(y_true, dtype='int32')
+y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
+# ====== Acc ====== #
+print()
+print("Acc:", accuracy_score(y_true, y_pred))
+print("Confusion matrix:")
+print(print_confusion(confusion_matrix(y_true, y_pred), digits))
+print(LOG_PATH)

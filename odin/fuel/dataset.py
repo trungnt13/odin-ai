@@ -326,7 +326,7 @@ class Dataset(object):
             pass
         # ====== create Feeder ====== #
         feeder = Feeder(DataDescriptor(data=data, indices=indices),
-                        batch_filter=None, batch_mode='batch',
+                        batch_filter=batch_filter, batch_mode=batch_mode,
                         ncpu=1, buffer_size=1)
         return feeder.set_recipes(recipes)
 
