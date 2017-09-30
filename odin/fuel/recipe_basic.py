@@ -44,10 +44,6 @@ class FeederRecipe(object):
 
     @property
     def nb_desc(self):
-        if self._nb_desc == 0:
-            raise RuntimeError("`nb_data` have not been set, using method "
-                               "`set_feeder_info` to set operating information "
-                               "for this recipe.")
         return self._nb_desc
 
     # ==================== abstract ==================== #
@@ -84,7 +80,7 @@ class FeederRecipe(object):
         print_attrs = {}
         for name in all_attrs:
             if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
-            name not in ('nb_data', 'nb_desc'):
+            name not in ('nb_desc'):
                 attr = getattr(self, name)
                 if name == 'data_idx':
                     print_attrs[name] = str(attr)

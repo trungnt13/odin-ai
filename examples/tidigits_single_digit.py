@@ -213,23 +213,23 @@ f_pred = K.function(inputs=inputs,
 # ===========================================================================
 # Training
 # ===========================================================================
-# print('Start training ...')
-# task = training.MainLoop(batch_size=BATCH_SIZE,
-#                          seed=120825,
-#                          shuffle_level=2,
-#                          allow_rollback=True)
-# task.set_save(MODEL_PATH, f)
-# task.set_callbacks([
-#     training.NaNDetector(),
-#     training.EarlyStopGeneralizationLoss('valid', ce,
-#                                          threshold=5, patience=5)
-# ])
-# task.set_train_task(f_train, train, epoch=25, name='train',
-#                     labels=digits)
-# task.set_valid_task(f_test, valid,
-#                     freq=training.Timer(percentage=0.5),
-#                     name='valid', labels=digits)
-# task.run()
+print('Start training ...')
+task = training.MainLoop(batch_size=BATCH_SIZE,
+                         seed=120825,
+                         shuffle_level=2,
+                         allow_rollback=True)
+task.set_save(MODEL_PATH, f)
+task.set_callbacks([
+    training.NaNDetector(),
+    training.EarlyStopGeneralizationLoss('valid', ce,
+                                         threshold=5, patience=5)
+])
+task.set_train_task(f_train, train, epoch=25, name='train',
+                    labels=digits)
+task.set_valid_task(f_test, valid,
+                    freq=training.Timer(percentage=0.5),
+                    name='valid', labels=digits)
+task.run()
 # ===========================================================================
 # Prediction
 # ===========================================================================

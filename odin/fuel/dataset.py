@@ -13,7 +13,7 @@ from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple)
-from .recipe_basic import FeederRecipe
+from .recipe_basic import FeederRecipe, RecipeList
 
 
 __all__ = [
@@ -115,7 +115,7 @@ class Dataset(object):
         self.read_only = read_only
         self._readme_info = [ctext('README:', 'yellow'),
                              '------',
-                             ' No information!']
+                             '  No information!']
         self._readme_path = None
         # parse all data from path
         if path is not None:
@@ -149,7 +149,7 @@ class Dataset(object):
                 readme_path = os.path.join(path, fname)
                 with open(readme_path, 'r') as readme_file:
                     readme = readme_file.readlines()[:MAXIMUM_README_LINE]
-                    readme = [' ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
+                    readme = ['  ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
                     readme.append(' * For more information: ' + readme_path)
                     self._readme_info = [ctext('README:', 'yellow'),
                                          '------'] + readme
@@ -164,23 +164,41 @@ class Dataset(object):
                 else:
                     self._data_map[key] = d
         # ====== Load stored recipes ====== #
-        recipes_path = os.path.join(self.path, 'recipes')
-        if os.path.exists(recipes_path) and os.path.isfile(recipes_path):
+        # check recipes path
+        if os.path.exists(self.recipe_path) and os.path.isfile(self.recipe_path):
             raise RuntimeError("Found a file at path: '%s', which supposed to "
-                               "be a folder used for saving `recipes`"
-                               % recipes_path)
-        if not os.path.exists(recipes_path):
-            os.mkdir(recipes_path)
+                               "be a folder used for saving `recipe`"
+                               % self.recipe_path)
+        if not os.path.exists(self.recipe_path):
+            os.mkdir(self.recipe_path)
+        # all recipes is pickle-able
         self._saved_recipes = {}
+        for recipe_name in os.listdir(self.recipe_path):
+            with open(os.path.join(self.recipe_path, recipe_name), 'r') as f:
+                recipe = cPickle.load(f)
+                self._saved_recipes[recipe_name] = recipe
         # ====== load stored indices ====== #
-        index_path = os.path.join(self.path, 'index')
-        if os.path.exists(recipes_path) and os.path.isfile(recipes_path):
+        # check indices path
+        if os.path.exists(self.recipe_path) and os.path.isfile(self.recipe_path):
             raise RuntimeError("Found a file at path: '%s', which supposed to "
-                               "be a folder used for saving `recipes`"
-                               % recipes_path)
-        if not os.path.exists(recipes_path):
-            os.mkdir(recipes_path)
+                               "be a folder used for saving `index`"
+                               % self.recipe_path)
+        if not os.path.exists(self.index_path):
+            os.mkdir(self.index_path)
+        # load all saved indices
         self._saved_indices = {}
+        for index_name in os.listdir(self.index_path):
+            path = os.path.join(self.index_path, index_name)
+            index = MmapDict(path=path, read_only=True)
+            # remove extension from the name
+            self._saved_indices[index_name] = index
+
+    # ==================== Pickle ==================== #
+    def __getstate__(self):
+        return self.path
+
+    def __setstate__(self, path):
+        self._set_path(path)
 
     # ==================== archive loading ==================== #
     def _load_archive(self, path, extract_path):
@@ -220,6 +238,14 @@ class Dataset(object):
     @property
     def path(self):
         return self._path
+
+    @property
+    def recipe_path(self):
+        return os.path.join(self.path, 'recipe')
+
+    @property
+    def index_path(self):
+        return os.path.join(self.path, 'index')
 
     @property
     def archive_path(self):
@@ -275,11 +301,67 @@ class Dataset(object):
         return path
 
     # ==================== Feeder management ==================== #
-    def add_indices(self, name, indices):
-        pass
+    def add_indices(self, indices, name, override=False):
+        # ====== validate name ====== #
+        if not is_string(name):
+            raise ValueError("`name` must be string, but given: %s" % str(type(name)))
+        if name in self._saved_indices and not override:
+            raise ValueError("Cannot override pre-defined INDEX with name: '%s'"
+                            % name)
+        # ====== validate indices ====== #
+        path = os.path.join(self.index_path, name)
+        ids = MmapDict(path)
+        # predefined mapping, save or copy everything to a
+        # MmapDict
+        if isinstance(indices, Mapping):
+            for name, (start, end) in indices.iteritems():
+                ids[name] = (start, end)
+        # list of name, or (name, (start, end))
+        elif isinstance(indices, (tuple, list, np.ndarray)):
+            for i in indices:
+                if is_string(i): # only name
+                    ids[i] = self['indices'][i]
+                elif len(i) == 2: # name, (start, end)
+                    name, (start, end) = i
+                    ids[name] = (int(start), int(end))
+                elif len(i) == 3: # name, start, end
+                    name, start, end = i
+                    ids[name] = (int(start), int(end))
+                else:
+                    raise ValueError("Unsupport index parsing (name, start, end)"
+                                     "for: %s" % str(i))
+        # flush everything to disk
+        ids.flush(save_all=True)
+        ids.close()
+        # ====== assign new index ====== #
+        self._saved_indices[name] = MmapDict(path, read_only=True)
+        return self
 
-    def add_recipes(self, name, recipes):
-        pass
+    def add_recipes(self, recipes, name, override=False):
+        # ====== validate arguments ====== #
+        if not is_string(name):
+            raise ValueError("`name` must be string, but given: %s" % str(type(name)))
+        if name in self._saved_recipes and not override:
+            raise ValueError("Cannot override pre-defined RECIPE with name: '%s'"
+                            % name)
+        # ====== validate recipes list ====== #
+        if isinstance(recipes, RecipeList):
+            recipes = tuple(recipes._recipes)
+        else:
+            tmp = []
+            for rcp in as_tuple(recipes, t=FeederRecipe):
+                if isinstance(rcp, RecipeList):
+                    tmp += list(rcp._recipes)
+                else:
+                    tmp.append(rcp)
+            recipes = tuple(tmp)
+        # ====== store the recipes to disk ====== #
+        path = os.path.join(self.recipe_path, name)
+        with open(path, 'w') as f:
+            cPickle.dump(recipes, f, protocol=cPickle.HIGHEST_PROTOCOL)
+        # ====== update local recipes list ====== #
+        self._saved_recipes[name] = recipes
+        return self
 
     def create_feeder(self, data, recipes, indices=None,
                       batch_filter=None, batch_mode='batch',
@@ -331,6 +413,40 @@ class Dataset(object):
         return feeder.set_recipes(recipes)
 
     # ==================== Data management ==================== #
+    def copy(self, destination):
+        """ Copy the dataset to a new folder and closed
+        the old dataset
+
+        Note
+        ----
+        if the dataset size >= 1GB, need confirmation for copying
+        """
+        read_only = self.read_only
+        if self.size > 1024:
+            confirmation = raw_input(
+                'The size of the dataset at path: "%s" is %d (MB)\n'
+                'Do you want to copy everything to "%s" (Y - yes):')
+            if 'y' not in confirmation.lower():
+                return self
+        destination = os.path.abspath(str(destination))
+        if not os.path.exists(destination):
+            os.mkdir(destination)
+        elif not os.path.isdir(destination):
+            raise ValueError('path at "%s" must be a folder' % destination)
+        else:
+            ds = Dataset(destination, read_only=read_only)
+            if ds.size != self.size:
+                raise RuntimeError("Found another Dataset at path: '%s' has "
+                                   "size %d(MB), which is different from size "
+                                   "of this Dataset %d(MB)." %
+                                   (destination, ds.size, self.size))
+            return ds
+        from distutils.dir_util import copy_tree
+        copy_tree(self.path, destination)
+        # ====== open new dataset ====== #
+        self.close()
+        return Dataset(destination, read_only=read_only)
+
     def flush(self):
         for dtype, shape, data, path in self._data_map.itervalues():
             if hasattr(data, 'flush'):
@@ -347,6 +463,13 @@ class Dataset(object):
                     data.close()
                 del data
                 del self._data_map[name]
+            # close all external indices and recipes
+            for name, ids in self._saved_indices.iteritems():
+                ids.close()
+            for name, rcp in self._saved_indices.iteritems():
+                del rcp
+            self._saved_indices.clear()
+            self._saved_recipes.clear()
             # Check if exist global instance
             if self.path in Dataset.__INSTANCES:
                 del Dataset.__INSTANCES[self.path]
@@ -454,6 +577,8 @@ class Dataset(object):
                 yield self[name]
 
     def __str__(self):
+        padding = '  '
+        # NOTE: each element in the list is one line
         s = ['==========  ' +
              ctext('Dataset:%s Total:%d Size:%.2f(MB)', 'magenta') %
              (self.path, len(self._data_map), self.size) +
@@ -475,12 +600,25 @@ class Dataset(object):
             longest_file = max(len(str(path)), longest_file)
             print_info.append([name, dtype, shape, path])
         # ====== return print string ====== #
-        format_str = (' Name:%-' + str(longest_name) + 's  '
+        format_str = (padding + 'Name:%-' + str(longest_name) + 's  '
                       'dtype:%-' + str(longest_dtype) + 's '
                       'shape:%-' + str(longest_shape) + 's  '
                       'file:%-' + str(longest_file) + 's')
         for name, dtype, shape, path in print_info:
             s.append(format_str % (name, dtype, shape, path))
+        # ====== add recipes info ====== #
+        for name, recipe in self._saved_recipes.iteritems():
+            s.append(ctext('(Recipe) ', 'yellow') + '"%s"' % name)
+            for rcp in recipe:
+                rcp = str(rcp)
+                s.append('\n'.join([padding + line
+                                    for line in rcp.split('\n')]))
+        # ====== add indices info ====== #
+        for name, index in self._saved_indices.iteritems():
+            s.append(ctext('(Index) ', 'yellow') + '"%s"' % name)
+            s.append(padding + str(index))
+            name, (start, end) = index.iteritems().next()
+            s.append(padding + 'Sample: "%s %d-%d"' % (name, start, end))
         return '\n'.join(s)
 
     @property
@@ -492,13 +630,6 @@ class Dataset(object):
         else:
             readme = self._readme_info[-1]
         return readme
-
-    # ==================== Pickle ==================== #
-    def __getstate__(self):
-        return self.path
-
-    def __setstate__(self, path):
-        self._set_path(path)
 
 
 # ===========================================================================
