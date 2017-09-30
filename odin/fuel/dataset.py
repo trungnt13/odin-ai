@@ -337,7 +337,22 @@ class Dataset(object):
         self._saved_indices[name] = MmapDict(path, read_only=True)
         return self
 
+    def remove_indices(self, name):
+        if name is None: # remove all recipes
+            for name in self._saved_indices.keys():
+                self.remove_indices(name)
+        # remove only a selected
+        elif name in self._saved_indices:
+            self._saved_indices[name].close()
+            del self._saved_indices[name]
+            os.remove(os.path.join(self.index_path, name))
+        return self
+
     def add_recipes(self, recipes, name, override=False):
+        """
+        Parameters
+        ----------
+        """
         # ====== validate arguments ====== #
         if not is_string(name):
             raise ValueError("`name` must be string, but given: %s" % str(type(name)))
@@ -363,9 +378,19 @@ class Dataset(object):
         self._saved_recipes[name] = recipes
         return self
 
+    def remove_recipes(self, name):
+        if name is None: # remove all recipes
+            for name in self._saved_recipes.keys():
+                self.remove_recipes(name)
+        # remove only a selected
+        elif name in self._saved_recipes:
+            del self._saved_recipes[name]
+            os.remove(os.path.join(self.recipe_path, name))
+        return self
+
     def create_feeder(self, data, recipes, indices=None,
                       batch_filter=None, batch_mode='batch',
-                      name=None):
+                      name=None, override=False):
         """
         Parameters
         ----------
@@ -376,7 +401,7 @@ class Dataset(object):
             the list of recipes defining the rule of transforming
             the data
         indices: None, string, dict, list
-            pass
+            list of (name, (start, end)) for iterating over files in Feeder
         batch_filter: callable
             must be a function has take a list of np.ndarray as first arguments
             ([X]) or ([X, y]), you can return None to ignore given batch, return the
@@ -396,16 +421,27 @@ class Dataset(object):
         """
         from .feeder import Feeder, DataDescriptor
         # check data
-        data = [self.__getitem__(dat) if is_string(dat) else as_data(dat)
+        data = [self.__getitem__(dat) if is_string(dat) else
+                as_data(dat)
                 for dat in as_tuple(data)]
         # check recipes
-        recipes = as_tuple(recipes, t=FeederRecipe)
+        if is_string(recipes):
+            recipes = self._saved_recipes[recipes]
+        else:
+            recipes = as_tuple(recipes, t=FeederRecipe)
         # check indices
         if indices is None:
             indices = self.__getitem__('indices')
-        # ====== saving recipes and indices, if name is not None ====== #
-        if name is not None:
+        elif is_string(indices):
+            indices = self._saved_indices[indices]
+        elif isinstance(indices, (Mapping, tuple, list, np.ndarray)):
             pass
+        # ====== saving recipes and indices, if name is not None ====== #
+        if is_string(name):
+            if name not in self._saved_indices or override:
+                self.add_indices(indices, name, override=True)
+            if name not in self._saved_recipes or override:
+                self.add_recipes(recipes, name, override=True)
         # ====== create Feeder ====== #
         feeder = Feeder(DataDescriptor(data=data, indices=indices),
                         batch_filter=batch_filter, batch_mode=batch_mode,
