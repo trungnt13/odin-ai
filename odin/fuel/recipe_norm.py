@@ -5,7 +5,7 @@ import numpy as np
 
 from .recipe_basic import FeederRecipe
 from odin.utils import (axis_normalize, as_tuple)
-from odin.preprocessing.signal import compute_delta
+from odin.preprocessing.signal import delta
 
 
 # ===========================================================================
@@ -239,7 +239,7 @@ class ComputeDelta(FeederRecipe):
             X = [x if i not in data_idx else
                  np.concatenate(
                      ([x] if self.keep_original else []) +
-                     compute_delta(x, order=self.delta, axis=self.axis),
+                     delta(x, order=self.delta, axis=self.axis),
                      axis=self.axis)
                  for i, x in enumerate(X)]
         return name, X

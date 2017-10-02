@@ -478,21 +478,40 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_acoustic_features(features, title=None):
+def plot_features(features, order=None, title=None):
+    """ Plot a series of 1D and 2D in the same scale for comparison
+
+    Parameters
+    ----------
+    features: Mapping
+        pytho Mapping from name (string type) to feature matrix (`numpy.ndarray`)
+    order: None or list of string
+        if None, the order is keys of `features` sorted in alphabet order,
+        else, plot the features or subset of features based on the name
+        specified in `order`
+    title: None or string
+        title for the figure
+    """
     from matplotlib import pyplot as plt
     if not isinstance(features, Mapping):
         raise ValueError("`features` must be mapping from name -> feature_matrix.")
-    features = [(name, X)
-                for name, X in features.iteritems()
-                if isinstance(X, np.ndarray) and (X.ndim == 1 or X.ndim == 2)]
-    features = sorted(features, key=lambda x: x[0])
+    # ====== check order or create defauljt order ====== #
+    if order is not None:
+        order = [str(o) for o in order]
+    else:
+        order = sorted(features.keys())
+    # ====== get all numpy array ====== #
+    features = [(name, features[name]) for name in order
+                if name in features and
+                isinstance(features[name], np.ndarray) and
+                (features[name].ndim == 1 or features[name].ndim == 2)]
     plt.figure(figsize=(4, len(features)))
     for i, (name, X) in enumerate(features):
         plt.subplot(len(features), 1, i + 1)
         if X.ndim == 1:
             plt.plot(X)
             plt.xlim(0, len(X))
-            plt.ylabel(name)
+            plt.ylabel(name, fontsize=6)
         else: # transpose to frequency x time
             plot_spectrogram(X.T, title=name)
         # auto, equal
@@ -500,8 +519,9 @@ def plot_acoustic_features(features, title=None):
         # plt.axis('off')
         plt.xticks(())
         plt.yticks(())
-    if title is not None:
-        plt.suptitle(str(title))
+        # add title to the first subplot
+        if i == 0 and title is not None:
+            plt.title(str(title), fontsize=8)
 
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,

@@ -19,10 +19,9 @@ from scipy.signal import lfilter
 
 from odin.utils import is_number, cache_memory, is_string, as_tuple
 from .base import Extractor
-from .signal import (pad_center, get_window, segment_axis, stft, istft,
-                     compute_delta, smooth, pre_emphasis, spectra,
-                     vad_energy, power2db, pitch_track, resample,
-                     rastafilt, mvn, wmvn)
+from .signal import (smooth, pre_emphasis, spectra, vad_energy,
+                     pitch_track, resample, rastafilt, mvn, wmvn,
+                     shifted_deltas)
 
 
 # ===========================================================================
@@ -347,8 +346,18 @@ class VADextractor(Extractor):
 
 class AcousticNorm(Extractor):
 
+    """
+    Parameters
+    ----------
+    sdc: int
+        Lag size for delta feature computation for
+        "Shifted Delta Coefficients", if `sdc` > 0, the
+        shifted delta features will be append to MFCCs
+
+    """
+
     def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
-                 win_length=301, var_norm=True, rasta=True,
+                 win_length=301, var_norm=True, rasta=True, sdc=0,
                  feat_type=('mspec', 'spec', 'mfcc',
                             'qspec', 'qmfcc', 'qmspec')):
         super(AcousticNorm, self).__init__()
@@ -356,6 +365,7 @@ class AcousticNorm(Extractor):
         self.window_mean_var_norm = bool(window_mean_var_norm)
         self.rasta = bool(rasta)
         self.var_norm = bool(var_norm)
+        self.sdc = int(sdc)
         # ====== check win_length ====== #
         win_length = int(win_length)
         if win_length % 2 == 0:
@@ -376,16 +386,19 @@ class AcousticNorm(Extractor):
         # all `features` is [t, f] shape
         for name, features in feat.iteritems():
             if name in self.feat_type:
-                features = features.T
                 if 'mfcc' in name and self.rasta:
                     features = rastafilt(features)
+                    if self.sdc >= 1:
+                        features = np.hstack([
+                            features,
+                            shifted_deltas(features, N=7, d=self.sdc, P=3, k=7)
+                        ])
                 if self.mean_var_norm:
                     features = mvn(features, varnorm=self.var_norm)
                 if self.window_mean_var_norm:
                     features = wmvn(features, w=self.win_length,
-                                    varnorm=self.var_norm)
+                                    varnorm=False)
                 # transpose back to [t, f]
-                features = features.T
             feat_normalized[name] = features
         return feat_normalized
 

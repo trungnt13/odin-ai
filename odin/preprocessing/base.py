@@ -10,7 +10,7 @@ from odin.utils import get_all_files, is_string, as_tuple, is_pickleable
 
 
 from sklearn.base import BaseEstimator, TransformerMixin
-from .signal import compute_delta
+from .signal import delta
 
 
 @add_metaclass(ABCMeta)
@@ -87,23 +87,6 @@ class DeltaExtractor(Extractor):
         if order < 0:
             raise ValueError("`order` must >= 0, given value: %d" % order)
         self.order = order
-        # ====== axis ====== #
-        self.axis = axis
-        self.feat_type = feat_type
-
-    def _transform(self, X):
-        pass
-
-
-class ShiftedDeltaExtractor(Extractor):
-
-    def __init__(self, width=9, axis=-1, feat_type=None):
-        super(DeltaExtractor, self).__init__()
-        # ====== check width ====== #
-        width = int(width)
-        if width % 2 == 0 or width < 3:
-            raise ValueError("`width` must be odd integer >= 3, give value: %d" % width)
-        self.width = width
         # ====== axis ====== #
         self.axis = axis
         self.feat_type = feat_type

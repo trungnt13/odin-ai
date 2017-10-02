@@ -575,47 +575,50 @@ def resample(y, sr_orig, sr_new, axis=0, best_algorithm=True):
 
 def mvn(x, varnorm=True):
     """ Mean and Variance Normalization
+    Normalization is applied on time-axis
 
     Parameters
     ----------
-    x: [f, t]
-        frequency x time
+    x: [t, f]
+        time x frequency
 
     Note
     ----
     Just standard normalization, not a big deal for its name
     """
-    y = x - x.mean(1, keepdims=True)
+    y = x - x.mean(0, keepdims=True)
     if varnorm:
-        y /= (x.std(1, keepdims=True) + 1e-20)
+        y /= (x.std(0, keepdims=True) + 1e-20)
     return y
 
 
 def wmvn(x, w=301, varnorm=True):
     """ Windowed - Mean and Variance Normalization
+    Normalization is applied on time-axis
 
     Parameters
     ----------
-    x: [f, t]
-        frequency x time
+    x: [t, f]
+        time x frequency
 
     """
     if w < 3 or (w & 1) != 1:
         raise ValueError('Window length should be an odd integer >= 3')
-    ndim, nobs = x.shape
+    nobs, ndim = x.shape
     if nobs < w:
         return mvn(x, varnorm)
     hlen = int((w - 1) / 2)
-    y = np.zeros((ndim, nobs), dtype=x.dtype)
-    y[:, :hlen] = x[:, :hlen] - x[:, :w].mean(1, keepdims=True)
+    y = np.zeros((nobs, ndim), dtype=x.dtype)
+    y[:hlen, :] = x[:hlen, :] - x[:w, :].mean(0, keepdims=True)
     for ix in range(hlen, nobs - hlen):
-        y[:, ix] = x[:, ix] - x[:, ix - hlen:ix + hlen + 1].mean(1)
-    y[:, nobs - hlen:nobs] = x[:, nobs - hlen:nobs] - x[:, nobs - w:].mean(1, keepdims=True)
+        y[ix, :] = x[ix, :] - x[ix - hlen:ix + hlen + 1, :].mean(0)
+    y[nobs - hlen:nobs, :] = x[nobs - hlen:nobs, :] - \
+        x[nobs - w:, :].mean(0, keepdims=True)
     if varnorm:
-        y[:, :hlen] /= (x[:, :w].std(1, keepdims=True) + 1e-20)
+        y[:hlen, :] /= (x[:w, :].std(0, keepdims=True) + 1e-20)
         for ix in range(hlen, nobs - hlen):
-            y[:, ix] /= (x[:, ix - hlen:ix + hlen + 1].std(1) + 1e-20)
-        y[:, nobs - hlen:nobs] /= (x[:, nobs - w:].std(1, keepdims=True) + 1e-20)
+            y[ix, :] /= (x[ix - hlen:ix + hlen + 1, :].std(0) + 1e-20)
+        y[nobs - hlen:nobs, :] /= (x[nobs - w:, :].std(0, keepdims=True) + 1e-20)
     return y
 
 
@@ -625,11 +628,14 @@ def rastafilt(x):
        same for y but after filtering
        default filter is single pole at 0.94
 
+    The filter is applied on frequency axis
+
     Parameters
     ----------
-    x: [f, t]
-        frequency x time MFCC
+    x: [t, f]
+        time x frequency
     """
+    x = x.T # lazy style to reuse the code from [f, t] libraries
     ndim, nobs = x.shape
     numer = np.arange(-2, 3)
     # careful with division here (float point suggested by Ville Vestman)
@@ -643,7 +649,7 @@ def rastafilt(x):
     y = np.zeros((ndim, nobs))
     for ix in range(ndim):
         y[ix, 4:] = signal.lfilter(numer, denom, x[ix, 4:], zi=z[ix, :], axis=-1)[0]
-    return y
+    return y.T
 
 
 def pre_emphasis(s, coeff=0.97):
@@ -695,14 +701,16 @@ def smooth(x, win=11, window='hanning'):
     return y[win:-win + 1]
 
 
-def compute_delta(data, width=9, order=1, axis=-1, trim=True):
+def delta(data, width=9, order=1, axis=0):
     r'''Compute delta features: local estimate of the derivative
     of the input data along the selected axis.
+    Original implementation: librosa
 
     Parameters
     ----------
     data      : np.ndarray
-        the input data matrix (eg, spectrogram), shape=(d, t)
+        the input data matrix (e.g. for spectrogram, delta should be applied
+        on time-axis).
     width     : int >= 3, odd [scalar]
         Number of frames over which to compute the delta feature
     order     : int > 0 [scalar]
@@ -711,8 +719,6 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     axis      : int [scalar]
         the axis along which to compute deltas.
         Default is -1 (columns).
-    trim      : bool
-        set to `True` to trim the output matrix to the original size.
 
     Returns
     -------
@@ -726,13 +732,13 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     >>> mfcc = mfcc(y=y, sr=sr)
     >>> mfcc_delta1, mfcc_delta2 = compute_delta(mfcc, 2)
     '''
-
     data = np.atleast_1d(data)
 
     if width < 3 or np.mod(width, 2) != 1:
         raise ValueError('width must be an odd integer >= 3')
 
-    if order <= 0 or not isinstance(order, int):
+    order = int(order)
+    if order <= 0:
         raise ValueError('order must be a positive integer')
 
     half_length = 1 + int(width // 2)
@@ -747,63 +753,44 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
     padding[axis] = (width, width)
     delta_x = np.pad(data, padding, mode='edge')
 
+    # ====== compute deltas ====== #
     all_deltas = []
     for _ in range(order):
         delta_x = signal.lfilter(window, 1, delta_x, axis=axis)
         all_deltas.append(delta_x)
-
-    # Cut back to the original shape of the input data
-    if trim:
-        _ = []
-        for delta_x in all_deltas:
-            idx = [slice(None)] * delta_x.ndim
-            idx[axis] = slice(- half_length - data.shape[axis], - half_length)
-            delta_x = delta_x[idx]
-            _.append(delta_x.astype('float32'))
-        all_deltas = _
-
-    return all_deltas
-
-
-def deltas(x, w=5):
-    """ Based on deltas.m by Dan Ellis
-       rows of x = features, cols of x = frame
-       same for y but after filtering
-       default filter is single pole at 0.94
-
-    Parameters
-    ----------
-    x: [f, t]
-    """
-    if w < 3 or (w & 1) != 1:
-        raise ValueError('Window length should be an odd integer >= 3')
-    hlen = int(w / 2.)
-    win = np.arange(hlen, -(hlen + 1), -1)
-    win = win / np.sum(win * win)
-    xx = np.c_[np.tile(x[:, 0][:, np.newaxis], hlen), x, np.tile(x[:, -1][:, np.newaxis], hlen)]
-    d = signal.lfilter(win, 1, xx)
-    return d[:, 2 * hlen:]
+    # ====== Cut back to the original shape of the input data ====== #
+    trim_deltas = []
+    for delta_x in all_deltas:
+        idx = [slice(None)] * delta_x.ndim
+        idx[axis] = slice(- half_length - data.shape[axis], - half_length)
+        delta_x = delta_x[idx]
+        trim_deltas.append(delta_x.astype('float32'))
+    return trim_deltas[0] if order == 1 else trim_deltas
 
 
 def shifted_deltas(x, N=7, d=1, P=3, k=7):
-    """
+    """ Calculate Shifted Delta Coefficients
+    (suggested applying on time-dimension) for MFCCs
+
     Parameters
     ----------
-    x: [f, t]
+    x: [t, f]
+        time x frequency
     """
+    x = x.T
     if d < 1:
         raise ValueError('d should be an integer >= 1')
     nobs = x.shape[1]
     x = x[:N]
     w = 2 * d + 1
-    dx = deltas(x, w)
+    dx = delta(x, w, axis=-1)
     sdc = np.empty((k * N, nobs))
     sdc[:] = np.tile(dx[:, -1], k).reshape(k * N, 1)
     for ix in range(k):
         if ix * P > nobs:
             break
         sdc[ix * N:(ix + 1) * N, :nobs - ix * P] = dx[:, ix * P:nobs]
-    return sdc
+    return sdc.T
 
 
 @cache_memory('__strict__')
