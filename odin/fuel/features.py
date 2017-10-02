@@ -46,20 +46,6 @@ __all__ = [
 # Helper
 # ===========================================================================
 # ==================== For speech ==================== #
-def _append_energy_and_deltas(s, energy, delta_order):
-    # s.shape = [Time, Dimension]
-    if s is None:
-        return None
-    if energy is not None:
-        s = np.hstack((s, energy[:, None]))
-    # compute delta
-    if delta_order > 0:
-        deltas = speech.compute_delta(s.T, order=delta_order)
-        # tranpose back to [Time, Dim]
-        s = np.hstack([s] + [i.T for i in deltas])
-    return s
-
-
 def _escape_filename(file_name):
     return file_name.replace('/', '-')
 

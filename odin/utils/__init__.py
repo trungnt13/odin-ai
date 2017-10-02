@@ -266,6 +266,16 @@ def stdio(path=None, suppress=False, stderr=True):
             sys.stderr = f
 
 
+def eprint(text):
+    """Print ERROR message to stderr"""
+    print(ctext('[Error]', 'red') + str(text), file=sys.stderr)
+
+
+def wprint(text):
+    """Print WARNING message to stderr"""
+    print(ctext('[Warning]', 'yellow') + str(text), file=sys.stderr)
+
+
 # ===========================================================================
 # Universal ID
 # ===========================================================================
@@ -801,7 +811,8 @@ def get_file(fname, origin, untar=False):
             shutil.rmtree(fpath)
     # ====== download package ====== #
     if not os.path.exists(fpath):
-        prog = Progbar(target=-1, name="Downloading: %s" % origin)
+        prog = Progbar(target=-1, name="Downloading: %s" % origin,
+                       print_report=True, print_summary=True)
 
         def dl_progress(count, block_size, total_size):
             if prog.target < 0:

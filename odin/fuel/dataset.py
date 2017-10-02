@@ -12,7 +12,7 @@ from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
 from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
-                        ctext, as_tuple)
+                        ctext, as_tuple, eprint, wprint)
 from .recipe_basic import FeederRecipe, RecipeList
 
 
@@ -262,9 +262,33 @@ class Dataset(object):
         for name, (dtype, shape, data, path) in self._data_map.iteritems():
             try:
                 size_bytes += os.path.getsize(path) # in bytes
-            except:
-                pass
+            except Exception as e:
+                eprint("Cannot acquire file size information, file: %s; error: %s"
+                       % (str(name), str(e)))
         return size_bytes / 1024. / 1024.
+
+    def recipes(self):
+        return {name: rcp
+                for name, rcp in self._saved_recipes.iteritems()}
+
+    def indices(self):
+        return {name: ids
+                for name, ids in self._saved_indices.iteritems()}
+
+    def __iter__(self):
+        return self.iteritems()
+
+    def items(self):
+        return list(self.iteritems())
+
+    def iteritems(self):
+        for name in self._data_map.keys():
+            yield name, self.__getitem__(name)
+
+    def iterinfo(self):
+        """Return iteration of: (dtype, shape, loaded_data, path)"""
+        for name, (dtype, shape, data, path) in self._data_map.iteritems():
+            return (dtype, shape, self.__getitem__(name), path)
 
     def keys(self):
         """
@@ -274,13 +298,20 @@ class Dataset(object):
         """
         return self._data_map.keys()
 
+    def iterkeys(self):
+        return self._data_map.iterkeys()
+
     def values(self):
         """
         Return
         ------
         (dtype, shape, data, path) of Data
         """
-        return self._data_map.values()
+        return [self.__getitem__(k) for k in self._data_map.keys()]
+
+    def itervalues(self):
+        for k in self._data_map.keys():
+            yield self.__getitem__(k)
 
     def archive(self):
         from zipfile import ZipFile, ZIP_DEFLATED
@@ -604,13 +635,6 @@ class Dataset(object):
             self._data_map[key] = (type(value).__name__,
                                    len(value) if hasattr(value, '__len__') else 0,
                                    value, path)
-
-    def __iter__(self):
-        for name, (dtype, shape, data) in self._data_map.iteritems():
-            if isinstance(data, (Data, NoSQL)):
-                yield data
-            else:
-                yield self[name]
 
     def __str__(self):
         padding = '  '

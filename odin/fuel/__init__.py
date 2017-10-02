@@ -1,3 +1,5 @@
+import shutil
+
 from .utils import *
 from .data import *
 from .dataset import *

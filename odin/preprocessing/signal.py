@@ -27,7 +27,6 @@ import numpy as np
 import scipy as sp
 from scipy import linalg, fftpack, signal
 from numpy.lib.stride_tricks import as_strided
-# try to make this script independent from O.D.I.N
 try:
     from odin.utils import cache_memory, cache_disk
 except ImportError:
@@ -458,7 +457,7 @@ def dct_filters(n_filters, n_input):
 
 
 @cache_memory
-def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
+def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
     """Create a Filterbank matrix to combine FFT bins into Mel-frequency bins
     Original code: librosa
 
@@ -467,10 +466,10 @@ def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
     sr        : number > 0 [scalar]
         sampling rate of the incoming signal
 
-    n_fft     : int > 0 [scalar]
+    nfft     : int > 0 [scalar]
         number of FFT components
 
-    n_mels    : int > 0 [scalar]
+    nmels    : int > 0 [scalar]
         number of Mel bands to generate
 
     fmin      : float >= 0 [scalar]
@@ -498,22 +497,22 @@ def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
     if fmax is None:
         fmax = float(sr) / 2
     # Initialize the weights
-    n_mels = int(n_mels)
-    weights = np.zeros((n_mels, int(1 + n_fft // 2)))
+    nmels = int(nmels)
+    weights = np.zeros((nmels, int(1 + nfft // 2)))
 
     # Center freqs of each FFT bin
-    fftfreqs = np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
+    fftfreqs = np.linspace(0, float(sr) / 2, int(1 + nfft // 2),
                            endpoint=True)
 
     # 'Center freqs' of mel bands - uniformly spaced between limits
     min_mel = hz2mel(fmin)
     max_mel = hz2mel(fmax)
-    mel_f = mel2hz(mels=np.linspace(min_mel, max_mel, n_mels + 2))
+    mel_f = mel2hz(mels=np.linspace(min_mel, max_mel, nmels + 2))
 
     fdiff = np.diff(mel_f)
     ramps = np.subtract.outer(mel_f, fftfreqs)
 
-    for i in range(n_mels):
+    for i in range(nmels):
         # lower and upper slopes for all bins
         lower = -ramps[i] / fdiff[i]
         upper = ramps[i + 2] / fdiff[i + 1]
@@ -522,7 +521,7 @@ def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
         weights[i] = np.maximum(0, np.minimum(lower, upper))
 
     # Slaney-style mel is scaled to be approx constant energy per channel
-    enorm = 2.0 / (mel_f[2:n_mels + 2] - mel_f[:n_mels])
+    enorm = 2.0 / (mel_f[2:nmels + 2] - mel_f[:nmels])
     weights *= enorm[:, np.newaxis]
 
     # Only check weights if f_mel[0] is positive
@@ -536,25 +535,117 @@ def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
 
 
 @cache_memory
-def get_window(window, Nx, fftbins=True):
+def get_window(window, frame_length, periodic=True):
     ''' Cached version of scipy.signal.get_window '''
+    # Funtion
     if six.callable(window):
-        return window(Nx)
+        return window(frame_length)
+    # Window name or scalar
     elif (isinstance(window, (six.string_types, tuple)) or
           np.isscalar(window)):
-        return signal.get_window(window, Nx, fftbins=fftbins)
+        return signal.get_window(window, frame_length, fftbins=periodic)
+    # Predefined-array
     elif isinstance(window, (np.ndarray, list)):
-        if len(window) == Nx:
+        if len(window) == frame_length:
             return np.asarray(window)
         raise ValueError('Window size mismatch: '
-                         '{:d} != {:d}'.format(len(window), Nx))
+                         '{:d} != {:d}'.format(len(window), frame_length))
+    # Unknown
     else:
-        raise ValueError('Invalid window specification: {}'.format(window))
+        raise ValueError('Invalid window specification: %s' % str(window))
 
 
 # ===========================================================================
 # Array utils
 # ===========================================================================
+def resample(y, sr_orig, sr_new, axis=0, best_algorithm=True):
+    '''
+    '''
+    sr_orig = int(sr_orig)
+    sr_new = int(sr_new)
+    if sr_new > sr_orig:
+        raise ValueError("Do not support upsampling audio from %d(Hz) to %d(Hz)."
+            % (sr_orig, sr_new))
+    elif sr_orig != sr_new:
+        import resampy
+        y = resampy.resample(y, sr_orig=sr_orig, sr_new=sr_new, axis=axis,
+                filter='kaiser_best' if best_algorithm else 'kaiser_fast')
+    return y
+
+
+def mvn(x, varnorm=True):
+    """ Mean and Variance Normalization
+
+    Parameters
+    ----------
+    x: [f, t]
+        frequency x time
+
+    Note
+    ----
+    Just standard normalization, not a big deal for its name
+    """
+    y = x - x.mean(1, keepdims=True)
+    if varnorm:
+        y /= (x.std(1, keepdims=True) + 1e-20)
+    return y
+
+
+def wmvn(x, w=301, varnorm=True):
+    """ Windowed - Mean and Variance Normalization
+
+    Parameters
+    ----------
+    x: [f, t]
+        frequency x time
+
+    """
+    if w < 3 or (w & 1) != 1:
+        raise ValueError('Window length should be an odd integer >= 3')
+    ndim, nobs = x.shape
+    if nobs < w:
+        return mvn(x, varnorm)
+    hlen = int((w - 1) / 2)
+    y = np.zeros((ndim, nobs), dtype=x.dtype)
+    y[:, :hlen] = x[:, :hlen] - x[:, :w].mean(1, keepdims=True)
+    for ix in range(hlen, nobs - hlen):
+        y[:, ix] = x[:, ix] - x[:, ix - hlen:ix + hlen + 1].mean(1)
+    y[:, nobs - hlen:nobs] = x[:, nobs - hlen:nobs] - x[:, nobs - w:].mean(1, keepdims=True)
+    if varnorm:
+        y[:, :hlen] /= (x[:, :w].std(1, keepdims=True) + 1e-20)
+        for ix in range(hlen, nobs - hlen):
+            y[:, ix] /= (x[:, ix - hlen:ix + hlen + 1].std(1) + 1e-20)
+        y[:, nobs - hlen:nobs] /= (x[:, nobs - w:].std(1, keepdims=True) + 1e-20)
+    return y
+
+
+def rastafilt(x):
+    """ Based on rastafile.m by Dan Ellis
+       rows of x = critical bands, cols of x = frame
+       same for y but after filtering
+       default filter is single pole at 0.94
+
+    Parameters
+    ----------
+    x: [f, t]
+        frequency x time MFCC
+    """
+    ndim, nobs = x.shape
+    numer = np.arange(-2, 3)
+    # careful with division here (float point suggested by Ville Vestman)
+    numer = -numer / np.sum(numer * numer)
+    denom = [1, -0.94]
+    y = np.zeros((ndim, 4))
+    z = np.zeros((ndim, 4))
+    zi = [0., 0., 0., 0.]
+    for ix in range(ndim):
+        y[ix, :], z[ix, :] = signal.lfilter(numer, 1, x[ix, :4], zi=zi, axis=-1)
+    y = np.zeros((ndim, nobs))
+    for ix in range(ndim):
+        y[ix, 4:] = signal.lfilter(numer, denom, x[ix, 4:], zi=z[ix, :], axis=-1)[0]
+    return y
+
+
 def pre_emphasis(s, coeff=0.97):
     """Pre-emphasis of an audio signal.
     Parameters
@@ -672,6 +763,47 @@ def compute_delta(data, width=9, order=1, axis=-1, trim=True):
         all_deltas = _
 
     return all_deltas
+
+
+def deltas(x, w=5):
+    """ Based on deltas.m by Dan Ellis
+       rows of x = features, cols of x = frame
+       same for y but after filtering
+       default filter is single pole at 0.94
+
+    Parameters
+    ----------
+    x: [f, t]
+    """
+    if w < 3 or (w & 1) != 1:
+        raise ValueError('Window length should be an odd integer >= 3')
+    hlen = int(w / 2.)
+    win = np.arange(hlen, -(hlen + 1), -1)
+    win = win / np.sum(win * win)
+    xx = np.c_[np.tile(x[:, 0][:, np.newaxis], hlen), x, np.tile(x[:, -1][:, np.newaxis], hlen)]
+    d = signal.lfilter(win, 1, xx)
+    return d[:, 2 * hlen:]
+
+
+def shifted_deltas(x, N=7, d=1, P=3, k=7):
+    """
+    Parameters
+    ----------
+    x: [f, t]
+    """
+    if d < 1:
+        raise ValueError('d should be an integer >= 1')
+    nobs = x.shape[1]
+    x = x[:N]
+    w = 2 * d + 1
+    dx = deltas(x, w)
+    sdc = np.empty((k * N, nobs))
+    sdc[:] = np.tile(dx[:, -1], k).reshape(k * N, 1)
+    for ix in range(k):
+        if ix * P > nobs:
+            break
+        sdc[ix * N:(ix + 1) * N, :nobs - ix * P] = dx[:, ix * P:nobs]
+    return sdc
 
 
 @cache_memory('__strict__')
@@ -915,187 +1047,6 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
 # ===========================================================================
 # Fourier transform
 # ===========================================================================
-def speech_enhancement(X, Gain=0.9, NN=2):
-    """This program is only to process the single file seperated by the silence
-    section if the silence section is detected, then a counter to number of
-    buffer is set and pre-processing is required.
-
-    Usage: SpeechENhance(wavefilename, Gain, Noise_floor)
-
-    :param X: input audio signal
-    :param Gain: default value is 0.9, suggestion range 0.6 to 1.4,
-            higher value means more subtraction or noise redcution
-    :param NN:
-
-    :return: a 1-dimensional array of boolean that
-        is True for high energy frames.
-
-    Note
-    ----
-    I move this function here, so we don't have to import `sidekit`.
-    You can check original version from `sidekit.frontend.vad`.
-    Copyright 2014 Sun Han Wu and Anthony Larcher
-    """
-    if X.shape[0] < 512:  # creer une exception
-        return X
-
-    num1 = 40  # dsiable buffer number
-    Alpha = 0.75  # original value is 0.9
-    FrameSize = 32 * 2  # 256*2
-    FrameShift = int(FrameSize / NN)  # FrameSize/2=128
-    nfft = FrameSize  # = FrameSize
-    Fmax = int(np.floor(nfft / 2) + 1)  # 128+1 = 129
-    # arising hamming windows
-    Hamm = 1.08 * (0.54 - 0.46 * np.cos(2 * np.pi * np.arange(FrameSize) / (FrameSize - 1)))
-    y0 = np.zeros(FrameSize - FrameShift)  # 128 zeros
-
-    Eabsn = np.zeros(Fmax)
-    Eta1 = Eabsn
-
-    ###################################################################
-    # initial parameter for noise min
-    mb = np.ones((1 + FrameSize // 2, 4)) * FrameSize / 2  # 129x4  set four buffer * FrameSize/2
-    im = 0
-    Beta1 = 0.9024  # seems that small value is better;
-    pxn = np.zeros(1 + FrameSize // 2)  # 1+FrameSize/2=129 zeros vector
-
-    ###################################################################
-    old_absx = Eabsn
-    x = np.zeros(FrameSize)
-    x[FrameSize - FrameShift:FrameSize] = X[
-        np.arange(np.min((int(FrameShift), X.shape[0])))]  # fread(ifp, FrameSize, 'short')% read  FrameSize samples
-
-    if x.shape[0] < FrameSize:
-        EOF = 1
-        return X
-
-    EOF = 0
-    Frame = 0
-
-    ###################################################################
-    # add the pre-noise estimates
-    for i in range(200):
-        Frame += 1
-        fftn = fftpack.fft(x * Hamm)  # get its spectrum
-        absn = np.abs(fftn[0:Fmax])  # get its amplitude
-
-        # add the following part from noise estimation algorithm
-        pxn = Beta1 * pxn + (1 - Beta1) * absn  # Beta=0.9231 recursive pxn
-        im = (im + 1) % 40  # noise_memory=47;  im=0 (init) for noise level estimation
-
-        if im:
-            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
-        else:
-            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
-            mb[:, 0] = pxn
-            #  0-2  vector shifted to 1 to 3
-
-        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
-        # over_sub_noise= oversubtraction factor
-
-        # end of noise detection algotihm
-        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
-        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
-        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
-
-        if In_data.shape[0] < FrameShift:  # to check file is out
-            EOF = 1
-            break
-        else:
-            x[FrameSize - FrameShift:FrameSize] = In_data  # shift new 128 to position 129 to FrameSize location
-            # end of for loop for noise estimation
-
-    # end of prenoise estimation ************************
-    x = np.zeros(FrameSize)
-    x[FrameSize - FrameShift:FrameSize] = X[np.arange(np.min((int(FrameShift), X.shape[0])))]
-
-    if x.shape[0] < FrameSize:
-        EOF = 1
-        return X
-
-    EOF = 0
-    Frame = 0
-
-    X1 = np.zeros(X.shape)
-    Frame = 0
-
-    while EOF == 0:
-        Frame += 1
-        xwin = x * Hamm
-
-        fftx = fftpack.fft(xwin, nfft)  # FrameSize FFT
-        absx = np.abs(fftx[0:Fmax])  # Fmax=129,get amplitude of x
-        argx = fftx[:Fmax] / (absx + np.spacing(1))  # normalize x spectrum phase
-
-        absn = absx
-
-        # add the following part from rainer algorithm
-        pxn = Beta1 * pxn + (1 - Beta1) * absn  # s Beta=0.9231   recursive pxn
-
-        im = int((im + 1) % (num1 * NN / 2))  # original =40 noise_memory=47;  im=0 (init) for noise level estimation
-
-        if im:
-            mb[:, 0] = np.minimum(mb[:, 0], pxn)  # 129 by 4 im<>0  update the first vector from PXN
-        else:
-            mb[:, 1:] = mb[:, :3]  # im==0 every 47 time shift pxn to first vector of mb
-            mb[:, 0] = pxn
-
-        pn = 2 * np.min(mb, axis=1)  # pn = 129x1po(9)=1.5 noise level estimate compensation
-
-        Eabsn = pn
-        Gaina = Gain
-
-        temp1 = Eabsn * Gaina
-
-        Eta1 = Alpha * old_absx + (1 - Alpha) * np.maximum(absx - temp1, 0)
-        new_absx = (absx * Eta1) / (Eta1 + temp1)  # wiener filter
-        old_absx = new_absx
-
-        ffty = new_absx * argx  # multiply amplitude with its normalized spectrum
-
-        y = np.real(fftpack.ifft(np.concatenate((ffty, np.conj(ffty[np.arange(Fmax - 2, 0, -1)])))))
-
-        y[:FrameSize - FrameShift] = y[:FrameSize - FrameShift] + y0
-        y0 = y[FrameShift:FrameSize]  # keep 129 to FrameSize point samples
-        x[:FrameSize - FrameShift] = x[FrameShift:FrameSize]
-
-        index1 = np.arange(FrameShift * Frame, np.min((FrameShift * (Frame + 1), X.shape[0])))
-        In_data = X[index1]  # fread(ifp, FrameShift, 'short');
-
-        z = 2 / NN * y[:FrameShift]  # left channel is the original signal
-        z /= 1.15
-        z = np.minimum(z, 32767)
-        z = np.maximum(z, -32768)
-        index0 = np.arange(FrameShift * (Frame - 1), FrameShift * Frame)
-        if not all(index0 < X1.shape[0]):
-            idx = 0
-            while (index0[idx] < X1.shape[0]) & (idx < index0.shape[0]):
-                X1[index0[idx]] = z[idx]
-                idx += 1
-        else:
-            X1[index0] = z
-
-        if In_data.shape[0] == 0:
-            EOF = 1
-        else:
-            x[np.arange(FrameSize - FrameShift, FrameSize + In_data.shape[0] - FrameShift)] = In_data
-
-    X1 = X1[X1.shape[0] - X.shape[0]:]
-    return X1
-
-
-def framing(y, win_length, hop_length, window='hann', center=True):
-    if center:
-        y = np.pad(y, int(win_length // 2), mode='reflect')
-    # Window the time series.
-    y_frames = segment_axis(y,
-        frame_length=win_length, hop_length=hop_length, end='cut')
-    if window is not None:
-        fft_window = get_window(window, win_length, fftbins=True)
-        y_frames = y_frames * fft_window.reshape(1, -1)
-    return y_frames
-
-
 def get_energy(frames, log=True):
     """ Calculate frame-wise energy
     Parameters
@@ -1117,8 +1068,8 @@ def get_energy(frames, log=True):
     return log_energy.astype('float32')
 
 
-def stft(y, n_fft=256, hop_length=None, window='hann',
-         center=True, preemphasis=None, energy=False):
+def stft(y, frame_length, step_length=None, nfft=None,
+         window='hann', padding=False, energy=False):
     """Short-time Fourier transform (STFT)
 
     Returns a complex-valued matrix D such that
@@ -1132,22 +1083,23 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
     ----------
     y : np.ndarray [shape=(n,)], real-valued
         the input signal (audio time series)
-    n_fft : int > 0 [scalar]
+    frame_length: int
+        number of samples point for 1 frame
+    step_length: int
+        number of samples point for 1 step (when shifting the frames)
+        If unspecified, defaults `frame_length / 4`.
+    nfft: int > 0 [scalar]
         FFT window size
-    hop_length : int > 0 [scalar]
-        number audio of frames between STFT columns.
-        If unspecified, defaults `win_length / 4`.
+        If not provided, uses the smallest power of 2 enclosing `frame_length`.
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
         - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.hanning`
         - a vector or array of length `n_fft`
-    center : boolean
+    padding: boolean
         - If `True`, the signal `y` is padded so that frame
           `D[:, t]` is centered at `y[t * hop_length]`.
         - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
-    preemphasis: float `(0, 1)`, None
-        pre-emphasis coefficience
     energy: bool
         if True, return log-frame-wise energy
 
@@ -1157,41 +1109,55 @@ def stft(y, n_fft=256, hop_length=None, window='hann',
         STFT matrix
     log_energy : ndarray [shape=(t,), dtype=float32]
         (log) energy of each frame
+
+    Note
+    ----
+    This implementation have been tested to achieve slightly better speed
+    than scipy implementation
     """
-    # if n_fft is None:
-    n_fft = int(n_fft)
-    # Set the default hop, if it's not already specified
-    if hop_length is None:
-        hop_length = n_fft // 4
-    hop_length = int(hop_length)
-    # pre-emphasis
-    if isinstance(preemphasis, Number) and 0. < preemphasis < 1.:
-        y = pre_emphasis(y, coeff=preemphasis)
-    y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
-                       center=center, window=window)
-    # calculate frames energy
+    frame_length = int(frame_length)
+    if step_length is None:
+        step_length = frame_length // 4
+    else:
+        step_length = int(step_length)
+    if nfft is None:
+        nfft = int(2**np.ceil(np.log(frame_length) / np.log(2.0)))
+    elif nfft < frame_length:
+        raise ValueError('nfft must be greater than or equal to `frame_length`.')
+    # ====== check if padding zeros ====== #
+    if padding:
+        y = np.pad(y, int(frame_length // 2), mode='constant')
+    # ====== framing the signal ====== #
+    shape = y.shape[:-1] + (y.shape[-1] - frame_length + 1, frame_length)
+    strides = y.strides + (y.strides[-1],)
+    y_frames = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
+    if y_frames.ndim > 2:
+        y_frames = np.rollaxis(y_frames, 1)
+    y_frames = y_frames[::step_length] # [n, frame_length]
+    # ====== prepare the window function ====== #
+    if window is not None:
+        fft_window = get_window(window, frame_length, periodic=True
+            ).reshape(1, -1)
+        # scaling the windows
+        scale = np.sqrt(1.0 / fft_window.sum()**2)
+        y_frames = fft_window * y_frames
+    else:
+        scale = np.sqrt(1.0 / frame_length**2)
+    # ====== calculate frames energy ====== #
     if energy:
-        log_energy = get_energy(y_frames, log=True)
-    # Pre-allocate the STFT matrix
-    y_frames = y_frames.T
-    stft_matrix = np.empty((int(1 + n_fft // 2), y_frames.shape[1]),
-                           dtype=np.complex64, order='F')
-    # how many columns can we fit within MAX_MEM_BLOCK?
-    n_columns = int(MAX_MEM_BLOCK / (stft_matrix.shape[0] *
-                                     stft_matrix.itemsize))
-    for bl_s in range(0, stft_matrix.shape[1], n_columns):
-        bl_t = min(bl_s + n_columns, stft_matrix.shape[1])
-        # RFFT and Conjugate here to match phase from DPWE code
-        stft_matrix[:, bl_s:bl_t] = fftpack.fft(
-            y_frames[:, bl_s:bl_t], axis=0
-        )[:stft_matrix.shape[0]].conj()
+        log_energy = get_energy(y_frames, log=True).astype('float32')
+    # ====== STFT matrix ====== #
+    # norm='ortho' ?
+    S = np.fft.rfft(a=y_frames, n=nfft, axis=-1)
+    S *= scale # this scale is important for iSTFT recostruct original signal
     # return in form (t, d)
     if energy:
-        return stft_matrix.T, log_energy.astype('float32')
-    return stft_matrix.T
+        return S, log_energy
+    return S
 
 
-def istft(stft_matrix, hop_length=None, window='hann', center=True):
+def istft(stft_matrix, frame_length, step_length=None,
+          window='hann', padding=False):
     """
     Inverse short-time Fourier transform (ISTFT).
 
@@ -1211,62 +1177,50 @@ def istft(stft_matrix, hop_length=None, window='hann', center=True):
     ----------
     stft_matrix : np.ndarray [shape=(1 + n_fft/2, t)]
         STFT matrix from `stft`
-    hop_length  : int > 0 [scalar]
-        Number of frames between STFT columns.
-        If unspecified, defaults to `win_length / 4`.
+    frame_length: int
+        number of samples point for 1 frame
+    step_length: int
+        number of samples point for 1 step (when shifting the frames)
+        If unspecified, defaults `frame_length / 4`.
     window      : string, tuple, number, function, np.ndarray [shape=(n_fft,)]
         - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.hanning`
         - a user-specified window vector of length `n_fft`
-    center      : boolean
-        - If `True`, `D` is assumed to have centered frames.
-        - If `False`, `D` is assumed to have left-aligned frames.
-    dtype : numeric type
-        Real numeric type for `y`.  Default is 32-bit float.
+    padding: boolean
+        - If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
 
     Returns
     -------
     y : np.ndarray [shape=(n,), dtype=float32]
         time domain signal reconstructed from `stft_matrix`
     """
-    n_fft = 2 * (stft_matrix.shape[1] - 1)
-    # Set the default hop, if it's not already specified
-    if hop_length is None:
-        hop_length = n_fft // 4
-    hop_length = int(hop_length)
-    ifft_window = get_window(window, n_fft, fftbins=True)
-    # Pad out to match n_fft
-    ifft_window = pad_center(ifft_window, n_fft, '__cache__')
-
-    n_frames = stft_matrix.shape[0]
-    expected_signal_len = n_fft + hop_length * (n_frames - 1)
-    y = np.zeros(expected_signal_len, dtype=np.float32)
-    ifft_window_sum = np.zeros(expected_signal_len, dtype=np.float32)
-    ifft_window_square = ifft_window * ifft_window
-
-    for i in range(n_frames):
-        sample = i * hop_length
-        spec = stft_matrix[i, :].flatten()
-        spec = np.concatenate((spec.conj(), spec[-2:0:-1]), 0)
-        ytmp = ifft_window * fftpack.ifft(spec).real
-
-        y[sample:(sample + n_fft)] = y[sample:(sample + n_fft)] + ytmp
-        ifft_window_sum[sample:(sample + n_fft)] += ifft_window_square
-    # Normalize by sum of squared window
-    approx_nonzero_indices = ifft_window_sum > np.finfo(np.float32).tiny
-    y[approx_nonzero_indices] /= ifft_window_sum[approx_nonzero_indices]
-    if center:
-        y = y[int(n_fft // 2):-int(n_fft // 2)]
-    return y
+    # ====== check arguments ====== #
+    frame_length = int(frame_length)
+    if step_length is None:
+        step_length = frame_length // 4
+    else:
+        step_length = int(step_length)
+    nfft = 2 * (stft_matrix.shape[1] - 1)
+    # ====== use scipy here ====== #
+    try:
+        from scipy.signal.spectral import istft as _istft
+    except ImportError:
+        raise RuntimeError("`istft` requires scipy version >= 0.19")
+    return _istft(stft_matrix, fs=1.0, window=window,
+                  nperseg=frame_length, noverlap=frame_length - step_length, nfft=nfft,
+                  input_onesided=True, boundary=padding,
+                  time_axis=0, freq_axis=-1)[-1]
 
 
-def spectra(sr, y=None, S=None,
-            n_fft=256, hop_length=None, window='hann',
-            nb_melfilters=None, nb_ceps=None,
+def spectra(sr, frame_length, y=None, S=None,
+            step_length=None, nfft=512, window='hann',
+            nmels=None, nceps=None,
             fmin=64, fmax=None,
-            top_db=80.0, center=True, power=2.0, log=True,
-            preemphasis=None, backend='odin'):
+            top_db=80.0, power=2.0, log=True,
+            padding=False):
     """Compute spectra information from STFT matrix or a power spectrogram,
     The extracted spectra include:
     * log-power spectrogram
@@ -1282,30 +1236,44 @@ def spectra(sr, y=None, S=None,
 
     Parameters
     ----------
-    y : np.ndarray [shape=(n,)] or None
-        audio time-series
     sr : number > 0 [scalar]
         sampling rate of `y`
+    frame_length: int
+        number of samples point for 1 frame
+    y : np.ndarray [shape=(n,)] or None
+        audio time-series
     S : np.ndarray [shape=(d, t)]
-        spectrogram
-    n_fft : int > 0 [scalar]
+        spectrogram or complex STFT
+    step_length: int
+        number of samples point for 1 step (when shifting the frames)
+        If unspecified, defaults `frame_length / 4`.
+    nfft : int > 0 [scalar]
         length of the FFT window
-    hop_length : int > 0 [scalar]
-        number of samples between successive frames.
-        See `librosa.core.stft`
-    center : boolean
+    window      : string, tuple, number, function, np.ndarray [shape=(n_fft,)]
+        - a window specification (string, tuple, or number);
+          see `scipy.signal.get_window`
+        - a window function, such as `scipy.signal.hanning`
+        - a user-specified window vector of length `n_fft`
+    nmels: int, or None
+        number of mel-filter bands
+    nceps: int, or None
+        number of ceptrum for cepstral analysis
+    fmin: int
+        min frequency for mel-filter bands
+    fmax: int, or None
+        maximum frequency for mel-filter bands.
+        If None, usng `sr / 2` as fmax
+    top_db: int
+        maximum deciben
+    power : float > 0 [scalar]
+        Exponent for the magnitude spectrogram.
+        e.g., 1 for energy (or magnitude), 2 for power, etc.
+    log: bool
+        if True, convert all power spectrogram to DB
+    padding : bool
         - If `True`, the signal `y` is padded so that frame
           `D[:, t]` is centered at `y[t * hop_length]`.
         - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
-    power : float > 0 [scalar]
-        Exponent for the magnitude melspectrogram.
-        e.g., 1 for energy, 2 for power, etc.
-    log: bool
-        if True, convert all power spectrogram to DB
-    preemphasis: float `(0, 1)`, None
-        pre-emphasis coefficience
-    backend: 'odin', 'sptk'
-        support backend for calculating the spectra
 
     Returns
     -------
@@ -1317,168 +1285,75 @@ def spectra(sr, y=None, S=None,
     `log` and `power` don't work for `sptk` backend
 
     """
-    backend = str(backend)
-    if backend not in ('odin', 'sptk'):
-        raise ValueError("'backend' must be: 'odin' or 'sptk'.")
     mel_spec = None
     mfcc = None
-    log_mel_spec = None
     log_energy = None
-    # ====== sptk backend ====== #
-    if backend == 'sptk':
-        if y is None:
-            raise ValueError("orginal raw waveform is required for sptk.")
-        try:
-            import pysptk
-        except ImportError:
-            raise RuntimeError("backend 'sptk' require pysptk for running.")
-        n_fft = int(n_fft)
-        hop_length = n_fft // 4 if hop_length is None else int(hop_length)
-        # framing input signals
-        y_frames = framing(y, win_length=n_fft, hop_length=hop_length,
-                           center=center, window=window)
-        log_energy = get_energy(y_frames, log=True)
-        mel_spec = np.apply_along_axis(pysptk.mcep, 1, y_frames,
-            order=nb_melfilters - 1 if nb_melfilters is not None else 24,
-            alpha=0.)
-        spec = np.abs(np.apply_along_axis(pysptk.mgc2sp, 1, mel_spec,
-            alpha=0.0, gamma=0.0, fftlen=n_fft))
-        phase = np.apply_along_axis(pysptk.c2ndps, 1, mel_spec, fftlen=n_fft)
-        # MFCC features
-        if nb_ceps is not None:
-            mfcc_trial = 25
-            # sometimes PySPTK return NaN for unknown reason
-            while mfcc_trial >= 0:
-                mfcc_trial -= 1
-                mfcc = np.apply_along_axis(pysptk.mfcc, 1, y_frames,
-                    order=int(nb_ceps), fs=sr,
-                    alpha=0. if preemphasis is None else preemphasis,
-                    window_len=n_fft, frame_len=n_fft,
-                    num_filterbanks=24 if nb_melfilters is None else nb_melfilters,
-                    czero=False, power=False)
-                if not np.isnan(mfcc.astype('float32').sum()):
-                    break
-        if nb_melfilters is None:
-            mel_spec = None
-    # ====== ODIN: STFT matrix not specified ====== #
+    # ====== compute STFT if needed ====== #
+    if S is None:
+        S, log_energy = stft(y, frame_length=frame_length,
+                             step_length=step_length, nfft=nfft,
+                             window=window, padding=padding, energy=True)
+    nfft = int(2 * (S.shape[1] - 1))
+    # ====== check arguments ====== #
+    power = int(power)
+    # check fmax
+    if sr is None and fmax is None:
+        fmax = 4000
     else:
-        if S is None:
-            S, log_energy = stft(y, n_fft=n_fft, hop_length=hop_length,
-                                 window=window, preemphasis=preemphasis,
-                                 center=center, energy=True)
-        n_fft = int(2 * (S.shape[1] - 1))
-        # ====== check arguments ====== #
-        power = int(power)
-        # check fmax
-        if sr is None and fmax is None:
-            fmax = 4000
-        else:
-            fmax = sr // 2 if fmax is None else int(fmax)
-        # check fmin
-        fmin = int(fmin)
-        if fmin >= fmax:
-            raise ValueError("fmin must < fmax.")
-        # ====== getting phase spectrogram ====== #
-        phase = np.angle(S)
-        phase = compute_delta(phase, width=9, axis=0, order=1
-            )[-1].astype('float32')
-        # ====== extract the basic spectrogram ====== #
-        if 'complex' in str(S.dtype): # STFT
-            spec = np.abs(S)
-        if power > 1:
-            spec = np.power(spec, power)
-        # ====== extrct mel-filter-bands features ====== #
-        if nb_melfilters is not None or nb_ceps is not None:
-            mel_basis = mel_filters(sr, n_fft=n_fft,
-                n_mels=24 if nb_melfilters is None else int(nb_melfilters),
-                fmin=fmin, fmax=fmax)
-            # transpose to (nb_samples; nb_mels)
-            mel_spec = np.dot(mel_basis, spec.T)
-            mel_spec = mel_spec.T
-        # ====== extract cepstrum features ====== #
-        # extract MFCC
-        if nb_ceps is not None:
-            nb_ceps = int(nb_ceps) + 1
-            log_mel_spec = power2db(mel_spec, top_db=top_db)
-            dct_basis = dct_filters(nb_ceps, log_mel_spec.shape[1])
-            mfcc = np.dot(dct_basis, log_mel_spec.T)[1:, :].T
-        # applying log to convert to db
-        if log:
-            spec = power2db(spec, top_db=top_db)
-            if mel_spec is not None:
-                mel_spec = log_mel_spec if log_mel_spec is not None else \
-                    power2db(mel_spec, top_db=top_db)
+        fmax = sr // 2 if fmax is None else int(fmax)
+    # check fmin
+    fmin = int(fmin)
+    if fmin >= fmax:
+        raise ValueError("fmin must < fmax, but fmin=%d and fmax=%d" %
+                         (fmin, fmax))
+    # ====== extract the basic spectrogram ====== #
+    if 'complex' in str(S.dtype): # get magnitude from STFT
+        spec = np.abs(S)
+    if power > 1:
+        spec = np.power(spec, power)
+    # ====== extrct mel-filter-bands features ====== #
+    if nmels is not None or nceps is not None:
+        mel_basis = mel_filters(sr,
+            nfft=nfft, nmels=24 if nmels is None else int(nmels),
+            fmin=fmin, fmax=fmax)
+        # transpose to (nb_samples; nb_mels)
+        mel_spec = np.dot(mel_basis, spec.T)
+        mel_spec = mel_spec.T
+        mel_spec = power2db(mel_spec, top_db=top_db)
+    # ====== extract cepstrum features ====== #
+    # extract MFCC
+    if nceps is not None:
+        nceps = int(nceps) + 1
+        dct_basis = dct_filters(nceps, mel_spec.shape[1])
+        mfcc = np.dot(dct_basis, mel_spec.T)[1:, :].T
+    # applying log to convert to db
+    if log:
+        spec = power2db(spec, top_db=top_db)
     # ====== return result ====== #
-    if mel_spec is not None:
-        mel_spec = mel_spec.astype('float32')
-    if mfcc is not None:
-        mfcc = mfcc.astype('float32')
     results = {}
     results['spec'] = spec.astype('float32')
-    results['phase'] = phase.astype('float32')
     results['energy'] = log_energy
-    results['mspec'] = mel_spec
-    results['mfcc'] = mfcc
+    results['mspec'] = None if mel_spec is None else mel_spec.astype('float32')
+    results['mfcc'] = None if mfcc is None else mfcc.astype('float32')
     return results
 
 
 # ===========================================================================
 # invert spectrogram
 # ===========================================================================
-_mspec_synthesizer = {}
-
-
-def imspec(mspec, hop_length, pitch=None, normalize=False, enhance=False):
-    """ Invert mel-spectrogram back to raw waveform
-
-    Parameters
-    ----------
-    hop_length : int > 0 [scalar]
-        number audio of frames between STFT columns.
-        If unspecified, defaults `win_length / 4`.
-
-    """
-    try:
-        import pysptk
-    except ImportError:
-        raise RuntimeError("invert mel-spectrogram requires pysptk library.")
-    n = mspec.shape[0]
-    order = mspec.shape[1] - 1
-    hop_length = int(hop_length)
-    # ====== check stored Synthesizer ====== #
-    # if (order, hop_length) not in _mspec_synthesizer:
-    _mspec_synthesizer[(order, hop_length)] = \
-        pysptk.synthesis.Synthesizer(pysptk.synthesis.LMADF(order=order),
-                                     hop_length)
-    # ====== generate source excitation ====== #
-    if pitch is None:
-        pitch = np.zeros(shape=(n,))
-    else:
-        pitch = pitch.ravel()
-    source_excitation = pysptk.excite(pitch.astype('float64'), hopsize=hop_length)
-    # ====== invert log to get power ====== #
-    y = _mspec_synthesizer[(order, hop_length)].synthesis(
-        source_excitation.astype('float64'), mspec.astype('float64'))
-    y = np.nan_to_num(y)
-    # ====== post-processing ====== #
-    if normalize:
-        y = (y - y.mean()) / y.std()
-    if enhance:
-        y = speech_enhancement(y)
-    return y
-
-
-def ispec(spec, hop_length, window="hann", nb_iter=30, db=False,
-          normalize=True, center=True):
+def ispec(spec, frame_length, step_length=None, window="hann",
+          nb_iter=48, normalize=True, db=False, padding=False):
     """ Invert power spectrogram back to raw waveform
 
     Parameters
     ----------
     spec : np.ndarray [shape=(t, n_fft / 2 + 1)]
         magnitude, power, or DB spectrogram of STFT
-    hop_length : int > 0 [scalar]
-        number audio of frames between STFT columns.
-        If unspecified, defaults `win_length / 4`.
+    frame_length: int
+        number of samples point for 1 frame
+    step_length: int
+        number of samples point for 1 step (when shifting the frames)
+        If unspecified, defaults `frame_length / 4`.
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
         - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
@@ -1492,17 +1367,27 @@ def ispec(spec, hop_length, window="hann", nb_iter=30, db=False,
         normalize output raw signal to have mean=0., and std=1.
 
     """
+    # ====== check arguments ====== #
+    frame_length = int(frame_length)
+    if step_length is None:
+        step_length = frame_length // 4
+    else:
+        step_length = int(step_length)
+    # ====== convert to power spectrogram ====== #
     if db:
         spec = db2power(spec)
+    # ====== iterative estmate best phase ====== #
     X_best = copy.deepcopy(spec)
-    n_fft = (spec.shape[1] - 1) * 2
+    nfft = (spec.shape[1] - 1) * 2
     for i in range(nb_iter):
-        X_t = istft(X_best, hop_length=hop_length, window=window, center=center)
-        est = stft(X_t, n_fft=n_fft, hop_length=hop_length, window=window,
-                   center=center)
+        X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
+                    window=window, padding=padding)
+        est = stft(X_t, frame_length=frame_length, step_length=step_length,
+                   nfft=nfft, window=window, padding=padding, energy=False)
         phase = est / np.maximum(1e-8, np.abs(est))
-        X_best = spec * phase[:len(spec)]
-    X_t = istft(X_best, hop_length=hop_length, window=window)
+        X_best = spec * phase
+    X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
+                window=window, padding=padding)
     y = np.real(X_t)
     if normalize:
         y = (y - y.mean()) / y.std()

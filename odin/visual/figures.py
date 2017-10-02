@@ -13,6 +13,7 @@ import copy
 import warnings
 import colorsys
 from six import string_types
+from collections import Mapping
 from six.moves import zip, range
 from contextlib import contextmanager
 
@@ -477,81 +478,34 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_audio(s, sr=None, win=0.02, hop=0.01, window='hann',
-               nb_melfilters=40, nb_ceps=13,
-               get_qspec=True, get_vad=True,
-               fmin=64, fmax=None,
-               sr_new=None, preemphasis=None,
-               pitch_threshold=0.3, pitch_fmax=260,
-               vad_smooth=3, vad_minlen=0.1, cqt_bins=96,
-               power=2, log=True, backend='odin', title=""):
+def plot_acoustic_features(features, title=None):
     from matplotlib import pyplot as plt
-    from odin.preprocessing import speech
-
-    # ====== helper ====== #
-    def spectrogram(spec, vad, title):
-        plt.figure()
-        if spec.shape[0] / spec.shape[1] >= 8.:
-            nb_samples = len(spec)
-            n1, n2, n3 = nb_samples // 4, nb_samples // 2, 3 * nb_samples // 4
-            plt.subplot2grid((3, 4), (0, 0), rowspan=1, colspan=4)
-            plot_spectrogram(spec.T, vad=vad)
-            plt.subplot2grid((3, 4), (1, 0), rowspan=1, colspan=2)
-            plot_spectrogram(spec[:n1].T, vad=vad[:n1])
-            plt.subplot2grid((3, 4), (1, 2), rowspan=1, colspan=2)
-            plot_spectrogram(spec[n1:n2].T, vad=vad[n1:n2])
-            plt.subplot2grid((3, 4), (2, 0), rowspan=1, colspan=2)
-            plot_spectrogram(spec[n2:n3].T, vad=vad[n2:n3])
-            plt.subplot2grid((3, 4), (2, 2), rowspan=1, colspan=2)
-            plot_spectrogram(spec[n3:].T, vad=vad[n3:])
-        else:
-            plot_spectrogram(spec.T, vad=vad)
+    if not isinstance(features, Mapping):
+        raise ValueError("`features` must be mapping from name -> feature_matrix.")
+    features = [(name, X)
+                for name, X in features.iteritems()
+                if isinstance(X, np.ndarray) and (X.ndim == 1 or X.ndim == 2)]
+    features = sorted(features, key=lambda x: x[0])
+    plt.figure(figsize=(4, len(features)))
+    for i, (name, X) in enumerate(features):
+        plt.subplot(len(features), 1, i + 1)
+        if X.ndim == 1:
+            plt.plot(X)
+            plt.xlim(0, len(X))
+            plt.ylabel(name)
+        else: # transpose to frequency x time
+            plot_spectrogram(X.T, title=name)
+        # auto, equal
+        plt.gca().set_aspect(aspect='auto')
+        # plt.axis('off')
+        plt.xticks(())
+        plt.yticks(())
+    if title is not None:
         plt.suptitle(str(title))
-        plt.tight_layout()
-    # ====== load signal ====== #
-    if isinstance(s, string_types):
-        name = os.path.basename(s)
-        s, _ = speech.read(s)
-        if sr is None:
-            sr = _
-    else:
-        name = "-".join([str(s.shape), str(sr)])
-    title = str(title) + ":" + name
-    # ====== processing ====== #
-    get_vad = True if not get_vad else get_vad
-    y = speech.speech_features(s, sr, win=win, hop=hop, window=window,
-            nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-            get_spec=True, get_qspec=get_qspec, get_phase=True,
-            get_pitch=True, get_f0=True,
-            get_vad=get_vad, get_energy=True, get_delta=False,
-            fmin=fmin, fmax=fmax, sr_new=sr_new, preemphasis=preemphasis,
-            pitch_threshold=pitch_threshold, pitch_fmax=pitch_fmax,
-            vad_smooth=vad_smooth, vad_minlen=vad_minlen, cqt_bins=cqt_bins,
-            power=power, log=log, backend=backend)
-    # ====== plot raw signals ====== #
-    if sr > 16000:
-        s = speech.resample(s, sr, 16000)
-        sr = 16000
-    plt.figure()
-    plt.subplot(4, 1, 1); plt.plot(s); plt.title('Raw')
-    plt.subplot(4, 1, 2); plt.plot(y['energy'].ravel()); plt.title('Energy')
-    plt.subplot(4, 1, 3); plt.plot(y['pitch'].ravel()); plt.title('Pitch')
-    plt.subplot(4, 1, 4); plt.plot(y['f0'].ravel()); plt.title('F0')
-    plt.tight_layout()
-    plt.suptitle(title)
-    # ====== plot spectrogram ====== #
-    spectrogram(y['spec'], y['vad'], title='STFT power spectrum')
-    spectrogram(y['mspec'], y['vad'], title='(STFT) Mel-cepstrum')
-    spectrogram(y['mfcc'], y['vad'], title='(STFT) MFCCs')
-    if get_qspec:
-        spectrogram(y['qspec'], y['vad'], title='CQT power spectrum')
-        spectrogram(y['qmspec'], y['vad'], title='(CQT) Mel-cepstrum')
-        spectrogram(y['qmfcc'], y['vad'], title='(CQT) MFCCs')
-    return y
 
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
-                     linewidth=0.5):
+                     linewidth=0.5, title=None):
     '''
     Parameters
     ----------
@@ -613,8 +567,9 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
     # ax.tick_params(axis='both', which='major', labelsize=6)
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.axis('off')
-    ax.set_title(str(x.shape), fontsize=6)
+    # ax.axis('off')
+    if title is not None:
+        ax.set_ylabel(str(title) + '-' + str(x.shape), fontsize=6)
     img = ax.pcolorfast(x, cmap=colormap, alpha=0.9)
     # ====== draw vad vertical line ====== #
     if vad is not None:
@@ -1006,3 +961,9 @@ def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True, log=Tr
             plt.close('all')
     except Exception as e:
         sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
+
+
+def plot_save_show(path, figs=None, dpi=180, tight_plot=False,
+                   clear_all=True, log=True):
+    plot_save(path, figs, dpi, tight_plot, clear_all, log)
+    os.system('open -a /Applications/Preview.app %s' % path)

@@ -49,3 +49,6 @@
 [submodule "variational-dropout-sparsifies-dnn"]
 	path = variational-dropout-sparsifies-dnn
 	url = https://github.com/ars-ashuha/variational-dropout-sparsifies-dnn.git
+[submodule "ideas/sciblog"]
+	path = ideas/sciblog
+	url = https://github.com/miguelgfierro/sciblog.git

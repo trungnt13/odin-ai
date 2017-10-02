@@ -12,68 +12,22 @@ import six
 import math
 import copy
 import warnings
-from collections import OrderedDict
+from collections import OrderedDict, Mapping
 
 import numpy as np
+from scipy.signal import lfilter
 
-from odin.utils import is_number, cache_memory, is_string
+from odin.utils import is_number, cache_memory, is_string, as_tuple
+from .base import Extractor
 from .signal import (pad_center, get_window, segment_axis, stft, istft,
                      compute_delta, smooth, pre_emphasis, spectra,
-                     vad_energy, power2db, pitch_track)
+                     vad_energy, power2db, pitch_track, resample,
+                     rastafilt, mvn, wmvn)
+
 
 # ===========================================================================
 # Predefined variables of speech datasets
 # ===========================================================================
-# ==================== Predefined datasets information ==================== #
-nist15_cluster_lang = OrderedDict([
-    ['ara', ['ara-arz', 'ara-acm', 'ara-apc', 'ara-ary', 'ara-arb']],
-    ['zho', ['zho-yue', 'zho-cmn', 'zho-cdo', 'zho-wuu']],
-    ['eng', ['eng-gbr', 'eng-usg', 'eng-sas']],
-    ['fre', ['fre-waf', 'fre-hat']],
-    ['qsl', ['qsl-pol', 'qsl-rus']],
-    ['spa', ['spa-car', 'spa-eur', 'spa-lac', 'por-brz']]
-])
-nist15_lang_list = np.asarray([
-    # Egyptian, Iraqi, Levantine, Maghrebi, Modern Standard
-    'ara-arz', 'ara-acm', 'ara-apc', 'ara-ary', 'ara-arb',
-    # Cantonese, Mandarin, Min Dong, Wu
-    'zho-yue', 'zho-cmn', 'zho-cdo', 'zho-wuu',
-    # British, American, South Asian (Indian)
-    'eng-gbr', 'eng-usg', 'eng-sas',
-    # West african, Haitian
-    'fre-waf', 'fre-hat',
-    # Polish, Russian
-    'qsl-pol', 'qsl-rus',
-    # Caribbean, European, Latin American, Brazilian
-    'spa-car', 'spa-eur', 'spa-lac', 'por-brz'
-])
-
-
-def nist15_label(label):
-    '''
-    Return
-    ------
-    lang_id : int
-        idx in the list of 20 language, None if not found
-    cluster_id : int
-        idx in the list of 6 clusters, None if not found
-    within_cluster_id : int
-        idx in the list of each clusters, None if not found
-    '''
-    label = label.replace('spa-brz', 'por-brz')
-    rval = [None, None, None]
-    # lang_id
-    if label not in nist15_lang_list:
-        raise ValueError('Cannot found label:%s' % label)
-    rval[0] = np.argmax(label == nist15_lang_list)
-    # cluster_id
-    for c, x in enumerate(nist15_cluster_lang.iteritems()):
-        j = x[1]
-        if label in j:
-            rval[1] = c
-            rval[2] = j.index(label)
-    return rval
-
 # ==================== Timit ==================== #
 timit_61 = ['aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay',
     'b', 'bcl', 'ch', 'd', 'dcl', 'dh', 'dx', 'eh', 'el', 'em', 'en',
@@ -93,118 +47,352 @@ timit_map = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er',
     'dcl': 'sil', 'gcl': 'sil', 'h#': 'sil', 'pau': 'sil', 'epi': 'sil'}
 
 
-def timit_phonemes(phn, map39=False, blank=False):
-    ''' Included blank '''
-    if type(phn) not in (list, tuple, np.ndarray):
-        phn = [phn]
-    if map39:
-        timit = timit_39
-        timit_map = timit_map
-        l = 39
+# ===========================================================================
+# Helper function
+# ===========================================================================
+def _extract_s_sr(s_sr):
+    if isinstance(s_sr, Mapping):
+        s_sr = (s_sr['raw'], s_sr['sr'])
+    elif not isinstance(s_sr, (tuple, list)) or \
+    not isinstance(s_sr[0], np.ndarray) or \
+    not is_number(s_sr[1]):
+        raise ValueError("Input to SpectraExtractor must be a tuple, or list "
+                         "of raw signal (ndarray) and sample rate (int).")
+    s, sr = s_sr
+    return s, int(sr)
+
+
+def _extract_frame_step_length(sr, frame_length, step_length):
+    # ====== check frame length ====== #
+    if frame_length < 1.:
+        frame_length = int(sr * frame_length)
     else:
-        timit = timit_61
-        timit_map = {}
-        l = 61
-    # ====== return phonemes ====== #
-    rphn = []
-    for p in phn:
-        if p not in timit_map and p not in timit:
-            if blank: rphn.append(l)
+        frame_length = int(frame_length)
+    # ====== check step length ====== #
+    if step_length is None:
+        step_length = frame_length // 4
+    elif step_length < 1.:
+        step_length = int(sr * step_length)
+    else:
+        step_length = int(step_length)
+    return frame_length, step_length
+
+
+@cache_memory
+def _num_two_factors(x):
+    """return number of times x is divideable for 2"""
+    if x <= 0:
+        return 0
+    num_twos = 0
+    while x % 2 == 0:
+        num_twos += 1
+        x //= 2
+    return num_twos
+
+
+@cache_memory
+def _max_fft_bins(sr, n_fft, fmax):
+    return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
+                                        endpoint=True)) if j >= fmax][0]
+
+
+# ===========================================================================
+# Audio feature extractor
+# ===========================================================================
+class AudioReader(Extractor):
+
+    def __init__(self, sr=None, sr_new=None, best_resample=True,
+                 remove_dc_n_dither=True, preemphasis=0.97,
+                 dtype=None, saved=False):
+        super(AudioReader, self).__init__()
+        self.sr = sr
+        self.sr_new = sr_new
+        self.best_resample = best_resample
+        self.remove_dc_n_dither = bool(remove_dc_n_dither)
+        self.preemphasis = preemphasis
+        self.dtype = dtype
+        self.saved = bool(saved)
+
+    def _transform(self, path_or_array):
+        sr = None # by default, we don't know sample rate
+        # ====== read audio from path or opened file ====== #
+        if is_string(path_or_array) or isinstance(path_or_array, file):
+            if isinstance(path_or_array, file):
+                f = path_or_array
+                path = f.name
+            else:
+                f = open(path_or_array, 'r')
+                path = path_or_array
+            # ====== process ====== #
+            if '.pcm' in path.lower():
+                s = np.memmap(f, dtype=np.int16, mode='r')
+            else:
+                import soundfile
+                try:
+                    s, sr = soundfile.read(f)
+                except Exception as e:
+                    if '.sph' in f.name.lower():
+                        f.seek(0)
+                        s = np.memmap(f, dtype=np.int16, mode='r')
+                    else:
+                        raise e
+            # close file
+            f.close()
+        # ====== provided np.ndarray for normalization ====== #
         else:
-            rphn.append(timit.index(timit_map[p]) if p in timit_map else timit.index(p))
-    return rphn
+            s = path_or_array
+        # ====== valiate sample rate ====== #
+        if self.sr is not None:
+            if sr is not None and sr != self.sr:
+                raise RuntimeError("Audio file at path: '%s' has sample rate: '%d'"
+                                   ", but the provided sample rate is '%d'" %
+                                   (path, sr, self.sr))
+            sr = int(self.sr)
+        # resampling if necessary
+        if sr is not None and self.sr_new is not None:
+            s = resample(s, sr, self.sr_new, best_algorithm=self.best_resample)
+            sr = int(self.sr_new)
+        # ====== normalizing ====== #
+        np.random.seed(8)  # for repeatability
+        # ====== remove DC offset and diterhing ====== #
+        # Approached suggested by:
+        # 'Omid Sadjadi': 'omid.sadjadi@nist.gov'
+        if self.remove_dc_n_dither:
+            # assuming 16-bit
+            if max(abs(s)) <= 1.:
+                s = s * 2**15
+            # select alpha
+            if sr == 16000:
+                alpha = 0.99
+            elif sr == 8000:
+                alpha = 0.999
+            else:
+                raise ValueError('Sampling frequency %s not supported' % str(sr))
+            slen = s.size
+            s = lfilter([1, -1], [1, -alpha], s)
+            dither = np.random.rand(slen) + np.random.rand(slen) - 1
+            s_pow = max(s.std(), 1e-20)
+            s = s + 1.e-6 * s_pow * dither
+        else: # just remove DC offset
+            s -= np.mean(s, 0)
+        # ====== pre-emphasis ====== #
+        if self.preemphasis is not None and 0. < self.preemphasis < 1.:
+            s = pre_emphasis(s, coeff=float(self.preemphasis))
+        # ====== dtype ====== #
+        if self.dtype is not None:
+            s = s.astype(self.dtype)
+        if self.saved:
+            return {'raw': s, 'sr': sr}
+        return (s, sr)
 
 
-# ===========================================================================
-# Audio helper
-# ===========================================================================
-def read(path_or_file, pcm=False,
-         remove_dc_offset=True, remove_zeros=True,
-         dtype='float32'):
-    '''
+class SpectraExtractor(Extractor):
+    """AcousticExtractor
+
     Parameters
     ----------
-    remove_dc_offset: bool
-        if True, substract the mean of the audio array
-    remove_zeros: bool
-        if True, remove all zeros values in the audio array
+    frame_length: int
+        number of samples point for 1 frame
+    step_length: int
+        number of samples point for 1 step (when shifting the frames)
+        If unspecified, defaults `win_length / 4`.
+    nb_fft: int > 0 [scalar]
+        FFT window size
+        If not provided, uses the smallest power of 2 enclosing `frame_length`.
+    window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
+        - a window specification (string, tuple, or number);
+          see `scipy.signal.get_window`
+        - a window function, such as `scipy.signal.hanning`
+        - a vector or array of length `n_fft`
+    """
 
-    Return
-    ------
-    waveform (ndarray: [samples;channel]),
-    sample rate (int)
-    '''
-    if pcm or \
-    (is_string(path_or_file) and '.pcm' in path_or_file.lower()) or \
-    (isinstance(path_or_file, file) and '.pcm' in path_or_file.name.lower()):
-        s, sr = (np.memmap(path_or_file, dtype=np.int16, mode='r'), None)
-    else:
-        import soundfile
-        f = open(path_or_file, 'r') if is_string(path_or_file) else path_or_file
-        try:
-            s, sr = soundfile.read(f)
-        except Exception as e:
-            if '.sph' in f.name.lower():
-                f.seek(0)
-                s, sr = (np.memmap(f, dtype=np.int16, mode='r'), None)
-            else:
-                raise e
-        f.close()
-    # ====== check valid channels ====== #
-    if s.ndim == 2:
-        if s.shape[0] == 1 or s.shape[1] == 1:
-            s = s.ravel()
-        elif s.shape[0] == 2:
-            s = s.T
-        elif s.shape[1] == 2:
-            pass
-        else:
-            raise ValueError("No support for signal shape=%s" % str(s))
-    elif s.ndim > 2:
-        raise ValueError("Loaded signal has %d-channels, only "
-                         "support maximum 2 channels." % s.ndim)
-    # ====== copy new array with given dtype ====== #
-    if dtype is None:
-        dtype = s.dtype
-    s = s.astype(dtype)
-    # aggressively remove zeros
-    if remove_zeros:
-        if s.ndim == 1:
-            s = s[s != 0.]
-        else: # remove where both channel is zeros
-            s = s[np.sum(s, axis=1) != 0., :]
-    # make zero mean
-    if len(s) > 0 and remove_dc_offset:
-        s -= np.mean(s, 0, dtype=dtype)
-    return s, sr
+    def __init__(self, frame_length, step_length=None, nfft=512, window='hann',
+                 nmels=None, nceps=None, fmin=64, fmax=None,
+                 power=2.0, log=True, padding=False):
+        super(SpectraExtractor, self).__init__()
+        # ====== STFT ====== #
+        self.frame_length = frame_length
+        self.step_length = step_length
+        self.nfft = nfft
+        self.window = window
+        # ====== ceptral analysis ====== #
+        self.nmels = nmels
+        self.nceps = nceps
+        self.fmin = fmin
+        self.fmax = fmax
+        # ====== power spectrum ====== #
+        self.power = power
+        self.log = log
+        # ====== others ====== #
+        self.padding = padding
+
+    def _transform(self, s_sr):
+        s, sr = _extract_s_sr(s_sr)
+        frame_length, step_length = _extract_frame_step_length(
+            sr, self.frame_length, self.step_length)
+        # ====== extract spectra ====== #
+        feat = spectra(sr=sr, frame_length=frame_length, y=s, S=None,
+                       step_length=step_length, nfft=self.nfft,
+                       window=self.window,
+                       nmels=self.nmels, nceps=self.nceps,
+                       fmin=self.fmin, fmax=self.fmax,
+                       top_db=80., power=self.power, log=self.log,
+                       padding=self.padding)
+        feat['sr'] = sr
+        return feat
 
 
-def audio_duration(fpath, sr=None, bitdepth=None):
-    """ Estimate audio length in second """
-    if sr is None or bitdepth is None:
-        s, sr = read(fpath, remove_dc_offset=False)
-        duration = max(s.shape) / sr
-        del s; return duration
-    if not os.path.exists(fpath):
-        raise Exception('File at path:%s does not exist' % fpath)
-    return os.path.getsize(fpath) / (bitdepth / 8) / sr
+class CQTExtractor(Extractor):
+    """ CQTExtractor """
+
+    def __init__(self, frame_length, step_length=None, nbins=96, window='hann',
+                 nmels=None, nceps=None, fmin=64, fmax=None, padding=False):
+        super(CQTExtractor, self).__init__()
+        self.frame_length = frame_length
+        self.step_length = step_length
+        self.nbins = int(nbins)
+        self.window = window
+        self.nmels = nmels
+        self.nceps = nceps
+        self.fmin = fmin
+        self.fmax = fmax
+        self.padding = padding
+
+    def _transform(self, s_sr):
+        s, sr = _extract_s_sr(s_sr)
+        frame_length, step_length = _extract_frame_step_length(
+            sr, self.frame_length, self.step_length)
+        # ====== extract CQT ====== #
+        from librosa.core import constantq
+        # auto adjust bins_per_octave to get maximum range of frequency
+        bins_per_octave = np.ceil(float(self.nbins - 1) / np.log2(sr / 2. / self.fmin)) + 1
+        # adjust the bins_per_octave to make acceptable hop_length
+        # i.e. 2_factors(hop_length) < [ceil(cqt_bins / bins_per_octave) - 1]
+        if _num_two_factors(step_length) < np.ceil(self.nbins / bins_per_octave) - 1:
+            bins_per_octave = np.ceil(self.nbins / (_num_two_factors(step_length) + 1))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            qtrans = constantq.cqt(s, sr=sr, hop_length=step_length, n_bins=self.nbins,
+                                   bins_per_octave=int(bins_per_octave),
+                                   fmin=self.fmin, tuning=0.0, real=False, norm=1,
+                                   filter_scale=1., sparsity=0.01).astype('complex64')
+        # ====== ceptral analysis ====== #
+        feat = spectra(sr, frame_length, y=None, S=qtrans.T,
+                       step_length=step_length, nfft=None, window='hann',
+                       nmels=self.nmels, nceps=self.nceps,
+                       fmin=64, fmax=self.fmax,
+                       top_db=80.0, power=2.0, log=True,
+                       padding=self.padding)
+        # ====== add 'q' prefix for CQT features ====== #
+        feat = {'q' + name: X for name, X in feat.iteritems()}
+        feat['sr'] = sr
+        return feat
 
 
-def resample(s, fs_orig, fs_new, axis=0, best_algorithm=True):
-    '''
-    '''
-    fs_orig = int(fs_orig)
-    fs_new = int(fs_new)
-    if fs_new > fs_orig:
-        raise ValueError("Do not support upsampling audio from %d(Hz) to %d(Hz)."
-            % (fs_orig, fs_new))
-    elif fs_orig != fs_new:
-        import resampy
-        s = resampy.resample(s, sr_orig=fs_orig, sr_new=fs_new, axis=axis,
-                             filter='kaiser_best' if best_algorithm else 'kaiser_fast')
-    return s
+class PitchExtractor(Extractor):
+
+    def __init__(self, frame_length, step_length=None,
+                 threshold=0.2, fmin=20, fmax=260,
+                 algo='swipe', f0=False):
+        super(PitchExtractor, self).__init__()
+        self.threshold = threshold
+        self.fmin = int(fmin)
+        self.fmax = int(fmax)
+        self.algo = algo
+        self.f0 = f0
+        self.frame_length = frame_length
+        self.step_length = step_length
+
+    def _transform(self, s_sr):
+        s, sr = _extract_s_sr(s_sr)
+        frame_length, step_length = _extract_frame_step_length(
+            sr, self.frame_length, self.step_length)
+        # ====== extract pitch ====== #
+        pitch_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
+            fmax=self.fmax, threshold=self.threshold, otype='pitch',
+            algorithm=self.algo)
+        if self.f0:
+            f0_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
+                fmax=self.fmax, threshold=self.threshold, otype='f0',
+                algorithm=self.algo)
+            return {'pitch': pitch_freq, 'f0': f0_freq}
+        return {'pitch': pitch_freq}
 
 
+class VADextractor(Extractor):
+
+    def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
+                 feat_type='energy'):
+        super(VADextractor, self).__init__()
+        self.nb_mixture = int(nb_mixture)
+        self.nb_train_it = int(nb_train_it)
+        self.smooth_window = int(smooth_window)
+        self.feat_type = str(feat_type).lower()
+
+    def _transform(self, feat):
+        # ====== select features type ====== #
+        features = feat[self.feat_type]
+        # ====== calculate VAD ====== #
+        vad, vad_threshold = vad_energy(log_energy=features.ravel(),
+            distrib_nb=self.nb_mixture, nb_train_it=self.nb_train_it)
+        if self.smooth_window > 0:
+            # at least 2 voice frames
+            threshold = (2. / self.smooth_window)
+            vad = smooth(
+                vad, win=self.smooth_window, window='flat') >= threshold
+        # ====== vad is only 0 and 1 so 'uint8' is enough ====== #
+        vad = vad.astype('uint8')
+        return {'vad': vad, 'vad_threshold': float(vad_threshold)}
+
+
+class AcousticNorm(Extractor):
+
+    def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
+                 win_length=301, var_norm=True, rasta=True,
+                 feat_type=('mspec', 'spec', 'mfcc',
+                            'qspec', 'qmfcc', 'qmspec')):
+        super(AcousticNorm, self).__init__()
+        self.mean_var_norm = bool(mean_var_norm)
+        self.window_mean_var_norm = bool(window_mean_var_norm)
+        self.rasta = bool(rasta)
+        self.var_norm = bool(var_norm)
+        # ====== check win_length ====== #
+        win_length = int(win_length)
+        if win_length % 2 == 0:
+            raise ValueError("win_length must be odd number")
+        if win_length < 3:
+            raise ValueError("win_length must >= 3")
+        self.win_length = win_length
+        # ====== check which features will be normalized ====== #
+        self.feat_type = tuple([feat.lower()
+            for feat in as_tuple(feat_type, t=str)])
+
+    def _transform(self, feat):
+        if not isinstance(feat, Mapping):
+            raise ValueError("AcousticNorm only transform dictionary of: feature "
+                             "name -> features matrices into normalized features,"
+                             "the given input is not dictionary")
+        feat_normalized = {}
+        # all `features` is [t, f] shape
+        for name, features in feat.iteritems():
+            if name in self.feat_type:
+                features = features.T
+                if 'mfcc' in name and self.rasta:
+                    features = rastafilt(features)
+                if self.mean_var_norm:
+                    features = mvn(features, varnorm=self.var_norm)
+                if self.window_mean_var_norm:
+                    features = wmvn(features, w=self.win_length,
+                                    varnorm=self.var_norm)
+                # transpose back to [t, f]
+                features = features.T
+            feat_normalized[name] = features
+        return feat_normalized
+
+
+# ===========================================================================
+# Spectrogram manipulation
+# ===========================================================================
 def save(file_or_path, s, sr, subtype=None):
     '''
     Parameters
@@ -236,27 +424,6 @@ def save(file_or_path, s, sr, subtype=None):
     return write(file_or_path, s, sr, subtype=subtype)
 
 
-# ===========================================================================
-# Spectrogram manipulation
-# ===========================================================================
-@cache_memory
-def __num_two_factors(x):
-    """return number of times x is divideable for 2"""
-    if x <= 0:
-        return 0
-    num_twos = 0
-    while x % 2 == 0:
-        num_twos += 1
-        x //= 2
-    return num_twos
-
-
-@cache_memory
-def __max_fft_bins(sr, n_fft, fmax):
-    return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
-                                        endpoint=True)) if j >= fmax][0]
-
-
 def __to_separated_indices(idx, min_distance=1, min_length=8):
     """ For example:
     min_distance = 1
@@ -281,293 +448,5 @@ def __to_separated_indices(idx, min_distance=1, min_length=8):
             segments.append([])
             n += 1
     segments[-1].append(idx[-1])
-    return [(s[0], s[-1] + 1) for s in segments if len(s) >= min_length]
-
-
-def speech_features(s, sr=None,
-                    win=0.02, hop=0.01, window='hann',
-                    nb_melfilters=None, nb_ceps=None,
-                    get_spec=True, get_qspec=False, get_phase=False,
-                    get_pitch=False, get_f0=False,
-                    get_vad=True, vad_smooth=3, vad_minlen=0.1,
-                    get_energy=False, get_delta=False,
-                    fmin=64, fmax=None, sr_new=None,
-                    pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
-                    cqt_bins=96, preemphasis=None,
-                    center=True, power=2, log=True,
-                    return_raw=False, backend='odin'):
-    """ Automatically extract multiple acoustic representation of
-    speech features
-
-    Parameters
-    ----------
-    s: np.ndarray
-        raw signal
-    sr: int
-        sample rate
-    win: float
-        window length in millisecond
-    hop: float
-        hop length between windows, in millisecond
-    nb_melfilters: int, or None
-        number of Mel bands to generate, if None, mel-filter banks features
-        won't be returned
-    nb_ceps: int, or None
-        number of MFCCs to return, if None, mfcc coefficients won't be
-        returned
-    get_spec: bool
-        if True, include the log-power spectrogram
-    get_qspec: bool
-        if True, return Q-transform coefficients
-    get_phase: bool
-        if True, return phase components of STFT
-    get_pitch:
-        if True, include the Pitch frequency (F0)
-    get_vad: int, bool
-        if True, include the indicators of voice activities detection.
-        if int, `get_vad` is the number of Gaussian mixture components for VAD.
-        by default, use 2 distribution.
-    get_energy: bool
-        if True, include the log energy of each frames
-    get_delta: bool or int
-        if True and > 0, for each features append the delta with given order-th
-        (e.g. delta=2 will include: delta1 and delta2)
-    fmin : float > 0 [scalar]
-        lower frequency cutoff (if you work with other voice than human speech,
-        set `fmin` to 20Hz).
-    fmax : float > 0 [scalar]
-        upper frequency cutoff.
-    sr_new: int or None
-        new sample rate
-    preemphasis: float `(0, 1)`, or None
-        pre-emphasis coefficience
-    pitch_threshold: float in `(0, 1)`
-        Voice/unvoiced threshold for pitch tracking. (Default is 0.3)
-    pitch_fmax: float
-        maximum frequency of pitch. (Default is 260 Hz)
-    pitch_algo: 'swipe', 'rapt', 'avg'
-        SWIPE - A Saw-tooth Waveform Inspired Pitch Estimation.
-        RAPT - a robust algorithm for pitch tracking.
-        avg - apply swipe and rapt at the same time, then take average.
-        Default is 'SWIPE'
-    vad_smooth: int, bool
-        window length to smooth the vad indices.
-        If True default window length is 3.
-    vad_minlen: float (in second)
-        the minimum length of audio segments that can be considered
-        speech.
-    cqt_bins : int > 0
-        Number of frequency bins for constant Q-transform, starting at `fmin`
-    center : boolean
-        - If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
-    power : float > 0 [scalar]
-        Exponent for the magnitude spectrogram.
-        e.g., 1 for energy, 2 for power, etc.
-    log: bool
-        if True, convert all power spectrogram to DB
-    return_raw: bool
-        if True, return downsampled raw signal
-    backend: 'odin', 'sptk'
-        support backend for calculating the spectra
-
-    Return
-    ------
-    y = {
-        'mfcc': np.ndarray (txd) - float32,
-        'energy': np.ndarray (txd) - float32,
-        'spec': np.ndarray (txd) - float32,
-        'mspec': np.ndarray (txd) - float32,
-
-        'qspec': np.ndarray (txd) - float32,
-        'qmspec': np.ndarray (txd) - float32,
-        'qmfcc': np.ndarray (txd) - float32,
-
-        'phase': np.ndarray (txd) - float32,
-        'pitch': np.ndarray (txd) - float32,
-        'vad': np.ndarray (t,) - uint8
-    }
-    (txd): time x features
-    """
-    from odin.fuel import Data
-    # file path
-    if is_string(s):
-        path = s
-        s, sr_ = read(path)
-        if sr_ is None and sr is None:
-            raise ValueError("Cannot get sample rate from file: %s" % path)
-        if sr_ is not None:
-            sr = sr_
-    # Data object
-    elif isinstance(s, Data):
-        s = s[:]
-    # check valid 1-D numpy array
-    if np.prod(s.shape) == np.max(s.shape):
-        s = s.ravel()
-    else:
-        raise Exception('Speech Feature Extraction only accept 1-D signal')
-    s = s.astype('float32')
-    # resample if necessary
-    if sr_new is not None and int(sr_new) != int(sr):
-        s = resample(s, sr, sr_new, axis=0, best_algorithm=False)
-        sr = sr_new
-    # ====== check other info ====== #
-    if fmax is None:
-        fmax = sr // 2
-    if fmin is None or fmin < 0 or fmin >= fmax:
-        fmin = 0
-    if pitch_fmax is None:
-        pitch_fmax = fmax
-    win_length = int(win * sr)
-    # n_fft must be 2^x
-    n_fft = 2 ** int(np.ceil(np.log2(win_length)))
-    if hop is not None:
-        hop_length = int(hop * sr) # hop_length must be 2^x
-    else:
-        hop_length = n_fft // 4
-    # nb_ceps += 1 # increase one so we can ignore the first MFCC
-    # ====== 5: extract pitch features ====== #
-    pitch_freq = None
-    if get_pitch:
-        pitch_freq = pitch_track(s, sr, hop_length, fmin=fmin,
-            fmax=pitch_fmax, threshold=pitch_threshold, otype='pitch',
-            algorithm=pitch_algo).reshape(-1, 1)
-    f0_freq = None
-    if get_f0:
-        f0_freq = pitch_track(s, sr, hop_length, fmin=fmin,
-            fmax=pitch_fmax, threshold=pitch_threshold, otype='f0',
-            algorithm=pitch_algo).reshape(-1, 1)
-    # ====== 0: extract Constant Q-transform ====== #
-    q_melspectrogram = None
-    q_mfcc = None
-    qspec = None
-    qphase = None
-    # qspec requires librosa
-    if get_qspec:
-        from librosa.core import constantq
-        # auto adjust bins_per_octave to get maximum range of frequency
-        bins_per_octave = np.ceil(float(cqt_bins - 1) / np.log2(sr / 2. / fmin)) + 1
-        # adjust the bins_per_octave to make acceptable hop_length
-        # i.e. 2_factors(hop_length) < [ceil(cqt_bins / bins_per_octave) - 1]
-        if __num_two_factors(hop_length) < np.ceil(cqt_bins / bins_per_octave) - 1:
-            bins_per_octave = np.ceil(cqt_bins / (__num_two_factors(hop_length) + 1))
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=DeprecationWarning)
-            qtrans = constantq.cqt(s, sr=sr, hop_length=hop_length, n_bins=cqt_bins,
-                                   bins_per_octave=int(bins_per_octave),
-                                   fmin=fmin, tuning=0.0, real=False, norm=1,
-                                   filter_scale=1., sparsity=0.01).astype('complex64')
-        # get log power Q-spectrogram
-        Q = spectra(S=qtrans.T, sr=sr,
-                    nb_melfilters=nb_melfilters, nb_ceps=nb_ceps,
-                    fmin=fmin, fmax=fmax, power=2.0, log=True,
-                    backend='odin')
-        qspec = Q['spec']
-        q_melspectrogram = Q['mspec'] if 'mspec' in Q else None
-        q_mfcc = Q['mfcc'] if 'mfcc' in Q else None
-        qphase = Q['phase']
-    # ====== 1: extract STFT and Spectrogram ====== #
-    # no padding for center
-    feat = spectra(sr=sr, y=s, n_fft=n_fft, hop_length=hop_length,
-                   window=window, nb_melfilters=nb_melfilters,
-                   nb_ceps=nb_ceps, fmin=fmin, fmax=fmax,
-                   power=power, log=log, center=center,
-                   preemphasis=preemphasis, backend=backend)
-    # ====== 4: extract spectrogram ====== #
-    spec = feat['spec']
-    mspec = feat['mspec'] if 'mspec' in feat else None
-    mfcc = feat['mfcc'] if 'mfcc' in feat else None
-    log_energy = feat['energy'][:, None] # always 2D
-    # ====== adjust the length of pitch and f0 equal to spec ====== #
-    if pitch_freq is not None:
-        if len(pitch_freq) > len(spec):
-            n = len(pitch_freq) - len(spec)
-            pitch_freq = pitch_freq[n // 2:-int(np.ceil(n / 2))]
-        elif len(pitch_freq) < len(spec):
-            _ = len(spec) - len(pitch_freq)
-            pitch_freq = np.pad(pitch_freq, ((0, _), (0, 0)), mode='constant')
-    if f0_freq is not None:
-        if len(f0_freq) > len(spec):
-            n = len(f0_freq) - len(spec)
-            f0_freq = f0_freq[n // 2:-int(np.ceil(n / 2))]
-        elif len(f0_freq) < len(spec):
-            _ = len(spec) - len(f0_freq)
-            f0_freq = np.pad(f0_freq, ((0, _), (0, 0)), mode='constant')
-    # ====== 3: extract VAD ====== #
-    vad = None
-    if get_vad:
-        distribNb, nbTrainIt = 3, 24
-        if is_number(get_vad) and get_vad >= 2:
-            distribNb = int(get_vad)
-        vad, vad_threshold = vad_energy(log_energy.ravel(), distrib_nb=distribNb,
-                                        nb_train_it=nbTrainIt)
-        vad = vad.astype('uint8')
-        if vad_smooth:
-            vad_smooth = 3 if int(vad_smooth) == 1 else vad_smooth
-            # at least 2 voice frames
-            vad = smooth(vad, win=vad_smooth, window='flat') >= 2. / vad_smooth
-            vad = vad.astype('uint8')
-    # ====== 7: compute delta ====== #
-    if get_delta and get_delta > 0:
-        get_delta = int(get_delta)
-        if log_energy is not None:
-            log_energy = np.concatenate(
-                [log_energy] + compute_delta(log_energy, order=get_delta),
-                axis=1)
-        # STFT
-        if mspec is not None:
-            mspec = np.concatenate(
-                [mspec] + compute_delta(mspec, order=get_delta),
-                axis=1)
-        if mfcc is not None:
-            mfcc = np.concatenate(
-                [mfcc] + compute_delta(mfcc, order=get_delta),
-                axis=1)
-        # Q-transform
-        if q_melspectrogram is not None:
-            q_melspectrogram = np.concatenate(
-                [q_melspectrogram] + compute_delta(q_melspectrogram, order=get_delta),
-                axis=1)
-        if q_mfcc is not None:
-            q_mfcc = np.concatenate(
-                [q_mfcc] + compute_delta(q_mfcc, order=get_delta),
-                axis=1)
-        # Pitch and F0
-        if get_pitch:
-            pitch_freq = np.concatenate(
-                [pitch_freq] + compute_delta(pitch_freq, order=get_delta),
-                axis=1)
-        if get_f0:
-            f0_freq = np.concatenate(
-                [f0_freq] + compute_delta(f0_freq, order=get_delta),
-                axis=1)
-    # ====== 8: make sure CQT give the same length with STFT ====== #
-    if get_qspec and qspec.shape[0] > spec.shape[0]:
-        n = qspec.shape[0] - spec.shape[0]
-        qspec = qspec[n // 2:-int(np.ceil(n / 2))]
-        if qphase is not None:
-            qphase = qphase[n // 2:-int(np.ceil(n / 2))]
-        if q_melspectrogram is not None:
-            q_melspectrogram = q_melspectrogram[n // 2:-int(np.ceil(n / 2))]
-        if q_mfcc is not None:
-            q_mfcc = q_mfcc[n // 2:-int(np.ceil(n / 2))]
-    return OrderedDict([
-        ('spec', spec if get_spec else None),
-        ('mspec', None if mspec is None else mspec),
-        ('mfcc', None if mfcc is None else mfcc),
-        ('energy', log_energy if get_energy else None),
-
-        ('qspec', qspec if get_qspec else None),
-        ('qmspec', None if q_melspectrogram is None else q_melspectrogram),
-        ('qmfcc', None if q_mfcc is None else q_mfcc),
-
-        ('phase', feat['phase'] if get_phase else None),
-        ('qphase', qphase if get_phase and get_qspec else None),
-
-        ('f0', f0_freq if get_f0 else None),
-        ('pitch', pitch_freq if get_pitch else None),
-
-        ('vad', vad if get_vad else None),
-        ('raw', s if return_raw else None)
-    ])
+    return [(s[0], s[-1] + 1) for s in segments
+            if len(s) >= min_length]
