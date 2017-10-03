@@ -6,10 +6,10 @@ from six import add_metaclass
 from abc import ABCMeta, abstractmethod
 from collections import Mapping
 
-from odin.utils import get_all_files, is_string, as_tuple, is_pickleable
-
-
+import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
+
+from odin.utils import get_all_files, is_string, as_tuple, is_pickleable
 from .signal import delta
 
 
@@ -75,7 +75,7 @@ def _check_feat_name(feat_type, name):
 
 class DeltaExtractor(Extractor):
 
-    def __init__(self, width=9, order=1, axis=-1, feat_type=None):
+    def __init__(self, width=9, order=1, axis=0, feat_type=None):
         super(DeltaExtractor, self).__init__()
         # ====== check width ====== #
         width = int(width)
@@ -83,16 +83,25 @@ class DeltaExtractor(Extractor):
             raise ValueError("`width` must be odd integer >= 3, give value: %d" % width)
         self.width = width
         # ====== check order ====== #
-        order = int(order)
-        if order < 0:
-            raise ValueError("`order` must >= 0, given value: %d" % order)
-        self.order = order
+        self.order = as_tuple(order, t=int)
         # ====== axis ====== #
         self.axis = axis
         self.feat_type = feat_type
 
     def _transform(self, X):
-        pass
+        if isinstance(X, Mapping):
+            max_order = max(self.order)
+            for name, feat in X.items():
+                if _check_feat_name(self.feat_type, name):
+                    all_deltas = delta(data=feat, width=self.width,
+                                       order=max_order, axis=self.axis)
+                    if not isinstance(all_deltas, (tuple, list)):
+                        all_deltas = (all_deltas,)
+                    all_deltas = tuple([d for i, d in enumerate(all_deltas)
+                                        if (i + 1) in self.order])
+                    feat = np.concatenate((feat,) + all_deltas, axis=-1)
+                X[name] = feat
+        return X
 
 
 class EqualizeShape0(Extractor):
@@ -116,7 +125,7 @@ class EqualizeShape0(Extractor):
                     for name, feat in X.iteritems()
                     if _check_feat_name(self.feat_type, name))
             # ====== equalize ====== #
-            for name, feat in X.iteritems():
+            for name, feat in X.items():
                 # cut the features in left and right
                 # if the shape[0] is longer
                 if _check_feat_name(self.feat_type, name) and feat.shape[0] != n:

@@ -783,7 +783,7 @@ def shifted_deltas(x, N=7, d=1, P=3, k=7):
     nobs = x.shape[1]
     x = x[:N]
     w = 2 * d + 1
-    dx = delta(x, w, axis=-1)
+    dx = delta(x, w, order=1, axis=-1)
     sdc = np.empty((k * N, nobs))
     sdc[:] = np.tile(dx[:, -1], k).reshape(k * N, 1)
     for ix in range(k):

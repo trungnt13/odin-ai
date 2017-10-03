@@ -8,16 +8,18 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import re
 import six
 import math
 import copy
 import warnings
-from collections import OrderedDict, Mapping
+from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
 from scipy.signal import lfilter
 
-from odin.utils import is_number, cache_memory, is_string, as_tuple
+from odin.utils import (is_number, cache_memory, is_string, as_tuple,
+                        get_all_files, is_pickleable)
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
@@ -100,9 +102,19 @@ def _max_fft_bins(sr, n_fft, fmax):
 # ===========================================================================
 class AudioReader(Extractor):
 
+    """ Return a dictionary of
+    {
+        'raw': loaded_signal,
+        'duration': in second,
+        'sr': sample rate,
+        'path': path_to_loaded_file
+    }
+
+    """
+
     def __init__(self, sr=None, sr_new=None, best_resample=True,
                  remove_dc_n_dither=True, preemphasis=0.97,
-                 dtype=None, saved=False):
+                 dtype=None):
         super(AudioReader, self).__init__()
         self.sr = sr
         self.sr_new = sr_new
@@ -110,10 +122,33 @@ class AudioReader(Extractor):
         self.remove_dc_n_dither = bool(remove_dc_n_dither)
         self.preemphasis = preemphasis
         self.dtype = dtype
-        self.saved = bool(saved)
 
     def _transform(self, path_or_array):
         sr = None # by default, we don't know sample rate
+        path = None
+        duration = None
+        # ====== check path_or_array ====== #
+        if isinstance(path_or_array, (tuple, list)):
+            if len(path_or_array) != 2:
+                raise ValueError("`path_or_array` can be a tuple or list of "
+                    "length 2, which contains: (string_path, sr) or "
+                    "(sr, string_path) or (raw_array, sr) or (sr, raw_array).")
+            if is_number(path_or_array[0]):
+                sr, path_or_array = path_or_array
+            else:
+                path_or_array, sr = path_or_array
+        elif isinstance(path_or_array, Mapping):
+            if 'sr' in path_or_array:
+                sr = path_or_array['sr']
+            if 'raw' in path_or_array:
+                path_or_array = path_or_array['raw']
+            elif 'path' in path_or_array:
+                path_or_array = path_or_array['path']
+            else:
+                raise ValueError('`path_or_array` can be a dictionary, contains '
+                    'following key: sr, raw, path. One of the key `raw` for '
+                    'raw array signal, or `path` for path to audio file must '
+                    'be specified.')
         # ====== read audio from path or opened file ====== #
         if is_string(path_or_array) or isinstance(path_or_array, file):
             if isinstance(path_or_array, file):
@@ -180,9 +215,12 @@ class AudioReader(Extractor):
         # ====== dtype ====== #
         if self.dtype is not None:
             s = s.astype(self.dtype)
-        if self.saved:
-            return {'raw': s, 'sr': sr}
-        return (s, sr)
+        # ====== get duration if possible ====== #
+        if sr is not None:
+            duration = max(s.shape) / sr
+        return {'raw': s, 'sr': sr,
+                'duration': duration, # in second
+                'path': os.path.abspath(path) if path is not None else None}
 
 
 class SpectraExtractor(Extractor):
@@ -401,6 +439,100 @@ class AcousticNorm(Extractor):
                 # transpose back to [t, f]
             feat_normalized[name] = features
         return feat_normalized
+
+
+class Read3ColSAD(Extractor):
+    """ Read3ColSAD simple helper for applying 3 col
+    SAD (name, start-in-second, end-in-second) to extracted acoustic features
+
+    Parameters
+    ----------
+    path: str
+        path to folder contain all SAD files
+    name_converter: callable
+        convert the 'path' element in features dictionary (provided to
+        `transform`) to name for search in parsed SAD dictionary.
+    file_regex: str
+        regular expression for filtering the files name
+    separated: bool
+        if True, cut files features based on SAD segments (i.e. name:start:end)
+        otherwise, merge all SAD frames of once file into single matrix
+    keep_unvoiced: bool
+        if True, keep all the the features of utterances even though
+        cannot file SAD for it.
+        otherwise, return None.
+    feat_type: list of string
+        all features type will be applied using given SAD
+
+    Return
+    ------
+    add 'sad': [(start, end), ...] to the features dictionary
+    each features specified in `feat_type` is cutted into segments of SAD, or
+    concatenated into single matrix (with `separated=False`)
+
+    """
+
+    def __init__(self, path, step_length, name_converter=None, file_regex='.*',
+                 separated=True, keep_unvoiced=False,
+                 feat_type=('spec', 'mspec', 'mfcc',
+                            'qspec', 'qmspec', 'qmfcc',
+                            'pitch', 'f0', 'vad', 'energy')):
+        super(Read3ColSAD, self).__init__()
+        self.separated = bool(separated)
+        self.keep_unvoiced = bool(keep_unvoiced)
+        self.feat_type = tuple([str(feat) for feat in feat_type])
+        self.step_length = float(step_length)
+        # ====== file regex ====== #
+        file_regex = re.compile(str(file_regex))
+        # ====== name_converter ====== #
+        if name_converter is not None:
+            if not callable(name_converter) or not is_pickleable(name_converter):
+                raise ValueError("`name_converter` must be picklable function.")
+        self.name_converter = name_converter
+        # ====== parse all file ====== #
+        if not os.path.isdir(path):
+            raise ValueError("`path` must be path to folder")
+        sad = defaultdict(list)
+        for f in get_all_files(path):
+            if file_regex.search(os.path.basename(f)) is not None:
+                with open(f, 'r') as f:
+                    for line in f:
+                        name, start, end = line.strip().split(' ')
+                        sad[name].append((float(start), float(end)))
+        self.sad = sad
+
+    def _transform(self, feats):
+        if 'path' in feats:
+            path = feats['path']
+            if self.name_converter is not None:
+                path = self.name_converter(path)
+            # ====== convert step_length ====== #
+            step_length = self.step_length
+            if step_length >= 1: # step_length is number of frames
+                step_length = step_length / feats['sr']
+            # ====== found SAD ====== #
+            if path in self.sad:
+                feats_sad = {name: X for name, X in feats.iteritems()
+                             if name not in self.feat_type}
+                sad = self.sad[path]
+                feats_sad['sad'] = sad
+                for start, end in sad:
+                    start = int(start / step_length)
+                    end = int(end / step_length)
+                    for ftype in self.feat_type:
+                        X = feats[ftype][start:end]
+                        if ftype not in feats_sad:
+                            feats_sad[ftype] = []
+                        feats_sad[ftype].append(X)
+                # concatenate sad segments
+                if not self.separated:
+                    for ftype in self.feat_type:
+                        feats_sad[ftype] = np.concatenate(
+                            feats_sad[ftype], axis=-1)
+                return feats_sad
+        if not self.keep_unvoiced:
+            return None
+        return feats
 
 
 # ===========================================================================
