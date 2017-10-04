@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import inspect
 
 from six import add_metaclass
 from abc import ABCMeta, abstractmethod
@@ -78,6 +79,33 @@ def _check_feat_name(feat_type, name):
     return name in feat_type
 
 
+class NameConverter(Extractor):
+
+    def __init__(self, converter, keys=None):
+        super(NameConverter, self).__init__()
+        # ====== check converter ====== #
+        from odin.utils.decorators import functionable
+        if not callable(converter):
+            raise ValueError("`converter` must be callable.")
+        if inspect.isfunction(converter):
+            self.converter = functionable(converter)
+        else:
+            self.converter = converter
+        # ====== check keys ====== #
+        self.keys = ('name', 'path') if keys is None else \
+            as_tuple(keys, t=str)
+
+    def _transform(self, X):
+        if isinstance(X, Mapping):
+            for key in self.keys:
+                name = X.get(key, None)
+                if is_string(name):
+                    break
+            name = self.converter(name)
+            X['name'] = str(name)
+        return X
+
+
 class DeltaExtractor(Extractor):
 
     def __init__(self, width=9, order=1, axis=0, feat_type=None):
@@ -110,7 +138,12 @@ class DeltaExtractor(Extractor):
 
 
 class EqualizeShape0(Extractor):
-    """ EqualizeShape0 """
+    """ EqualizeShape0
+
+    This Extractor shrink the shape of all given features in `feat_type`
+    to the same length.
+    THe final length is the `minimum length` of all given features.
+    """
 
     def __init__(self, feat_type):
         super(EqualizeShape0, self).__init__()

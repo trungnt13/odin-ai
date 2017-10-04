@@ -185,6 +185,8 @@ class Name2Trans(FeederRecipe):
 
     def __init__(self, converter_func, ref_idx=0):
         super(Name2Trans, self).__init__()
+        if inspect.isfunction(converter_func):
+            converter_func = functionable(converter_func)
         if not callable(converter_func):
             raise ValueError('"converter_func" must be callable.')
         if not is_pickleable(converter_func):

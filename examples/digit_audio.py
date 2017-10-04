@@ -42,25 +42,7 @@ features = ['mspec']
 # Get wav and process new dataset configuration
 # ===========================================================================
 # ====== process new features ====== #
-datapath = F.load_digit_wav()
-output_path = get_datasetpath(name='digit_feat', override=False)
-feat = F.SpeechProcessor(datapath, output_path,
-                         audio_ext='.wav',
-                         sr=None, sr_info={}, sr_new=None, best_resample=True,
-                         win=0.025, hop=hop_length,
-                         nb_melfilters=40, nb_ceps=13,
-                         get_spec=True, get_qspec=True, get_phase=True,
-                         get_pitch=True, get_f0=True,
-                         get_vad=nb_vad_mixture,
-                         get_energy=True, get_delta=2,
-                         fmin=64, fmax=None, preemphasis=0.97,
-                         pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
-                         vad_smooth=3, vad_minlen=0.05,
-                         pca=True, pca_whiten=False,
-                         save_stats=True, substitute_nan=None,
-                         dtype='float16', datatype='memmap',
-                         ncache=600, ncpu=12)
-feat.run()
+output_path = get_datasetpath(name='digit', override=False)
 ds = F.Dataset(output_path, read_only=True)
 print(ds)
 
@@ -82,7 +64,6 @@ print("Validation set")
 print(print_dist(stats.freqcount([int(i[0][0]) for i in valid]), show_number=True))
 print("Test set")
 print(print_dist(stats.freqcount([int(i[0][0]) for i in test]), show_number=True))
-
 # ===========================================================================
 # Create feeders
 # ===========================================================================
@@ -96,25 +77,23 @@ test = F.Feeder(F.DataDescriptor(data=data, indices=test),
 
 recipes = [
     F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
-    F.recipes.Normalization(
-        local_normalize=True,
-        data_idx=None
-    ),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
-                         label_transform=F.recipes.last_seen),
+                         label_transform=F.recipes.last_seen,
+                         label_idx=-1),
 ]
 train.set_recipes(recipes)
 test.set_recipes(recipes)
 valid.set_recipes(recipes)
-print('Feature shape:', train.shape)
-feat_shape = (None,) + train.shape[1:]
+print(train)
 
 with open('/tmp/test_feeder', 'w') as f:
     cPickle.dump(test, f, protocol=2)
-X = K.placeholder(shape=feat_shape, name='X')
-y = K.placeholder(shape=(None,), dtype='int32', name='y')
 
+inputs = [K.placeholder(shape=(None,) + shape[1:], name='input_%d' % i)
+          for i, shape in enumerate(train.shape)]
+X = inputs[:-1]
+y = inputs[-1]
 # ===========================================================================
 # Create network
 # ===========================================================================
@@ -143,7 +122,7 @@ with N.nnop_scope(ops=['Pool'], mode='max', pool_size=2):
     ], debug=True)
 y_pred_logits = f(X)
 y_pred_prob = tf.nn.softmax(y_pred_logits)
-y_onehot = tf.one_hot(y, depth=nb_classes)
+y_onehot = tf.one_hot(tf.cast(y, dtype='int32'), depth=nb_classes)
 # ====== create cost ====== #
 cost_ce = tf.losses.softmax_cross_entropy(y_onehot, y_pred_logits)
 cost_acc = K.metrics.categorical_accuracy(y_pred_prob, y)

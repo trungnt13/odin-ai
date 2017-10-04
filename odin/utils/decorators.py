@@ -464,19 +464,29 @@ class functionable(object):
 
     """ Class handles save and load a function with its arguments
 
+    This function does perfectly for following cases:
+        - Pickling `lambda` function without external dependencies.
+        - Pickling top-level function.
+        - Pickling imported function.
+
     Parameters
     ----------
+    func: function
+        lambda or function
     arg: list
-        arguments list for given function
+        stored arguments list for given function
     kwargs: dict
-        keyword arguments for given function
+        stored keyword arguments for given function
 
     Note
     ----
-    Please use this function with care, only primitive variables
-    are stored in pickling the function.
-    Avoid involving closure in creating function (because closure cannot
-    be serialized with any mean), for example:
+     - Please use this function with care, only primitive variables
+     are stored in pickling the function.
+     - Avoid involving closure in creating function (because closure cannot
+     be serialized with any mean), for example:
+
+    Example
+    -------
     >>> # Wrong way:
     >>> lambda: obj.y
     >>> # Good way (explicitly store the obj in default arguments):
@@ -496,7 +506,7 @@ class functionable(object):
         try:
             self._sandbox = cPickle.dumps(self._function,
                 protocol=cPickle.HIGHEST_PROTOCOL)
-        except:
+        except Exception:
             self._sandbox = _serialize_function_sandbox(func, self._source)
         # ====== store argsmap ====== #
         argspec = inspect.getargspec(func)

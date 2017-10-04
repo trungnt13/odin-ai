@@ -35,7 +35,7 @@ pitch_threshold = 0.8
 pitch_algo = 'rapt'
 datapath = F.load_digit_wav()
 print("Found %d (.wav) files" % len(datapath.keys()))
-output_path = utils.get_datasetpath(name='digit_feat')
+output_path = utils.get_datasetpath(name='digit')
 # ===========================================================================
 # Extractor
 # ===========================================================================
@@ -44,6 +44,7 @@ extractors = [
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True,
                           preemphasis=0.97, dtype='float32'),
+    pp.NameConverter(converter=lambda x:os.path.basename(x).replace('.wav', '')),
     pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
                                nfft=512, nmels=40, nceps=20,
                                fmin=64, fmax=4000, padding=padding),
@@ -136,7 +137,7 @@ for name, start, end in indices:
 # ====== Visual cluster ====== #
 if PCA:
     from sklearn.manifold import TSNE
-    feat = 'spec'
+    feat = 'mspec'
     X = []; y = []
     feat_pca = ds[feat + '_pca']
     for f, (start, end) in ds['indices']:
