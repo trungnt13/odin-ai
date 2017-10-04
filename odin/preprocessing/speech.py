@@ -110,6 +110,11 @@ class AudioReader(Extractor):
         'path': path_to_loaded_file
     }
 
+    Note
+    ----
+    Dithering introduces white noise when you save the raw array into
+    audio file.
+
     """
 
     def __init__(self, sr=None, sr_new=None, best_resample=True,
@@ -241,6 +246,15 @@ class SpectraExtractor(Extractor):
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.hanning`
         - a vector or array of length `n_fft`
+    power : float > 0 [scalar]
+        Exponent for the magnitude spectrogram.
+        e.g., 1 for energy (or magnitude), 2 for power, etc.
+    log: bool
+        if True, convert all power spectrogram to DB
+    padding : bool
+        - If `True`, the signal `y` is padded so that frame
+          `D[:, t]` is centered at `y[t * hop_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
     """
 
     def __init__(self, frame_length, step_length=None, nfft=512, window='hann',
@@ -258,10 +272,10 @@ class SpectraExtractor(Extractor):
         self.fmin = fmin
         self.fmax = fmax
         # ====== power spectrum ====== #
-        self.power = power
-        self.log = log
+        self.power = float(power)
+        self.log = bool(log)
         # ====== others ====== #
-        self.padding = padding
+        self.padding = bool(padding)
 
     def _transform(self, s_sr):
         s, sr = _extract_s_sr(s_sr)
@@ -275,7 +289,6 @@ class SpectraExtractor(Extractor):
                        fmin=self.fmin, fmax=self.fmax,
                        top_db=80., power=self.power, log=self.log,
                        padding=self.padding)
-        feat['sr'] = sr
         return feat
 
 
@@ -322,7 +335,6 @@ class CQTExtractor(Extractor):
                        padding=self.padding)
         # ====== add 'q' prefix for CQT features ====== #
         feat = {'q' + name: X for name, X in feat.iteritems()}
-        feat['sr'] = sr
         return feat
 
 
@@ -392,6 +404,9 @@ class AcousticNorm(Extractor):
         "Shifted Delta Coefficients", if `sdc` > 0, the
         shifted delta features will be append to MFCCs
 
+    Note
+    ----
+    This normalization can destroy inverted raw signal from spectrgram
     """
 
     def __init__(self, mean_var_norm=True, window_mean_var_norm=True,

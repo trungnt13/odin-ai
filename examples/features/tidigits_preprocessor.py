@@ -14,15 +14,15 @@ import shutil
 
 import numpy as np
 
-from odin.visual import plot_save, plot_audio
-from odin.preprocessing import speech
+from odin.visual import plot_save
+from odin import preprocessing as pp
 from odin import nnet as N, fuel as F, backend as K
 from odin.utils import get_all_files, get_all_ext, exec_commands
 
 README = \
 """
 Original sample rate: 20,000 Hz
-Downsampled sample rate: 16,000 Hz
+Downsampled sample rate: 8,000 Hz
 
 Category       Symbol    Number    Age Range (years)
   Man            M        111           21 - 70
@@ -126,23 +126,26 @@ if not os.path.exists(wav_path):
             for path in audio_files]
     exec_commands(cmds, print_progress=True)
 # ====== create new segments list ====== #
-segments = get_all_files(wav_path, filter_func=lambda f: f[-4:] == '.wav')
-# remove .wav extension
-segments = [[os.path.basename(path).replace('.wav', ''), path, 0, -1, 0]
-            for path in segments]
+segments = get_all_files(wav_path, filter_func=lambda f: f[-4:] == '.wav')[:25]
 # ====== store everything in one dataset ====== #
 if args.reset and os.path.exists(wav_ds):
     shutil.rmtree(wav_ds)
 if not os.path.exists(wav_ds):
-    wave = F.WaveProcessor(segments, output_path=wav_ds,
-                           sr=None, sr_info={}, sr_new=16000, best_resample=True,
-                           audio_ext='.wav', pcm=False, remove_dc_offset=True,
-                           maxlen=None, dtype='float16', datatype='memmap',
-                           ncache=0.2, ncpu=10)
+    wave = pp.FeatureProcessor(segments,
+        extractor=[
+            pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
+                                  remove_dc_n_dither=True, preemphasis=0.97,
+                                  dtype='float16'),
+            pp.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
+                             keys='path')
+        ],
+        path=wav_ds, ncpu=1)
     wave.run()
-    wave.validate('/tmp/tidigits_report', nb_samples=25)
+    pp.validate_features(wave, '/tmp/tidigits_wave', override=True,
+                         nb_samples=8)
     with open(os.path.join(wav_ds, 'README'), 'w') as f:
         f.write(README)
+exit()
 # ===========================================================================
 # Acoustic feature extractor
 # ===========================================================================
@@ -150,6 +153,32 @@ if not os.path.exists(wav_ds):
 ds = F.Dataset(wav_ds, read_only=True)
 print(ds)
 # ====== processing ====== #
+extractors = [
+    pp.speech.AudioReader(sr_new=8000, best_resample=True,
+                          remove_dc_n_dither=True,
+                          preemphasis=0.97, dtype='float32'),
+    pp.NameConverter(converter=lambda x:os.path.basename(x).replace('.wav', '')),
+    pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
+                               nfft=512, nmels=40, nceps=20,
+                               fmin=64, fmax=4000, padding=padding),
+    pp.speech.CQTExtractor(frame_length=0.025, step_length=0.005,
+                           nbins=96, nmels=40, nceps=20,
+                           fmin=64, fmax=4000, padding=padding),
+    pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
+                             threshold=0.12, f0=True, algo='swipe'),
+    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
+                           feat_type='energy'),
+    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
+                           rasta=True, sdc=1,
+                           feat_type=('mspec', 'mfcc',
+                                      'qspec', 'qmfcc', 'qmspec')),
+    pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
+                      feat_type=('mspec', 'qmspec')),
+    pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
+                                 'qspec', 'qmspec', 'qmfcc',
+                                 'pitch', 'f0', 'vad', 'energy')),
+    pp.RunningStatistics()
+]
 if os.path.exists(outpath):
     print("Remove old dataset at path:", outpath)
     shutil.rmtree(outpath)

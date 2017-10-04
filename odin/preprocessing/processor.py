@@ -40,6 +40,29 @@ _default_module = re.compile('__.*__')
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _special_cases(X, feat_name, file_name, ds, path):
+    """ Same special for checking the integrity of the features """
+    if feat_name == 'raw':
+        from .speech import save
+        sr = ds['sr'][file_name]
+        if '.wav' not in file_name:
+            file_name += '.wav'
+        save(os.path.join(path, file_name), X.astype('float32'), sr=sr)
+    elif feat_name == 'spec':
+        from .speech import SpectraExtractor, _extract_frame_step_length, save
+        from .signal import ispec
+        sr = ds['sr'][file_name]
+        extractor = [i for _, i in ds['pipeline'].steps
+                     if isinstance(i, SpectraExtractor)][0]
+        frame_length, step_length = _extract_frame_step_length(sr,
+            extractor.frame_length, extractor.step_length)
+        raw = ispec(X, frame_length=frame_length, step_length=step_length,
+                    window=extractor.window, padding=extractor.padding,
+                    db=extractor.log)
+        file_name += '-ispec.wav'
+        save(os.path.join(path, file_name), raw.astype('float32'), sr=sr)
+
+
 def validate_features(ds_or_processor, path, nb_samples=25,
                       override=False, seed=12082518):
     def logger(title, tag, check):
@@ -51,12 +74,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
               ctext("✓", text_color) if check else ctext("✗", text_color))
     import matplotlib
     matplotlib.use('Agg')
-    from matplotlib import pyplot as plt
     from odin.visual import plot_save, plot_features
     # ====== check path to dataset ====== #
     should_close_ds = True
     if isinstance(ds_or_processor, FeatureProcessor):
-        ds = Dataset(ds_or_processor.output_path, read_only=True)
+        ds = Dataset(ds_or_processor.path, read_only=True)
     elif is_string(ds_or_processor):
         ds = Dataset(ds_or_processor, read_only=True)
     elif isinstance(ds_or_processor, Dataset):
@@ -163,11 +185,12 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             dat = ds[feat_name][start:end]
             # No NaN value
             if np.any(np.isnan(dat)):
-                logger("NaN values in file: '%s'" % file_name, feat_name, False)
+                logger("NaN values", file_name + ':' + feat_name, False)
                 fail_test = True
             # not all value closed to zeros
             if np.all(np.isclose(dat, 0.)):
-                logger("All-closed-zeros values in file: '%s'" % file_name, feat_name, False)
+                logger("All-closed-zeros values", file_name + ':' + feat_name,
+                       False)
                 fail_test = True
             prog['Name'] = file_name
             prog.add(1)
@@ -181,10 +204,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 if X.ndim >= 1:
                     X = X[:]
                 if np.any(np.isnan(X)):
-                    logger("NaN values in '%s'" % stat_name, feat_name, False)
+                    logger("NaN values", feat_name + ':' + stat_name, False)
                     fail_test = True
                 if np.all(np.isclose(X, 0.)):
-                    logger("All-closed-zeros values in '%s'" % stat_name, feat_name, False)
+                    logger("All-closed-zeros values", feat_name + ':' + stat_name,
+                           False)
                     fail_test = True
             if not fail_test:
                 logger("Check statistics for: ", feat_name, True)
@@ -216,15 +240,23 @@ def validate_features(ds_or_processor, path, nb_samples=25,
     all_samples = np.random.choice(ds['indices'].keys(), size=nb_samples,
                                    replace=False)
     # plotting all samples
-    for sample in all_samples:
+    for file_name in all_samples:
         X = {}
         for feat_name in all_features:
             if feat_name in external_indices:
-                start, end = ds['indices_%s' % feat_name][sample]
+                start, end = ds['indices_%s' % feat_name][file_name]
             else:
-                start, end = ds['indices'][sample]
-            X[feat_name] = ds[feat_name][start:end]
-        plot_features(X, title=sample)
+                start, end = ds['indices'][file_name]
+            feat = ds[feat_name][start:end]
+            X[feat_name] = feat
+            # some special handling
+            try:
+                _special_cases(X=feat, feat_name=feat_name, file_name=file_name,
+                               ds=ds, path=path)
+            except Exception as e:
+                logger("Special case error: '%s'" % str(e),
+                       file_name + ':' + feat_name, False)
+        plot_features(X, title=file_name)
     # plotting the statistic
     for feat_name, stat_name in all_stats.iteritems():
         X = {name: ds[name][:]
