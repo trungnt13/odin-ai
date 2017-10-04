@@ -18,6 +18,7 @@ from collections import OrderedDict, Mapping, defaultdict
 import numpy as np
 from scipy.signal import lfilter
 
+from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable)
 from .base import Extractor
@@ -100,6 +101,53 @@ def _max_fft_bins(sr, n_fft, fmax):
 # ===========================================================================
 # Audio feature extractor
 # ===========================================================================
+class RawDSReader(Extractor):
+    """ This reader, read data directly from raw waveform processed dataset
+    The given Dataset must contains:
+     - 'raw': 1-D MmapData stored raw waveform
+     - 'sr': MmapDict, mapping file name -> sample rate (integer value)
+     - 'indices': MmapDict, mapping file name -> start, end index in 'raw'
+     - 'path' (optional)
+     - 'name' (optional)
+     - 'duration' (optional)
+    """
+
+    def __init__(self, path_or_ds):
+        super(RawDSReader, self).__init__()
+        # ====== check argument ====== #
+        if is_string(path_or_ds):
+            ds = Dataset(path_or_ds, read_only=True)
+        elif isinstance(path_or_ds, Dataset):
+            ds = path_or_ds
+        else:
+            raise ValueError("`path_or_ds` must be string path to a folder or "
+                             "a loaded Dataset.")
+        # ====== check the dataset ====== #
+        if 'raw' not in ds or not isinstance(ds['raw'], MmapData):
+            raise ValueError("Dataset at path:'%s' must contain 'raw' MmapData, "
+                             "which stored the raw waveform." % ds.path)
+        if 'sr' not in ds or not isinstance(ds['sr'], MmapDict):
+            raise ValueError("Dataset at path:'%s' must contain 'sr' MmapDict, "
+                             "which stored the sample rate (integer)." % ds.path)
+        if 'indices' not in ds or not isinstance(ds['indices'], MmapDict):
+            raise ValueError("Dataset at path:'%s' must contain 'indices' MmapDict, "
+                             "which stored the mapping: name->(start, end)" % ds.path)
+        self.ds = ds
+
+    def _transform(self, name):
+        start, end = self.ds['indices'][name]
+        raw = self.ds['raw'][start:end]
+        ret = {'raw': raw.astype('float32'),
+               'sr': int(self.ds['sr'][name])}
+        if 'duration' in self.ds:
+            ret['duration'] = float(self.ds['duration'][name])
+        if 'path' in self.ds:
+            ret['path'] = str(self.ds['path'][name])
+        if 'name' in self.ds:
+            ret['name'] = str(self.ds['name'][name])
+        return ret
+
+
 class AudioReader(Extractor):
 
     """ Return a dictionary of
@@ -381,6 +429,8 @@ class VADextractor(Extractor):
     def _transform(self, feat):
         # ====== select features type ====== #
         features = feat[self.feat_type]
+        if features.ndim > 1:
+            features = features.sum(axis=-1)
         # ====== calculate VAD ====== #
         vad, vad_threshold = vad_energy(log_energy=features.ravel(),
             distrib_nb=self.nb_mixture, nb_train_it=self.nb_train_it)

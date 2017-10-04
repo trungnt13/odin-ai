@@ -145,7 +145,6 @@ if not os.path.exists(wav_ds):
                          nb_samples=8)
     with open(os.path.join(wav_ds, 'README'), 'w') as f:
         f.write(README)
-exit()
 # ===========================================================================
 # Acoustic feature extractor
 # ===========================================================================
@@ -153,21 +152,20 @@ exit()
 ds = F.Dataset(wav_ds, read_only=True)
 print(ds)
 # ====== processing ====== #
+frame_length = 0.025
+step_length = 0.005
+nfft = 512
+nmels = 40
+nceps = 20
+padding = False
 extractors = [
-    pp.speech.AudioReader(sr_new=8000, best_resample=True,
-                          remove_dc_n_dither=True,
-                          preemphasis=0.97, dtype='float32'),
-    pp.NameConverter(converter=lambda x:os.path.basename(x).replace('.wav', '')),
-    pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
-                               nfft=512, nmels=40, nceps=20,
-                               fmin=64, fmax=4000, padding=padding),
-    pp.speech.CQTExtractor(frame_length=0.025, step_length=0.005,
-                           nbins=96, nmels=40, nceps=20,
-                           fmin=64, fmax=4000, padding=padding),
-    pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
-                             threshold=0.12, f0=True, algo='swipe'),
-    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
-                           feat_type='energy'),
+    pp.speech.RawDSReader(path_or_ds=ds),
+    pp.speech.SpectraExtractor(frame_length=frame_length, step_length=step_length,
+                               nfft=nfft, nmels=nmels, nceps=nceps,
+                               fmin=64, fmax=None, padding=padding),
+    pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
+                             threshold=1., f0=True, algo='rapt'),
+    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25, feat_type='energy'),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
                            rasta=True, sdc=1,
                            feat_type=('mspec', 'mfcc',
@@ -179,30 +177,11 @@ extractors = [
                                  'pitch', 'f0', 'vad', 'energy')),
     pp.RunningStatistics()
 ]
-if os.path.exists(outpath):
-    print("Remove old dataset at path:", outpath)
-    shutil.rmtree(outpath)
-acous = F.SpeechProcessor(ds, outpath,
-                sr=16000, sr_info={}, sr_new=8000,
-                win=0.02, hop=0.005, window='hann',
-                nb_melfilters=40, nb_ceps=13,
-                get_spec=True, get_qspec=False, get_phase=False,
-                get_pitch=True, get_f0=True,
-                get_vad=3, get_energy=True, get_delta=2,
-                fmin=64, fmax=None,
-                pitch_threshold=0.3, pitch_fmax=260, pitch_algo='swipe',
-                vad_smooth=3, vad_minlen=0.1,
-                cqt_bins=96, preemphasis=0.97,
-                center=True, power=2, log=True, backend='odin',
-                pca=True, pca_whiten=False,
-                audio_ext=None, save_raw=True,
-                save_stats=True, substitute_nan=None,
-                dtype='float16', datatype='memmap',
-                ncache=800, ncpu=10)
+acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
+                            path=outpath, pca=True, ncache=250, ncpu=1,
+                            override=True)
 acous.run()
-F.validate_features(acous, path='/tmp/tmp',
-                    nb_samples=48,
-                    override=True)
+pp.validate_features(acous, path='/tmp/tidigits', nb_samples=12, override=True)
 # copy README
 with open(os.path.join(outpath, 'README'), 'w') as f:
     f.write(README)

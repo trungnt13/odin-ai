@@ -147,7 +147,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
         logger("Checked all:", ids_name, True)
     # ====== check all dictionary types ====== #
     for name in all_keys:
-        if isinstance(ds[name], MmapDict):
+        if isinstance(ds[name], MmapDict) and 'indices' not in name:
             data = ds[name]
             # special cases
             if name == 'sr':
@@ -254,7 +254,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 _special_cases(X=feat, feat_name=feat_name, file_name=file_name,
                                ds=ds, path=path)
             except Exception as e:
-                logger("Special case error: '%s'" % str(e),
+                logger("Special case error: %s" % str(e),
                        file_name + ':' + feat_name, False)
         plot_features(X, title=file_name)
     # plotting the statistic
