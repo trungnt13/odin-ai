@@ -80,7 +80,7 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
 pp.validate_features(ds, path='/tmp/tmp', nb_samples=6, override=True)
-exit()
+
 padding = '  '
 print(ctext("* Pipeline:", 'red'))
 for _, extractor in ds['pipeline'].steps:

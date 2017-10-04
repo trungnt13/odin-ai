@@ -76,6 +76,7 @@ test = F.Feeder(F.DataDescriptor(data=data, indices=test),
                 ncpu=2)
 
 recipes = [
+    F.recipes.Slice(slices=slice(0, 40), axis=-1, data_idx=0),
     F.recipes.Name2Trans(converter_func=lambda x: int(x[0])),
     F.recipes.Sequencing(frame_length=longest_utterances, hop_length=1,
                          end='pad', endvalue=0, endmode='post',
@@ -92,6 +93,7 @@ with open('/tmp/test_feeder', 'w') as f:
 
 inputs = [K.placeholder(shape=(None,) + shape[1:], name='input_%d' % i)
           for i, shape in enumerate(train.shape)]
+print("Inputs:", str(inputs))
 X = inputs[:-1]
 y = inputs[-1]
 # ===========================================================================
