@@ -492,6 +492,23 @@ def plot_features(features, order=None, title=None):
     title: None or string
         title for the figure
     """
+    known_order = [
+        # For audio processing
+        'raw',
+        'energy',
+        'vad',
+        'pitch',
+        'f0',
+        'spec',
+        'mspec',
+        'mfcc',
+        'qspec',
+        'qmspec',
+        'qmfcc',
+        # For image processing
+        # For video processing
+    ]
+
     from matplotlib import pyplot as plt
     if not isinstance(features, Mapping):
         raise ValueError("`features` must be mapping from name -> feature_matrix.")
@@ -499,7 +516,16 @@ def plot_features(features, order=None, title=None):
     if order is not None:
         order = [str(o) for o in order]
     else:
-        order = sorted(features.keys())
+        keys = sorted(features.keys() if isinstance(features, Mapping) else
+                      [k for k, v in features])
+        order = []
+        for name in known_order:
+            if name in keys:
+                order.append(name)
+        # add the remain keys
+        for name in keys:
+            if name not in order:
+                order.append(name)
     # ====== get all numpy array ====== #
     features = [(name, features[name]) for name in order
                 if name in features and
@@ -518,7 +544,9 @@ def plot_features(features, order=None, title=None):
         plt.gca().set_aspect(aspect='auto')
         # plt.axis('off')
         plt.xticks(())
-        plt.yticks(())
+        # plt.yticks(())
+        plt.tick_params(axis='y', size=6, labelsize=4, color='r', pad=0,
+                        length=2)
         # add title to the first subplot
         if i == 0 and title is not None:
             plt.title(str(title), fontsize=8)

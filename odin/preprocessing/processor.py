@@ -31,7 +31,7 @@ from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
                         add_notification, keydefaultdict,
                         stdio, get_stdio_path, wprint)
-from odin.fuel import Dataset, MmapDict
+from odin.fuel import Dataset, MmapDict, MmapData
 
 from .base import Extractor
 _default_module = re.compile('__.*__')
@@ -40,107 +40,39 @@ _default_module = re.compile('__.*__')
 # ===========================================================================
 # Helper
 # ===========================================================================
-# ==================== For speech ==================== #
-def _escape_filename(file_name):
-    return file_name.replace('/', '-')
-
-
-def _plot_data(data, feat_name, file_name,
-               dataset, processor, outpath):
-    from matplotlib import pyplot as plt
-    from odin.visual import plot_save, plot_spectrogram
-    from scipy.io.wavfile import write
-    # ====== Audio signals ====== #
-    if processor in (SpeechProcessor, WaveProcessor):
-        # ====== raw  ====== #
-        if feat_name == 'raw':
-            path = os.path.join(outpath,
-                    _escape_filename(file_name.split('.')[0] + '.wav'))
-            data = data[:].astype('float32')
-            data = (data - data.mean()) / data.std()
-            write(path, rate=dataset['sr'][file_name], data=data)
-            # saving figure
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                plt.figure(figsize=(10, 4))
-                data = speech.resample(data, dataset['sr'][file_name], 8000,
-                                       best_algorithm=True)
-                if 'vad' in dataset:
-                    plt.subplot(2, 1, 1)
-                    plt.plot(data)
-                    start, end = dataset['indices'][file_name]
-                    plt.subplot(2, 1, 2)
-                    plt.plot(dataset['vad'][start:end][:])
-                else:
-                    plt.plot(data)
-                plt.suptitle(file_name)
-        # ====== speech features ====== #
-        elif feat_name in ('spec', 'mspec', 'mfcc', 'qspec', 'qmspec', 'qmfcc'):
-            data = data[:].astype('float32')
-            # saving figure
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                plt.figure(figsize=(10, 4))
-                if 'vad' in dataset:
-                    start, end = dataset['indices'][file_name]
-                    plot_spectrogram(data.T, vad=dataset['vad'][start:end][:])
-                else:
-                    plot_spectrogram(data.T)
-                plt.suptitle(file_name)
-            # invert spectrogram
-            if feat_name == 'spec':
-                sr = dataset['sr'][file_name]
-                hop = dataset['config']['hop']
-                raw = signal.ispec(data, hop_length=hop * sr, nb_iter=48,
-                                   db=dataset['config']['log'],
-                                   normalize=True,
-                                   center=dataset['config']['center'])
-                path = os.path.join(outpath,
-                        _escape_filename(file_name.split('.')[0] + '-ispec.wav'))
-                write(path, rate=sr, data=raw)
-        # ====== energy, f0, pitch ====== #
-        elif feat_name in ('energy', 'f0', 'pitch'):
-            data = data[:].astype('float32')
-            plt.figure(figsize=(10, 4))
-            plt.plot(data)
-            plt.suptitle(file_name)
-
-
 def validate_features(ds_or_processor, path, nb_samples=25,
-                      override=False):
+                      override=False, seed=12082518):
     def logger(title, tag, check):
+        check = bool(check)
+        text_color = 'yellow' if check else 'red'
         print(ctext('   *', 'cyan'),
-              ctext(str(title), 'yellow'),
+              ctext(str(title), text_color),
               ctext(str(tag), 'magenta'),
-              "✓" if bool(check) else "✗")
+              ctext("✓", text_color) if check else ctext("✗", text_color))
     import matplotlib
     matplotlib.use('Agg')
-    matplotlib.rcParams['xtick.labelsize'] = 6
-    matplotlib.rcParams['ytick.labelsize'] = 6
     from matplotlib import pyplot as plt
-    from odin.visual import plot_save
+    from odin.visual import plot_save, plot_features
     # ====== check path to dataset ====== #
+    should_close_ds = True
     if isinstance(ds_or_processor, FeatureProcessor):
         ds = Dataset(ds_or_processor.output_path, read_only=True)
     elif is_string(ds_or_processor):
         ds = Dataset(ds_or_processor, read_only=True)
     elif isinstance(ds_or_processor, Dataset):
         ds = ds_or_processor
+        should_close_ds = False
     else:
         raise ValueError("`ds` can be None, string, or Dataset. No "
                          "support for given input type: %s" % str(type(ds)))
-    print(ctext('Validating dataset:', 'yellow'),
-          '"%s"' % ds.path)
+    print(ctext('Validating dataset:', 'yellow'), '"%s"' % ds.path)
     # ====== extract the config of the dataset ====== #
-    if 'config' not in ds:
+    if 'config' not in ds or 'pipeline' not in ds:
         raise RuntimeError("The `Dataset` must be generated by `FeatureProcessor` "
                            "which must contain `config` MmapDict of extracted "
                            "features configuration.")
     config = ds['config']
-    processor = eval(config['__processor__'])
-    if not issubclass(processor, FeatureProcessor):
-        raise RuntimeError("This Dataset was created by %s which is NOT "
-                           "subclass of `FeatureProcessor`." % str(processor))
+    pipeline = ds['pipeline']
     # ====== output path ====== #
     path = str(path)
     if not os.path.exists(path):
@@ -158,10 +90,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
     nb_samples = int(nb_samples)
     # ====== get all features ====== #
     # [(name, dtype, statistic-able), ...]
-    features_properties = config['features_properties']
-    external_indices = config['external_indices']
-    excluded_pca = config['excluded_pca']
-    all_keys = ds.keys()
+    all_keys = [k for k in ds.keys() if k not in ('config', 'pipeline')]
+    # store all features (included the features in external_indices
+    all_features = []
+    external_indices = [k.split('_')[1] for k in all_keys
+                        if 'indices' in k and k != 'indices']
     # ====== checking indices ====== #
     main_indices = {name: (start, end)
                     for name, (start, end) in ds['indices'].iteritems()}
@@ -173,19 +106,26 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             assert prev[2] == now[1], "Zero length in indices"
             assert prev[2] - prev[1] > 0, "Zero length in indices"
             assert now[2] - now[1] > 0, "Zero length in indices"
-        # final length match length of Dat
+        # final length match length of Data
         if ids_name != 'indices':
-            assert now[-1] == len(ds[ids_name.split('_')[-1]]), ids_name
+            feat_name = ids_name.split('_')[-1]
+            assert now[-1] == len(ds[feat_name]), \
+                "Indices and data length mismatch, name: %s" % ids_name
+            all_features.append(feat_name)
         else:
-            for name, dtype, _ in features_properties:
-                if name not in external_indices and dtype != 'dict':
-                    assert now[-1] == len(ds[name]), \
-                    "Length of indices and actual data mismatch, " + ids_name + ':' + name
+            for feat_name in all_keys:
+                if feat_name not in external_indices and \
+                'sum1' != feat_name[-4:] and 'sum2' != feat_name[-4:] and \
+                'mean' != feat_name[-4:] and 'std' != feat_name[-3:] and \
+                isinstance(ds[feat_name], MmapData):
+                    assert now[-1] == len(ds[feat_name]), \
+                    "Length of indices and actual data mismatch, " + ids_name + ':' + feat_name
+                    all_features.append(feat_name)
         # logging
         logger("Checked all:", ids_name, True)
     # ====== check all dictionary types ====== #
-    for name, dtype, stats_able in features_properties:
-        if dtype == 'dict':
+    for name in all_keys:
+        if isinstance(ds[name], MmapDict):
             data = ds[name]
             # special cases
             if name == 'sr':
@@ -195,17 +135,22 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             # check
             for key, val in data.iteritems():
                 assert key in main_indices, \
-                "Dictionary key not found in indices (dict:%s dtype:%s)" % (name, str(dtype))
+                "Dictionary with name:'%s' has key not found in indices." % name
                 assert checking_func(val)
-            logger("Checked dictionary type: ", name, True)
+            logger("Checked dictionary: ", name, True)
     # ====== checking each type of data ====== #
-    sampled_name = np.random.choice(ds['indices'].keys(),
-                                    size=nb_samples,
-                                    replace=False)
-    for feat_name, dtype, stats_able in features_properties:
-        if feat_name == 'vad' or dtype == 'dict':
-            continue
-        figure_path = os.path.join(path, '%s.pdf' % feat_name)
+    # get all stats name
+    all_stats = defaultdict(list)
+    for k in all_keys:
+        if 'sum1' == k[-4:] or 'sum2' == k[-4:] or \
+        'mean' == k[-4:] or 'std' == k[-3:]:
+            all_stats[k[:-4].split('_')[0]].append(k)
+    # get all pca name
+    all_pca = {i: i + '_pca' for i in all_features
+               if i + '_pca' in ds}
+    # checking one-by-one numpy.ndarray features array
+    for feat_name in all_features:
+        dtype = str(ds[feat_name].dtype)
         # checking all data
         indices = ds['indices'] if feat_name not in external_indices else \
             ds['indices_%s' % feat_name]
@@ -213,62 +158,88 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                        print_report=True,
                        name='Checking: %s(%s)' % (feat_name, dtype))
         # start iterating over all data file
+        fail_test = False
         for file_name, (start, end) in indices:
             dat = ds[feat_name][start:end]
-            # picking sample for visualization
-            if file_name in sampled_name:
-                _plot_data(data=dat, feat_name=feat_name, file_name=file_name,
-                           dataset=ds, processor=processor, outpath=path)
             # No NaN value
-            assert not np.any(np.isnan(dat)), \
-                "NaN values in file: %s, feat: %s" % (file_name, feat_name)
+            if np.any(np.isnan(dat)):
+                logger("NaN values in file: '%s'" % file_name, feat_name, False)
+                fail_test = True
             # not all value closed to zeros
-            assert not np.all(np.isclose(dat, 0.)),\
-                "All-zeros values in file: %s, feat: %s" % (file_name, feat_name)
+            if np.all(np.isclose(dat, 0.)):
+                logger("All-closed-zeros values in file: '%s'" % file_name, feat_name, False)
+                fail_test = True
             prog['Name'] = file_name
             prog.add(1)
-        logger("Check data incredibility for: ", feat_name, True)
+        if not fail_test:
+            logger("Check data incredibility for: ", feat_name, True)
         # checking statistics
-        if stats_able:
-            plt.figure()
-            for i, stats in enumerate(['_mean', '_std', '_sum1', '_sum2']):
-                stats_name = stats[1:]
-                stats = ds[feat_name + stats][:]
-                assert not np.any(np.isnan(stats)),\
-                    "NaN values in stat: %s, feat: %s" % (stats_name, feat_name)
-                assert not np.all(np.isclose(stats, 0.)),\
-                    "All-zeros values in stats: %s, feat: %s" % (stats_name, feat_name)
-                plt.subplot(4, 2, i * 2 + 1)
-                plt.plot(stats)
-                plt.ylabel(stats_name)
-                plt.subplot(4, 2, i * 2 + 2)
-                plt.scatter(np.arange(len(stats)), stats, s=1.)
-            plt.suptitle('"%s" Statistics' % feat_name)
-            logger("Check statistics for: ", feat_name, True)
-            # check PCA
-            if feat_name not in excluded_pca and \
-            feat_name + '_pca' in ds:
-                pca = ds[feat_name + '_pca']
-                n = len(ds[feat_name])
-                nb_feats = ds[feat_name].shape[-1]
-                # performing PCA on random samples
-                for i in range(nb_samples):
-                    start = np.random.randint(0, n - nb_samples - 1)
-                    X = pca.transform(
-                        ds[feat_name][start:(start + nb_samples)],
-                        n_components=max(nb_feats // 2, 1))
-                    assert not np.any(np.isnan(X)),\
-                        "NaN values in PCA of feat: %s" % feat_name
-                    assert not np.all(np.isclose(X, 0.)),\
-                        "All-zeros values in PCA of feat: %s" % feat_name
+        if feat_name in all_stats:
+            fail_test = False
+            for stat_name in all_stats[feat_name]:
+                X = ds[stat_name]
+                if X.ndim >= 1:
+                    X = X[:]
+                if np.any(np.isnan(X)):
+                    logger("NaN values in '%s'" % stat_name, feat_name, False)
+                    fail_test = True
+                if np.all(np.isclose(X, 0.)):
+                    logger("All-closed-zeros values in '%s'" % stat_name, feat_name, False)
+                    fail_test = True
+            if not fail_test:
+                logger("Check statistics for: ", feat_name, True)
+        # check PCA
+        if feat_name in all_pca:
+            pca = ds[all_pca[feat_name]]
+            n = ds[feat_name].shape[0]
+            nb_feats = ds[feat_name].shape[-1]
+            fail_test = False
+            # performing PCA on random samples
+            for i in range(nb_samples):
+                start = np.random.randint(0, n - nb_samples - 1)
+                X = pca.transform(
+                    ds[feat_name][start:(start + nb_samples)],
+                    n_components=max(nb_feats // 2, 1))
+                if np.any(np.isnan(X)):
+                    logger("NaN values in PCA", feat_name, False)
+                    fail_test = True
+                    break
+                if np.all(np.isclose(X, 0.)):
+                    logger("All-closed-zeros values in PCA", feat_name, False)
+                    fail_test = True
+                    break
+            if not fail_test:
                 logger("Check PCA for: ", feat_name, True)
-        # saving all the figures
-        plot_save(figure_path, dpi=80, log=False, clear_all=True)
-        logger("Figure save at: ", figure_path, True)
+    # ====== Do sampling ====== #
+    np.random.seed(seed) # seed for reproceducible
+    figure_path = os.path.join(path, 'report.pdf')
+    all_samples = np.random.choice(ds['indices'].keys(), size=nb_samples,
+                                   replace=False)
+    # plotting all samples
+    for sample in all_samples:
+        X = {}
+        for feat_name in all_features:
+            if feat_name in external_indices:
+                start, end = ds['indices_%s' % feat_name][sample]
+            else:
+                start, end = ds['indices'][sample]
+            X[feat_name] = ds[feat_name][start:end]
+        plot_features(X, title=sample)
+    # plotting the statistic
+    for feat_name, stat_name in all_stats.iteritems():
+        X = {name: ds[name][:]
+             for name in stat_name
+             if ds[name].ndim >= 1}
+        if len(X) > 0:
+            plot_features(X, title=feat_name)
+    # save all plot to 1 path
+    plot_save(figure_path, log=False)
+    logger("Figure save at: ", figure_path, True)
     logger("All reports at folder: ", os.path.abspath(path), True)
     # ====== cleaning ====== #
     stdio(path=prev_stdio)
-    ds.close()
+    if should_close_ds:
+        ds.close()
 
 
 # ===========================================================================
@@ -417,6 +388,9 @@ class FeatureProcessor(object):
             all_indices = defaultdict(list)
             # processing
             for feat_name, X in result.iteritems():
+                if feat_name in ('config', 'pipeline'):
+                    raise RuntimeError("Returned features' name cannot be one "
+                                       "of the following: 'config', 'pipeline'.")
                 # if numpy ndarray, save to MmapData
                 if isinstance(X, np.ndarray) or \
                 'sum1' == feat_name[-4:] or 'sum2' == feat_name[-4:]:

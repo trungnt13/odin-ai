@@ -71,7 +71,7 @@ extractors = [
 # ===========================================================================
 jobs = [path for name, path in datapath if '.wav' in path]
 processor = pp.FeatureProcessor(jobs, extractors, output_path, pca=True,
-                                ncache=260, ncpu=12, override=True)
+                                ncache=260, ncpu=10, override=True)
 with utils.UnitTimer():
     processor.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
@@ -79,8 +79,8 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 # ====== check the preprocessed dataset ====== #
 print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
-print(ds)
-
+pp.validate_features(ds, path='/tmp/tmp', nb_samples=6, override=True)
+exit()
 padding = '  '
 print(ctext("* Pipeline:", 'red'))
 for _, extractor in ds['pipeline'].steps:
