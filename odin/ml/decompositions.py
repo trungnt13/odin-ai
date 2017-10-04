@@ -309,7 +309,7 @@ class MiniBatchPCA(IncrementalPCA):
             self.noise_variance_ = 0.
         return self
 
-    def transform(self, X, y=None, n_components=None):
+    def transform(self, X, n_components=None):
         # ====== check number of components ====== #
         # specified percentage of explained variance
         if n_components is not None:
@@ -331,18 +331,18 @@ class MiniBatchPCA(IncrementalPCA):
         # ====== start transforming ====== #
         X_transformed = []
         for start, end in batch_list:
-            x = super(MiniBatchPCA, self).transform(X=X[start:end], y=y)
+            x = super(MiniBatchPCA, self).transform(X=X[start:end])
             if n_components is not None:
                 x = x[:, :n_components]
             X_transformed.append(x)
         return np.concatenate(X_transformed, axis=0)
 
-    def invert_transform(self, X, y=None):
+    def invert_transform(self, X):
         if isinstance(X, Data):
             X = X[:]
-        return super(MiniBatchPCA, self).inverse_transform(X=X, y=y)
+        return super(MiniBatchPCA, self).inverse_transform(X=X)
 
-    def transform_mpi(self, X, y=None, keep_order=True, ncpu=4,
+    def transform_mpi(self, X, keep_order=True, ncpu=4,
                       n_components=None):
         """ Sample as transform but using multiprocessing """
         n = X.shape[0]
@@ -357,7 +357,7 @@ class MiniBatchPCA(IncrementalPCA):
         def map_func(batch):
             for start, end in batch:
                 start, end = batch[0]
-                x = super(MiniBatchPCA, self).transform(X=X[start:end], y=y)
+                x = super(MiniBatchPCA, self).transform(X=X[start:end])
                 # doing dim reduction here save a lot of memory for
                 # inter-processors transfer
                 if n_components is not None:

@@ -454,31 +454,26 @@ class Read3ColSAD(Extractor):
         `transform`) to name for search in parsed SAD dictionary.
     file_regex: str
         regular expression for filtering the files name
-    separated: bool
-        if True, cut files features based on SAD segments (i.e. name:start:end)
-        otherwise, merge all SAD frames of once file into single matrix
     keep_unvoiced: bool
         if True, keep all the the features of utterances even though
-        cannot file SAD for it.
-        otherwise, return None.
+        cannot file SAD for it. Otherwise, return None.
     feat_type: list of string
         all features type will be applied using given SAD
 
     Return
     ------
-    add 'sad': [(start, end), ...] to the features dictionary
-    each features specified in `feat_type` is cutted into segments of SAD, or
-    concatenated into single matrix (with `separated=False`)
+     - add 'sad': [(start, end), ...] to the features dictionary
+     - each features specified in `feat_type` is cutted into segments of SAD,
+     then concatenated into single matrix (hence, you can use features['sad']
+     to get back the separated segments).
 
     """
 
     def __init__(self, path, step_length, name_converter=None, file_regex='.*',
-                 separated=True, keep_unvoiced=False,
-                 feat_type=('spec', 'mspec', 'mfcc',
-                            'qspec', 'qmspec', 'qmfcc',
-                            'pitch', 'f0', 'vad', 'energy')):
+                 keep_unvoiced=False, feat_type=('spec', 'mspec', 'mfcc',
+                                                 'qspec', 'qmspec', 'qmfcc',
+                                                 'pitch', 'f0', 'vad', 'energy')):
         super(Read3ColSAD, self).__init__()
-        self.separated = bool(separated)
         self.keep_unvoiced = bool(keep_unvoiced)
         self.feat_type = tuple([str(feat) for feat in feat_type])
         self.step_length = float(step_length)
@@ -512,23 +507,23 @@ class Read3ColSAD(Extractor):
                 step_length = step_length / feats['sr']
             # ====== found SAD ====== #
             if path in self.sad:
-                feats_sad = {name: X for name, X in feats.iteritems()
-                             if name not in self.feat_type}
                 sad = self.sad[path]
-                feats_sad['sad'] = sad
+                # SAD transformed features
+                feats_sad = {}
+                # store (start-frame_index, end) of all SAD here
+                feats_sad['sad'] = []
                 for start, end in sad:
                     start = int(start / step_length)
                     end = int(end / step_length)
+                    feats_sad['sad'].append((start, end))
                     for ftype in self.feat_type:
                         X = feats[ftype][start:end]
                         if ftype not in feats_sad:
                             feats_sad[ftype] = []
                         feats_sad[ftype].append(X)
                 # concatenate sad segments
-                if not self.separated:
-                    for ftype in self.feat_type:
-                        feats_sad[ftype] = np.concatenate(
-                            feats_sad[ftype], axis=-1)
+                for ftype in self.feat_type:
+                    feats_sad[ftype] = np.concatenate(feats_sad[ftype], axis=-1)
                 return feats_sad
         if not self.keep_unvoiced:
             return None

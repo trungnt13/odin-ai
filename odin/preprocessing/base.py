@@ -39,6 +39,11 @@ class Extractor(BaseEstimator, TransformerMixin):
     def transform(self, X):
         # NOTE: do not override this method
         y = self._transform(X)
+        # ====== check returned types ====== #
+        if not isinstance(y, (Mapping, None)):
+            raise RuntimeError("Extractor can only return Mapping or None, but "
+                               "the returned type is: %s" % str(type(y)))
+        # ====== Merge previous results ====== #
         if isinstance(y, Mapping):
             # remove None values
             tmp = {}
@@ -135,4 +140,57 @@ class EqualizeShape0(Extractor):
                     feat = feat[diff_left:-diff_right]
                 equalized[name] = feat
             X = equalized
+        return X
+
+
+class RunningStatistics(Extractor):
+    """ Running statistics
+
+    Parameters
+    ----------
+    feat_type: None or list of string
+        list of features name will be used for calculating the
+        running statistics.
+        If None, calculate the statistics for all `numpy.ndarray`
+    """
+
+    def __init__(self, feat_type=None, axis=0, name=''):
+        super(RunningStatistics, self).__init__()
+        self.feat_type = None if feat_type is None else \
+            as_tuple(feat_type, t=str)
+        self.axis = axis
+        self.name = str(name)
+
+    def get_sum1_name(self, feat_name):
+        return '%s_%ssum1' % (feat_name, self.name)
+
+    def get_sum2_name(self, feat_name):
+        return '%s_%ssum2' % (feat_name, self.name)
+
+    def _transform(self, X):
+        if isinstance(X, Mapping):
+            # ====== preprocessing feat_type ====== #
+            feat_type = self.feat_type
+            if feat_type is None:
+                feat_type = [name for name, feat in X.iteritems()
+                             if isinstance(feat, np.ndarray) and feat.ndim >= 1]
+            # ====== calculate the statistics ====== #
+            for feat_name in feat_type:
+                feat = X[feat_name]
+                # ====== SUM of x^1 ====== #
+                sum1 = np.sum(feat, axis=self.axis,
+                              dtype='float64')
+                s1_name = self.get_sum1_name(feat_name)
+                if s1_name not in X:
+                    X[s1_name] = sum1
+                else:
+                    X[s1_name] += sum1
+                # ====== SUM of x^2 ====== #
+                sum2 = np.sum(np.power(feat, 2), axis=self.axis,
+                              dtype='float64')
+                s2_name = self.get_sum2_name(feat_name)
+                if s2_name not in X:
+                    X[s2_name] = sum2
+                else:
+                    X[s2_name] += sum2
         return X

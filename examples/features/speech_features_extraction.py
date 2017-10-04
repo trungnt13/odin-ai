@@ -15,7 +15,8 @@ import shutil
 import os
 import sys
 from odin import visual
-from odin import fuel as F, utils
+from odin.utils import ctext
+from odin import fuel as F, utils, preprocessing as pp
 from collections import defaultdict
 from odin.ml import MiniBatchPCA
 
@@ -28,82 +29,102 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
-backend = 'odin'
 PCA = True
 center = True
 pitch_threshold = 0.8
 pitch_algo = 'rapt'
 datapath = F.load_digit_wav()
-output_path = utils.get_datasetpath(name='digit_%s' % backend,
-                                    override=True)
+print("Found %d (.wav) files" % len(datapath.keys()))
+output_path = utils.get_datasetpath(name='digit_feat')
+# ===========================================================================
+# Extractor
+# ===========================================================================
+padding = False
+extractors = [
+    pp.speech.AudioReader(sr_new=8000, best_resample=True,
+                          remove_dc_n_dither=True,
+                          preemphasis=0.97, dtype='float32'),
+    pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
+                               nfft=512, nmels=40, nceps=20,
+                               fmin=64, fmax=4000, padding=padding),
+    pp.speech.CQTExtractor(frame_length=0.025, step_length=0.005,
+                           nbins=96, nmels=40, nceps=20,
+                           fmin=64, fmax=4000, padding=padding),
+    pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
+                             threshold=0.12, f0=True, algo='swipe'),
+    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
+                           feat_type='energy'),
+    pp.speech.AcousticNorm(mean_var_norm=True,
+                           window_mean_var_norm=True,
+                           rasta=True, sdc=1),
+    pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
+                      feat_type=('mspec', 'qmspec')),
+    pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
+                                 'qspec', 'qmspec', 'qmfcc',
+                                 'pitch', 'f0', 'vad', 'energy')),
+    pp.RunningStatistics()
+]
+
 # ===========================================================================
 # Processor
 # ===========================================================================
-feat = F.SpeechProcessor(datapath, output_path, audio_ext='wav',
-                         sr=None, sr_new=8000, sr_info={},
-                         win=0.025, hop=0.005, window='hann',
-                         nb_melfilters=40, nb_ceps=13,
-                         get_delta=2, get_energy=True, get_phase=True,
-                         get_spec=True, get_pitch=True, get_f0=True,
-                         get_vad=3, get_qspec=True,
-                         pitch_threshold=pitch_threshold,
-                         pitch_fmax=280,
-                         pitch_algo=pitch_algo,
-                         cqt_bins=96, vad_smooth=3, vad_minlen=0.1,
-                         preemphasis=None,
-                         center=center, power=2, log=True,
-                         backend=backend,
-                         pca=PCA, pca_whiten=False,
-                         save_raw=True, save_stats=True, substitute_nan=None,
-                         dtype='float32', datatype='memmap',
-                         ncache=600, ncpu=10)
+jobs = [path for name, path in datapath if '.wav' in path]
+processor = pp.FeatureProcessor(jobs, extractors, output_path, pca=True,
+                                ncache=260, ncpu=12, override=True)
 with utils.UnitTimer():
-    feat.run()
+    processor.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),
             os.path.join(output_path, 'README.md'))
 # ====== check the preprocessed dataset ====== #
 print('Output path:', output_path)
-F.validate_features(feat, '/tmp/digit_audio', override=True)
 ds = F.Dataset(output_path, read_only=True)
+print(ds)
 
-print("* Configurations:")
+padding = '  '
+print(ctext("* Pipeline:", 'red'))
+for _, extractor in ds['pipeline'].steps:
+    for line in str(extractor).split('\n'):
+        print(padding, line)
+
+print(ctext("* Configurations:", 'red'))
 for i, j in ds['config'].iteritems():
-    print(' ', i, ':', j)
+    print(padding, i, ':', j)
 
 for n in ds.keys():
     if '_pca' in n:
         pca = ds[n]
         if pca.components_ is None:
-            print(n, 'components is None !')
+            print(ctext(n, 'yellow'), 'components is None !')
         elif np.any(np.isnan(pca.components_)):
-            print(n, 'contains NaN !')
+            print(ctext(n, 'yellow'), 'contains NaN !')
         else:
-            print(n, ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
+            print(ctext(n, 'yellow'),
+                ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
 # ====== plot the processed files ====== #
-figpath = '/tmp/speech_features_%s.pdf' % backend
-files = np.random.choice(ds['indices'].keys(), size=8, replace=False)
+figpath = '/tmp/speech_features.pdf'
+files = np.random.choice(ds['indices'].keys(), size = 8, replace = False)
 for f in files:
-    with visual.figure(ncol=1, nrow=5, dpi=180,
-                       show=False, tight_layout=True, title=f):
+    with visual.figure(ncol = 1, nrow = 5, dpi = 180,
+                       show = False, tight_layout = True, title = f):
         start, end = ds['indices'][f]
         vad = ds['vad'][start:end]
         pitch = ds['pitch'][start:end].astype('float32')
-        energy = ds['energy'][start:end][:, 0].astype('float32')
+        energy = ds['energy'][start:end][:].astype('float32')
         spec = ds['spec'][start:end].astype('float32')
         mspec = ds['mspec'][start:end][:, :40].astype('float32')
-        mfcc = ds['mfcc'][start:end][:, :13].astype('float32')
+        mfcc = ds['mfcc'][start:end][:, :20].astype('float32')
         visual.subplot(5, 1, 1)
         visual.plot(energy.ravel())
         visual.subplot(5, 1, 2)
         visual.plot(pitch.ravel())
         visual.subplot(5, 1, 3)
-        visual.plot_spectrogram(spec.T, vad=vad)
+        visual.plot_spectrogram(spec.T, vad = vad)
         visual.subplot(5, 1, 4)
-        visual.plot_spectrogram(mspec.T, vad=vad)
+        visual.plot_spectrogram(mspec.T, vad = vad)
         visual.subplot(5, 1, 5)
-        visual.plot_spectrogram(mfcc.T, vad=vad)
+        visual.plot_spectrogram(mfcc.T, vad = vad)
 # ====== check if any pitch or f0 allzeros ====== #
 indices = sorted([(name, s, e) for name, (s, e) in ds['indices']],
                  key=lambda x: x[1])
@@ -121,9 +142,10 @@ if PCA:
     for f, (start, end) in ds['indices']:
         X.append(
             np.mean(
-                feat_pca.transform(ds[feat][start:end]), axis=0, keepdims=True
-        ))
-        y.append(int(f[0]))
+                feat_pca.transform(ds[feat][start:end]),
+                axis=0, keepdims=True)
+        )
+        y.append(int(os.path.basename(f)[0]))
     X = np.concatenate(X, axis=0)
     y = np.asarray(y)
     X_ = TSNE(n_components=2).fit_transform(X)

@@ -136,8 +136,14 @@ class Dataset(object):
         self._data_map = OrderedDict()
         self._path = os.path.abspath(path)
         self._default_hdf5 = os.path.basename(self._path) + '_default.h5'
+        # svaed feeder info
+        self._saved_indices = {}
+        self._saved_recipes = {}
+        # just make new dir
         if not os.path.exists(path):
             os.mkdir(path)
+            os.mkdir(self.recipe_path)
+            os.mkdir(self.index_path)
             return # not thing to do more
         elif not os.path.isdir(path):
             raise ValueError('Dataset path must be a folder.')
@@ -172,7 +178,6 @@ class Dataset(object):
         if not os.path.exists(self.recipe_path):
             os.mkdir(self.recipe_path)
         # all recipes is pickle-able
-        self._saved_recipes = {}
         for recipe_name in os.listdir(self.recipe_path):
             with open(os.path.join(self.recipe_path, recipe_name), 'r') as f:
                 recipe = cPickle.load(f)
@@ -186,7 +191,6 @@ class Dataset(object):
         if not os.path.exists(self.index_path):
             os.mkdir(self.index_path)
         # load all saved indices
-        self._saved_indices = {}
         for index_name in os.listdir(self.index_path):
             path = os.path.join(self.index_path, index_name)
             index = MmapDict(path=path, read_only=True)
@@ -533,9 +537,9 @@ class Dataset(object):
             # close all external indices and recipes
             for name, ids in self._saved_indices.iteritems():
                 ids.close()
-            for name, rcp in self._saved_indices.iteritems():
-                del rcp
             self._saved_indices.clear()
+            for name, rcp in self._saved_recipes.iteritems():
+                del rcp
             self._saved_recipes.clear()
             # Check if exist global instance
             if self.path in Dataset.__INSTANCES:
