@@ -117,6 +117,8 @@ class Dataset(object):
                              '------',
                              '  No information!']
         self._readme_path = None
+        # flag to check cPickle called with protocol 2
+        self._new_args_called = False
         # parse all data from path
         if path is not None:
             if override and os.path.exists(path) and os.path.isdir(path):
@@ -126,11 +128,11 @@ class Dataset(object):
                 self._load_archive(path,
                     extract_path=path.replace(os.path.basename(path), ''))
             else:
-                self._set_path(path)
+                self._set_path(path, self.read_only)
         else:
             raise ValueError('Invalid path for Dataset: %s' % path)
 
-    def _set_path(self, path):
+    def _set_path(self, path, read_only):
         MAXIMUM_README_LINE = 25
         # all files are opened with default_mode=r+
         self._data_map = OrderedDict()
@@ -161,7 +163,8 @@ class Dataset(object):
                                          '------'] + readme
                     self._readme_path = readme_path
             # parse data
-            data = _parse_data_descriptor(os.path.join(path, fname), self.read_only)
+            data = _parse_data_descriptor(os.path.join(path, fname),
+                                          read_only)
             if data is None: continue
             for key, d in data:
                 if key in self._data_map:
@@ -199,10 +202,21 @@ class Dataset(object):
 
     # ==================== Pickle ==================== #
     def __getstate__(self):
-        return self.path
+        if not self._new_args_called:
+            raise RuntimeError(
+                "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
+                "when using `pickle` or `cPickle` to be able pickling Dataset.")
+        self._new_args_called = False
+        return self.path, self.read_only
 
-    def __setstate__(self, path):
-        self._set_path(path)
+    def __setstate__(self, states):
+        path, read_only = states
+        self._new_args_called = False
+        self._set_path(path, read_only)
+
+    def __getnewargs__(self):
+        self._new_args_called = True
+        return (self.path,)
 
     # ==================== archive loading ==================== #
     def _load_archive(self, path, extract_path):

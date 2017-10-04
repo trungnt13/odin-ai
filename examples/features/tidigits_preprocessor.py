@@ -11,6 +11,7 @@ matplotlib.use('Agg')
 import os
 os.environ['ODIN'] = "cpu,float32"
 import shutil
+from six.moves import cPickle
 
 import numpy as np
 
@@ -126,7 +127,7 @@ if not os.path.exists(wav_path):
             for path in audio_files]
     exec_commands(cmds, print_progress=True)
 # ====== create new segments list ====== #
-segments = get_all_files(wav_path, filter_func=lambda f: f[-4:] == '.wav')[:25]
+segments = get_all_files(wav_path, filter_func=lambda f: f[-4:] == '.wav')
 # ====== store everything in one dataset ====== #
 if args.reset and os.path.exists(wav_ds):
     shutil.rmtree(wav_ds)
@@ -139,7 +140,7 @@ if not os.path.exists(wav_ds):
             pp.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
                              keys='path')
         ],
-        path=wav_ds, ncpu=1)
+        path=wav_ds, ncache=300, ncpu=8, override=True)
     wave.run()
     pp.validate_features(wave, '/tmp/tidigits_wave', override=True,
                          nb_samples=8)
@@ -175,10 +176,11 @@ extractors = [
     pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
+    pp.RemoveFeatures(feat_type=('raw')),
     pp.RunningStatistics()
 ]
 acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
-                            path=outpath, pca=True, ncache=250, ncpu=1,
+                            path=outpath, pca=True, ncache=300, ncpu=8,
                             override=True)
 acous.run()
 pp.validate_features(acous, path='/tmp/tidigits', nb_samples=12, override=True)

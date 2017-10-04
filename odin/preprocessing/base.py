@@ -13,6 +13,9 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from odin.utils import get_all_files, is_string, as_tuple, is_pickleable
 from .signal import delta
 
+# special tag put into features dictionary to mark it as removed
+_REMOVED_FEATURES_ = '__removed_features__'
+
 
 @add_metaclass(ABCMeta)
 class Extractor(BaseEstimator, TransformerMixin):
@@ -65,6 +68,10 @@ class Extractor(BaseEstimator, TransformerMixin):
                                            "upper case.")
                     if name not in y:
                         y[name] = feat
+            # remove all features marked as REMOVED
+            for name, feat in y.items():
+                if is_string(feat) and feat == _REMOVED_FEATURES_:
+                    del y[name]
         return y
 
 
@@ -226,4 +233,19 @@ class RunningStatistics(Extractor):
                     X[s2_name] = sum2
                 else:
                     X[s2_name] += sum2
+        return X
+
+
+class RemoveFeatures(Extractor):
+    """ Remove features by name from extracted features dictionary """
+
+    def __init__(self, feat_type=()):
+        super(RemoveFeatures, self).__init__()
+        self.feat_type = as_tuple(feat_type, t=str)
+
+    def _transform(self, X):
+        if isinstance(X, Mapping):
+            for feat_name in self.feat_type:
+                if feat_name in X:
+                    X[feat_name] = _REMOVED_FEATURES_
         return X
