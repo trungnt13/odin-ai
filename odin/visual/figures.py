@@ -533,6 +533,7 @@ def plot_features(features, order=None, title=None):
                 (features[name].ndim == 1 or features[name].ndim == 2)]
     plt.figure(figsize=(4, len(features)))
     for i, (name, X) in enumerate(features):
+        X = X.astype('float32')
         plt.subplot(len(features), 1, i + 1)
         if X.ndim == 1:
             plt.plot(X)

@@ -59,7 +59,7 @@ def extract_gender(x):
 
 
 def extract_digit(x):
-    if '.wav' in x:
+    if '_jackson_' in x:
         return x[0] if x[0] != '0' else 'z'
     return x.split('_')[6]
 

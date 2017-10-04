@@ -1354,6 +1354,7 @@ def ispec(spec, frame_length, step_length=None, window="hann",
         normalize output raw signal to have mean=0., and std=1.
 
     """
+    spec = spec.astype('float64')
     # ====== check arguments ====== #
     frame_length = int(frame_length)
     if step_length is None:

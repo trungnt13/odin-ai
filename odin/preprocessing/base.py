@@ -236,6 +236,33 @@ class RunningStatistics(Extractor):
         return X
 
 
+class AsType(Extractor):
+    """ An extractor convert given features to given types
+
+    Parameters
+    ----------
+    type_map: Mapping, or list, tuple of (name, dtype)
+        mapping from feature name -> desire numpy dtype of the features.
+        This is only applied for features which is `numpy.ndarray`
+    """
+
+    def __init__(self, type_map={}):
+        super(AsType, self).__init__()
+        if isinstance(type_map, Mapping):
+            type_map = type_map.iteritems()
+        self.type_map = {str(feat_name): np.dtype(feat_type)
+                         for feat_name, feat_type in type_map}
+
+    def _transform(self, X):
+        if isinstance(X, Mapping):
+            for feat_name, feat_type in self.type_map.iteritems():
+                if feat_name in X:
+                    feat = X[feat_name]
+                    if isinstance(feat, np.ndarray):
+                        X[feat_name] = feat.astype(feat_type)
+        return X
+
+
 class RemoveFeatures(Extractor):
     """ Remove features by name from extracted features dictionary """
 

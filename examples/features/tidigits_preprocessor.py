@@ -135,10 +135,10 @@ if not os.path.exists(wav_ds):
     wave = pp.FeatureProcessor(segments,
         extractor=[
             pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
-                                  remove_dc_n_dither=True, preemphasis=0.97,
-                                  dtype='float16'),
+                                  remove_dc_n_dither=True, preemphasis=0.97),
             pp.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
-                             keys='path')
+                             keys='path'),
+            pp.AsType({'raw': 'float16'})
         ],
         path=wav_ds, ncache=300, ncpu=8, override=True)
     wave.run()
@@ -177,7 +177,11 @@ extractors = [
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
     pp.RemoveFeatures(feat_type=('raw')),
-    pp.RunningStatistics()
+    pp.RunningStatistics(),
+    pp.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
+               'qspec': 'float16', 'qmspec': 'float16', 'qmfcc': 'float16',
+               'pitch': 'float16', 'f0': 'float16',
+               'vad': 'float16', 'energy': 'float16'})
 ]
 acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
                             path=outpath, pca=True, ncache=300, ncpu=8,

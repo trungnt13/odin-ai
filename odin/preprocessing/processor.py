@@ -56,7 +56,8 @@ def _special_cases(X, feat_name, file_name, ds, path):
                      if isinstance(i, SpectraExtractor)][0]
         frame_length, step_length = _extract_frame_step_length(sr,
             extractor.frame_length, extractor.step_length)
-        raw = ispec(X, frame_length=frame_length, step_length=step_length,
+        raw = ispec(X,
+                    frame_length=frame_length, step_length=step_length,
                     window=extractor.window, padding=extractor.padding,
                     db=extractor.log)
         file_name += '-ispec.wav'
@@ -394,7 +395,7 @@ class FeatureProcessor(object):
                 if self.pca and feat_name not in self.excluded_pca and \
                 (X_cached.ndim >= 2 and all(s > 1 for s in X_cached.shape) and
                  'float' in str(X_cached.dtype).lower()):
-                    pca[feat_name].partial_fit(X_cached)
+                    pca[feat_name].partial_fit(X_cached.astype('float32'))
                 # flush data
                 if feat_name in dataset:
                     dataset[feat_name].append(X_cached)

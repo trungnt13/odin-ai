@@ -43,7 +43,7 @@ padding = False
 extractors = [
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True,
-                          preemphasis=0.97, dtype='float32'),
+                          preemphasis=0.97),
     pp.NameConverter(converter=lambda x:os.path.basename(x).replace('.wav', '')),
     pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
                                nfft=512, nmels=40, nceps=20,
@@ -52,7 +52,7 @@ extractors = [
                            nbins=96, nmels=40, nceps=20,
                            fmin=64, fmax=4000, padding=padding),
     pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
-                             threshold=0.12, f0=True, algo='swipe'),
+                             threshold=1.0, f0=True, algo='rapt'),
     pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
@@ -64,7 +64,12 @@ extractors = [
     pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
-    pp.RunningStatistics()
+    pp.RunningStatistics(),
+    pp.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
+               'qspec': 'float16', 'qmspec': 'float16', 'qmfcc': 'float16',
+               'pitch': 'float16', 'f0': 'float16',
+               'vad': 'float16', 'energy': 'float16',
+               'raw': 'float16'})
 ]
 
 # ===========================================================================
@@ -81,17 +86,18 @@ shutil.copy(os.path.join(datapath.path, 'README.md'),
 print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
 pp.validate_features(ds, path='/tmp/tmp', nb_samples=6, override=True)
-
+print(ds)
+# ====== print pipeline ====== #
 padding = '  '
 print(ctext("* Pipeline:", 'red'))
 for _, extractor in ds['pipeline'].steps:
     for line in str(extractor).split('\n'):
         print(padding, line)
-
+# ====== print config ====== #
 print(ctext("* Configurations:", 'red'))
 for i, j in ds['config'].iteritems():
     print(padding, i, ':', j)
-
+# ====== check PCA components ====== #
 for n in ds.keys():
     if '_pca' in n:
         pca = ds[n]

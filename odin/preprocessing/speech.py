@@ -166,15 +166,13 @@ class AudioReader(Extractor):
     """
 
     def __init__(self, sr=None, sr_new=None, best_resample=True,
-                 remove_dc_n_dither=True, preemphasis=0.97,
-                 dtype=None):
+                 remove_dc_n_dither=True, preemphasis=0.97):
         super(AudioReader, self).__init__()
         self.sr = sr
         self.sr_new = sr_new
         self.best_resample = best_resample
         self.remove_dc_n_dither = bool(remove_dc_n_dither)
         self.preemphasis = preemphasis
-        self.dtype = dtype
 
     def _transform(self, path_or_array):
         sr = None # by default, we don't know sample rate
@@ -265,9 +263,6 @@ class AudioReader(Extractor):
         # ====== pre-emphasis ====== #
         if self.preemphasis is not None and 0. < self.preemphasis < 1.:
             s = pre_emphasis(s, coeff=float(self.preemphasis))
-        # ====== dtype ====== #
-        if self.dtype is not None:
-            s = s.astype(self.dtype)
         # ====== get duration if possible ====== #
         if sr is not None:
             duration = max(s.shape) / sr
@@ -389,8 +384,8 @@ class CQTExtractor(Extractor):
 class PitchExtractor(Extractor):
 
     def __init__(self, frame_length, step_length=None,
-                 threshold=0.2, fmin=20, fmax=260,
-                 algo='swipe', f0=False):
+                 threshold=1., fmin=20, fmax=260,
+                 algo='rapt', f0=False):
         super(PitchExtractor, self).__init__()
         self.threshold = threshold
         self.fmin = int(fmin)
