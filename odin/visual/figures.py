@@ -478,7 +478,7 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
     return ax
 
 
-def plot_features(features, order=None, title=None):
+def plot_features(features, order=None, title=None, fig_width=4):
     """ Plot a series of 1D and 2D in the same scale for comparison
 
     Parameters
@@ -531,7 +531,7 @@ def plot_features(features, order=None, title=None):
                 if name in features and
                 isinstance(features[name], np.ndarray) and
                 (features[name].ndim == 1 or features[name].ndim == 2)]
-    plt.figure(figsize=(4, len(features)))
+    plt.figure(figsize=(int(fig_width), len(features)))
     for i, (name, X) in enumerate(features):
         X = X.astype('float32')
         plt.subplot(len(features), 1, i + 1)

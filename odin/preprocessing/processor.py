@@ -40,6 +40,12 @@ _default_module = re.compile('__.*__')
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _escape_file_name(file_name):
+    file_name = file_name.replace('/', '_')
+    file_name = file_name.replace(':', '_')
+    return file_name
+
+
 def _special_cases(X, feat_name, file_name, ds, path):
     """ Same special for checking the integrity of the features """
     if feat_name == 'raw':
@@ -47,7 +53,8 @@ def _special_cases(X, feat_name, file_name, ds, path):
         sr = ds['sr'][file_name]
         if '.wav' not in file_name:
             file_name += '.wav'
-        save(os.path.join(path, file_name), X.astype('float32'), sr=sr)
+        save(os.path.join(path, _escape_file_name(file_name)),
+             X.astype('float32'), sr=sr)
     elif feat_name == 'spec':
         from .speech import SpectraExtractor, _extract_frame_step_length, save
         from .signal import ispec
@@ -61,11 +68,13 @@ def _special_cases(X, feat_name, file_name, ds, path):
                     window=extractor.window, padding=extractor.padding,
                     db=extractor.log)
         file_name += '-ispec.wav'
-        save(os.path.join(path, file_name), raw.astype('float32'), sr=sr)
+        save(os.path.join(path, _escape_file_name(file_name)),
+             raw.astype('float32'), sr=sr)
 
 
 def validate_features(ds_or_processor, path, nb_samples=25,
-                      override=False, seed=12082518):
+                      override=False, seed=12082518,
+                      fig_width=4):
     def logger(title, tag, check):
         check = bool(check)
         text_color = 'yellow' if check else 'red'
@@ -257,14 +266,14 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             except Exception as e:
                 logger("Special case error: %s" % str(e),
                        file_name + ':' + feat_name, False)
-        plot_features(X, title=file_name)
+        plot_features(X, title=file_name, fig_width=fig_width)
     # plotting the statistic
     for feat_name, stat_name in all_stats.iteritems():
         X = {name: ds[name][:]
              for name in stat_name
              if ds[name].ndim >= 1}
         if len(X) > 0:
-            plot_features(X, title=feat_name)
+            plot_features(X, title=feat_name, fig_width=fig_width)
     # save all plot to 1 path
     plot_save(figure_path, log=False)
     logger("Figure save at: ", figure_path, True)

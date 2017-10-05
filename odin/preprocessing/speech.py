@@ -21,6 +21,7 @@ from scipy.signal import lfilter
 from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable)
+from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
@@ -158,6 +159,11 @@ class AudioReader(Extractor):
         'path': path_to_loaded_file
     }
 
+    Parameters
+    ----------
+    sr: int or None
+        provided sr for missing sr audio (i.e. pcm files)
+
     Note
     ----
     Dithering introduces white noise when you save the raw array into
@@ -227,11 +233,7 @@ class AudioReader(Extractor):
         else:
             s = path_or_array
         # ====== valiate sample rate ====== #
-        if self.sr is not None:
-            if sr is not None and sr != self.sr:
-                raise RuntimeError("Audio file at path: '%s' has sample rate: '%d'"
-                                   ", but the provided sample rate is '%d'" %
-                                   (path, sr, self.sr))
+        if sr is None and self.sr is not None:
             sr = int(self.sr)
         # resampling if necessary
         if sr is not None and self.sr_new is not None:
@@ -259,7 +261,7 @@ class AudioReader(Extractor):
             s_pow = max(s.std(), 1e-20)
             s = s + 1.e-6 * s_pow * dither
         else: # just remove DC offset
-            s -= np.mean(s, 0)
+            s = s - np.mean(s, 0)
         # ====== pre-emphasis ====== #
         if self.preemphasis is not None and 0. < self.preemphasis < 1.:
             s = pre_emphasis(s, coeff=float(self.preemphasis))
@@ -472,8 +474,7 @@ class AcousticNorm(Extractor):
             raise ValueError("win_length must >= 3")
         self.win_length = win_length
         # ====== check which features will be normalized ====== #
-        self.feat_type = tuple([feat.lower()
-            for feat in as_tuple(feat_type, t=str)])
+        self.feat_type = as_tuple(feat_type, t=str)
 
     def _transform(self, feat):
         if not isinstance(feat, Mapping):
@@ -529,61 +530,76 @@ class Read3ColSAD(Extractor):
 
     """
 
-    def __init__(self, path, step_length, name_converter=None, file_regex='.*',
+    def __init__(self, path_or_map, step_length,
+                 name_converter=None, ref_key='path', file_regex='.*',
                  keep_unvoiced=False, feat_type=('spec', 'mspec', 'mfcc',
                                                  'qspec', 'qmspec', 'qmfcc',
                                                  'pitch', 'f0', 'vad', 'energy')):
         super(Read3ColSAD, self).__init__()
         self.keep_unvoiced = bool(keep_unvoiced)
-        self.feat_type = tuple([str(feat) for feat in feat_type])
+        self.feat_type = as_tuple(feat_type, t=str)
         self.step_length = float(step_length)
         # ====== file regex ====== #
         file_regex = re.compile(str(file_regex))
         # ====== name_converter ====== #
         if name_converter is not None:
-            if not callable(name_converter) or not is_pickleable(name_converter):
-                raise ValueError("`name_converter` must be picklable function.")
+            if not callable(name_converter):
+                raise ValueError("`name_converter` must be callable.")
+            name_converter = functionable(func=name_converter)
         self.name_converter = name_converter
+        self.ref_key = as_tuple(ref_key, t=str)
         # ====== parse all file ====== #
-        if not os.path.isdir(path):
-            raise ValueError("`path` must be path to folder")
-        sad = defaultdict(list)
-        for f in get_all_files(path):
-            if file_regex.search(os.path.basename(f)) is not None:
-                with open(f, 'r') as f:
-                    for line in f:
-                        name, start, end = line.strip().split(' ')
-                        sad[name].append((float(start), float(end)))
+        if not is_string(path_or_map) and not isinstance(path_or_map, Mapping):
+            raise ValueError("`path` must be path to folder, or dictionary.")
+        # read the SAD from file
+        if is_string(path_or_map):
+            sad = defaultdict(list)
+            for f in get_all_files(path_or_map):
+                if file_regex.search(os.path.basename(f)) is not None:
+                    with open(f, 'r') as f:
+                        for line in f:
+                            name, start, end = line.strip().split(' ')
+                            sad[name].append((float(start), float(end)))
+        else:
+            sad = path_or_map
         self.sad = sad
 
     def _transform(self, feats):
-        if 'path' in feats:
-            path = feats['path']
+        # ====== get ref name ====== #
+        name = None
+        for k in self.ref_key:
+            name = feats.get(k, None)
+            if is_string(name):
+                break
+        # ====== start ====== #
+        if is_string(name):
             if self.name_converter is not None:
-                path = self.name_converter(path)
+                name = self.name_converter(name)
             # ====== convert step_length ====== #
             step_length = self.step_length
             if step_length >= 1: # step_length is number of frames
                 step_length = step_length / feats['sr']
             # ====== found SAD ====== #
-            if path in self.sad:
-                sad = self.sad[path]
+            if name in self.sad:
+                sad = self.sad[name]
+                if len(sad) == 0:
+                    print(name)
                 # SAD transformed features
-                feats_sad = {}
-                # store (start-frame_index, end) of all SAD here
-                feats_sad['sad'] = []
+                feats_sad = defaultdict(list)
+                index = 0
                 for start, end in sad:
                     start = int(start / step_length)
                     end = int(end / step_length)
-                    feats_sad['sad'].append((start, end))
+                    # cut SAD out from feats
                     for ftype in self.feat_type:
                         X = feats[ftype][start:end]
-                        if ftype not in feats_sad:
-                            feats_sad[ftype] = []
                         feats_sad[ftype].append(X)
+                    # store (start-frame_index, end-frame-index) of all SAD here
+                    feats_sad['sad'].append((index, index + X.shape[0]))
+                    index = index + X.shape[0]
                 # concatenate sad segments
                 for ftype in self.feat_type:
-                    feats_sad[ftype] = np.concatenate(feats_sad[ftype], axis=-1)
+                    feats_sad[ftype] = np.concatenate(feats_sad[ftype], axis=0)
                 return feats_sad
         if not self.keep_unvoiced:
             return None

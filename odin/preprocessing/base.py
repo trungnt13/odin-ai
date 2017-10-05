@@ -44,7 +44,7 @@ class Extractor(BaseEstimator, TransformerMixin):
         # NOTE: do not override this method
         y = self._transform(X)
         # ====== check returned types ====== #
-        if not isinstance(y, (Mapping, None)):
+        if not isinstance(y, (Mapping, type(None))):
             raise RuntimeError("Extractor can only return Mapping or None, but "
                                "the returned type is: %s" % str(type(y)))
         # ====== Merge previous results ====== #
@@ -92,8 +92,9 @@ class NameConverter(Extractor):
         super(NameConverter, self).__init__()
         # ====== check converter ====== #
         from odin.utils.decorators import functionable
-        if not callable(converter):
+        if not callable(converter) and not isinstance(converter, Mapping):
             raise ValueError("`converter` must be callable.")
+        # converter can be function or dictionary
         if inspect.isfunction(converter):
             self.converter = functionable(converter)
         else:
@@ -108,7 +109,8 @@ class NameConverter(Extractor):
                 name = X.get(key, None)
                 if is_string(name):
                     break
-            name = self.converter(name)
+            name = self.converter(name) if callable(self.converter) else\
+                self.converter[name]
             X['name'] = str(name)
         return X
 

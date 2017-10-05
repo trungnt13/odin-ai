@@ -184,7 +184,7 @@ extractors = [
                'vad': 'float16', 'energy': 'float16'})
 ]
 acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
-                            path=outpath, pca=True, ncache=300, ncpu=8,
+                            path=outpath, pca=True, ncache=500, ncpu=8,
                             override=True)
 acous.run()
 pp.validate_features(acous, path='/tmp/tidigits', nb_samples=12, override=True)
