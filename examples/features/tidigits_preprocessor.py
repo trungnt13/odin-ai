@@ -135,7 +135,7 @@ if not os.path.exists(wav_ds):
     wave = pp.FeatureProcessor(segments,
         extractor=[
             pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
-                                  remove_dc_n_dither=True, preemphasis=0.97),
+                                  remove_dc_n_dither=False, preemphasis=0.97),
             pp.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
                              keys='path'),
             pp.AsType({'raw': 'float16'})

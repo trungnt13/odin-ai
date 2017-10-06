@@ -1,31 +1,61 @@
 from __future__ import print_function, division, absolute_import
 
 import warnings
-from collections import Counter
+from collections import Counter, Mapping
 
 import numpy as np
 
 from .recipe_basic import FeederRecipe
-from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number)
+from odin.utils.decorators import functionable
 from odin.preprocessing.signal import segment_axis
+from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number,
+                        is_string)
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
-def most_common(x):
-    return Counter(x).most_common()[0][0]
+def _get_data_label_idx(data_idx, label_idx, ndim):
+    data_idx = axis_normalize(axis=data_idx, ndim=ndim, return_tuple=True)
+    label_idx = axis_normalize(axis=label_idx, ndim=ndim, return_tuple=True)
+    # exclude all index in label_idx
+    data_idx = [i for i in data_idx if i not in label_idx]
+    return data_idx, label_idx
 
 
-def last_seen(x):
-    return x[-1]
+def _check_label_mode(mode):
+    if is_number(mode):
+        return np.clip(float(mode), 0., 1.)
+    if is_string(mode):
+        mode = mode.lower()
+        if mode not in ('common', 'last', 'first', 'middle'):
+            raise ValueError(
+                "`label_mode` can be: 'common', 'last', 'first', 'middle'")
+        return mode
+    raise ValueError("No support for `label_mode`=%s" % str(mode))
 
 
-def in_middle(x):
-    if len(x) % 2 == 0: # even
-        return x[len(x) // 2]
-    # odd
-    return x[len(x) // 2 + 1]
+def _apply_label_mode(y, mode, axis=1):
+    ndim = y.ndim
+    axis = axis_normalize(axis=axis, ndim=ndim)
+    if is_string(mode):
+        if mode == 'common':
+            slices = [slice(None) if i != axis else -1
+                      for i in range(ndim)]
+        elif mode == 'last':
+            slices = [slice(None) if i != axis else -1
+                      for i in range(ndim)]
+        elif mode == 'first':
+            slices = [slice(None) if i != axis else 0
+                      for i in range(ndim)]
+        elif mode == 'middle':
+            slices = [slice(None) if i != axis else y.shape[i] // 2
+                      for i in range(ndim)]
+    elif is_number(mode):
+        slices = [slice(None) if i != axis else
+                  int(float(mode) * y.shape[axis])
+                  for i in range(ndim)]
+    return y[slices]
 
 
 # ===========================================================================
@@ -357,16 +387,20 @@ class Sequencing(FeederRecipe):
     Return
     ------
     a ndarray
-
     The array is not copied unless necessary (either because it is unevenly
     strided and being flattened or because end is set to 'pad' or 'wrap').
+
+    Note
+    ----
+    It is suggested the use end='cut', and choose relevant short
+    `frame_length`, using `pad` or `wrap` will significant increase
+    amount of memory usage.
 
     """
 
     def __init__(self, frame_length=256, hop_length=None,
                  end='cut', endvalue=0., endmode='post',
-                 label_transform=last_seen,
-                 data_idx=None, label_idx=()):
+                 data_idx=None, label_mode='last', label_idx=()):
         super(Sequencing, self).__init__()
         self.frame_length = int(frame_length)
         self.hop_length = frame_length // 2 if hop_length is None else int(hop_length)
@@ -377,13 +411,7 @@ class Sequencing(FeederRecipe):
         self.endvalue = endvalue
         self.endmode = str(endmode)
         # ====== transform function ====== #
-        if label_transform is not None and not callable(label_transform):
-            raise ValueError("`label_transform` must be callable object, but "
-                             "given type: %s" % type(label_transform))
-        if not is_pickleable(label_transform):
-            raise ValueError("`label_transform` must be pickle-able function, "
-                             "i.e. it must be top-level function.")
-        self.label_transform = label_transform
+        self.label_mode = _check_label_mode(label_mode)
         # specific index
         self.data_idx = data_idx
         self.label_idx = label_idx
@@ -464,8 +492,126 @@ class Sequencing(FeederRecipe):
                     feat_shape = (shp[-1],) if len(shp) >= 2 else ()
                     mid_shape = tuple(shp[1:-1])
                     shp = (n, self.frame_length,) + mid_shape + feat_shape
-                # for labels.
+                # for labels, #this assume that the label_transform
+                # will remove unncessary dimension
                 elif idx in label_idx:
                     shp = (n,) + shp[1:]
             new_shapes.append((shp, ids))
         return new_shapes
+
+
+class SADindex(FeederRecipe):
+    """ Voice activity indexing (i.e. only select frames
+    indicated by SAD from the )
+
+    Parameters
+    ----------
+    vad: dict, list of (indices, data)
+        anything take file name and return a list of SAD indices
+    frame_length: int
+        if `frame_length`=1, simply concatenate all VAD frames.
+    label_mode: str
+        One of the following
+        'last': the last element in the label list
+        'middle': the middle element in the label list
+        'first': the first element in the label list
+        'common': the most common in the label list
+        float value: position according to the percentile (0.0 - 1.0)
+
+    Note
+    ----
+    `frame_length` is also the minimum length for an SAD segment, any
+    segment smaller than given value will be removed.
+
+    """
+
+    def __init__(self, sad, frame_length, step_length=None,
+                 data_idx=None, label_idx=(), label_mode='last'):
+        super(SADindex, self).__init__()
+        if not isinstance(sad, Mapping):
+            raise ValueError('Unsupport "vad" type: %s' % type(sad).__name__)
+        self.sad = sad
+        self.frame_length = int(frame_length)
+        self.step_length = frame_length // 2 if step_length is None else \
+            int(step_length)
+        self.data_idx = data_idx
+        # ====== for labels ====== #
+        self.label_idx = label_idx
+        self.label_mode = _check_label_mode(label_mode)
+
+    def _estimate_n_segments(self, indices):
+        # indices is list of [(start, end), ...]
+        n = 0
+        for start, end in indices:
+            nb_samples = end - start
+            if nb_samples < self.frame_length:
+                pass # 0
+            elif nb_samples == self.frame_length:
+                n += 1
+            else: # cut mode
+                n += int(np.floor(
+                    (nb_samples - self.frame_length) / self.step_length)) + 1
+        return n
+
+    def process(self, name, X):
+        # ====== return None, ignore the file ====== #
+        if name not in self.sad:
+            return None
+        # ====== prepare the index ====== #
+        indices = self.sad[name]
+        data_idx = axis_normalize(axis=self.data_idx, ndim=len(X),
+                                  return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx, ndim=len(X),
+                                   return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
+        # ====== found the VAD, process it ====== #
+        X_new = []
+        for idx, x in enumerate(X):
+            if idx in data_idx or idx in label_idx:
+                x_new = []
+                for start, end in indices:
+                    seg = x[start:end]
+                    if end - start == self.frame_length:
+                        x_new.append(np.expand_dims(seg, axis=0))
+                    elif end - start < self.frame_length:
+                        pass
+                    elif end - start > self.frame_length:
+                        x_new.append(segment_axis(seg,
+                            frame_length=self.frame_length,
+                            hop_length=self.step_length,
+                            end='cut'))
+                # no SAD
+                if len(x_new) == 0:
+                    return None
+                # merge all segments together
+                x = np.concatenate(x_new, axis=0)
+                # label transform
+                if idx in label_idx:
+                    x = _apply_label_mode(x, self.label_mode, axis=1)
+            X_new.append(x)
+        return name, X_new
+
+    def shape_transform(self, shapes):
+        # ====== prepare the index ====== #
+        data_idx = axis_normalize(axis=self.data_idx, ndim=len(shapes),
+                                  return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx, ndim=len(shapes),
+                                   return_tuple=True)
+        data_idx = [i for i in data_idx
+                    if i not in label_idx]
+        # ====== shapes ====== #
+        shapes_new = []
+        for idx, (shp, ids) in enumerate(shapes):
+            total_sample = 0
+            ids_new = []
+            for name, _ in ids:
+                n = self._estimate_n_segments(self.sad[name])
+                total_sample += n
+                ids_new.append((name, n))
+            if idx in data_idx: # Data INdex
+                shp = (total_sample, self.frame_length) + shp[1:]
+            elif idx in label_idx: # Label index
+                shp = (total_sample,) + shp[1:]
+            shapes_new.append((shp, ids_new))
+        return tuple(shapes_new)
