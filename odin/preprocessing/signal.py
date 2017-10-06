@@ -173,7 +173,7 @@ def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
         minimum_duration = np.clip(minimum_duration, 0., 0.99 * maximum_duration)
     # ====== start spliting ====== #
     frames = segment_axis(s, frame_length, frame_length,
-                          axis=0, end='pad', endvalue=0.)
+                          axis=0, end='pad', pad_value=0.)
     energy = get_energy(frames, log=True)
     vad = vad_energy(energy, distrib_nb=nb_mixtures, nb_train_it=33)[0]
     vad = smooth(vad, win=frame_length, window='flat')
@@ -911,8 +911,8 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
     return X
 
 
-def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
-                 end='cut', endvalue=0, endmode='post'):
+def segment_axis(a, frame_length=2048, step_length=512, axis=0,
+                 end='cut', pad_value=0, pad_mode='post'):
     """Generate a new array that chops the given array along the given axis
     into overlapping frames.
 
@@ -932,7 +932,7 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
         the array to segment
     frame_length: int
         the length of each frame
-    hop_length: int
+    step_length: int
         the number of array elements by which the frames should overlap
     axis: int, None
         the axis to operate on; if None, act on the flattened array
@@ -942,9 +942,9 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
             - 'cut'   Simply discard the extra values
             - 'wrap'  Copy values from the beginning of the array
             - 'pad'   Pad with a constant value
-    endvalue: int
+    pad_value: int
         the value to use for end='pad'
-    endmode: 'pre', 'post'
+    pad_mode: 'pre', 'post'
         if "pre", padding or wrapping at the beginning of the array.
         if "post", padding or wrapping at the ending of the array.
 
@@ -965,7 +965,7 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
         axis = 0
 
     length = a.shape[axis]
-    overlap = frame_length - hop_length
+    overlap = frame_length - step_length
 
     if overlap >= frame_length:
         raise ValueError("frames cannot overlap by more than 100%")
@@ -992,17 +992,17 @@ def segment_axis(a, frame_length=2048, hop_length=512, axis=0,
             s[-1] = roundup
             b = np.empty(s, dtype=a.dtype)
             # pre-padding
-            if endmode == 'pre':
+            if pad_mode == 'pre':
                 b[..., :length] = a
                 if end == 'pad':
-                    b[..., length:] = endvalue
+                    b[..., length:] = pad_value
                 elif end == 'wrap':
                     b[..., length:] = a[..., :roundup - length]
             # post-padding
-            elif endmode == 'post':
+            elif pad_mode == 'post':
                 b[..., -length:] = a
                 if end == 'pad':
-                    b[..., :(roundup - length)] = endvalue
+                    b[..., :(roundup - length)] = pad_value
                 elif end == 'wrap':
                     b[..., :(roundup - length)] = a[..., :roundup - length]
             a = b
@@ -1085,8 +1085,8 @@ def stft(y, frame_length, step_length=None, nfft=None,
         - a vector or array of length `n_fft`
     padding: boolean
         - If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+          `D[:, t]` is centered at `y[t * step_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * step_length]`
     energy: bool
         if True, return log-frame-wise energy
 
@@ -1176,8 +1176,8 @@ def istft(stft_matrix, frame_length, step_length=None,
         - a user-specified window vector of length `n_fft`
     padding: boolean
         - If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+          `D[:, t]` is centered at `y[t * step_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * step_length]`
 
     Returns
     -------
@@ -1259,8 +1259,8 @@ def spectra(sr, frame_length, y=None, S=None,
         if True, convert all power spectrogram to DB
     padding : bool
         - If `True`, the signal `y` is padded so that frame
-          `D[:, t]` is centered at `y[t * hop_length]`.
-        - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+          `D[:, t]` is centered at `y[t * step_length]`.
+        - If `False`, then `D[:, t]` begins at `y[t * step_length]`
 
     Returns
     -------
@@ -1385,7 +1385,7 @@ def ispec(spec, frame_length, step_length=None, window="hann",
 # ===========================================================================
 # F0 analysis
 # ===========================================================================
-def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
+def pitch_track(y, sr, step_length, fmin=60.0, fmax=260.0, threshold=0.3,
                 otype="pitch", algorithm='swipe'):
     """
 
@@ -1395,7 +1395,7 @@ def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
         A whole audio signal
     sr : int
         Sampling frequency.
-    hop_length : int
+    step_length : int
         Hop length.
     fmin : float, optional
         Minimum fundamental frequency. Default is 60.0
@@ -1435,15 +1435,15 @@ def pitch_track(y, sr, hop_length, fmin=60.0, fmax=260.0, threshold=0.3,
     # ====== Do it ====== #
     sr = int(sr)
     if algorithm == 'avg':
-        y1 = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=hop_length,
+        y1 = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=step_length,
                           threshold=threshold, min=fmin, max=fmax, otype=otype)
-        y2 = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=hop_length,
+        y2 = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=step_length,
                          voice_bias=threshold, min=fmin, max=fmax, otype=otype)
         y = (y1 + y2) / 2
     elif algorithm == 'swipe':
-        y = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=hop_length,
+        y = pysptk.swipe(y.astype(np.float64), fs=sr, hopsize=step_length,
                          threshold=threshold, min=fmin, max=fmax, otype=otype)
     else:
-        y = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=hop_length,
+        y = pysptk.rapt(y.astype(np.float32), fs=sr, hopsize=step_length,
                         voice_bias=threshold, min=fmin, max=fmax, otype=otype)
     return y.astype('float32')

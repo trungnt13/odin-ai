@@ -35,27 +35,28 @@ def _check_label_mode(mode):
     raise ValueError("No support for `label_mode`=%s" % str(mode))
 
 
-def _apply_label_mode(y, mode, axis=1):
-    ndim = y.ndim
-    axis = axis_normalize(axis=axis, ndim=ndim)
-    if is_string(mode):
-        if mode == 'common':
-            slices = [slice(None) if i != axis else -1
-                      for i in range(ndim)]
-        elif mode == 'last':
-            slices = [slice(None) if i != axis else -1
-                      for i in range(ndim)]
-        elif mode == 'first':
-            slices = [slice(None) if i != axis else 0
-                      for i in range(ndim)]
-        elif mode == 'middle':
-            slices = [slice(None) if i != axis else y.shape[i] // 2
-                      for i in range(ndim)]
-    elif is_number(mode):
-        slices = [slice(None) if i != axis else
-                  int(float(mode) * y.shape[axis])
-                  for i in range(ndim)]
-    return y[slices]
+def _apply_label_mode(y, mode):
+    # This applying the label transform to 1-st axis
+    if y.ndim == 1:
+        y = np.expand_dims(y, axis=0)
+    if is_number(mode):
+        n = y.shape[1]
+        n = int(float(mode) * n)
+        return y[:, n]
+    if mode == 'common':
+        raise NotImplementedError
+    if mode == 'last':
+        return y[:, -1]
+    elif mode == 'first':
+        return y[:, 0]
+    elif mode == 'middle':
+        n = y.shape[1]
+        if n % 2 == 0:
+            n //= 2
+        else:
+            n = n // 2 + 1
+        return y[:, n]
+    raise NotImplementedError("No support for label mode: '%s'" % mode)
 
 
 # ===========================================================================
@@ -294,14 +295,8 @@ class Stacking(FeederRecipe):
             warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
                           'into %d features.' % (name, X[0].shape[0], self.n))
             return None
-        data_idx = axis_normalize(axis=self.data_idx,
-                                  ndim=len(X),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx,
-                                   ndim=len(X),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(X))
         # ====== stacking  ====== #
         X = [self._stacking(x) if idx in data_idx else x
              for idx, x in enumerate(X)]
@@ -310,14 +305,8 @@ class Stacking(FeederRecipe):
         return name, X
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(axis=self.data_idx,
-                                  ndim=len(shapes),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx,
-                                   ndim=len(shapes),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(shapes))
         # ====== update the shape and indices ====== #
         new_shapes = []
         for idx, (shp, ids) in enumerate(shapes):
@@ -361,7 +350,7 @@ class Sequencing(FeederRecipe):
     ----------
     frame_length: int
         the length of each frame
-    hop_length: int
+    step_length: int
         the number of array elements by which the frames should overlap
     axis: int
         the axis to operate on; if None, act on the flattened array
@@ -371,9 +360,9 @@ class Sequencing(FeederRecipe):
             - 'cut'   Simply discard the extra values
             - 'wrap'  Copy values from the beginning of the array
             - 'pad'   Pad with a constant value
-    endvalue: Number
+    pad_value: Number
         the value to use for end='pad'
-    endmode: 'pre', 'post'
+    pad_mode: 'pre', 'post'
         if "pre", padding or wrapping at the beginning of the array.
         if "post", padding or wrapping at the ending of the array.
     label_transform: callable
@@ -398,38 +387,32 @@ class Sequencing(FeederRecipe):
 
     """
 
-    def __init__(self, frame_length=256, hop_length=None,
-                 end='cut', endvalue=0., endmode='post',
+    def __init__(self, frame_length=256, step_length=None,
+                 end='cut', pad_value=0., pad_mode='post',
                  data_idx=None, label_mode='last', label_idx=()):
         super(Sequencing, self).__init__()
         self.frame_length = int(frame_length)
-        self.hop_length = frame_length // 2 if hop_length is None else int(hop_length)
-        if hop_length > frame_length:
-            raise ValueError("hop_length=%d must be smaller than frame_length=%d"
-                             % (hop_length, frame_length))
+        self.step_length = frame_length // 2 if step_length is None else int(step_length)
+        if step_length > frame_length:
+            raise ValueError("step_length=%d must be smaller than frame_length=%d"
+                             % (step_length, frame_length))
         self.end = str(end)
-        self.endvalue = endvalue
-        self.endmode = str(endmode)
+        self.pad_value = pad_value
+        self.pad_mode = str(pad_mode)
         # ====== transform function ====== #
-        self.label_mode = _check_label_mode(label_mode)
         # specific index
         self.data_idx = data_idx
         self.label_idx = label_idx
+        self.label_mode = _check_label_mode(label_mode)
 
     def process(self, name, X):
         # ====== not enough data points for sequencing ====== #
         if X[0].shape[0] < self.frame_length and self.end == 'cut':
-            warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
-                          'into %d features.' % (name, X[0].shape[0], self.frame_length))
+            # warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
+            #               'into %d features.' % (name, X[0].shape[0], self.frame_length))
             return None
-        data_idx = axis_normalize(axis=self.data_idx,
-                                  ndim=len(X),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx,
-                                   ndim=len(X),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(X))
         # ====== segnments X ====== #
         X_new = []
         for idx, x in enumerate(X):
@@ -437,22 +420,23 @@ class Sequencing(FeederRecipe):
             if idx in data_idx:
                 x = segment_axis(a=x,
                                  frame_length=self.frame_length,
-                                 hop_length=self.hop_length, axis=0,
-                                 end=self.end, endvalue=self.endvalue,
-                                 endmode=self.endmode)
+                                 step_length=self.step_length, axis=0,
+                                 end=self.end, pad_value=self.pad_value,
+                                 pad_mode=self.pad_mode)
             # for label
             elif idx in label_idx:
                 org_dtype = x.dtype
                 x = segment_axis(a=np.asarray(x, dtype='str'),
                                  frame_length=self.frame_length,
-                                 hop_length=self.hop_length,
+                                 step_length=self.step_length,
                                  axis=0, end=self.end,
-                                 endvalue='__end__',
-                                 endmode=self.endmode)
+                                 pad_value='__end__',
+                                 pad_mode=self.pad_mode)
                 # need to remove padded value
                 x = np.asarray(
-                    [self.label_transform([j for j in i
-                                           if '__end__' not in j])
+                    [_apply_label_mode(
+                        np.array([j for j in i if '__end__' not in j]),
+                        mode=self.label_mode)
                      for i in x],
                     dtype=org_dtype
                 )
@@ -460,14 +444,8 @@ class Sequencing(FeederRecipe):
         return name, X_new
 
     def shape_transform(self, shapes):
-        data_idx = axis_normalize(axis=self.data_idx,
-                                  ndim=len(shapes),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx,
-                                   ndim=len(shapes),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(shapes))
         # ====== update the indices ====== #
         new_shapes = []
         for idx, (shp, ids) in enumerate(shapes):
@@ -480,10 +458,10 @@ class Sequencing(FeederRecipe):
                     else:
                         if self.end != 'cut':
                             nb_samples = np.ceil(
-                                (nb_samples - self.frame_length) / self.hop_length)
+                                (nb_samples - self.frame_length) / self.step_length)
                         else:
                             nb_samples = np.floor(
-                                (nb_samples - self.frame_length) / self.hop_length)
+                                (nb_samples - self.frame_length) / self.step_length)
                         nb_samples = int(nb_samples) + 1
                     ids_new.append((name, nb_samples))
                     n += nb_samples
@@ -558,13 +536,9 @@ class SADindex(FeederRecipe):
         if name not in self.sad:
             return None
         # ====== prepare the index ====== #
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(X))
         indices = self.sad[name]
-        data_idx = axis_normalize(axis=self.data_idx, ndim=len(X),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx, ndim=len(X),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
         # ====== found the VAD, process it ====== #
         X_new = []
         for idx, x in enumerate(X):
@@ -579,27 +553,23 @@ class SADindex(FeederRecipe):
                     elif end - start > self.frame_length:
                         x_new.append(segment_axis(seg,
                             frame_length=self.frame_length,
-                            hop_length=self.step_length,
+                            step_length=self.step_length,
                             end='cut'))
                 # no SAD
                 if len(x_new) == 0:
                     return None
                 # merge all segments together
                 x = np.concatenate(x_new, axis=0)
-                # label transform
+                # label transform, axis = 1 (new generate axis)
                 if idx in label_idx:
-                    x = _apply_label_mode(x, self.label_mode, axis=1)
+                    x = _apply_label_mode(x, self.label_mode)
             X_new.append(x)
         return name, X_new
 
     def shape_transform(self, shapes):
         # ====== prepare the index ====== #
-        data_idx = axis_normalize(axis=self.data_idx, ndim=len(shapes),
-                                  return_tuple=True)
-        label_idx = axis_normalize(axis=self.label_idx, ndim=len(shapes),
-                                   return_tuple=True)
-        data_idx = [i for i in data_idx
-                    if i not in label_idx]
+        data_idx, label_idx = _get_data_label_idx(
+            self.data_idx, self.label_idx, len(shapes))
         # ====== shapes ====== #
         shapes_new = []
         for idx, (shp, ids) in enumerate(shapes):
@@ -609,9 +579,11 @@ class SADindex(FeederRecipe):
                 n = self._estimate_n_segments(self.sad[name])
                 total_sample += n
                 ids_new.append((name, n))
-            if idx in data_idx: # Data INdex
+            # Data INdex
+            if idx in data_idx:
                 shp = (total_sample, self.frame_length) + shp[1:]
-            elif idx in label_idx: # Label index
+            # Label index
+            elif idx in label_idx:
                 shp = (total_sample,) + shp[1:]
             shapes_new.append((shp, ids_new))
         return tuple(shapes_new)

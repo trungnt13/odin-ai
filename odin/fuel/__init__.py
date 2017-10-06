@@ -59,10 +59,29 @@ def load_digit_wav():
             shutil.rmtree(outpath)
         zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
         zf.extractall(path=outpath + '/../'); zf.close()
-    except:
+    except Exception:
         # remove downloaded zip files
         os.remove(datapath)
         import traceback; traceback.print_exc()
+    return Dataset(outpath, read_only=True)
+
+
+def load_digit_raw():
+    path = 'https://s3.amazonaws.com/ai-datasets/digit_raw.zip'
+    datapath = get_file('digit_raw.zip', path)
+    try:
+        outpath = datapath.replace('.zip', '')
+        if os.path.exists(outpath):
+            shutil.rmtree(outpath)
+        zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
+        zf.extractall(path=outpath + '/../')
+        zf.close()
+    except Exception:
+        # remove downloaded zip files
+        os.remove(datapath)
+        import traceback; traceback.print_exc()
+    finally:
+        os.remove(datapath)
     return Dataset(outpath, read_only=True)
 
 
@@ -75,7 +94,7 @@ def load_commands_wav():
             shutil.rmtree(outpath)
         zf = ZipFile(datapath, mode='r', compression=ZIP_DEFLATED)
         zf.extractall(path=outpath + '/../'); zf.close()
-    except:
+    except Exception:
         # remove downloaded zip files
         os.remove(datapath)
         import traceback; traceback.print_exc()
