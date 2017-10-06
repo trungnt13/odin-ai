@@ -7,7 +7,7 @@ import numpy as np
 
 from .recipe_basic import FeederRecipe
 from odin.utils.decorators import functionable
-from odin.preprocessing.signal import segment_axis
+from odin.preprocessing.signal import segment_axis, stack_frames
 from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number,
                         is_string)
 
@@ -260,49 +260,42 @@ class Stacking(FeederRecipe):
 
     Note
     ----
-    Stacking recipe transforms the data and labels in different way
+    You must be carefull applying stacking on label before one-hot
+    encoded it.
     """
 
     def __init__(self, left_context=10, right_context=10, shift=None,
-                 data_idx=None, label_idx=()):
+                 data_idx=None, label_mode='last', label_idx=()):
         super(Stacking, self).__init__()
-        self.left_context = left_context
-        self.right_context = right_context
-        self.n = int(left_context) + 1 + int(right_context)
-        self.shift = int(right_context) if shift is None else int(shift)
+        self.left_context = int(left_context)
+        self.right_context = int(right_context)
+        self.shift = self.left_context if shift is None else int(shift)
         self.data_idx = data_idx
+        self.label_mode = _check_label_mode(label_mode)
         self.label_idx = label_idx
 
-    def _stacking(self, x):
-        # x is ndarray
-        idx = list(range(0, x.shape[0], self.shift))
-        _ = [x[i:i + self.n].reshape(1, -1) for i in idx
-             if (i + self.n) <= x.shape[0]]
-        x = np.concatenate(_, axis=0) if len(_) > 1 else _[0]
-        return x
-
-    def _middle_label(self, trans):
-        idx = list(range(0, len(trans), self.shift))
-        # only take the middle labelobject
-        trans = np.asarray(
-            [trans[i + self.left_context + 1]
-             for i in idx
-             if (i + self.n) <= len(trans)])
-        return trans
+    @property
+    def frame_length(self):
+        return self.left_context + 1 + self.right_context
 
     def process(self, name, X):
-        if X[0].shape[0] < self.n: # not enough data points for stacking
-            warnings.warn('name="%s" has shape[0]=%d, which is not enough to stack '
-                          'into %d features.' % (name, X[0].shape[0], self.n))
+        # not enough data points for stacking
+        if X[0].shape[0] < self.frame_length:
             return None
         data_idx, label_idx = _get_data_label_idx(
             self.data_idx, self.label_idx, len(X))
         # ====== stacking  ====== #
-        X = [self._stacking(x) if idx in data_idx else x
-             for idx, x in enumerate(X)]
-        X = [self._middle_label(x) if idx in label_idx else x
-             for idx, x in enumerate(X)]
-        return name, X
+        X_new = []
+        for idx, x in enumerate(X):
+            if idx in data_idx:
+                x = stack_frames(x, frame_length=self.frame_length,
+                                 step_length=self.shift)
+            elif idx in label_idx:
+                x = segment_axis(x, frame_length=self.frame_length,
+                                 step_length=self.shift, axis=0, end='cut')
+                x = _apply_label_mode(x, self.label_mode)
+            X_new.append(x)
+        return name, X_new
 
     def shape_transform(self, shapes):
         data_idx, label_idx = _get_data_label_idx(
@@ -314,7 +307,7 @@ class Stacking(FeederRecipe):
                 # calculate new number of samples
                 n = 0; ids_new = []
                 for name, nb_samples in ids:
-                    nb_samples = 1 + (nb_samples - self.n) // self.shift
+                    nb_samples = 1 + (nb_samples - self.frame_length) // self.shift
                     ids_new.append((name, nb_samples))
                     n += nb_samples
                 # for label_idx, number of features kept as original
@@ -322,10 +315,8 @@ class Stacking(FeederRecipe):
                     shp = (n,) + shp[1:]
                 # for data_idx, only apply for 2D
                 elif idx in data_idx:
-                    if len(shp) > 2:
-                        raise Exception('Stacking only support 2D array.')
-                    nb_features = shp[-1] * self.n if len(shp) == 2 else \
-                        self.n
+                    nb_features = shp[1] * self.frame_length if len(shp) == 2 \
+                        else self.frame_length
                     shp = (n, nb_features)
             new_shapes.append((shp, ids))
         # ====== do the shape infer ====== #

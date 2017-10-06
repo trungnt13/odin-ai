@@ -911,6 +911,35 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
     return X
 
 
+def stack_frames(X, frame_length, step_length=None):
+    """ Example:
+    >>> X = [[ 0  1]
+    ...      [ 2  3]
+    ...      [ 4  5]
+    ...      [ 6  7]
+    ...      [ 8  9]
+    ...      [10 11]
+    ...      [12 13]
+    ...      [14 15]
+    ...      [16 17]
+    ...      [18 19]]
+    >>> frame_length = 5
+    >>> step_length = 2
+    >>> stack_frames(X, frame_length, step_length)
+    >>> [[ 0  1  2  3  4  5  6  7  8  9]
+    ...  [ 4  5  6  7  8  9 10 11 12 13]
+    ...  [ 8  9 10 11 12 13 14 15 16 17]]
+    """
+    assert X.ndim == 2, "Only support 2D matrix for stacking frames."
+    frame_length = int(frame_length)
+    if step_length is None:
+        step_length = frame_length // 2
+    shape = (1 + (X.shape[0] - frame_length) // step_length,
+             frame_length * X.shape[1])
+    strides = (X.strides[0] * step_length, X.strides[1])
+    return np.lib.stride_tricks.as_strided(X, shape=shape, strides=strides)
+
+
 def segment_axis(a, frame_length=2048, step_length=512, axis=0,
                  end='cut', pad_value=0, pad_mode='post'):
     """Generate a new array that chops the given array along the given axis
