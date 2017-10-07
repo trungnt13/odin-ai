@@ -37,8 +37,6 @@ def _check_label_mode(mode):
 
 def _apply_label_mode(y, mode):
     # This applying the label transform to 1-st axis
-    if y.ndim == 1:
-        y = np.expand_dims(y, axis=0)
     if is_number(mode):
         n = y.shape[1]
         n = int(float(mode) * n)
@@ -404,10 +402,10 @@ class Sequencing(FeederRecipe):
     def process(self, name, X):
         # ====== not enough data points for sequencing ====== #
         if self.end == 'cut' and \
-        any(x[0].shape[0] < self.frame_length for x in X):
+        any(x.shape[0] < self.frame_length for x in X):
             return None
         if self.end == 'ignore' and \
-        any(x[0].shape[0] > self.frame_length for x in X):
+        any(x.shape[0] > self.frame_length for x in X):
             return None
         end = self.end
         if end == 'ignore':
@@ -427,22 +425,24 @@ class Sequencing(FeederRecipe):
                                  pad_mode=self.pad_mode)
             # for label
             elif idx in label_idx:
-                # TODO: check label transform here
                 org_dtype = x.dtype
-                x = segment_axis(a=np.asarray(x, dtype='str'),
-                                 frame_length=self.frame_length,
-                                 step_length=self.step_length,
-                                 axis=0, end=end,
-                                 pad_value='__end__',
-                                 pad_mode=self.pad_mode)
+                x = segment_axis(
+                    a=x if end == 'cut' else np.asarray(x, dtype='str'),
+                    frame_length=self.frame_length, step_length=self.step_length,
+                    axis=0, end=end,
+                    pad_value='__end__', pad_mode=self.pad_mode)
+                if end == 'cut':
+                    x = _apply_label_mode(y=x, mode=self.label_mode)
                 # need to remove padded value
-                x = np.asarray(
-                    [_apply_label_mode(
-                        np.array([j for j in i if '__end__' not in j]),
-                        mode=self.label_mode)
-                     for i in x],
-                    dtype=org_dtype
-                )
+                else:
+                    x = np.asarray(
+                        [_apply_label_mode(
+                            y=np.expand_dims([j for j in i if '__end__' not in j], 0),
+                            mode=self.label_mode)
+                         for i in x],
+                        dtype=org_dtype
+                    )
+                    x = x[:, 0]
             X_new.append(x)
         return name, X_new
 

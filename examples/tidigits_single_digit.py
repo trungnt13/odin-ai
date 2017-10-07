@@ -12,13 +12,10 @@
 #     => "train_g_08_17_as_a_4291815"
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
-
 import matplotlib
 matplotlib.use('Agg')
-
 import os
 os.environ['ODIN'] = 'gpu,float32,seed=12082518'
-from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
@@ -31,13 +28,16 @@ from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
-                        as_tuple_of_shape, stdio, ctext)
+                        as_tuple_of_shape, stdio, ctext, ArgController)
+args = ArgController(
+).add('-bs', 'batch size', '64'
+).parse()
 # ===========================================================================
 # Const
 # ===========================================================================
 FEAT = ['mspec', 'vad']
 DS_PATH = '/home/trung/data/tidigits'
-BATCH_SIZE = 32
+BATCH_SIZE = int(args.bs)
 
 MODEL_PATH = get_modelpath('tidigit', override=True)
 LOG_PATH = get_logpath('tidigit.log', override=True)
@@ -97,7 +97,7 @@ length += [(name, end - start) for name, (start, end) in test.iteritems()]
 print(print_hist([nb_frames for name, nb_frames in length],
                  bincount=30, showSummary=True, title="#Frames"))
 length = max(length, key=lambda x: x[-1])
-print(length)
+print("Maximum length:", length)
 length = length[-1]
 # ds = F.Dataset("/mnt/sdb1/TIDIGITS/raw", read_only=True)
 # ====== genders ====== #
@@ -162,7 +162,6 @@ if True:
     for X, vad, y in valid:
         n += X.shape[0]
     assert n == len(valid)
-exit()
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -233,7 +232,7 @@ task.set_callbacks([
 task.set_train_task(f_train, train, epoch=25, name='train',
                     labels=digits)
 task.set_valid_task(f_test, valid,
-                    freq=training.Timer(percentage=0.5),
+                    freq=training.Timer(percentage=0.8),
                     name='valid', labels=digits)
 task.run()
 # ===========================================================================
