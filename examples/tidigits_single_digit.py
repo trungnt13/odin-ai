@@ -28,6 +28,7 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 from odin import backend as K, nnet as N, fuel as F
 from odin.stats import train_valid_test_split, freqcount
 from odin import training
+from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
                         as_tuple_of_shape, stdio, ctext)
@@ -91,10 +92,14 @@ print(print_dist(
     show_number=True,
     title="Testing distribution"))
 # ====== length distribution ====== #
-length = [(end - start) for name, (start, end) in train.iteritems()]
-length += [(end - start) for name, (start, end) in test.iteritems()]
-print(print_hist(length, bincount=30, showSummary=True, title="#Frames"))
-length = max(length)
+length = [(name, end - start) for name, (start, end) in train.iteritems()]
+length += [(name, end - start) for name, (start, end) in test.iteritems()]
+print(print_hist([nb_frames for name, nb_frames in length],
+                 bincount=30, showSummary=True, title="#Frames"))
+length = max(length, key=lambda x: x[-1])
+print(length)
+length = length[-1]
+# ds = F.Dataset("/mnt/sdb1/TIDIGITS/raw", read_only=True)
 # ====== genders ====== #
 f_digits, digits = unique_labels([i[0] for i in train.items() + test.items()],
                                  extract_digit, True)
@@ -116,10 +121,10 @@ recipes = [
     F.recipes.Slice(slices=slice(40), axis=-1, data_idx=0),
     F.recipes.Name2Trans(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
-    F.recipes.Sequencing(frame_length=length, hop_length=1,
-                         end='pad', endmode='post', endvalue=0,
-                         label_transform=F.recipes.last_seen,
-                         data_idx=None, label_idx=-1)
+    F.recipes.Sequencing(frame_length=length, step_length=1,
+                         end='pad', pad_mode='post', pad_value=0,
+                         data_idx=None,
+                         label_mode='last', label_idx=-1),
 ]
 data = [ds[f] for f in FEAT]
 train = F.Feeder(F.DataDescriptor(data=data, indices=train),
@@ -131,7 +136,7 @@ valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
                  buffer_size=len(digits),
                  batch_mode='batch')
 test = F.Feeder(F.DataDescriptor(data=data, indices=test),
-                dtype='float32', ncpu=4,
+                dtype='float32', ncpu=8,
                 buffer_size=1,
                 batch_mode='file')
 train.set_recipes(recipes)
@@ -142,7 +147,7 @@ print(valid)
 print(test)
 # just to evaluate if we correctly estimate the right amount
 # of data in the FeederRecipes
-if False:
+if True:
     n = 0
     for X, vad, y in train:
         n += X.shape[0]
@@ -157,6 +162,7 @@ if False:
     for X, vad, y in valid:
         n += X.shape[0]
     assert n == len(valid)
+exit()
 # ===========================================================================
 # Create model
 # ===========================================================================

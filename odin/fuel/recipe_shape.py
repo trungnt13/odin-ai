@@ -387,7 +387,12 @@ class Sequencing(FeederRecipe):
         if step_length > frame_length:
             raise ValueError("step_length=%d must be smaller than frame_length=%d"
                              % (step_length, frame_length))
-        self.end = str(end)
+        # ====== check mode ====== #
+        end = str(end).lower()
+        if end not in ('cut', 'pad', 'wrap', 'ignore'):
+            raise ValueError(
+                "`end` mode support included: 'cut', 'pad', 'wrap', 'ignore'")
+        self.end = end
         self.pad_value = pad_value
         self.pad_mode = str(pad_mode)
         # ====== transform function ====== #
@@ -398,10 +403,16 @@ class Sequencing(FeederRecipe):
 
     def process(self, name, X):
         # ====== not enough data points for sequencing ====== #
-        if X[0].shape[0] < self.frame_length and self.end == 'cut':
-            # warnings.warn('name="%s" has shape[0]=%d, which is not enough to sequence '
-            #               'into %d features.' % (name, X[0].shape[0], self.frame_length))
+        if self.end == 'cut' and \
+        any(x[0].shape[0] < self.frame_length for x in X):
             return None
+        if self.end == 'ignore' and \
+        any(x[0].shape[0] > self.frame_length for x in X):
+            return None
+        end = self.end
+        if end == 'ignore':
+            end = 'pad'
+        # ====== preprocessing data-idx, label-idx ====== #
         data_idx, label_idx = _get_data_label_idx(
             self.data_idx, self.label_idx, len(X))
         # ====== segnments X ====== #
@@ -412,15 +423,16 @@ class Sequencing(FeederRecipe):
                 x = segment_axis(a=x,
                                  frame_length=self.frame_length,
                                  step_length=self.step_length, axis=0,
-                                 end=self.end, pad_value=self.pad_value,
+                                 end=end, pad_value=self.pad_value,
                                  pad_mode=self.pad_mode)
             # for label
             elif idx in label_idx:
+                # TODO: check label transform here
                 org_dtype = x.dtype
                 x = segment_axis(a=np.asarray(x, dtype='str'),
                                  frame_length=self.frame_length,
                                  step_length=self.step_length,
-                                 axis=0, end=self.end,
+                                 axis=0, end=end,
                                  pad_value='__end__',
                                  pad_mode=self.pad_mode)
                 # need to remove padded value
@@ -444,17 +456,30 @@ class Sequencing(FeederRecipe):
                 # transoform the indices
                 n = 0; ids_new = []
                 for name, nb_samples in ids:
-                    if nb_samples < self.frame_length:
-                        nb_samples = 0 if self.end == 'cut' else 1
-                    else:
-                        if self.end != 'cut':
-                            nb_samples = np.ceil(
-                                (nb_samples - self.frame_length) / self.step_length)
+                    # MODE = cut
+                    if self.end == 'cut':
+                        if nb_samples < self.frame_length:
+                            nb_samples = 0
                         else:
-                            nb_samples = np.floor(
-                                (nb_samples - self.frame_length) / self.step_length)
-                        nb_samples = int(nb_samples) + 1
-                    ids_new.append((name, nb_samples))
+                            nb_samples = 1 + np.floor(
+                            (nb_samples - self.frame_length) / self.step_length)
+                    # MODE = ignore and pad
+                    elif self.end == 'ignore':
+                        if nb_samples > self.frame_length:
+                            nb_samples = 0
+                        else:
+                            nb_samples = 1
+                    # MODE = pad
+                    else:
+                        if nb_samples < self.frame_length:
+                            nb_samples = 1
+                        else:
+                            nb_samples = 1 + np.ceil(
+                            (nb_samples - self.frame_length) / self.step_length)
+                    # make sure everything is integer
+                    nb_samples = int(nb_samples)
+                    if nb_samples > 0:
+                        ids_new.append((name, nb_samples))
                     n += nb_samples
                 # transoform the shape for data
                 if idx in data_idx:

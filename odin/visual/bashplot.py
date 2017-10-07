@@ -508,7 +508,13 @@ def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
         summary = "|" + ("observations: %d" % n).center(center) + "|\n"
         summary += "|" + ("min value: %f" % np.min(f)).center(center) + "|\n"
         summary += "|" + ("mean : %f" % np.mean(f)).center(center) + "|\n"
+        summary += "|" + (" 1-per: %f" % np.percentile(f, 1)).center(center) + "|\n"
+        summary += "|" + (" 5-per: %f" % np.percentile(f, 5)).center(center) + "|\n"
+        summary += "|" + ("25-per: %f" % np.percentile(f, 25)).center(center) + "|\n"
         summary += "|" + ("median: %f" % np.median(f)).center(center) + "|\n"
+        summary += "|" + ("75-per: %f" % np.percentile(f, 75)).center(center) + "|\n"
+        summary += "|" + ("95-per: %f" % np.percentile(f, 95)).center(center) + "|\n"
+        summary += "|" + ("99-per: %f" % np.percentile(f, 99)).center(center) + "|\n"
         summary += "|" + ("sd : %f" % np.std(f)).center(center) + "|\n"
         summary += "|" + ("max value: %f" % np.max(f)).center(center) + "|\n"
         summary += "-" * (2 + center)
