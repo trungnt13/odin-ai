@@ -1,6 +1,11 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+# Each process only run 1 threads
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import time
 import types
 import inspect

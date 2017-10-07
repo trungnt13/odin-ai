@@ -264,7 +264,7 @@ class Stacking(FeederRecipe):
     encoded it.
     """
 
-    def __init__(self, left_context=10, right_context=10, shift=None,
+    def __init__(self, left_context=10, right_context=10, shift=1,
                  data_idx=None, label_mode='last', label_idx=()):
         super(Stacking, self).__init__()
         self.left_context = int(left_context)

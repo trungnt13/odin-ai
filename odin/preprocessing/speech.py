@@ -300,6 +300,20 @@ class SpectraExtractor(Extractor):
         - If `True`, the signal `y` is padded so that frame
           `D[:, t]` is centered at `y[t * hop_length]`.
         - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
+
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
     """
 
     def __init__(self, frame_length, step_length=None, nfft=512, window='hann',
@@ -338,7 +352,22 @@ class SpectraExtractor(Extractor):
 
 
 class CQTExtractor(Extractor):
-    """ CQTExtractor """
+    """ CQTExtractor
+
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
+    """
 
     def __init__(self, frame_length, step_length=None, nbins=96, window='hann',
                  nmels=None, nceps=None, fmin=64, fmax=None, padding=False):
@@ -384,6 +413,21 @@ class CQTExtractor(Extractor):
 
 
 class PitchExtractor(Extractor):
+    """
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
+    """
 
     def __init__(self, frame_length, step_length=None,
                  threshold=1., fmin=20, fmax=260,
@@ -414,6 +458,21 @@ class PitchExtractor(Extractor):
 
 
 class VADextractor(Extractor):
+    """
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
+    """
 
     def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
                  feat_type='energy'):
@@ -441,8 +500,44 @@ class VADextractor(Extractor):
         return {'vad': vad, 'vad_threshold': float(vad_threshold)}
 
 
-class AcousticNorm(Extractor):
+class RASTAfilter(object):
+    """ RASTAfilter
 
+    Specialized "Relative Spectral Transform" applying for MFCCs
+    and PLP
+
+     RASTA is a separate technique that applies a band-pass filter
+     to the energy in each frequency subband in order to smooth over
+     short-term noise variations and to remove any constant offset
+     resulting from static spectral coloration in the speech channel
+     e.g. from a telephone line
+
+    References
+    ----------
+    [PLP and RASTA](http://www.ee.columbia.edu/ln/rosa/matlab/rastamat/)
+
+    """
+
+    def __init__(self, rasta=True, sdc=1):
+        super(RASTAfilter, self).__init__()
+        self.rasta = bool(rasta)
+        self.sdc = int(sdc)
+
+    def _transform(self, feat):
+        if 'mfcc' in feat:
+            mfcc = feat['mfcc']
+            if self.rasta:
+                mfcc = rastafilt(mfcc)
+            if self.sdc >= 1:
+                mfcc = np.hstack([
+                    mfcc,
+                    shifted_deltas(mfcc, N=7, d=self.sdc, P=3, k=7)
+                ])
+            feat['mfcc'] = mfcc
+        return feat
+
+
+class AcousticNorm(Extractor):
     """
     Parameters
     ----------
@@ -454,18 +549,27 @@ class AcousticNorm(Extractor):
     Note
     ----
     This normalization can destroy inverted raw signal from spectrgram
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
     """
 
     def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
-                 win_length=301, var_norm=True, rasta=True, sdc=0,
+                 win_length=301, var_norm=True,
                  feat_type=('mspec', 'spec', 'mfcc',
                             'qspec', 'qmfcc', 'qmspec')):
         super(AcousticNorm, self).__init__()
         self.mean_var_norm = bool(mean_var_norm)
         self.window_mean_var_norm = bool(window_mean_var_norm)
-        self.rasta = bool(rasta)
         self.var_norm = bool(var_norm)
-        self.sdc = int(sdc)
         # ====== check win_length ====== #
         win_length = int(win_length)
         if win_length % 2 == 0:
@@ -477,21 +581,10 @@ class AcousticNorm(Extractor):
         self.feat_type = as_tuple(feat_type, t=str)
 
     def _transform(self, feat):
-        if not isinstance(feat, Mapping):
-            raise ValueError("AcousticNorm only transform dictionary of: feature "
-                             "name -> features matrices into normalized features,"
-                             "the given input is not dictionary")
         feat_normalized = {}
         # all `features` is [t, f] shape
         for name, features in feat.iteritems():
             if name in self.feat_type:
-                if 'mfcc' in name and self.rasta:
-                    features = rastafilt(features)
-                    if self.sdc >= 1:
-                        features = np.hstack([
-                            features,
-                            shifted_deltas(features, N=7, d=self.sdc, P=3, k=7)
-                        ])
                 if self.mean_var_norm:
                     features = mvn(features, varnorm=self.var_norm)
                 if self.window_mean_var_norm:

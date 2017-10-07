@@ -911,8 +911,17 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
     return X
 
 
-def stack_frames(X, frame_length, step_length=None):
-    """ Example:
+def stack_frames(X, frame_length, step_length=None, make_contigous=False):
+    """
+
+    Parameters
+    ----------
+    make_contigous: bool
+        if True, use `numpy.ascontiguousarray` to ensure input `X`
+        is contiguous.
+
+    Example
+    -------
     >>> X = [[ 0  1]
     ...      [ 2  3]
     ...      [ 4  5]
@@ -930,7 +939,14 @@ def stack_frames(X, frame_length, step_length=None):
     ...  [ 4  5  6  7  8  9 10 11 12 13]
     ...  [ 8  9 10 11 12 13 14 15 16 17]]
     """
+    # ====== check input ====== #
     assert X.ndim == 2, "Only support 2D matrix for stacking frames."
+    if not X.flags['C_CONTIGUOUS']:
+        if make_contigous:
+            X = np.ascontiguousarray(X)
+        else:
+            raise ValueError('Input buffer must be contiguous.')
+    # ====== stacking ====== #
     frame_length = int(frame_length)
     if step_length is None:
         step_length = frame_length // 2
