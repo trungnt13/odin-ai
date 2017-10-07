@@ -55,12 +55,12 @@ extractors = [
                              threshold=1.0, f0=True, algo='rapt'),
     pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
-    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
-                           rasta=True, sdc=1,
-                           feat_type=('mspec', 'mfcc',
-                                      'qspec', 'qmfcc', 'qmspec')),
+    pp.speech.RASTAfilter(rasta=True, sdc=1),
     pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
                       feat_type=('mspec', 'qmspec')),
+    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
+                           feat_type=('mspec', 'mfcc',
+                                      'qspec', 'qmfcc', 'qmspec')),
     pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
@@ -77,7 +77,8 @@ extractors = [
 # ===========================================================================
 jobs = [path for name, path in datapath if '.wav' in path]
 processor = pp.FeatureProcessor(jobs, extractors, output_path, pca=True,
-                                ncache=260, ncpu=10, override=True)
+                                ncache=260, ncpu=(utils.cpu_count() - 1),
+                                override=True)
 with utils.UnitTimer():
     processor.run()
 shutil.copy(os.path.join(datapath.path, 'README.md'),

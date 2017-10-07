@@ -18,7 +18,7 @@ import numpy as np
 from odin.visual import plot_save
 from odin import preprocessing as pp
 from odin import nnet as N, fuel as F, backend as K
-from odin.utils import get_all_files, get_all_ext, exec_commands
+from odin.utils import get_all_files, get_all_ext, exec_commands, cpu_count
 
 README = \
 """
@@ -167,12 +167,12 @@ extractors = [
     pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
                              threshold=1., f0=True, algo='rapt'),
     pp.speech.VADextractor(nb_mixture=3, nb_train_it=25, feat_type='energy'),
-    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
-                           rasta=True, sdc=1,
-                           feat_type=('mspec', 'mfcc',
-                                      'qspec', 'qmfcc', 'qmspec')),
+    pp.speech.RASTAfilter(rasta=True, sdc=1),
     pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
                       feat_type=('mspec', 'qmspec')),
+    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
+                           feat_type=('mspec', 'mfcc',
+                                      'qspec', 'qmfcc', 'qmspec')),
     pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
@@ -184,8 +184,8 @@ extractors = [
                'vad': 'float16', 'energy': 'float16'})
 ]
 acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
-                            path=outpath, pca=True, ncache=500, ncpu=8,
-                            override=True)
+                            path=outpath, pca=True, ncache=500,
+                            ncpu=(cpu_count() - 1), override=True)
 acous.run()
 pp.validate_features(acous, path='/tmp/tidigits', nb_samples=12, override=True)
 # copy README

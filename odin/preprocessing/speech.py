@@ -500,7 +500,7 @@ class VADextractor(Extractor):
         return {'vad': vad, 'vad_threshold': float(vad_threshold)}
 
 
-class RASTAfilter(object):
+class RASTAfilter(Extractor):
     """ RASTAfilter
 
     Specialized "Relative Spectral Transform" applying for MFCCs
@@ -511,6 +511,21 @@ class RASTAfilter(object):
      short-term noise variations and to remove any constant offset
      resulting from static spectral coloration in the speech channel
      e.g. from a telephone line
+
+    Note
+    ----
+    This normalization can destroy inverted raw signal from spectrgram
+    The following order is recommended for extracting spectra:
+     - Loading raw audio
+     - remove DC offeset and dithering
+     - preemphasis
+     - Extracting the Spectra
+     - Extracting SAD (optional)
+     - Rastafilt (optional for MFCC)
+     - Calculate Deltas (and shifted delta for MFCCs).
+     - Applying SAD labels
+     - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
 
     References
     ----------

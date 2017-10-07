@@ -54,7 +54,7 @@ def _special_cases(X, feat_name, file_name, ds, path):
         if '.wav' not in file_name:
             file_name += '.wav'
         save(os.path.join(path, _escape_file_name(file_name)),
-             X.astype('int32'), sr=sr)
+             X.astype('float32'), sr=sr)
     elif feat_name == 'spec':
         from .speech import SpectraExtractor, _extract_frame_step_length, save
         from .signal import ispec
