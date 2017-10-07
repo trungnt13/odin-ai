@@ -657,8 +657,6 @@ class Read3ColSAD(Extractor):
         self.name_converter = name_converter
         self.ref_key = as_tuple(ref_key, t=str)
         # ====== parse all file ====== #
-        if not is_string(path_or_map) and not isinstance(path_or_map, Mapping):
-            raise ValueError("`path` must be path to folder, or dictionary.")
         # read the SAD from file
         if is_string(path_or_map):
             sad = defaultdict(list)
@@ -668,8 +666,10 @@ class Read3ColSAD(Extractor):
                         for line in f:
                             name, start, end = line.strip().split(' ')
                             sad[name].append((float(start), float(end)))
-        else:
+        elif isinstance(path_or_map, Mapping):
             sad = path_or_map
+        else:
+            raise ValueError("`path` must be path to folder, or dictionary.")
         self.sad = sad
 
     def _transform(self, feats):
@@ -687,28 +687,34 @@ class Read3ColSAD(Extractor):
             step_length = self.step_length
             if step_length >= 1: # step_length is number of frames
                 step_length = step_length / feats['sr']
+                # now step_length is in second
             # ====== found SAD ====== #
             if name in self.sad:
                 sad = self.sad[name]
-                if len(sad) == 0:
-                    print(name)
-                # SAD transformed features
-                feats_sad = defaultdict(list)
-                index = 0
-                for start, end in sad:
-                    start = int(start / step_length)
-                    end = int(end / step_length)
-                    # cut SAD out from feats
-                    for ftype in self.feat_type:
-                        X = feats[ftype][start:end]
-                        feats_sad[ftype].append(X)
-                    # store (start-frame_index, end-frame-index) of all SAD here
-                    feats_sad['sad'].append((index, index + X.shape[0]))
-                    index = index + X.shape[0]
-                # concatenate sad segments
-                for ftype in self.feat_type:
-                    feats_sad[ftype] = np.concatenate(feats_sad[ftype], axis=0)
-                return feats_sad
+                if len(sad) > 0:
+                    # SAD transformed features
+                    feats_sad = defaultdict(list)
+                    sad_indices = []
+                    index = 0
+                    for start, end in sad:
+                        start = int(start / step_length)
+                        end = int(end / step_length)
+                        if end - start == 0:
+                            continue
+                        # cut SAD out from feats
+                        for ftype in self.feat_type:
+                            X = feats[ftype][start:end]
+                            feats_sad[ftype].append(X)
+                        # store (start-frame_index, end-frame-index) of all SAD here
+                        sad_indices.append((index, index + X.shape[0]))
+                        index += X.shape[0]
+                    # concatenate sad segments
+                    feats_sad = {ftype: np.concatenate(y, axis=0)
+                                 for ftype, y in feats_sad.iteritems()
+                                 if len(y) > 0}
+                    feats_sad['sad'] = sad_indices
+                    return feats_sad
+        # ====== return unvoiced or not ====== #
         if not self.keep_unvoiced:
             return None
         return feats
