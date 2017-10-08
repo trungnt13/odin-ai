@@ -263,7 +263,7 @@ class Stacking(FeederRecipe):
     """
 
     def __init__(self, left_context=10, right_context=10, shift=1,
-                 data_idx=None, label_mode='last', label_idx=()):
+                 data_idx=None, label_mode='middle', label_idx=()):
         super(Stacking, self).__init__()
         self.left_context = int(left_context)
         self.right_context = int(right_context)
@@ -554,18 +554,22 @@ class SADindex(FeederRecipe):
         # ====== prepare the index ====== #
         data_idx, label_idx = _get_data_label_idx(
             self.data_idx, self.label_idx, len(X))
-        indices = self.sad[name]
+        sad_indices = self.sad[name]
         # ====== found the VAD, process it ====== #
         X_new = []
         for idx, x in enumerate(X):
             if idx in data_idx or idx in label_idx:
                 x_new = []
-                for start, end in indices:
+                for start, end in sad_indices:
+                    # zero-length SAD
+                    if end - start == 0:
+                        continue
+                    # get the SAD segments
                     seg = x[start:end]
                     if end - start == self.frame_length:
                         x_new.append(np.expand_dims(seg, axis=0))
                     elif end - start < self.frame_length:
-                        pass
+                        pass # too short just ignore it
                     elif end - start > self.frame_length:
                         x_new.append(segment_axis(seg,
                             frame_length=self.frame_length,

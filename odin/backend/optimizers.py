@@ -65,6 +65,8 @@ class Optimizer(object):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -79,10 +81,11 @@ class Optimizer(object):
                         decay_rate ^ (global_step / decay_steps)
     """
 
-    def __init__(self, lr, decay_steps=None, decay_rate=0.96,
+    def __init__(self, lr, decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None,
                  clip_alg='total_norm'):
         self._name = self.__class__.__name__ + '_' + str(uuid(length=3))
+        self.staircase = bool(staircase)
         with tf.variable_scope(self._name):
             self._lr = _as_variable(lr, name='learning_rate', roles=LearningRate)
             self._lr_decay = None
@@ -130,7 +133,7 @@ class Optimizer(object):
             if self._lr_decay is None:
                 self._lr_decay = tf.train.exponential_decay(self._lr,
                     self._step, self.decay_steps, self.decay_rate,
-                    staircase=True)
+                    staircase=self.staircase)
             return self._lr_decay
         else:
             return self._lr
@@ -212,6 +215,8 @@ class SGD(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -223,11 +228,11 @@ class SGD(Optimizer):
     """
 
     def __init__(self, lr=0.01, momentum=0.9, nesterov=False,
-                 decay_steps=None, decay_rate=0.96,
+                 decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None,
                  clip_alg='total_norm'):
         super(SGD, self).__init__(lr=lr,
-            decay_steps=decay_steps, decay_rate=decay_rate,
+            decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
             clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
         with tf.variable_scope(self.name):
             # ====== momentum ====== #
@@ -262,6 +267,8 @@ class RMSProp(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -296,10 +303,10 @@ class RMSProp(Optimizer):
     """
 
     def __init__(self, lr=0.001, rho=0.9, momentum=0.0, epsilon=1e-10,
-                 decay_steps=None, decay_rate=0.96,
+                 decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None, clip_alg='total_norm'):
         super(RMSProp, self).__init__(lr=lr,
-            decay_steps=decay_steps, decay_rate=decay_rate,
+            decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
             clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
         with tf.variable_scope(self.name):
             self.rho = _as_variable(rho, name='rho',
@@ -331,6 +338,8 @@ class Adadelta(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -375,10 +384,10 @@ class Adadelta(Optimizer):
     """
 
     def __init__(self, lr=1.0, rho=0.95, epsilon=1e-8,
-                 decay_steps=None, decay_rate=0.96,
+                 decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None, clip_alg='total_norm'):
         super(Adadelta, self).__init__(lr=lr,
-            decay_steps=decay_steps, decay_rate=decay_rate,
+            decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
             clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
         with tf.variable_scope(self.name):
             self.rho = _as_variable(rho, name='rho',
@@ -409,6 +418,8 @@ class Adam(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -436,10 +447,10 @@ class Adam(Optimizer):
     """
 
     def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8,
-                 decay_steps=None, decay_rate=0.96,
+                 decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None, clip_alg='total_norm'):
         super(Adam, self).__init__(lr=lr,
-            decay_steps=decay_steps, decay_rate=decay_rate,
+            decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
             clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
         with tf.variable_scope(self.name):
             self.beta1 = _as_variable(beta1, name='beta1',
@@ -472,6 +483,8 @@ class Adamax(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -526,6 +539,8 @@ class Nadam(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -586,6 +601,8 @@ class Adagrad(Optimizer):
       Must be positive. (e.g. decay every 100000 steps with a base of 0.96)
     decay_rate: A scalar `float32` or `float64` `Tensor` or a
       Python number.  The decay rate.
+    staircase: boolean.
+        If `True` decay the learning rate at discrete intervals
     clipnorm: float >= 0. Gradients will be clipped
         when their L2 norm exceeds this value.
     clipvalue: float >= 0. Gradients will be clipped
@@ -623,12 +640,11 @@ class Adagrad(Optimizer):
 
     def __init__(self, lr=0.01, initial_accumulator_value=0.1,
                  dual_avg=False,
-                 l1_regularization=0.0,
-                 l2_regularization=0.0,
-                 decay_steps=None, decay_rate=0.96,
+                 l1_regularization=0.0, l2_regularization=0.0,
+                 decay_steps=None, decay_rate=0.96, staircase=True,
                  clipnorm=None, clipvalue=None, clip_alg='total_norm'):
         super(Adagrad, self).__init__(lr=lr,
-            decay_steps=decay_steps, decay_rate=decay_rate,
+            decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
             clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
         with tf.variable_scope(self.name):
             self.initial_accumulator_value = float(initial_accumulator_value)
