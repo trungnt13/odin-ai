@@ -576,7 +576,7 @@ class functionable(object):
         else:
             s += 'Sandbox:%s\n' % str(len(self._sandbox))
         s += str(self._source)
-        return s
+        return s[:-1]
 
     def __eq__(self, other):
         if self._function == other._function and \

@@ -99,17 +99,32 @@ def _max_fft_bins(sr, n_fft, fmax):
                                         endpoint=True)) if j >= fmax][0]
 
 
+def read_pcm(path_or_file, encode=None):
+    dtype = np.int16
+    sr = None
+    if encode is not None:
+        if 'ulaw' in encode.lower():
+            dtype = np.int8
+            sr = 8000
+        elif 'vast' in encode.lower():
+            dtype = np.int16
+            sr = 44000
+    s = np.memmap(path_or_file, dtype=dtype, mode='r')
+    return s, sr
+
+
 # ===========================================================================
 # Audio feature extractor
 # ===========================================================================
 class RawDSReader(Extractor):
     """ This reader, read data directly from raw waveform processed dataset
+    The input is `name` of the raw audio in the dataset
+
     The given Dataset must contains:
      - 'raw': 1-D MmapData stored raw waveform
      - 'sr': MmapDict, mapping file name -> sample rate (integer value)
      - 'indices': MmapDict, mapping file name -> start, end index in 'raw'
      - 'path' (optional)
-     - 'name' (optional)
      - 'duration' (optional)
     """
 
@@ -139,13 +154,12 @@ class RawDSReader(Extractor):
         start, end = self.ds['indices'][name]
         raw = self.ds['raw'][start:end]
         ret = {'raw': raw.astype('float32'),
-               'sr': int(self.ds['sr'][name])}
+               'sr': int(self.ds['sr'][name]),
+               'name': name} # must include name here
         if 'duration' in self.ds:
             ret['duration'] = float(self.ds['duration'][name])
         if 'path' in self.ds:
             ret['path'] = str(self.ds['path'][name])
-        if 'name' in self.ds:
-            ret['name'] = str(self.ds['name'][name])
         return ret
 
 
@@ -163,6 +177,14 @@ class AudioReader(Extractor):
     ----------
     sr: int or None
         provided sr for missing sr audio (i.e. pcm files)
+
+    Input
+    -----
+    path_or_array: string, tuple, list, mapping
+        - string for path
+        - tuple or list for (path-or-raw, sr)
+        - mapping for provding additional information include:
+        sr, encode (ulaw, vast), 'raw' or 'path'
 
     Note
     ----
@@ -184,6 +206,7 @@ class AudioReader(Extractor):
         sr = None # by default, we don't know sample rate
         path = None
         duration = None
+        encode = None
         # ====== check path_or_array ====== #
         if isinstance(path_or_array, (tuple, list)):
             if len(path_or_array) != 2:
@@ -197,6 +220,9 @@ class AudioReader(Extractor):
         elif isinstance(path_or_array, Mapping):
             if 'sr' in path_or_array:
                 sr = path_or_array['sr']
+            if 'encode' in path_or_array:
+                encode = str(path_or_array['encode'])
+            # get raw or path out of the Dictionary
             if 'raw' in path_or_array:
                 path_or_array = path_or_array['raw']
             elif 'path' in path_or_array:
@@ -216,7 +242,7 @@ class AudioReader(Extractor):
                 path = path_or_array
             # ====== process ====== #
             if '.pcm' in path.lower():
-                s = np.memmap(f, dtype=np.int16, mode='r')
+                s, sr = read_pcm(path_or_file=f, encode=encode)
             else:
                 import soundfile
                 try:
@@ -224,7 +250,7 @@ class AudioReader(Extractor):
                 except Exception as e:
                     if '.sph' in f.name.lower():
                         f.seek(0)
-                        s = np.memmap(f, dtype=np.int16, mode='r')
+                        s, sr = read_pcm(path_or_file=f, encode=encode)
                     else:
                         raise e
             # close file
@@ -696,22 +722,25 @@ class Read3ColSAD(Extractor):
                     feats_sad = defaultdict(list)
                     sad_indices = []
                     index = 0
-                    for start, end in sad:
-                        start = int(start / step_length)
-                        end = int(end / step_length)
-                        if end - start == 0:
+                    for start_sec, end_sec in sad:
+                        start_idx = int(start_sec / step_length)
+                        end_idx = int(end_sec / step_length)
+                        # ignore zero SAD
+                        if end_idx - start_idx == 0:
                             continue
                         # cut SAD out from feats
-                        for ftype in self.feat_type:
-                            X = feats[ftype][start:end]
-                            feats_sad[ftype].append(X)
-                        # store (start-frame_index, end-frame-index) of all SAD here
-                        sad_indices.append((index, index + X.shape[0]))
-                        index += X.shape[0]
+                        for _, ftype in enumerate(self.feat_type):
+                            X = feats[ftype][start_idx:end_idx]
+                            if X.shape[0] != 0:
+                                feats_sad[ftype].append(X)
+                                # store (start-frame_index, end-frame-index)
+                                # of all SAD here
+                                if _ == 0:
+                                    sad_indices.append((index, index + X.shape[0]))
+                                    index += X.shape[0]
                     # concatenate sad segments
                     feats_sad = {ftype: np.concatenate(y, axis=0)
-                                 for ftype, y in feats_sad.iteritems()
-                                 if len(y) > 0}
+                                 for ftype, y in feats_sad.iteritems()}
                     feats_sad['sad'] = sad_indices
                     return feats_sad
         # ====== return unvoiced or not ====== #

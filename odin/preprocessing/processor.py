@@ -418,9 +418,11 @@ class FeatureProcessor(object):
             if result is None:
                 return
             # search for file name
-            file_name = result.get('name', None)
-            if file_name is None:
-                file_name = result.get('path', None)
+            for key in ('name', 'path'):
+                file_name = result.get(key, None)
+                if file_name is not None:
+                    break
+            # invalid file_name
             if file_name is None or not is_string(file_name):
                 raise RuntimeError("Cannot find file name in returned features "
                     "list, the file name can be specified in key: 'name', 'path' "
@@ -430,9 +432,13 @@ class FeatureProcessor(object):
             all_indices = defaultdict(list)
             # processing
             for feat_name, X in result.iteritems():
+                # some invalid feat_name
                 if feat_name in ('config', 'pipeline'):
                     raise RuntimeError("Returned features' name cannot be one "
                                        "of the following: 'config', 'pipeline'.")
+                # ignore some feat_name
+                if feat_name in ('name'):
+                    continue
                 # if numpy ndarray, save to MmapData
                 if isinstance(X, np.ndarray) or \
                 'sum1' == feat_name[-4:] or 'sum2' == feat_name[-4:]:

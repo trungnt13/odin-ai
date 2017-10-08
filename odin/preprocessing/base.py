@@ -10,11 +10,20 @@ from collections import Mapping
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from odin.utils import get_all_files, is_string, as_tuple, is_pickleable
+from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
+                        ctext, flatten_list)
 from .signal import delta
 
 # special tag put into features dictionary to mark it as removed
 _REMOVED_FEATURES_ = '__removed_features__'
+
+
+def set_extractor_debug(debug, *extractors):
+    extractors = [i for i in flatten_list(extractors)
+                  if isinstance(i, Extractor)]
+    for i in extractors:
+        i.debug = bool(debug)
+    return extractors
 
 
 @add_metaclass(ABCMeta)
@@ -29,8 +38,9 @@ class Extractor(BaseEstimator, TransformerMixin):
 
     """
 
-    def __init__(self):
+    def __init__(self, debug=False):
         super(Extractor, self).__init__()
+        self.debug = bool(debug)
 
     def fit(self, X, y=None):
         # Do nothing here
@@ -41,6 +51,14 @@ class Extractor(BaseEstimator, TransformerMixin):
         raise NotImplementedError
 
     def transform(self, X):
+        if self.debug:
+            print(ctext("[Extractor]", 'cyan'),
+                  ctext(self.__class__.__name__, 'magenta'))
+            for name, param in self.get_params().iteritems():
+                print('   ', ctext(name, 'yellow'), ':', str(param))
+        # nothing to transform from None results
+        if X is None:
+            return None
         # NOTE: do not override this method
         y = self._transform(X)
         # ====== check returned types ====== #
