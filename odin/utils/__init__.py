@@ -465,7 +465,7 @@ class ArgController(object):
         self.arg_dict[name] = preprocess
         return self
 
-    def parse(self):
+    def parse(self, config_path=None):
         if self.parser is None:
             raise Exception('Call add to assign at least 1 argument for '
                             'for the function.')
