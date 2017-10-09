@@ -54,6 +54,9 @@ class Normalization(FeederRecipe):
         default (True, or 'normal'), normalize the data to have mean=0, std=1
         'sigmoid', normalize by the min and max value to have all element in [0, 1]
         'tanh', normalize to have all element in [-1, 1].
+        'mean', only subtract the mean
+    axis: int, list of int
+        normalizing axis for `local_normalize`
     data_idx: int, or list of int
         In case multiple Data is given, only normalize in the given indices.
 
@@ -66,7 +69,7 @@ class Normalization(FeederRecipe):
     """
 
     def __init__(self, mean=None, std=None, local_normalize=None,
-                 data_idx=0):
+                 axis=0, data_idx=0):
         super(Normalization, self).__init__()
         # mean
         if mean is not None:
@@ -82,12 +85,12 @@ class Normalization(FeederRecipe):
             raise ValueError("Not support for local_normalize=%s, you must specify "
                             "one of the following mode: none, false, tanh, sigmoid, "
                             "normal (or true)." % self.local_normalize)
+        self.axis = axis
         self.data_idx = data_idx
 
     def process(self, name, X):
         X_normlized = []
-        data_idx = axis_normalize(axis=self.data_idx,
-                                  ndim=len(X),
+        data_idx = axis_normalize(axis=self.data_idx, ndim=len(X),
                                   return_tuple=True)
         for i, x in enumerate(X):
             if i in data_idx:
@@ -97,13 +100,16 @@ class Normalization(FeederRecipe):
                     x = (x - self.mean) / self.std
                 # ====== perform local normalization ====== #
                 if 'normal' in self.local_normalize or 'true' in self.local_normalize:
-                    x = (x - x.mean(0)) / x.std(0)
+                    x = ((x - x.mean(self.axis, keepdims=True)) /
+                         x.std(self.axis, keepdims=True))
                 elif 'sigmoid' in self.local_normalize:
                     min_, max_ = np.min(x), np.max(x)
                     x = (x - min_) / (max_ - min_)
                 elif 'tanh' in self.local_normalize:
                     min_, max_ = np.min(x), np.max(x)
                     x = 2 * (x - min_) / (max_ - min_) - 1
+                elif 'mean' in self.local_normalize:
+                    x -= x.mean(0)
             X_normlized.append(x)
         return name, X_normlized
 

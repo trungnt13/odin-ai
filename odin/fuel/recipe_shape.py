@@ -286,6 +286,8 @@ class Stacking(FeederRecipe):
         X_new = []
         for idx, x in enumerate(X):
             if idx in data_idx:
+                if x.ndim == 1:
+                    x = np.expand_dims(x, axis=-1)
                 x = stack_frames(x, frame_length=self.frame_length,
                                  step_length=self.shift)
             elif idx in label_idx:
@@ -314,7 +316,7 @@ class Stacking(FeederRecipe):
                 # for data_idx, only apply for 2D
                 elif idx in data_idx:
                     nb_features = shp[1] * self.frame_length if len(shp) == 2 \
-                        else self.frame_length
+                        else self.frame_length # 1D case
                     shp = (n, nb_features)
             new_shapes.append((shp, ids))
         # ====== do the shape infer ====== #

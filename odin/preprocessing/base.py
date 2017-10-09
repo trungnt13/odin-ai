@@ -60,7 +60,13 @@ class Extractor(BaseEstimator, TransformerMixin):
         if X is None:
             return None
         # NOTE: do not override this method
-        y = self._transform(X)
+        try:
+            y = self._transform(X)
+        except Exception as e:
+            print('\n\n')
+            import traceback; traceback.print_exc()
+            raise e
+            print('\n\n')
         # ====== check returned types ====== #
         if not isinstance(y, (Mapping, type(None))):
             raise RuntimeError("Extractor can only return Mapping or None, but "

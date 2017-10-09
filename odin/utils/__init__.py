@@ -75,7 +75,7 @@ def ctext(s, color='red'):
         from colorama import Fore
         color = color.upper()
         color = getattr(Fore, color, '')
-        return color + s + Fore.RESET
+        return color + str(s) + Fore.RESET
     except ImportError:
         pass
     return s
