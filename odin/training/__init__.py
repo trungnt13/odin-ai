@@ -139,11 +139,15 @@ class Task(object):
 
     def set_func(self, func, data):
         # ====== check function ====== #
-        if not isinstance(func, K.Function):
-            raise ValueError("`func` must be instance of odin.backend.Function")
         self._func = func
-        self._output_info = [(o.name, o.get_shape().as_list())
-                             for o in self._func.outputs]
+        if isinstance(func, K.Function):
+            self._output_info = [(o.name, o.get_shape().as_list())
+                                 for o in self._func.outputs]
+        elif callable(func):
+            self._output_info = [] # No info (normal function)
+        else:
+            raise ValueError("No support for function type: %s" %
+                func.__class__.__name__)
         # ====== check data ====== #
         if not isinstance(data, (tuple, list)):
             data = [data]
