@@ -335,7 +335,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
             # print float, except the last one is int
             info_str = [_float2str(val) if i < (nb_info - 1) else
                         ('%d' % val)
-                        for i, val in enumerate(info[i])]
+                        for i, val in enumerate(info[row_id])]
             fig += row_text + ' ' + '|'.join(info_str) + '\n'
         else:
             fig += row_text + '\n'

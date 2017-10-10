@@ -1138,7 +1138,7 @@ def get_resultpath(tag, name=None, override=False, prompt=False,
         if not os.path.exists(path):
             os.mkdir(path)
     # ====== check if override ====== #
-    if override:
+    if override and len(os.listdir(path)) > 0:
         if prompt:
             user_cmd = raw_input('Do you want to delete "%s" (Y for yes):').lower()
             if user_cmd != 'y':
