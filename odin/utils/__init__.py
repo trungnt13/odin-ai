@@ -1098,7 +1098,7 @@ def get_datasetpath(name=None, override=False, is_folder=True, root='~'):
 
 
 def get_modelpath(name=None, override=False, root='~'):
-    """ Default model path for saving ODIN networks """
+    """ Default model path for saving O.D.I.N networks """
     return _get_managed_path('models', name, override,
                              is_folder=True, root=root)
 
@@ -1108,9 +1108,44 @@ def get_logpath(name=None, override=False, root='~'):
                              is_folder=False, root=root)
 
 
-def get_resultpath(name=None, override=False, root='~'):
-    return _get_managed_path('results', name, override,
+def get_resultpath(tag, name=None, override=False, prompt=False,
+                   root='~'):
+    """
+    Parameters
+    ----------
+    tag: string
+        specific tag for the task you are working on
+    name: string
+        name of the folder contains all the results (NOTE: the
+        name can has subfolder)
+    override: bool
+        if True, remove exist folder
+    prompt: bool
+        if True, display prompt and require (Y) input before
+        delete old folder, if (N), the program exit.
+    root: string
+        root path for the results (default: "~/.odin")
+    """
+    path = _get_managed_path('results', tag, False,
                              is_folder=True, root=root)
+    # only return the main folder
+    if name is None:
+        return path
+    # return the sub-folder
+    name = str(name).split('/')
+    for i in name:
+        path = os.path.join(path, i)
+        if not os.path.exists(path):
+            os.mkdir(path)
+    # ====== check if override ====== #
+    if override:
+        if prompt:
+            user_cmd = raw_input('Do you want to delete "%s" (Y for yes):').lower()
+            if user_cmd != 'y':
+                exit()
+        shutil.rmtree(path)
+        os.mkdir(path)
+    return path
 
 
 # ===========================================================================
