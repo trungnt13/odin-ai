@@ -627,6 +627,8 @@ class MainLoop(object):
 
     # ==================== logic ==================== #
     def _save(self):
+        # trigger event for callbacks
+        self._callback.event(SIG_TRAIN_SAVE)
         # default save procedure
         if self._save_path is not None and self._save_obj is not None:
             add_notification("Creating checkpoint at:" + self._save_path)
@@ -639,6 +641,8 @@ class MainLoop(object):
 
     def _rollback(self):
         if not self._allow_rollback: return
+        # trigger event for callbacks
+        self._callback.event(SIG_TRAIN_ROLLBACK)
         # default rollback procedure
         if self._save_path is not None and os.path.exists(self._save_path):
             add_notification("Rollback from:" + self._save_path)
@@ -674,6 +678,7 @@ class MainLoop(object):
                     if SIG_TRAIN_SAVE in msg: self._save()
                     if SIG_TRAIN_ROLLBACK in msg: self._rollback()
                     if SIG_TRAIN_STOP in msg:
+                        self._callback.event(SIG_TRAIN_STOP)
                         finished_task[self._main_task] = True
                         break
                 # ====== execute valid and eval task ====== #
@@ -693,6 +698,7 @@ class MainLoop(object):
                         if SIG_TRAIN_SAVE in msg: self._save()
                         if SIG_TRAIN_ROLLBACK in msg: self._rollback()
                         if SIG_TRAIN_STOP in msg:
+                            self._callback.event(SIG_TRAIN_STOP)
                             finished_task[self._main_task] = True
                             break
         # ====== end main task ====== #

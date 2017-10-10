@@ -37,6 +37,7 @@ __all__ = [
     'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
+    'LRdecay',
 ]
 
 # This SIGNAL can terminate running iterator (or generator),
@@ -84,16 +85,20 @@ def date2time(date):
 class Callback(object):
 
     """Callback
+    Order of execution:
+     - task_start(self, task, results)
+     - epoch_start(self, task, results)
+     - batch_start(self, task, results)
+     - batch_end(self, task, results)
+     - epoch_end(self, task, results)
+     - task_end(self, task, results)
 
-    Callbacks
-    --------
-    task_start(self)
-    task_end(self)
-    epoch_start(self)
-    epoch_end(self)
-    batch_start(self)
-    batch_end(self)
-
+    Some accessible properties from `task`
+     - curr_epoch: Total number of epoch finished since the beginning of the Task
+     - curr_iter: Total number of iteration finished since the beginning of the Task
+     - curr_samples: Total number of samples finished since the beginning of the Task
+     - curr_epoch_iter: Number of iteration within current epoch
+     - curr_epoch_samples: Number of samples within current epoch
     """
 
     def __init__(self, log=True):
@@ -116,6 +121,15 @@ class Callback(object):
         pass
 
     def task_end(self, task, task_results):
+        pass
+
+    def event(self, event_name):
+        """ This function is directly called by MainLoop when
+        special event triggered, for example:
+         - SIG_TRAIN_ROLLBACK
+         - SIG_TRAIN_STOP
+         - SIG_TRAIN_SAVE
+        """
         pass
 
     def send_notification(self, msg):
@@ -219,6 +233,10 @@ class CallbackList(Callback):
             msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
         return msg
 
+    def event(self, event_name):
+        for i in self._callbacks:
+            i.event(event_name)
+
 
 # ===========================================================================
 # NaN value detection
@@ -257,6 +275,29 @@ class Checkpoint(Callback):
             if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
                 return SIG_TRAIN_SAVE
         return None
+
+
+# ===========================================================================
+# Learning rate manipulation
+# ===========================================================================
+class LRdecay(Callback):
+    """ LRdecay
+    whenever SIG_TRAIN_ROLLBACK is triggered, decrease the learning
+    rate by `decay_rate`
+    """
+
+    def __init__(self, lr, decay_rate=0.5):
+        super(LRdecay, self).__init__()
+        from odin import backend as K
+        self.lr = lr
+        self.lr_value = K.get_value(lr)
+        self.decay_rate = decay_rate
+
+    def event(self, event_name):
+        if event_name == SIG_TRAIN_ROLLBACK:
+            from odin import backend as K
+            self.lr_value *= self.decay_rate
+            K.set_value(self.lr)
 
 
 # ===========================================================================
