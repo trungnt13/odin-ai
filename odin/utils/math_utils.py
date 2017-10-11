@@ -41,7 +41,7 @@ class interp(object):
     """ Original code, libgdx
     https://github.com/libgdx/libgdx/wiki/Interpolation
 
-    Return an array of interpolated values within given range: [start, end]
+    Return an array of interpolated values within given range: [0., 1.]
     """
     @staticmethod
     def circle(n):
