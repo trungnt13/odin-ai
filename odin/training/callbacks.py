@@ -297,7 +297,7 @@ class LRdecay(Callback):
         if event_name == SIG_TRAIN_ROLLBACK:
             from odin import backend as K
             self.lr_value *= self.decay_rate
-            K.set_value(self.lr)
+            K.set_value(self.lr, self.lr_value)
 
 
 # ===========================================================================
