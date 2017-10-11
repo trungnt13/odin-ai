@@ -97,11 +97,11 @@ class Normalization(FeederRecipe):
                 x = x.astype('float32')
                 # ====== global normalization ====== #
                 if self.mean is not None and self.std is not None:
-                    x = (x - self.mean) / self.std
+                    x = (x - self.mean) / (self.std + 1e-20)
                 # ====== perform local normalization ====== #
                 if 'normal' in self.local_normalize or 'true' in self.local_normalize:
                     x = ((x - x.mean(self.axis, keepdims=True)) /
-                         x.std(self.axis, keepdims=True))
+                         (x.std(self.axis, keepdims=True) + 1e-20))
                 elif 'sigmoid' in self.local_normalize:
                     min_, max_ = np.min(x), np.max(x)
                     x = (x - min_) / (max_ - min_)

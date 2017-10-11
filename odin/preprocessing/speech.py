@@ -730,7 +730,8 @@ class Read3ColSAD(Extractor):
                             continue
                         # cut SAD out from feats
                         for _, ftype in enumerate(self.feat_type):
-                            X = feats[ftype][start_idx:end_idx]
+                            X = feats[ftype]
+                            X = X[start_idx:min(end_idx, X.shape[0])]
                             if X.shape[0] != 0:
                                 feats_sad[ftype].append(X)
                                 # store (start-frame_index, end-frame-index)
