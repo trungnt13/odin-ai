@@ -13,7 +13,7 @@ import copy
 import warnings
 import colorsys
 from six import string_types
-from collections import Mapping
+from collections import Mapping, OrderedDict
 from six.moves import zip, range
 from contextlib import contextmanager
 
@@ -505,27 +505,34 @@ def plot_features(features, order=None, title=None, fig_width=4):
         'qspec',
         'qmspec',
         'qmfcc',
+        'bnf',
+        'ivec',
         # For image processing
         # For video processing
     ]
 
     from matplotlib import pyplot as plt
+    if isinstance(features, (tuple, list)):
+        features = OrderedDict(features)
     if not isinstance(features, Mapping):
         raise ValueError("`features` must be mapping from name -> feature_matrix.")
-    # ====== check order or create defauljt order ====== #
+    # ====== check order or create default order ====== #
     if order is not None:
         order = [str(o) for o in order]
     else:
-        keys = sorted(features.keys() if isinstance(features, Mapping) else
-                      [k for k, v in features])
-        order = []
-        for name in known_order:
-            if name in keys:
-                order.append(name)
-        # add the remain keys
-        for name in keys:
-            if name not in order:
-                order.append(name)
+        if isinstance(features, OrderedDict):
+            order = features.keys()
+        else:
+            keys = sorted(features.keys() if isinstance(features, Mapping) else
+                          [k for k, v in features])
+            order = []
+            for name in known_order:
+                if name in keys:
+                    order.append(name)
+            # add the remain keys
+            for name in keys:
+                if name not in order:
+                    order.append(name)
     # ====== get all numpy array ====== #
     features = [(name, features[name]) for name in order
                 if name in features and
@@ -535,12 +542,18 @@ def plot_features(features, order=None, title=None, fig_width=4):
     for i, (name, X) in enumerate(features):
         X = X.astype('float32')
         plt.subplot(len(features), 1, i + 1)
+        # flatten 2D features with one dim equal to 1
+        if X.ndim == 2 and any(s == 1 for s in X.shape):
+            X = X.ravel()
+        # check valid dimension and select appropriate plot
         if X.ndim == 1:
             plt.plot(X)
             plt.xlim(0, len(X))
             plt.ylabel(name, fontsize=6)
-        else: # transpose to frequency x time
+        elif X.ndim == 2: # transpose to frequency x time
             plot_spectrogram(X.T, title=name)
+        else:
+            raise RuntimeError("No support for >= 3D features.")
         # auto, equal
         plt.gca().set_aspect(aspect='auto')
         # plt.axis('off')
