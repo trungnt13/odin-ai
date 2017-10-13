@@ -528,7 +528,7 @@ class NNOp(object):
             var = initializer(shape)
         # is a scalar
         elif is_number(initializer):
-            var = np.full(shape=shape, fill_value=initializer)
+            var = np.full(shape=shape, fill_value=initializer, dtype='float32')
         # else actual tensor
         else:
             var = initializer
