@@ -190,7 +190,7 @@ class AudioReader(Extractor):
     ----
     Dithering introduces white noise when you save the raw array into
     audio file.
-
+    For now only support one channel
     """
 
     def __init__(self, sr=None, sr_new=None, best_resample=True,
@@ -207,6 +207,7 @@ class AudioReader(Extractor):
         path = None
         duration = None
         encode = None
+        channel = 0
         # ====== check path_or_array ====== #
         if isinstance(path_or_array, (tuple, list)):
             if len(path_or_array) != 2:
@@ -258,6 +259,17 @@ class AudioReader(Extractor):
         # ====== provided np.ndarray for normalization ====== #
         else:
             s = path_or_array
+        # ====== check channel ====== #
+        if s.ndim == 1:
+            pass
+        elif s.ndim == 2:
+            if s.shape[0] == 2:
+                s = s[channel, :]
+            elif s.shape[1] == 2:
+                s = s[:, channel]
+        else:
+            raise ValueError("No support for %d-D signal from file: %s" %
+                (s.ndim, str(path)))
         # ====== valiate sample rate ====== #
         if sr is None and self.sr is not None:
             sr = int(self.sr)
