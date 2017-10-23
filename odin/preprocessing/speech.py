@@ -26,6 +26,8 @@ from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
                      shifted_deltas)
+# import all OpenSMILE extractor
+from ._opensmile import *
 
 
 # ===========================================================================
@@ -342,15 +344,22 @@ class SpectraExtractor(Extractor):
     Note
     ----
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
     """
 
@@ -395,15 +404,22 @@ class CQTExtractor(Extractor):
     Note
     ----
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
     """
 
@@ -455,15 +471,22 @@ class PitchExtractor(Extractor):
     Note
     ----
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
     """
 
@@ -497,18 +520,23 @@ class PitchExtractor(Extractor):
 
 class VADextractor(Extractor):
     """
-    Note
-    ----
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
     """
 
@@ -552,17 +580,23 @@ class RASTAfilter(Extractor):
 
     Note
     ----
-    This normalization can destroy inverted raw signal from spectrgram
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
 
     References
@@ -601,17 +635,23 @@ class AcousticNorm(Extractor):
 
     Note
     ----
-    This normalization can destroy inverted raw signal from spectrgram
     The following order is recommended for extracting spectra:
-     - Loading raw audio
-     - remove DC offeset and dithering
-     - preemphasis
-     - Extracting the Spectra
-     - Extracting SAD (optional)
-     - Rastafilt (optional for MFCC)
-     - Calculate Deltas (and shifted delta for MFCCs).
-     - Applying SAD labels
-     - Applying CMVN and WCMVN (This is important so the SAD frames
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
         are not affected by the nosie).
     """
 
@@ -674,6 +714,26 @@ class Read3ColSAD(Extractor):
      then concatenated into single matrix (hence, you can use features['sad']
      to get back the separated segments).
 
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + VADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
     """
 
     def __init__(self, path_or_map, step_length,

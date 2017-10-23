@@ -9,13 +9,47 @@ from collections import Mapping
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list)
 from .signal import delta
 
-# special tag put into features dictionary to mark it as removed
-_REMOVED_FEATURES_ = '__removed_features__'
+
+# ===========================================================================
+# Helper
+# ===========================================================================
+def make_pipeline(steps, debug=False):
+    ID = [0]
+
+    def item2step(x):
+        if isinstance(x, (tuple, list)):
+            if len(x) == 1 and isinstance(x[0], Extractor):
+                x = x[0]
+                ID[0] += 1
+                return (x.__class__.__name__ + str(ID[0]), x)
+            elif len(x) == 2:
+                if is_string(x[0]) and isinstance(x[1], Extractor):
+                    return x
+                elif is_string(x[1]) and isinstance(x[0], Extractor):
+                    return (x[1], x[0])
+        elif isinstance(x, Extractor):
+            ID[0] += 1
+            return (x.__class__.__name__ + str(ID[0]), x)
+        return None
+
+    if isinstance(steps, Mapping):
+        steps = steps.items()
+    elif not isinstance(steps, (tuple, list)):
+        steps = [steps]
+    steps = [item2step(i) for i in steps]
+    steps = filter(lambda x: x is not None, steps)
+    # ====== set debug mode ====== #
+    if debug:
+        for name, extractor in steps:
+            extractor.set_debug(True)
+    # ====== return pipeline ====== #
+    return Pipeline(steps=steps)
 
 
 def set_extractor_debug(debug, *extractors):
@@ -26,6 +60,33 @@ def set_extractor_debug(debug, *extractors):
     return extractors
 
 
+def _type_name(x):
+    return type(x).__name__
+
+
+def _str_complex(x):
+    if isinstance(x, (tuple, list)):
+        return "(list)length=%d;type=%s" % (len(x), _type_name(x[0]))
+    if isinstance(x, np.ndarray):
+        return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
+    if isinstance(x, Mapping):
+        return "(map)length=%d;dtype=%s" % (len(x),
+            ','.join([_type_name(i) for i in x.iteritems().next()]))
+    return str(x)
+
+
+def _equal_inputs_outputs(x, y):
+    try:
+        if x != y:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+# ===========================================================================
+# Basic extractors
+# ===========================================================================
 @add_metaclass(ABCMeta)
 class Extractor(BaseEstimator, TransformerMixin):
     """ Extractor
@@ -40,7 +101,11 @@ class Extractor(BaseEstimator, TransformerMixin):
 
     def __init__(self, debug=False):
         super(Extractor, self).__init__()
-        self.debug = bool(debug)
+        self._debug = bool(debug)
+
+    def set_debug(self, debug):
+        self._debug = bool(debug)
+        return self
 
     def fit(self, X, y=None):
         # Do nothing here
@@ -51,11 +116,6 @@ class Extractor(BaseEstimator, TransformerMixin):
         raise NotImplementedError
 
     def transform(self, X):
-        if self.debug:
-            print(ctext("[Extractor]", 'cyan'),
-                  ctext(self.__class__.__name__, 'magenta'))
-            for name, param in self.get_params().iteritems():
-                print('   ', ctext(name, 'yellow'), ':', str(param))
         # nothing to transform from None results
         if X is None:
             return None
@@ -63,10 +123,9 @@ class Extractor(BaseEstimator, TransformerMixin):
         try:
             y = self._transform(X)
         except Exception as e:
-            print('\n\n')
+            print('\n')
             import traceback; traceback.print_exc()
             raise e
-            print('\n\n')
         # ====== check returned types ====== #
         if not isinstance(y, (Mapping, type(None))):
             raise RuntimeError("Extractor can only return Mapping or None, but "
@@ -92,17 +151,35 @@ class Extractor(BaseEstimator, TransformerMixin):
                                            "upper case.")
                     if name not in y:
                         y[name] = feat
-            # remove all features marked as REMOVED
-            for name, feat in y.items():
-                if is_string(feat) and feat == _REMOVED_FEATURES_:
-                    del y[name]
+        # ====== print debug text ====== #
+        if self._debug:
+            print(ctext("[Extractor]", 'cyan'),
+                  ctext(self.__class__.__name__, 'magenta'))
+            # inputs
+            if not _equal_inputs_outputs(X, y):
+                print('  ', ctext("Inputs:", 'yellow'))
+                if isinstance(X, Mapping):
+                    for k, v in X.iteritems():
+                        print('    ', ctext(k, 'blue'), ':', _str_complex(v))
+                else:
+                    print('    ', _str_complex(X))
+            # outputs
+            print('  ', ctext("Outputs:", 'yellow'))
+            if isinstance(y, Mapping):
+                for k, v in y.iteritems():
+                    print('    ', ctext(k, 'blue'), ':', _str_complex(v))
+            else:
+                print('    ', _str_complex(y))
+            # parameters
+            for name, param in self.get_params().iteritems():
+                print('  ', ctext(name, 'yellow'), ':', _str_complex(param))
         return y
 
 
 # ===========================================================================
 # General extractor
 # ===========================================================================
-def _check_feat_name(feat_type, name):
+def _match_feat_name(feat_type, name):
     if feat_type is None:
         return True
     elif callable(feat_type):
@@ -111,6 +188,17 @@ def _check_feat_name(feat_type, name):
 
 
 class NameConverter(Extractor):
+
+    """
+    Parameters
+    ----------
+    converter: Mapping, function
+        convert `inputs['name'] = converter(inputs[keys])`
+    keys: str, or list of str
+        the order in the list is priority of each key, searching
+        through the inputs for given key and convert it to
+        new `name`
+    """
 
     def __init__(self, converter, keys=None):
         super(NameConverter, self).__init__()
@@ -141,7 +229,21 @@ class NameConverter(Extractor):
 
 class DeltaExtractor(Extractor):
 
-    def __init__(self, width=9, order=1, axis=0, feat_type=None):
+    """
+    Parameters
+    ----------
+    width: int
+        amount of frames taken into account for 1 delta
+    order: list of int
+        list of all delta order will be concatenate (NOTE: keep `0` in
+        the list if you want to keep original features)
+    axis: int
+        which dimension calculating the data
+        (suggest time-dimension for acoustic features)
+    feat_type: list of str
+        list of all features name for calculating the delta
+    """
+    def __init__(self, width=9, order=(0, 1), axis=0, feat_type=None):
         super(DeltaExtractor, self).__init__()
         # ====== check width ====== #
         width = int(width)
@@ -158,14 +260,17 @@ class DeltaExtractor(Extractor):
         if isinstance(X, Mapping):
             max_order = max(self.order)
             for name, feat in X.items():
-                if _check_feat_name(self.feat_type, name):
+                if _match_feat_name(self.feat_type, name):
                     all_deltas = delta(data=feat, width=self.width,
                                        order=max_order, axis=self.axis)
                     if not isinstance(all_deltas, (tuple, list)):
                         all_deltas = (all_deltas,)
+                    else:
+                        all_deltas = tuple(all_deltas)
+                    all_deltas = (feat,) + all_deltas
                     all_deltas = tuple([d for i, d in enumerate(all_deltas)
-                                        if (i + 1) in self.order])
-                    feat = np.concatenate((feat,) + all_deltas, axis=-1)
+                                        if i in self.order])
+                    feat = np.concatenate(all_deltas, axis=-1)
                 X[name] = feat
         return X
 
@@ -194,12 +299,12 @@ class EqualizeShape0(Extractor):
             equalized = {}
             n = min(feat.shape[0]
                     for name, feat in X.iteritems()
-                    if _check_feat_name(self.feat_type, name))
+                    if _match_feat_name(self.feat_type, name))
             # ====== equalize ====== #
             for name, feat in X.items():
                 # cut the features in left and right
                 # if the shape[0] is longer
-                if _check_feat_name(self.feat_type, name) and feat.shape[0] != n:
+                if _match_feat_name(self.feat_type, name) and feat.shape[0] != n:
                     diff = feat.shape[0] - n
                     diff_left = diff // 2
                     diff_right = diff - diff_left
@@ -297,8 +402,10 @@ class RemoveFeatures(Extractor):
         self.feat_type = as_tuple(feat_type, t=str)
 
     def _transform(self, X):
-        if isinstance(X, Mapping):
-            for feat_name in self.feat_type:
-                if feat_name in X:
-                    X[feat_name] = _REMOVED_FEATURES_
         return X
+
+    def transform(self, X):
+        if isinstance(X, Mapping):
+            for f in self.feat_type:
+                del X[f]
+        return super(RemoveFeatures, self).transform(X)

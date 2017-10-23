@@ -1097,7 +1097,7 @@ def get_energy(frames, log=True):
                           log_energy)
     if log:
         log_energy = np.log(log_energy)
-    return log_energy.astype('float32')
+    return np.expand_dims(log_energy.astype('float32'), -1)
 
 
 def stft(y, frame_length, step_length=None, nfft=None,
