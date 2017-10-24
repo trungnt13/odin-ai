@@ -497,6 +497,7 @@ def plot_features(features, order=None, title=None, fig_width=4):
         'raw',
         'energy',
         'vad',
+        'sad',
         'pitch',
         'f0',
         'spec',

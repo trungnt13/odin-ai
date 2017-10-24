@@ -246,11 +246,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 logger("Check PCA for: ", feat_name, True)
     # ====== Do sampling ====== #
     np.random.seed(seed) # seed for reproceducible
-    figure_path = os.path.join(path, 'report.pdf')
     all_samples = np.random.choice(ds['indices'].keys(), size=nb_samples,
                                    replace=False)
     # plotting all samples
-    for file_name in all_samples:
+    for sample_id, file_name in enumerate(all_samples):
+        figure_path = os.path.join(path, 'report%d.pdf' % sample_id)
         X = {}
         for feat_name in all_features:
             if feat_name in external_indices:
@@ -267,16 +267,18 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 logger("Special case error: %s" % str(e),
                        file_name + ':' + feat_name, False)
         plot_features(X, title=file_name, fig_width=fig_width)
+        plot_save(figure_path, log=False, clear_all=True)
+        logger("Sample figure saved at: ", figure_path, True)
     # plotting the statistic
+    figure_path = os.path.join(path, 'stats.pdf')
     for feat_name, stat_name in all_stats.iteritems():
         X = {name: ds[name][:]
              for name in stat_name
              if ds[name].ndim >= 1}
         if len(X) > 0:
             plot_features(X, title=feat_name, fig_width=fig_width)
-    # save all plot to 1 path
-    plot_save(figure_path, log=False)
-    logger("Figure save at: ", figure_path, True)
+    plot_save(figure_path, log=False, clear_all=True)
+    logger("Stats figure save at: ", figure_path, True)
     logger("All reports at folder: ", os.path.abspath(path), True)
     # ====== cleaning ====== #
     stdio(path=prev_stdio)

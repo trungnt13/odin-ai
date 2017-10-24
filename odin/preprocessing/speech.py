@@ -121,10 +121,16 @@ def audio_segmenter(files, outpath, max_duration,
                     override=False):
     """ Segment all given files into small chunks, the new file
     name is formatted as:
-     [name_without_extension].[ID].wav
+     - [name_without_extension].[ID].wav
 
     The information for each segment is saved at a csv file:
-     [outpath]/segments.csv
+     - [outpath]/segments.csv
+
+    Note
+    ----
+    We separated the segmenter from FeatureProcessor, since you can try
+    different configuration for the features on the same set of segments,
+    it is efficient to do this once-for-all.
     """
     # ====== validate arguments ====== #
     max_duration = int(max_duration)
