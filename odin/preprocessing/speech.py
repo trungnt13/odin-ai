@@ -12,6 +12,7 @@ import re
 import six
 import math
 import copy
+import shutil
 import warnings
 from collections import OrderedDict, Mapping, defaultdict
 
@@ -20,7 +21,7 @@ from scipy.signal import lfilter
 
 from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
-                        get_all_files, is_pickleable)
+                        get_all_files, is_pickleable, Progbar, mpi, ctext)
 from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
@@ -113,6 +114,72 @@ def read_pcm(path_or_file, encode=None):
             sr = 44000
     s = np.memmap(path_or_file, dtype=dtype, mode='r')
     return s, sr
+
+
+def audio_segmenter(files, outpath, max_duration,
+                    sr=None, sr_new=None, best_resample=True,
+                    override=False):
+    """ Segment all given files into small chunks, the new file
+    name is formatted as:
+     [name_without_extension].[ID].wav
+
+    The information for each segment is saved at a csv file:
+     [outpath]/segments.csv
+    """
+    # ====== validate arguments ====== #
+    max_duration = int(max_duration)
+    files = [f for f in as_tuple(files, t=str)
+             if os.path.isfile(f)]
+    outpath = str(outpath)
+    if os.path.isfile(outpath):
+        raise ValueError("outpath at: %s is a file." % outpath)
+    if os.path.isdir(outpath):
+        if not override:
+            raise RuntimeError("Cannot override outpath at: %s" % outpath)
+        else:
+            shutil.rmtree(outpath)
+    if not os.path.isdir(outpath):
+        os.mkdir(outpath)
+    reader = AudioReader(sr=sr, sr_new=sr_new, best_resample=best_resample,
+                         remove_dc_n_dither=False, preemphasis=None)
+
+    # ====== segmenting ====== #
+    def segmenting(f):
+        raw = reader.transform(f)
+        path, sr, raw = raw['path'], raw['sr'], raw['raw']
+        segs = [int(np.round(i)) for i in np.linspace(
+            start=0, stop=raw.shape[0],
+            num=int(np.ceil(raw.shape[0] / (sr * max_duration))) + 1,
+            endpoint=True)]
+        indices = list(zip(segs, segs[1:]))
+        name = os.path.basename(path)
+        info = []
+        for idx, (s, e) in enumerate(indices):
+            y = raw[s:e]
+            seg_name = name.split('.')[:-1] + [str(idx), 'wav']
+            seg_name = '.'.join(seg_name)
+            save(os.path.join(outpath, seg_name), y, sr)
+            info.append((seg_name, s / sr, e / sr))
+        return path, info
+    nb_files = len(files)
+    prog = Progbar(target=nb_files, print_summary=True, print_report=True,
+                   name='Segmenting to path: %s' % outpath)
+    task = mpi.MPI(jobs=files, map_func=lambda fpath: segmenting(fpath[0]),
+                   ncpu=None, buffer_size=1)
+    # ====== running the processor ====== #
+    seg_indices = []
+    for f, info in task:
+        prog['File'] = f
+        prog['#Segs'] = len(info)
+        for seg, s, e in info:
+            seg_indices.append((seg, os.path.basename(f), s, e))
+        prog.add(1)
+    # ====== save the info ====== #
+    info_path = os.path.join(outpath, 'segments.csv')
+    header = ' '.join(['segment', 'origin', 'start', 'end'])
+    np.savetxt(info_path, seg_indices,
+               fmt='%s', delimiter=' ', header=header, comments='')
+    print("Segment info saved at:", ctext(info_path, 'cyan'))
 
 
 # ===========================================================================
@@ -308,7 +375,7 @@ class AudioReader(Extractor):
         # ====== get duration if possible ====== #
         if sr is not None:
             duration = max(s.shape) / sr
-        return {'raw': s, 'sr': sr,
+        return {'raw': s.astype('float32'), 'sr': sr,
                 'duration': duration, # in second
                 'path': os.path.abspath(path) if path is not None else None}
 
@@ -618,9 +685,10 @@ class RASTAfilter(Extractor):
             if self.sdc >= 1:
                 mfcc = np.hstack([
                     mfcc,
-                    shifted_deltas(mfcc, N=7, d=self.sdc, P=3, k=7)
+                    shifted_deltas(mfcc, N=mfcc.shape[-1], d=self.sdc,
+                                   P=3, k=7)
                 ])
-            feat['mfcc'] = mfcc
+            feat['mfcc'] = mfcc.astype("float32")
         return feat
 
 

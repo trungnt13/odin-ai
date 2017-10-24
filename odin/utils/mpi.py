@@ -333,6 +333,8 @@ class MPI(SelfIterator):
         NOTE: the argument of map_func is always a list.
     reduce_func: callable
         take returned a `not-None` object from `map_func` as input.
+    ncpu: int or None
+        number of processes, if None, `ncpu = cpu_count() - 1`
     buffer_size: int
         the amount of data each process keep before return to main
         process.
@@ -430,7 +432,7 @@ class MPI(SelfIterator):
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
-        self._ncpu = max(min(ncpu, 2 * cpu_count() - 1), 1)
+        self._ncpu = np.clip(int(ncpu), 1, cpu_count() - 1)
         self._maximum_queue_size = maximum_queue_size
         self._buffer_size = buffer_size
         # processes manager

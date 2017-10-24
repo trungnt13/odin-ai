@@ -341,7 +341,7 @@ class FeatureProcessor(object):
         self.excluded_pca = as_tuple(excluded_pca, t=str)
         # ====== check multiprocessing ====== #
         if ncpu is None: # auto select number of CPU
-            ncpu = min(len(jobs), int(1.2 * cpu_count()))
+            ncpu = min(len(jobs), cpu_count() - 1)
         ncpu = int(ncpu)
         if ncpu <= 0 or ncache <= 0:
             raise ValueError('`ncpu` and `ncache` must be greater than 0, but '
