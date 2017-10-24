@@ -423,13 +423,13 @@ class SpectraExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -483,13 +483,13 @@ class CQTExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -550,13 +550,13 @@ class PitchExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -591,7 +591,7 @@ class PitchExtractor(Extractor):
         return {'pitch': pitch_freq}
 
 
-class VADextractor(Extractor):
+class SADextractor(Extractor):
     """
     The following order is recommended for extracting spectra:
     + AudioReader:
@@ -600,13 +600,13 @@ class VADextractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -615,7 +615,7 @@ class VADextractor(Extractor):
 
     def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
                  feat_type='energy'):
-        super(VADextractor, self).__init__()
+        super(SADextractor, self).__init__()
         self.nb_mixture = int(nb_mixture)
         self.nb_train_it = int(nb_train_it)
         self.smooth_window = int(smooth_window)
@@ -636,7 +636,7 @@ class VADextractor(Extractor):
                 vad, win=self.smooth_window, window='flat') >= threshold
         # ====== vad is only 0 and 1 so 'uint8' is enough ====== #
         vad = vad.astype('uint8')
-        return {'vad': vad, 'vad_threshold': float(vad_threshold)}
+        return {'sad': vad, 'sad_threshold': float(vad_threshold)}
 
 
 class RASTAfilter(Extractor):
@@ -660,13 +660,13 @@ class RASTAfilter(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -716,13 +716,13 @@ class AcousticNorm(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -757,9 +757,81 @@ class AcousticNorm(Extractor):
                 if self.window_mean_var_norm:
                     features = wmvn(features, w=self.win_length,
                                     varnorm=False)
-                # transpose back to [t, f]
             feat_normalized[name] = features
         return feat_normalized
+
+
+class ApplyingSAD(Extractor):
+    """ Applying SAD index to given features
+
+    Parameters
+    ----------
+    threshold: None or float
+        if `sad`, is continuous value, threshold need to be applied
+    smooth_win: int (> 0)
+        ammount of adjent frames will be taken into the SAD
+    keep_unvoiced: bool
+        if True, keep the whole audio file even though no SAD found
+    sad_name: str
+        feature name for `sad`
+    feat_type: str, or list of str
+        all features' name will be applied.
+
+    Note
+    ----
+    The following order is recommended for extracting spectra:
+    + AudioReader:
+        - Loading raw audio
+        - remove DC offeset and dithering
+        - preemphasis
+    + SpectraExtractor (or CQTExtractor):
+        - Extracting the Spectra
+    + SADextractor:
+        - Extracting SAD (optional)
+    + Rastafilt:
+        - Rastafilt (optional for MFCC)
+    + DeltaExtractor
+        - Calculate Deltas (and shifted delta for MFCCs).
+    + Read3ColSAD, ApplyingSAD:
+        - Applying SAD labels
+    + AcousticNorm
+        - Applying CMVN and WCMVN (This is important so the SAD frames
+        are not affected by the nosie).
+    """
+
+    def __init__(self, threshold=None, smooth_win=None, keep_unvoiced=False,
+                 sad_name='sad', feat_type=('spec', 'mspec', 'mfcc',
+                                            'qspec', 'qmspec', 'qmfcc',
+                                            'pitch', 'f0', 'energy', 'sad')):
+        super(ApplyingSAD, self).__init__()
+        self.threshold = float(threshold) if is_number(threshold) else None
+        self.smooth_win = int(smooth_win) if is_number(smooth_win) else None
+        self.sad_name = str(sad_name)
+        self.feat_type = as_tuple(feat_type, t=str)
+        self.keep_unvoiced = bool(keep_unvoiced)
+
+    def _transform(self, X):
+        if self.sad_name in X:
+            # ====== threshold sad to index ====== #
+            sad = X[self.sad_name]
+            if is_number(self.threshold):
+                sad = (sad >= self.threshold).astype('int32')
+            if is_number(self.smooth_win) and self.smooth_win > 0:
+                sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
+            sad = sad.astype('bool')
+            # ====== keep unvoiced or not ====== #
+            if np.sum(sad) == 0 and not self.keep_unvoiced:
+                return None
+            # ====== start ====== #
+            X_new = {}
+            for feat_name, feat in X.iteritems():
+                if feat_name in self.feat_type:
+                    assert len(sad) == max(feat.shpae),\
+                        "Length of sad labels is: %d, but number of sample is: %s"\
+                        % (len(sad), max(feat.shape))
+                    X_new[feat_name] = feat[sad]
+            X = X_new
+        return X
 
 
 class Read3ColSAD(Extractor):
@@ -797,13 +869,13 @@ class Read3ColSAD(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + VADextractor:
+    + SADextractor:
         - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
-    + Read3ColSAD:
+    + Read3ColSAD, ApplyingSAD:
         - Applying SAD labels
     + AcousticNorm
         - Applying CMVN and WCMVN (This is important so the SAD frames
@@ -814,7 +886,7 @@ class Read3ColSAD(Extractor):
                  name_converter=None, ref_key='path', file_regex='.*',
                  keep_unvoiced=False, feat_type=('spec', 'mspec', 'mfcc',
                                                  'qspec', 'qmspec', 'qmfcc',
-                                                 'pitch', 'f0', 'vad', 'energy')):
+                                                 'pitch', 'f0', 'sad', 'energy')):
         super(Read3ColSAD, self).__init__()
         self.keep_unvoiced = bool(keep_unvoiced)
         self.feat_type = as_tuple(feat_type, t=str)

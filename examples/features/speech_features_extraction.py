@@ -53,7 +53,7 @@ extractors = [
                            fmin=64, fmax=4000, padding=padding),
     pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
                              threshold=1.0, f0=True, algo='rapt'),
-    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25,
+    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
     pp.speech.RASTAfilter(rasta=True, sdc=1),
     pp.DeltaExtractor(width=9, order=(1, 2), axis=0,

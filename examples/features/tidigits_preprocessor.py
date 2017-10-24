@@ -166,7 +166,7 @@ extractors = [
                                fmin=64, fmax=None, padding=padding),
     pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
                              threshold=1., f0=True, algo='rapt'),
-    pp.speech.VADextractor(nb_mixture=3, nb_train_it=25, feat_type='energy'),
+    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25, feat_type='energy'),
     pp.speech.RASTAfilter(rasta=True, sdc=1),
     pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
                       feat_type=('mspec', 'qmspec')),
