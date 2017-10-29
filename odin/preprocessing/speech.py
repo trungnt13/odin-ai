@@ -177,6 +177,10 @@ def audio_segmenter(files, outpath, max_duration,
     for f, info in task:
         prog['File'] = f
         prog['#Segs'] = len(info)
+        assert all(e - s <= max_duration
+                   for name, s, e in info), \
+            "Results contain segments > max duration, file: %s, segs: %s" %\
+            (f, str(info))
         for seg, s, e in info:
             seg_indices.append((seg, os.path.basename(f), s, e))
         prog.add(1)
@@ -826,7 +830,7 @@ class ApplyingSAD(Extractor):
             X_new = {}
             for feat_name, feat in X.iteritems():
                 if feat_name in self.feat_type:
-                    assert len(sad) == max(feat.shpae),\
+                    assert len(sad) == max(feat.shape),\
                         "Length of sad labels is: %d, but number of sample is: %s"\
                         % (len(sad), max(feat.shape))
                     X_new[feat_name] = feat[sad]

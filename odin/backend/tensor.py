@@ -26,6 +26,11 @@ def _normalize_axis(axis, ndim):
     return axis % ndim
 
 
+def entropy(p):
+    """Return simple calculation of discrete Shanon entropy"""
+    return -tf.reduce_sum(p * tf.log(p))
+
+
 def linear(x):
     return x
 

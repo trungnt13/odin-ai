@@ -18,14 +18,6 @@ from .recipe_basic import FeederRecipe, RecipeList
 
 __all__ = [
     'Dataset',
-    'load_mnist',
-    'load_cifar10',
-    'load_cifar100',
-    'load_mspec_test',
-    'load_imdb',
-    'load_iris',
-    'load_digit_feat',
-    'load_tiwave',
 ]
 
 
@@ -41,13 +33,13 @@ def _parse_data_descriptor(path, read_only):
         dtype, shape = MmapData.read_header(path, mode='r', return_file=False)
         # shape[1:], because first dimension can be resize afterward
         return [(os.path.basename(path), (dtype, shape, None, path))]
-    except: # cannot read the header of MmapData, maybe Hdf5
+    except Exception: # cannot read the header of MmapData, maybe Hdf5
         try:
             f = open_hdf5(path, read_only=read_only)
             ds = get_all_hdf_dataset(f)
             data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
             return [(str(i.name), (str(i.dtype), i.shape, i, i.path)) for i in data]
-        except:
+        except Exception:
             pass
     # ====== try to load pickle file if possible ====== #
     name = os.path.basename(path)
@@ -56,13 +48,13 @@ def _parse_data_descriptor(path, read_only):
             data = cPickle.load(f)
             return [(name,
             (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
-    except:
+    except Exception:
         pass
     # ====== load memmap dict ====== #
     try:
         data = MmapDict(path, read_only=read_only)
         return [(name, ('memdict', len(data), data, path))]
-    except:
+    except Exception:
         pass
     # ====== load SQLiteDict ====== #
     if '.db' in os.path.splitext(path)[1]:
@@ -72,7 +64,7 @@ def _parse_data_descriptor(path, read_only):
             return [(tab if tab != SQLiteDict._DEFAULT_TABLE else name,
                      ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
                     for tab in db.get_all_tables()]
-        except:
+        except Exception:
             pass
     # ====== unknown datatype ====== #
     return [(name, ('unknown', 'unknown', None, path))]
@@ -708,126 +700,3 @@ class Dataset(object):
         else:
             readme = self._readme_info[-1]
         return readme
-
-
-# ===========================================================================
-# Predefined dataset
-# ===========================================================================
-def _load_data_from_path(datapath, create_dataset=True):
-    from zipfile import ZipFile, ZIP_DEFLATED
-    if not os.path.isdir(datapath):
-        datapath_tmp = datapath.replace('.zip', '') + '.tmp'
-        os.rename(datapath, datapath_tmp)
-        zf = ZipFile(datapath_tmp, mode='r', compression=ZIP_DEFLATED)
-        zf.extractall(path=datapath)
-        zf.close()
-        os.remove(datapath_tmp)
-    if create_dataset:
-        ds = Dataset(datapath, read_only=True)
-        return ds
-    return datapath
-
-
-def load_mnist(path='https://s3.amazonaws.com/ai-datasets/MNIST.zip'):
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
-    datapath = get_file('MNIST', path)
-    return _load_data_from_path(datapath)
-
-
-def load_cifar10(path='https://s3.amazonaws.com/ai-datasets/cifar10.zip'):
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
-    datapath = get_file('cifar10', path)
-    return _load_data_from_path(datapath)
-
-
-def load_cifar100(path='https://s3.amazonaws.com/ai-datasets/cifar100.zip'):
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
-    datapath = get_file('cifar100', path)
-    return _load_data_from_path(datapath)
-
-
-def load_mspec_test():
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
-    path = 'https://s3.amazonaws.com/ai-datasets/mspec_test.zip'
-    datapath = get_file('mspec_test', path)
-    return _load_data_from_path(datapath)
-
-
-def load_imdb(nb_words=None, maxlen=None):
-    """ The preprocessed imdb dataset with following configuraiton:
-     - nb_words=88587
-     - length=2494
-     - NO skip for any top popular word
-     - Word_IDX=1 for beginning of sequences
-     - Word_IDX=2 for ignored word (OOV)
-     - Other word start from 3
-     - padding='pre' with value=0
-    """
-    path = 'https://s3.amazonaws.com/ai-datasets/imdb.zip'
-    datapath = get_file('imdb', path)
-    ds = _load_data_from_path(datapath)
-    X_train, y_train, X_test, y_test = \
-        ds['X_train'], ds['y_train'], ds['X_test'], ds['y_test']
-    # create new data with new configuration
-    if maxlen is not None or nb_words is not None:
-        nb_words = max(min(88587, nb_words), 3)
-        path = ds.path + '_tmp'
-        if os.path.exists(path):
-            shutil.rmtree(path)
-        ds = Dataset(path)
-        # preprocess data
-        if maxlen is not None:
-            # for X_train
-            _X, _y = [], []
-            for i, j in zip(X_train[:], y_train[:]):
-                if i[-maxlen] == 0 or i[-maxlen] == 1:
-                    _X.append([k if k < nb_words else 2 for k in i[-maxlen:]])
-                    _y.append(j)
-            X_train = np.array(_X, dtype=X_train.dtype)
-            y_train = np.array(_y, dtype=y_train.dtype)
-            # for X_test
-            _X, _y = [], []
-            for i, j in zip(X_test[:], y_test[:]):
-                if i[-maxlen] == 0 or i[-maxlen] == 1:
-                    _X.append([k if k < nb_words else 2 for k in i[-maxlen:]])
-                    _y.append(j)
-            X_test = np.array(_X, dtype=X_test.dtype)
-            y_test = np.array(_y, dtype=y_test.dtype)
-        ds['X_train'] = X_train
-        ds['y_train'] = y_train
-        ds['X_test'] = X_test
-        ds['y_test'] = y_test
-        ds.flush()
-    return ds
-
-
-def load_iris():
-    path = "https://s3.amazonaws.com/ai-datasets/iris.zip"
-    datapath = get_file('iris', path)
-    return _load_data_from_path(datapath)
-
-
-def load_digit_feat():
-    path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
-    name = 'digit'
-    datapath = get_file(name, path)
-    return _load_data_from_path(datapath)
-
-
-def load_tiwave():
-    path = 'https://s3.amazonaws.com/ai-datasets/tiwave.zip'
-    name = 'tiwave'
-    datapath = get_file(name, path)
-    return _load_data_from_path(datapath)

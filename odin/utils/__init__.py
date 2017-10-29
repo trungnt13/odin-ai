@@ -790,23 +790,16 @@ else:
     from six.moves.urllib.request import urlretrieve
 
 
-def get_file(fname, origin, untar=False):
+def get_file(fname, origin, outdir):
     '''
-    This function is adpated from: https://github.com/fchollet/keras
-    Original work Copyright (c) 2014-2015 keras contributors
-    Modified work Copyright 2016-2017 TrungNT
-
-    Return
-    ------
-    file path of the downloaded file
+    Parameters
+    ----------
+    fname: output file name
+    origin: url, link
+    outdir: path to output dir
     '''
-    datadir = get_datasetpath()
-    if untar:
-        untar_fpath = os.path.join(datadir, fname)
-        fpath = untar_fpath + '.tar.gz'
-    else:
-        fpath = os.path.join(datadir, fname)
-    # ====== check empty folder ====== #
+    fpath = os.path.join(outdir, fname)
+    # ====== remove empty folder ====== #
     if os.path.exists(fpath):
         if os.path.isdir(fpath) and len(os.listdir(fpath)) == 0:
             shutil.rmtree(fpath)
@@ -832,23 +825,6 @@ def get_file(fname, origin, untar=False):
             if os.path.exists(fpath):
                 os.remove(fpath)
             raise
-    # ====== untar the package ====== #
-    if untar:
-        if not os.path.exists(untar_fpath):
-            print('Untaring file...')
-            tfile = tarfile.open(fpath, 'r:gz')
-            try:
-                tfile.extractall(path=datadir)
-            except (Exception, KeyboardInterrupt) as e:
-                if os.path.exists(untar_fpath):
-                    if os.path.isfile(untar_fpath):
-                        os.remove(untar_fpath)
-                    else:
-                        shutil.rmtree(untar_fpath)
-                raise
-            tfile.close()
-        return untar_fpath
-
     return fpath
 
 

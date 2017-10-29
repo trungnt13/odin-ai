@@ -11,6 +11,8 @@ import math
 import numpy as np
 import scipy as sp
 
+from six import string_types
+
 from .cache_utils import cache_memory
 
 
@@ -98,6 +100,40 @@ def unique_labels(y, key_func=None, return_labels=False):
     if return_labels:
         return labels_indexing, tuple(sorted_labels)
     return labels_indexing
+
+
+# ===========================================================================
+# Label splitter
+# ===========================================================================
+_CACHE_SPLITTER = {}
+
+
+class _label_split_helper(object):
+    def __init__(self, pos, delimiter):
+        super(_label_split_helper, self).__init__()
+        self.pos = pos
+        self.delimiter = delimiter
+
+    def __call__(self, x):
+        if isinstance(x, string_types):
+            return x.split(self.delimiter)[self.pos]
+        elif isinstance(x, (tuple, list, np.ndarray)):
+            for i in x:
+                if isinstance(i, string_types):
+                    return i.split(self.delimiter)[self.pos]
+        else:
+            raise RuntimeError("Unsupport type=%s for label splitter" %
+                str(type(x)))
+
+
+def label_splitter(pos, delimiter='/'):
+    pos = int(pos)
+    delimiter = str(delimiter)
+    splitter_id = str(pos) + delimiter
+    if splitter_id not in _CACHE_SPLITTER:
+        splitter = _label_split_helper(pos, delimiter)
+        _CACHE_SPLITTER[splitter_id] = splitter
+    return _CACHE_SPLITTER[splitter_id]
 
 
 # def replace(array, value, new_value):
