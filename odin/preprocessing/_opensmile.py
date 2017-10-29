@@ -55,16 +55,27 @@ def _get_conf_file(name):
 # ===========================================================================
 # Main extractor
 # ===========================================================================
-class SMILEpitch(Extractor):
-    pass
+class oSMILEpitch(Extractor):
+    """
+    Parameters
+    ----------
+    method: 'shs', 'acf'
+        shs: subharmonic summation
+        acf: autocorrelation function
+    """
+
+    def __init__(self, frame_length, step_length=None,
+                 window='gauss', fmin=52, fmax=620,
+                 sr=8000, method='shs'):
+        super(oSMILEpitch, self).__init__()
 
 
-class SMILEsad(Extractor):
+class oSMILEsad(Extractor):
     """docstring for SMILEsad"""
 
     def __init__(self, frame_length, step_length=None,
-                 threshold=None, sr=8000):
-        super(SMILEsad, self).__init__()
+                 window='ham', threshold=None, sr=8000):
+        super(oSMILEsad, self).__init__()
         # ====== verifying ====== #
         from odin.fuel import load_sad_model
         verify_dependencies()
@@ -76,6 +87,7 @@ class SMILEsad(Extractor):
             step_length = frame_length / 4
         self.step_length = float(step_length)
         self.sr = int(sr)
+        self.window = str(window)
         self.threshold = None if threshold is None \
             else np.clip(threshold, -1., 1.)
         # ====== update config ====== #
@@ -88,7 +100,8 @@ class SMILEsad(Extractor):
     def _update_config(self):
         kwargs = {'framesize': self.frame_length, 'framestep': self.step_length,
                   'netfile': self._lstm_path, 'initfile': self._init_path,
-                  'hifreq': self.sr // 2 if self.sr < 16000 else 8000}
+                  'hifreq': self.sr // 2 if self.sr < 16000 else 8000,
+                  'window': self.window}
         with open(self.get_config_path(), 'w') as f:
             f.write(self._sad_conf.format(**kwargs))
 
