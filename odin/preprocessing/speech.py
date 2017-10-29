@@ -54,6 +54,86 @@ timit_map = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er',
 
 
 # ===========================================================================
+# Basics
+# ===========================================================================
+def _read_pcm(path):
+    dtype = np.int16
+    sr = None
+    if encode is not None:
+        if 'ulaw' in encode.lower():
+            dtype = np.int8
+            sr = 8000
+        elif 'vast' in encode.lower():
+            dtype = np.int16
+            sr = 44000
+    raw = np.memmap(path, dtype=dtype, mode='r')
+    return raw, sr
+
+
+def read(path_or_file, encode=None):
+    # ====== check input ====== #
+    if isinstance(path_or_file, file):
+        f = path_or_file
+        path = f.name
+    elif os.path.isfile(path_or_file):
+        f = open(path_or_file, 'r')
+        path = path_or_file
+    else:
+        raise ValueError("Invalid type of `path_or_file` %s" %
+            str(type(path_or_file)))
+    # support encode
+    if encode not in (None, 'ulaw', 'vast'):
+        raise ValueError("No support for encode: %s" % str(encode))
+    # ====== read the audio ====== #
+    if '.pcm' in path.lower():
+        raw, sr = _read_pcm(f, encode=encode)
+    else:
+        import soundfile
+        try:
+            raw, sr = soundfile.read(f)
+        except Exception as e:
+            if '.sph' in f.name.lower():
+                f.seek(0)
+                raw, sr = _read_pcm(f, encode=encode)
+            else:
+                raise e
+    # close file
+    f.close()
+    return raw, sr
+
+
+def save(file_or_path, s, sr, subtype=None):
+    '''
+    Parameters
+    ----------
+    s : array_like
+        The data to write.  Usually two-dimensional (channels x frames),
+        but one-dimensional `data` can be used for mono files.
+        Only the data types ``'float64'``, ``'float32'``, ``'int32'``
+        and ``'int16'`` are supported.
+
+        .. note:: The data type of `data` does **not** select the data
+                  type of the written file. Audio data will be
+                  converted to the given `subtype`. Writing int values
+                  to a float file will *not* scale the values to
+                  [-1.0, 1.0). If you write the value ``np.array([42],
+                  dtype='int32')``, to a ``subtype='FLOAT'`` file, the
+                  file will then contain ``np.array([42.],
+                  dtype='float32')``.
+    subtype: str
+        'PCM_24': 'Signed 24 bit PCM'
+        'PCM_16': 'Signed 16 bit PCM'
+        'PCM_S8': 'Signed 8 bit PCM'
+
+    Return
+    ------
+    waveform (ndarray), sample rate (int)
+    '''
+    from soundfile import write
+    return write(file_or_path, s, sr, subtype=subtype)
+
+
+# ===========================================================================
 # Helper function
 # ===========================================================================
 def _extract_s_sr(s_sr):
@@ -100,20 +180,6 @@ def _num_two_factors(x):
 def _max_fft_bins(sr, n_fft, fmax):
     return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
                                         endpoint=True)) if j >= fmax][0]
-
-
-def read_pcm(path_or_file, encode=None):
-    dtype = np.int16
-    sr = None
-    if encode is not None:
-        if 'ulaw' in encode.lower():
-            dtype = np.int8
-            sr = 8000
-        elif 'vast' in encode.lower():
-            dtype = np.int16
-            sr = 44000
-    s = np.memmap(path_or_file, dtype=dtype, mode='r')
-    return s, sr
 
 
 def audio_segmenter(files, outpath, max_duration,
@@ -192,56 +258,6 @@ def audio_segmenter(files, outpath, max_duration,
     print("Segment info saved at:", ctext(info_path, 'cyan'))
 
 
-# ===========================================================================
-# Audio feature extractor
-# ===========================================================================
-class RawDSReader(Extractor):
-    """ This reader, read data directly from raw waveform processed dataset
-    The input is `name` of the raw audio in the dataset
-
-    The given Dataset must contains:
-     - 'raw': 1-D MmapData stored raw waveform
-     - 'sr': MmapDict, mapping file name -> sample rate (integer value)
-     - 'indices': MmapDict, mapping file name -> start, end index in 'raw'
-     - 'path' (optional)
-     - 'duration' (optional)
-    """
-
-    def __init__(self, path_or_ds):
-        super(RawDSReader, self).__init__()
-        # ====== check argument ====== #
-        if is_string(path_or_ds):
-            ds = Dataset(path_or_ds, read_only=True)
-        elif isinstance(path_or_ds, Dataset):
-            ds = path_or_ds
-        else:
-            raise ValueError("`path_or_ds` must be string path to a folder or "
-                             "a loaded Dataset.")
-        # ====== check the dataset ====== #
-        if 'raw' not in ds or not isinstance(ds['raw'], MmapData):
-            raise ValueError("Dataset at path:'%s' must contain 'raw' MmapData, "
-                             "which stored the raw waveform." % ds.path)
-        if 'sr' not in ds or not isinstance(ds['sr'], MmapDict):
-            raise ValueError("Dataset at path:'%s' must contain 'sr' MmapDict, "
-                             "which stored the sample rate (integer)." % ds.path)
-        if 'indices' not in ds or not isinstance(ds['indices'], MmapDict):
-            raise ValueError("Dataset at path:'%s' must contain 'indices' MmapDict, "
-                             "which stored the mapping: name->(start, end)" % ds.path)
-        self.ds = ds
-
-    def _transform(self, name):
-        start, end = self.ds['indices'][name]
-        raw = self.ds['raw'][start:end]
-        ret = {'raw': raw.astype('float32'),
-               'sr': int(self.ds['sr'][name]),
-               'name': name} # must include name here
-        if 'duration' in self.ds:
-            ret['duration'] = float(self.ds['duration'][name])
-        if 'path' in self.ds:
-            ret['path'] = str(self.ds['path'][name])
-        return ret
-
-
 class AudioReader(Extractor):
 
     """ Return a dictionary of
@@ -273,30 +289,40 @@ class AudioReader(Extractor):
     """
 
     def __init__(self, sr=None, sr_new=None, best_resample=True,
-                 remove_dc_n_dither=True, preemphasis=0.97):
+                 remove_dc_n_dither=True, preemphasis=0.97,
+                 dataset=None):
         super(AudioReader, self).__init__()
         self.sr = sr
         self.sr_new = sr_new
         self.best_resample = best_resample
         self.remove_dc_n_dither = bool(remove_dc_n_dither)
         self.preemphasis = preemphasis
+        # ====== check dataset ====== #
+        if is_string(dataset) and os.path.isdir(dataset):
+            dataset = Dataset(dataset)
+        elif dataset is not None and not isinstance(dataset, Dataset):
+            raise ValueError("dataset can be instance of odin.fuel.Dataset or None")
+        self.dataset = dataset
 
     def _transform(self, path_or_array):
+        raw = None # raw
         sr = None # by default, we don't know sample rate
         path = None
         duration = None
         encode = None
         channel = 0
         # ====== check path_or_array ====== #
+        # tuple of sr and raw_array
         if isinstance(path_or_array, (tuple, list)):
             if len(path_or_array) != 2:
                 raise ValueError("`path_or_array` can be a tuple or list of "
                     "length 2, which contains: (string_path, sr) or "
                     "(sr, string_path) or (raw_array, sr) or (sr, raw_array).")
             if is_number(path_or_array[0]):
-                sr, path_or_array = path_or_array
+                sr, raw = path_or_array
             else:
-                path_or_array, sr = path_or_array
+                raw, sr = path_or_array
+        # mapping of specific data
         elif isinstance(path_or_array, Mapping):
             if 'sr' in path_or_array:
                 sr = path_or_array['sr']
@@ -304,57 +330,51 @@ class AudioReader(Extractor):
                 encode = str(path_or_array['encode'])
             # get raw or path out of the Dictionary
             if 'raw' in path_or_array:
-                path_or_array = path_or_array['raw']
+                raw = path_or_array['raw']
             elif 'path' in path_or_array:
-                path_or_array = path_or_array['path']
+                path = path_or_array
+                raw, sr = read(path, encode=encode)
             else:
                 raise ValueError('`path_or_array` can be a dictionary, contains '
                     'following key: sr, raw, path. One of the key `raw` for '
                     'raw array signal, or `path` for path to audio file must '
                     'be specified.')
-        # ====== read audio from path or opened file ====== #
-        if is_string(path_or_array) or isinstance(path_or_array, file):
-            if isinstance(path_or_array, file):
-                f = path_or_array
-                path = f.name
-            else:
-                f = open(path_or_array, 'r')
-                path = path_or_array
-            # ====== process ====== #
-            if '.pcm' in path.lower():
-                s, sr = read_pcm(path_or_file=f, encode=encode)
-            else:
-                import soundfile
-                try:
-                    s, sr = soundfile.read(f)
-                except Exception as e:
-                    if '.sph' in f.name.lower():
-                        f.seek(0)
-                        s, sr = read_pcm(path_or_file=f, encode=encode)
-                    else:
-                        raise e
-            # close file
-            f.close()
-        # ====== provided np.ndarray for normalization ====== #
+        # read string file pth
+        elif is_string(path_or_array):
+            path = path_or_array
+            if os.path.isfile(path_or_array):
+                raw, sr = read(path_or_array, encode=encode)
+            elif self.dataset is not None:
+                start, end = self.dataset['indices'][path_or_array]
+                raw = self.dataset['raw'][start:end]
+                sr = int(self.dataset['sr'][path_or_array])
+                if 'path' in self.dataset:
+                    path = str(self.dataset['path'][path_or_array])
+        # read from file object
+        elif isinstance(path_or_array, file):
+            path = path_or_array.name
+            raw, sr = read(path_or_array, encode=encode)
         else:
-            s = path_or_array
+            raise ValueError("`path_or_array` can be: list, tuple, Mapping, string, file"
+                ". But given: %s" % str(type(path_or_array)))
         # ====== check channel ====== #
-        if s.ndim == 1:
+        raw = raw.astype('float32')
+        if raw.ndim == 1:
             pass
-        elif s.ndim == 2:
-            if s.shape[0] == 2:
-                s = s[channel, :]
-            elif s.shape[1] == 2:
-                s = s[:, channel]
+        elif raw.ndim == 2:
+            if raw.shape[0] == 2:
+                raw = raw[channel, :]
+            elif raw.shape[1] == 2:
+                raw = raw[:, channel]
         else:
             raise ValueError("No support for %d-D signal from file: %s" %
-                (s.ndim, str(path)))
+                (raw.ndim, str(path)))
         # ====== valiate sample rate ====== #
         if sr is None and self.sr is not None:
             sr = int(self.sr)
         # resampling if necessary
         if sr is not None and self.sr_new is not None:
-            s = resample(s, sr, self.sr_new, best_algorithm=self.best_resample)
+            raw = resample(raw, sr, self.sr_new, best_algorithm=self.best_resample)
             sr = int(self.sr_new)
         # ====== normalizing ====== #
         np.random.seed(8)  # for repeatability
@@ -363,8 +383,8 @@ class AudioReader(Extractor):
         # 'Omid Sadjadi': 'omid.sadjadi@nist.gov'
         if self.remove_dc_n_dither:
             # assuming 16-bit
-            if max(abs(s)) <= 1.:
-                s = s * 2**15
+            if max(abs(raw)) <= 1.:
+                raw = raw * 2**15
             # select alpha
             if sr == 16000:
                 alpha = 0.99
@@ -372,20 +392,20 @@ class AudioReader(Extractor):
                 alpha = 0.999
             else:
                 raise ValueError('Sampling frequency %s not supported' % str(sr))
-            slen = s.size
-            s = lfilter([1, -1], [1, -alpha], s)
+            slen = raw.size
+            raw = lfilter([1, -1], [1, -alpha], raw)
             dither = np.random.rand(slen) + np.random.rand(slen) - 1
-            s_pow = max(s.std(), 1e-20)
-            s = s + 1.e-6 * s_pow * dither
+            s_pow = max(raw.std(), 1e-20)
+            raw = raw + 1.e-6 * s_pow * dither
         else: # just remove DC offset
-            s = s - np.mean(s, 0)
+            raw = raw - np.mean(raw, 0)
         # ====== pre-emphasis ====== #
         if self.preemphasis is not None and 0. < self.preemphasis < 1.:
-            s = pre_emphasis(s, coeff=float(self.preemphasis))
+            raw = pre_emphasis(raw, coeff=float(self.preemphasis))
         # ====== get duration if possible ====== #
         if sr is not None:
-            duration = max(s.shape) / sr
-        return {'raw': s.astype('float32'), 'sr': sr,
+            duration = max(raw.shape) / sr
+        return {'raw': raw, 'sr': sr,
                 'duration': duration, # in second
                 'path': os.path.abspath(path) if path is not None else None}
 
@@ -970,65 +990,3 @@ class Read3ColSAD(Extractor):
         if not self.keep_unvoiced:
             return None
         return feats
-
-
-# ===========================================================================
-# Spectrogram manipulation
-# ===========================================================================
-def save(file_or_path, s, sr, subtype=None):
-    '''
-    Parameters
-    ----------
-    s : array_like
-        The data to write.  Usually two-dimensional (channels x frames),
-        but one-dimensional `data` can be used for mono files.
-        Only the data types ``'float64'``, ``'float32'``, ``'int32'``
-        and ``'int16'`` are supported.
-
-        .. note:: The data type of `data` does **not** select the data
-                  type of the written file. Audio data will be
-                  converted to the given `subtype`. Writing int values
-                  to a float file will *not* scale the values to
-                  [-1.0, 1.0). If you write the value ``np.array([42],
-                  dtype='int32')``, to a ``subtype='FLOAT'`` file, the
-                  file will then contain ``np.array([42.],
-                  dtype='float32')``.
-    subtype: str
-        'PCM_24': 'Signed 24 bit PCM'
-        'PCM_16': 'Signed 16 bit PCM'
-        'PCM_S8': 'Signed 8 bit PCM'
-
-    Return
-    ------
-    waveform (ndarray), sample rate (int)
-    '''
-    from soundfile import write
-    return write(file_or_path, s, sr, subtype=subtype)
-
-
-def __to_separated_indices(idx, min_distance=1, min_length=8):
-    """ For example:
-    min_distance = 1
-    [1,2,3,4,
-     8,9,10,
-     15,16,17,18] => [(1,5), (8, 11), (15, 19)]
-
-    Paramaters
-    ----------
-    min_distance: int
-        pass
-    min_length: int
-        pass
-    """
-    if len(idx) == 0: return idx
-    segments = [[]]
-    n = 0
-    for i, j in zip(idx, idx[1:]):
-        segments[n].append(i)
-        # new segments
-        if j - i > min_distance:
-            segments.append([])
-            n += 1
-    segments[-1].append(idx[-1])
-    return [(s[0], s[-1] + 1) for s in segments
-            if len(s) >= min_length]

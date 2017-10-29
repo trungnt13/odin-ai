@@ -19,16 +19,14 @@ from odin.utils import get_file, get_script_path, ctext, get_datasetpath
 # ===========================================================================
 # Helper
 # ===========================================================================
-def unzip_folder(zip_path, out_path, override=False, remove_zip=True):
+def unzip_folder(zip_path, out_path, remove_zip=True):
     if '.zip' not in zip_path:
         raise ValueError(".zip extension must be in the zip_path.")
+    if not os.path.exists(zip_path):
+        raise ValueError("Cannot find zip file at path: %s" % zip_path)
     try:
-        if os.path.exists(out_path):
-            if not override:
-                raise ValueError("Extracted already exists at: %s" % outpath)
-            shutil.rmtree(out_path)
         zf = ZipFile(zip_path, mode='r', compression=ZIP_DEFLATED)
-        zf.extractall(path=out_path + '/../')
+        zf.extractall(path=out_path)
         zf.close()
     except Exception:
         shutil.rmtree(out_path)
@@ -41,38 +39,85 @@ def unzip_folder(zip_path, out_path, override=False, remove_zip=True):
 @add_metaclass(ABCMeta)
 class DataLoader(object):
     PATH = 'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzLw==\n'
+    BASE_DIR = get_datasetpath(root='~')
 
     def __init__(self):
         super(DataLoader, self).__init__()
 
-    @property
-    def name(self):
-        return self.__class__.__name__
+    @classmethod
+    def get_name(clazz, ext=''):
+        name = clazz.__name__
+        name = name if ext is None or len(ext) == 0 \
+            else '_'.join([name, ext])
+        return name
 
-    @property
-    def support_ext(self):
-        return ['', None]
+    @classmethod
+    def get_zip_path(clazz, ext=''):
+        return os.path.join(DataLoader.BASE_DIR,
+                            clazz.get_name(ext) + '.zip')
 
-    def get_dataset(self, ext='', root='~'):
-        if ext not in self.support_ext:
-            raise RuntimeError("Given extension: '%s', but support ext are: %s"
-                               % (ext, self.support_ext))
-        name = self.name if ext is None or len(ext) == 0 \
-            else '_'.join([self.name, ext])
-        name = name + '.zip'
+    @classmethod
+    def get_ds_path(clazz, ext=''):
+        return os.path.join(DataLoader.BASE_DIR, clazz.get_name(ext))
+
+    @classmethod
+    def get_dataset(clazz, ext='', override=False):
+        # ====== all path ====== #
+        name = clazz.get_name(ext) + '.zip'
         path = base64.decodestring(DataLoader.PATH) + name
-        datapath = get_file(name, path, get_datasetpath(root=root))
-        print(datapath)
+        zip_path = clazz.get_zip_path(ext)
+        out_path = clazz.get_ds_path(ext)
+        # ====== check out_path ====== #
+        if os.path.isfile(out_path):
+            raise RuntimeError("Found a file at path: %s, we need a folder "
+                               "to unzip downloaded files." % out_path)
+        elif os.path.isdir(out_path):
+            if override or len(os.listdir(out_path)) == 0:
+                shutil.rmtree(out_path)
+            else:
+                return Dataset(out_path, read_only=True)
+        # ====== download the file ====== #
+        if os.path.exists(zip_path) and override:
+            os.remove(zip_path)
+        if not os.path.exists(zip_path):
+            get_file(name, path, DataLoader.BASE_DIR)
+        # ====== upzip dataset ====== #
+        unzip_folder(zip_path, out_path, remove_zip=True)
+        return Dataset(out_path, read_only=True)
 
 
 # ===========================================================================
-# Load dataset
+# Images dataset
 # ===========================================================================
 class MNIST(DataLoader):
-    """docstring for MNIST"""
+    pass
 
-    def __init__(self):
-        super(MNIST, self).__init__()
+
+class CIFAR10(DataLoader):
+    pass
+
+
+class CIFAR100(DataLoader):
+    pass
+
+
+# ===========================================================================
+# AUdio dataset
+# ===========================================================================
+class WDIGITS(DataLoader):
+    pass
+
+
+class COMMANDS(DataLoader):
+    pass
+
+# ===========================================================================
+# Others
+# ===========================================================================
+
+
+class IRIS(DataLoader):
+    pass
 
 
 def load_imdb(nb_words=None, maxlen=None):
@@ -123,39 +168,10 @@ def load_imdb(nb_words=None, maxlen=None):
     return ds
 
 
-def load_iris():
-    path = "https://s3.amazonaws.com/ai-datasets/iris.zip"
-    datapath = get_file('iris', path)
-    return _load_data_from_path(datapath)
-
-
 def load_digit_feat():
     path = 'https://s3.amazonaws.com/ai-datasets/digit.zip'
     name = 'digit'
     datapath = get_file(name, path)
-    return _load_data_from_path(datapath)
-
-
-def load_cifar10(path='https://s3.amazonaws.com/ai-datasets/cifar10.zip'):
-    """
-    path : str
-        local path or url to hdf5 datafile
-    """
-    datapath = get_file('cifar10', path)
-    return _load_data_from_path(datapath)
-
-
-def load_cifar100():
-    path = r'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2NpZmFyMTAwLnppcA==\n'
-    path = base64.decodestring(path)
-    datapath = get_file('cifar100', path)
-    return _load_data_from_path(datapath)
-
-
-def load_tiwave():
-    path = 'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL3Rpd2F2ZS56aXA=\n'
-    datapath = get_file(name, path)
-    print(datapath)
     return _load_data_from_path(datapath)
 
 
