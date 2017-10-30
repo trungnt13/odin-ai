@@ -11,6 +11,7 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 
+from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list)
 from .signal import delta
@@ -72,6 +73,10 @@ def _str_complex(x):
     if isinstance(x, Mapping):
         return "(map)length=%d;dtype=%s" % (len(x),
             ','.join([_type_name(i) for i in x.iteritems().next()]))
+    if isinstance(x, Dataset):
+        return ("(ds)path:%s" % x.path)
+    if is_string(x):
+        return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
     return str(x)
 
 
@@ -243,6 +248,7 @@ class DeltaExtractor(Extractor):
     feat_type: list of str
         list of all features name for calculating the delta
     """
+
     def __init__(self, width=9, order=(0, 1), axis=0, feat_type=None):
         super(DeltaExtractor, self).__init__()
         # ====== check width ====== #
