@@ -139,7 +139,7 @@ class _openSMILEbase(Extractor):
                 from soundfile import write
                 write(inpath, data=raw, samplerate=self.sr)
                 path = inpath
-            command = 'SMILExtract -loglevel 9 -C %s -I %s -O %s' % \
+            command = 'SMILExtract -loglevel -1 -C %s -I %s -O %s' % \
                 (self.config_path, path, outpath)
             os.system(command)
             results = np.genfromtxt(outpath, dtype='float32',
@@ -163,6 +163,11 @@ class openSMILEpitch(_openSMILEbase):
     """
     Parameters
     ----------
+    loudness: bool
+        if True, append loudness values to the output
+    voiceProb: bool
+        if True, append `sap` speech activities probabilities to
+        the output
     method: 'shs', 'acf'
         shs: subharmonic summation
         acf: autocorrelation function
@@ -233,7 +238,7 @@ class openSMILEpitch(_openSMILEbase):
             X_loud = X[:, 2:3] # loud
             X_sap = X[:, 0:1] # sap
             X_pitch = X[:, 1:2] # pitch
-        ret = {'pitch': X_pitch}
+        ret = {'pitch0': X_pitch}
         if self.f0:
             ret['f0'] = X[:, 3:4]
         if self.loudness:

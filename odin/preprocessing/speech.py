@@ -565,6 +565,17 @@ class CQTExtractor(Extractor):
 
 class PitchExtractor(Extractor):
     """
+    Parameters
+    ----------
+    threshold : float, optional
+        Voice/unvoiced threshold. Default is 0.3 (as suggested for SWIPE)
+        Threshold >= 1.0 is suggested for RAPT
+    algo: 'swipe', 'rapt', 'avg'
+        swipe - A Saw-tooth Waveform Inspired Pitch Estimation.
+        rapt - a robust algorithm for pitch tracking.
+        avg - apply swipe and rapt at the same time, then take average.
+        Default is 'swipe'
+
     Note
     ----
     The following order is recommended for extracting spectra:
@@ -588,8 +599,8 @@ class PitchExtractor(Extractor):
     """
 
     def __init__(self, frame_length, step_length=None,
-                 threshold=1., fmin=20, fmax=260,
-                 algo='rapt', f0=False):
+                 threshold=0.5, fmin=20, fmax=320,
+                 algo='swipe', f0=False):
         super(PitchExtractor, self).__init__()
         self.threshold = threshold
         self.fmin = int(fmin)
