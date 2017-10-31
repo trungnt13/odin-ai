@@ -599,7 +599,7 @@ class PitchExtractor(Extractor):
     """
 
     def __init__(self, frame_length, step_length=None,
-                 threshold=0.5, fmin=20, fmax=320,
+                 threshold=0.5, fmin=20, fmax=400,
                  algo='swipe', f0=False):
         super(PitchExtractor, self).__init__()
         self.threshold = threshold
@@ -618,11 +618,14 @@ class PitchExtractor(Extractor):
         pitch_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
             fmax=self.fmax, threshold=self.threshold, otype='pitch',
             algorithm=self.algo)
+        pitch_freq = np.expand_dims(pitch_freq, axis=-1)
         if self.f0:
             f0_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
                 fmax=self.fmax, threshold=self.threshold, otype='f0',
                 algorithm=self.algo)
-            return {'pitch': pitch_freq, 'f0': f0_freq}
+            f0_freq = np.expand_dims(f0_freq, axis=-1)
+            return {'pitch': pitch_freq,
+                    'f0': f0_freq}
         return {'pitch': pitch_freq}
 
 

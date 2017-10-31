@@ -238,7 +238,7 @@ class openSMILEpitch(_openSMILEbase):
             X_loud = X[:, 2:3] # loud
             X_sap = X[:, 0:1] # sap
             X_pitch = X[:, 1:2] # pitch
-        ret = {'pitch0': X_pitch}
+        ret = {'pitch': X_pitch}
         if self.f0:
             ret['f0'] = X[:, 3:4]
         if self.loudness:
