@@ -139,7 +139,7 @@ class _openSMILEbase(Extractor):
                 from soundfile import write
                 write(inpath, data=raw, samplerate=self.sr)
                 path = inpath
-            command = 'SMILExtract -loglevel -1 -C %s -I %s -O %s' % \
+            command = 'SMILExtract -loglevel 9 -C %s -I %s -O %s' % \
                 (self.config_path, path, outpath)
             os.system(command)
             results = np.genfromtxt(outpath, dtype='float32',
@@ -170,7 +170,8 @@ class openSMILEpitch(_openSMILEbase):
 
     def __init__(self, frame_length, step_length=None,
                  window='gauss', fmin=52, fmax=620,
-                 f0=False, method='shs', sr=None):
+                 f0=False, loudness=False, voiceProb=False, method='shs',
+                 sr=None):
         super(openSMILEpitch, self).__init__(sr=sr)
         # ====== config ====== #
         self.frame_length = float(frame_length)
@@ -180,7 +181,10 @@ class openSMILEpitch(_openSMILEbase):
         self.window = str(window)
         self.fmin = int(fmin)
         self.fmax = int(fmax)
+        self.loudness = bool(loudness)
+        self.voiceProb = bool(voiceProb)
         self.f0 = bool(f0)
+        self.f0_config = _get_conf_file('smileF0.cfg')
         # ====== method ====== #
         method = str(method).lower()
         self.method_name = method
@@ -194,19 +198,49 @@ class openSMILEpitch(_openSMILEbase):
 
     @property
     def config(self):
+        # check method for extracting pitch
         method = self.method.format(**{'fmin': self.fmin, 'fmax': self.fmax})
         method_path = self.config_path + '.method'
         with open(method_path, 'w') as f:
             f.write(method)
+        # check method for extracting F0
+        if self.f0:
+            if self.method_name == 'acf':
+                turn_on_specscale = ''
+            else:
+                turn_on_specscale = ';'
+            f0_config = self.f0_config.format(**{'fmin': self.fmin, 'fmax': self.fmax,
+                                                 'turn_on_specscale': turn_on_specscale})
+            f0_path = self.config_path + '.f0'
+            with open(f0_path, 'w') as f:
+                f.write(f0_config)
+            f0_path = '\\{%s}' % f0_path
+            f0_flag = ';F0'
+        else:
+            f0_path = ''
+            f0_flag = ''
         return {'framesize': self.frame_length, 'framestep': self.step_length,
-                'window': self.window, 'method': '\\{%s}' % method_path}
+                'window': self.window, 'method': '\\{%s}' % method_path,
+                'f0': f0_path, 'f0_flag': f0_flag}
 
     def _post_processing(self, X):
         X = X[:, 1:] # remove timestamp
-        X = X[:, :1]
-        # if self.method_name == 'acf':
-        #     X *= self.fmax
-        return {"pitch": X}
+        if self.method_name == 'shs':
+            X_loud = X[:, 2:3] # loud
+            X_sap = X[:, 1:2] # sap
+            X_pitch = X[:, 0:1] # pitch
+        else:
+            X_loud = X[:, 2:3] # loud
+            X_sap = X[:, 0:1] # sap
+            X_pitch = X[:, 1:2] # pitch
+        ret = {'pitch': X_pitch}
+        if self.f0:
+            ret['f0'] = X[:, 3:4]
+        if self.loudness:
+            ret['loudness'] = X_loud
+        if self.voiceProb:
+            ret['sap'] = X_sap
+        return ret
 
 
 class openSMILEsad(_openSMILEbase):

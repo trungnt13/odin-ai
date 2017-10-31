@@ -283,13 +283,20 @@ class DeltaExtractor(Extractor):
 
 class EqualizeShape0(Extractor):
     """ EqualizeShape0
+    The final length of all features is the `minimum length`.
 
     This Extractor shrink the shape of all given features in `feat_type`
     to the same length.
-    THe final length is the `minimum length` of all given features.
+
+    Parameters
+    ----------
+    shrink_mode: 'center', 'left', 'right'
+        center: remove data points from both left and right
+        left: remove data points at the beginning (left)
+        right: remove data points at the end (right)
     """
 
-    def __init__(self, feat_type):
+    def __init__(self, feat_type, shrink_mode='right'):
         super(EqualizeShape0, self).__init__()
         if feat_type is None:
             pass
@@ -299,6 +306,10 @@ class EqualizeShape0(Extractor):
         else:
             feat_type = tuple([f.lower() for f in as_tuple(feat_type, t=str)])
         self.feat_type = feat_type
+        shrink_mode = str(shrink_mode).lower()
+        if shrink_mode not in ('center', 'left', 'right'):
+            raise ValueError("shrink mode support include: center, left, right")
+        self.shrink_mode = shrink_mode
 
     def _transform(self, X):
         if isinstance(X, Mapping):
@@ -312,9 +323,14 @@ class EqualizeShape0(Extractor):
                 # if the shape[0] is longer
                 if _match_feat_name(self.feat_type, name) and feat.shape[0] != n:
                     diff = feat.shape[0] - n
-                    diff_left = diff // 2
-                    diff_right = diff - diff_left
-                    feat = feat[diff_left:-diff_right]
+                    if self.shrink_mode == 'center':
+                        diff_left = diff // 2
+                        diff_right = diff - diff_left
+                        feat = feat[diff_left:-diff_right]
+                    elif self.shrink_mode == 'right':
+                        feat = feat[:-diff]
+                    elif self.shrink_mode == 'left':
+                        feat = feat[diff:]
                 equalized[name] = feat
             X = equalized
         return X
