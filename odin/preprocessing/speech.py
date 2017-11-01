@@ -198,6 +198,7 @@ def audio_segmenter(files, outpath, max_duration,
     different configuration for the features on the same set of segments,
     it is efficient to do this once-for-all.
     """
+    info_path = os.path.join(outpath, 'segments.csv')
     # ====== validate arguments ====== #
     max_duration = int(max_duration)
     files = [f for f in as_tuple(files, t=str)
@@ -207,7 +208,7 @@ def audio_segmenter(files, outpath, max_duration,
         raise ValueError("outpath at: %s is a file." % outpath)
     if os.path.isdir(outpath):
         if not override:
-            raise RuntimeError("Cannot override outpath at: %s" % outpath)
+            return info_path
         else:
             shutil.rmtree(outpath)
     if not os.path.isdir(outpath):
@@ -251,11 +252,11 @@ def audio_segmenter(files, outpath, max_duration,
             seg_indices.append((seg, os.path.basename(f), s, e))
         prog.add(1)
     # ====== save the info ====== #
-    info_path = os.path.join(outpath, 'segments.csv')
     header = ' '.join(['segment', 'origin', 'start', 'end'])
     np.savetxt(info_path, seg_indices,
                fmt='%s', delimiter=' ', header=header, comments='')
     print("Segment info saved at:", ctext(info_path, 'cyan'))
+    return info_path
 
 
 class AudioReader(Extractor):

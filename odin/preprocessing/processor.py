@@ -38,6 +38,69 @@ _default_module = re.compile('__.*__')
 
 
 # ===========================================================================
+# PCA calculation
+# ===========================================================================
+def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False):
+    # ====== check input dataset ====== #
+    own_dataset = True
+    if is_string(dataset) and os.path.isdir(dataset):
+        dataset = Dataset(dataset, read_only=True)
+    elif isinstance(dataset, Dataset):
+        own_dataset = False
+    elif isinstance(dataset, FeatureProcessor):
+        dataset = Dataset(dataset.path, read_only=True)
+    else:
+        raise ValueError("Cannot acquire Dataset from input: %s" % str(dataset))
+    # ====== extract all feat_name ====== #
+    if is_string(feat_name) and feat_name == 'auto':
+        feat_name = []
+        for k in dataset.keys():
+            X = dataset[k]
+            if hasattr(X, 'ndim') and X.ndim == 2 and X.shape[-1] > 1:
+                feat_name.append(k)
+    else:
+        feat_name = as_tuple(feat_name, t=str)
+    # ====== load PCA ====== #
+    # init PCA
+    pca_map = {}
+    nb_samples = 0
+    for feat in feat_name:
+        nb_samples += dataset[feat].shape[0]
+        # found exist pca model
+        if feat + '_pca' in dataset and not override:
+            pca_map[feat] = dataset[feat + '_pca']
+        # create new PCA
+        else:
+            pca_map[feat] = MiniBatchPCA(n_components=None, whiten=False,
+                                         copy=True, batch_size=None)
+    # ====== run PCA extraction ====== #
+    prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
+                   name='Calculating PCA: %s' % ';'.join(feat_name))
+
+    def map_pca(X):
+        name, pca = X[0]
+        X = dataset[name]
+        # No shuffling make iter much faster
+        for x in X.set_batch(batch_size=batch_size, seed=None, shuffle_level=0):
+            pca.partial_fit(x)
+            yield x.shape[0]
+        # save PCA model
+        with open(os.path.join(dataset.path, name + '_pca'), 'w') as f:
+            cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
+        prog.add_notification('Stored PCA model of: %s' %
+                              ctext(name, 'yellow'))
+    mpi = MPI(jobs=pca_map.items(), map_func=map_pca,
+              ncpu=None, buffer_size=1,
+              maximum_queue_size=12082518, chunk_scheduler=True)
+    for n in mpi:
+        prog.add(n)
+    # ====== return ====== #
+    if own_dataset:
+        dataset.close()
+    return pca_map
+
+
+# ===========================================================================
 # Helper
 # ===========================================================================
 def _escape_file_name(file_name):
@@ -73,8 +136,7 @@ def _special_cases(X, feat_name, file_name, ds, path):
 
 
 def validate_features(ds_or_processor, path, nb_samples=25,
-                      override=False, seed=12082518,
-                      fig_width=4):
+                      override=False, seed=12082518, fig_width=4):
     def logger(title, tag, check):
         check = bool(check)
         text_color = 'yellow' if check else 'red'
@@ -302,12 +364,6 @@ class FeatureProcessor(object):
         list of extactor for creating a Pipeline
     path: str
         path to a folder for saving output Dataset
-    pca: bool
-        if True, calculte PCA for returned features as numpy.ndarray
-        with `ndim > 1` and `dtype is float`.
-    excluded_pca: tuple of str
-        all features with given name in this list is ignored during
-        computation of pca
     ncache: float or int (> 0)
         pass
     ncpu: int (>0)
@@ -317,7 +373,6 @@ class FeatureProcessor(object):
     """
 
     def __init__(self, jobs, extractor, path,
-                 pca=True, excluded_pca=(),
                  ncache=0.12, ncpu=1, name=None, override=False):
         super(FeatureProcessor, self).__init__()
         # ====== check outpath ====== #
@@ -338,9 +393,6 @@ class FeatureProcessor(object):
         if not isinstance(jobs, (tuple, list)):
             raise ValueError("Provided `jobs` must be instance of tuple or list.")
         self.jobs = tuple(jobs)
-        # ====== check PCA ====== #
-        self.pca = bool(pca)
-        self.excluded_pca = as_tuple(excluded_pca, t=str)
         # ====== check multiprocessing ====== #
         if ncpu is None: # auto select number of CPU
             ncpu = min(len(jobs), cpu_count() - 1)
@@ -389,9 +441,6 @@ class FeatureProcessor(object):
                 stats[key[:-4]][0] = dataset[key][:]
             elif 'sum2' == key[-4:]:
                 stats[key[:-4]][1] = dataset[key][:]
-        # init PCA
-        pca = defaultdict(lambda: MiniBatchPCA(n_components=None, whiten=False,
-                                               copy=True, batch_size=None))
         # all data are cached for periodically flushed
         cache = defaultdict(list)
         nb_processed = [0] # store the value as reference
@@ -401,12 +450,6 @@ class FeatureProcessor(object):
         def flush_feature(feat_name, X_cached):
             if len(X_cached) > 0:
                 X_cached = np.concatenate(X_cached, 0)
-                # NOTE: if nb_samples < nb_features,
-                # fitting PCA will course error
-                if self.pca and feat_name not in self.excluded_pca and \
-                (X_cached.ndim >= 2 and all(s > 1 for s in X_cached.shape) and
-                 'float' in str(X_cached.dtype).lower()):
-                    pca[feat_name].partial_fit(X_cached.astype('float32'))
                 # flush data
                 if feat_name in dataset:
                     dataset[feat_name].append(X_cached)
@@ -529,12 +572,6 @@ class FeatureProcessor(object):
                 prog.add_notification('Saved statistics of: %s, shape: %s' %
                                       (ctext(feat_name.split('_')[0], 'yellow'),
                                        ctext(str(sum1.shape), 'yellow')))
-        # ====== save all PCA ====== #
-        for name, pca_model in pca.iteritems():
-            if pca_model is not None and pca_model.is_fitted:
-                dataset[name + '_pca'] = pca_model
-                prog.add_notification('Stored PCA model of: %s' %
-                                      ctext(name, 'yellow'))
         # ====== dataset flush() ====== #
         dataset.flush()
         dataset.close()
@@ -549,7 +586,6 @@ class FeatureProcessor(object):
         config = MmapDict(config_path)
         config['__configuration_time__'] = time.time()
         config['__processor__'] = self.name
-        config['excluded_pca'] = self.excluded_pca
         for i in dir(self):
             if _default_module.match(i) is not None:
                 continue

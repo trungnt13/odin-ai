@@ -17,7 +17,7 @@ from abc import abstractproperty, ABCMeta, abstractmethod
 import numpy as np
 
 from odin.utils import (is_string, get_script_path, ctext, is_number,
-                        get_logpath)
+                        get_logpath, uuid)
 
 from .base import Extractor
 
@@ -55,15 +55,6 @@ def _get_conf_file(name):
         return f.read()
 
 
-_UNIQUE_ID = 0
-
-
-def _get_unique_id():
-    global _UNIQUE_ID
-    _UNIQUE_ID += 1
-    return _UNIQUE_ID
-
-
 # ===========================================================================
 # Main extractor
 # ===========================================================================
@@ -73,7 +64,7 @@ class _openSMILEbase(Extractor):
     def __init__(self, sr):
         verify_dependencies()
         super(_openSMILEbase, self).__init__()
-        self._id = _get_unique_id()
+        self._id = uuid()
         self.sr = sr
         self._first_config_generated = False
         self._conf = _get_conf_file('%s.cfg' % self.__class__.__name__)
@@ -125,7 +116,7 @@ class _openSMILEbase(Extractor):
         if self.sr is None:
             raise RuntimeError("Cannot acquire sample rate for the input.")
         # ====== extract SAD ====== #
-        unique_id = _get_unique_id()
+        unique_id = os.getpid()
         inpath = os.path.join(
             get_logpath(), '%s%d.wav' % (self.__class__.__name__, unique_id))
         outpath = os.path.join(

@@ -498,6 +498,7 @@ def plot_features(features, order=None, title=None, fig_width=4):
         'energy',
         'vad',
         'sad',
+        'sap',
         'pitch',
         'loudness',
         'f0',

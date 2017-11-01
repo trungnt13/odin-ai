@@ -1,5 +1,5 @@
 from .base import make_pipeline, set_extractor_debug, Pipeline
-from .processor import validate_features, FeatureProcessor
+from .processor import validate_features, FeatureProcessor, calculate_pca
 from . import base
 from . import speech
 from . import image

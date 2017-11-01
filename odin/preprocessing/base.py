@@ -411,7 +411,7 @@ class AsType(Extractor):
             for feat_name, feat_type in self.type_map.iteritems():
                 if feat_name in X:
                     feat = X[feat_name]
-                    if isinstance(feat, np.ndarray):
+                    if isinstance(feat, np.ndarray) and feat_type != feat.dtype:
                         X[feat_name] = feat.astype(feat_type)
         return X
 
