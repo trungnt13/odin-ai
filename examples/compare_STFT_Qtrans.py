@@ -25,7 +25,7 @@ feat = speech.speech_features(y, sr,
     pitch_threshold=0.8, fmin=64, fmax=None,
     sr_new=None, preemphasis=0.97)
 
-for i, j in feat.iteritems():
+for i, j in feat.items():
     print(i, j.shape)
 
 plt.subplot(7, 1, 1)

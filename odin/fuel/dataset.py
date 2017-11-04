@@ -269,7 +269,7 @@ class Dataset(object):
     def size(self):
         """ return size in MegaByte"""
         size_bytes = 0
-        for name, (dtype, shape, data, path) in self._data_map.iteritems():
+        for name, (dtype, shape, data, path) in self._data_map.items():
             try:
                 size_bytes += os.path.getsize(path) # in bytes
             except Exception as e:
@@ -279,26 +279,23 @@ class Dataset(object):
 
     def recipes(self):
         return {name: rcp
-                for name, rcp in self._saved_recipes.iteritems()}
+                for name, rcp in self._saved_recipes.items()}
 
     def indices(self):
         return {name: ids
-                for name, ids in self._saved_indices.iteritems()}
+                for name, ids in self._saved_indices.items()}
 
     def __iter__(self):
-        return self.iteritems()
+        return self.items()
 
     def items(self):
-        return list(self.iteritems())
-
-    def iteritems(self):
         for name in self._data_map.keys():
             yield name, self.__getitem__(name)
 
     def iterinfo(self):
         """Return iteration of: (dtype, shape, loaded_data, path)"""
-        for name, (dtype, shape, data, path) in self._data_map.iteritems():
-            return (dtype, shape, self.__getitem__(name), path)
+        for name, (dtype, shape, data, path) in self._data_map.items():
+            yield (dtype, shape, self.__getitem__(name), path)
 
     def keys(self):
         """
@@ -308,18 +305,12 @@ class Dataset(object):
         """
         return self._data_map.keys()
 
-    def iterkeys(self):
-        return self._data_map.iterkeys()
-
     def values(self):
         """
         Return
         ------
         (dtype, shape, data, path) of Data
         """
-        return [self.__getitem__(k) for k in self._data_map.keys()]
-
-    def itervalues(self):
         for k in self._data_map.keys():
             yield self.__getitem__(k)
 
@@ -328,7 +319,7 @@ class Dataset(object):
         path = self.archive_path
         zfile = ZipFile(path, mode='w', compression=ZIP_DEFLATED)
 
-        files = set([_[-1] for _ in self._data_map.itervalues()])
+        files = set([_[-1] for _ in self._data_map.values()])
 
         prog = Progbar(target=len(files), name="[Dataset] Archiving",
                        print_report=True, print_summary=True)
@@ -355,7 +346,7 @@ class Dataset(object):
         # predefined mapping, save or copy everything to a
         # MmapDict
         if isinstance(indices, Mapping):
-            for name, (start, end) in indices.iteritems():
+            for name, (start, end) in indices.items():
                 ids[name] = (start, end)
         # list of name, or (name, (start, end))
         elif isinstance(indices, (tuple, list, np.ndarray)):
@@ -525,7 +516,7 @@ class Dataset(object):
         return Dataset(destination, read_only=read_only)
 
     def flush(self):
-        for dtype, shape, data, path in self._data_map.itervalues():
+        for dtype, shape, data, path in self._data_map.values():
             if hasattr(data, 'flush'):
                 data.flush()
             elif data is not None: # Flush pickling data
@@ -541,10 +532,10 @@ class Dataset(object):
                 del data
                 del self._data_map[name]
             # close all external indices and recipes
-            for name, ids in self._saved_indices.iteritems():
+            for name, ids in self._saved_indices.items():
                 ids.close()
             self._saved_indices.clear()
-            for name, rcp in self._saved_recipes.iteritems():
+            for name, rcp in self._saved_recipes.items():
                 del rcp
             self._saved_recipes.clear()
             # Check if exist global instance
@@ -564,7 +555,7 @@ class Dataset(object):
     def _validate_memmap_max_open(self, name):
         # ====== check if MmapData excess limit, close 1 files ====== #
         if len(MmapData._INSTANCES) + 1 >= MAX_OPEN_MMAP:
-            for i, (_dtype, _shape, _data, _path) in self._data_map.iteritems():
+            for i, (_dtype, _shape, _data, _path) in self._data_map.items():
                 if isinstance(_data, MmapData) and i != name:
                     self.close(name=i)
                     self._data_map[i] = (_dtype, _shape, _path)
@@ -616,7 +607,7 @@ class Dataset(object):
             if os.path.exists(path):
                 raise Exception('File with path=%s already exist.' % path)
             d = MmapDict(path)
-            for i, j in value.iteritems():
+            for i, j in value.items():
                 d[i] = j
             d.flush()
             # store new dict
@@ -662,7 +653,7 @@ class Dataset(object):
         longest_dtype = 0
         longest_file = 0
         print_info = []
-        for name, (dtype, shape, data, path) in self._data_map.iteritems():
+        for name, (dtype, shape, data, path) in self._data_map.items():
             shape = data.shape if hasattr(data, 'shape') else shape
             longest_name = max(len(name), longest_name)
             longest_dtype = max(len(str(dtype)), longest_dtype)
@@ -677,17 +668,17 @@ class Dataset(object):
         for name, dtype, shape, path in print_info:
             s.append(format_str % (name, dtype, shape, path))
         # ====== add recipes info ====== #
-        for name, recipe in self._saved_recipes.iteritems():
+        for name, recipe in self._saved_recipes.items():
             s.append(ctext('(Recipe) ', 'yellow') + '"%s"' % name)
             for rcp in recipe:
                 rcp = str(rcp)
                 s.append('\n'.join([padding + line
                                     for line in rcp.split('\n')]))
         # ====== add indices info ====== #
-        for name, index in self._saved_indices.iteritems():
+        for name, index in self._saved_indices.items():
             s.append(ctext('(Index) ', 'yellow') + '"%s"' % name)
             s.append(padding + str(index))
-            name, (start, end) = index.iteritems().next()
+            name, (start, end) = index.items().next()
             s.append(padding + 'Sample: "%s %d-%d"' % (name, start, end))
         return '\n'.join(s)
 

@@ -1,2 +1,3 @@
-from decompositions import *
-from clustering import *
+from .decompositions import *
+from .clustering import *
+from .gmm import GMM

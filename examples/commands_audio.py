@@ -49,7 +49,7 @@ print(ds)
 # Split the dataset for train, valid, test
 # ===========================================================================
 indices = sorted(
-    ((name, start, end) for name, (start, end) in ds['indices'].iteritems()),
+    ((name, start, end) for name, (start, end) in ds['indices'].items()),
     key=lambda x: x[0]
 )
 all_labels = list(set(i[0].split("_")[0] for i in indices))

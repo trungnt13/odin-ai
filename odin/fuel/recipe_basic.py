@@ -97,7 +97,7 @@ class FeederRecipe(object):
                     print_attrs[name] = "(map)" + str(len(attr))
                 elif is_primitives(attr):
                     print_attrs[name] = str(attr)
-        print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
+        print_attrs = sorted(print_attrs.items(), key=lambda x: x[0])
         print_attrs = [('#desc', self.nb_desc)] + print_attrs
         print_attrs = ' '.join(["%s:%s" % (ctext(key, 'yellow'), val)
                                 for key, val in print_attrs])

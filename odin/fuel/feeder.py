@@ -230,7 +230,7 @@ class DataDescriptor(MutableData):
         """
         if self._length is None:
             self._length = sum((end - start)
-                            for name, (start, end) in self.indices.iteritems())
+                            for name, (start, end) in self.indices.items())
         ret_shape = [(self._length,) + dat.shape[1:]
                      for dat in self.data]
         return ret_shape[0] if len(ret_shape) == 1 else tuple(ret_shape)
@@ -255,7 +255,7 @@ class DataDescriptor(MutableData):
         def _create_iter():
             ret_name = bool(self._return_name)
             yield None # just return for initialize the iteration
-            for name, (start, end) in self.indices.iteritems():
+            for name, (start, end) in self.indices.items():
                 dat = [d[start: end] for d in self.data]
                 if ret_name:
                     dat = [name] + dat

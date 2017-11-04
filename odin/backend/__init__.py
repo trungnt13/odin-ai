@@ -188,5 +188,5 @@ def eval(x, feed_dict=None):
                 for tensor in x]
     elif isinstance(x, Mapping):
         return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
-            for name, tensor in x.iteritems()}
+            for name, tensor in x.items()}
     return _eval_single_tensor(x, feed_dict=feed_dict)

@@ -40,7 +40,7 @@ embedding = F.load_glove(ndim=embedding_dims)
 newsgroup = F.load_20newsgroup()
 labels = []
 texts = []
-for i, j in newsgroup.iteritems():
+for i, j in newsgroup.items():
     labels += [i] * len(j)
     texts += j
     print(i, ':', len(j))
@@ -65,7 +65,7 @@ else:
     tk.fit(texts, vocabulary=None)
     cPickle.dump(tk, open(tokenizer_path, 'w'), protocol=cPickle.HIGHEST_PROTOCOL)
 print('========== Summary ==========')
-for i, j in tk.summary.iteritems():
+for i, j in tk.summary.items():
     print(i, ':', j)
 
 # ===========================================================================

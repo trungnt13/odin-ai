@@ -291,7 +291,7 @@ def get_roles(var, return_string=True):
         otherwise convert role to actual class and return them
     """
     roles = []
-    for r, var_list in tf.get_default_graph()._collections.iteritems():
+    for r, var_list in tf.get_default_graph()._collections.items():
         if var in var_list:
             if not return_string:
                 roles.append(name_to_roles(r))

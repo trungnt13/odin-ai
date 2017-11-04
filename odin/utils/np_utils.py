@@ -8,12 +8,60 @@
 from __future__ import division, absolute_import, print_function
 
 import math
+import marshal
+
 import numpy as np
 import scipy as sp
 
 from six import string_types
 
 from .cache_utils import cache_memory
+
+
+__all__ = [
+    'array2bytes',
+    'bytes2array',
+    'one_hot',
+    'unique_labels',
+    'label_splitter'
+]
+
+# ===========================================================================
+# Serialization
+# ===========================================================================
+idx_2_dt = {b'0': 'float32', b'1': 'float64',
+            b'2': 'int32', b'3': 'int64',
+            b'4': 'bool',
+            b'5': 'float16', b'6': 'int16',
+            b'7': 'complex64', b'8': 'complex128'}
+dt_2_idx = {'float32': b'0', 'float64': b'1',
+            'int32': b'2', 'int64': b'3',
+            'bool': b'4',
+            'float16': b'5', 'int16': b'6',
+            'complex64': b'7', 'complex128': b'8'}
+
+# support to 12 Dimension
+nd_2_idx = {0: b'0', 1: b'1', 2: b'2', 3: b'3', 4: b'4',
+            5: b'5', 6: b'6', 7: b'7', 8: b'8', 9: b'9',
+            10: b'10', 11: b'11', 12: b'12'}
+
+
+def array2bytes(a):
+    """ Fastest way to convert `numpy.ndarray` and all its
+    metadata to bytes array.
+    """
+    shape = marshal.dumps(a.shape, 0)
+    array = a.tobytes() + shape + dt_2_idx[a.dtype.name] + nd_2_idx[a.ndim]
+    return array
+
+
+def bytes2array(b):
+    """ Deserialize result from `array2bytes` back to `numpy.ndarray` """
+    ndim = int(b[-1:])
+    dtype = idx_2_dt[b[-2:-1]]
+    i = -((ndim + 1) * 5) - 2
+    shape = marshal.loads(b[i:-2])
+    return np.frombuffer(b[:i], dtype=dtype).reshape(shape)
 
 
 # ===========================================================================

@@ -25,7 +25,6 @@ import numpy as np
 
 from sklearn.pipeline import Pipeline
 
-from odin.ml import MiniBatchPCA
 from odin.utils.mpi import MPI
 from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
@@ -61,6 +60,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False
     else:
         feat_name = as_tuple(feat_name, t=str)
     # ====== load PCA ====== #
+    from odin.ml import MiniBatchPCA
     # init PCA
     pca_map = {}
     nb_samples = 0

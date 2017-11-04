@@ -346,7 +346,7 @@ class Progbar(object):
         self.__pb.close()
         self.__pb = None
         # create epoch summary
-        for key, values in self._epoch_hist[self._epoch_idx].iteritems():
+        for key, values in self._epoch_hist[self._epoch_idx].items():
             values = [v for v in values]
             if isinstance(values[0], Number):
                 self._epoch_summary[self._epoch_idx][key] = np.mean(values)
@@ -420,7 +420,7 @@ class Progbar(object):
                         fp.write(' ' * len(l))
                         fp.write('\r')  # place cursor back at the beginning of line
                         self.progress_bar.moveto(1)
-                    self.progress_bar.clear(nomove=True)
+                    self.progress_bar.clear()
                     self.progress_bar.moveto(-i - 1)
                 fp.write(report)
                 fp.flush()

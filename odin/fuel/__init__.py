@@ -9,7 +9,7 @@ from .data import *
 from .dataset import *
 from .feeder import *
 
-import recipes
+from . import recipes
 
 from zipfile import ZipFile, ZIP_DEFLATED
 

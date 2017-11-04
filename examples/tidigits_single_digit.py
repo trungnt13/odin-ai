@@ -71,7 +71,7 @@ ds = F.Dataset(DS_PATH, read_only=True)
 print(ds)
 train = {}
 test = {}
-for name, (start, end) in ds['indices'].iteritems():
+for name, (start, end) in ds['indices'].items():
     assert end - start > 0
     if len(extract_digit(name)) == 1:
         if is_train(name):
@@ -92,8 +92,8 @@ print(print_dist(
     show_number=True,
     title="Testing distribution"))
 # ====== length distribution ====== #
-length = [(name, end - start) for name, (start, end) in train.iteritems()]
-length += [(name, end - start) for name, (start, end) in test.iteritems()]
+length = [(name, end - start) for name, (start, end) in train.items()]
+length += [(name, end - start) for name, (start, end) in test.items()]
 print(print_hist([nb_frames for name, nb_frames in length],
                  bincount=30, showSummary=True, title="#Frames"))
 length = max(length, key=lambda x: x[-1])

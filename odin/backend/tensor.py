@@ -590,7 +590,7 @@ def rnn_decorator(*args, **kwargs):
                 # step args contains all kwargs for step function
                 step_args.update(zip(arg_order, args))
                 # kwargs = dict(step_args)
-                kwargs = {i: j for i, j in step_args.iteritems()
+                kwargs = {i: j for i, j in step_args.items()
                           if i in arg_names}
                 # check get all necessary parametesr for step fucntion
                 if len(kwargs) < nb_required_args:

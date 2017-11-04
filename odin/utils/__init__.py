@@ -31,7 +31,7 @@ except:
 import numpy
 
 from .progbar import Progbar, add_notification
-from .mpi import SelfIterator, segment_list, SharedCounter, async, MPI
+from .mpi import segment_list, SharedCounter, async, MPI
 from .profile import *
 from .path_utils import *
 from .cache_utils import *
@@ -150,6 +150,27 @@ def iter_chunk(it, n):
     while obj:
         yield obj
         obj = list(islice(it, n))
+
+
+def to_bytes(x, nbytes=None, order='little'):
+    """ Convert some python object to bytes array, support type:
+    * string, unicode
+    * integer
+    * numpy.ndarray
+
+    Note
+    ----
+    This method is SLOW
+    """
+    if is_string(x):
+        return x.encode()
+    elif isinstance(x, int):
+        return x.to_bytes(nbytes, order, signed=False)
+    elif isinstance(x, np.ndarray):
+        return x.tobytes()
+    else:
+        raise ValueError("Not support bytes conversion for type: %s" %
+            type(x).__name__)
 
 
 def batching(n, batch_size):

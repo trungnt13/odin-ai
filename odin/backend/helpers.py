@@ -252,7 +252,7 @@ def get_operations(type=None, device=None, sort=False, scope=None,
     ops = get_graph().get_operations()
     # update OpID
     if len(_ops_ID) != len(ops):
-        for ID, op in get_graph()._nodes_by_id.iteritems():
+        for ID, op in get_graph()._nodes_by_id.items():
             if op not in _ops_ID:
                 _ops_ID[op] = ID
     # filter out some op
@@ -277,7 +277,7 @@ def get_operationID(op):
     ops = get_graph().get_operations()
     # update OpID
     if len(_ops_ID) != len(ops):
-        for ID, op in get_graph()._nodes_by_id.iteritems():
+        for ID, op in get_graph()._nodes_by_id.items():
             if op not in _ops_ID:
                 _ops_ID[op] = ID
     return _ops_ID[op]
@@ -656,7 +656,7 @@ class ComputationGraph(object):
         for t in tensors:
             if t.graph not in graph_nodes_ID:
                 graph_nodes_ID[t.graph] = {op: ID
-                    for ID, op in t.graph._nodes_by_id.iteritems()}
+                    for ID, op in t.graph._nodes_by_id.items()}
         tensors = sorted(tensors, key=lambda x: graph_nodes_ID[x.graph][x.op])
         placeholders = [t for t in tensors if is_placeholder(t)]
 

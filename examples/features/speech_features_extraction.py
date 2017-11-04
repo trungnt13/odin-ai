@@ -96,7 +96,7 @@ for _, extractor in ds['pipeline'].steps:
         print(padding, line)
 # ====== print config ====== #
 print(ctext("* Configurations:", 'red'))
-for i, j in ds['config'].iteritems():
+for i, j in ds['config'].items():
     print(padding, i, ':', j)
 # ====== check PCA components ====== #
 for n in ds.keys():

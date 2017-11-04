@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import sys
 # Each process only run 1 threads
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1'
@@ -190,288 +191,231 @@ class SharedCounter(object):
         with self.lock:
             return self.val.value
 
-
-@add_metaclass(ABCMeta)
-class SelfIterator(object):
-    """ Extend the implementation of standard iterator
-    Allow the iterator to be stopped, and monitoring remain length
-
-    Example
-    -------
-    >>> class TestIt(SelfIterator):
-    >>>     def __init__(self):
-    >>>         super(TestIt, self).__init__()
-    >>>         self.i = -1
-    >>>         self.list = [1, 2, 3, 4]
-    >>>     def _next(self):
-    >>>         if self.i < 3:
-    >>>             self.i += 1
-    >>>             return self.list[self.i]
-    >>>         raise StopIteration
-    >>>     def __len__(self):
-    >>>         return len(self.list) - self.i - 1
-    ...
-    >>> it = TestIt()
-    >>> for i in it:
-    >>>     print(i, len(it)) # output: 1 3, 2 2, 3 1, 4 0
-    >>> print(it.finished) # True
-    >>> for i in it:
-    >>>     print(i) # nothing printed out
-
-    Note
-    ----
-    raise StopIteration at the end of the iteration
-    _is_finished is assigned to 2 if stop() is called
-
-    """
-
-    def __init__(self):
-        super(SelfIterator, self).__init__()
-        self._is_finished = False
-        self._is_initialized = False
-
-    def __str__(self):
-        return '<%s: length=%d: finished=%s: replicable=%s>' % \
-        (self.__class__.__name__, len(self), self.finished, self.replicable)
-
-    # ==================== general API ==================== #
-    def __iter__(self):
-        self._is_initialized = True
-        self._init()
-        return self
-
-    @property
-    def finished(self):
-        return self._is_finished
-
-    @property
-    def replicable(self):
-        """ return True of this Iter is copy-able """
-        if 'NotImplementedError' in inspect.getsource(self._copy):
-            return False
-        return True
-
-    #python 2
-    def next(self):
-        # check if initilaized
-        if not self._is_initialized:
-            self._init()
-            self._is_initialized = True
-        # check if finished
-        if self.finished:
-            raise StopIteration
-        # run the iteration
-        try:
-            return self._next()
-        except StopIteration: # first time finish
-            self._is_finished = True
-            self._finalize()
-            raise StopIteration
-
-    #python 3
-    def __next__(self):
-        # check if initilaized
-        if not self._is_initialized:
-            self._init()
-            self._is_initialized = True
-        # check if finished
-        if self.finished:
-            raise StopIteration
-        # run the iteration
-        try:
-            return self._next()
-        except StopIteration: # first time finish
-            self._is_finished = True
-            self._finalize()
-            raise StopIteration
-
-    def stop(self):
-        # call finalize if everything is running
-        need_to_finalize = not self._is_finished
-        self._is_finished = _SIG_TERMINATE_ITERATOR
-        if need_to_finalize:
-            self._finalize()
-
-    def copy(self):
-        return self._copy()
-
-    # ==================== abstract methods ==================== #
-    def _init(self):
-        """ Called before the iteration start """
-        pass
-
-    def _finalize(self):
-        pass
-
-    def _copy(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def _next(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def __len__(self):
-        """ Return the remain jobs in the iterator not the
-        full length """
-        raise NotImplementedError
+    def __del__(self):
+        del self.lock
+        del self.val
 
 
 # ===========================================================================
 # Main API
 # ===========================================================================
-class MPI(SelfIterator):
-    """ Multiprocessing interface
+class MPI(object):
+    """ MPI
+    This class use round robin to schedule the tasks to each processes
 
     Parameters
     ----------
-    jobs: str
-        pass
-    map_func: callable
+    func: callable
         take a `list of jobs` as input (i.e. map_func([job1, job2, ...])),
         the length of this list is determined by `buffer_size`
         NOTE: the argument of map_func is always a list.
-    reduce_func: callable
-        take returned a `not-None` object from `map_func` as input.
-    ncpu: int or None
-        number of processes, if None, `ncpu = cpu_count() - 1`
-    buffer_size: int
-        the amount of data each process keep before return to main
-        process.
-    maximum_queue_size: int (default: 66)
-        maximum number of batch will be cached in Queue before main process
-        get it and feed to the GPU (if there are too many results in Queue, a
-        deadlock will happen)
+    ncpu: int
+        number of processes.
+    batch: int
+        the amount of samples grouped into list, and feed to each
+        process each iteration.
+    hwm: int
+        "high water mark" for SEND socket, is a hard limit on the
+        maximum number of outstanding messages ØMQ shall queue
+        in memory for any single peer that the specified socket
+        is communicating with.
     chunk_scheduler: bool
-        if True, jobs are grouped into small chunks of `buffer_size`, then each
+        if `True`, jobs are grouped into small chunks of `batch`, then each
         chunk will be feed to each process until the jobs are exhausted, hence,
         this approach guarantee that all processes will run until the end, but
         the execution speed will be lower since each processes need to
         continuously receives chunks from main process.
-        if False, jobs are splited into equal size for each process at the
-        beginning.
-
-
-
-    Notes
-    -----
-    If map_func return None, it won't be queued to the results for reduct_func
-    If map_func return a Generator, MPI will traverses through it and queues all
-    returned values.
-
-    Benchmark
-    ---------
-    NO LOCK
-    2-2: 0.68 0.66 0.66
-    4-4: 0.59 0.59 0.62
-    LOCK
-    2-2: 0.69 0.66 0.66
-    4-4: 0.6 0.6 0.58
-
-    Example
-    -------
-    >>> jobs = list(range(0, 12 * 2, 1))
-    >>> def map_func(sub_jobs):
-    >>>     ret = [i + 1 for i in sub_jobs]
-    >>>     print('Map:', ret)
-    >>>     return ret
-    >>> def reduce_func(result):
-    >>>     return sum(result)
-    >>> x = MPI(jobs, map_func, reduce_func,
-    >>>         ncpu=3, buffer_size=2, maximum_queue_size=12)
-    >>> for i in x.run():
-    >>>     print(i)
-    >>> print('--------')
-    >>> for i in x.run():
-    >>>     print(i)
-    >>> # Map: [1, 2]
-    >>> # Map: [9, 10]
-    >>> # Map: [3, 4]
-    >>> # Map: [5, 6]
-    >>> # Map: [7, 8]
-    >>> # 3
-    >>> # Map: [17, 18]
-    >>> # 7
-    >>> # Map: [11, 12]
-    >>> # 11
-    >>> # 19
-    >>> # 15
-    >>> # Map: [13, 14]
-    >>> # 23
-    >>> # 27
-    >>> # Map: [15, 16]
-    >>> # Map: [19, 20]
-    >>> # 35
-    >>> # 31
-    >>> # Map: [21, 22]
-    >>> # 39
-    >>> # Map: [23, 24]
-    >>> # 43
-    >>> # 47
-    >>> # ----
-    >>> # Exception (cannot re-run the same MPI)
+        if `False`, jobs are splited into equal size for each process at the
+        beginning, do this if you sure all jobs require same processing time.
+    backend: {'pyzmq', 'python'}
+        using 'pyzmq' for interprocess communication or default python Queue.
+    Note
+    ----
+    Using pyzmq backend often 3 time faster than python Queue
     """
 
-    def __init__(self, jobs, map_func, reduce_func=None,
-                 ncpu=1, buffer_size=1, maximum_queue_size=144,
-                 chunk_scheduler=True):
+    def __init__(self, jobs, func,
+                 ncpu=1, batch=1, hwm=144,
+                 backend='pyzmq'):
         super(MPI, self).__init__()
-        self._jobs = jobs
-        self._chunk_scheduler = bool(chunk_scheduler)
+        backend = str(backend).lower()
+        if backend not in ('pyzmq', 'python'):
+            raise ValueError("Only support 2 backends: 'pyzmq', and 'python'")
+        self._backend = backend
+        self._ID = np.random.randint(0, 10e8, dtype=int)
         # ====== check map_func ====== #
-        if not callable(map_func):
-            raise Exception('"map_func" must be callable')
-        self._map_func = map_func
-        # ====== check reduce_func ====== #
-        if reduce_func is None: reduce_func = lambda x: x
-        if not callable(reduce_func):
-            raise Exception('"reduce_func" must be callable or None')
-        self._reduce_func = reduce_func
+        if not callable(func):
+            raise Exception('"func" must be callable')
+        self._func = func
         # ====== MPI parameters ====== #
-        self._remain_jobs = SharedCounter(len(jobs))
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
         self._ncpu = np.clip(int(ncpu), 1, cpu_count() - 1)
-        self._maximum_queue_size = maximum_queue_size
-        self._buffer_size = buffer_size
+        self._batch = max(1, int(batch))
+        self._hwm = max(0, int(hwm))
+        # ====== internal states ====== #
+        self._nb_working_cpu = self._ncpu
         # processes manager
-        self.__processes_started = False
-        self.__shared_counter = SharedCounter()
-        self.__results = Queue(maxsize=0)
-        if self._chunk_scheduler:
-            self.__tasks_queue = Queue(maxsize=0)
-        else:
-            self.__tasks_queue = None
-        self.__nb_working_processes = self._ncpu
+        self._is_init = False
+        self._is_running = False
+        self._is_finished = False
+        self._terminate_now = False
+        # ====== other queue ====== #
+        if not isinstance(jobs, (tuple, list, np.ndarray)):
+            raise ValueError("`jobs` must be instance of tuple or list.")
+        self._jobs = jobs
+        self._remain_jobs = SharedCounter(len(self._jobs))
+        # Equally split for all processes
+        self._tasks = Queue(maxsize=0)
+        for i in segment_list(np.arange(len(self._jobs), dtype='int32'),
+                              size=self._batch):
+            self._tasks.put_nowait(i)
+        for i in range(self._ncpu): # ending signal
+            self._tasks.put_nowait(None)
+        # ====== only 1 iteration is created ====== #
+        self._current_iter = None
 
-    def _copy(self):
-        return MPI(self._jobs, self._map_func, self._reduce_func,
-                   self._ncpu, self._buffer_size, self._maximum_queue_size,
-                   self._chunk_scheduler)
+    # ==================== properties ==================== #
+    def __len__(self):
+        """ Return the number of remain jobs """
+        return max(self._remain_jobs.value, 0)
 
-    def _init(self):
+    @property
+    def nb_working_cpu(self):
+        return self._nb_working_cpu
+
+    @property
+    def is_initialized(self):
+        return self._is_init
+
+    @property
+    def is_finished(self):
+        return self._is_finished
+
+    @property
+    def is_running(self):
+        return self._is_running
+
+    def terminate(self):
+        self._terminate_now = True
+
+    # ==================== helper ==================== #
+    def __iter(self):
+        # Initialize
+        if not self._is_init:
+            if self._backend == 'pyzmq':
+                init_func = self._init_zmq
+                run_func = self._run_pyzmq
+            elif self._backend == 'python':
+                init_func = self._init_python
+                run_func = self._run_python
+            init_func()
+            self._is_init = True
+        yield None # yeild not thing for init
+        # Select run function
+        self._is_running = True
+        for i in run_func():
+            yield i
+            if self._terminate_now:
+                break
+        # Finalize
+        self._is_running = False
+        self._finalize()
+        self._is_finished = True
+
+    def __iter__(self):
+        if self._current_iter is None:
+            self._current_iter = self.__iter()
+            next(self._current_iter)
+        return self._current_iter
+
+    # ==================== pyzmq ==================== #
+    def _init_zmq(self):
+        # this is ugly but work well
+        import zmq
+
         # tasks_or_queue only return the indices, need to get it from self._jobs
-        def wrapped_map(tasks_or_queue, return_queue, counter, remain_jobs):
-            maximum_queue_size = self._maximum_queue_size
-            minimum_queue_size = max(maximum_queue_size // self._ncpu, 1)
-            # ====== create task iterator for chunk scheduler ====== #
-            if self._chunk_scheduler: # chunk-scheduler
-                def _func():
-                    while True:
-                        t = tasks_or_queue.get()
-                        if t is None: # end of task queue
-                            break
-                        yield [self._jobs[idx] for idx in t]
-                task_iterator = _func()
-            else: # one-split-do-it-all
-                task_iterator = (
-                    [self._jobs[idx] for idx in tasks_or_queue[i:i + self._buffer_size]]
-                    for i in range(0, len(tasks_or_queue), self._buffer_size))
+        def wrapped_map(pID, tasks, remain_jobs):
+            # ====== create ZMQ socket ====== #
+            ctx = zmq.Context()
+            sk = ctx.socket(zmq.PAIR)
+            sk.set(zmq.SNDHWM, self._hwm)
+            sk.set(zmq.LINGER, -1)
+            sk.bind("ipc:///tmp/%d" % (self._ID + pID))
+
             # ====== Doing the jobs ====== #
-            for t in task_iterator:
+            t = tasks.get()
+            while t is not None:
+                # `t` is just list of indices
+                t = [self._jobs[i] for i in t]
+                # monitor current number of remain jobs
+                remain_jobs.add(-len(t))
+                ret = self._func(t)
+                # if a generator is return, traverse through the
+                # iterator and return each result
+                if not isinstance(ret, types.GeneratorType):
+                    ret = (ret,)
+                for r in ret:
+                    # ignore None values
+                    if r is not None:
+                        sk.send_pyobj(r)
+                # delete old data (this work, checked)
+                del ret
+                # ge tne tasks
+                t = tasks.get()
+            # ending signal
+            sk.send_pyobj(None)
+            # wait for ending message
+            sk.recv()
+            sk.close()
+            ctx.term()
+            sys.exit(0)
+        # ====== start the processes ====== #
+        self._processes = [Process(target=wrapped_map,
+                                   args=(i, self._tasks, self._remain_jobs))
+                           for i in range(self._ncpu)]
+        [p.start() for p in self._processes]
+        # ====== pyzmq PULL socket ====== #
+        ctx = zmq.Context()
+        sockets = []
+        for i in range(self._ncpu):
+            sk = ctx.socket(zmq.PAIR)
+            sk.set(zmq.RCVHWM, 0) # no limit receiving
+            sk.connect("ipc:///tmp/%d" % (self._ID + i))
+            sockets.append(sk)
+        self._ctx = ctx
+        self._sockets = sockets
+        self._zmq_noblock = zmq.NOBLOCK
+        self._zmq_again = zmq.error.Again
+
+    def _run_pyzmq(self):
+        while self._nb_working_cpu > 0:
+            for sk in self._sockets:
+                try:
+                    r = sk.recv_pyobj(flags=self._zmq_noblock)
+                    if r is None:
+                        self._nb_working_cpu -= 1
+                        sk.send(b'')
+                        sk.close()
+                        self._sockets.remove(sk)
+                    else:
+                        yield r
+                except self._zmq_again:
+                    pass
+
+    # ==================== python queue ==================== #
+    def _init_python(self):
+        def worker_func(tasks, queue, counter, remain_jobs):
+            hwm = self._hwm
+            minimum_update_size = max(hwm // self._ncpu, 1)
+            # ====== Doing the jobs ====== #
+            t = tasks.get()
+            while t is not None:
+                # `t` is just list of indices
+                t = [self._jobs[i] for i in t]
                 remain_jobs.add(-len(t)) # monitor current number of remain jobs
-                ret = self._map_func(t)
+                ret = self._func(t)
                 # if a generator is return, traverse through the
                 # iterator and return each result
                 if not isinstance(ret, types.GeneratorType):
@@ -479,14 +423,14 @@ class MPI(SelfIterator):
                 nb_returned = 0
                 for r in ret:
                     if r is not None: # ignore None values
-                        return_queue.put(r)
+                        queue.put(r)
                         nb_returned += 1
                         # sometime 1 batch get too big, and we need to stop
-                        # putting too many data into the queue.
-                        if nb_returned >= minimum_queue_size:
+                        # putting too many data into the queue
+                        if nb_returned >= minimum_update_size:
                             counter.add(nb_returned)
                             nb_returned = 0
-                            while counter.value > maximum_queue_size:
+                            while counter.value > hwm:
                                 time.sleep(0.1)
                 del ret # delete old data (this work, checked)
                 # increase shared counter (this number must perfectly
@@ -494,74 +438,52 @@ class MPI(SelfIterator):
                 if nb_returned > 0:
                     counter.add(nb_returned)
                 # check if we need to wait for the consumer here
-                while counter.value > maximum_queue_size:
+                while counter.value > hwm:
                     time.sleep(0.1)
+                # get new tasks
+                t = tasks.get()
             # ending signal
-            return_queue.put(None)
+            queue.put(None)
+            sys.exit(0)
         # ====== multiprocessing variables ====== #
-        # Equally split for all processes
-        if not self._chunk_scheduler:
-            the_jobs = segment_list(
-                np.arange(len(self._jobs), dtype='int32'),
-                n_seg=self._ncpu)
-        # small chunks for round-robin
-        else:
-            the_jobs = segment_list(
-                np.arange(len(self._jobs), dtype='int32'),
-                size=self._buffer_size)
-            for j in the_jobs: # small chunks
-                self.__tasks_queue.put_nowait(j)
-            for i in range(self._ncpu): # ending signal
-                self.__tasks_queue.put_nowait(None)
-            the_jobs = [self.__tasks_queue] * self._ncpu
-        self.__processes = [Process(target=wrapped_map,
-                                    args=(tasks, self.__results,
-                                          self.__shared_counter, self._remain_jobs))
-                            for i, tasks in enumerate(the_jobs)]
+        self._queue = Queue(maxsize=0)
+        self._counter = SharedCounter(initial_value=0)
+        self._processes = [Process(target=worker_func,
+                                   args=(self._tasks, self._queue,
+                                         self._counter, self._remain_jobs))
+                           for i in range(self._ncpu)]
+        [p.start() for p in self._processes]
 
+    def _run_python(self):
+        while self._nb_working_cpu > 0:
+            r = self._queue.get()
+            while r is None:
+                self._nb_working_cpu -= 1
+                if self._nb_working_cpu <= 0:
+                    break
+                r = self._queue.get()
+            if r is not None:
+                self._counter.add(-1)
+                yield r
+
+    # ==================== finalize ==================== #
     def _finalize(self):
-        self.__nb_working_processes = 0
-        if not self.__processes_started:
-            return
         # terminate or join all processes
-        if self.finished == _SIG_TERMINATE_ITERATOR:
-            [p.terminate() for p in self.__processes
+        if self._terminate_now:
+            [p.terminate() for p in self._processes
              if p._popen is not None and p.is_alive()]
+        # only join started process which has _popen is not None
         else:
-            # only join started process which has _popen is not Noen
-            [p.join() for p in self.__processes if p._popen is not None]
-        if self.__tasks_queue is not None:
-            self.__tasks_queue.close()
-        self.__results.close()
-
-    def _next(self):
-        # if the processes haven't started, start them only once
-        if not self.__processes_started:
-            [p.start() for p in self.__processes]
-            self.__processes_started = True
-        # ====== end of iteration ====== #
-        if self.__nb_working_processes <= 0:
-            raise StopIteration
-        # ====== fetch the results ====== #
-        r = self.__results.get()
-        while r is None:
-            self.__nb_working_processes -= 1
-            if self.__nb_working_processes <= 0:
-                break
-            r = self.__results.get()
-        # still None, no more tasks to do
-        if r is None: raise StopIteration
-        # otherwise, something to return and reduce the counter
-        self.__shared_counter.add(-1)
-        return self._reduce_func(r)
-
-    def __len__(self):
-        """ Return the number of remain jobs """
-        return max(self._remain_jobs.value, 0)
-
-    def run(self):
-        """"""
-        if self.finished:
-            raise Exception('The MPI already finished, call copy() to '
-                            'replicate this MPI, and re-run it if you want.')
-        return iter(self)
+            [p.join() for p in self._processes
+            if p._popen is not None]
+        self._tasks.close()
+        del self._remain_jobs
+        # ====== pyzmq ====== #
+        if self._backend == 'pyzmq':
+            for sk in self._sockets:
+                sk.close()
+            self._ctx.term()
+        # ====== python ====== #
+        elif self._backend == 'python':
+            self._queue.close()
+            del self._counter
