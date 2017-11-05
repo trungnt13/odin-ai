@@ -38,7 +38,7 @@ def unzip_folder(zip_path, out_path, remove_zip=True):
 
 @add_metaclass(ABCMeta)
 class DataLoader(object):
-    PATH = 'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzLw==\n'
+    ORIGIN = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzLw==\n'
     BASE_DIR = get_datasetpath(root='~')
 
     def __init__(self):
@@ -64,7 +64,7 @@ class DataLoader(object):
     def get_dataset(clazz, ext='', override=False):
         # ====== all path ====== #
         name = clazz.get_name(ext) + '.zip'
-        path = base64.decodestring(DataLoader.PATH) + name
+        path = base64.decodestring(DataLoader.ORIGIN).decode() + name
         zip_path = clazz.get_zip_path(ext)
         out_path = clazz.get_ds_path(ext)
         # ====== check out_path ====== #
@@ -105,10 +105,14 @@ class CIFAR100(DataLoader):
 # AUdio dataset
 # ===========================================================================
 class WDIGITS(DataLoader):
+    """ 700 MB of data from multiple speaker for digit recognition
+    from audio
+    """
     pass
 
 
 class DIGITS(DataLoader):
+    """ 501 short file for single digits recognition from audio """
     pass
 
 

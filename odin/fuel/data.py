@@ -85,6 +85,7 @@ class Data(object):
       during unpickling.
     * `_new_args` must be picklable, and also be pickled.
     """
+
     def __init__(self):
         # batch information
         self._batch_size = 256
@@ -800,17 +801,15 @@ class MmapData(Data):
     This class always read MmapData with mode=r+
     """
     _INSTANCES = OrderedDict()
-    HEADER = 'mmapdata'
+    HEADER = b'mmapdata'
     MAXIMUM_HEADER_SIZE = 486
 
     @staticmethod
-    def read_header(path, mode, return_file):
+    def read_header(path, read_only, return_file):
         """ return: dtype, shape
         Necessary information to create numpy.memmap
         """
-        if mode not in ('r', 'r+'):
-            raise ValueError("Only support 2 modes: 'r' and 'r+'.")
-        f = open(path, mode)
+        f = open(path, mode='rb' if read_only else 'rb+')
         if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
             raise Exception('Invalid header for MmapData.')
         # 8 bytes for size of info
@@ -842,7 +841,7 @@ class MmapData(Data):
         if len(MmapData._INSTANCES) + 1 > MAX_OPEN_MMAP:
             raise ValueError('Only allowed to open maximum of {} memmap file'.format(MAX_OPEN_MMAP))
         # ====== create new instance ====== #
-        new_instance = super(MmapData, clazz).__new__(clazz, *args, **kwargs)
+        new_instance = super(MmapData, clazz).__new__(clazz)
         MmapData._INSTANCES[path] = new_instance
         return new_instance
 
@@ -850,7 +849,6 @@ class MmapData(Data):
         super(MmapData, self).__init__()
         # validate path
         path = os.path.abspath(path)
-        mode = 'r' if read_only else 'r+'
         self.read_only = read_only
         # ====== check shape info ====== #
         if shape is not None:
@@ -859,14 +857,14 @@ class MmapData(Data):
             shape = tuple([0 if i is None or i < 0 else i for i in shape])
         # read exist file
         if os.path.exists(path):
-            dtype, shape, f = MmapData.read_header(path, mode=mode,
+            dtype, shape, f = MmapData.read_header(path, read_only=read_only,
                                                    return_file=True)
         # create new file
         else:
             if dtype is None or shape is None:
                 raise Exception("First created this MmapData, `dtype` and "
                                 "`shape` must NOT be None.")
-            f = open(path, 'w+')
+            f = open(path, 'wb+')
             f.write(MmapData.HEADER)
             dtype = str(np.dtype(dtype))
             if isinstance(shape, np.ndarray):
@@ -881,7 +879,8 @@ class MmapData(Data):
             f.write('%8d' % size)
             f.write(_)
         self._file = f
-        self._data = np.memmap(f, dtype=dtype, shape=shape, mode=mode,
+        self._data = np.memmap(f, dtype=dtype, shape=shape,
+                               mode = 'r' if read_only else 'r+',
                                offset=_aligned_memmap_offset(dtype))
         self._path = path
         self._new_args = path

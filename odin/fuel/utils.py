@@ -36,8 +36,7 @@ class NoSQL(MutableMapping):
         if path in all_instances:
             return all_instances[path]
         # ====== Create new instance ====== #
-        new_instance = super(NoSQL, subclass).__new__(
-            subclass, path, read_only, cache_size, *args, **kwargs)
+        new_instance = super(NoSQL, subclass).__new__(subclass)
         all_instances[path] = new_instance
         # some pre-defined attribute
         new_instance._cache_size = cache_size
@@ -149,27 +148,18 @@ class NoSQL(MutableMapping):
         raise NotImplementedError
 
     def __iter__(self):
-        return self.iteritems()
+        return self.items()
 
+    @abstractmethod
     def keys(self):
-        return list(self.iterkeys())
-
-    @abstractmethod
-    def iterkeys(self):
         raise NotImplementedError
 
+    @abstractmethod
     def values(self):
-        return list(self.itervalues())
-
-    @abstractmethod
-    def itervalues(self):
         raise NotImplementedError
 
-    def items(self):
-        return list(self.iteritems())
-
     @abstractmethod
-    def iteritems(self):
+    def items(self):
         raise NotImplementedError
 
     def __del__(self):
@@ -219,7 +209,7 @@ class MmapDict(NoSQL):
     MmapDict read speed is double faster than SQLiteDict.
     MmapDict also support multiprocessing
     """
-    HEADER = 'mmapdict'
+    HEADER = b'mmapdict'
     SIZE_BYTES = 48
     # the indices are flushed after it is increased this amount of size
     MAX_INDICES_SIZE = 25 # in megabyte
@@ -227,7 +217,7 @@ class MmapDict(NoSQL):
     def _restore_dict(self, path, read_only, cache_size):
         # ====== already exist ====== #
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            file = open(str(path), mode='r+')
+            file = open(str(path), mode='rb+')
             if file.read(len(MmapDict.HEADER)) != MmapDict.HEADER:
                 raise Exception('Given file is not in the right format '
                                 'for MmapDict.')
@@ -244,7 +234,7 @@ class MmapDict(NoSQL):
             if read_only:
                 raise Exception('File at path:"%s" does not exist '
                                 '(read-only mode).' % path)
-            file = open(str(path), mode='w+')
+            file = open(str(path), mode='wb+')
             file.write(MmapDict.HEADER)
             # just write the header
             file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') %
@@ -288,7 +278,7 @@ class MmapDict(NoSQL):
         # ====== serialize the data ====== #
         # start from old_max_position, append new values
         file.seek(max_position)
-        for key, value in self._cache_dict.iteritems():
+        for key, value in self._cache_dict.items():
             try:
                 value = marshal.dumps(value)
             except ValueError:
@@ -380,21 +370,21 @@ class MmapDict(NoSQL):
         else:
             del self.indices[key]
 
-    def iterkeys(self):
-        return chain(self.indices.iterkeys(), self._cache_dict.iterkeys())
+    def keys(self):
+        return chain(self.indices.keys(), self._cache_dict.keys())
 
-    def itervalues(self):
-        for name, (start, size) in self.indices.iteritems():
+    def values(self):
+        for name, (start, size) in self.indices.items():
             self._mmap.seek(start)
             yield marshal.loads(self._mmap.read(size))
-        for val in self._cache_dict.itervalues():
+        for val in self._cache_dict.values():
             yield val
 
-    def iteritems(self):
-        for name, (start, size) in self.indices.iteritems():
+    def items(self):
+        for name, (start, size) in self.indices.items():
             self._mmap.seek(start)
             yield name, marshal.loads(self._mmap.read(size))
-        for key, val in self._cache_dict.itervalues():
+        for key, val in self._cache_dict.values():
             yield key, val
 
 
@@ -518,23 +508,14 @@ class TableDict(MutableMapping):
         return False
 
     def keys(self):
-        return list(self.iterkeys())
-
-    def iterkeys(self):
         with self.table_context():
-            return self._sqlite.iterkeys()
+            return self._sqlite.keys()
 
     def values(self):
-        return list(self.itervalues())
-
-    def itervalues(self):
         with self.table_context():
-            return self._sqlite.itervalues()
+            return self._sqlite.values()
 
     def items(self):
-        return list(self.iteritems())
-
-    def iteritems(self):
         with self.table_context():
             return self._sqlite.items()
 
@@ -610,7 +591,7 @@ class SQLiteDict(NoSQL):
                     "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
                     [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
                       else marshal.dumps(v))
-                     for k, v in self.current_cache.iteritems()])
+                     for k, v in self.current_cache.items()])
                 self.connection.commit()
                 self.current_cache.clear()
         # restore the last table
@@ -775,25 +756,25 @@ class SQLiteDict(NoSQL):
                          cond='key IN ("%s")' % ', '.join(db_key)))
         self.connection.commit()
 
-    def iterkeys(self):
+    def keys(self):
         for k in self.cursor.execute(
             """SELECT key from {tb};""".format(tb=self._current_table)):
             yield k[0]
-        for k in self.current_cache.iterkeys():
+        for k in self.current_cache.keys():
             yield k
 
-    def itervalues(self):
+    def values(self):
         for val in self.cursor.execute(
             """SELECT value from {tb};""".format(tb=self._current_table)):
             yield marshal.loads(val[0])
-        for v in self.current_cache.itervalues():
+        for v in self.current_cache.values():
             yield v
 
-    def iteritems(self):
+    def items(self):
         for item in self.cursor.execute(
             """SELECT key, value from {tb};""".format(tb=self._current_table)):
             yield (item[0], marshal.loads(item[1]))
-        for k, v in self.current_cache.iteritems():
+        for k, v in self.current_cache.items():
             yield k, v
 
     def update(self, items):
@@ -801,7 +782,7 @@ class SQLiteDict(NoSQL):
             return
         query = """UPDATE {tb} SET value=(?) WHERE key=("?");"""
         if isinstance(items, Mapping):
-            items = items.iteritems()
+            items = items.items()
         # ====== check if update is in cache ====== #
         db_update = []
         for key, value in items:

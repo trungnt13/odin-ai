@@ -30,16 +30,17 @@ def _parse_data_descriptor(path, read_only):
         return None
     # ====== check if a file is Data ====== #
     try:
-        dtype, shape = MmapData.read_header(path, mode='r', return_file=False)
+        dtype, shape = MmapData.read_header(path, read_only=True,
+                                            return_file=False)
         # shape[1:], because first dimension can be resize afterward
         return [(os.path.basename(path), (dtype, shape, None, path))]
-    except Exception: # cannot read the header of MmapData, maybe Hdf5
+    except Exception as e: # cannot read the header of MmapData, maybe Hdf5
         try:
             f = open_hdf5(path, read_only=read_only)
             ds = get_all_hdf_dataset(f)
             data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
             return [(str(i.name), (str(i.dtype), i.shape, i, i.path)) for i in data]
-        except Exception:
+        except Exception as e:
             pass
     # ====== try to load pickle file if possible ====== #
     name = os.path.basename(path)
@@ -48,13 +49,13 @@ def _parse_data_descriptor(path, read_only):
             data = cPickle.load(f)
             return [(name,
             (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
-    except Exception:
+    except Exception as e:
         pass
     # ====== load memmap dict ====== #
     try:
         data = MmapDict(path, read_only=read_only)
         return [(name, ('memdict', len(data), data, path))]
-    except Exception:
+    except Exception as e:
         pass
     # ====== load SQLiteDict ====== #
     if '.db' in os.path.splitext(path)[1]:
@@ -64,7 +65,7 @@ def _parse_data_descriptor(path, read_only):
             return [(tab if tab != SQLiteDict._DEFAULT_TABLE else name,
                      ('sqlite', len(db.set_table(tab)), db.as_table(tab), path))
                     for tab in db.get_all_tables()]
-        except Exception:
+        except Exception as e:
             pass
     # ====== unknown datatype ====== #
     return [(name, ('unknown', 'unknown', None, path))]
@@ -98,7 +99,7 @@ class Dataset(object):
         if path in Dataset.__INSTANCES:
             return Dataset.__INSTANCES[path]
         # new Dataset
-        new_instance = super(Dataset, clazz).__new__(clazz, *args, **kwargs)
+        new_instance = super(Dataset, clazz).__new__(clazz)
         Dataset.__INSTANCES[path] = new_instance
         return new_instance
 

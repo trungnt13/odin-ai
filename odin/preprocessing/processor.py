@@ -89,9 +89,9 @@ def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False
             cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
         prog.add_notification('Stored PCA model of: %s' %
                               ctext(name, 'yellow'))
-    mpi = MPI(jobs=pca_map.items(), map_func=map_pca,
-              ncpu=None, buffer_size=1,
-              maximum_queue_size=12082518, chunk_scheduler=True)
+    mpi = MPI(jobs=pca_map.items(), func=map_pca,
+              ncpu=None, batch=1, hwm=12082518,
+              backend='pyzmq')
     for n in mpi:
         prog.add(n)
     # ====== return ====== #
@@ -457,7 +457,7 @@ class FeatureProcessor(object):
                     dataset[(feat_name, 'memmap')] = X_cached
 
         # ====== repeated for each result returned ====== #
-        def wrapped_reduce(result):
+        def post_processing(result):
             # returned result is always dictionary or None
             # if dictionary, it is mapping: name -> feature_matrix
             if result is None:
@@ -528,15 +528,15 @@ class FeatureProcessor(object):
             return file_name
         # ====== processing ====== #
         mpi = MPI(jobs=self.jobs,
-                  map_func=self._map_multiple_works,
-                  reduce_func=wrapped_reduce,
+                  func=self._map_multiple_works,
                   ncpu=self.ncpu,
-                  buffer_size=min(8, max(len(self.jobs) // self.ncpu, 1)),
-                  maximum_queue_size=self.ncpu * 3,
-                  chunk_scheduler=True)
+                  batch=min(8, max(len(self.jobs) // self.ncpu, 1)),
+                  hwm=self.ncpu * 3,
+                  backend='pyzmq')
         prog = Progbar(target=njobs, name=self.name,
                        interval=0.12, print_report=True, print_summary=True)
-        for name in mpi:
+        for result in mpi:
+            name = post_processing(result)
             prog['File'] = '%-20s' % str(name)
             prog.add(1)
         # ====== end, flush the last time ====== #

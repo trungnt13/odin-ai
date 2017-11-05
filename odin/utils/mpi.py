@@ -199,7 +199,7 @@ class SharedCounter(object):
 # ===========================================================================
 # Main API
 # ===========================================================================
-_SLEEP_TIME = 0.02
+_SLEEP_TIME = 0.01
 
 
 class MPI(object):
@@ -208,6 +208,8 @@ class MPI(object):
 
     Parameters
     ----------
+    jobs: list, tuple, numpy.ndarray
+        list of works.
     func: callable
         take a `list of jobs` as input (i.e. map_func([job1, job2, ...])),
         the length of this list is determined by `buffer_size`

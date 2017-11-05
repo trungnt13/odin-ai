@@ -364,8 +364,9 @@ class MiniBatchPCA(IncrementalPCA):
                     x = x[:, :n_components]
                 # just need to return the start for ordering
                 yield start, x
-        mpi = MPI(batch_list, map_func=map_func,
-            ncpu=ncpu, buffer_size=1, maximum_queue_size=ncpu * 12)
+        mpi = MPI(batch_list, func=map_func,
+                  ncpu=ncpu, batch=1, hwm=ncpu * 12,
+                  backend='pyzmq')
         # ====== process the return ====== #
         X_transformed = []
         for start, x in mpi:

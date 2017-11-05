@@ -33,9 +33,11 @@ PCA = True
 center = True
 pitch_threshold = 0.8
 pitch_algo = 'rapt'
-datapath = F.load_digit_wav()
-print("Found %d (.wav) files" % len(datapath.keys()))
+audio = F.DIGITS.get_dataset()
+print(audio)
+print("Found %d (.wav) files" % len(list(audio['indices'].keys())))
 output_path = utils.get_datasetpath(name='digit')
+exit()
 # ===========================================================================
 # Extractor
 # ===========================================================================

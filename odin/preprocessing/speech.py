@@ -237,8 +237,8 @@ def audio_segmenter(files, outpath, max_duration,
     nb_files = len(files)
     prog = Progbar(target=nb_files, print_summary=True, print_report=True,
                    name='Segmenting to path: %s' % outpath)
-    task = mpi.MPI(jobs=files, map_func=lambda fpath: segmenting(fpath[0]),
-                   ncpu=None, buffer_size=1)
+    task = mpi.MPI(jobs=files, func=lambda fpath: segmenting(fpath[0]),
+                   ncpu=None, batch=1, backend='pyzmq')
     # ====== running the processor ====== #
     seg_indices = []
     for f, info in task:

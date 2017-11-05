@@ -417,7 +417,7 @@ class NNOp(object):
                     "the new NNOp has type: %s" % (old_clazz, clazz))
             return NNOp._ALL_NNOPS[name]
         # ====== allocate new Op ====== #
-        new_op = super(NNOp, clazz).__new__(clazz, *args, **kwargs)
+        new_op = super(NNOp, clazz).__new__(clazz)
         new_op._name = name
         return new_op
 

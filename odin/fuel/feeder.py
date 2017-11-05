@@ -345,7 +345,7 @@ class Feeder(MutableData):
 
     def __init__(self, data_desc, dtype=None,
                  batch_filter=None, batch_mode='batch',
-                 ncpu=1, buffer_size=8, maximum_queue_size=86):
+                 ncpu=1, buffer_size=8, hwm=86):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         self._data = as_tuple(data_desc, t=DataDescriptor)
@@ -367,7 +367,7 @@ class Feeder(MutableData):
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
         self._recipes.set_feeder_info(nb_desc=len(self._data))
-        self.set_multiprocessing(ncpu, buffer_size, maximum_queue_size)
+        self.set_multiprocessing(ncpu, buffer_size, hwm)
         # ====== cache shape information ====== #
         # store first dimension
         self._cache_shape = None
@@ -419,14 +419,13 @@ class Feeder(MutableData):
         self._running_iter = []
 
     # ==================== multiprocessing ==================== #
-    def set_multiprocessing(self, ncpu=None, buffer_size=None,
-                            maximum_queue_size=None):
+    def set_multiprocessing(self, ncpu=None, buffer_size=None, hwm=None):
         if ncpu is not None:
             self.ncpu = int(ncpu)
         if buffer_size is not None:
             self.buffer_size = int(buffer_size)
-        if maximum_queue_size is not None:
-            self.maximum_queue_size = int(maximum_queue_size)
+        if hwm is not None:
+            self.hwm = int(hwm)
         return self
 
     def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
@@ -577,27 +576,17 @@ class Feeder(MutableData):
                     batch.append(X)
             # choose grouping function
             if self._batch_mode == 'batch':
-                return _batch_grouping(batch, batch_size, rng, batch_filter)
+                X = _batch_grouping(batch, batch_size, rng, batch_filter)
             elif self._batch_mode == 'file':
-                return _file_grouping(batch, batch_size, rng, batch_filter)
+                X = _file_grouping(batch, batch_size, rng, batch_filter)
+            if len(X) == 1:
+                return X[0]
+            return X
 
-        def reduce_func(results):
-            # perform batch level permutation
-            if rng is not None:
-                permutation = rng.permutation(results[0].shape[0])
-                results = [r[permutation] for r in results]
-            # convert batch to tuple object if possible
-            if isinstance(results, (tuple, list)) and len(results) == 1:
-                results = results[0]
-            elif isinstance(results, list):
-                results = tuple(results)
-            return results
         # ====== track and return ====== #
-        it = MPI(all_keys, map_func, reduce_func,
-                 ncpu=self.ncpu,
-                 buffer_size=self.buffer_size,
-                 maximum_queue_size=self.maximum_queue_size,
-                 chunk_scheduler=True)
+        it = MPI(jobs=all_keys, func=map_func, ncpu=self.ncpu,
+                 batch=self.buffer_size, hwm=self.maximum_queue_size,
+                 backend='pyzmq')
         self._running_iter.append(it)
         return it
 
@@ -679,7 +668,7 @@ class Feeder(MutableData):
         spamming to many iteration
         """
         for i in self._running_iter:
-            i.stop()
+            i.terminate()
         self._running_iter = []
 
     def __del__(self):
