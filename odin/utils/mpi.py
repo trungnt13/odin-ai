@@ -299,6 +299,13 @@ class MPI(object):
 
     def terminate(self):
         self._terminate_now = True
+        # force everything finished
+        if self._current_iter is not None and \
+        not self.is_finished:
+            try:
+                next(self._current_iter)
+            except StopIteration:
+                pass
 
     # ==================== helper ==================== #
     def __iter(self):
@@ -316,9 +323,9 @@ class MPI(object):
         # Select run function
         self._is_running = True
         for i in run_func():
-            yield i
             if self._terminate_now:
                 break
+            yield i
         # Finalize
         self._is_running = False
         self._finalize()
