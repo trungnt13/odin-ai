@@ -199,6 +199,9 @@ class SharedCounter(object):
 # ===========================================================================
 # Main API
 # ===========================================================================
+_SLEEP_TIME = 0.02
+
+
 class MPI(object):
     """ MPI
     This class use round robin to schedule the tasks to each processes
@@ -438,7 +441,7 @@ class MPI(object):
                             counter.add(nb_returned)
                             nb_returned = 0
                             while counter.value > hwm:
-                                time.sleep(0.1)
+                                time.sleep(_SLEEP_TIME)
                 del ret # delete old data (this work, checked)
                 # increase shared counter (this number must perfectly
                 # counted, only 1 mismatch and deadlock will happen)
@@ -446,7 +449,7 @@ class MPI(object):
                     counter.add(nb_returned)
                 # check if we need to wait for the consumer here
                 while counter.value > hwm:
-                    time.sleep(0.1)
+                    time.sleep(_SLEEP_TIME)
                 # get new tasks
                 t = tasks.get()
             # ending signal
