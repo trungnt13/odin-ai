@@ -308,6 +308,7 @@ class AudioReader(Extractor):
     def _transform(self, path_or_array):
         raw = None # raw
         sr = None # by default, we don't know sample rate
+        name = None
         path = None
         duration = None
         encode = None
@@ -328,7 +329,7 @@ class AudioReader(Extractor):
             if 'sr' in path_or_array:
                 sr = path_or_array['sr']
             if 'encode' in path_or_array:
-                encode = str(path_or_array['encode'])
+                encode = path_or_array['encode']
             # get raw or path out of the Dictionary
             if 'raw' in path_or_array:
                 raw = path_or_array['raw']
@@ -345,12 +346,14 @@ class AudioReader(Extractor):
             path = path_or_array
             if os.path.isfile(path_or_array):
                 raw, sr = read(path_or_array, encode=encode)
+            # given a dataset
             elif self.dataset is not None:
                 start, end = self.dataset['indices'][path_or_array]
                 raw = self.dataset['raw'][start:end]
                 sr = int(self.dataset['sr'][path_or_array])
+                name = path_or_array
                 if 'path' in self.dataset:
-                    path = str(self.dataset['path'][path_or_array])
+                    path = self.dataset['path'][path_or_array]
         # read from file object
         elif isinstance(path_or_array, file):
             path = path_or_array.name
@@ -369,7 +372,7 @@ class AudioReader(Extractor):
                 raw = raw[:, channel]
         else:
             raise ValueError("No support for %d-D signal from file: %s" %
-                (raw.ndim, str(path)))
+                (raw.ndim, path))
         # ====== valiate sample rate ====== #
         if sr is None and self.sr is not None:
             sr = int(self.sr)
@@ -392,7 +395,7 @@ class AudioReader(Extractor):
             elif sr == 8000:
                 alpha = 0.999
             else:
-                raise ValueError('Sampling frequency %s not supported' % str(sr))
+                raise ValueError('Sampling frequency %s not supported' % sr)
             slen = raw.size
             raw = lfilter([1, -1], [1, -alpha], raw)
             dither = np.random.rand(slen) + np.random.rand(slen) - 1
@@ -406,9 +409,16 @@ class AudioReader(Extractor):
         # ====== get duration if possible ====== #
         if sr is not None:
             duration = max(raw.shape) / sr
-        return {'raw': raw, 'sr': sr,
-                'duration': duration, # in second
-                'path': os.path.abspath(path) if path is not None else None}
+        # ====== check if absolute path====== #
+        if path is not None:
+            path = str(path, 'utf-8')
+            if '/' != path[0]:
+                path = os.path.abspath(path)
+        ret = {'raw': raw, 'sr': sr, 'duration': duration, # in second
+               'path': path}
+        if name is not None:
+            ret['name'] = name
+        return ret
 
 
 class SpectraExtractor(Extractor):

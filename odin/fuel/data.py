@@ -876,7 +876,8 @@ class MmapData(Data):
             if size > MmapData.MAXIMUM_HEADER_SIZE:
                 raise Exception('The size of header excess maximum allowed size '
                                 '(%d bytes).' % MmapData.MAXIMUM_HEADER_SIZE)
-            f.write('%8d' % size)
+            size = '%8d' % size
+            f.write(size.encode())
             f.write(_)
         self._file = f
         self._data = np.memmap(f, dtype=dtype, shape=shape,
@@ -1059,8 +1060,8 @@ class MmapData(Data):
         # rewrite the header
         f.seek(len(MmapData.HEADER))
         meta = marshal.dumps([dtype, shape])
-        size = len(meta)
-        f.write('%8d' % size)
+        size = '%8d' % len(meta)
+        f.write(size.encode())
         f.write(meta)
         f.flush()
         # extend the memmap

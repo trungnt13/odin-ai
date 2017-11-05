@@ -237,10 +237,12 @@ class MmapDict(NoSQL):
             file = open(str(path), mode='wb+')
             file.write(MmapDict.HEADER)
             # just write the header
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') %
-                       (len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2))
+            header = ('%' + str(MmapDict.SIZE_BYTES) + 'd') % \
+                (len(MmapDict.HEADER) + MmapDict.SIZE_BYTES * 2)
+            file.write(header.encode())
             # write the length of Pickled indices dictionary
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % 0)
+            data_size = ('%' + str(MmapDict.SIZE_BYTES) + 'd') % 0
+            file.write(data_size.encode())
             file.flush()
             # init indices dict
             self._indices_dict = {}
@@ -300,10 +302,12 @@ class MmapDict(NoSQL):
         # ====== update the position ====== #
         # write new max size
         file.seek(len(MmapDict.HEADER))
-        file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % max_position)
+        max_position = ('%' + str(MmapDict.SIZE_BYTES) + 'd') % max_position
+        file.write(max_position.encode())
         # update length of pickled indices dictionary
         if indices_length > 0:
-            file.write(('%' + str(MmapDict.SIZE_BYTES) + 'd') % indices_length)
+            indices_length = ('%' + str(MmapDict.SIZE_BYTES) + 'd') % indices_length
+            file.write(indices_length.encode())
         # flush everything
         file.flush()
         # upate the mmap

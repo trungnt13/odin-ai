@@ -173,7 +173,7 @@ def _eval_single_tensor(x, feed_dict=None):
         return builtins.eval(x)
     elif isinstance(x, tf.Operation):
         return get_session().run(x, feed_dict=feed_dict)
-    raise ValueError("Type %s don't have the eval function." % str(x))
+    raise ValueError("Type %s don't have the eval function." % str(x, 'utf-8'))
 
 
 def eval(x, feed_dict=None):

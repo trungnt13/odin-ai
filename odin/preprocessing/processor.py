@@ -29,7 +29,8 @@ from odin.utils.mpi import MPI
 from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
                         add_notification, keydefaultdict,
-                        stdio, get_stdio_path, wprint)
+                        stdio, get_stdio_path, wprint,
+                        add_notification)
 from odin.fuel import Dataset, MmapDict, MmapData
 
 from .base import Extractor
@@ -74,8 +75,10 @@ def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False
             pca_map[feat] = MiniBatchPCA(n_components=None, whiten=False,
                                          copy=True, batch_size=None)
     # ====== run PCA extraction ====== #
+    add_notification("Selected features for PCA:" +
+        ctext(', '.join(feat_name), 'yellow'))
     prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
-                   name='Calculating PCA: %s' % ';'.join(feat_name))
+                   name='PCA')
 
     def map_pca(X):
         name, pca = X[0]
@@ -85,11 +88,11 @@ def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False
             pca.partial_fit(x)
             yield x.shape[0]
         # save PCA model
-        with open(os.path.join(dataset.path, name + '_pca'), 'w') as f:
+        with open(os.path.join(dataset.path, name + '_pca'), 'wb') as f:
             cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
         prog.add_notification('Stored PCA model of: %s' %
                               ctext(name, 'yellow'))
-    mpi = MPI(jobs=pca_map.items(), func=map_pca,
+    mpi = MPI(jobs=list(pca_map.items()), func=map_pca,
               ncpu=None, batch=1, hwm=12082518,
               backend='pyzmq')
     for n in mpi:
@@ -308,7 +311,8 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                 logger("Check PCA for: ", feat_name, True)
     # ====== Do sampling ====== #
     np.random.seed(seed) # seed for reproceducible
-    all_samples = np.random.choice(ds['indices'].keys(), size=nb_samples,
+    all_samples = np.random.choice(list(ds['indices'].keys()),
+                                   size=nb_samples,
                                    replace=False)
     # plotting all samples
     for sample_id, file_name in enumerate(all_samples):
@@ -577,7 +581,7 @@ class FeatureProcessor(object):
         dataset.close()
         # ====== saving the extractor ====== #
         pipeline_path = os.path.join(dataset.path, 'pipeline')
-        with open(pipeline_path, 'w') as f:
+        with open(pipeline_path, 'wb') as f:
             cPickle.dump(self.extractor, f, protocol=2)
         prog.add_notification("Saved Extractor pipeline at: %s" %
                               ctext(pipeline_path, 'yellow'))

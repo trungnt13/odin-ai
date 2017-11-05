@@ -56,9 +56,11 @@ extractors = pp.make_pipeline(steps=[
                            step_length=step_length,
                            nbins=96, nmels=40, nceps=20,
                            fmin=64, fmax=4000, padding=padding),
-    pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
-                             threshold=0.5, f0=False, algo='swipe',
-                             fmin=64, fmax=400),
+    # pp.speech.PitchExtractor(frame_length=0.06, step_length=step_length,
+    #                          threshold=0.5, f0=False, algo='swipe',
+    #                          fmin=64, fmax=400),
+    pp.speech.openSMILEpitch(frame_length=0.06, step_length=step_length,
+                             voiceProb=True, loudness=True),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
     pp.speech.RASTAfilter(rasta=True, sdc=0),
@@ -77,24 +79,22 @@ extractors = pp.make_pipeline(steps=[
                'pitch': 'float16', 'f0': 'float16',
                'vad': 'float16', 'energy': 'float16',
                'raw': 'float16'})
-], debug=True)
-extractors.transform(all_files[0])
-exit()
+], debug=False)
+# extractors.transform(all_files[0])
 # ===========================================================================
 # Processor
 # ===========================================================================
-jobs = [path for name, path in datapath if '.wav' in path]
-processor = pp.FeatureProcessor(jobs, extractors, output_path, pca=True,
-                                ncache=260, ncpu=(utils.cpu_count() - 1),
-                                override=True)
+processor = pp.FeatureProcessor(all_files, extractors, output_path,
+                                ncache=260, ncpu=None, override=True)
 with utils.UnitTimer():
     processor.run()
-shutil.copy(os.path.join(datapath.path, 'README.md'),
+shutil.copy(os.path.join(audio.path, 'README.md'),
             os.path.join(output_path, 'README.md'))
+pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
 print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
-pp.validate_features(ds, path='/tmp/tmp', nb_samples=6, override=True)
+# pp.validate_features(ds, path='/tmp/digits', nb_samples=8, override=True)
 print(ds)
 # ====== print pipeline ====== #
 padding = '  '
@@ -121,12 +121,13 @@ for n in ds.keys():
                                 pca.explained_variance_[:8])]))
 # ====== plot the processed files ====== #
 figpath = '/tmp/speech_features.pdf'
-files = np.random.choice(ds['indices'].keys(), size = 8, replace = False)
+files = np.random.choice(list(ds['indices'].keys()),
+                         size=8, replace=False)
 for f in files:
     with visual.figure(ncol = 1, nrow = 5, dpi = 180,
                        show = False, tight_layout = True, title = f):
         start, end = ds['indices'][f]
-        vad = ds['vad'][start:end]
+        vad = ds['sad'][start:end]
         pitch = ds['pitch'][start:end].astype('float32')
         energy = ds['energy'][start:end][:].astype('float32')
         spec = ds['spec'][start:end].astype('float32')
@@ -147,8 +148,7 @@ indices = sorted([(name, s, e) for name, (s, e) in ds['indices']],
                  key=lambda x: x[1])
 for name, start, end in indices:
     pitch = ds['pitch'][start:end][:]
-    f0 = ds['f0'][start:end][:]
-    if not np.any(pitch) or not np.any(f0):
+    if not np.any(pitch):
         print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
 if PCA:
@@ -162,7 +162,7 @@ if PCA:
                 feat_pca.transform(ds[feat][start:end]),
                 axis=0, keepdims=True)
         )
-        y.append(int(os.path.basename(f)[0]))
+        y.append(int(f[0]))
     X = np.concatenate(X, axis=0)
     y = np.asarray(y)
     X_ = TSNE(n_components=2).fit_transform(X)

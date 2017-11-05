@@ -74,7 +74,7 @@ def _str_complex(x):
         return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
     if isinstance(x, Mapping):
         return "(map)length=%d;dtype=%s" % (len(x),
-            ','.join([_type_name(i) for i in x.values()]))
+            ';'.join([_type_name(i) for i in next(iter(x.items()))]))
     if isinstance(x, Dataset):
         return ("(ds)path:%s" % x.path)
     if is_string(x):
@@ -349,18 +349,18 @@ class RunningStatistics(Extractor):
         If None, calculate the statistics for all `numpy.ndarray`
     """
 
-    def __init__(self, feat_type=None, axis=0, name=''):
+    def __init__(self, feat_type=None, axis=0, prefix=''):
         super(RunningStatistics, self).__init__()
         self.feat_type = None if feat_type is None else \
             as_tuple(feat_type, t=str)
         self.axis = axis
-        self.name = str(name)
+        self.prefix = str(prefix)
 
     def get_sum1_name(self, feat_name):
-        return '%s_%ssum1' % (feat_name, self.name)
+        return '%s_%ssum1' % (feat_name, self.prefix)
 
     def get_sum2_name(self, feat_name):
-        return '%s_%ssum2' % (feat_name, self.name)
+        return '%s_%ssum2' % (feat_name, self.prefix)
 
     def _transform(self, X):
         if isinstance(X, Mapping):

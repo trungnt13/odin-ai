@@ -527,7 +527,7 @@ class Dataset(object):
     def close(self, name=None):
         # ====== close all Data ====== #
         if name is None: # close all files
-            for name, (dtype, shape, data, path) in self._data_map.items():
+            for name, (dtype, shape, data, path) in list(self._data_map.items()):
                 if hasattr(data, 'close'):
                     data.close()
                 del data
@@ -536,7 +536,7 @@ class Dataset(object):
             for name, ids in self._saved_indices.items():
                 ids.close()
             self._saved_indices.clear()
-            for name, rcp in self._saved_recipes.items():
+            for name, rcp in list(self._saved_recipes.items()):
                 del rcp
             self._saved_recipes.clear()
             # Check if exist global instance

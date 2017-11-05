@@ -38,7 +38,8 @@ def verify_dependencies():
     except subprocess.CalledProcessError:
         raise Exception("Can't find SMILExtract executable")
     else:
-        m = re.search('openSMILE version (.*)', output, re.MULTILINE)
+        m = re.search('openSMILE version (.*)', str(output, 'utf-8'),
+                      re.MULTILINE)
         if m:
             opensmile_version = m.group(1)
             print('Found openSMILE:', ctext(opensmile_version, 'magenta'))
