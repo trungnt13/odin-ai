@@ -191,10 +191,10 @@ def validate_features(ds_or_processor, path, nb_samples=25,
                         if 'indices' in k and k != 'indices']
     # ====== checking indices ====== #
     main_indices = {name: (start, end)
-                    for name, (start, end) in ds['indices'].iteritems()}
+                    for name, (start, end) in ds['indices'].items()}
     for ids_name in (k for k in all_keys if 'indices' in k):
         ids = sorted([(name, start, end)
-                      for name, (start, end) in ds[ids_name].iteritems()],
+                      for name, (start, end) in ds[ids_name].items()],
                      key=lambda x: x[1])
         for prev, now in zip(ids, ids[1:]):
             assert prev[2] == now[1], "Zero length in indices"
@@ -227,7 +227,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
             else:
                 checking_func = lambda x: True
             # check
-            for key, val in data.iteritems():
+            for key, val in data.items():
                 assert key in main_indices, \
                 "Dictionary with name:'%s' has key not found in indices." % name
                 assert checking_func(val)
@@ -333,7 +333,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
         logger("Sample figure saved at: ", figure_path, True)
     # plotting the statistic
     figure_path = os.path.join(path, 'stats.pdf')
-    for feat_name, stat_name in all_stats.iteritems():
+    for feat_name, stat_name in all_stats.items():
         X = {name: ds[name][:]
              for name in stat_name
              if ds[name].ndim >= 1}
@@ -410,7 +410,7 @@ class FeatureProcessor(object):
                      for i, e in enumerate(extractor)]
             extractor = Pipeline(steps=steps)
         elif isinstance(extractor, Mapping):
-            steps = [(str(n), e) for n, e in extractor.iteritems()]
+            steps = [(str(n), e) for n, e in extractor.items()]
             extractor = Pipeline(steps=steps)
         elif isinstance(extractor, Extractor):
             extractor = Pipeline(
@@ -476,7 +476,7 @@ class FeatureProcessor(object):
             # store all new indices
             all_indices = defaultdict(list)
             # processing
-            for feat_name, X in result.iteritems():
+            for feat_name, X in result.items():
                 # some invalid feat_name
                 if feat_name in ('config', 'pipeline'):
                     raise RuntimeError("Returned features' name cannot be one "
@@ -504,7 +504,7 @@ class FeatureProcessor(object):
                 # remove data
                 del X
             # ====== update indices ====== #
-            all_indices = sorted(all_indices.iteritems(),
+            all_indices = sorted(all_indices.items(),
                                  key=lambda x: len(x[1]), reverse=True)
             if len(all_indices) > 0:
                 # the first dominant indices
@@ -521,7 +521,7 @@ class FeatureProcessor(object):
             # ====== flush cache ====== #
             nb_processed[0] += 1
             if nb_processed[0] % cache_limit == 0: # 12 + 8
-                for feat_name, X_cached in cache.iteritems():
+                for feat_name, X_cached in cache.items():
                     flush_feature(feat_name, X_cached)
                 cache.clear()
             # ====== update progress ====== #
@@ -540,13 +540,13 @@ class FeatureProcessor(object):
             prog['File'] = '%-20s' % str(name)
             prog.add(1)
         # ====== end, flush the last time ====== #
-        for feat_name, X_cached in cache.iteritems():
+        for feat_name, X_cached in cache.items():
             flush_feature(feat_name, X_cached)
         cache.clear(); cache = None
         dataset.flush()
         prog.add_notification("Flushed all data to disk")
         # ====== saving indices ====== #
-        for name, db in databases.iteritems():
+        for name, db in databases.items():
             db.flush(save_all=True)
             db_size = len(db)
             db.close()
@@ -567,7 +567,7 @@ class FeatureProcessor(object):
             dataset[name + 'std'] = std
         # save all stats
         if len(stats) > 0:
-            for feat_name, (sum1, sum2) in stats.iteritems():
+            for feat_name, (sum1, sum2) in stats.items():
                 save_mean_std(sum1, sum2, feat_name)
                 prog.add_notification('Saved statistics of: %s, shape: %s' %
                                       (ctext(feat_name.split('_')[0], 'yellow'),

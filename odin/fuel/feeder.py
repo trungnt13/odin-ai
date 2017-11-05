@@ -261,7 +261,7 @@ class DataDescriptor(MutableData):
                     dat = [name] + dat
                 yield dat[0] if len(dat) == 1 else dat
         it = _create_iter()
-        it.next()
+        next(it)
         return it
 
     def __del__(self):

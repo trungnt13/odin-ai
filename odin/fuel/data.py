@@ -380,7 +380,7 @@ class Data(object):
                 yield permutation_func(x)
         # ====== create, init, and return the iteration ====== #
         it = create_iteration()
-        it.next()
+        next(it)
         return it
 
     # ==================== Strings ==================== #
@@ -1557,14 +1557,14 @@ class DataIterator(MutableData):
                         if n[i] <= 0:
                             continue
                         try:
-                            x = x.next()[:n[i]]
+                            x = next(x)[:n[i]]
                             n[i] -= x.shape[0]
                             batch.append(x)
                         except StopIteration: # one iterator stopped
                             it[i] = iter(data[i].set_batch(distribution[i],
                                 seed=rng.randint(10e8), start=start, end=end,
                                 shuffle_level=self._shuffle_level))
-                            x = it[i].next()[:n[i]]
+                            x = next(it[i])[:n[i]]
                             n[i] -= x.shape[0]
                             batch.append(x)
                     # got final batch
@@ -1590,13 +1590,13 @@ class DataIterator(MutableData):
                     if n[current_data] <= 0:
                         current_data += 1
                     try:
-                        x = it[current_data].next()[:n[current_data]]
+                        x = next(it[current_data])[:n[current_data]]
                         n[current_data] -= x.shape[0]
                     except StopIteration: # one iterator stopped
                         it[current_data] = iter(data[current_data].set_batch(batch_size, seed=rng.randint(10e8),
                                             start=start, end=end,
                                             shuffle_level=self._shuffle_level))
-                        x = it[current_data].next()[:n[current_data]]
+                        x = next(it[current_data])[:n[current_data]]
                         n[current_data] -= x.shape[0]
                     # shuffle x
                     if self._shuffle_level > 0:
@@ -1605,7 +1605,7 @@ class DataIterator(MutableData):
                         yield x[i:j]
         # ====== create and return the iteration ====== #
         it = create_iteration()
-        it.next()
+        next(it)
         return it
 
     # ==================== Slicing methods ==================== #

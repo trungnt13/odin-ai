@@ -107,12 +107,12 @@ class ModelDescriptor(object):
 
     @property
     def input_shape(self):
-        return {i: j.shape for i, j in self._input_desc.iteritems()
+        return {i: j.shape for i, j in self._input_desc.items()
                 if isinstance(j, VariableDescriptor)}
 
     @property
     def input_shape_ref(self):
-        return {i: j.shape_ref for i, j in self._input_desc.iteritems()
+        return {i: j.shape_ref for i, j in self._input_desc.items()
                 if isinstance(j, VariableDescriptor)}
 
     # ==================== pickle ==================== #
@@ -171,7 +171,7 @@ class ModelDescriptor(object):
             j = self._input_desc[i]
             if isinstance(j, VariableDescriptor):
                 plh[i] = j.placeholder
-        for i, j in self._input_desc.iteritems():
+        for i, j in self._input_desc.items():
             if i not in plh and isinstance(j, VariableDescriptor):
                 plh[i] = j.placeholder
         return plh
@@ -203,7 +203,7 @@ class ModelDescriptor(object):
         args = [_check_accepted_inputs(j, self.name + '/' + i)
                 for i, j in zip(spec.args, args)]
         kwargs = {i: _check_accepted_inputs(j, self.name + '/' + i)
-                  for i, j in kwargs.iteritems()}
+                  for i, j in kwargs.items()}
         # ====== check inputs ====== #
         if len(self._input_desc) == 0:
             # load to the save_kwargs
@@ -221,7 +221,7 @@ class ModelDescriptor(object):
         # ====== get inputs variable====== #
         model_inputs = {i: j.placeholder if isinstance(j, VariableDescriptor)
                         else j
-                        for i, j in input_desc.iteritems()}
+                        for i, j in input_desc.items()}
         # ====== call the function ====== #
         # finally call the function to get outputs
         _ = [0]
@@ -257,7 +257,7 @@ class ModelDescriptor(object):
                            self.nb_parameters * 4 / 1024 / 1024)
         # ====== print input desc info ====== #
         s += '\t%s:\n' % ctext('Input description', 'yellow')
-        for i, j in self._input_desc.iteritems():
+        for i, j in self._input_desc.items():
             s += '\t\t%s: %s\n' % (ctext(str(i), 'red'), str(j))
         # ====== print nnop info ====== #
         s += '\t%s:\n' % ctext('NNOp info', 'yellow')

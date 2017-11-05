@@ -453,7 +453,7 @@ class Tokenizer(object):
     def top_k(self, n=12):
         top = []
         count = self._word_counts if self.__order == 'word' else self._word_docs
-        for i, w in enumerate(self.dictionary.iterkeys()):
+        for i, w in enumerate(self.dictionary.keys()):
             if i == 0: continue
             top.append((w, count[w]))
             if i >= n + 1: break
@@ -690,15 +690,15 @@ class Tokenizer(object):
                 elif mode == 'freq':
                     length = len(seq)
                     count = freqcount(seq)
-                    for tok, n in count.iteritems():
+                    for tok, n in count.items():
                         X[i, tok] = n / float(length)
                 elif mode == 'count':
                     count = freqcount(seq)
-                    for tok, n in count.iteritems():
+                    for tok, n in count.items():
                         X[i, tok] = n
                 elif mode == 'tfidf':
                     count = freqcount(seq)
-                    for tok, n in count.iteritems():
+                    for tok, n in count.items():
                         tf = 1 + np.log(n)
                         docs_freq = self._word_dictionary_info.get(tok, (0, 0))[-1]
                         idf = np.log(1 + self.nb_docs / (1 + docs_freq))
@@ -724,9 +724,9 @@ class Tokenizer(object):
         elif is_number(token_not_found):
             token_not_found = int(token_not_found)
         # ====== create embedding matrix ====== #
-        ndim = len(vocabulary.itervalues().next())
+        ndim = len(next(vocabulary.values()))
         matrix = np.zeros(shape=(len(self.dictionary), ndim), dtype=dtype)
-        for word, idx in self.dictionary.iteritems():
+        for word, idx in self.dictionary.items():
             if len(word) == 0: continue
             if word in vocabulary:
                 matrix[idx, :] = vocabulary[word]

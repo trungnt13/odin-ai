@@ -359,7 +359,7 @@ class Task(object):
             # create new iter
             self._created_iter = self.__iter()
             # initialize the iteration
-            self._created_iter.next()
+            next(self._created_iter)
         return self._created_iter
 
     def __del__(self):
@@ -658,7 +658,7 @@ class MainLoop(object):
         if self._main_task is not None:
             finished_task = {i: False for i in self._task + self._subtask}
             task_iter = {i: iter(i) for i in self._task + self._subtask}
-            for freq in self._task_freq.itervalues():
+            for freq in self._task_freq.values():
                 freq.set_counter(self._main_task)
         # ====== main logics ====== #
         while self._main_task is not None and \
@@ -666,7 +666,7 @@ class MainLoop(object):
             for t in self._task:
                 # ====== execute training task first ====== #
                 if not finished_task[t]:
-                    res = task_iter[t].next()
+                    res = next(task_iter[t])
                     # task message
                     if isinstance(res, str):
                         if res == 'task_end':

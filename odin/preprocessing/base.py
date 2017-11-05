@@ -44,7 +44,7 @@ def make_pipeline(steps, debug=False):
     elif not isinstance(steps, (tuple, list)):
         steps = [steps]
     steps = [item2step(i) for i in steps]
-    steps = filter(lambda x: x is not None, steps)
+    steps = [s for s in steps if s is not None]
     # ====== set debug mode ====== #
     if debug:
         for name, extractor in steps:
@@ -62,6 +62,8 @@ def set_extractor_debug(debug, *extractors):
 
 
 def _type_name(x):
+    if isinstance(x, np.dtype):
+        return x.name
     return type(x).__name__
 
 
@@ -72,7 +74,7 @@ def _str_complex(x):
         return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
     if isinstance(x, Mapping):
         return "(map)length=%d;dtype=%s" % (len(x),
-            ','.join([_type_name(i) for i in x.iteritems().next()]))
+            ','.join([_type_name(i) for i in x.values()]))
     if isinstance(x, Dataset):
         return ("(ds)path:%s" % x.path)
     if is_string(x):
@@ -139,7 +141,7 @@ class Extractor(BaseEstimator, TransformerMixin):
         if isinstance(y, Mapping):
             # remove None values
             tmp = {}
-            for name, feat in y.iteritems():
+            for name, feat in y.items():
                 if any(c.isupper() for c in name):
                     raise RuntimeError("name for features cannot contain "
                                        "upper case.")
@@ -150,7 +152,7 @@ class Extractor(BaseEstimator, TransformerMixin):
             # add old features extracted in X,
             # but do NOT override new features in y
             if isinstance(X, Mapping):
-                for name, feat in X.iteritems():
+                for name, feat in X.items():
                     if any(c.isupper() for c in name):
                         raise RuntimeError("name for features cannot contain "
                                            "upper case.")
@@ -164,19 +166,19 @@ class Extractor(BaseEstimator, TransformerMixin):
             if not _equal_inputs_outputs(X, y):
                 print('  ', ctext("Inputs:", 'yellow'))
                 if isinstance(X, Mapping):
-                    for k, v in X.iteritems():
+                    for k, v in X.items():
                         print('    ', ctext(k, 'blue'), ':', _str_complex(v))
                 else:
                     print('    ', _str_complex(X))
             # outputs
             print('  ', ctext("Outputs:", 'yellow'))
             if isinstance(y, Mapping):
-                for k, v in y.iteritems():
+                for k, v in y.items():
                     print('    ', ctext(k, 'blue'), ':', _str_complex(v))
             else:
                 print('    ', _str_complex(y))
             # parameters
-            for name, param in self.get_params().iteritems():
+            for name, param in self.get_params().items():
                 print('  ', ctext(name, 'yellow'), ':', _str_complex(param))
         return y
 
@@ -315,7 +317,7 @@ class EqualizeShape0(Extractor):
         if isinstance(X, Mapping):
             equalized = {}
             n = min(feat.shape[0]
-                    for name, feat in X.iteritems()
+                    for name, feat in X.items()
                     if _match_feat_name(self.feat_type, name))
             # ====== equalize ====== #
             for name, feat in X.items():
@@ -365,7 +367,7 @@ class RunningStatistics(Extractor):
             # ====== preprocessing feat_type ====== #
             feat_type = self.feat_type
             if feat_type is None:
-                feat_type = [name for name, feat in X.iteritems()
+                feat_type = [name for name, feat in X.items()
                              if isinstance(feat, np.ndarray) and feat.ndim >= 1]
             # ====== calculate the statistics ====== #
             for feat_name in feat_type:
@@ -402,13 +404,13 @@ class AsType(Extractor):
     def __init__(self, type_map={}):
         super(AsType, self).__init__()
         if isinstance(type_map, Mapping):
-            type_map = type_map.iteritems()
+            type_map = type_map.items()
         self.type_map = {str(feat_name): np.dtype(feat_type)
                          for feat_name, feat_type in type_map}
 
     def _transform(self, X):
         if isinstance(X, Mapping):
-            for feat_name, feat_type in self.type_map.iteritems():
+            for feat_name, feat_type in self.type_map.items():
                 if feat_name in X:
                     feat = X[feat_name]
                     if isinstance(feat, np.ndarray) and feat_type != feat.dtype:

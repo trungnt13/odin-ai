@@ -109,7 +109,7 @@ def nnop_scope(scope=None, id_start=None, ops=[], **kwargs):
     ops = as_tuple(ops)
     # copy prevous scopes
     args_scope = defaultdict(dict)
-    for i, j in __ARGS_SCOPE_STACK[-1].iteritems():
+    for i, j in __ARGS_SCOPE_STACK[-1].items():
         args_scope[i] = j.copy()
     # update new scopes
     for o in ops:
@@ -334,7 +334,7 @@ class _NNOp_Meta(ABCMeta):
         # update the new arguments into default arguments
         new_args = OrderedDict([(name, args[i]) if i < len(args) else
                                 (name, default)
-                                for i, (name, default) in enumerate(default_args.iteritems())])
+                                for i, (name, default) in enumerate(default_args.items())])
         new_args.update(kwargs)
         return super(_NNOp_Meta, clazz).__call__(*[], **new_args)
 
@@ -460,7 +460,7 @@ class NNOp(object):
     def __setstate__(self, states):
         self._new_args_called = False
         self._save_states = states
-        for key, val in self._save_states.iteritems():
+        for key, val in self._save_states.items():
             setattr(self, key, val)
         # # ====== check exist NNOp ====== #
         name = self.name
@@ -588,12 +588,12 @@ class NNOp(object):
     def variables(self):
         """ Get all variables related to this Op"""
         # created variable from `get_variable`
-        allname = [name for _, (name, t) in self._variable_info.iteritems()
+        allname = [name for _, (name, t) in self._variable_info.items()
                    if t == 'variable']
         allvars = [v for v in K.get_all_variables() if v.name in allname]
         # related variables to all `Tensor`
         tensors = [self.get_variable(name)
-                   for name, (info, t) in self._variable_info.iteritems()
+                   for name, (info, t) in self._variable_info.items()
                    if t == 'tensor']
         tensors = K.ComputationGraph(tensors).variables
         # all variables within the scope
@@ -677,7 +677,7 @@ class NNOp(object):
             keywords = {}
             # kwargs must be specified in args, or the _initialize
             # must accept **kwaobject, class_or_type_or_tuplergs
-            for i, j in kwargs.iteritems():
+            for i, j in kwargs.items():
                 if argspec.keywords is not None or i in argspec.args:
                     keywords[i] = j
             # initialize the operator (call the initilazation process)
@@ -704,7 +704,7 @@ class NNOp(object):
                 attr = getattr(self, name)
                 if is_primitives(attr) or inspect.isfunction(attr):
                     print_attrs[name] = attr
-        print_attrs = sorted(print_attrs.iteritems(), key=lambda x: x[0])
+        print_attrs = sorted(print_attrs.items(), key=lambda x: x[0])
         # ====== format the output ====== #
         ops_format = '<%s, name: %s, init: %s>\n'
         ops_format = ops_format % (ctext(self.__class__.__name__, 'cyan'),

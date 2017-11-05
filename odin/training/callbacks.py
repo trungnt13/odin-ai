@@ -158,15 +158,15 @@ class Debug(Callback):
 
     def epoch_end(self, task, epoch_results):
         print("Epoch End:", task.name, task.curr_epoch, task.curr_samples,
-              [(i, len(j), type(j[0])) for i, j in epoch_results.iteritems()])
+              [(i, len(j), type(j[0])) for i, j in epoch_results.items()])
 
     def task_start(self, task):
         print("Task Start:", task.name, task.curr_epoch, task.curr_samples)
 
     def task_end(self, task, task_results):
         print("Task End:", task.name, task.curr_epoch, task.curr_samples,
-            [(i, [(n, len(v), type(v[0])) for n, v in j.iteritems()])
-             for i, j in task_results.iteritems()])
+            [(i, [(n, len(v), type(v[0])) for n, v in j.items()])
+             for i, j in task_results.items()])
 
 
 class CallbackList(Callback):

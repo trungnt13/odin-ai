@@ -138,7 +138,7 @@ def typecheck(inputs=None, outputs=None, debug=2):
             input_args = list(args)
             excluded = {i: j for i, j in zip(args_name, input_args)}
             # check default kwargs
-            for i, j in args_defaults.iteritems():
+            for i, j in args_defaults.items():
                 if i in excluded: # already input as positional argument
                     continue
                 if i in kwargs: # specified value
@@ -218,7 +218,7 @@ def autoattr(*args, **kwargs):
         def wrapper(*args, **kwargs):
             results = func(*args, **kwargs)
             if len(args) > 0:
-                for i, j in attrs.iteritems():
+                for i, j in attrs.items():
                     if hasattr(args[0], i):
                         if callable(j):
                             setattr(args[0], str(i), j(getattr(args[0], i)))
@@ -262,7 +262,7 @@ def autoinit(func):
             assigned_arguments.append(varargs)
         # handle varkw
         if kwargs:
-            for attr, val in kwargs.iteritems():
+            for attr, val in kwargs.items():
                 try:
                     setattr(self, attr, val)
                     assigned_arguments.append(attr)
@@ -348,7 +348,7 @@ def _serialize_function_sandbox(function, source):
     sandbox = OrderedDict()
     # ====== serialize primitive type ====== #
     seen_main_function = False
-    for name, val in environment.iteritems():
+    for name, val in environment.items():
         typ = None
         # ignore system modules
         if sys_module.match(name) is not None:
@@ -415,7 +415,7 @@ def _deserialize_function_sandbox(sandbox):
     defined_function = []
     main_func = None
     # first pass we deserialize all type except function type
-    for name, (typ, val) in sandbox.iteritems():
+    for name, (typ, val) in sandbox.items():
         if is_string(typ):
             if typ == 'None':
                 val = None
@@ -561,10 +561,10 @@ class functionable(object):
     # ==================== methods ==================== #
     def __call__(self, *args, **kwargs):
         final_args = self._argsmap.copy()
-        for i, j in zip(final_args.iterkeys(), args):
+        for i, j in zip(final_args.keys(), args):
             final_args[i] = j
         final_args.update(kwargs)
-        final_args = {i: j for i, j in final_args.iteritems()
+        final_args = {i: j for i, j in final_args.items()
                       if not isinstance(j, _ArgPlaceHolder_)}
         return self._function(**final_args)
 
@@ -652,7 +652,7 @@ class Singleton(type):
         kwspec.update(zip(spec.args[1:], args))
         kwspec.update(kwargs)
         # convert all path to abspath to make sure same path are the same
-        for i, j in kwspec.iteritems():
+        for i, j in kwspec.items():
             if is_path(j):
                 kwspec[i] = os.path.abspath(j)
         # check duplicate instances

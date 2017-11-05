@@ -35,45 +35,51 @@ pitch_threshold = 0.8
 pitch_algo = 'rapt'
 audio = F.DIGITS.get_dataset()
 print(audio)
-print("Found %d (.wav) files" % len(list(audio['indices'].keys())))
+all_files = list(audio['indices'].keys())
+print("Found %d (.wav) files" % len(all_files))
 output_path = utils.get_datasetpath(name='digit')
-exit()
 # ===========================================================================
 # Extractor
 # ===========================================================================
 padding = False
-extractors = [
+frame_length = 0.025
+step_length = 0.005
+extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
-                          remove_dc_n_dither=True,
-                          preemphasis=0.97),
-    pp.NameConverter(converter=lambda x:os.path.basename(x).replace('.wav', '')),
-    pp.speech.SpectraExtractor(frame_length=0.025, step_length=0.005,
+                          remove_dc_n_dither=True, preemphasis=0.97,
+                          dataset=audio),
+    pp.speech.SpectraExtractor(frame_length=frame_length,
+                               step_length=step_length,
                                nfft=512, nmels=40, nceps=20,
                                fmin=64, fmax=4000, padding=padding),
-    pp.speech.CQTExtractor(frame_length=0.025, step_length=0.005,
+    pp.speech.CQTExtractor(frame_length=frame_length,
+                           step_length=step_length,
                            nbins=96, nmels=40, nceps=20,
                            fmin=64, fmax=4000, padding=padding),
-    pp.speech.PitchExtractor(frame_length=0.025, step_length=0.005,
-                             threshold=1.0, f0=True, algo='rapt'),
+    pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
+                             threshold=0.5, f0=False, algo='swipe',
+                             fmin=64, fmax=400),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
-    pp.speech.RASTAfilter(rasta=True, sdc=1),
-    pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
-                      feat_type=('mspec', 'qmspec')),
+    pp.speech.RASTAfilter(rasta=True, sdc=0),
+    pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
+                      feat_type=('mspec', 'qmspec', 'mfcc', 'qmfcc',
+                                 'energy', 'pitch')),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
                            feat_type=('mspec', 'mfcc',
                                       'qspec', 'qmfcc', 'qmspec')),
-    pp.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
+    pp.base.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                  'qspec', 'qmspec', 'qmfcc',
                                  'pitch', 'f0', 'vad', 'energy')),
-    pp.RunningStatistics(),
-    pp.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
+    pp.base.RunningStatistics(),
+    pp.base.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
                'qspec': 'float16', 'qmspec': 'float16', 'qmfcc': 'float16',
                'pitch': 'float16', 'f0': 'float16',
                'vad': 'float16', 'energy': 'float16',
                'raw': 'float16'})
-]
-
+], debug=True)
+extractors.transform(all_files[0])
+exit()
 # ===========================================================================
 # Processor
 # ===========================================================================

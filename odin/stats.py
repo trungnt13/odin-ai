@@ -114,7 +114,7 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
         clusters[cluster_func(i)].append(i)
     # ====== applying data split for each cluster separately ====== #
     train_list, valid_list, test_list = [], [], []
-    for name, clus in clusters.iteritems():
+    for name, clus in clusters.items():
         _1, _2, _3 = _split_list(clus, rng, train=train, idfunc=idfunc,
                                  inc_test=inc_test)
         train_list += _1
@@ -171,7 +171,7 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False,
     # check pretty return
     if pretty_return:
         s = ''
-        for name, value in freq.iteritems():
+        for name, value in freq.items():
             s += ' %s: %d\n' % (ctext(name, 'yellow'), value)
         return s
     return freq

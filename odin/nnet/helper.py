@@ -23,7 +23,7 @@ def _shrink_kwargs(op, kwargs):
     elif not isinstance(op, types.FunctionType): # callable object
         op = op.__call__
     spec = inspect.getargspec(op)
-    keywords = {i: j for i, j in kwargs.iteritems()
+    keywords = {i: j for i, j in kwargs.items()
                 if spec.keywords is not None or i in spec.args}
     return keywords
 
@@ -136,7 +136,7 @@ class Sequence(HelperOps):
     def _apply(self, x, **kwargs):
         # ====== get specific Ops kwargs ====== #
         params = {}
-        for k, v in kwargs.get('params', {}).iteritems():
+        for k, v in kwargs.get('params', {}).items():
             # check valid keywords
             if isinstance(v, (tuple, list)):
                 try: v = dict(v)

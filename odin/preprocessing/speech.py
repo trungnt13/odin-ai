@@ -560,7 +560,7 @@ class CQTExtractor(Extractor):
                        top_db=80.0, power=2.0, log=True,
                        padding=self.padding)
         # ====== add 'q' prefix for CQT features ====== #
-        feat = {'q' + name: X for name, X in feat.iteritems()}
+        feat = {'q' + name: X for name, X in feat.items()}
         return feat
 
 
@@ -789,7 +789,7 @@ class AcousticNorm(Extractor):
     def _transform(self, feat):
         feat_normalized = {}
         # all `features` is [t, f] shape
-        for name, features in feat.iteritems():
+        for name, features in feat.items():
             if name in self.feat_type:
                 if self.mean_var_norm:
                     features = mvn(features, varnorm=self.var_norm)
@@ -863,7 +863,7 @@ class ApplyingSAD(Extractor):
                 return None
             # ====== start ====== #
             X_new = {}
-            for feat_name, feat in X.iteritems():
+            for feat_name, feat in X.items():
                 if feat_name in self.feat_type:
                     assert len(sad) == max(feat.shape),\
                         "Length of sad labels is: %d, but number of sample is: %s"\
@@ -998,7 +998,7 @@ class Read3ColSAD(Extractor):
                                     index += X.shape[0]
                     # concatenate sad segments
                     feats_sad = {ftype: np.concatenate(y, axis=0)
-                                 for ftype, y in feats_sad.iteritems()}
+                                 for ftype, y in feats_sad.items()}
                     feats_sad['sad'] = sad_indices
                     return feats_sad
         # ====== return unvoiced or not ====== #

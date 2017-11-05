@@ -679,7 +679,7 @@ class Dataset(object):
         for name, index in self._saved_indices.items():
             s.append(ctext('(Index) ', 'yellow') + '"%s"' % name)
             s.append(padding + str(index))
-            name, (start, end) = index.items().next()
+            name, (start, end) = next(index.items())
             s.append(padding + 'Sample: "%s %d-%d"' % (name, start, end))
         return '\n'.join(s)
 

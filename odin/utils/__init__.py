@@ -120,7 +120,7 @@ def is_primitives(x, inc_ndarray=True):
         return all(is_primitives(i) for i in x)
     elif isinstance(x, Mapping):
         return all(is_primitives(i) and is_primitives(j)
-                   for i, j in x.iteritems())
+                   for i, j in x.items())
     if is_number(x) or is_string(x) or is_bool(x) or x is None or \
     (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
         return True
@@ -427,7 +427,7 @@ class ArgController(object):
 
     def _parse_input(self, key, val):
         # ====== search if manual preprocessing available ====== #
-        for i, preprocess in self.arg_dict.iteritems():
+        for i, preprocess in self.arg_dict.items():
             if key in i and preprocess is not None:
                 return preprocess(val)
         # ====== auto preprocess ====== #
@@ -523,7 +523,7 @@ class ArgController(object):
             max_len = max(len(i) for i in args.keys())
             max_len = '%-' + str(max_len) + 's'
             print('\n******** Parsed arguments ********')
-            for i, j in args.iteritems():
+            for i, j in args.items():
                 print(max_len % i, ': ', j)
             print('**********************************\n')
         # convert it to struct
@@ -666,7 +666,7 @@ class struct(dict):
     def __init__(self, *args, **kwargs):
         super(struct, self).__init__(*args, **kwargs)
         # copy all dict to attr
-        for i, j in self.iteritems():
+        for i, j in self.items():
             if is_string(i) and not hasattr(self, i):
                 super(struct, self).__setattr__(i, j)
 
@@ -710,7 +710,7 @@ class bidict(dict):
         return super(bidict, self).__getitem__(key)
 
     def update(self, *args, **kwargs):
-        for k, v in dict(*args, **kwargs).iteritems():
+        for k, v in dict(*args, **kwargs).items():
             self[k] = v
             self._inv[v] = k
 

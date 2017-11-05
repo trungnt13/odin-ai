@@ -25,7 +25,7 @@ import numpy as np
 #     pass
 
 # import matplotlib
-# for name, hex in matplotlib.colors.cnames.iteritems():
+# for name, hex in matplotlib.colors.cnames.items():
 #     print(name, hex)
 line_styles = ['-', '--', '-.', ':']
 
@@ -425,9 +425,9 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
         legend = {(c, m): "%s_%s" % (c, m)
                   for c in set(color) for m in set(marker)}
     elif is_marker_none:
-        legend = {(i, default_marker): j for i, j in legend.iteritems()}
+        legend = {(i, default_marker): j for i, j in legend.items()}
     elif is_color_none:
-        legend = {(default_color, i): j for i, j in legend.iteritems()}
+        legend = {(default_color, i): j for i, j in legend.items()}
     if not all((c, m) in legend for c in set(color) for m in set(marker)):
         raise ValueError("Legend must contains following keys: %s, but the given "
                         "legend only contains: %s"
@@ -440,7 +440,7 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
     else:
         axes = []
         legend_ = []
-        for code, name in legend.iteritems():
+        for code, name in legend.items():
             c, m = list(code)
             x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
             y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]

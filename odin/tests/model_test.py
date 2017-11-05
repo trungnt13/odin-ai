@@ -116,19 +116,19 @@ class ModelTest(unittest.TestCase):
         # ====== test same configurations ====== #
         self.assertEqual(str_new, str_old)
         # ====== test same params ====== #
-        for i, j in p_new.iteritems():
+        for i, j in p_new.items():
             k = p_old[i]
             for a, b in zip(j, k):
                 self.assertEqual(np.array_equal(a, b), True)
         # ====== test set params ====== #
         params = m.get_params(deep=True)
         params_new = {}
-        for n, p in params.iteritems():
+        for n, p in params.items():
             params_new[n] = [np.random.rand(*i.shape).astype('float32')
                              for i in p]
         m.set_params(**params_new)
         # test if equal new onces
-        for i, j in m.get_params(deep=True).iteritems():
+        for i, j in m.get_params(deep=True).items():
             k = params_new[i]
             for a, b in zip(j, k):
                 self.assertEqual(np.array_equal(a, b), True)
