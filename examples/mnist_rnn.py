@@ -83,7 +83,7 @@ f_pred = K.function(X, y_pred_score)
 # ===========================================================================
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
-task.set_save(get_modelpath(name='mnist.ai', override=True), ops)
+task.set_checkpoint(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_task(f_train, (ds['X_train'], ds['y_train']), epoch=arg['epoch'], name='train')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), freq=0.6, name='valid')
 task.set_subtask(f_test, (ds['X_test'], ds['y_test']), when=-1, name='test')

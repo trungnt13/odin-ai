@@ -46,7 +46,7 @@ def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
     else:
         x_id = {i: [j] for i, j in enumerate(x)}
     # shuffle ID(s)
-    id_list = x_id.keys()
+    id_list = list(x_id.keys())
     rng.shuffle(id_list)
     # ====== split ====== #
     N = len(id_list)

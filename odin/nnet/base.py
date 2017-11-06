@@ -45,15 +45,17 @@ def get_all_nnops(model_scope=None, op_type=None):
     return allops
 
 
-def _assign_new_nnop(nnops):
-    if not isinstance(nnops, NNOp):
+def _assign_new_nnop(nnop):
+    if not isinstance(nnop, NNOp):
         raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
-                         ", but the given object has type: %s" % str(type(nnops)))
-    name = nnops.name
+                         ", but the given object has type: %s" %
+                         str(type(nnop)))
+    name = nnop.name
     if name in NNOp._ALL_NNOPS:
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
-                           "already existed." % (type(NNOp._ALL_NNOPS[name]), name))
-    NNOp._ALL_NNOPS[name] = nnops
+                           "already existed." %
+                           (type(NNOp._ALL_NNOPS[name]), name))
+    NNOp._ALL_NNOPS[name] = nnop
 
 
 # ===========================================================================
@@ -380,10 +382,11 @@ class NNOp(object):
     _ALL_NNOPS = {}
 
     def __new__(clazz, *args, **kwargs):
-        # cPickle call __new__
+        # ====== cPickle call __new__ ====== #
         if len(args) == 1 and len(kwargs) == 0 and \
         (is_string(args[0]) and '[__name__]' in args[0]):
             name = args[0].replace('[__name__]', '')
+            # Found predefined NNOP
             if name in NNOp._ALL_NNOPS:
                 instance = NNOp._ALL_NNOPS[name]
                 if not isinstance(instance, clazz):
@@ -391,6 +394,8 @@ class NNOp(object):
                         "which is different from pickled type: '%s'" %
                         (type(instance), clazz))
                 return instance
+            # just create new instance
+            return super(NNOp, clazz).__new__(clazz)
         # New for first time create instance
         # ====== update Op name if it is None ====== #
         name = kwargs.get('name', None)
@@ -466,18 +471,13 @@ class NNOp(object):
         self._save_states = states
         for key, val in self._save_states.items():
             setattr(self, key, val)
-        # # ====== check exist NNOp ====== #
-        name = self.name
-        if name in NNOp._ALL_NNOPS:
-            if type(NNOp._ALL_NNOPS[name]) != type(self):
-                raise RuntimeError("Found duplicated NNOp with name: '%s' and type: '%s'"
-                    % (name, str(type(NNOp._ALL_NNOPS[name]))))
-            # cannot find '[__name__]' due to not specify protocol
-            # hence the __getnewargs__ is not called
-            elif NNOp._ALL_NNOPS[name] != self:
-                raise RuntimeError("Mismatch NNOp, two NNOps with the same name "
-                                   "are initizlied:\n%s\nis different from:\n%s" %
-                                   (str(NNOp._ALL_NNOPS[name]), str(self)))
+        # ====== check exist NNOp ====== #
+        if self.name not in NNOp._ALL_NNOPS:
+            _assign_new_nnop(self)
+        elif NNOp._ALL_NNOPS[self.name] != self:
+            raise RuntimeError("Mismatch NNOp, two NNOps with the same name "
+                               "are initizlied:\n%s\nis different from:\n%s" %
+                               (str(NNOp._ALL_NNOPS[self.name]), str(self)))
 
     def __getnewargs__(self):
         self._new_args_called = True
@@ -718,6 +718,12 @@ class NNOp(object):
                                    self._is_initialized)
         for i, j in print_attrs:
             ops_format += "\t%s: %s\n" % (ctext(i, 'yellow'), str(j))
+        for name in self._variable_info.keys():
+            v = self.get(name)
+            ops_format += "\t(Var)%s shape=%s, dtype=%s\n" % \
+                (ctext(v.name, 'yellow'),
+                 ctext(v.get_shape().as_list(), 'yellow'),
+                 ctext(v.dtype.base_dtype.name, 'yellow'))
         return ops_format[:-1]
 
     # ==================== Slicing ==================== #

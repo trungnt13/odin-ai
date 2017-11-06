@@ -149,7 +149,7 @@ f_pred = K.function(X + [y], y_prob, training=False)
 print('Start training ...')
 task = training.MainLoop(batch_size=8, seed=120825, shuffle_level=2,
                          allow_rollback=True)
-task.set_save(MODEL_PATH, f)
+task.set_checkpoint(MODEL_PATH, f)
 task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', ce,

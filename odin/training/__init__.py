@@ -495,7 +495,7 @@ class MainLoop(object):
                 self._callback, self._allow_rollback)
 
     # ==================== Signal handling ==================== #
-    def set_save(self, path, obj, variables=[]):
+    def set_checkpoint(self, path, obj, variables=[]):
         """
         Parameters
         ----------
@@ -636,8 +636,9 @@ class MainLoop(object):
                 os.mkdir(self._save_path)
             elif os.path.isfile(self._save_path):
                 raise ValueError("Save path for the model must be a folder.")
-            N.serialize(self._save_obj, self._save_path, save_variables=True,
-                        variables=self._save_variables, override=True)
+            N.serialize(nnops=self._save_obj, path=self._save_path,
+                        save_variables=True, variables=self._save_variables,
+                        override=True)
 
     def _rollback(self):
         if not self._allow_rollback: return

@@ -121,9 +121,9 @@ class ModelDescriptor(object):
                 self._opID, self.nnops]
 
     def __setstate__(self, states):
-        (self._func, self._input_desc, self._opID, nnops) = states
+        (self._func, self._input_desc, self._opID,
+            nnops) = states
         self._func = self._func.function
-
         self._last_outputs = None
         self._f_outputs = None
 

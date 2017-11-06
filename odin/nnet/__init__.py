@@ -40,25 +40,29 @@ def serialize(nnops, path, save_variables=True, variables=[],
     # ====== checking path ====== #
     if os.path.exists(path):
         if os.path.isfile(path):
-            raise ValueError("path must be path to a folder.")
+            raise ValueError("path: '%s' is NOT a folder." % path)
         elif override:
-            shutil.rmtree(path); os.mkdir(path)
+            shutil.rmtree(path)
+            os.mkdir(path)
     else:
         os.mkdir(path)
     nnops_path = os.path.join(path, 'nnops.ai')
     vars_path = os.path.join(path, 'variables')
     # ====== getting save data ====== #
-    var = []
+    vars = []
     if save_variables:
-        var = nnops.variables if isinstance(nnops, (NNOp, ModelDescriptor)) else \
-            flatten_list([o.variables for o in nnops if isinstance(o, NNOp)])
-    var = list(set(var + as_list(variables)))
+        for op in as_tuple(nnops):
+            if hasattr(op, 'variables'):
+                for v in as_tuple(op.variables):
+                    if K.is_variable(v):
+                        vars.append(v)
+    vars = list(set(vars + as_list(variables)))
     # save NNOps
     with open(nnops_path, 'wb') as f:
         cPickle.dump(nnops, f, protocol=cPickle.HIGHEST_PROTOCOL)
     # save Variables
-    if len(var) > 0:
-        K.save_variables(var, vars_path)
+    if len(vars) > 0:
+        K.save_variables(vars, vars_path)
     return path
 
 

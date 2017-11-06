@@ -63,7 +63,7 @@ f_pred = K.function(X, y_pred, training=False)
 print('Start training ...')
 task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
                          allow_rollback=True)
-task.set_save(get_modelpath(name='mnist_ai', override=True), ops)
+task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops)
 task.set_callbacks([
     training.NaNDetector(),
     # training.Checkpoint('train'),

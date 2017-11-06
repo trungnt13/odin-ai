@@ -116,7 +116,7 @@ f_pred = K.function(X, y_prob, training=False)
 print('Start training ...')
 task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2,
                          print_progress=True, confirm_exit=True)
-task.set_save(get_modelpath(name='digit_audio_ai', override=True), f)
+task.set_checkpoint(get_modelpath(name='digit_audio_ai', override=True), f)
 task.set_callbacks([
     training.NaNDetector(),
     training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5)
