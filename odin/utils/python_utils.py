@@ -24,7 +24,7 @@ def _create_theproxy_(attrname):
 
 class _MetaPrimitive(type):
 
-    """ This meta class if helpfull for creating reference class
+    """ This meta class is helpful for creating reference class
     while keeping its primitive type. """
 
     def __new__(meta, name, bases, attrdict):
@@ -67,12 +67,12 @@ class PrimitiveRef(object):
                              "was given type: '%s'" %
                              (main_type.__name__, type(default).__name__))
         # ====== create new instance ====== #
-        instance = super(PrimitiveRef, cls).__new__(cls, default)
+        instance = super(PrimitiveRef, cls).__new__(cls)
         instance._default = default
         return instance
 
     def __init__(self, obj, default=None):
-        super(PrimitiveRef, self).__init__(default)
+        super(PrimitiveRef, self).__init__()
         self._obj = obj
 
     # ==================== others ==================== #

@@ -32,7 +32,6 @@ utils.stdio(LOG_PATH)
 PCA = True
 center = True
 pitch_threshold = 0.8
-pitch_algo = 'rapt'
 audio = F.WDIGITS.get_dataset()
 print(audio)
 all_files = list(audio['indices'].keys())

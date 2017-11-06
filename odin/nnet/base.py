@@ -480,6 +480,16 @@ class NNOp(object):
         return ('[__name__]' + self.name,)
 
     # ==================== properties ==================== #
+    def get(self, name):
+        """"Simple shortcut for getting defined variable"""
+        if isinstance(name, bytes):
+            name = str(name, 'utf-8')
+        elif not is_string(name):
+            raise ValueError("`name` must be string.")
+        if name not in self._variable_info:
+            raise ValueError("Variable with name: '%s' hasn't been created." % name)
+        return self.get_variable(name)
+
     @cache_memory
     def get_variable(self, name, shape=None, initializer=None, roles=[]):
         """
@@ -640,14 +650,6 @@ class NNOp(object):
             if isinstance(value, _PRIMITIVE_TYPES):
                 self._save_states[name] = value
         return super(NNOp, self).__setattr__(name, value)
-
-    def __getattr__(self, name):
-        # merge the attributes of ops wit its configuration
-        if name in self.__dict__:
-            return self.__dict__[name]
-        if name in self._variable_info:
-            return self.get_variable(name)
-        raise AttributeError("NNOp cannot find attribute with name: %s" % name)
 
     # ==================== abstract method ==================== #
     def _initialize(self, **kwargs):
@@ -821,10 +823,10 @@ class Dense(NNOp):
 
     def _apply(self, X):
         # calculate projection
-        activation = K.dot(X, self.W)
+        activation = K.dot(X, self.get('W'))
         # add the bias
         if self.b_init is not None:
-            activation = activation + self.b
+            activation = activation + self.get('b')
         # Nonlinearity might change the shape of activation
         return self.activation(activation)
 
@@ -836,13 +838,13 @@ class TransposeDense(NNTransposeOps):
         self.num_units = self.T.input_shape[-1]
         if self.T.b_init is not None:
             self.get_variable(initializer=self.T.b_init,
-                shape=(self.num_units,), name='b', roles=Bias)
+                              shape=(self.num_units,), name='b', roles=Bias)
 
     def _apply(self, X):
         # calculate projection
-        activation = K.dot(X, tf.transpose(self.T.W))
+        activation = K.dot(X, tf.transpose(self.T.var('W')))
         if self.T.b_init is not None:
-            activation = activation + self.b
+            activation = activation + self.get('b')
         # Nonlinearity might change the shape of activation
         return self.T.activation(activation)
 

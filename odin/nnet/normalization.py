@@ -197,24 +197,24 @@ class BatchNorm(NNOp):
                    for input_axis in range(ndim)]
         # apply dimshuffle pattern to all parameters
         beta = 0 if self.beta_init is None else \
-            K.dimshuffle(self.beta, pattern)
+            K.dimshuffle(self.get('beta'), pattern)
         gamma = 1 if self.gamma_init is None else \
-            K.dimshuffle(self.gamma, pattern)
+            K.dimshuffle(self.get('gamma'), pattern)
 
         # ====== if trainign: use local mean and var ====== #
         def training_fn():
-            running_mean = ((1 - self.alpha) * self.mean +
+            running_mean = ((1 - self.alpha) * self.get('mean') +
                             self.alpha * mean)
-            running_var = ((1 - self.alpha) * self.var +
+            running_var = ((1 - self.alpha) * self.get('var') +
                            self.alpha * var)
             with tf.control_dependencies([
-                    tf.assign(self.mean, running_mean),
-                    tf.assign(self.var, running_var)]):
+                    tf.assign(self.get('mean'), running_mean),
+                    tf.assign(self.get('var'), running_var)]):
                 return tf.identity(mean), tf.identity(var)
 
         # ====== if inference: use global mean and var ====== #
         def infer_fn():
-            return self.mean, self.var
+            return self.get('mean'), self.get('var')
 
         mean, var = tf.cond(K.is_training(), training_fn, infer_fn)
         inv_std = tf.rsqrt(var + self.epsilon)

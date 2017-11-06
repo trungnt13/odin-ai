@@ -13,17 +13,16 @@ import tensorflow as tf
 
 from odin import backend as K
 from odin import nnet as N
-from odin import fuel, training
+from odin import fuel as F, training
 from six.moves import cPickle
 
 # ===========================================================================
 # Load data
 # ===========================================================================
-ds = fuel.load_mnist()
+ds = F.MNIST.get_dataset()
 print(ds)
 X = K.placeholder(shape=(None,) + ds['X_train'].shape[1:], name='X')
 y = K.placeholder(shape=(None,), name='y', dtype='int32')
-
 # ===========================================================================
 # Build network
 # ===========================================================================
@@ -33,8 +32,8 @@ ops = N.Sequence([
     N.Conv(32, (3, 3), strides=(1, 1), pad='same',
            activation=tf.nn.relu),
     N.Pool(pool_size=(2, 2), strides=None),
-    # N.Conv(64, (3, 3), strides=(1, 1), pad='same',
-    #        activation=tf.nn.relu),
+    N.Conv(64, (3, 3), strides=(1, 1), pad='same',
+           activation=tf.nn.relu),
     N.Pool(pool_size=(2, 2), strides=None),
     N.Dropout(level=0.5),
     N.Flatten(outdim=2),
@@ -42,7 +41,7 @@ ops = N.Sequence([
     N.Dense(10, activation=K.linear)
 ], debug=True)
 y_pred = ops(X)
-
+exit()
 y_onehot = K.one_hot(y, nb_classes=10)
 cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred),
                       name='CE')

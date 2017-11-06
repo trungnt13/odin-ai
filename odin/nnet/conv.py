@@ -241,9 +241,9 @@ class Conv(NNOp):
         # ====== apply bias ====== #
         if hasattr(self, 'b'):
             if self.untie_biases:
-                conved += tf.expand_dims(self.b, axis=0)
+                conved += tf.expand_dims(self.get('b'), axis=0)
             else:
-                conved += K.dimshuffle(self.b, ('x',) * (self.ndim + 1) + (0,))
+                conved += K.dimshuffle(self.get('b'), ('x',) * (self.ndim + 1) + (0,))
         return self.activation(conved)
 
     def convolve(self, X):
@@ -256,7 +256,7 @@ class Conv(NNOp):
         else:
             raise Exception('No support for %d-D input.' % self.ndim)
         # ====== perform normal convolution ====== #
-        conved = tf.nn.convolution(input=X, filter=self.W,
+        conved = tf.nn.convolution(input=X, filter=self.get('W'),
             padding=self.pad,
             strides=self.strides,
             dilation_rate=self.dilation,
@@ -314,7 +314,7 @@ class TransposeConv(Conv):
         native_shape = tf.shape(X)
         output_shape = [native_shape[i] if j is None else j
                         for i, j in enumerate(output_shape)]
-        deconved = deconv_func(value=X, filter=self.W,
+        deconved = deconv_func(value=X, filter=self.get('W'),
             output_shape=output_shape, strides=(1,) + self.strides + (1,),
             padding=self.pad)
         return K.set_shape(deconved, _)
@@ -350,16 +350,16 @@ class DeConv(NNTransposeOps):
         if isinstance(ops, TransposeConv):
             self._deconv = Conv(num_filters=ops.input_shape[-1],
                     filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
-                    W_init=ops.W, b_init=ops.b_init,
+                    W_init=ops.get('W'), b_init=ops.b_init,
                     untie_biases=ops.untie_biases, activation=ops.activation,
                     dilation=ops.dilation, name=self.name + '_deconv')
         elif isinstance(ops, Conv):
             self._deconv = TransposeConv(num_filters=ops.input_shape[-1],
-                    filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
-                    W_init=ops.W, b_init=ops.b_init,
-                    untie_biases=ops.untie_biases, activation=ops.activation,
-                    dilation=ops.dilation, output_shape=ops.input_shape,
-                    name=self.name + '_deconv')
+                filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
+                W_init=ops.get('W'), b_init=ops.b_init,
+                untie_biases=ops.untie_biases, activation=ops.activation,
+                dilation=ops.dilation, output_shape=ops.input_shape,
+                name=self.name + '_deconv')
         else:
             raise ValueError("Unsupport deconvolution for NNOp with type=%s"
                              % str(type(self.T)))

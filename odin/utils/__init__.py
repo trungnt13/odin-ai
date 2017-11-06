@@ -566,7 +566,7 @@ def as_tuple(x, N=None, t=None):
     LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
     """
     if not isinstance(x, tuple):
-        if isinstance(x, (types.GeneratorType, types.ListType)):
+        if isinstance(x, (types.GeneratorType, list)):
             x = tuple(x)
         else:
             x = (x,)
