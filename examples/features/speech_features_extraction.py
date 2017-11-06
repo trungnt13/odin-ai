@@ -33,7 +33,7 @@ PCA = True
 center = True
 pitch_threshold = 0.8
 pitch_algo = 'rapt'
-audio = F.DIGITS.get_dataset()
+audio = F.WDIGITS.get_dataset()
 print(audio)
 all_files = list(audio['indices'].keys())
 print("Found %d (.wav) files" % len(all_files))
@@ -44,6 +44,7 @@ output_path = utils.get_datasetpath(name='digit')
 padding = False
 frame_length = 0.025
 step_length = 0.005
+dtype = 'float32'
 extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True, preemphasis=0.97,
@@ -52,10 +53,10 @@ extractors = pp.make_pipeline(steps=[
                                step_length=step_length,
                                nfft=512, nmels=40, nceps=20,
                                fmin=64, fmax=4000, padding=padding),
-    pp.speech.CQTExtractor(frame_length=frame_length,
-                           step_length=step_length,
-                           nbins=96, nmels=40, nceps=20,
-                           fmin=64, fmax=4000, padding=padding),
+    # pp.speech.CQTExtractor(frame_length=frame_length,
+    #                        step_length=step_length,
+    #                        nbins=96, nmels=40, nceps=20,
+    #                        fmin=64, fmax=4000, padding=padding),
     # pp.speech.PitchExtractor(frame_length=0.06, step_length=step_length,
     #                          threshold=0.5, f0=False, algo='swipe',
     #                          fmin=64, fmax=400),
@@ -71,30 +72,34 @@ extractors = pp.make_pipeline(steps=[
                            feat_type=('mspec', 'mfcc',
                                       'qspec', 'qmfcc', 'qmspec')),
     pp.base.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
-                                 'qspec', 'qmspec', 'qmfcc',
-                                 'pitch', 'f0', 'vad', 'energy')),
+                                      'qspec', 'qmspec', 'qmfcc',
+                                      'pitch', 'f0', 'vad', 'energy',
+                                      'sap', 'loudness')),
     pp.base.RunningStatistics(),
-    pp.base.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
-               'qspec': 'float16', 'qmspec': 'float16', 'qmfcc': 'float16',
-               'pitch': 'float16', 'f0': 'float16',
-               'vad': 'float16', 'energy': 'float16',
-               'raw': 'float16'})
+    pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
+                    'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
+                    'pitch': dtype, 'f0': dtype, 'sap': dtype,
+                    'vad': dtype, 'energy': dtype, 'loudness': dtype,
+                    'raw': dtype})
 ], debug=False)
 # extractors.transform(all_files[0])
+# exit()
 # ===========================================================================
 # Processor
 # ===========================================================================
 processor = pp.FeatureProcessor(all_files, extractors, output_path,
-                                ncache=260, ncpu=None, override=True)
+                                ncache=0.12, ncpu=None, override=True)
 with utils.UnitTimer():
     processor.run()
-shutil.copy(os.path.join(audio.path, 'README.md'),
+readme_path = os.path.join(audio.path, [i for i in os.listdir(audio.path)
+                                        if 'README' in i][0])
+shutil.copy(readme_path,
             os.path.join(output_path, 'README.md'))
 pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
 print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
-# pp.validate_features(ds, path='/tmp/digits', nb_samples=8, override=True)
+pp.validate_features(ds, path='/tmp/digits', nb_samples=8, override=True)
 print(ds)
 # ====== print pipeline ====== #
 padding = '  '
@@ -151,7 +156,7 @@ for name, start, end in indices:
     if not np.any(pitch):
         print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
-if PCA:
+if PCA and False:
     from sklearn.manifold import TSNE
     feat = 'mspec'
     X = []; y = []
@@ -173,8 +178,8 @@ if PCA:
         visual.plot_scatter(X[:, 0], X[:, 1], color=y, legend=legend)
     with visual.figure(ncol=1, nrow=5):
         visual.plot_scatter(X_[:, 0], X_[:, 1], color=y, legend=legend)
-# ====== save all the figure ====== #
-visual.plot_save(figpath, tight_plot=True)
-print("Figure saved to:", figpath)
-ds.archive()
-print("Archive at:", ds.archive_path)
+    # ====== save all the figure ====== #
+    visual.plot_save(figpath, tight_plot=True)
+    print("Figure saved to:", figpath)
+    ds.archive()
+    print("Archive at:", ds.archive_path)

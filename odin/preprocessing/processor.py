@@ -40,7 +40,7 @@ _default_module = re.compile('__.*__')
 # ===========================================================================
 # PCA calculation
 # ===========================================================================
-def calculate_pca(dataset, feat_name='auto', batch_size=2056 * 2, override=False):
+def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
     # ====== check input dataset ====== #
     own_dataset = True
     if is_string(dataset) and os.path.isdir(dataset):
