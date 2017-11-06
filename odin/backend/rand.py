@@ -162,7 +162,7 @@ def normal(shape, mean=0., std=1.):
 
 
 def uniform(shape, range=0.05):
-    if isinstance(range, (int, float, long)):
+    if isinstance(range, (int, float)):
         range = (-abs(range), abs(range))
     return np.cast[floatX](
         get_rng().uniform(low=range[0], high=range[1], size=shape))

@@ -175,7 +175,7 @@ class Dataset(object):
             os.mkdir(self.recipe_path)
         # all recipes is pickle-able
         for recipe_name in os.listdir(self.recipe_path):
-            with open(os.path.join(self.recipe_path, recipe_name), 'r') as f:
+            with open(os.path.join(self.recipe_path, recipe_name), 'rb') as f:
                 recipe = cPickle.load(f)
                 self._saved_recipes[recipe_name] = recipe
         # ====== load stored indices ====== #
@@ -405,7 +405,7 @@ class Dataset(object):
             recipes = tuple(tmp)
         # ====== store the recipes to disk ====== #
         path = os.path.join(self.recipe_path, name)
-        with open(path, 'w') as f:
+        with open(path, 'wb') as f:
             cPickle.dump(recipes, f, protocol=cPickle.HIGHEST_PROTOCOL)
         # ====== update local recipes list ====== #
         self._saved_recipes[name] = recipes

@@ -54,7 +54,7 @@ def serialize(nnops, path, save_variables=True, variables=[],
             flatten_list([o.variables for o in nnops if isinstance(o, NNOp)])
     var = list(set(var + as_list(variables)))
     # save NNOps
-    with open(nnops_path, 'w') as f:
+    with open(nnops_path, 'wb') as f:
         cPickle.dump(nnops, f, protocol=cPickle.HIGHEST_PROTOCOL)
     # save Variables
     if len(var) > 0:
@@ -70,7 +70,7 @@ def deserialize(path):
     # ====== load the NNOps ====== #
     if not os.path.exists(nnops_path):
         raise ValueError("Cannot file path to serialized NNOps at: %s" % nnops_path)
-    with open(nnops_path, 'r') as f:
+    with open(nnops_path, 'rb') as f:
         nnops = cPickle.load(f)
     # ====== load the Variables ====== #
     if os.path.exists(vars_path + '.index'):

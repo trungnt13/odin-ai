@@ -307,7 +307,7 @@ def func_to_str(func):
     if func.__closure__ is not None:
         print("[WARNING] function: %s contains closure, which cannot be "
               "serialized." % str(func))
-        closure = tuple([c.cell_contents for c in func.func_closure])
+        closure = tuple([c.cell_contents for c in func.__closure__])
     defaults = func.__defaults__
     return (code, closure, defaults)
 
@@ -343,7 +343,7 @@ def _serialize_function_sandbox(function, source):
     import re
     sys_module = re.compile('__\w+__')
 
-    environment = function.func_globals
+    environment = function.__globals__
     func_module = function.__module__
     sandbox = OrderedDict()
     # ====== serialize primitive type ====== #
@@ -452,7 +452,7 @@ def _deserialize_function_sandbox(sandbox):
     # second pass, function all funciton and set it globales to new environment
     for name in defined_function:
         func = environment[name]
-        func.func_globals.update(environment)
+        func.__globals__.update(environment)
     return main_func, environment
 
 
@@ -548,7 +548,7 @@ class functionable(object):
 
     @property
     def name(self):
-        return self._function.func_name
+        return self._function.__name__
 
     @property
     def source(self):
@@ -569,7 +569,7 @@ class functionable(object):
         return self._function(**final_args)
 
     def __str__(self):
-        s = 'Name:   %s\n' % self._function.func_name
+        s = 'Name:   %s\n' % self._function.__name__
         s += 'kwargs: %s\n' % str(self._argsmap)
         if is_string(self._sandbox):
             s += 'Sandbox: pickle-able\n'
@@ -586,7 +586,7 @@ class functionable(object):
 
     # ==================== update kwargs ==================== #
     def __setitem__(self, key, value):
-        if not isinstance(key, (str, int, float, long)):
+        if not isinstance(key, (str, int, float)):
             raise ValueError('Only accept string for kwargs key or int for '
                              'index of args, but type(key)={}'.format(type(key)))
         if isinstance(key, str):
@@ -599,7 +599,7 @@ class functionable(object):
                 self._argsmap[key] = value
 
     def __getitem__(self, key):
-        if not isinstance(key, (str, int, float, long)):
+        if not isinstance(key, (str, int, float)):
             raise ValueError('Only accept string for kwargs key or int for '
                              'index of args, but type(key)={}'.format(type(key)))
         if isinstance(key, str):

@@ -105,7 +105,6 @@ class Optimizer(object):
                 raise ValueError('clipvalue value must greater than 0.')
             self.clipvalue = _as_variable(clipvalue, name="clip_value",
                 roles=GraidentsClipping)
-
         # ====== internal states values ====== #
         clip_alg = clip_alg.lower()
         if clip_alg not in ('total_norm', 'norm', 'avg_norm'):
@@ -177,10 +176,10 @@ class Optimizer(object):
         with tf.variable_scope(self.name):
             # get the gradient
             grads_var = self.algorithm.compute_gradients(loss_or_grads,
-                var_list=params)
+                                                         var_list=params)
             grads_var = {g: v for g, v in grads_var if g is not None}
-            grads = grads_var.keys()
-            params = grads_var.values()
+            grads = list(grads_var.keys())
+            params = list(grads_var.values())
             # ====== clipnorm ====== #
             if self.clipnorm is not None:
                 if self.clip_alg == 'norm':

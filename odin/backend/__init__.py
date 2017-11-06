@@ -127,9 +127,9 @@ def save_variables(var_list, path, session=None):
     # ====== save the collections ====== #
     collections = {var.name: role.get_roles(var, return_string=True)
                    for var in var_list}
-    cPickle.dump([collections, var_meta],
-                 open(path + '.collections', 'w'),
-                 protocol=cPickle.HIGHEST_PROTOCOL)
+    with open(path + '.collections', 'wb') as f:
+        cPickle.dump([collections, var_meta], f,
+                     protocol=cPickle.HIGHEST_PROTOCOL)
     return checkpoint
 
 
@@ -137,7 +137,8 @@ def restore_variables(path, session=None):
     if session is None:
         session = get_session()
     # ====== load and check var meta ====== #
-    collections, var_meta = cPickle.load(open(path + '.collections', 'r'))
+    with open(path + '.collections', 'rb') as f:
+        collections, var_meta = cPickle.load(f)
     var_list = []
     allvars = {v.name.split(':')[0]: v for v in get_all_variables()}
     for name, dtype, shape in var_meta:

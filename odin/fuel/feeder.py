@@ -653,7 +653,7 @@ class Feeder(MutableData):
         # ====== flush and close everything ====== #
         ds.flush()
         ds.close()
-        with open(os.path.join(path, 'README'), 'w') as f:
+        with open(os.path.join(path, 'README'), 'wb') as f:
             f.write(str(self))
         # end
         # ====== check one more time ====== #

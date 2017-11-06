@@ -87,7 +87,7 @@ class FeederRecipe(object):
                 elif isinstance(attr, slice):
                     print_attrs[name] = str(attr)
                 elif inspect.isfunction(attr):
-                    print_attrs[name] = "(f)" + attr.func_name
+                    print_attrs[name] = "(f)" + attr.__name__
                 elif isinstance(attr, np.ndarray):
                     print_attrs[name] = ("(%s)" % str(attr.dtype)) + \
                         str(attr.shape)

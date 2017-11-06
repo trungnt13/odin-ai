@@ -41,7 +41,6 @@ ops = N.Sequence([
     N.Dense(10, activation=K.linear)
 ], debug=True)
 y_pred = ops(X)
-exit()
 y_onehot = K.one_hot(y, nb_classes=10)
 cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred),
                       name='CE')
@@ -58,13 +57,12 @@ print('Building testing functions ...')
 f_test = K.function([X, y], [cost_ce, cost_acc, cost_cm], training=False)
 print('Building predicting functions ...')
 f_pred = K.function(X, y_pred, training=False)
-
-
 # ===========================================================================
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2)
+task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
+                         allow_rollback=True)
 task.set_save(get_modelpath(name='mnist_ai', override=True), ops)
 task.set_callbacks([
     training.NaNDetector(),
