@@ -34,7 +34,7 @@ class Pool(NNOp):
         pad_w is the size of the left and right margins.
     mode : {'max', 'avg'}
         Operation executed on each window. `max` or `average`
-    pool_func : 'auto' or callable
+    pool_func : 'auto' or call-able
         if 'auto', auto select pool function based on number of input
         dimension (pool2D for 4D input, pool3D for 5D input)
     transpose_mode: 'nn', 'pad', 'pad_margin', 'repeat'
@@ -111,7 +111,7 @@ class Upsample(NNOp):
         # ====== check output_shape ====== #
         output_shape = self.output_shape
         if output_shape is not None:
-            if callable(output_shape):
+            if hasattr(output_shape, '__call__'):
                 output_shape = output_shape()
             # do padding if necessary
             paddings = [[0, 0] if i is None or o is None or i >= o else

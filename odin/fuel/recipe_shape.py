@@ -356,7 +356,7 @@ class Sequencing(FeederRecipe):
     pad_mode: 'pre', 'post'
         if "pre", padding or wrapping at the beginning of the array.
         if "post", padding or wrapping at the ending of the array.
-    label_transform: callable
+    label_transform: call-able
         a function transform a sequence of transcription value into
         desire value for 1 sample.
     data_idx: int, list of int, None, or empty list, tuple

@@ -50,21 +50,21 @@ class BatchNorm(NNOp):
         Coefficient for the exponential moving average of batch-wise means and
         standard deviations computed during training; the closer to one, the
         more it will depend on the last batches seen
-    beta : trainable variable, expression, numpy array, callable or None
+    beta : trainable variable, expression, numpy array, call-able or None
         Initial value, expression or initializer for :math:`\\beta`. Must match
         the incoming shape, skipping all axes in `axes`. Set to ``None`` to fix
         it to 0.0 instead of learning it.
         See :func:`lasagne.utils.create_param` for more information.
-    gamma : trainable variable, expression, numpy array, callable or None
+    gamma : trainable variable, expression, numpy array, call-able or None
         Initial value, expression or initializer for :math:`\\gamma`. Must
         match the incoming shape, skipping all axes in `axes`. Set to ``None``
         to fix it to 1.0 instead of learning it.
         See :func:`lasagne.utils.create_param` for more information.
-    mean : Theano shared variable, expression, numpy array, or callable
+    mean : Theano shared variable, expression, numpy array, or call-able
         Initial value, expression or initializer for :math:`\\mu`. Must match
         the incoming shape, skipping all axes in `axes`.
         See :func:`lasagne.utils.create_param` for more information.
-    inv_std : Theano shared variable, expression, numpy array, or callable
+    inv_std : Theano shared variable, expression, numpy array, or call-able
         Initial value, expression or initializer for :math:`1 / \\sqrt{
         \\sigma^2 + \\epsilon}`. Must match the incoming shape, skipping all
         axes in `axes`.

@@ -130,14 +130,14 @@ def unique_labels(y, key_func=None, return_labels=False):
 
     Returns
     -------
-    (callable, tuple):
+    (call-able, tuple):
         function that transform any object into unique label index
         (optional) list of ordered labels.
     """
     if not isinstance(y, (list, tuple, np.ndarray)):
         raise ValueError("`y` must be iterable (list, tuple, or numpy.ndarray).")
     # ====== Get an unique order of y ====== #
-    if key_func is None or not callable(key_func):
+    if key_func is None or not hasattr(key_func, '__call__'):
         key_func = lambda _: str(_)
     sorted_labels = list(sorted(set(key_func(i) for i in y)))
     fast_index = {j: i for i, j in enumerate(sorted_labels)}

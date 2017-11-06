@@ -411,13 +411,12 @@ class UniqueHasher(object):
 class ArgController(object):
     """ Simple interface to argparse """
 
-    def __init__(self, version='1.00', print_parsed=True):
+    def __init__(self, print_parsed=True):
         super(ArgController, self).__init__()
         self.parser = None
         self._require_input = False
         self.arg_dict = {}
         self.name = []
-        self.version = str(version)
         self.print_parsed = print_parsed
 
     def _is_positional(self, name):
@@ -435,7 +434,7 @@ class ArgController(object):
             val = float(val)
             if int(val) == val:
                 val = int(val)
-        except:
+        except Exception as e:
             val = str(val)
         return val
 
@@ -452,14 +451,14 @@ class ArgController(object):
             description of the argument
         default: str
             default value for the argument
-        preprocess: callable
+        preprocess: call-able
             take in the parsed argument and preprocess it into necessary
             information
         """
         if self.parser is None:
             self.parser = argparse.ArgumentParser(
                 description='Automatic argument parser (yes,true > True; no,false > False)',
-                version=self.version, add_help=True)
+                add_help=True)
         # ====== NO default value ====== #
         if default is None:
             if self._is_positional(name):
@@ -482,7 +481,7 @@ class ArgController(object):
                 default=str(default), metavar='')
 
         # store preprocess dictionary
-        if not callable(preprocess):
+        if not hasattr(preprocess, '__call__'):
             preprocess = None
         self.arg_dict[name] = preprocess
         return self

@@ -435,7 +435,7 @@ class Dataset(object):
             the data
         indices: None, string, dict, list
             list of (name, (start, end)) for iterating over files in Feeder
-        batch_filter: callable
+        batch_filter: call-able
             must be a function has take a list of np.ndarray as first arguments
             ([X]) or ([X, y]), you can return None to ignore given batch, return the
             data for accepting the batch

@@ -413,9 +413,9 @@ def rnn_decorator(*args, **kwargs):
 
     In the decorator, you are allowed to provide the `name` (in string) of
     above variables, the process of looking for these name are following:
-     * If your `callable` is a method (i.e bound to an object), then the
+     * If your `call-able` is a method (i.e bound to an object), then the
      variables will be searched in the attributes of the object.
-     * If your `callable` is a function (i.e the first argument is not an
+     * If your `call-able` is a function (i.e the first argument is not an
      object but variable), then you have to specified all the information
      when you call the function.
 

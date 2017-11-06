@@ -81,10 +81,10 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     train: float (0.0 - 1.0)
         proportion used for training, validating and testing will be
         half of the remain.
-    cluster_func: None or callable
+    cluster_func: None or call-able
         organize data into cluster, then applying the same
         train_valid_test split strategy for each cluster.
-    idfunc: None or callable
+    idfunc: None or call-able
         a function transform the task list into unique identity for splitting,
         `idfunc` has to return comparable keys.
     inc_test: bool
@@ -102,13 +102,13 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     elif isinstance(x, np.ndarray):
         x = x.tolist()
     # ====== check idfunc ====== #
-    if not callable(idfunc):
+    if not hasattr(idfunc, '__call__'):
         idfunc = None
     # ====== clustering ====== #
     if cluster_func is None:
         cluster_func = lambda x: 8 # lucky number
-    if not callable(cluster_func):
-        raise ValueError("'cluster_func' must be callable or None.")
+    if not hasattr(cluster_func, '__call__'):
+        raise ValueError("'cluster_func' must be call-able or None.")
     clusters = defaultdict(list)
     for i in x:
         clusters[cluster_func(i)].append(i)
@@ -132,9 +132,9 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False,
 
     Parameters
     ----------
-    key: callable
+    key: call-able
         extract the key from each item in the list
-    count: callable, int
+    count: call-able, int
         extract the count from each item in the list
     normalize: bool
         if normalize, all the values are normalized from 0. to 1. (

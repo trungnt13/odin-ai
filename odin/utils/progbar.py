@@ -84,10 +84,10 @@ class Progbar(object):
         print updated report along with the progress bar for each update
     print_summary: bool
         print epoch summary after each epoch
-    count_func: callable
+    count_func: call-able
         a function takes the returned batch and return an integer for upating
         progress.
-    report_func: callable
+    report_func: call-able
         a function takes the returned batch and a collection of pair
         (key, value) for constructing the report.
     name: str or None
@@ -155,15 +155,15 @@ class Progbar(object):
                                "when `target` is an iterator with specific length.")
         #
         if count_func is not None:
-            if not callable(count_func):
-                raise ValueError("`count_func` must be callable or None.")
+            if not hasattr(count_func, '__call__'):
+                raise ValueError("`count_func` must be call-able or None.")
             self.__count_func = count_func
         else:
             self.__count_func = lambda x: len(x)
         #
         if report_func is not None:
-            if not callable(report_func):
-                raise ValueError("`report_func` must be callable or None.")
+            if not hasattr(report_func, '__call__'):
+                raise ValueError("`report_func` must be call-able or None.")
             self.__report_func = report_func
         else:
             self.__report_func = lambda x: None

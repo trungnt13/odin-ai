@@ -891,7 +891,7 @@ class Read3ColSAD(Extractor):
     ----------
     path: str
         path to folder contain all SAD files
-    name_converter: callable
+    name_converter: call-able
         convert the 'path' element in features dictionary (provided to
         `transform`) to name for search in parsed SAD dictionary.
     file_regex: str
@@ -944,8 +944,8 @@ class Read3ColSAD(Extractor):
         file_regex = re.compile(str(file_regex))
         # ====== name_converter ====== #
         if name_converter is not None:
-            if not callable(name_converter):
-                raise ValueError("`name_converter` must be callable.")
+            if not hasattr(name_converter, '__call__'):
+                raise ValueError("`name_converter` must be call-able.")
             name_converter = functionable(func=name_converter)
         self.name_converter = name_converter
         self.ref_key = as_tuple(ref_key, t=str)

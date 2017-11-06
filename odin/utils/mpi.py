@@ -110,16 +110,16 @@ def async(func=None, callback=None):
 
     Parameters
     ----------
-    func: callable
+    func: call-able
         main workload executed in this function and return the
         results.
-    callback: callable
+    callback: call-able
         a callback function triggered when the task finished
     """
     @decorator
     def _decorator_func_(func, *args, **kwargs):
         task = _async_task(func, *args, **kwargs)
-        if callable(callback):
+        if hasattr(callback, '__call__'):
             task._callback = callback
         return task
     # roles are not specified, given function directly
@@ -210,7 +210,7 @@ class MPI(object):
     ----------
     jobs: list, tuple, numpy.ndarray
         list of works.
-    func: callable
+    func: call-able
         take a `list of jobs` as input (i.e. map_func([job1, job2, ...])),
         the length of this list is determined by `buffer_size`
         NOTE: the argument of map_func is always a list.
@@ -249,8 +249,8 @@ class MPI(object):
         self._backend = backend
         self._ID = np.random.randint(0, 10e8, dtype=int)
         # ====== check map_func ====== #
-        if not callable(func):
-            raise Exception('"func" must be callable')
+        if not hasattr(func, '__call__'):
+            raise Exception('"func" must be call-able')
         self._func = func
         # ====== MPI parameters ====== #
         # never use all available CPU

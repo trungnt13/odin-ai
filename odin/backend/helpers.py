@@ -46,8 +46,9 @@ def set_training(is_training, graph=None, return_ops=False):
 def cond_training(train_fn, infer_fn,
                   train_dependencies=None, infer_dependencies=None,
                   name="ConditionalTraining"):
-    if not callable(train_fn) or not callable(infer_fn):
-        raise ValueError("`train_fn` and `infer_fn` must be callable.")
+    if not hasattr(train_fn, '__call__') or \
+    not hasattr(infer_fn, '__call__'):
+        raise ValueError("`train_fn` and `infer_fn` must be call-able.")
     with tf.variable_scope(name):
         if train_dependencies is not None:
             def _train_fn():
@@ -196,7 +197,7 @@ def set_value(x, value, return_ops=False, name='SetValue'):
 def _filter_string(criterion, x):
     if isinstance(criterion, string_types):
         return criterion == x
-    elif callable(criterion):
+    elif hasattr(criterion, '__call__'):
         return criterion(x)
     elif criterion is None:
         return True

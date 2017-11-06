@@ -5,7 +5,7 @@ matplotlib.use('Agg')
 
 from odin.utils import ArgController, stdio, one_hot
 args = ArgController(
-).add('model', 'model name, specified in `models_cifar.py` in `models` folder'
+).add('-model', 'model name, specified in models_cifar.py', 'test'
 ).parse()
 
 import os
@@ -25,14 +25,14 @@ stdio(LOG_PATH)
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-ds = F.load_cifar10()
+ds = F.CIFAR10.get_dataset()
 nb_labels = 10
 print(ds)
 X_train = ds['X_train'][:].astype('float32') / 255.
 y_train = one_hot(ds['y_train'][:], nb_classes=nb_labels)
 X_test = ds['X_test'][:].astype('float32') / 255.
 y_test = one_hot(ds['y_test'][:], nb_classes=nb_labels)
-
+exit()
 # ===========================================================================
 # Create network
 # ===========================================================================

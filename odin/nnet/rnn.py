@@ -65,8 +65,10 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
     if s0 is None and hasattr(nnops, name):
         s0 = getattr(nnops, name)
     elif s0 is not None:
-        if callable(s0) or K.is_variable(s0) or isinstance(s0, np.ndarray):
-            _ = (nb_layers, 1, hidden_size) if callable(s0) or isinstance(s0, np.ndarray) \
+        if hasattr(s0, '__call__') or K.is_variable(s0) or \
+        isinstance(s0, np.ndarray):
+            _ = (nb_layers, 1, hidden_size) \
+                if hasattr(s0, '__call__') or isinstance(s0, np.ndarray) \
                 else s0.get_shape()
             s0 = nnops.config.create_params(
                 s0, shape=_, name=name, roles=InitialState)
@@ -379,11 +381,11 @@ class CudnnRNN(NNOp):
         self.return_states = return_states
         self.dropout = dropout
 
-        if not callable(W_init):
-            raise ValueError('W_init must be callable with input is variable shape')
+        if not hasattr(W_init, '__call__'):
+            raise ValueError('W_init must be call-able with input is variable shape')
         self.W_init = W_init
-        if not callable(b_init):
-            raise ValueError('b_init must be callable with input is variable shape')
+        if not hasattr(b_init, '__call__'):
+            raise ValueError('b_init must be call-able with input is variable shape')
         self.b_init = b_init
 
     # ==================== abstract methods ==================== #

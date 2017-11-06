@@ -142,13 +142,13 @@ class Conv(NNOp):
         position in each channel. As a result, the `b` attribute will be a
         3D tensor.
 
-    W_init : Theano shared variable, expression, numpy array or callable
+    W_init : Theano shared variable, expression, numpy array or call-able
         Initial value, expression or initializer for the weights.
         These should be a 4D tensor with shape
         ``(num_filters, num_input_channels, filter_rows, filter_columns)``.
         See :func:`lasagne.utils.create_param` for more information.
 
-    b_init : Theano shared variable, expression, numpy array, callable or ``None``
+    b_init : Theano shared variable, expression, numpy array, call-able or ``None``
         Initial value, expression or initializer for the biases. If set to
         ``None``, the layer will have no biases. Otherwise, biases should be
         a 1D array with shape ``(num_filters,)`` if `untie_biases` is set to
@@ -156,7 +156,7 @@ class Conv(NNOp):
         ``(num_filters, output_rows, output_columns)`` instead.
         See :func:`lasagne.utils.create_param` for more information.
 
-    activation : callable or None
+    activation : call-able or None
         The activation that is applied to the layer activations. If None
         is provided, the layer will be linear.
 

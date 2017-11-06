@@ -71,7 +71,7 @@ class TransLoader(FeederRecipe):
             label_func = lambda x: x
         elif isinstance(label_dict, Mapping):
             label_func = lambda x: label_dict[x]
-        elif callable(label_dict):
+        elif hasattr(label_dict, '__call__'):
             label_func = label_dict
         else:
             raise ValueError('label_dict must be a dictionary, function or None.')
@@ -113,8 +113,8 @@ class Filter(FeederRecipe):
 
     def __init__(self, filter_func):
         super(Filter, self).__init__()
-        if not callable(filter_func):
-            raise ValueError('"filter_func" must be callable.')
+        if not hasattr(filter_func, '__call__'):
+            raise ValueError('"filter_func" must be call-able.')
         if not is_pickleable(filter_func):
             raise ValueError('"filter_func" must be pickle-able.')
         self.filter_func = filter_func
@@ -187,8 +187,8 @@ class Name2Trans(FeederRecipe):
         super(Name2Trans, self).__init__()
         if inspect.isfunction(converter_func):
             converter_func = functionable(converter_func)
-        if not callable(converter_func):
-            raise ValueError('"converter_func" must be callable.')
+        if not hasattr(converter_func, '__call__'):
+            raise ValueError('"converter_func" must be call-able.')
         if not is_pickleable(converter_func):
             raise ValueError('"converter_func" must be pickle-able.')
         self.converter_func = converter_func

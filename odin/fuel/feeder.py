@@ -299,7 +299,7 @@ class Feeder(MutableData):
     dtype: string or numpy.dtype
         all data return from this feeder are converted to given dtype
         if None, original dtype is kept
-    batch_filter: callable
+    batch_filter: call-able
         must be a function has take a list of np.ndarray as first arguments
         ([X]) or ([X, y]), you can return None to ignore given batch, return the
         data for accepting the batch
@@ -378,7 +378,7 @@ class Feeder(MutableData):
         # ====== batch mode ====== #
         if batch_filter is None:
             batch_filter = _dummy_batch_filter
-        elif not callable(batch_filter):
+        elif not hasattr(batch_filter, '__call__'):
             raise ValueError('batch_filter must be a function has 1 or 2 '
                              'parameters (X) or (X, y).')
         # check if batch_filter Picklable
@@ -432,7 +432,7 @@ class Feeder(MutableData):
                   seed=-1, start=None, end=None, shuffle_level=None):
         # ====== check batch_filter ====== #
         if batch_filter is not None:
-            if not callable(batch_filter):
+            if not hasattr(batch_filter, '__call__'):
                 raise ValueError(
                     'batch_filter must be a function has 1 arguments (X)')
             self._batch_filter = batch_filter

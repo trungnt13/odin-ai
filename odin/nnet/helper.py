@@ -20,7 +20,7 @@ def _shrink_kwargs(op, kwargs):
         op = op._apply
     elif isinstance(op, functionable): # functionable
         op = op.function
-    elif not isinstance(op, types.FunctionType): # callable object
+    elif not isinstance(op, types.FunctionType): # call-able object
         op = op.__call__
     spec = inspect.getargspec(op)
     keywords = {i: j for i, j in kwargs.items()
@@ -35,8 +35,8 @@ class HelperOps(NNOp):
 
     Parameters
     ----------
-    ops: NNOp or callable
-        list or single NNOp, or callable
+    ops: NNOp or call-able
+        list or single NNOp, or call-able
 
     """
 
@@ -44,7 +44,8 @@ class HelperOps(NNOp):
         super(HelperOps, self).__init__(**kwargs)
         self.ops = [functionable(i)
                     if isinstance(i, types.FunctionType) else i
-                    for i in as_tuple(ops) if callable(i)]
+                    for i in as_tuple(ops)
+                    if hasattr(i, '__call__')]
 
     @property
     def variables(self):
@@ -63,7 +64,7 @@ class Merge(HelperOps):
         list of inputs operator, we expect one input for each NNOp,
         however, if only one 1 input is given, we apply all NNOp on the
         same input.
-    merge_function: callable
+    merge_function: call-able
         function that convert a list of variables into 1 variable
     """
 
@@ -76,7 +77,7 @@ class Merge(HelperOps):
         # ====== iteratively appply all ops ====== #
         results = [op(x, **_shrink_kwargs(op, kwargs))
                    for x, op in zip(X, self.ops)]
-        if callable(self.merge_function):
+        if hasattr(self.merge_function, '__call__'):
             return self.merge_function(results)
         else:
             return results

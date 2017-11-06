@@ -137,7 +137,8 @@ def get_args_scope():
 # Helper
 # ===========================================================================
 def _check_shape(s):
-    if callable(s): return functionable(s)
+    if hasattr(s, '__call__'):
+        return functionable(s)
     if is_number(s) or s is None:
         s = (s,)
     elif isinstance(s, np.ndarray):
@@ -146,7 +147,8 @@ def _check_shape(s):
 
 
 def _check_dtype(dtype):
-    if callable(dtype): return functionable(dtype)
+    if hasattr(dtype, '__call__'):
+        return functionable(dtype)
     # ====== check dtype ====== #
     if dtype is None:
         dtype = K.floatX
@@ -179,13 +181,13 @@ class VariableDescriptor(object):
 
     Parameters
     ----------
-    shape: tuple, list, TensorVariable, callable
+    shape: tuple, list, TensorVariable, call-able
         if TensorVariable is given, shape and dtype will be taken from
-        given variable. if a callable object is given, the object must
+        given variable. if a call-able object is given, the object must
         return shape information when called without any argument.
-    dtype: str, numpy.dtype, callable
+    dtype: str, numpy.dtype, call-able
         dtype of input variable
-    name: str, None, callable
+    name: str, None, call-able
         specific name for the variable
 
     Note
@@ -256,22 +258,24 @@ class VariableDescriptor(object):
 
     @property
     def shape(self):
-        return self._shape() if callable(self._shape) else self._shape
+        return self._shape() if hasattr(self._shape, '__call__') \
+            else self._shape
 
     @property
     def shape_ref(self):
-        """ ref is callable reference to the shape information of
+        """ ref is call-able reference to the shape information of
         this descriptor, it will return the actual shape if you
         call it. """
         return self._shape_ref
 
     @property
     def dtype(self):
-        return self._dtype() if callable(self._dtype) else self._dtype
+        return self._dtype() if hasattr(self._dtype, '__call__') \
+            else self._dtype
 
     @property
     def dtype_ref(self):
-        """ ref is callable reference to the dtype information of
+        """ ref is call-able reference to the dtype information of
         this descriptor, it will return the actual dtype if you
         call it. """
         return self._dtype_ref
@@ -534,7 +538,7 @@ class NNOp(object):
             return add_role(var, roles)
         #####################################
         # 0. initializing function.
-        if callable(initializer):
+        if hasattr(initializer, '__call__'):
             var = initializer(shape)
         # is a scalar
         elif is_number(initializer):
@@ -575,7 +579,7 @@ class NNOp(object):
         else:
             raise RuntimeError("cannot initialize parameters: 'spec' is not "
                                "a numpy array, a Theano expression, or a "
-                               "callable")
+                               "call-able")
         # ====== assign annotations ====== #
         return add_role(var, roles)
 
@@ -862,7 +866,7 @@ class ParametricRectifier(NNOp):
     ----------
     incoming : a :class:`Layer` instance or a tuple
         The layer feeding into this layer, or the expected input shape
-    alpha : Theano shared variable, expression, numpy array or callable
+    alpha : Theano shared variable, expression, numpy array or call-able
         Initial value, expression or initializer for the alpha values. The
         shape must match the incoming shape, skipping those axes the alpha
         values are shared over (see the example below).

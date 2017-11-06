@@ -368,11 +368,11 @@ def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
     ----------
     S : np.ndarray
         input power
-    ref : scalar or callable
+    ref : scalar or call-able
         If scalar, the amplitude `abs(S)` is scaled relative to `ref`:
         `10 * log10(S / ref)`.
         Zeros in the output correspond to positions where `S == ref`.
-        If callable, the reference value is computed as `ref(S)`.
+        If call-able, the reference value is computed as `ref(S)`.
     amin : float > 0 [scalar]
         minimum threshold for `abs(S)` and `ref`
     top_db : float >= 0 [scalar]
@@ -387,7 +387,7 @@ def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
     if amin <= 0:
         raise ValueError('amin must be strictly positive')
     magnitude = np.abs(S)
-    if callable(ref):
+    if hasattr(ref, '__call__'):
         # User supplied a function to calculate reference power
         ref_value = ref(magnitude)
     else:
@@ -538,7 +538,7 @@ def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
 def get_window(window, frame_length, periodic=True):
     ''' Cached version of scipy.signal.get_window '''
     # Funtion
-    if six.callable(window):
+    if hasattr(window, '__call__'):
         return window(frame_length)
     # Window name or scalar
     elif (isinstance(window, (six.string_types, tuple)) or
@@ -870,7 +870,7 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
         in the beginning or in the end of the sequence
     value: object
         padding object
-    transformer: callable
+    transformer: call-able
         a function transform each element in sequence into desire value
         (e.g. a dictionary)
 
@@ -887,8 +887,8 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
                          % padding)
     if transformer is None:
         transformer = lambda x: x
-    if not callable(transformer):
-        raise ValueError('transformer must be callable, but given value is %s' %
+    if not hasattr(transformer, '__call__'):
+        raise ValueError('transformer must be call-able, but given value is %s' %
                          type(transformer))
     # ====== processing ====== #
     if maxlen is None:

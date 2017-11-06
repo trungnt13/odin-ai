@@ -60,7 +60,7 @@ class Task(object):
     """
     Parameters
     ----------
-    func: callable
+    func: call-able
         function will be executed for each iteration
     data: single or list of odin.fuel.Data, numpy.ndarray
         iterate over all these data and execute function on
@@ -143,7 +143,7 @@ class Task(object):
         if isinstance(func, K.Function):
             self._output_info = [(o.name, o.get_shape().as_list())
                                  for o in self._func.outputs]
-        elif callable(func):
+        elif hasattr(func, '__call__'):
             self._output_info = [] # No info (normal function)
         else:
             raise ValueError("No support for function type: %s" %

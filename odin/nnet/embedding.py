@@ -17,7 +17,7 @@ class Embedding(NNOp):
         number of dimension of the vector to represent each entity
         in the dictionary.
 
-    W_inti : trainable variable, expression, numpy array or callable
+    W_inti : trainable variable, expression, numpy array or call-able
         Initial value (or specification) for initialize weights matrix
         which has size (input_szie, output_size)
     """

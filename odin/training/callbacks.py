@@ -349,8 +349,8 @@ class EarlyStop(Callback):
 
         if get_value is None:
             get_value = lambda x: x
-        elif not callable(get_value):
-            raise ValueError('get_value must callable')
+        elif not hasattr(get_value, '__call__'):
+            raise ValueError('get_value must call-able')
         self._get_value = functionable(get_value)
         # ====== history ====== #
         self._history = []

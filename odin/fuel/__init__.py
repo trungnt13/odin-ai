@@ -61,6 +61,10 @@ class DataLoader(object):
         return os.path.join(DataLoader.BASE_DIR, clazz.get_name(ext))
 
     @classmethod
+    def load(clazz, ext='', override=False):
+        return clazz.get_dataset(clazz=clazz, ext=ext, override=override)
+
+    @classmethod
     def get_dataset(clazz, ext='', override=False):
         # ====== all path ====== #
         name = clazz.get_name(ext) + '.zip'

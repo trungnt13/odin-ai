@@ -189,7 +189,7 @@ class Extractor(BaseEstimator, TransformerMixin):
 def _match_feat_name(feat_type, name):
     if feat_type is None:
         return True
-    elif callable(feat_type):
+    elif hasattr(feat_type, '__call__'):
         return bool(feat_type(name))
     return name in feat_type
 
@@ -211,8 +211,9 @@ class NameConverter(Extractor):
         super(NameConverter, self).__init__()
         # ====== check converter ====== #
         from odin.utils.decorators import functionable
-        if not callable(converter) and not isinstance(converter, Mapping):
-            raise ValueError("`converter` must be callable.")
+        if not hasattr(converter, '__call__') and \
+        not isinstance(converter, Mapping):
+            raise ValueError("`converter` must be call-able.")
         # converter can be function or dictionary
         if inspect.isfunction(converter):
             self.converter = functionable(converter)
@@ -228,8 +229,8 @@ class NameConverter(Extractor):
                 name = X.get(key, None)
                 if is_string(name):
                     break
-            name = self.converter(name) if callable(self.converter) else\
-                self.converter[name]
+            name = self.converter(name) if hasattr(self.converter, '__call__') \
+                else self.converter[name]
             X['name'] = str(name)
         return X
 
@@ -302,9 +303,9 @@ class EqualizeShape0(Extractor):
         super(EqualizeShape0, self).__init__()
         if feat_type is None:
             pass
-        elif callable(feat_type):
+        elif hasattr(feat_type, '__call__'):
             if not is_pickleable(feat_type):
-                raise ValueError("`feat_type` must be a pickle-able callable.")
+                raise ValueError("`feat_type` must be a pickle-able call-able.")
         else:
             feat_type = tuple([f.lower() for f in as_tuple(feat_type, t=str)])
         self.feat_type = feat_type

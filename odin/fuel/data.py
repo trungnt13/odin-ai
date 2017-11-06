@@ -1662,8 +1662,8 @@ class DataMerge(MutableData):
         if len(self._data) == 0:
             raise ValueError('Cannot find any instance of Data from given argument.')
 
-        if not callable(merge_func):
-            raise ValueError('Merge operator must be callable and accept at '
+        if not hasattr(merge_func, '__call__'):
+            raise ValueError('Merge operator must be call-able and accept at '
                              'least one argument.')
         self._merge_func = merge_func
 
