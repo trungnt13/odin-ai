@@ -15,26 +15,7 @@ from odin.utils.decorators import functionable
 from odin.utils import (is_lambda, get_module_from_path,
                         is_primitives, ctext)
 
-from .base import (nnop_scope, get_all_nnops, VariableDescriptor)
-
-
-# ===========================================================================
-# Helpers
-# ===========================================================================
-def _check_accepted_inputs(x, backup_name):
-    if K.is_tensor(x):
-        return VariableDescriptor(shape=x, name=x.name.split(':')[0])
-    elif isinstance(x, VariableDescriptor):
-        if x._name is None:
-            x._name = backup_name
-        return x
-    elif is_primitives(x):
-        return x
-    else:
-        raise ValueError("The input argument for ModelDescriptor can be: "
-            "`Tensor`, `odin.nnet.VariableDescriptor`, and primitive types"
-            " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
-            " But the given type is: %s" % type(x))
+from .base import (nnop_scope, get_all_nnops, VariableDesc)
 
 
 # ===========================================================================
@@ -81,8 +62,8 @@ class ModelDescriptor(object):
     ... # First time initialize the input description
     ...
     >>> K.set_training(True)
-    >>> y_train = feedforward_vae(inputs=[N.VariableDescriptor(shape=(8, 8)),
-    ...                                   N.VariableDescriptor(shape=(12, 12))],
+    >>> y_train = feedforward_vae(inputs=[N.VariableDesc(shape=(8, 8)),
+    ...                                   N.VariableDesc(shape=(12, 12))],
     ...                           check=True)
     ...
     >>> K.set_training(False); y_score = feedforward_vae()
@@ -100,32 +81,27 @@ class ModelDescriptor(object):
                              "method or lambda function.")
         self._func = func
         self._input_desc = {}
-        self._opID = [0] # store as reference value
-        # ====== cached tensor variables ====== #
-        self._last_outputs = None
-        self._f_outputs = None
+        # mapping from input kwargs -> outputs
+        self._last_outputs = {}
 
     @property
     def input_shape(self):
         return {i: j.shape for i, j in self._input_desc.items()
-                if isinstance(j, VariableDescriptor)}
+                if isinstance(j, VariableDesc)}
 
     @property
     def input_shape_ref(self):
         return {i: j.shape_ref for i, j in self._input_desc.items()
-                if isinstance(j, VariableDescriptor)}
+                if isinstance(j, VariableDesc)}
 
     # ==================== pickle ==================== #
     def __getstate__(self):
-        return [functionable(self._func), self._input_desc,
-                self._opID, self.nnops]
+        return [functionable(self._func), self._input_desc, self.nnops]
 
     def __setstate__(self, states):
-        (self._func, self._input_desc, self._opID,
-            nnops) = states
+        self._func, self._input_desc, nnops = states
         self._func = self._func.function
-        self._last_outputs = None
-        self._f_outputs = None
+        self._last_outputs = {}
 
     # ==================== properties ==================== #
     @property
@@ -135,13 +111,6 @@ class ModelDescriptor(object):
     @property
     def name(self):
         return self._func.__name__
-
-    @property
-    def opID(self):
-        """ Return the number of Op have been created in this model
-        (start from 0)
-        """
-        return self._opID[0]
 
     @property
     def variables(self):
@@ -169,28 +138,12 @@ class ModelDescriptor(object):
         plh = OrderedDict()
         for i in args:
             j = self._input_desc[i]
-            if isinstance(j, VariableDescriptor):
+            if isinstance(j, VariableDesc):
                 plh[i] = j.placeholder
         for i, j in self._input_desc.items():
-            if i not in plh and isinstance(j, VariableDescriptor):
+            if i not in plh and isinstance(j, VariableDesc):
                 plh[i] = j.placeholder
         return plh
-
-    @property
-    def last_outputs(self):
-        return self._last_outputs
-
-    @property
-    def f_outputs(self):
-        if self._f_outputs is None:
-            if self._last_outputs is None and len(self._input_desc) == 0:
-                raise ValueError("No cache value of outputs found, you must "
-                    "call this ModelDescriptor with inputs descriptor first.")
-            outputs = self._last_outputs
-            # get number of actual inputs need for prediction
-            self._f_outputs = K.function(
-                K.ComputationGraph(outputs).placeholders, outputs)
-        return self._f_outputs
 
     @property
     def nnops(self):
@@ -219,19 +172,39 @@ class ModelDescriptor(object):
             input_desc[key] = val
         input_desc.update(kwargs)
         # ====== get inputs variable====== #
-        model_inputs = {i: j.placeholder if isinstance(j, VariableDescriptor)
-                        else j
-                        for i, j in input_desc.items()}
+        model_inputs = OrderedDict() # map: argument name -> placeholder
+        model_data = OrderedDict() # map: placeholder -> numpy array
+        placeholders = list(self.placeholders.items())
+        for idx, (k, v) in enumerate(input_desc.items()):
+            if isinstance(v, VariableDesc):
+                v = v.placeholder
+                v_dat = None
+            elif K.is_placeholder(v):
+                v_dat = None
+            elif isinstance(v, np.ndarray):
+                v_dat = v
+                v = placeholders[idx][1]
+            model_inputs[k] = v
+            # data for placeholder
+            if v_dat is not None:
+                model_data[v] = v_dat
+        if len(model_data) > 0 and len(model_data) != len(model_inputs):
+            raise RuntimeError("This model requires %d inputs with shapes: %s, "
+                               "but only given %d numpy array with shapes: %s" %
+                               (len(model_inputs),
+                                '; '.join([v.get_shape() for v in model_inputs.values()]),
+                                len(model_data),
+                                '; '.join([v.shape for v in model_data])))
         # ====== call the function ====== #
         # finally call the function to get outputs
-        _ = [0]
-        with nnop_scope(self.name, id_start=_):
+        with nnop_scope(self.name, id_start=0):
             outputs = self._func(**model_inputs)
-        if _[0] > self._opID[0]:
-            self._opID[0] = _[0]
         # ====== check outputs values ====== #
         self._last_outputs = outputs
         self._f_outputs = None # reset last function
+        # ====== feed data if available ====== #
+        if len(model_data) > 0:
+            return K.eval(outputs, feed_dict=model_data)
         return outputs
 
     def __getattr__(self, name):

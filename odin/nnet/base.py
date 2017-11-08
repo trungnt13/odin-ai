@@ -31,7 +31,7 @@ import tensorflow as tf
 # ===========================================================================
 def get_all_nnops(model_scope=None, op_type=None):
     """ Return a dictionary of (name, nnops) for all created NNOp """
-    allops = NNOp._ALL_NNOPS.values()
+    allops = list(NNOp._ALL_NNOPS.values())
     if model_scope is not None:
         if not is_string(model_scope): model_scope = model_scope.name
         allops = [o for o in allops if o.name[:len(model_scope)] == model_scope]
@@ -51,6 +51,9 @@ def _assign_new_nnop(nnop):
                          ", but the given object has type: %s" %
                          str(type(nnop)))
     name = nnop.name
+    if not nnop.is_initialized:
+        raise RuntimeError("Given NNOp with name: '%s' has not been initialized"
+                           % name)
     if name in NNOp._ALL_NNOPS:
         raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
                            "already existed." %
@@ -156,7 +159,7 @@ def _check_dtype(dtype):
         dtype = K.floatX
     elif isinstance(dtype, np.dtype) or is_string(dtype):
         dtype = str(dtype)
-    elif isinstance(dtype, VariableDescriptor):
+    elif isinstance(dtype, VariableDesc):
         dtype = DtypeRef(dtype)
     elif isinstance(dtype, tf.DType):
         dtype = dtype.base_dtype.name
@@ -176,8 +179,8 @@ def _shape_compare(shape1, shape2):
 # ===========================================================================
 # Input descriptor
 # ===========================================================================
-class VariableDescriptor(object):
-    """ VariableDescriptor
+class VariableDesc(object):
+    """ VariableDesc
     Store all the necessary information to create placeholder as input
     to any ComputationalGraph.
 
@@ -198,7 +201,7 @@ class VariableDescriptor(object):
     """
 
     def __init__(self, shape, dtype=None, name=None):
-        super(VariableDescriptor, self).__init__()
+        super(VariableDesc, self).__init__()
         # ====== placeholder ====== #
         self.__placeholder = None
         self._name = name if name is None else str(name)
@@ -210,10 +213,13 @@ class VariableDescriptor(object):
             self._shape = shape.get_shape().as_list()
             # store the placeholder so don't have to create it again
             self.__placeholder = shape
-        # input the VariableDescriptor directly
-        elif isinstance(shape, VariableDescriptor):
+        # input the VariableDesc directly
+        elif isinstance(shape, VariableDesc):
             self._shape = ShapeRef(shape)
-            self._dtype = DtypeRef(shape) if dtype is None else _check_dtype(dtype)
+            self._dtype = DtypeRef(shape) if dtype is None \
+                else _check_dtype(dtype)
+            if shape.__placeholder is not None:
+                self.__placeholder = shape.__placeholder
         # input regular information flow
         else:
             self._shape = _check_shape(shape)
@@ -241,7 +247,7 @@ class VariableDescriptor(object):
         _check_dtype(plh.dtype) == self.dtype:
             self.__placeholder = plh
         else:
-            raise ValueError("This VariableDescriptor require input with shape=%s,"
+            raise ValueError("This VariableDesc require input with shape=%s,"
                              "and dtype=%s, but given a placholder with shape=%s, "
                              "dtype=%s." % (str(self.shape), self.dtype,
                             str(plh.get_shape().as_list()), _check_dtype(plh.dtype)))
@@ -294,11 +300,11 @@ class VariableDescriptor(object):
     def __cmp__(self, other):
         # ====== compare to a TensorVariable ====== #
         if K.is_tensor(other):
-            other = VariableDescriptor(
+            other = VariableDesc(
                 shape=other.get_shape().as_list(),
                 dtype=_check_dtype(other.dtype))
-        # ====== compare to a VariableDescriptor ====== #
-        if isinstance(other, VariableDescriptor):
+        # ====== compare to a VariableDesc ====== #
+        if isinstance(other, VariableDesc):
             if _shape_compare(self.shape, other.shape) \
             and self.dtype == other.dtype:
                 return 0
@@ -338,11 +344,18 @@ class _NNOp_Meta(ABCMeta):
                 default_args.update(current_scope[n])
         # ====== update user specified args and kwargs ====== #
         # update the new arguments into default arguments
-        new_args = OrderedDict([(name, args[i]) if i < len(args) else
-                                (name, default)
-                                for i, (name, default) in enumerate(default_args.items())])
-        new_args.update(kwargs)
-        return super(_NNOp_Meta, clazz).__call__(*[], **new_args)
+        new_kwargs = OrderedDict([
+            (name, args[i]) if i < len(args) else (name, default)
+            for i, (name, default) in enumerate(default_args.items())])
+        new_kwargs.update(kwargs)
+        # ====== create new instance and __init__ if necessary ====== #
+        op = clazz.__new__(clazz, *[], **new_kwargs)
+        if not hasattr(op, '_name'):
+            raise ValueError("NNOp must be given a name when initialized.")
+        # check if op already initialized
+        if op.name not in NNOp._ALL_NNOPS:
+            clazz.__init__(op, *[], **new_kwargs)
+        return op
 
 
 @add_metaclass(_NNOp_Meta)
@@ -428,34 +441,20 @@ class NNOp(object):
         # ====== allocate new Op ====== #
         new_op = super(NNOp, clazz).__new__(clazz)
         new_op._name = name
+        new_op._save_states = {'_name': name}
         return new_op
 
     def __init__(self, **kwargs):
-        # ====== create default NNOp name ====== #
-        if not hasattr(self, '_name'):
-            raise ValueError("NNOp must be given a name when initialized")
-        self._save_states = {'_name': self._name}
-        # list of VariableDescriptor
-        self._input_desc = []
+        # mapping: name -> VariableDesc, or Primitives
+        self._input_desc = {}
+        # mapping: ','.join(id(tensor)) -> output
+        self._cache_outputs = {}
         self._transpose_ops = None
         self._is_initialized = False
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
         self._variable_info = OrderedDict()
         # special flags to detect if cPickle called with protocol >= 2
         self._new_args_called = False
-
-    def _check_input_desc(self, inputs):
-        inputs = [VariableDescriptor(shape=i) for i in as_tuple(inputs)]
-        # first time initialized the input description
-        if len(self._input_desc) == 0:
-            self._input_desc = inputs
-            for i, j in enumerate(self._input_desc):
-                j._name = '%s_inp%.2d' % (self.name, i)
-        else:
-            inputs = [j if i is None else i
-                      for i, j in zip(inputs, self._input_desc)]
-            inputs = inputs + self._input_desc[len(inputs):]
-        return [i.placeholder for i in inputs]
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -471,6 +470,7 @@ class NNOp(object):
         self._save_states = states
         for key, val in self._save_states.items():
             setattr(self, key, val)
+        self._cache_outputs = {}
         # ====== check exist NNOp ====== #
         if self.name not in NNOp._ALL_NNOPS:
             _assign_new_nnop(self)
@@ -628,35 +628,38 @@ class NNOp(object):
     def placeholders(self):
         """ Create list of placeholder to represent inputs of this NNOp
         """
-        x = [i.placeholder for i in self._input_desc]
+        x = [i.placeholder for i in self._input_desc.values()
+             if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
     @property
-    def nb_input(self):
-        return len(self._input_desc)
+    def set_placeholder(self, name, plh):
+        raise NotImplementedError
 
     @property
     def input_shape(self):
-        x = [i.shape for i in self._input_desc]
+        x = [i.shape for i in self._input_desc.values()
+             if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
     @property
     def input_shape_ref(self):
-        x = [i.shape_ref for i in self._input_desc]
+        x = [i.shape_ref for i in self._input_desc
+             if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
         # check hasattr to prevent recursive loop at the beginning before
         # __init__ is called
-        if hasattr(self, '_save_states') and name != '_save_states':
-            # otherwise, only save primitive types
-            if isinstance(value, _PRIMITIVE_TYPES):
-                self._save_states[name] = value
+        if hasattr(self, '_save_states'):
+            if name not in ('_save_states', '_cache_outputs'):
+                if is_primitives(value, inc_ndarray=True):
+                    self._save_states[name] = value
         return super(NNOp, self).__setattr__(name, value)
 
     # ==================== abstract method ==================== #
-    def _initialize(self, **kwargs):
+    def _initialize(self):
         """ This function is only called once, for the first time you
         apply this Ops
         """
@@ -670,35 +673,105 @@ class NNOp(object):
         raise NotImplementedError
 
     # ==================== interaction method ==================== #
-    def apply(self, X, **kwargs):
+    def _check_input_arg(self, x, name):
+        """Validate input variable
+        Return
+        ------
+        tuple of (VariableDesc, raw_data)
+        VariableDesc: can be None if only given a primitive data types
+        raw_data: can be None if only give VariableDesc
+        """
+        desc = None
+        data = None
+        # if given tensor, use the new tensor
+        if K.is_tensor(x) or isinstance(x, VariableDesc):
+            desc = x if isinstance(x, VariableDesc) else\
+                VariableDesc(shape=x, name=x.name.split(':')[0])
+            if name not in self._input_desc:
+                self._input_desc[name] = desc
+            elif desc != self._input_desc[name]:
+                raise ValueError("Found variable with description: '%s', given "
+                    "variable with description: '%s'" %
+                    (str(self._input_desc[name]), str(desc)))
+        # if given data, use old tensor with new data
+        elif isinstance(x, np.ndarray):
+            if name not in self._input_desc:
+                desc = VariableDesc(shape=x.shape, dtype=x.dtype, name=name)
+                self._input_desc[name] = desc
+            else:
+                desc = self._input_desc[name]
+                if desc.shape != x.shape or \
+                np.dtype(desc.dtype) != np.dtype(x.dtype):
+                    raise ValueError("NNOp has input description: '%s', given "
+                                     "ndarray: shape=%s dtype=%s" %
+                                     (str(desc), x.shape, x.dtype))
+            data = x
+        # primitive, keep it simple
+        elif is_primitives(x, inc_ndarray=False):
+            self._input_desc[name] = x
+            desc = x
+        # Uknown input, ERROR
+        else:
+            raise ValueError("The input argument for ModelDescriptor can be: "
+                "`Tensor`, `odin.nnet.VariableDesc`, and primitive types"
+                " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
+                " But the given type is: %s" % type(x))
+        return (desc, data)
+
+    def apply(self, *args, **kwargs):
         # self.name can contain ModelDescriptor varable scope, hence,
         # remove the scope here
-        name = self.name
-        if '/' in name:
-            name = name.split('/')[-1]
+        name = self.name.split('/')[-1]
         with tf.variable_scope(name, reuse=self.is_initialized):
-            # ====== initialize first ====== #
-            # only select necessary arguments
-            argspec = inspect.getargspec(self._initialize)
-            keywords = {}
-            # kwargs must be specified in args, or the _initialize
-            # must accept **kwaobject, class_or_type_or_tuplergs
-            for i, j in kwargs.items():
-                if argspec.keywords is not None or i in argspec.args:
-                    keywords[i] = j
             # initialize the operator (call the initilazation process)
-            X = self._check_input_desc(X)
+            spec = inspect.getargspec(self._apply)
+            kwargs = {name: self._check_input_arg(j, name=name)
+                      for name, j in kwargs.items()}
+            kwargs.update({name: self._check_input_arg(j, name=name)
+                           for name, j in zip(spec.args[1:], args)})
+            # add missing slot from _input_desc
+            for name, var in self._input_desc.items():
+                if name not in kwargs:
+                    kwargs[name] = (var, None)
+            # ====== get op inputs and data ====== #
+            op_inputs = {}
+            op_data = {}
+            footprint = ''
+            for name, (desc, dat) in sorted(kwargs.items(),
+                                            key=lambda x:x[0]):
+                footprint += name + ':'
+                if isinstance(desc, VariableDesc):
+                    plh = desc.placeholder
+                    op_inputs[name] = plh
+                    if dat is not None:
+                        op_data[plh] = dat
+                    footprint += plh.__class__.__name__ + '_' + str(id(plh))
+                else: # primitive types
+                    op_inputs[name] = desc
+                    footprint += type(desc).__name__ + '_' + str(desc)
+                footprint += '|'
+            # ====== initialize first ====== #
             if not self._is_initialized:
-                self._initialize(**keywords)
+                self._initialize()
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
                 _assign_new_nnop(self)
             # ====== calculate and return outputs ====== #
-            rets = self._apply(X[0] if len(X) == 1 else X, **kwargs)
-            return rets
+            # footprint created by concat argument name and its
+            # object python ID (primitive arugment using str)
+            if footprint in self._cache_outputs:
+                y = self._cache_outputs[footprint]
+            else:
+                y = self._apply(**op_inputs)
+                # record cahced return
+                self._cache_outputs[footprint] = y
+            # check if op_data given
+            if len(op_data) > 0:
+                return K.eval(y, feed_dict=op_data)
+            return y
 
-    def __call__(self, X, **kwargs):
-        return self.apply(X, **kwargs)
+    def __call__(self, *args, **kwargs):
+        return self.apply(*args, **kwargs)
 
     def __str__(self):
         # ====== get all attrs ====== #
@@ -733,7 +806,7 @@ class NNOp(object):
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.rand.constant, NNOp, VariableDescriptor, type)
+                    K.rand.constant, NNOp, VariableDesc, type)
 
 
 # ===========================================================================

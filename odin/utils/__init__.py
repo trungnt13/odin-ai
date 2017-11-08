@@ -116,11 +116,13 @@ def is_primitives(x, inc_ndarray=True):
     inc_ndarray: bool
         if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
     """
+    # complex list or Mapping
     if isinstance(x, (tuple, list)):
         return all(is_primitives(i) for i in x)
     elif isinstance(x, Mapping):
         return all(is_primitives(i) and is_primitives(j)
                    for i, j in x.items())
+    # check for number, string, bool, and numpy array
     if is_number(x) or is_string(x) or is_bool(x) or x is None or \
     (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
         return True
