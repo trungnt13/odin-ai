@@ -261,8 +261,9 @@ class VariableDesc(object):
 
     @property
     def shape(self):
-        return self._shape() if hasattr(self._shape, '__call__') \
+        s = self._shape() if hasattr(self._shape, '__call__') \
             else self._shape
+        return tuple(s)
 
     @property
     def dtype(self):
@@ -298,6 +299,9 @@ class VariableDesc(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
+_NO_OUTPUT_CACHED_ = '__no_output_cached__'
+
+
 class _NNOp_Meta(ABCMeta):
     """ arguments scope for the NNOp
 
@@ -308,7 +312,8 @@ class _NNOp_Meta(ABCMeta):
     """
     def __new__(mcs, name, bases, class_dict):
         private = {'T', 'apply', '__call__', '__getstate__', '__setstate__',
-                   '__getnewargs__', 'get', 'get_variable', '__setattr__'}
+                   '__getnewargs__', 'get', 'get_variable', '__setattr__',
+                   'input_shape', 'placeholders', 'last_output'}
         if name != 'NNOp':
             for attr in private:
                 if attr in class_dict:
@@ -437,13 +442,14 @@ class NNOp(object):
         # this store spontanious args and kwargs feeded to apply()
         new_op._current_args = ()
         new_op._current_kwargs = {}
+        new_op._last_output = _NO_OUTPUT_CACHED_
         # all save-able attributes of NNOp store here
         new_op._save_states = {'_name': name}
         return new_op
 
     def __init__(self, **kwargs):
         # mapping: name -> VariableDesc, or Primitives
-        self._input_desc = {}
+        self._input_desc = OrderedDict()
         # mapping: ','.join(id(tensor)) -> output
         self._cache_outputs = {}
         self._transpose_ops = None
@@ -463,10 +469,13 @@ class NNOp(object):
         return self._save_states
 
     def __setstate__(self, states):
+        # ====== default attribute ====== #
+        self._last_output = _NO_OUTPUT_CACHED_
         self._current_args = ()
         self._current_kwargs = {}
         self._cache_outputs = {}
         self._new_args_called = False
+        # ====== save states ====== #
         self._save_states = states
         for key, val in self._save_states.items():
             setattr(self, key, val)
@@ -673,6 +682,14 @@ class NNOp(object):
         return self._input_desc[name].set_placeholder(plh)
 
     @property
+    def last_output(self):
+        if is_string(self._last_output) and \
+        self._last_output == _NO_OUTPUT_CACHED_:
+            raise RuntimeError("This NNOp has not been initialized, and contains "
+                "no information about outputs.")
+        return self._last_output
+
+    @property
     def input_shape(self):
         x = [i.shape for i in self._input_desc.values()
              if isinstance(i, VariableDesc)]
@@ -684,7 +701,8 @@ class NNOp(object):
         # __init__ is called
         if hasattr(self, '_save_states'):
             if name not in ('_save_states', '_cache_outputs',
-                            '_current_args', '_current_kwargs'):
+                            '_current_args', '_current_kwargs',
+                            '_last_output'):
                 if is_primitives(value, inc_ndarray=True,
                                  exception_types=[NNOp, FuncDesc]) or \
                 (hasattr(value, '__call__') and is_pickleable(value)):
@@ -745,31 +763,33 @@ class NNOp(object):
             desc = x
         # Uknown input, ERROR
         else:
-            raise ValueError("The input argument for ModelDescriptor can be: "
+            raise ValueError("The input argument for Model can be: "
                 "`Tensor`, `odin.nnet.VariableDesc`, and primitive types"
                 " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
                 " But the given type is: %s" % type(x))
         return (desc, data)
 
     def apply(self, *args, **kwargs):
-        # self.name can contain ModelDescriptor varable scope, hence,
+        # self.name can contain Model varable scope, hence,
         # remove the scope here
-        name = self.name.split('/')[-1]
-        with tf.variable_scope(name, reuse=self.is_initialized):
-            # initialize the operator (call the initilazation process)
+        with tf.variable_scope(self.name.split('/')[-1],
+                               reuse=self.is_initialized):
             spec = inspect.getargspec(self._apply)
-            kwargs = {name: self._check_input_arg(j, name=name)
-                      for name, j in kwargs.items()}
-            kwargs.update({name: self._check_input_arg(j, name=name)
-                           for name, j in zip(spec.args[1:], args)})
+            # adding kwargs_new in Order
+            kwargs_new = OrderedDict()
+            extra_name = [] if spec.keywords is None else \
+                [name for name in kwargs.keys() if name not in spec.args]
+            for idx, name in enumerate(spec.args[1:] + extra_name):
+                if idx < len(args):
+                    x = args[idx]
+                elif name in kwargs:
+                    x = kwargs[name]
+                else:
+                    continue
+                kwargs_new[name] = self._check_input_arg(x=x, name=name)
+            kwargs = kwargs_new
             # check if _apply have vargs or keywords
-            if spec.varargs is not None:
-                args = args[len(spec.args):]
-            else:
-                args = ()
-            if spec.keywords is None:
-                kwargs = {name: kwargs[name] for name in spec.args
-                          if name in kwargs}
+            args = () if spec.varargs is None else args[len(spec.args):]
             # add missing slot from _input_desc
             for name, var in self._input_desc.items():
                 if name not in kwargs:
@@ -815,6 +835,7 @@ class NNOp(object):
         # ====== reset the current information ====== #
         self._current_args = ()
         self._current_kwargs = {}
+        self._last_output = y
         return y
 
     def __call__(self, *args, **kwargs):
@@ -828,7 +849,11 @@ class NNOp(object):
         for name in all_attrs:
             if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
             'name' != name and 'is_initialized' != name:
-                attr = getattr(self, name)
+                try:
+                    attr = getattr(self, name)
+                except Exception:
+                    continue
+                # check print-able type
                 if is_primitives(attr) or \
                 (hasattr(attr, '__call__') and not inspect.ismethod(attr)):
                     print_attrs[name] = attr
@@ -931,8 +956,8 @@ class LambdaOp(NNOp):
 
     def _transpose(self):
         return LambdaOp(func=self.funcT, funcT=self.func,
-                        var_init={k: self.get(k)
-                                  for k in self.var_init.keys()})
+                        var_init={name: var
+                                  for name, (var, vtype) in self._variable_info.items()})
 
 
 class NNSliceOp(NNOp):

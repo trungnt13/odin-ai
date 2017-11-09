@@ -1,6 +1,6 @@
 from __future__ import print_function, absolute_import, division
 
-from .model import ModelDescriptor, get_model_descriptor
+from .model import Model, get_model_descriptor
 from .base import *
 from .conv import *
 from .noise import *

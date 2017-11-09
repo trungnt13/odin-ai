@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 from odin import nnet as N, backend as K
 
 
-@N.ModelDescriptor
+@N.Model
 def gender(X, f, **kwargs):
     nb_gender = kwargs.get('nb_gender', 4)
     if f is None:

@@ -4,7 +4,7 @@ from odin import backend as K, nnet as N
 import tensorflow as tf
 
 
-@N.ModelDescriptor
+@N.Model
 def test(X, y):
     nb_classes = y.get_shape().as_list()[-1]
     with N.nnop_scope(ops=['Conv'], b_init=None, activation=K.linear):

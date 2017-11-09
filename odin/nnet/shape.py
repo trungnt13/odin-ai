@@ -3,7 +3,6 @@ from __future__ import division, absolute_import
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import AttrRef
 
 from .base import NNOp
 
@@ -24,7 +23,7 @@ class Flatten(NNOp):
         return K.flatten(x, outdim=self.outdim)
 
     def _transpose(self):
-        return Reshape(shape=AttrRef(self, 'input_shape'))
+        return Reshape(shape=self.input_shape)
 
 
 # ===========================================================================
@@ -40,7 +39,7 @@ class Reshape(NNOp):
         return K.reshape(x, shape=self.shape)
 
     def _transpose(self):
-        return Reshape(shape=AttrRef(self, 'input_shape'))
+        return Reshape(shape=self.input_shape)
 
 
 class Dimshuffle(NNOp):
@@ -53,7 +52,7 @@ class Dimshuffle(NNOp):
         return K.dimshuffle(x, pattern=self.pattern)
 
     def _transpose(self):
-        return Reshape(shape=self.input_shape_ref)
+        return Reshape(shape=self.input_shape)
 
 
 class Squeeze(NNOp):

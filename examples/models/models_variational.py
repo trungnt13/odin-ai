@@ -5,7 +5,7 @@ import edward as ed
 from edward.models import Bernoulli, Normal
 
 
-@N.ModelDescriptor
+@N.Model
 def dense_vae(X, saved_states, **kwargs):
     n = kwargs.get('n', 10)
     batch_size = K.get_shape(X)[0]
@@ -72,7 +72,7 @@ def dense_vae(X, saved_states, **kwargs):
     return (samples, z, qz), (f_inference, f_generative)
 
 
-@N.ModelDescriptor
+@N.Model
 def convolutional_vae(X, saved_states, **kwargs):
     """ convolutional_vae
 
@@ -156,7 +156,7 @@ def convolutional_vae(X, saved_states, **kwargs):
     return (samples, z, qz), (f_inference, f_generative)
 
 
-@N.ModelDescriptor
+@N.Model
 def feedforward_vae(X, X1, f):
     if f is None:
         f = N.Sequence([

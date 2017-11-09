@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 from odin import nnet as N, backend as K
 
 
-@N.ModelDescriptor
+@N.Model
 def ladder1(X, y, states, **kwargs):
     noise = kwargs.get('noise', 0.3)
     # hyperparameters that denote the importance of each layer

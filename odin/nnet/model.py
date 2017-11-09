@@ -15,19 +15,19 @@ from odin.utils.decorators import functionable
 from odin.utils import (is_lambda, get_module_from_path,
                         is_primitives, ctext)
 
-from .base import (nnop_scope, get_all_nnops, VariableDesc)
+from .base import (nnop_scope, get_all_nnops, VariableDesc, NNOp)
 
 
 # ===========================================================================
 # Model descriptor
 # ===========================================================================
-class ModelDescriptor(object):
-    """ ModelDescriptor
+class Model(object):
+    """ Model
     This class allow you to define extremely complex computational graph
     by lumping many nnet operators into once function, but still keeping
     it simple (i.e. just like calling a function).
 
-    The ModelDescriptor will automatically save all states of the function,
+    The Model will automatically save all states of the function,
     keeps track its relevant inputs, and performing inference is
     straightforward also.
 
@@ -36,46 +36,17 @@ class ModelDescriptor(object):
 
     Usage
     -----
-    >>> @ModelDescriptor
+    >>> @Model
     >>> def model_creator_function(X1, X2, ..., y1, y2, ..., saved_states, **kwargs):
     ...     if save_states is None:
     ...         # create your network here
     ...     else:
     ...         # load saved_states
     ...     return [output1, output2, ...], saved_states
-
-    Example
-    -------
-    >>> import numpy as np
-    >>> from odin import nnet
-    ...
-    >>> @nnet.ModelDescriptor
-    >>> def feedforward_vae(X, X1, f, **kwargs):
-    ...     check = kwargs['check']
-    ...     if f is None:
-    ...         f = N.Sequence([
-    ...             N.Dense(num_units=10, activation=K.softmax),
-    ...             N.Dropout(level=0.5)
-    ...         ])
-    ...     # f is return for automatically saved
-    ...     return f(X), f
-    ... # First time initialize the input description
-    ...
-    >>> K.set_training(True)
-    >>> y_train = feedforward_vae(inputs=[N.VariableDesc(shape=(8, 8)),
-    ...                                   N.VariableDesc(shape=(12, 12))],
-    ...                           check=True)
-    ...
-    >>> K.set_training(False); y_score = feedforward_vae()
-    ... # Overide default Placeholder
-    >>> X = K.placeholder(shape=(12, 12), name='X')
-    >>> K.set_training(True); y_train = feedforward_vae([None, X])
-    ... # performing inference
-    >>> feedforward_vae.f_pred(np.random.rand(8, 8), np.random.rand(12, 12))
     """
 
     def __init__(self, func):
-        super(ModelDescriptor, self).__init__()
+        super(Model, self).__init__()
         if not isinstance(func, FunctionType) or is_lambda(func):
             raise ValueError("This decorator can be only used with function, not "
                              "method or lambda function.")
@@ -205,7 +176,7 @@ class ModelDescriptor(object):
     def __getattr__(self, name):
         # merge the attributes of function to the descriptor
         try:
-            return super(ModelDescriptor, self).__getattr__(name)
+            return super(Model, self).__getattr__(name)
         except AttributeError:
             return getattr(self._func, name)
 
@@ -214,7 +185,7 @@ class ModelDescriptor(object):
 
     def __str__(self):
         s = "<%s, name: %s, init: %s>\n" % (
-            ctext('ModelDescriptor', 'cyan'),
+            ctext('Model', 'cyan'),
             ctext(self.name, 'MAGENTA'),
             len(self._input_desc) > 0)
         s += '\t%s: %s\n' % (ctext('Core function', 'yellow'),
@@ -265,7 +236,7 @@ def get_model_descriptor(name, path = None, prefix = 'model'):
     # ====== search for model ====== #
     for p in path:
         model_func = get_module_from_path(name, path = p, prefix = prefix)
-        model_func = [f for f in model_func if isinstance(f, ModelDescriptor)]
+        model_func = [f for f in model_func if isinstance(f, Model)]
     if len(model_func) == 0:
         raise ValueError("Cannot find any model creator function with name=%s "
                          "at paths=%s." % (name, ', '.join(path)))

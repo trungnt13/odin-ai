@@ -199,7 +199,15 @@ class Conv(NNOp):
         return self.filter_size + (self.input_shape[-1], self.num_filters)
 
     def _transpose(self):
-        return DeConv(self)
+        return TransposeConv(num_filters=self.input_shape[-1],
+                             filter_size=self.filter_size,
+                             strides=self.strides, pad=self.pad,
+                             W_init=self.get('W'),
+                             b_init=None if self.b_init is None else 0.,
+                             untie_biases=self.untie_biases,
+                             activation=self.activation,
+                             dilation=self.dilation,
+                             output_shape=self.input_shape)
 
     def _initialize(self):
         # ====== validate init arguments ====== #
@@ -282,7 +290,13 @@ class TransposeConv(Conv):
         self._output_shape = output_shape
 
     def _transpose(self):
-        return DeConv(self)
+        return Conv(num_filters=self.input_shape[-1], filter_size=self.filter_size,
+                    strides=self.strides, pad=self.pad,
+                    W_init=self.get('W'),
+                    b_init=None if self.b_init is None else 0.,
+                    untie_biases=self.untie_biases,
+                    activation=self.activation,
+                    dilation=self.dilation)
 
     @property
     def kernel_shape(self):
@@ -318,52 +332,3 @@ class TransposeConv(Conv):
             output_shape=output_shape, strides=(1,) + self.strides + (1,),
             padding=self.pad)
         return K.set_shape(deconved, _)
-
-
-# ===========================================================================
-# Deconvolution
-# ===========================================================================
-# NNTranspose
-class DeConv(NNOp):
-
-    def __init__(self, ops, **kwargs):
-        super(DeConv, self).__init__(ops)
-        self._deconv = None
-
-    @property
-    def variables(self):
-        v = super(DeConv, self).variables + self._deconv.variables
-        v = list(set(v))
-        return v
-
-    @property
-    def kernel_shape(self):
-        return self.T.kernel_shape
-
-    @property
-    def output_shape(self):
-        return self.T.input_shape
-
-    # ==================== abstract method ==================== #
-    def _initialize(self):
-        super(DeConv, self)._initialize()
-        ops = self.T
-        if isinstance(ops, TransposeConv):
-            self._deconv = Conv(num_filters=ops.input_shape[-1],
-                    filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
-                    W_init=ops.get('W'), b_init=ops.b_init,
-                    untie_biases=ops.untie_biases, activation=ops.activation,
-                    dilation=ops.dilation, name=self.name + '_deconv')
-        elif isinstance(ops, Conv):
-            self._deconv = TransposeConv(num_filters=ops.input_shape[-1],
-                filter_size=ops.filter_size, strides=ops.strides, pad=ops.pad,
-                W_init=ops.get('W'), b_init=ops.b_init,
-                untie_biases=ops.untie_biases, activation=ops.activation,
-                dilation=ops.dilation, output_shape=ops.input_shape,
-                name=self.name + '_deconv')
-        else:
-            raise ValueError("Unsupport deconvolution for NNOp with type=%s"
-                             % str(type(self.T)))
-
-    def _apply(self, X):
-        return self._deconv(X)
