@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import is_number, is_string, as_tuple
+from odin.utils import is_number, is_string, as_tuple, AttrRef
 from odin.utils.decorators import functionable
 
 from .base import NNOp
@@ -68,7 +68,7 @@ class Pool(NNOp):
     def _transpose(self):
         ops = Upsample(size=self.strides, axes='auto',
             mode=self.transpose_mode, transpose_mode=self.mode,
-            output_shape=self.input_shape_ref,
+            output_shape=AttrRef(self, 'input_shape'),
             name=self.name + '_transpose')
         ops._transpose_ops = self
         return ops

@@ -13,7 +13,7 @@ from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 
 from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
-                        ctext, flatten_list)
+                        ctext, flatten_list, dummy_formatter)
 from .signal import delta
 
 
@@ -59,27 +59,6 @@ def set_extractor_debug(debug, *extractors):
     for i in extractors:
         i.debug = bool(debug)
     return extractors
-
-
-def _type_name(x):
-    if isinstance(x, np.dtype):
-        return x.name
-    return type(x).__name__
-
-
-def _str_complex(x):
-    if isinstance(x, (tuple, list)):
-        return "(list)length=%d;type=%s" % (len(x), _type_name(x[0]))
-    if isinstance(x, np.ndarray):
-        return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
-    if isinstance(x, Mapping):
-        return "(map)length=%d;dtype=%s" % (len(x),
-            ';'.join([_type_name(i) for i in next(iter(x.items()))]))
-    if isinstance(x, Dataset):
-        return ("(ds)path:%s" % x.path)
-    if is_string(x):
-        return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
-    return str(x)
 
 
 def _equal_inputs_outputs(x, y):
@@ -167,19 +146,19 @@ class Extractor(BaseEstimator, TransformerMixin):
                 print('  ', ctext("Inputs:", 'yellow'))
                 if isinstance(X, Mapping):
                     for k, v in X.items():
-                        print('    ', ctext(k, 'blue'), ':', _str_complex(v))
+                        print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))
                 else:
-                    print('    ', _str_complex(X))
+                    print('    ', dummy_formatter(X))
             # outputs
             print('  ', ctext("Outputs:", 'yellow'))
             if isinstance(y, Mapping):
                 for k, v in y.items():
-                    print('    ', ctext(k, 'blue'), ':', _str_complex(v))
+                    print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))
             else:
-                print('    ', _str_complex(y))
+                print('    ', dummy_formatter(y))
             # parameters
             for name, param in self.get_params().items():
-                print('  ', ctext(name, 'yellow'), ':', _str_complex(param))
+                print('  ', ctext(name, 'yellow'), ':', dummy_formatter(param))
         return y
 
 

@@ -89,11 +89,6 @@ class ModelDescriptor(object):
         return {i: j.shape for i, j in self._input_desc.items()
                 if isinstance(j, VariableDesc)}
 
-    @property
-    def input_shape_ref(self):
-        return {i: j.shape_ref for i, j in self._input_desc.items()
-                if isinstance(j, VariableDesc)}
-
     # ==================== pickle ==================== #
     def __getstate__(self):
         return [functionable(self._func), self._input_desc, self.nnops]

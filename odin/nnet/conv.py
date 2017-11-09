@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin import backend as K
 from odin.utils import as_tuple, is_string
 from odin.backend.role import ConvKernel, Bias
-from .base import NNOp, NNTransposeOps
+from .base import NNOp
 
 
 # ===========================================================================
@@ -323,7 +323,8 @@ class TransposeConv(Conv):
 # ===========================================================================
 # Deconvolution
 # ===========================================================================
-class DeConv(NNTransposeOps):
+# NNTranspose
+class DeConv(NNOp):
 
     def __init__(self, ops, **kwargs):
         super(DeConv, self).__init__(ops)

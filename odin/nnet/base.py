@@ -20,7 +20,8 @@ from odin import backend as K
 from odin.utils.decorators import functionable
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
-                        ShapeRef, DtypeRef, flatten_list, get_all_files)
+                        flatten_list, get_all_files, is_pickleable,
+                        FuncDesc, dummy_formatter)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
@@ -160,7 +161,7 @@ def _check_dtype(dtype):
     elif isinstance(dtype, np.dtype) or is_string(dtype):
         dtype = str(dtype)
     elif isinstance(dtype, VariableDesc):
-        dtype = DtypeRef(dtype)
+        dtype = dtype.dtype
     elif isinstance(dtype, tf.DType):
         dtype = dtype.base_dtype.name
     return dtype
@@ -215,8 +216,8 @@ class VariableDesc(object):
             self.__placeholder = shape
         # input the VariableDesc directly
         elif isinstance(shape, VariableDesc):
-            self._shape = ShapeRef(shape)
-            self._dtype = DtypeRef(shape) if dtype is None \
+            self._shape = shape.shape
+            self._dtype = shape.dtype if dtype is None \
                 else _check_dtype(dtype)
             if shape.__placeholder is not None:
                 self.__placeholder = shape.__placeholder
@@ -224,19 +225,13 @@ class VariableDesc(object):
         else:
             self._shape = _check_shape(shape)
             self._dtype = _check_dtype(dtype)
-        # ====== create reference ====== #
-        # trick to store self in x, hence, no closure
-        self._shape_ref = ShapeRef(self)
-        self._dtype_ref = DtypeRef(self)
 
     # ==================== pickle ==================== #
     def __getstate__(self):
-        return (self._shape, self._shape_ref,
-                self._dtype, self._dtype_ref, self._name)
+        return (self._shape, self._dtype, self._name)
 
     def __setstate__(self, states):
-        (self._shape, self._shape_ref,
-         self._dtype, self._dtype_ref, self._name) = states
+        (self._shape, self._dtype, self._name) = states
         self.__placeholder = None
 
     # ==================== properties ==================== #
@@ -270,23 +265,9 @@ class VariableDesc(object):
             else self._shape
 
     @property
-    def shape_ref(self):
-        """ ref is call-able reference to the shape information of
-        this descriptor, it will return the actual shape if you
-        call it. """
-        return self._shape_ref
-
-    @property
     def dtype(self):
         return self._dtype() if hasattr(self._dtype, '__call__') \
             else self._dtype
-
-    @property
-    def dtype_ref(self):
-        """ ref is call-able reference to the dtype information of
-        this descriptor, it will return the actual dtype if you
-        call it. """
-        return self._dtype_ref
 
     # ==================== override ==================== #
     def __str__(self):
@@ -325,6 +306,18 @@ class _NNOp_Meta(ABCMeta):
     you can only modify the arguments and kwarguments using __call__
     from MetaClass, not __new__ of instance class.
     """
+    def __new__(mcs, name, bases, class_dict):
+        private = {'T', 'apply', '__call__', '__getstate__', '__setstate__',
+                   '__getnewargs__', 'get', 'get_variable', '__setattr__'}
+        if name != 'NNOp':
+            for attr in private:
+                if attr in class_dict:
+                    raise RuntimeError("[Class:%s]The behaviour of NNOp is "
+                        "restricted to ensure properly operations, the following "
+                        "methods or properties cannot be overrided: '%s'" %
+                        (ctext(name, 'red'), ctext(attr, 'yellow')))
+        return super().__new__(mcs, name, bases, class_dict)
+
     def __call__(clazz, *args, **kwargs):
         NO_ARGUMENT = '[__no_argument__]'
         # getting the default arguments to check user intentionally override
@@ -441,6 +434,10 @@ class NNOp(object):
         # ====== allocate new Op ====== #
         new_op = super(NNOp, clazz).__new__(clazz)
         new_op._name = name
+        # this store spontanious args and kwargs feeded to apply()
+        new_op._current_args = ()
+        new_op._current_kwargs = {}
+        # all save-able attributes of NNOp store here
         new_op._save_states = {'_name': name}
         return new_op
 
@@ -466,11 +463,13 @@ class NNOp(object):
         return self._save_states
 
     def __setstate__(self, states):
+        self._current_args = ()
+        self._current_kwargs = {}
+        self._cache_outputs = {}
         self._new_args_called = False
         self._save_states = states
         for key, val in self._save_states.items():
             setattr(self, key, val)
-        self._cache_outputs = {}
         # ====== check exist NNOp ====== #
         if self.name not in NNOp._ALL_NNOPS:
             _assign_new_nnop(self)
@@ -509,13 +508,20 @@ class NNOp(object):
         roles: `odin.backend.role.Role`
             categories of this variable
         """
+        if name in self.__dict__:
+            raise RuntimeError("name='%s' has been defined in dictionary of "
+                               "NNOp: '%s', type: %s" %
+                               (name, self.name, self.__class__.__name__))
         if shape is not None:
-            shape = tuple(shape)  # convert to tuple if needed
+            # convert to tuple if needed
+            shape = as_tuple(shape)
             if any(d <= 0 or d is None for d in shape):
                 raise ValueError((
                     "Cannot create param with a non-positive shape dimension. "
                     "Tried to create param with shape=%r, name=%r") %
                     (shape, name))
+        #####################################
+        # 1. looking for Defined variable.
         if initializer is None and shape is None:
             if name not in self._variable_info:
                 raise ValueError("Cannot find variable with name: %s for NNOps "
@@ -534,11 +540,24 @@ class NNOp(object):
                 if len(op) == 0:
                     raise RuntimeError("Cannot find any Op with given footprint: %s" % footprint)
                 var = op[0]._outputs[int(name.split(':')[-1])]
+            # get nnops
+            elif t == 'nnop':
+                var = var_name(*self._current_args, **self._current_kwargs)
             # only care about the first variable
             return add_role(var, roles)
         #####################################
-        # 0. initializing function.
-        if hasattr(initializer, '__call__'):
+        # 2. initializing function.
+        if is_string(initializer):
+            var = K.get_all_variables(name=initializer)
+            if len(var) == 0:
+                var = K.get_all_tensors(name=initializer)
+            if len(var) == 0:
+                raise ValueError("Cannot find any variable or tensor with name: "
+                    "'%s' for the initializer." % initializer)
+            var = var[0]
+        elif isinstance(initializer, NNOp):
+            var = initializer
+        elif hasattr(initializer, '__call__'):
             var = initializer(shape)
         # is a scalar
         elif is_number(initializer):
@@ -547,12 +566,12 @@ class NNOp(object):
         else:
             var = initializer
         #####################################
-        # 1. Numpy ndarray.
+        # 3. Numpy ndarray.
         if isinstance(var, np.ndarray):
             var = K.variable(var, shape=shape, name=name)
             self._variable_info[name] = (var.name, 'variable')
         #####################################
-        # 2. Shared variable, just check the shape.
+        # 4. Shared variable, just check the shape.
         elif K.is_variable(var):
             _shape = var.get_shape().as_list()
             if shape is not None and tuple(shape) != tuple(_shape):
@@ -561,9 +580,9 @@ class NNOp(object):
                                 (str(shape), str(_shape), str(name)))
             self._variable_info[name] = (var.name, 'variable')
         #####################################
-        # 3. expression, we can only check number of dimension.
+        # 5. expression, we can only check number of dimension.
         elif K.is_tensor(var):
-            # We cannot check the shape here, Theano expressions (even shared
+            # We cannot check the shape here, Tensor (even shared
             # variables) do not have a fixed compile-time shape. We can check the
             # dimensionality though.
             # Note that we cannot assign a name here. We could assign to the
@@ -574,14 +593,23 @@ class NNOp(object):
                                 "%d" % (name, var.get_shape().ndims, len(shape)))
             self._variable_info[name] = ((var.name, K.get_operation_footprint(var.op)),
                                          'tensor')
+        elif isinstance(var, NNOp):
+            self._variable_info[name] = (var, 'nnop')
         #####################################
-        # 4. Exception.
+        # 6. Exception.
         else:
             raise RuntimeError("cannot initialize parameters: 'spec' is not "
-                               "a numpy array, a Theano expression, or a "
-                               "call-able")
+                               "a numpy array, a Tensor expression, a call-able "
+                               ", or variable name as string (given type: %s)" %
+                               type(initializer).__name__)
         # ====== assign annotations ====== #
-        return add_role(var, roles)
+        if K.is_tensor(var):
+            return add_role(var, roles)
+        elif isinstance(var, NNOp):
+            return var
+        else:
+            raise ValueError("Unsupport for variable type: %s" %
+                type(var).__name__)
 
     @property
     def name(self):
@@ -590,30 +618,39 @@ class NNOp(object):
     @property
     def T(self):
         """ Return new ops which is transpose of this ops """
+        if not self.is_initialized:
+            raise RuntimeError("NNOp with name:'%s' has not been initialized, "
+                "call the Op on any input to first initialize input information."
+                % self.name)
         if self._transpose_ops is None:
             self._transpose_ops = self._transpose()
             if not isinstance(self._transpose_ops, NNOp):
                 raise ValueError("The _transposed method must return NNOp."
                                  "but the returned object has type=%s" %
                                  str(type(self._transpose_ops)))
+            # hard-fix the name of transpose NNOp
+            self._transpose_ops._name = self.name + '_T'
+            # this is very brain twisted
+            self._transpose_ops._transpose_ops = self
         return self._transpose_ops
 
     @property
     def variables(self):
         """ Get all variables related to this Op"""
-        # created variable from `get_variable`
-        allname = [name for _, (name, t) in self._variable_info.items()
-                   if t == 'variable']
-        allvars = [v for v in K.get_all_variables() if v.name in allname]
-        # related variables to all `Tensor`
-        tensors = [self.get_variable(name)
-                   for name, (info, t) in self._variable_info.items()
-                   if t == 'tensor']
-        tensors = K.ComputationGraph(tensors).variables
+        global_vars = {v.name: v for v in K.get_all_variables()}
+        all_vars = []
+        tensors = []
+        for alias, (name, vtype) in self._variable_info.items():
+            if vtype == 'variable':
+                all_vars.append(global_vars[name])
+            elif vtype == 'tensor':
+                tensors.append(self.get_variable(alias))
+            elif vtype == 'nnop':
+                all_vars += name.variables
+        all_vars += K.ComputationGraph(tensors).variables
         # all variables within the scope
-        scope_vars = K.get_all_variables(scope=self.name)
-        return sorted(set(allvars + tensors + scope_vars),
-                      key=lambda x: x.name)
+        all_vars += K.get_all_variables(scope=self.name)
+        return sorted(set(all_vars), key=lambda x: x.name)
 
     @property
     def parameters(self):
@@ -632,19 +669,12 @@ class NNOp(object):
              if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
-    @property
     def set_placeholder(self, name, plh):
-        raise NotImplementedError
+        return self._input_desc[name].set_placeholder(plh)
 
     @property
     def input_shape(self):
         x = [i.shape for i in self._input_desc.values()
-             if isinstance(i, VariableDesc)]
-        return x[0] if len(x) == 1 else x
-
-    @property
-    def input_shape_ref(self):
-        x = [i.shape_ref for i in self._input_desc
              if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
@@ -653,8 +683,11 @@ class NNOp(object):
         # check hasattr to prevent recursive loop at the beginning before
         # __init__ is called
         if hasattr(self, '_save_states'):
-            if name not in ('_save_states', '_cache_outputs'):
-                if is_primitives(value, inc_ndarray=True):
+            if name not in ('_save_states', '_cache_outputs',
+                            '_current_args', '_current_kwargs'):
+                if is_primitives(value, inc_ndarray=True,
+                                 exception_types=[NNOp, FuncDesc]) or \
+                (hasattr(value, '__call__') and is_pickleable(value)):
                     self._save_states[name] = value
         return super(NNOp, self).__setattr__(name, value)
 
@@ -719,6 +752,8 @@ class NNOp(object):
         return (desc, data)
 
     def apply(self, *args, **kwargs):
+        self._current_args = args
+        self._current_kwargs = kwargs
         # self.name can contain ModelDescriptor varable scope, hence,
         # remove the scope here
         name = self.name.split('/')[-1]
@@ -738,7 +773,7 @@ class NNOp(object):
             op_data = {}
             footprint = ''
             for name, (desc, dat) in sorted(kwargs.items(),
-                                            key=lambda x:x[0]):
+                                            key=lambda x: x[0]):
                 footprint += name + ':'
                 if isinstance(desc, VariableDesc):
                     plh = desc.placeholder
@@ -767,8 +802,11 @@ class NNOp(object):
                 self._cache_outputs[footprint] = y
             # check if op_data given
             if len(op_data) > 0:
-                return K.eval(y, feed_dict=op_data)
-            return y
+                y = K.eval(y, feed_dict=op_data)
+        # ====== reset the current information ====== #
+        self._current_args = ()
+        self._current_kwargs = {}
+        return y
 
     def __call__(self, *args, **kwargs):
         return self.apply(*args, **kwargs)
@@ -776,12 +814,14 @@ class NNOp(object):
     def __str__(self):
         # ====== get all attrs ====== #
         all_attrs = dir(self)
+        padding = '  '
         print_attrs = {}
         for name in all_attrs:
             if '_' != name[0] and (len(name) >= 2 and '__' != name[:2]) and\
             'name' != name and 'is_initialized' != name:
                 attr = getattr(self, name)
-                if is_primitives(attr) or inspect.isfunction(attr):
+                if is_primitives(attr) or \
+                (hasattr(attr, '__call__') and not inspect.ismethod(attr)):
                     print_attrs[name] = attr
         print_attrs = sorted(print_attrs.items(), key=lambda x: x[0])
         # ====== format the output ====== #
@@ -790,10 +830,15 @@ class NNOp(object):
                                    ctext(self.name, 'MAGENTA'),
                                    self._is_initialized)
         for i, j in print_attrs:
-            ops_format += "\t%s: %s\n" % (ctext(i, 'yellow'), str(j))
+            if isinstance(j, NNOp): # special format for NNOp
+                s = '\n' + '\n'.join([2 * padding + line
+                    for line in str(j).split('\n')])
+            else: # other attributes
+                s = dummy_formatter(j)
+            ops_format += padding + "%s: %s\n" % (ctext(i, 'yellow'), s)
         for name in self._variable_info.keys():
             v = self.get(name)
-            ops_format += "\t(Var)%s shape=%s, dtype=%s\n" % \
+            ops_format += padding + "(Var)%s shape=%s, dtype=%s\n" % \
                 (ctext(v.name, 'yellow'),
                  ctext(v.get_shape().as_list(), 'yellow'),
                  ctext(v.dtype.base_dtype.name, 'yellow'))
@@ -812,6 +857,75 @@ _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
 # ===========================================================================
 # Helper
 # ===========================================================================
+class LambdaOp(NNOp):
+
+    """
+    Parameters
+    ----------
+    func: callable
+        must be picklable, main lambda function
+    funcT: callable, None
+        function used in transpose, if None, if the original `func`
+    var_init: dict
+        mapping from name (string) to variable initialization
+        information.
+        the initialization information can be given in 2 forms:
+        - initializer: callable, ndarray, shape, Tensor, Variable, or
+        string (name of Variable)
+        - (initializer, roles): same as the first one but created
+        variable will be assigned given roles
+
+    Note
+    ----
+    There are 2 ways to feed argument for `func`:
+     - by calling this LambdaOp
+     >>> f = LambdaOp(func=lambda x, y=1, z=2: x + y + z)
+     >>> f(1, z=3)
+     - predefine the variable using `var_init`
+     >>> f = LambdaOp(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
+     >>> f()
+    """
+
+    def __init__(self, func, funcT=None, var_init={}, **kwargs):
+        super(LambdaOp, self).__init__(**kwargs)
+        # check main function
+        if not hasattr(func, '__call__'):
+            raise ValueError("func must be call-able for LambdaOp.")
+        func = func if is_pickleable(func) else functionable(func)
+        self.func = FuncDesc(func)
+        # check transpose function
+        if funcT is None:
+            funcT = func
+        elif not hasattr(funcT, '__call__'):
+            raise ValueError("funcT must be call-able for LambdaOp.")
+        else:
+            funcT = funcT if is_pickleable(funcT) else functionable(funcT)
+        self.funcT = FuncDesc(funcT)
+        # check vars
+        self.var_init = {str(k): v for k, v in var_init.items()}
+
+    def _initialize(self):
+        for name, info in self.var_init.items():
+            if isinstance(info, (tuple, list)) and len(info) == 2:
+                init, roles = info
+            else:
+                init = info
+                roles = []
+            self.get_variable(name=name, initializer=init, roles=roles)
+
+    def _apply(self, *args, **kwargs):
+        # ====== update additional specialized variable for this NNOp ====== #
+        for name in self._variable_info.keys():
+            if name not in kwargs:
+                kwargs[name] = self.get(name)
+        return self.func(*args, **kwargs)
+
+    def _transpose(self):
+        return LambdaOp(func=self.funcT, funcT=self.func,
+                        var_init={k: self.get(k)
+                                  for k in self.var_init.keys()})
+
+
 class NNSliceOp(NNOp):
 
     def __init__(self, ops, slice):
@@ -844,36 +958,6 @@ class NNSliceOp(NNOp):
                              self._ops.is_initialized, str(self.slice))
 
 
-class NNTransposeOps(NNOp):
-    """ TransposeOps
-    Create a transposed view of the origin NNOp
-    """
-
-    def __init__(self, ops, **kwargs):
-        name = ops.name.split("/")[-1]
-        super(NNTransposeOps, self).__init__(name=name + '_transpose')
-        if not isinstance(ops, NNOp):
-            raise ValueError("NNTransposeOps can only be applied for instance of "
-                             "odin.nnet.NNOp, but was given type=%s" % str(type(ops)))
-        self._transpose_ops = ops
-
-    def _transpose(self):
-        # return original Ops to prevent infinite useless loop of transpose
-        return self._transpose_ops
-
-    def _initialize(self, **kwargs):
-        if not self._transpose_ops.is_initialized:
-            raise RuntimeError("The original NNOp with name:%s have not been "
-                               "initialized, you must call the original NNOp "
-                               "first." % self._ops)
-
-    def __str__(self):
-        ops_format = '<original_ops: %s, name: %s, init: %s>'
-        return ops_format % (self._transpose_ops.__class__.__name__,
-                             self.name, self._transpose_ops.is_initialized and
-                             self.is_initialized)
-
-
 # ===========================================================================
 # Simple ops
 # ===========================================================================
@@ -893,7 +977,11 @@ class Dense(NNOp):
     # ==================== abstract methods ==================== #
     def _transpose(self):
         # create the new dense
-        return TransposeDense(self)
+        return Dense(num_units=self.input_shape[-1],
+                     W_init=LambdaOp(func=tf.transpose,
+                                     var_init={'a': self.get('W')}),
+                     b_init=None if self.b_init is None else 0.,
+                     activation=self.activation)
 
     def _initialize(self):
         input_shape = self.input_shape
@@ -914,24 +1002,6 @@ class Dense(NNOp):
         return self.activation(activation)
 
 
-class TransposeDense(NNTransposeOps):
-
-    def _initialize(self):
-        super(TransposeDense, self)._initialize()
-        self.num_units = self.T.input_shape[-1]
-        if self.T.b_init is not None:
-            self.get_variable(initializer=self.T.b_init,
-                              shape=(self.num_units,), name='b', roles=Bias)
-
-    def _apply(self, X):
-        # calculate projection
-        activation = K.dot(X, tf.transpose(self.T.var('W')))
-        if self.T.b_init is not None:
-            activation = activation + self.get('b')
-        # Nonlinearity might change the shape of activation
-        return self.T.activation(activation)
-
-
 class ParametricRectifier(NNOp):
     """ This class is adpated from Lasagne:
     Original work Copyright (c) 2014-2015 lasagne contributors
@@ -945,7 +1015,7 @@ class ParametricRectifier(NNOp):
     ----------
     incoming : a :class:`Layer` instance or a tuple
         The layer feeding into this layer, or the expected input shape
-    alpha : Theano shared variable, expression, numpy array or call-able
+    alpha : shared variable, expression, numpy array or call-able
         Initial value, expression or initializer for the alpha values. The
         shape must match the incoming shape, skipping those axes the alpha
         values are shared over (see the example below).

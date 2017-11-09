@@ -8,6 +8,7 @@ import types
 import signal
 import shutil
 import timeit
+import inspect
 import tarfile
 import numbers
 import tempfile
@@ -82,6 +83,31 @@ def ctext(s, color='red'):
     return s
 
 
+def _type_name(x):
+    if isinstance(x, np.dtype):
+        return x.name
+    return type(x).__name__
+
+
+def dummy_formatter(x):
+    s = str(x)
+    if len(s) < 120:
+        return s
+    if isinstance(x, (tuple, list)):
+        return "(list)length=%d;type=%s" % \
+            (len(x), _type_name(x[0]) if len(x) > 0 else '*empty*')
+    if isinstance(x, np.ndarray):
+        return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
+    if isinstance(x, Mapping):
+        return "(map)length=%d;dtype=%s" % (len(x),
+            ';'.join([_type_name(i) for i in next(iter(x.items()))]))
+    if 'odin.fuel.dataset.Dataset' in str(type(x)):
+        return ("(ds)path:%s" % x.path)
+    if is_string(x):
+        return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
+    return str(x)
+
+
 # ===========================================================================
 # Basics
 # ===========================================================================
@@ -107,7 +133,7 @@ def is_bool(b):
     return isinstance(b, type(True))
 
 
-def is_primitives(x, inc_ndarray=True):
+def is_primitives(x, inc_ndarray=True, exception_types=[]):
     """Primitive types include: number, string, boolean, None
     and numpy.ndarray (optional) and numpy.generic (optional)
 
@@ -124,6 +150,7 @@ def is_primitives(x, inc_ndarray=True):
                    for i, j in x.items())
     # check for number, string, bool, and numpy array
     if is_number(x) or is_string(x) or is_bool(x) or x is None or \
+    (any(isinstance(x, t) for t in exception_types)) or \
     (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
         return True
     return False
@@ -407,6 +434,86 @@ class UniqueHasher(object):
         return array[:, order]
 
 
+class FuncDesc(object):
+    """ This class store the description of arguments given a function.
+    Automatically match the argument and keyword-arguments in following
+    order:
+     - Match all positional arguments.
+     - if the function has `varargs`, keep the remains positional arguments.
+     - if the function has `keywords`, keep the unknown argument name in `kwargs`
+     - Add the missing default kwargs.
+     - Return new tuple of (arg, kwargs)
+    """
+
+    def __init__(self, func):
+        super(FuncDesc, self).__init__()
+        # copy information from other FuncDesc
+        if isinstance(func, FuncDesc):
+            self._args = func._args
+            self._defaults = func._defaults
+            self._inc_args = func._inc_args
+            self._inc_kwargs = func._inc_kwargs
+            self._func = func._func
+        # extract information from a function or method
+        elif inspect.isfunction(func) or inspect.ismethod(func):
+            spec = inspect.getargspec(func)
+            self._args = tuple(spec.args)
+            self._inc_args = spec.varargs is not None
+            self._inc_kwargs = spec.keywords is not None
+            self._defaults = {}
+            if spec.defaults is not None:
+                for name, val in zip(self._args[::-1], spec.defaults[::-1]):
+                    self._defaults[name] = val
+            self._func = func
+        else:
+            raise ValueError("`func` must be function, method, or FuncDesc.")
+        self.__name__ = self._func.__name__
+
+    @property
+    def args(self):
+        return tuple(self._args)
+
+    @property
+    def defaults(self):
+        return dict(self._defaults)
+
+    @property
+    def is_args(self):
+        return self._inc_args
+
+    @property
+    def is_kwargs(self):
+        return self._inc_kwargs
+
+    def match(self, *args, **kwargs):
+        keywords = OrderedDict()
+        for name, val in zip(self.args, args):
+            keywords[name] = val
+        # extra args
+        if self._inc_args and len(self.args) < len(args):
+            args = args[len(self.args):]
+        # remove extra kwargs in inc_kwargs=False
+        if not self._inc_kwargs:
+            kwargs = {name: kwargs[name]
+                      for name in self._args if name in kwargs}
+        keywords.update(kwargs)
+        # ====== update the default ====== #
+        for name, val in self._defaults.items():
+            if name not in keywords:
+                keywords[name] = val
+        return args, keywords
+
+    def __call__(self, *args, **kwargs):
+        args, kwargs = self.match(*args, **kwargs)
+        return self._func(*args, **kwargs)
+
+    def __str__(self):
+        s = "<%s>args:%s defaults:%s varargs:%s keywords:%s" % \
+            (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
+                self._inc_args, self._inc_kwargs)
+        return s
+
+
 # ===========================================================================
 # ArgCOntrol
 # ===========================================================================
@@ -660,6 +767,31 @@ def flatten_list(x, level=None):
 # ===========================================================================
 # Python
 # ===========================================================================
+class AttrRef(object):
+    """ The idea is create a reference object to specific
+    attributes of a specified object.
+
+    If the object is picklable, this AttrRef also picklable
+    """
+
+    def __init__(self, obj, attrs):
+        super(AttrRef, self).__init__()
+        self.obj = obj
+        self.attrs = as_tuple(attrs, t=str)
+
+    @property
+    def value(self):
+        return self.__call__()
+
+    def __call__(self):
+        for a in self.attrs:
+            if hasattr(self.obj, a):
+                return getattr(self.obj, a)
+        raise RuntimeError("Cannot find attributes with name: '%s' from "
+                           "object: '%s' in AttrRef." %
+                           (str(self.attrs), type(self.obj)))
+
+
 class struct(dict):
 
     '''Flexible object can be assigned any attribtues'''
@@ -956,7 +1088,6 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
     '''
     import re
     import imp
-    from inspect import getmembers
     # ====== validate input ====== #
     if exclude == '': exclude = []
     if type(exclude) not in (list, tuple, numpy.ndarray):
@@ -992,7 +1123,7 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
     # ====== Find all identifier in modules ====== #
     ids = []
     for m in modules:
-        for i in getmembers(m):
+        for i in inspect.getmembers(m):
             if identifier in i:
                 ids.append(i[1])
     # remove duplicate py
