@@ -66,12 +66,9 @@ class Pool(NNOp):
             padding=self.pad, pooling_type=self.mode)
 
     def _transpose(self):
-        ops = Upsample(size=self.strides, axes='auto',
+        return Upsample(size=self.strides, axes='auto',
             mode=self.transpose_mode, transpose_mode=self.mode,
-            output_shape=AttrRef(self, 'input_shape'),
-            name=self.name + '_transpose')
-        ops._transpose_ops = self
-        return ops
+            output_shape=self.input_shape)
 
 
 class Upsample(NNOp):
@@ -85,7 +82,8 @@ class Upsample(NNOp):
         pass
     mode: str, int
         `repeat` is
-
+    transpose_mode: {'max', 'avg'}
+        pass
     """
 
     def __init__(self, size=2, axes='auto', mode='nn', transpose_mode='max',
@@ -111,8 +109,6 @@ class Upsample(NNOp):
         # ====== check output_shape ====== #
         output_shape = self.output_shape
         if output_shape is not None:
-            if hasattr(output_shape, '__call__'):
-                output_shape = output_shape()
             # do padding if necessary
             paddings = [[0, 0] if i is None or o is None or i >= o else
                         [tf.cast(tf.ceil((o - i) / 2), 'int32'),
@@ -136,8 +132,5 @@ class Upsample(NNOp):
             raise RuntimeError("Do not support tranpose of Upsample with "
                                "axes=%s, the only support value is 'auto'."
                                % self.axes)
-        ops = Pool(pool_size=self.size, strides=None, pad='valid',
-            mode=self.transpose_mode, transpose_mode=self.mode,
-            name=self.name + '_transpose')
-        ops._transpose_ops = self
-        return ops
+        return Pool(pool_size=self.size, strides=None, pad='valid',
+            mode=self.transpose_mode, transpose_mode=self.mode)
