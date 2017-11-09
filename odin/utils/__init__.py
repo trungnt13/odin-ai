@@ -492,10 +492,12 @@ class FuncDesc(object):
         # extra args
         if self._inc_args and len(self.args) < len(args):
             args = args[len(self.args):]
+        else:
+            args = ()
         # remove extra kwargs in inc_kwargs=False
         if not self._inc_kwargs:
-            kwargs = {name: kwargs[name]
-                      for name in self._args if name in kwargs}
+            kwargs = {name: kwargs[name] for name in self._args
+                      if name in kwargs}
         keywords.update(kwargs)
         # ====== update the default ====== #
         for name, val in self._defaults.items():

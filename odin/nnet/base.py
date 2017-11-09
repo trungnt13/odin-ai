@@ -752,8 +752,6 @@ class NNOp(object):
         return (desc, data)
 
     def apply(self, *args, **kwargs):
-        self._current_args = args
-        self._current_kwargs = kwargs
         # self.name can contain ModelDescriptor varable scope, hence,
         # remove the scope here
         name = self.name.split('/')[-1]
@@ -764,6 +762,14 @@ class NNOp(object):
                       for name, j in kwargs.items()}
             kwargs.update({name: self._check_input_arg(j, name=name)
                            for name, j in zip(spec.args[1:], args)})
+            # check if _apply have vargs or keywords
+            if spec.varargs is not None:
+                args = args[len(spec.args):]
+            else:
+                args = ()
+            if spec.keywords is None:
+                kwargs = {name: kwargs[name] for name in spec.args
+                          if name in kwargs}
             # add missing slot from _input_desc
             for name, var in self._input_desc.items():
                 if name not in kwargs:
@@ -785,6 +791,9 @@ class NNOp(object):
                     op_inputs[name] = desc
                     footprint += type(desc).__name__ + '_' + str(desc)
                 footprint += '|'
+            # store current arguments
+            self._current_args = args
+            self._current_kwargs = op_inputs
             # ====== initialize first ====== #
             if not self._is_initialized:
                 self._initialize()
@@ -797,7 +806,7 @@ class NNOp(object):
             if footprint in self._cache_outputs:
                 y = self._cache_outputs[footprint]
             else:
-                y = self._apply(**op_inputs)
+                y = self._apply(*args, **op_inputs)
                 # record cahced return
                 self._cache_outputs[footprint] = y
             # check if op_data given
