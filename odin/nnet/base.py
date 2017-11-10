@@ -66,12 +66,13 @@ def _assign_new_nnop(nnop):
 # Context manager
 # ===========================================================================
 __ARGS_SCOPE_STACK = [defaultdict(dict)]
-_NAME_SCOPE = ''
+_NNOP_NAME_SCOPE = ''
 _NNOP_ID = defaultdict(int)
 
 
 @contextmanager
-def nnop_scope(scope=None, id_start=None, ops=[], **kwargs):
+def nnop_scope(scope=None, id_start=None, reuse=None,
+               ops=[], **kwargs):
     """Stores the default arguments for the given set of applied_nnops.
 
     For usage, please see examples at top of the file.
@@ -100,17 +101,17 @@ def nnop_scope(scope=None, id_start=None, ops=[], **kwargs):
     duplicated NNOp instead of UUID.
     """
     # ====== prepare Name Scope ====== #
-    global _NAME_SCOPE, _NNOP_ID
+    global _NNOP_NAME_SCOPE, _NNOP_ID
     # name scope
     if is_string(scope):
-        if scope not in _NAME_SCOPE:
-            _NAME_SCOPE = str(scope) if len(_NAME_SCOPE) == 0 else \
-                _NAME_SCOPE + '/' + str(scope)
+        if scope not in _NNOP_NAME_SCOPE:
+            _NNOP_NAME_SCOPE = str(scope) if len(_NNOP_NAME_SCOPE) == 0 else \
+                _NNOP_NAME_SCOPE + '/' + str(scope)
     # name scope
     if is_number(id_start):
-        _NNOP_ID[_NAME_SCOPE] = int(id_start)
+        _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start)
     elif isinstance(id_start, list) and is_number(id_start[0]):
-        _NNOP_ID[_NAME_SCOPE] = int(id_start[0])
+        _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start[0])
     # ====== update Arguments Scope ====== #
     ops = as_tuple(ops)
     # copy prevous scopes
@@ -122,17 +123,17 @@ def nnop_scope(scope=None, id_start=None, ops=[], **kwargs):
         args_scope[o].update(kwargs)
     __ARGS_SCOPE_STACK.append(args_scope)
     # ====== return the scope ====== #
-    with tf.variable_scope(_NAME_SCOPE):
+    with tf.variable_scope(scope, reuse=reuse):
         yield scope
     # ====== reset everything ====== #
     __ARGS_SCOPE_STACK.pop()
-    _NAME_SCOPE = '/'.join(_NAME_SCOPE.split('/')[:-1])
+    _NNOP_NAME_SCOPE = '/'.join(_NNOP_NAME_SCOPE.split('/')[:-1])
     if isinstance(id_start, list):
         id_start[0] = _NNOP_ID[0]
 
 
-def get_name_scope():
-    return _NAME_SCOPE
+def get_nnop_scope():
+    return _NNOP_NAME_SCOPE
 
 
 def get_args_scope():
@@ -413,9 +414,9 @@ class NNOp(object):
         # automatic generate name
         if name is None:
             name = clazz.__name__
-            if len(_NAME_SCOPE) > 0:
-                name = _NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[_NAME_SCOPE])
-                _NNOP_ID[_NAME_SCOPE] += 1
+            if len(_NNOP_NAME_SCOPE) > 0:
+                name = _NNOP_NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[_NNOP_NAME_SCOPE])
+                _NNOP_ID[_NNOP_NAME_SCOPE] += 1
             else:
                 name = name + "_" + str(uuid())
         # regulation for the NNOp name
@@ -423,8 +424,8 @@ class NNOp(object):
             if '/' in name or ':' in name:
                 raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
             # add name scope
-            if _NAME_SCOPE is not None:
-                name = _NAME_SCOPE + '/' + name
+            if _NNOP_NAME_SCOPE is not None:
+                name = _NNOP_NAME_SCOPE + '/' + name
                 _NNOP_ID[0] += 1
         else:
             raise ValueError("name for NNOp must be string, but given name "
@@ -662,6 +663,13 @@ class NNOp(object):
         return sorted(set(all_vars), key=lambda x: x.name)
 
     @property
+    def nnops(self):
+        """ Return all NNOp belong to the initialization of this Op
+        or within the scope of this Op.
+        """
+        raise NotImplementedError
+
+    @property
     def parameters(self):
         """ return all TensorVariables which have the PARAMETER role"""
         return [i for i in self.variables if has_roles(i, Parameter)]
@@ -772,8 +780,8 @@ class NNOp(object):
     def apply(self, *args, **kwargs):
         # self.name can contain Model varable scope, hence,
         # remove the scope here
-        with tf.variable_scope(self.name.split('/')[-1],
-                               reuse=self.is_initialized):
+        op_name = self.name.split('/')[-1]
+        with nnop_scope(scope=op_name, id_start=[0], reuse=self.is_initialized):
             spec = inspect.getargspec(self._apply)
             # adding kwargs_new in Order
             kwargs_new = OrderedDict()
@@ -789,7 +797,7 @@ class NNOp(object):
                 kwargs_new[name] = self._check_input_arg(x=x, name=name)
             kwargs = kwargs_new
             # check if _apply have vargs or keywords
-            args = () if spec.varargs is None else args[len(spec.args):]
+            args = () if spec.varargs is None else args[len(spec.args[1:]):]
             # add missing slot from _input_desc
             for name, var in self._input_desc.items():
                 if name not in kwargs:
@@ -971,10 +979,6 @@ class NNSliceOp(NNOp):
         if not isinstance(slice, (tuple, list)):
             slice = [slice]
         self.slice = slice
-
-    @property
-    def variables(self):
-        return self._ops.variables
 
     def _apply(self, X, **kwargs):
         y = self._ops.apply(X, **kwargs)

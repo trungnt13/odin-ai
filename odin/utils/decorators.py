@@ -14,14 +14,13 @@ from six.moves import builtins
 from collections import OrderedDict, defaultdict
 from collections import MutableMapping, Mapping
 from functools import wraps, partial
+from six import string_types
 from six.moves import zip, zip_longest, cPickle
 import types
 
 import numpy as np
 
 from odin import SIG_TERMINATE_ITERATOR
-from odin.utils import is_path, is_string
-
 
 __all__ = [
     'typecheck',
@@ -29,8 +28,8 @@ __all__ = [
     'autoinit',
     'abstractstatic',
     'functionable',
-    'singleton',
-    'terminatable_iterator'
+    'terminatable_iterator',
+    'singleton'
 ]
 
 
@@ -315,11 +314,12 @@ def func_to_str(func):
 def str_to_func(s, sandbox=None):
     if isinstance(s, (tuple, list)):
         code, closure, defaults = s
-    elif is_path(s): # path to file
-        with open(s, 'rb') as f:
-            code, closure, defaults = cPickle.load(f)
-    elif is_string(s): # pickled string
-        code, closure, defaults = cPickle.loads(s)
+    elif isinstance(s, string_types): # path to file
+        if os.path.isfile(s):
+            with open(s, 'rb') as f:
+                code, closure, defaults = cPickle.load(f)
+        else: # pickled string
+            code, closure, defaults = cPickle.loads(s)
     else:
         raise ValueError("Unsupport str_to_func for type:%s" % type(s))
     code = marshal.loads(cPickle.loads(code).tostring())
@@ -416,7 +416,7 @@ def _deserialize_function_sandbox(sandbox):
     main_func = None
     # first pass we deserialize all type except function type
     for name, (typ, val) in sandbox.items():
-        if is_string(typ):
+        if isinstance(typ, string_types):
             if typ == 'None':
                 val = None
             elif typ == 'edward_distribution':
@@ -496,6 +496,7 @@ class functionable(object):
     def __init__(self, func, *args, **kwargs):
         super(functionable, self).__init__()
         self._function = func
+        self.__name__ = self._function.__name__
         try: # sometime cannot get the source
             self._source = inspect.getsource(self._function)
         except Exception as e:
@@ -534,7 +535,7 @@ class functionable(object):
          self._source,
          self._argsmap) = states
         # ====== deserialize the function ====== #
-        if is_string(self._sandbox):
+        if isinstance(self._sandbox, string_types):
             self._function = cPickle.loads(self._sandbox)
         else:
             self._function, sandbox = _deserialize_function_sandbox(self._sandbox)
@@ -571,7 +572,7 @@ class functionable(object):
     def __str__(self):
         s = 'Name:   %s\n' % self._function.__name__
         s += 'kwargs: %s\n' % str(self._argsmap)
-        if is_string(self._sandbox):
+        if isinstance(self._sandbox, string_types):
             s += 'Sandbox: pickle-able\n'
         else:
             s += 'Sandbox:%s\n' % str(len(self._sandbox))
@@ -613,15 +614,10 @@ class functionable(object):
 def singleton(cls):
     ''' Singleton for class instance, all __init__ with same arguments return
     same instance
-
-    Note
-    ----
-    call .dispose() to fully destroy a Singeleton
+    @NOTE: this is copy from six.add_metaclass
     '''
     if not isinstance(cls, type):
-        raise Exception('singleton decorator only accept class without any '
-                        'addition parameter to the decorator.')
-
+        raise Exception('singleton decorator only accept class (type).')
     orig_vars = cls.__dict__.copy()
     slots = orig_vars.get('__slots__')
     if slots is not None:
@@ -635,37 +631,36 @@ def singleton(cls):
 
 
 class Singleton(type):
-    _instances = defaultdict(list) # (arguments, instance)
+    # class_type -> [(arguments, instance), ...]
+    _INSTANCES = defaultdict(list)
 
     @staticmethod
-    def _dispose(instance):
-        clz = instance.__class__
-        Singleton._instances[clz] = [(args, ins)
-                                     for args, ins in Singleton._instances[clz]
-                                     if ins != instance]
+    def _dispose(self):
+        clz = self.__class__
+        Singleton._INSTANCES[clz] = [(args, obj)
+                                     for args, obj in Singleton._INSTANCES[clz]
+                                     if obj != self]
+
+    def __new__(mcs, name, bases, class_dict):
+        if '_get_id' not in class_dict:
+            raise ValueError("Instance of Singleton must define classmethod "
+                "'_get_id', this method takes the same arguments as __init__ "
+                "and return the unique identity for an instance.")
+        return super().__new__(mcs, name, bases, class_dict)
 
     def __call__(cls, *args, **kwargs):
-        spec = inspect.getargspec(cls.__init__)
-        kwspec = {}
-        if spec.defaults is not None:
-            kwspec.update(zip(reversed(spec.args), reversed(spec.defaults)))
-        kwspec.update(zip(spec.args[1:], args))
-        kwspec.update(kwargs)
-        # convert all path to abspath to make sure same path are the same
-        for i, j in kwspec.items():
-            if is_path(j):
-                kwspec[i] = os.path.abspath(j)
-        # check duplicate instances
-        instances = Singleton._instances[cls]
-        for arguments, instance in instances:
-            if arguments == kwspec:
-                return instance
-        # not found old instance
-        instance = super(Singleton, cls).__call__(*args, **kwargs)
-        instances.append((kwspec, instance))
-        setattr(instance, 'dispose',
-                types.MethodType(Singleton._dispose, instance))
-        return instance
+        obj_id = cls._get_id(*args, **kwargs)
+        # check defined instance
+        instances_list = Singleton._INSTANCES[cls]
+        for arguments, obj in instances_list:
+            if arguments == obj_id:
+                return obj
+        # Create new instance
+        obj = super(Singleton, cls).__call__(*args, **kwargs)
+        instances_list.append((obj_id, obj))
+        setattr(obj, '__del__',
+                types.MethodType(Singleton._dispose, obj))
+        return obj
 
 # Override the module's __call__ attribute
 # sys.modules[__name__] = cache

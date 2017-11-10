@@ -41,6 +41,7 @@ from .np_utils import *
 from . import mpi
 from . import shape_calculation
 from . import math_utils
+from . import decorators
 
 
 # ===========================================================================
@@ -455,8 +456,12 @@ class FuncDesc(object):
             self._inc_kwargs = func._inc_kwargs
             self._func = func._func
         # extract information from a function or method
-        elif inspect.isfunction(func) or inspect.ismethod(func):
-            spec = inspect.getargspec(func)
+        elif inspect.isfunction(func) or inspect.ismethod(func) or \
+        isinstance(func, decorators.functionable):
+            if isinstance(func, decorators.functionable):
+                spec = inspect.getargspec(func.function)
+            else:
+                spec = inspect.getargspec(func)
             self._args = tuple(spec.args)
             self._inc_args = spec.varargs is not None
             self._inc_kwargs = spec.keywords is not None

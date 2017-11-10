@@ -12,9 +12,9 @@ import tensorflow as tf
 from tensorflow.contrib.distributions import Distribution as _Distribution
 
 from odin.config import get_session
-from odin.utils.decorators import singleton
 from odin.utils.cache_utils import cache_memory
-from odin.utils import dict_union, as_list, flatten_list, as_tuple, is_string
+from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
+                        decorators)
 
 from .role import (has_roles, Auxiliary, Parameter)
 
@@ -509,7 +509,7 @@ def function(inputs, outputs, updates=[], defaults={}, training=None):
 # ===========================================================================
 # Computational graph
 # ===========================================================================
-@singleton
+@decorators.singleton
 class ComputationGraph(object):
     r"""Encapsulates a managed Theano computation graph.
 
@@ -560,6 +560,10 @@ class ComputationGraph(object):
         All the updates found attached to the annotations.
 
     """
+
+    @classmethod
+    def _get_id(clazz, outputs=None, trace_up=False):
+        return outputs
 
     def __init__(self, outputs=None, trace_up=False):
         outputs = flatten_list(as_list(outputs), level=None)
