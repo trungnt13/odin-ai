@@ -290,7 +290,7 @@ class VariableDesc(object):
     def __repr__(self):
         return self.__str__()
 
-    def __cmp__(self, other):
+    def is_equal(self, other):
         # ====== compare to a TensorVariable ====== #
         if K.is_tensor(other):
             other = VariableDesc(
@@ -300,11 +300,11 @@ class VariableDesc(object):
         if isinstance(other, VariableDesc):
             if _shape_compare(self.shape, other.shape) \
             and self.dtype == other.dtype:
-                return 0
+                return True
         # ====== compare to a shape tuple (ignore the dtype) ====== #
         elif isinstance(other, (tuple, list)):
-            return 0 if _shape_compare(self.shape, other) else 1
-        return 1
+            return True if _shape_compare(self.shape, other) else False
+        return False
 
 
 # ===========================================================================
@@ -479,7 +479,8 @@ class NNOp(object):
                 "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
                 "when using `pickle` or `cPickle` to be able pickling NNOp.")
         self._new_args_called = False
-        return self._save_states
+        # add nnops here so all related NNOps are saved
+        return self._save_states, self.nnops
 
     def __setstate__(self, states):
         # ====== default attribute ====== #
@@ -489,7 +490,7 @@ class NNOp(object):
         self._cache_outputs = {}
         self._new_args_called = False
         # ====== save states ====== #
-        self._save_states = states
+        self._save_states, nnops = states
         for key, val in self._save_states.items():
             setattr(self, key, val)
         # ====== check exist NNOp ====== #
@@ -658,7 +659,12 @@ class NNOp(object):
 
     @property
     def variables(self):
-        """ Get all variables related to this Op"""
+        """ Get all variables related to this Op, which include:
+         - Initialized Variables
+         - Variables belong to related NNOp within this Op.
+         - Variables belone to related Tensor within this Op.
+         - Variables within the scope of this NNOp.
+        """
         global_vars = {v.name: v for v in K.get_all_variables()}
         all_vars = []
         tensors = []
@@ -669,10 +675,37 @@ class NNOp(object):
                 tensors.append(self.get_variable(alias))
             elif vtype == 'nnop':
                 all_vars += name.variables
+        # all variables from tensor
         all_vars += K.ComputationGraph(tensors).variables
+        # all variables from NNOp
+        for op in self.nnops:
+            all_vars += op.variables
         # all variables within the scope
         all_vars += K.get_all_variables(scope=self.name)
         return sorted(set(all_vars), key=lambda x: x.name)
+
+    @property
+    def nb_variables(self):
+        n = 0
+        for p in self.variables:
+            n += np.prod(p.get_shape().as_list()).astype('int32')
+        return n
+
+    @property
+    def parameters(self):
+        """ return all TensorVariables which have the PARAMETER role"""
+        return [i for i in self.variables if has_roles(i, Parameter)]
+
+    @property
+    def nb_parameters(self):
+        n = 0
+        for p in self.parameters:
+            n += np.prod(p.get_shape().as_list()).astype('int32')
+        return n
+
+    @property
+    def is_initialized(self):
+        return self._is_initialized
 
     @property
     def nnops(self):
@@ -686,15 +719,6 @@ class NNOp(object):
         ops += get_all_nnops(scope=self.name)
         return sorted([o for o in ops if o is not self],
                       key=lambda x: x.name)
-
-    @property
-    def parameters(self):
-        """ return all TensorVariables which have the PARAMETER role"""
-        return [i for i in self.variables if has_roles(i, Parameter)]
-
-    @property
-    def is_initialized(self):
-        return self._is_initialized
 
     @property
     def placeholders(self):
@@ -779,10 +803,10 @@ class NNOp(object):
                     self._kwargs_desc[name] = desc
                 curr_desc = self._kwargs_desc[name]
             # validating
-            if desc != curr_desc:
+            if not curr_desc.is_equal(desc):
                 raise ValueError("Found variable with description: '%s', given "
                     "variable with description: '%s'" %
-                    (str(self._kwargs_desc[name]), str(desc)))
+                    (str(curr_desc), str(desc)))
         # ====== if given data, use saved tensor with new data ====== #
         elif isinstance(x, np.ndarray):
             # positional
