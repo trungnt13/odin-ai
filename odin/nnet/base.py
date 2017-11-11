@@ -977,6 +977,23 @@ class NNOp(object):
                 (ctext(name, 'yellow'),
                     ctext(otype, 'yellow'),
                     ctext(op.input_shape, 'yellow'))
+        # ====== Input info ====== #
+        for i, arg in enumerate(self._args_desc):
+            if isinstance(arg, VariableDesc):
+                arg = str(arg)
+            else:
+                arg = '%s - value:%s' % (ctext(type_path(arg), 'cyan'),
+                                         dummy_formatter(arg))
+            name = ctext('[%d]' % i, 'yellow')
+            ops_format += padding + name + arg + '\n'
+        for key, arg in self._kwargs_desc.items():
+            if isinstance(arg, VariableDesc):
+                arg = str(arg)
+            else:
+                arg = 'type:%s, value:%s' % (ctext(type_path(arg), 'cyan'),
+                                             dummy_formatter(arg))
+            name = ctext('[%s]' % key, 'yellow')
+            ops_format += padding + name + arg + '\n'
         return ops_format[:-1]
 
     # ==================== Slicing ==================== #
@@ -992,7 +1009,7 @@ _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
 # ===========================================================================
 # Helper
 # ===========================================================================
-class LambdaOp(NNOp):
+class Lambda(NNOp):
 
     """
     Parameters
@@ -1013,16 +1030,16 @@ class LambdaOp(NNOp):
     Note
     ----
     There are 2 ways to feed argument for `func`:
-     - by calling this LambdaOp
-     >>> f = LambdaOp(func=lambda x, y=1, z=2: x + y + z)
+     - by calling this Lambda
+     >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z)
      >>> f(1, z=3)
      - predefine the variable using `var_init`
-     >>> f = LambdaOp(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
+     >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
      >>> f()
     """
     @staticmethod
     def search(name, path=None, prefix='model'):
-        """ This method search for any objects decorated with `LambdaOp`
+        """ This method search for any objects decorated with `Lambda`
         from given `path` with all script have given `prefix`
         """
         # ====== check path ====== #
@@ -1039,14 +1056,14 @@ class LambdaOp(NNOp):
         # ====== search for model ====== #
         for p in path:
             model_func = get_module_from_path(name, path = p, prefix = prefix)
-            model_func = [f for f in model_func if isinstance(f, LambdaOp)]
+            model_func = [f for f in model_func if isinstance(f, Lambda)]
         if len(model_func) == 0:
             raise ValueError("Cannot find any model creator function with name=%s "
                              "at paths=%s." % (name, ', '.join(path)))
         return model_func[0]
 
     def __init__(self, func, funcT=None, var_init={}, **kwargs):
-        super(LambdaOp, self).__init__(**kwargs)
+        super(Lambda, self).__init__(**kwargs)
         # check main function
         self.set_function(func, is_transpose=False)
         # check transpose function
@@ -1058,7 +1075,7 @@ class LambdaOp(NNOp):
 
     def set_function(self, func, is_transpose=False):
         if not hasattr(func, '__call__'):
-            raise ValueError("func must be call-able for LambdaOp.")
+            raise ValueError("func must be call-able for Lambda.")
         if not isinstance(func, FuncDesc):
             func = func if is_pickleable(func) else functionable(func)
             func = FuncDesc(func)
@@ -1085,9 +1102,9 @@ class LambdaOp(NNOp):
         return self._func(*args, **kwargs)
 
     def _transpose(self):
-        return LambdaOp(func=self._funcT, funcT=self._func,
-                        var_init={name: var
-                                  for name, (var, vtype) in self._variable_info.items()})
+        return Lambda(func=self._funcT, funcT=self._func,
+                      var_init={name: var
+                                for name, (var, vtype) in self._variable_info.items()})
 
 
 class NNSliceOp(NNOp):
@@ -1138,8 +1155,8 @@ class Dense(NNOp):
     def _transpose(self):
         # create the new dense
         return Dense(num_units=self.input_shape[-1],
-                     W_init=LambdaOp(func=tf.transpose,
-                                     var_init={'a': self.get('W')}),
+                     W_init=Lambda(func=tf.transpose,
+                                   var_init={'a': self.get('W')}),
                      b_init=None if self.b_init is None else 0.,
                      activation=self.activation)
 
