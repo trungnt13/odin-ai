@@ -21,7 +21,7 @@ from odin.utils.decorators import functionable
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
                         flatten_list, get_all_files, is_pickleable,
-                        FuncDesc, dummy_formatter)
+                        FuncDesc, dummy_formatter, type_path)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
@@ -30,12 +30,13 @@ import tensorflow as tf
 # ===========================================================================
 # Global NNOp manager
 # ===========================================================================
-def get_all_nnops(model_scope=None, op_type=None):
+def get_all_nnops(scope=None, op_type=None):
     """ Return a dictionary of (name, nnops) for all created NNOp """
     allops = list(NNOp._ALL_NNOPS.values())
-    if model_scope is not None:
-        if not is_string(model_scope): model_scope = model_scope.name
-        allops = [o for o in allops if o.name[:len(model_scope)] == model_scope]
+    if scope is not None:
+        if not is_string(scope):
+            scope = scope.name
+        allops = [o for o in allops if o.name[:len(scope)] == scope]
     if op_type is not None:
         op_type = [i for i in as_tuple(op_type)
                    if is_string(op_type) or issubclass(op_type, NNOp)]
@@ -71,8 +72,25 @@ _NNOP_ID = defaultdict(int)
 
 
 @contextmanager
-def nnop_scope(scope=None, id_start=None, reuse=None,
-               ops=[], **kwargs):
+def args_scope(ops, **kwargs):
+    # ====== update Arguments Scope ====== #
+    ops = as_tuple(ops)
+    # copy prevous scopes
+    args_scope = defaultdict(dict)
+    for i, j in __ARGS_SCOPE_STACK[-1].items():
+        args_scope[i] = j.copy()
+    # update new scopes
+    for o in ops:
+        args_scope[o].update(kwargs)
+    __ARGS_SCOPE_STACK.append(args_scope)
+    # ====== return the scope ====== #
+    yield None
+    # ====== reset everything ====== #
+    __ARGS_SCOPE_STACK.pop()
+
+
+@contextmanager
+def nnop_scope(scope=None, id_start=None, reuse=None):
     """Stores the default arguments for the given set of applied_nnops.
 
     For usage, please see examples at top of the file.
@@ -112,21 +130,10 @@ def nnop_scope(scope=None, id_start=None, reuse=None,
         _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start)
     elif isinstance(id_start, list) and is_number(id_start[0]):
         _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start[0])
-    # ====== update Arguments Scope ====== #
-    ops = as_tuple(ops)
-    # copy prevous scopes
-    args_scope = defaultdict(dict)
-    for i, j in __ARGS_SCOPE_STACK[-1].items():
-        args_scope[i] = j.copy()
-    # update new scopes
-    for o in ops:
-        args_scope[o].update(kwargs)
-    __ARGS_SCOPE_STACK.append(args_scope)
     # ====== return the scope ====== #
     with tf.variable_scope(scope, reuse=reuse):
         yield scope
     # ====== reset everything ====== #
-    __ARGS_SCOPE_STACK.pop()
     _NNOP_NAME_SCOPE = '/'.join(_NNOP_NAME_SCOPE.split('/')[:-1])
     if isinstance(id_start, list):
         id_start[0] = _NNOP_ID[0]
@@ -273,8 +280,9 @@ class VariableDesc(object):
 
     # ==================== override ==================== #
     def __str__(self):
-        return "<VarDesc - name:%s shape:%s dtype:%s init:%s>" % \
-        (str(self.name), str(self.shape), str(self.dtype),
+        return "<%s - name:%s shape:%s dtype:%s init:%s>" % \
+        (ctext('VarDesc', 'cyan'), ctext(str(self.name), 'yellow'),
+            str(self.shape), str(self.dtype),
          False if self.__placeholder is None else True)
 
     def __repr__(self):
@@ -449,8 +457,10 @@ class NNOp(object):
         return new_op
 
     def __init__(self, **kwargs):
+        # list of positional VariableDesc, or Primitives
+        self._args_desc = []
         # mapping: name -> VariableDesc, or Primitives
-        self._input_desc = OrderedDict()
+        self._kwargs_desc = OrderedDict()
         # mapping: ','.join(id(tensor)) -> output
         self._cache_outputs = {}
         self._transpose_ops = None
@@ -667,7 +677,13 @@ class NNOp(object):
         """ Return all NNOp belong to the initialization of this Op
         or within the scope of this Op.
         """
-        raise NotImplementedError
+        ops = []
+        for name, (var, vtype) in self._variable_info:
+            if vtype == 'nnop':
+                ops.append(var)
+        ops += get_all_nnops(scope=self.name)
+        return sorted([o for o in ops if o is not self],
+                      key=lambda x: x.name)
 
     @property
     def parameters(self):
@@ -682,12 +698,16 @@ class NNOp(object):
     def placeholders(self):
         """ Create list of placeholder to represent inputs of this NNOp
         """
-        x = [i.placeholder for i in self._input_desc.values()
+        x = [i.placeholder for i in self._args_desc
+             if isinstance(i, VariableDesc)]
+        x += [i.placeholder for i in self._kwargs_desc.values()
              if isinstance(i, VariableDesc)]
         return x[0] if len(x) == 1 else x
 
     def set_placeholder(self, name, plh):
-        return self._input_desc[name].set_placeholder(plh)
+        if is_number(name):
+            return self._args_desc[name].set_placeholder(plh)
+        return self._kwargs_desc[name].set_placeholder(plh)
 
     @property
     def last_output(self):
@@ -699,8 +719,7 @@ class NNOp(object):
 
     @property
     def input_shape(self):
-        x = [i.shape for i in self._input_desc.values()
-             if isinstance(i, VariableDesc)]
+        x = [tuple(i.get_shape().as_list()) for i in self.placeholders]
         return x[0] if len(x) == 1 else x
 
     def __setattr__(self, name, value):
@@ -742,34 +761,61 @@ class NNOp(object):
         """
         desc = None
         data = None
-        # if given tensor, use the new tensor
+        # ====== if given tensor, use the provided tensor ====== #
         if K.is_tensor(x) or isinstance(x, VariableDesc):
             desc = x if isinstance(x, VariableDesc) else\
                 VariableDesc(shape=x, name=x.name.split(':')[0])
-            if name not in self._input_desc:
-                self._input_desc[name] = desc
-            elif desc != self._input_desc[name]:
+            # positional argument
+            if is_number(name):
+                if len(self._args_desc) <= name:
+                    self._args_desc.append(desc)
+                curr_desc = self._args_desc[int(name)]
+            # keywords argument
+            else:
+                if name not in self._kwargs_desc:
+                    self._kwargs_desc[name] = desc
+                curr_desc = self._kwargs_desc[name]
+            # validating
+            if desc != curr_desc:
                 raise ValueError("Found variable with description: '%s', given "
                     "variable with description: '%s'" %
-                    (str(self._input_desc[name]), str(desc)))
-        # if given data, use old tensor with new data
+                    (str(self._kwargs_desc[name]), str(desc)))
+        # ====== if given data, use saved tensor with new data ====== #
         elif isinstance(x, np.ndarray):
-            if name not in self._input_desc:
-                desc = VariableDesc(shape=x.shape, dtype=x.dtype, name=name)
-                self._input_desc[name] = desc
+            # positional
+            if is_number(name):
+                if len(self._args_desc) <= name:
+                    self._args_desc.append(VariableDesc(
+                        shape=x.shape, dtype=x.dtype,
+                        name='Inp%d' % name))
+                desc = self._args_desc[int(name)]
+            # keywords
             else:
-                desc = self._input_desc[name]
-                if desc.shape != x.shape or \
-                np.dtype(desc.dtype) != np.dtype(x.dtype):
-                    raise ValueError("NNOp has input description: '%s', given "
-                                     "ndarray: shape=%s dtype=%s" %
-                                     (str(desc), x.shape, x.dtype))
+                if name not in self._kwargs_desc:
+                    self._kwargs_desc[name] = VariableDesc(
+                        shape=x.shape, dtype=x.dtype, name=name)
+                desc = self._kwargs_desc[name]
+            # validating
+            if desc.shape != x.shape or \
+            np.dtype(desc.dtype) != np.dtype(x.dtype):
+                raise ValueError("NNOp has input description: '%s', given "
+                                 "ndarray: shape=%s dtype=%s" %
+                                 (str(desc), x.shape, x.dtype))
+            # set data
             data = x
-        # primitive, keep it simple
+        # ====== primitive, keep it simple ====== #
         elif is_primitives(x, inc_ndarray=False):
-            self._input_desc[name] = x
+            # positional
+            if is_number(name):
+                if len(self._args_desc) <= name:
+                    self._args_desc.append(x)
+                else:
+                    self._args_desc[name] = x
+            # keywords
+            else:
+                self._kwargs_desc[name] = x
             desc = x
-        # Uknown input, ERROR
+        # ====== Uknown input, ERROR ====== #
         else:
             raise ValueError("The input argument for Model can be: "
                 "`Tensor`, `odin.nnet.VariableDesc`, and primitive types"
@@ -785,8 +831,10 @@ class NNOp(object):
             spec = inspect.getargspec(self._apply)
             # adding kwargs_new in Order
             kwargs_new = OrderedDict()
+            # if except name outside of spec.args
             extra_name = [] if spec.keywords is None else \
                 [name for name in kwargs.keys() if name not in spec.args]
+            # get all positional arguments
             for idx, name in enumerate(spec.args[1:] + extra_name):
                 if idx < len(args):
                     x = args[idx]
@@ -794,34 +842,52 @@ class NNOp(object):
                     x = kwargs[name]
                 else:
                     continue
+                # validate and record name to self._kwargs_desc
                 kwargs_new[name] = self._check_input_arg(x=x, name=name)
+            # kwargs now contains: arg_name -> (VariableDesc, ndarray(or None))
             kwargs = kwargs_new
             # check if _apply have vargs or keywords
-            args = () if spec.varargs is None else args[len(spec.args[1:]):]
+            args = () if spec.varargs is None else \
+                [self._check_input_arg(a, name=i)
+                 for i, a in enumerate(args[len(spec.args[1:]):])]
             # add missing slot from _input_desc
-            for name, var in self._input_desc.items():
+            for name, var in self._kwargs_desc.items():
                 if name not in kwargs:
                     kwargs[name] = (var, None)
             # ====== get op inputs and data ====== #
-            op_inputs = {}
+            op_args = []
+            op_kwargs = {}
             op_data = {}
             footprint = ''
+            # positional argument
+            for i, (desc, dat) in enumerate(args):
+                footprint += 'Inp%d:' % i
+                if isinstance(desc, VariableDesc):
+                    desc = desc.placeholder
+                    footprint += type_path(desc) + '_' + str(id(desc))
+                    if dat is not None:
+                        op_data[desc] = dat
+                else:
+                    footprint += type_path(desc) + '_'
+                    footprint += str(desc)
+                footprint += '|'
+                op_args.append(desc)
+            # kwargs
             for name, (desc, dat) in sorted(kwargs.items(),
                                             key=lambda x: x[0]):
                 footprint += name + ':'
                 if isinstance(desc, VariableDesc):
-                    plh = desc.placeholder
-                    op_inputs[name] = plh
+                    desc = desc.placeholder
+                    footprint += type_path(desc) + '_' + str(id(desc))
                     if dat is not None:
-                        op_data[plh] = dat
-                    footprint += plh.__class__.__name__ + '_' + str(id(plh))
+                        op_data[desc] = dat
                 else: # primitive types
-                    op_inputs[name] = desc
-                    footprint += type(desc).__name__ + '_' + str(desc)
+                    footprint += type_path(desc) + '_' + str(desc)
                 footprint += '|'
+                op_kwargs[name] = desc
             # store current arguments
-            self._current_args = args
-            self._current_kwargs = op_inputs
+            self._current_args = op_args
+            self._current_kwargs = op_kwargs
             # ====== initialize first ====== #
             if not self._is_initialized:
                 self._initialize()
@@ -834,7 +900,7 @@ class NNOp(object):
             if footprint in self._cache_outputs:
                 y = self._cache_outputs[footprint]
             else:
-                y = self._apply(*args, **op_inputs)
+                y = self._apply(*op_args, **op_kwargs)
                 # record cahced return
                 self._cache_outputs[footprint] = y
             # check if op_data given

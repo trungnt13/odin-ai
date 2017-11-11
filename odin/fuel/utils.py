@@ -20,6 +20,9 @@ from odin.utils import async, is_string, ctext, as_tuple
 
 @add_metaclass(ABCMeta)
 class NoSQL(MutableMapping):
+    """ The idea of this is transform everything (even SQL) into
+    (key, value) kind-of database.
+    """
     _INSTANCES = defaultdict(dict)
 
     def __new__(subclass, path, read_only=False, cache_size=250,

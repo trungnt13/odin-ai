@@ -157,6 +157,10 @@ def is_primitives(x, inc_ndarray=True, exception_types=[]):
     return False
 
 
+def type_path(obj):
+    return obj.__module__ + "." + obj.__class__.__name__
+
+
 def is_lambda(v):
     LAMBDA = lambda: 0
     return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
