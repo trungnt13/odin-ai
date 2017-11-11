@@ -9,7 +9,7 @@ import numbers
 import warnings
 from itertools import chain
 from functools import wraps
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, Mapping
 from contextlib import contextmanager
 from abc import ABCMeta, abstractmethod
 from six.moves import zip, range, cPickle
@@ -310,9 +310,6 @@ class VariableDesc(object):
 # ===========================================================================
 # Main Ops
 # ===========================================================================
-_NO_OUTPUT_CACHED_ = '__no_output_cached__'
-
-
 class _NNOp_Meta(ABCMeta):
     """ arguments scope for the NNOp
 
@@ -453,7 +450,6 @@ class NNOp(object):
         # this store spontanious args and kwargs feeded to apply()
         new_op._current_args = ()
         new_op._current_kwargs = {}
-        new_op._last_output = _NO_OUTPUT_CACHED_
         # all save-able attributes of NNOp store here
         new_op._save_states = {'_name': name}
         return new_op
@@ -465,6 +461,7 @@ class NNOp(object):
         self._kwargs_desc = OrderedDict()
         # mapping: ','.join(id(tensor)) -> output
         self._cache_outputs = {}
+        self._last_input_footprint = ''
         self._transpose_ops = None
         self._is_initialized = False
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
@@ -484,7 +481,6 @@ class NNOp(object):
 
     def __setstate__(self, states):
         # ====== default attribute ====== #
-        self._last_output = _NO_OUTPUT_CACHED_
         self._current_args = ()
         self._current_kwargs = {}
         self._cache_outputs = {}
@@ -563,7 +559,7 @@ class NNOp(object):
                 if len(op) == 0:
                     raise RuntimeError("Cannot find any Op with given footprint: %s" % footprint)
                 var = op[0]._outputs[int(name.split(':')[-1])]
-            # get nnops
+            # get nnops, use current args and kwargs for initialization
             elif t == 'nnop':
                 var = var_name(*self._current_args, **self._current_kwargs)
             # only care about the first variable
@@ -737,17 +733,37 @@ class NNOp(object):
 
     @property
     def last_output(self):
-        if is_string(self._last_output) and \
-        self._last_output == _NO_OUTPUT_CACHED_:
-            raise RuntimeError("This NNOp has not been initialized, and contains "
+        if self._last_input_footprint not in self._cache_outputs:
+            raise RuntimeError("This NNOp has not been called, and contains "
                 "no information about outputs.")
-        return self._last_output
+        return self._cache_outputs[self._last_input_footprint]
 
     @property
     def input_shape(self):
+        """NOTE: this input shape is only inferred from last inputs to
+        this NNOp,
+        since the input argument can has default argument, this input
+        shape can change after everytime you call the NNOp"""
         x = [tuple(i.get_shape().as_list())
              for i in as_tuple(self.placeholders)]
         return x[0] if len(x) == 1 else x
+
+    @property
+    def output_shape(self):
+        """NOTE: this input shape is only inferred from last inputs to
+        this NNOp,
+        since the input argument can has default argument, this input
+        shape can change after everytime you call the NNOp"""
+        output = self.last_output
+        extract_shape = lambda x: tuple(x.get_shape().as_list()) \
+            if hasattr(x, 'get_shape') else \
+            (x.shape if hasattr(x, 'shape') else ())
+        if isinstance(output, (tuple, list)):
+            return [extract_shape(o) for o in output]
+        elif isinstance(output, Mapping):
+            return OrderedDict([(name, extract_shape(o))
+                for name, o in output.items()])
+        return extract_shape(output)
 
     def __setattr__(self, name, value):
         # this record all assigned attribute to pickle them later
@@ -756,7 +772,7 @@ class NNOp(object):
         if hasattr(self, '_save_states'):
             if name not in ('_save_states', '_cache_outputs',
                             '_current_args', '_current_kwargs',
-                            '_last_output'):
+                            '_last_input_footprint'):
                 if is_primitives(value, inc_ndarray=True,
                                  exception_types=[NNOp, FuncDesc]) or \
                 (hasattr(value, '__call__') and is_pickleable(value)):
@@ -883,9 +899,11 @@ class NNOp(object):
                     kwargs[name] = (var, None)
             # ====== get op inputs and data ====== #
             op_args = []
-            op_kwargs = {}
+            op_kwargs = OrderedDict()
             op_data = {}
             footprint = ''
+            # footprint created by concat argument name and its
+            # object python ID (primitive arugment using str)
             # positional argument
             for i, (desc, dat) in enumerate(args):
                 footprint += 'Inp%d:' % i
@@ -922,21 +940,21 @@ class NNOp(object):
                 # only assign new NNOp if it is initialized
                 _assign_new_nnop(self)
             # ====== calculate and return outputs ====== #
-            # footprint created by concat argument name and its
-            # object python ID (primitive arugment using str)
+            # Recall cached output
             if footprint in self._cache_outputs:
                 y = self._cache_outputs[footprint]
+            # First time generate output given footprint
             else:
                 y = self._apply(*op_args, **op_kwargs)
                 # record cahced return
                 self._cache_outputs[footprint] = y
-            # check if op_data given
+            # check if op_data given, then evaluate to get the results.
             if len(op_data) > 0:
                 y = K.eval(y, feed_dict=op_data)
         # ====== reset the current information ====== #
         self._current_args = ()
         self._current_kwargs = {}
-        self._last_output = y
+        self._last_input_footprint = footprint
         return y
 
     def __call__(self, *args, **kwargs):

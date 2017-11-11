@@ -11,7 +11,7 @@ from odin import backend as K
 from odin.utils import as_tuple, is_number, flatten_list, ctext
 from odin.utils.decorators import functionable
 
-from .base import NNOp
+from .base import NNOp, get_nnop_scope
 
 
 def _shrink_kwargs(op, kwargs):
@@ -28,35 +28,7 @@ def _shrink_kwargs(op, kwargs):
     return keywords
 
 
-class HelperOps(NNOp):
-    """ HelperOps
-    In general, helper is the operator that take in a list of NNOp
-    and make an unique output from them.
-
-    Parameters
-    ----------
-    ops: NNOp or call-able
-        list or single NNOp, or call-able
-
-    """
-
-    def __init__(self, ops, **kwargs):
-        super(HelperOps, self).__init__(**kwargs)
-        self.ops = [functionable(i)
-                    if isinstance(i, types.FunctionType) else i
-                    for i in as_tuple(ops)
-                    if hasattr(i, '__call__')]
-
-    @property
-    def variables(self):
-        all_variables = []
-        for i in as_tuple(self.ops):
-            if hasattr(i, 'variables'):
-                all_variables += i.variables
-        return list(set(all_variables))
-
-
-class Merge(HelperOps):
+class Merge(NNOp):
     """
     Parameters
     ----------
@@ -83,7 +55,7 @@ class Merge(HelperOps):
             return results
 
 
-class Residual(HelperOps):
+class Residual(NNOp):
 
     def __init__(self, ops, **kwargs):
         super(Residual, self).__init__(ops, **kwargs)
@@ -96,11 +68,11 @@ class Residual(HelperOps):
         pass
 
 
-class StochasticDepth(HelperOps):
+class StochasticDepth(NNOp):
     pass
 
 
-class Sequence(HelperOps):
+class Sequence(NNOp):
 
     """ Sequence of Operators
 
@@ -110,8 +82,8 @@ class Sequence(HelperOps):
         if True, only operators with transposed implemented are added
         to tranpose operator
     debug: bool
-        if True, print Ops name and its output shape after applying
-        each operator in the sequence.
+        if `1`, print NNOp name and its input and output shape
+        if `2`, print all information of each NNOp
     all_layers: bool
         if True, return the output from all layers instead of only the last
         layer.
@@ -129,46 +101,41 @@ class Sequence(HelperOps):
 
     def __init__(self, ops, all_layers=False,
                  strict_transpose=False, debug=False, **kwargs):
-        super(Sequence, self).__init__(ops, **kwargs)
-        self.all_layers = all_layers
+        super(Sequence, self).__init__(**kwargs)
+        self._ops = as_tuple(ops, t=NNOp)
+        self.all_layers = bool(all_layers)
         self.strict_transpose = bool(strict_transpose)
-        self.debug = debug
+        self.debug = int(debug)
 
-    def _apply(self, x, **kwargs):
-        # ====== get specific Ops kwargs ====== #
-        params = {}
-        for k, v in kwargs.get('params', {}).items():
-            # check valid keywords
-            if isinstance(v, (tuple, list)):
-                try: v = dict(v)
-                except Exception: pass
-            if not isinstance(v, Mapping):
-                continue
-            # check valid keywords
-            for i in as_tuple(k):
-                params[self.ops[i] if is_number(i) else i] = v
+    @property
+    def ops(self):
+        return self._ops
+
+    def _apply(self, *args, **kwargs):
+        all_outputs = []
+        last_output_shape = [tuple(x.get_shape().as_list())
+        for x in self._current_args + list(self._current_kwargs.values())]
         # ====== print debug ====== #
-        if self.debug:
+        if self.debug > 0:
             print('**************** Sequences: %s ****************' %
                 ctext(self.name, 'cyan'))
-            print('First input:', x.get_shape().as_list())
-        # ====== applying ====== #
-        all_outputs = []
-        for op in self.ops:
-            keywords = _shrink_kwargs(op, kwargs)
-            if op in params:
-                keywords.update(params[op])
-            x = op(x, **keywords)
+            print("First input:", ctext(str(last_output_shape), 'yellow'))
+            type_format = '%-' + str(max(len(type(o).__name__) for o in self.ops)) + 's'
+            name_format = '%-' + str(max(len(o.name) for o in self.ops)) + 's'
+        # ====== start apply each NNOp ====== #
+        for i, op in enumerate(self.ops):
+            if i == 0:
+                x = op(*args, **kwargs)
+            else:
+                x = op(x)
             all_outputs.append(x)
             # print after finnish the op
-            if self.debug:
-                print(' ', op.name if isinstance(op, functionable) else str(op),
-                    '\n\t' + ctext('Output shape:', 'yellow'),
-                    [i.get_shape().as_list() for i in flatten_list(x, level=None)]
-                    if isinstance(x, (tuple, list)) else x.get_shape().as_list())
-        # end debug
-        if self.debug:
-            print()
+            if self.debug == 1:
+                print('[' + type_format % op.__class__.__name__ + ']',
+                      ctext(name_format % op.name, 'cyan'),
+                      "out:%s" % ctext(op.output_shape, 'yellow'))
+            elif self.debug >= 2:
+                print(str(op))
         return all_outputs if self.all_layers else x
 
     def _transpose(self):
@@ -183,28 +150,3 @@ class Sequence(HelperOps):
         seq = Sequence(transpose_ops, debug=self.debug,
                        name=self.name + '_transpose')
         return seq
-
-    # ==================== Arithemic operator ==================== #
-    def __add__(self, other):
-        return Sequence(self.ops + other.ops)
-
-    def __sub__(self, other):
-        return Sequence([i for i in self.ops if i not in other.ops])
-
-    def __iadd__(self, other):
-        self.ops += other.ops
-
-    def __isub__(self, other):
-        self.ops = [i for i in self.ops if i not in other.ops]
-
-    def __and__(self, other):
-        return Sequence([i for i in self.ops if i in other.ops])
-
-    def __iand__(self, other):
-        self.ops = [i for i in self.ops if i in other.ops]
-
-    def __or__(self, other):
-        return self.__add__(other)
-
-    def __ior__(self, other):
-        return self.__iadd__(other)

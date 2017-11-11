@@ -18,7 +18,6 @@ from odin.backend.role import (InitialState, Weight, Bias, Parameter,
 from odin.utils import as_tuple, is_string, is_number
 
 from .base import NNOp
-from .helper import Sequence, HelperOps
 from .normalization import BatchNorm
 
 
