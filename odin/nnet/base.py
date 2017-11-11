@@ -2,6 +2,7 @@ from __future__ import division, absolute_import, print_function
 
 import os
 import re
+import sys
 import shutil
 import inspect
 import numbers
@@ -21,7 +22,8 @@ from odin.utils.decorators import functionable
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
                         flatten_list, get_all_files, is_pickleable,
-                        FuncDesc, dummy_formatter, type_path)
+                        FuncDesc, dummy_formatter, type_path,
+                        get_module_from_path)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
@@ -678,7 +680,7 @@ class NNOp(object):
         or within the scope of this Op.
         """
         ops = []
-        for name, (var, vtype) in self._variable_info:
+        for name, (var, vtype) in self._variable_info.items():
             if vtype == 'nnop':
                 ops.append(var)
         ops += get_all_nnops(scope=self.name)
@@ -719,7 +721,8 @@ class NNOp(object):
 
     @property
     def input_shape(self):
-        x = [tuple(i.get_shape().as_list()) for i in self.placeholders]
+        x = [tuple(i.get_shape().as_list())
+             for i in as_tuple(self.placeholders)]
         return x[0] if len(x) == 1 else x
 
     def __setattr__(self, name, value):
@@ -928,7 +931,7 @@ class NNOp(object):
                 except Exception:
                     continue
                 # check print-able type
-                if is_primitives(attr) or \
+                if is_primitives(attr, inc_ndarray=True) or \
                 (hasattr(attr, '__call__') and not inspect.ismethod(attr)):
                     print_attrs[name] = attr
         print_attrs = sorted(print_attrs.items(), key=lambda x: x[0])
@@ -944,12 +947,36 @@ class NNOp(object):
             else: # other attributes
                 s = dummy_formatter(j)
             ops_format += padding + "%s: %s\n" % (ctext(i, 'yellow'), s)
-        for name in self._variable_info.keys():
+        # ====== print tensor ====== #
+        for name, (var, vtype) in self._variable_info.items():
+            if vtype != 'tensor':
+                continue
             v = self.get(name)
-            ops_format += padding + "(Var)%s shape=%s, dtype=%s\n" % \
-                (ctext(v.name, 'yellow'),
-                 ctext(v.get_shape().as_list(), 'yellow'),
-                 ctext(v.dtype.base_dtype.name, 'yellow'))
+            roles = K.role.get_roles(v)
+            ops_format += padding + "(Tensor)%s shape=%s, type=%s\n, role=%s\n" % \
+                (ctext(v.name.split(':')[0], 'yellow'),
+                 ctext(tuple(v.get_shape().as_list()), 'yellow'),
+                 ctext(v.dtype.base_dtype.name, 'yellow'),
+                 ctext(';'.join(roles), 'yellow'))
+        # ====== print Variable ====== #
+        for var in self.variables:
+            name = var.name.split(':')[0]
+            vtype = type(var).__name__
+            shape = tuple(var.get_shape().as_list())
+            roles = K.role.get_roles(var)
+            dtype = var.dtype.base_dtype.name
+            ops_format += padding + "(%s)%s shape=%s, type=%s, role=%s\n" % \
+                (vtype, ctext(name, 'yellow'),
+                    ctext(shape, 'yellow'), ctext(dtype, 'yellow'),
+                    ctext(';'.join(roles), 'yellow'))
+        # ====== print NNOps ====== #
+        for op in self.nnops:
+            name = op.name
+            otype = type(op).__name__
+            ops_format += padding + '(NNOp)%s type=%s, inshape=%s\n' % \
+                (ctext(name, 'yellow'),
+                    ctext(otype, 'yellow'),
+                    ctext(op.input_shape, 'yellow'))
         return ops_format[:-1]
 
     # ==================== Slicing ==================== #
@@ -993,24 +1020,53 @@ class LambdaOp(NNOp):
      >>> f = LambdaOp(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
      >>> f()
     """
+    @staticmethod
+    def search(name, path=None, prefix='model'):
+        """ This method search for any objects decorated with `LambdaOp`
+        from given `path` with all script have given `prefix`
+        """
+        # ====== check path ====== #
+        possible_path = ['.', './models', './model', './.models', './.model']
+        script_path = os.path.dirname(sys.argv[0])
+        if path is None:
+            path = [os.path.join(script_path, p) for p in possible_path]
+            path = [p for p in path if os.path.exists(p) and os.path.isdir(p)]
+        elif not isinstance(path, (tuple, list)):
+            path = [path]
+        if len(path) == 0:
+            raise ValueError("Cannot find any available directory that contain the "
+                             "model script.")
+        # ====== search for model ====== #
+        for p in path:
+            model_func = get_module_from_path(name, path = p, prefix = prefix)
+            model_func = [f for f in model_func if isinstance(f, LambdaOp)]
+        if len(model_func) == 0:
+            raise ValueError("Cannot find any model creator function with name=%s "
+                             "at paths=%s." % (name, ', '.join(path)))
+        return model_func[0]
 
     def __init__(self, func, funcT=None, var_init={}, **kwargs):
         super(LambdaOp, self).__init__(**kwargs)
         # check main function
-        if not hasattr(func, '__call__'):
-            raise ValueError("func must be call-able for LambdaOp.")
-        func = func if is_pickleable(func) else functionable(func)
-        self.func = FuncDesc(func)
+        self.set_function(func, is_transpose=False)
         # check transpose function
         if funcT is None:
             funcT = func
-        elif not hasattr(funcT, '__call__'):
-            raise ValueError("funcT must be call-able for LambdaOp.")
-        else:
-            funcT = funcT if is_pickleable(funcT) else functionable(funcT)
-        self.funcT = FuncDesc(funcT)
+        self.set_function(funcT, is_transpose=True)
         # check vars
         self.var_init = {str(k): v for k, v in var_init.items()}
+
+    def set_function(self, func, is_transpose=False):
+        if not hasattr(func, '__call__'):
+            raise ValueError("func must be call-able for LambdaOp.")
+        if not isinstance(func, FuncDesc):
+            func = func if is_pickleable(func) else functionable(func)
+            func = FuncDesc(func)
+        if is_transpose:
+            self._funcT = func
+        else:
+            self._func = func
+        return self
 
     def _initialize(self):
         for name, info in self.var_init.items():
@@ -1026,10 +1082,10 @@ class LambdaOp(NNOp):
         for name in self._variable_info.keys():
             if name not in kwargs:
                 kwargs[name] = self.get(name)
-        return self.func(*args, **kwargs)
+        return self._func(*args, **kwargs)
 
     def _transpose(self):
-        return LambdaOp(func=self.funcT, funcT=self.func,
+        return LambdaOp(func=self._funcT, funcT=self._func,
                         var_init={name: var
                                   for name, (var, vtype) in self._variable_info.items()})
 
