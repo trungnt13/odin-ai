@@ -145,9 +145,14 @@ def is_primitives(x, inc_ndarray=True, exception_types=[]):
     """
     # complex list or Mapping
     if isinstance(x, (tuple, list)):
-        return all(is_primitives(i) for i in x)
+        return all(is_primitives(i, inc_ndarray=inc_ndarray,
+                                 exception_types=exception_types)
+                   for i in x)
     elif isinstance(x, Mapping):
-        return all(is_primitives(i) and is_primitives(j)
+        return all(is_primitives(i, inc_ndarray=inc_ndarray,
+                                 exception_types=exception_types) and
+                   is_primitives(j, inc_ndarray=inc_ndarray,
+                                 exception_types=exception_types)
                    for i, j in x.items())
     # check for number, string, bool, and numpy array
     if is_number(x) or is_string(x) or is_bool(x) or x is None or \
