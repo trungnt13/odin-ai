@@ -924,10 +924,16 @@ class NNOp(object):
             # kwargs now contains: arg_name -> (VariableDesc, ndarray(or None))
             kwargs = kwargs_new
             # check if _apply have vargs or keywords
-            args = () if spec.varargs is None else \
-                [self._check_input_arg(a, name=i)
-                 for i, a in enumerate(args[len(spec.args[1:]):])]
-            # add missing slot from _input_desc
+            if spec.varargs is None:
+                args = ()
+            else:
+                args = [self._check_input_arg(a, name=i)
+                        for i, a in enumerate(args[len(spec.args[1:]):])]
+                # add missing positional, using self._args_desc as substitute
+                for i, var in enumerate(self._args_desc):
+                    if i >= len(args):
+                        args.append((var, None))
+            # add missing slot from _kwargs_desc
             for name, var in self._kwargs_desc.items():
                 if name not in kwargs:
                     kwargs[name] = (var, None)
