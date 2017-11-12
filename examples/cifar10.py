@@ -88,3 +88,46 @@ task.set_valid_task(f_test, (X_valid, y_valid),
                    freq=training.Timer(percentage=0.6), name='valid')
 task.set_eval_task(f_test, (X_test, y_test), name='eval')
 task.run()
+
+# ===========================================================================
+# Exsternal validation
+# ===========================================================================
+script = r"""
+import os
+os.environ['ODIN'] = 'float32,gpu,seed=12082518'
+import pickle
+
+import numpy as np
+from odin import fuel as F, nnet as N, backend as K
+from odin.utils import one_hot, batching, Progbar
+from odin.visual import print_confusion
+
+from sklearn.metrics import confusion_matrix
+
+ds = F.CIFAR10.get_dataset()
+nb_labels = 10
+print(ds)
+X_train = ds['X_train'][:].astype('float32') / 255.
+y_train = one_hot(ds['y_train'][:], nb_classes=nb_labels)
+X_test = ds['X_test'][:].astype('float32') / 255.
+y_test = one_hot(ds['y_test'][:], nb_classes=nb_labels)
+
+path = '/home/trung/.odin/models/cifar10_cnn'
+f = N.deserialize(path)
+outputs = f()
+inputs = f.placeholders
+f_pred = K.function(inputs[0], outputs['prob'], training=False)
+
+y_pred = []
+for i, (s, e) in enumerate(batching(n=X_test.shape[0], batch_size=256)):
+    X = X_test[s:e]
+    y_pred.append(f_pred(X))
+
+y_pred = np.concatenate(y_pred, axis=0)
+cm = confusion_matrix(y_true=np.argmax(y_test, axis=-1),
+                      y_pred=np.argmax(y_pred, axis=-1))
+print(print_confusion(cm))
+"""
+with open('/tmp/cifar10_tmp.py', 'w') as f:
+    f.write(script)
+os.system('python /tmp/cifar10_tmp.py')
