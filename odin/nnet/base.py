@@ -138,27 +138,51 @@ def nnop_scope(scope, prefix='', reuse=None):
     prefix: string
         prefix for NNOp name, just in case a name is not given when NNOp is
         initialized
+    reuse: bool
+        whether reuse variables for tensorflow.variable_scope
+
+    Example
+    -------
+    >>> X = K.variable(x, name='x')
+    >>> with N.nnop_scope(scope='s1'):
+    ...     f1 = N.Dense(8)
+    ...     f1(X)
+    ...     with N.nnop_scope(scope='s2'):
+    ...         f2 = N.Dense(25)
+    ...         f2(X)
+    ...         with N.nnop_scope(scope='s1', prefix='S'):
+    ...             f3 = N.Dense(12)
+    ...             f3(X)
+    >>> with N.nnop_scope(scope='s1/s2', prefix='S'):
+    ...     f4 = N.Dense(num_units=13)
+    ...     f4(X)
+    >>> # f1: s1/Dense_0
+    >>> # f2: s1/s2/Dense_0
+    >>> # f3: s1/s2/Dense_S0
+    >>> # f4 == f3
+    >>> print(N.get_all_nnops(scope='s1/s2')) # contains 2 NNOp
+    >>> print(N.get_all_nnops(scope='s1')) # contains 3 NNOp
     """
     if not is_string(scope) or len(scope) == 0:
         raise ValueError("`scope` must be string type, length > 0.")
     if not is_string(prefix):
         raise ValueError("`prefix` must be string type.")
     # ====== prepare Name Scope ====== #object
-    current_scope, prefix, opID = get_nnop_scope()
+    curr_scope, curr_prefix, curr_opID = get_nnop_scope()
     # NO duplicate scope
-    if scope not in current_scope:
-        current_scope = scope if len(current_scope) == 0 else \
-            current_scope + '/' + scope
+    if scope not in curr_scope:
+        curr_scope = scope if len(curr_scope) == 0 else \
+            curr_scope + '/' + scope
     # name scope
-    _NNOP_SCOPE_STACK.append([current_scope, prefix, 0])
+    _NNOP_SCOPE_STACK.append([curr_scope, prefix, 0])
     # ====== return the scope ====== #
     var_scope = tf.get_variable_scope().name
     # NO repeating the scope in variable scope
     if scope in var_scope:
-        yield None
+        yield curr_scope
     else:
         with tf.variable_scope(scope, reuse=reuse):
-            yield None
+            yield curr_scope
     # ====== reset everything ====== #
     _NNOP_SCOPE_STACK.pop()
 
@@ -435,13 +459,14 @@ class NNOp(object):
         op_scope = get_nnop_scope()
         # automatic generate name
         if name is None:
-            name = clazz.__name__ + '_' + str(op_scope[-1])
+            name = clazz.__name__ + '_' + str(op_scope[1]) + str(op_scope[2])
         # regulation for the NNOp name
-        elif is_string(name) and ('/' in name or ':' in name):
+        elif is_string(name):
+            if '/' in name or ':' in name:
                 raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
         else:
             raise ValueError("name for NNOp must be string, but given name "
-                             "has type: %s" % (name))
+                             "has type: %s" % name)
         # ====== add scope to name ====== #
         if len(op_scope[0]) > 0:
             name = op_scope[0] + '/' + name
