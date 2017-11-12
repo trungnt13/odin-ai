@@ -46,7 +46,6 @@ inputs = [K.placeholder(shape=(None,) + X_train.shape[1:], name='X', dtype='floa
 print("Inputs:", inputs)
 model = N.Lambda.search(MODEL_NAME, prefix='models_cifar')
 outputs = model(*inputs)
-exit()
 # ====== create losses ====== #
 ce = tf.losses.softmax_cross_entropy(inputs[-1], outputs['logit'])
 acc = K.metrics.categorical_accuracy(outputs['prob'], inputs[-1])

@@ -69,30 +69,22 @@ def _assign_new_nnop(nnop):
 # Context manager
 # ===========================================================================
 __ARGS_SCOPE_STACK = [defaultdict(dict)]
-_NNOP_NAME_SCOPE = ''
-_NNOP_ID = defaultdict(int)
+# each element is a list [scope_name, prefix_name, current_id]
+_NNOP_SCOPE_STACK = []
+
+
+def get_nnop_scope():
+    if len(_NNOP_SCOPE_STACK) == 0:
+        return ['', '', uuid()]
+    return _NNOP_SCOPE_STACK[-1]
+
+
+def get_args_scope():
+    return __ARGS_SCOPE_STACK[-1].copy()
 
 
 @contextmanager
 def args_scope(ops, **kwargs):
-    # ====== update Arguments Scope ====== #
-    ops = as_tuple(ops)
-    # copy prevous scopes
-    args_scope = defaultdict(dict)
-    for i, j in __ARGS_SCOPE_STACK[-1].items():
-        args_scope[i] = j.copy()
-    # update new scopes
-    for o in ops:
-        args_scope[o].update(kwargs)
-    __ARGS_SCOPE_STACK.append(args_scope)
-    # ====== return the scope ====== #
-    yield None
-    # ====== reset everything ====== #
-    __ARGS_SCOPE_STACK.pop()
-
-
-@contextmanager
-def nnop_scope(scope=None, id_start=None, reuse=None):
     """Stores the default arguments for the given set of applied_nnops.
 
     For usage, please see examples at top of the file.
@@ -120,33 +112,55 @@ def nnop_scope(scope=None, id_start=None, reuse=None):
     if the name scope is given, an increasement ID is generated for
     duplicated NNOp instead of UUID.
     """
-    # ====== prepare Name Scope ====== #
-    global _NNOP_NAME_SCOPE, _NNOP_ID
-    # name scope
-    if is_string(scope):
-        if scope not in _NNOP_NAME_SCOPE:
-            _NNOP_NAME_SCOPE = str(scope) if len(_NNOP_NAME_SCOPE) == 0 else \
-                _NNOP_NAME_SCOPE + '/' + str(scope)
-    # name scope
-    if is_number(id_start):
-        _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start)
-    elif isinstance(id_start, list) and is_number(id_start[0]):
-        _NNOP_ID[_NNOP_NAME_SCOPE] = int(id_start[0])
+    # ====== update Arguments Scope ====== #
+    ops = as_tuple(ops)
+    # copy prevous scopes
+    args_scope = defaultdict(dict)
+    for i, j in __ARGS_SCOPE_STACK[-1].items():
+        args_scope[i] = j.copy()
+    # update new scopes
+    for o in ops:
+        args_scope[o].update(kwargs)
+    __ARGS_SCOPE_STACK.append(args_scope)
     # ====== return the scope ====== #
-    with tf.variable_scope(scope, reuse=reuse):
-        yield scope
+    yield None
     # ====== reset everything ====== #
-    _NNOP_NAME_SCOPE = '/'.join(_NNOP_NAME_SCOPE.split('/')[:-1])
-    if isinstance(id_start, list):
-        id_start[0] = _NNOP_ID[0]
+    __ARGS_SCOPE_STACK.pop()
 
 
-def get_nnop_scope():
-    return _NNOP_NAME_SCOPE
-
-
-def get_args_scope():
-    return __ARGS_SCOPE_STACK[-1].copy()
+@contextmanager
+def nnop_scope(scope, prefix='', reuse=None):
+    """
+    Parameters
+    ----------
+    scope: string
+        the name of current scope, new NNOp will be created as "scope/name"
+    prefix: string
+        prefix for NNOp name, just in case a name is not given when NNOp is
+        initialized
+    """
+    if not is_string(scope) or len(scope) == 0:
+        raise ValueError("`scope` must be string type, length > 0.")
+    if not is_string(prefix):
+        raise ValueError("`prefix` must be string type.")
+    # ====== prepare Name Scope ====== #object
+    current_scope, prefix, opID = get_nnop_scope()
+    # NO duplicate scope
+    if scope not in current_scope:
+        current_scope = scope if len(current_scope) == 0 else \
+            current_scope + '/' + scope
+    # name scope
+    _NNOP_SCOPE_STACK.append([current_scope, prefix, 0])
+    # ====== return the scope ====== #
+    var_scope = tf.get_variable_scope().name
+    # NO repeating the scope in variable scope
+    if scope in var_scope:
+        yield None
+    else:
+        with tf.variable_scope(scope, reuse=reuse):
+            yield None
+    # ====== reset everything ====== #
+    _NNOP_SCOPE_STACK.pop()
 
 
 # ===========================================================================
@@ -418,25 +432,20 @@ class NNOp(object):
         # New for first time create instance
         # ====== update Op name if it is None ====== #
         name = kwargs.get('name', None)
+        op_scope = get_nnop_scope()
         # automatic generate name
         if name is None:
-            name = clazz.__name__
-            if len(_NNOP_NAME_SCOPE) > 0:
-                name = _NNOP_NAME_SCOPE + '/' + name + "_" + str(_NNOP_ID[_NNOP_NAME_SCOPE])
-                _NNOP_ID[_NNOP_NAME_SCOPE] += 1
-            else:
-                name = name + "_" + str(uuid())
+            name = clazz.__name__ + '_' + str(op_scope[-1])
         # regulation for the NNOp name
-        elif is_string(name):
-            if '/' in name or ':' in name:
+        elif is_string(name) and ('/' in name or ':' in name):
                 raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
-            # add name scope
-            if _NNOP_NAME_SCOPE is not None:
-                name = _NNOP_NAME_SCOPE + '/' + name
-                _NNOP_ID[0] += 1
         else:
             raise ValueError("name for NNOp must be string, but given name "
                              "has type: %s" % (name))
+        # ====== add scope to name ====== #
+        if len(op_scope[0]) > 0:
+            name = op_scope[0] + '/' + name
+            op_scope[-1] += 1
         # ====== check duplicated Op name ====== #
         if name in NNOp._ALL_NNOPS:
             old_clazz = NNOp._ALL_NNOPS[name].__class__
@@ -870,7 +879,7 @@ class NNOp(object):
         # self.name can contain Model varable scope, hence,
         # remove the scope here
         op_name = self.name.split('/')[-1]
-        with nnop_scope(scope=op_name, id_start=[0], reuse=self.is_initialized):
+        with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
             spec = inspect.getargspec(self._apply)
             # adding kwargs_new in Order
             kwargs_new = OrderedDict()

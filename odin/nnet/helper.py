@@ -117,7 +117,7 @@ class Sequence(NNOp):
         for x in self._current_args + list(self._current_kwargs.values())]
         # ====== print debug ====== #
         if self.debug > 0:
-            print('**************** Sequences: %s ****************' %
+            print('**************** Start: %s ****************' %
                 ctext(self.name, 'cyan'))
             print("First input:", ctext(str(last_output_shape), 'yellow'))
             type_format = '%-' + str(max(len(type(o).__name__) for o in self.ops)) + 's'
@@ -136,6 +136,10 @@ class Sequence(NNOp):
                       "out:%s" % ctext(op.output_shape, 'yellow'))
             elif self.debug >= 2:
                 print(str(op))
+        # ====== ending and return ====== #
+        if self.debug > 0:
+            print('**************** End: %s ****************' %
+                  ctext(self.name, 'cyan'))
         return all_outputs if self.all_layers else x
 
     def _transpose(self):

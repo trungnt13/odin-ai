@@ -43,7 +43,7 @@ def cnn(X, y):
                 N.Dense(512, activation=K.relu),
                 N.Dropout(level=0.5),
                 N.Dense(nb_classes, activation=K.linear)
-            ], debug=1)
+            ], debug=2)
     logit = f(X)
     prob = tf.nn.softmax(logit)
     return {'logit': logit, 'prob': prob}
