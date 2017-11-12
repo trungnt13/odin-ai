@@ -121,7 +121,11 @@ class NoSQL(MutableMapping):
             self.flush(save_all=True)
         # delete Singleton instance
         del NoSQL._INSTANCES[self.__class__.__name__][self.path]
-        self._close()
+        # close but some of the attribute may not be initialized
+        try:
+            self._close()
+        except AttributeError as e:
+            pass
 
     def flush(self, save_all=False):
         if self.read_only or self.is_closed:

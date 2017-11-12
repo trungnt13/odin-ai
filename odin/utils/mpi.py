@@ -17,7 +17,6 @@ from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_proc
 
 import numpy as np
 
-_SIG_TERMINATE_ITERATOR = '__THE_TERMINATOR__'
 # ===========================================================================
 # Threading
 # ===========================================================================
@@ -241,7 +240,7 @@ class MPI(object):
 
     def __init__(self, jobs, func,
                  ncpu=1, batch=1, hwm=144,
-                 backend='pyzmq'):
+                 backend='python'):
         super(MPI, self).__init__()
         backend = str(backend).lower()
         if backend not in ('pyzmq', 'python'):

@@ -31,8 +31,10 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 PCA = True
 center = True
-pitch_threshold = 0.8
-audio = F.WDIGITS.get_dataset()
+if True:
+    audio = F.WDIGITS.get_dataset()
+else:
+    audio = F.DIGITS.get_dataset()
 print(audio)
 all_files = list(audio['indices'].keys())
 print("Found %d (.wav) files" % len(all_files))
@@ -56,11 +58,11 @@ extractors = pp.make_pipeline(steps=[
     #                        step_length=step_length,
     #                        nbins=96, nmels=40, nceps=20,
     #                        fmin=64, fmax=4000, padding=padding),
-    # pp.speech.PitchExtractor(frame_length=0.06, step_length=step_length,
+    # pp.speech.PitchExtractor(frame_length=0.05, step_length=step_length,
     #                          threshold=0.5, f0=False, algo='swipe',
     #                          fmin=64, fmax=400),
-    pp.speech.openSMILEpitch(frame_length=0.06, step_length=step_length,
-                             voiceProb=True, loudness=True),
+    # pp.speech.openSMILEpitch(frame_length=0.06, step_length=step_length,
+    #                          voiceProb=True, loudness=True),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
     pp.speech.RASTAfilter(rasta=True, sdc=0),
@@ -72,14 +74,15 @@ extractors = pp.make_pipeline(steps=[
                                       'qspec', 'qmfcc', 'qmspec')),
     pp.base.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
                                       'qspec', 'qmspec', 'qmfcc',
-                                      'pitch', 'f0', 'vad', 'energy',
+                                      'pitch', 'f0', 'sad', 'energy',
                                       'sap', 'loudness')),
+    pp.base.RemoveFeatures(feat_type=('raw')),
     pp.base.RunningStatistics(),
     pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
                     'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
                     'pitch': dtype, 'f0': dtype, 'sap': dtype,
-                    'vad': dtype, 'energy': dtype, 'loudness': dtype,
-                    'raw': dtype})
+                    'sad': dtype, 'energy': dtype, 'loudness': dtype,
+                    'raw': dtype}),
 ], debug=False)
 # extractors.transform(all_files[0])
 # exit()
@@ -123,6 +126,7 @@ for n in ds.keys():
                 ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
+exit() # TODO: fix here
 # ====== plot the processed files ====== #
 figpath = '/tmp/speech_features.pdf'
 files = np.random.choice(list(ds['indices'].keys()),

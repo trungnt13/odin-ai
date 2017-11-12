@@ -94,7 +94,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
                               ctext(name, 'yellow'))
     mpi = MPI(jobs=list(pca_map.items()), func=map_pca,
               ncpu=None, batch=1, hwm=12082518,
-              backend='pyzmq')
+              backend='python')
     for n in mpi:
         prog.add(n)
     # ====== return ====== #
@@ -536,7 +536,7 @@ class FeatureProcessor(object):
                   ncpu=self.ncpu,
                   batch=min(8, max(len(self.jobs) // self.ncpu, 1)),
                   hwm=self.ncpu * 3,
-                  backend='pyzmq')
+                  backend='python')
         prog = Progbar(target=njobs, name=self.name,
                        interval=0.12, print_report=True, print_summary=True)
         for result in mpi:

@@ -366,7 +366,7 @@ class MiniBatchPCA(IncrementalPCA):
                 yield start, x
         mpi = MPI(batch_list, func=map_func,
                   ncpu=ncpu, batch=1, hwm=ncpu * 12,
-                  backend='pyzmq')
+                  backend='python')
         # ====== process the return ====== #
         X_transformed = []
         for start, x in mpi:

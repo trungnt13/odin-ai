@@ -161,6 +161,10 @@ class DataDescriptor(MutableData):
 
     def __init__(self, data, indices):
         super(DataDescriptor, self).__init__()
+        # ====== states variables ====== #
+        self._length = None
+        # if True return name during __iter__
+        self._return_name = False
         # ====== load indices ====== #
         self._indices_loader = async(_preprocessing_indices,
             callback=lambda result: self._loaded_callback())(indices)
@@ -177,10 +181,6 @@ class DataDescriptor(MutableData):
                              '(i.e. shape[0]), the given data have '
                              'shape: %s' % str([d.shape for d in data]))
         self._data = data
-        # ====== states variables ====== #
-        self._length = None
-        # if True return name during __iter__
-        self._return_name = False
 
     # ==================== Properties ==================== #
     @property
@@ -312,16 +312,17 @@ class Feeder(MutableData):
         A process will perform processing on a group of `buffer_size` number of
         data points, then, a list of results are returned to the main process.
         The higher this number the more powerful batch shuffling.
-    maximum_queue_size: int (default: 66)
-        maximum number of batch will be cached in Queue before main process
-        get it and feed to the GPU (if there are too many results in Queue, a
-        deadlock will happen)
+    hwm: int
+        "high water mark" for SEND socket, is a hard limit on the
+        maximum number of outstanding messages ØMQ shall queue
+        in memory for any single peer that the specified socket
+        is communicating with.
 
     Example
     -------
     >>> ds = F.Dataset(os.path.join(temppath, 'ds'), read_only=True)
     >>> feeder = F.Feeder(ds['X'], indices=ds['indices.csv'],
-    >>>                   ncpu=2, buffer_size=2, maximum_queue_size=12)
+    >>>                   ncpu=2, buffer_size=2, hwm=12)
     >>> feeder.set_recipes([
     >>>     F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
     >>>     F.recipes.CreateBatch()
@@ -338,7 +339,7 @@ class Feeder(MutableData):
      - shuffle_level=0: only shuffling the indices
      - shuffle_level=1: shuffle the buffered batch (e.g. 12 files in the indices)
      - shuffle_level=2: shuffle each returned batch
-    * you must balance 2 number: buffer_size and maximum_queue_size, so the
+    * you must balance 2 number: buffer_size and hwm, so the
     amount of data cached by all processed does not excess the RAM
 
     """
@@ -399,14 +400,14 @@ class Feeder(MutableData):
         self._new_args = (self._data, self._recipes,
                           self._output_types, self._cache_shape,
                           self._batch_mode, self._batch_filter,
-                          self.ncpu, self.buffer_size, self.maximum_queue_size)
+                          self.ncpu, self.buffer_size, self.hwm)
 
     # ==================== pickling ==================== #
     def _restore_data(self):
         (self._data, self._recipes,
          self._output_types, self._cache_shape,
          self._batch_mode, self._batch_filter,
-         self.ncpu, self.buffer_size, self.maximum_queue_size) = self._new_args
+         self.ncpu, self.buffer_size, self.hwm) = self._new_args
         # find intersection of all indices in DataDescriptor
         self._indices_keys = async(
             lambda: np.array(
@@ -419,9 +420,8 @@ class Feeder(MutableData):
         self._running_iter = []
 
     # ==================== multiprocessing ==================== #
-    def set_multiprocessing(self, ncpu=None, buffer_size=None, hwm=None):
-        if ncpu is not None:
-            self.ncpu = int(ncpu)
+    def set_multiprocessing(self, ncpu, buffer_size=None, hwm=None):
+        self.ncpu = ncpu
         if buffer_size is not None:
             self.buffer_size = int(buffer_size)
         if hwm is not None:
@@ -508,10 +508,10 @@ class Feeder(MutableData):
 
     def __str__(self):
         padding = '   '
-        s = '<%s: #keys:%d #iter:%d #CPU:%d #Buffer:%d #Queue:%d mode:"%s">\n' % \
+        s = '<%s: #keys:%d #iter:%d #CPU:%s #Buffer:%d #HWM:%d mode:"%s">\n' % \
             (ctext('Feeder', 'cyan'), len(self.indices_keys),
                 len(self._running_iter), self.ncpu, self.buffer_size,
-                self.maximum_queue_size, self._batch_mode)
+                self.hwm, self._batch_mode)
         # ====== Shape and dtype ====== #
         shape = (self.shape,) if is_number(self.shape[0]) else self.shape
         s += padding + ctext("Shape: ", 'magenta') + \
@@ -579,16 +579,14 @@ class Feeder(MutableData):
                 X = _batch_grouping(batch, batch_size, rng, batch_filter)
             elif self._batch_mode == 'file':
                 X = _file_grouping(batch, batch_size, rng, batch_filter)
-            if len(X) == 1:
-                return X[0]
             return X
 
         # ====== track and return ====== #
         it = MPI(jobs=all_keys, func=map_func, ncpu=self.ncpu,
-                 batch=self.buffer_size, hwm=self.maximum_queue_size,
-                 backend='pyzmq')
+                 batch=self.buffer_size, hwm=self.hwm,
+                 backend='python')
         self._running_iter.append(it)
-        return it
+        return iter(it)
 
     def save_cache(self, path, name=None, dtype=None, batch_size=1024):
         """ Save all preprocessed data to a Dataset

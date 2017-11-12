@@ -91,6 +91,7 @@ task.run()
 
 # ===========================================================================
 # Exsternal validation
+# Load model from file and perform validation
 # ===========================================================================
 script = r"""
 import os

@@ -27,7 +27,8 @@ from odin.stats import train_valid_test_split, freqcount
 from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
-from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
+from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
+                        Progbar, unique_labels, chain,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 args = ArgController(
 ).add('-bs', 'batch size', '64'
@@ -35,8 +36,9 @@ args = ArgController(
 # ===========================================================================
 # Const
 # ===========================================================================
-FEAT = ['mspec', 'vad']
-DS_PATH = '/home/trung/data/tidigits'
+FEAT = ['mspec', 'sad']
+ds = F.Dataset(get_datasetpath('digit'), read_only=True)
+print(ds)
 BATCH_SIZE = int(args.bs)
 
 MODEL_PATH = get_modelpath('tidigit', override=True)
@@ -60,15 +62,14 @@ def extract_gender(x):
 
 
 def extract_digit(x):
-    if '_jackson_' in x:
-        return x[0] if x[0] != '0' else 'z'
-    return x.split('_')[6]
+    i = x.split('_')[6]
+    if '_jackson_' in x and i == '0':
+        i = 'z'
+    return i
 
 # ===========================================================================
 # Load and visual the dataset
 # ===========================================================================
-ds = F.Dataset(DS_PATH, read_only=True)
-print(ds)
 train = {}
 test = {}
 for name, (start, end) in ds['indices'].items():
@@ -99,21 +100,21 @@ print(print_hist([nb_frames for name, nb_frames in length],
 length = max(length, key=lambda x: x[-1])
 print("Maximum length:", length)
 length = length[-1]
-# ds = F.Dataset("/mnt/sdb1/TIDIGITS/raw", read_only=True)
 # ====== genders ====== #
-f_digits, digits = unique_labels([i[0] for i in train.items() + test.items()],
-                                 extract_digit, True)
+f_digits, digits = unique_labels(
+    [i for i in chain(train.keys(), test.keys())],
+    key_func=extract_digit, return_labels=True)
 print(ctext("All digits:", 'yellow'), digits)
 # ===========================================================================
 # SPlit dataset
 # ===========================================================================
-# split by speaker ID
+# stratified sampling for each digit, splited based on speaker ID
 train, valid = train_valid_test_split(
     train.items(), train=0.6,
     cluster_func=lambda x: extract_digit(x[0]),
     idfunc=lambda x: extract_spk(x[0]),
     inc_test=False)
-test = test.items()
+test = list(test.items())
 print(ctext("#File train:", 'yellow'), len(train))
 print(ctext("#File valid:", 'yellow'), len(valid))
 print(ctext("#File test:", 'yellow'), len(test))
@@ -149,17 +150,17 @@ print(test)
 # of data in the FeederRecipes
 if True:
     n = 0
-    for X, vad, y in train:
+    for X, sad, y in train:
         n += X.shape[0]
     assert n == len(train)
     #
     n = 0
-    for name, idx, X, vad, y in test:
+    for name, idx, X, sad, y in test:
         n += X.shape[0]
     assert n == len(test)
     #
     n = 0
-    for X, vad, y in valid:
+    for X, sad, y in valid:
         n += X.shape[0]
     assert n == len(valid)
 # ===========================================================================
@@ -170,9 +171,10 @@ inputs = [K.placeholder(shape=(None,) + shape[1:],
                         name='input%d' % i)
           for i, shape in enumerate(as_tuple_of_shape(train.shape))]
 print("Inputs:", inputs)
-with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
+
+with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
                   pad='same'):
-    with N.nnop_scope(ops=['BatchNorm'], activation=K.relu):
+    with N.args_scope(ops=['BatchNorm'], activation=K.relu):
         f = N.Sequence([
             N.Dimshuffle(pattern=(0, 1, 2, 'x')),
             N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
@@ -248,31 +250,6 @@ for outputs in Progbar(test, name="Evaluating",
     assert idx == 0
     y_true.append(f_digits(name))
     y_pred.append(f_pred(*data))
-y_true = np.array(y_true, dtype='int32')
-y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
-# ====== Acc ====== #
-print()
-print("Acc:", accuracy_score(y_true, y_pred))
-print("Confusion matrix:")
-print(print_confusion(confusion_matrix(y_true, y_pred), digits))
-print(LOG_PATH)
-
-# ===========================================================================
-# Evaluate on digit audio dataset
-# ===========================================================================
-ds = F.load_digit_feat()
-test = ds.create_feeder(FEAT, recipes, batch_mode='file'
-    ).set_multiprocessing(ncpu=4, buffer_size=1)
-print(test)
-y_true = []
-y_pred = []
-for outputs in test:
-    name = str(outputs[0])
-    idx = int(outputs[1])
-    data = outputs[2:]
-    assert idx == 0
-    y_pred.append(f_pred(*data))
-    y_true.append(f_digits(name))
 y_true = np.array(y_true, dtype='int32')
 y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
 # ====== Acc ====== #
