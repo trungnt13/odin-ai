@@ -1,165 +1,212 @@
 # -*- coding: utf-8 -*-
 """"
 This module contains tools for Gaussian mixture modeling (GMM)
-"""
-from __future__ import print_function, division, absolute_import
-
-__version__ = '1.1'
 __author__ = 'Omid Sadjadi, Timothee Kheyrkhah'
 __email__ = 'omid.sadjadi@nist.gov'
-
+"""
 import time
 import numpy as np
-import multiprocessing as mp
+
+from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
+
+from odin.utils import MPI, batching
 
 EPS = np.finfo(float).eps
 
 
+# ===========================================================================
+# Helper
+# ===========================================================================
 def unwrap_expectation(args):
     return GMM.expectation(*args)
 
 
-def logsumexp(x, dim):
-    xmax = x.max(axis=dim, keepdims=True)
-    y = xmax + np.log(np.sum(np.exp(x - xmax), axis=dim, keepdims=True))
+def zeroStat(post):
+    return np.sum(post, axis=0, keepdims=True) # (1, M)
+
+
+def firstStat(X, post):
+    return np.dot(X.T, post) # (D, M)
+
+
+def secondStat(X, post):
+    return np.dot((X ** 2).T, post) # (D, M)
+
+
+def compute_llk(post):
+    return logsumexp(post, 1)
+
+
+def nextpow2(i):
+    n = 1
+    while n < i:
+        n *= 2
+    return n
+
+
+def logsumexp(x, axis):
+    xmax = x.max(axis=axis, keepdims=True)
+    y = xmax + np.log(np.sum(np.exp(x - xmax), axis=axis, keepdims=True))
     return y
 
 
-class GmmUtils:
-
-    def __init__(self):
-        pass
-
-    def postprob(self, data):
-        post = self.lgmmprob(data)
-        llk = logsumexp(post, 0)
-        post = np.exp(post - llk)
-        return post, llk
-
-    def compute_C(self):
-        precision = 1 / self.sigma
-        log_det = np.sum(np.log(self.sigma), 0, keepdims=True)
-        return np.sum(self.mu * self.mu * precision, 0, keepdims=True) + \
-            log_det - 2 * np.log(self.w)
-
-    def lgmmprob(self, data):
-        precision = 1 / self.sigma
-        D = precision.T.dot(data * data) - \
-            2 * (self.mu * precision).T.dot(data) + \
-            self.ndim * np.log(2 * np.pi)
-        return -0.5 * (self.C_.T + D)
-
-    @staticmethod
-    def compute_zeroStat(post):
-        return np.sum(post, 1, keepdims=True).T
-
-    @staticmethod
-    def compute_firstStat(data, post):
-        return data.dot(post.T)
-
-    @staticmethod
-    def compute_secondStat(data, post):
-        return (data * data).dot(post.T)
-
-    @staticmethod
-    def compute_llk(post):
-        return logsumexp(post, 1)
+def reduce_expectation_res(res):
+    Z, F, S, L, nframes = res[0]
+    for r in res[1:]:
+        n, f, s, l, nfr = r
+        Z += n
+        F += f
+        S += s
+        L += l
+        nframes += nfr
+    return Z, F, S, L, nframes
 
 
-class GMM(GmmUtils):
+# ===========================================================================
+# Main GMM
+# ===========================================================================
+class GMM(DensityMixin, BaseEstimator, TransformerMixin):
+    """ The following symbol is used:
+    N: number of samples (frames)
+    D: number of features dimension
+    M: current number of mixture
 
-    def __init__(self, ndim, nmix, ds_factor, final_niter, nworkers):
-        # rounding up to the nearest power of 2
-        self.nmix = int(np.power(2, np.ceil(np.log2(nmix))))
-        self.final_iter = int(final_niter)
-        self.ds_factor = int(ds_factor)
-        self.nworkers = int(nworkers)
-        self.ndim = int(ndim)
+    Parameters
+    ----------
+    covariance_type : {'full', 'tied', 'diag', 'spherical'},
+            defaults to 'full'.
+        String describing the type of covariance parameters to use.
+        Must be one of::
+
+            'full' (each component has its own general covariance matrix),
+            'tied' (all components share the same general covariance matrix),
+            'diag' (each component has its own diagonal covariance matrix),
+            'spherical' (each component has its own single variance).
+    init_algo: {'iter', 'kmean'}
+    device: {'gpu', 'cpu', 'mix'}
+        which devices using for the EM
+        'gpu' (only run on tensorflow implementation using GPU)
+        'cpu' (only run on numpy implemetation using CPU)
+        'mix' (using both GPU and CPU)
+    """
+
+    def __init__(self, nmix, niter=16,
+                 covariance_type='diag', init_algo='gmm',
+                 downsample=1,
+                 device='mix', ncpu=1):
+        super(GMM, self).__init__()
+        self.nmix = 2**int(np.round(np.log2(nmix)))
+        self.niter = int(niter)
+        self.downsample = int(downsample)
+        self.device = str(device)
+        self.ncpu = ncpu
+        # ====== state variable ====== #
+        self._is_initialized = False
+        self._is_fitted = False
+        # 'means', 'variances', 'weights'
+        # self.mu, self.sigma, self.w
+        # self.C_ = self.compute_C()
+
+    # ==================== properties ==================== #
+    def is_initialized(self):
+        return self._is_initialized
+
+    def is_fitted(self):
+        return self._is_fitted
+
+    # ==================== sklearn ==================== #
+    def _initialize(self, ndim):
+        if self._is_initialized:
+            return
+        self.ndim = ndim
+        self._is_initialized = True
+        # ====== init ====== #
+        # (D, M)
         self.mu = np.zeros((ndim, 1), dtype='f4')
+        # (D, M)
         self.sigma = np.ones((ndim, 1), dtype='f4')
+        # (1, M)
         self.w = np.ones((1, 1), dtype='f4')
-        self.C_ = self.compute_C() # shape=(1, 1)
+        # (1, M)
+        self.C_ = self.compute_C()
 
-    def fit(self, data_list, gmmFilename=""):
-        # binding of the main procedure gmm_em
-        p = mp.Pool(processes=self.nworkers)
+    def fit(self, X, y=None):
+        # ====== check input ====== #
+        self._initialize(ndim=X.shape[1])
+        assert X.ndim == 2 and X.shape[1] == self.ndim
+        # ====== start GMM ====== #
         print('\nInitializing the GMM hyperparameters ...\n')
         # supports 4096 components, modify for more components
         niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10]
-        niter[int(np.log2(self.nmix))] = self.final_iter
+        niter[int(np.log2(self.nmix))] = self.niter
         mix = 1
         while mix <= self.nmix:
-            print('\nRe-estimating the GMM hyperparameters for {} components ...'.format(mix))
+            print('Re-estimating the GMM hyperparameters for {} components ...'.format(mix))
             for iter in range(niter[int(np.log2(mix))]):
-                print('EM iter#: {} \t'.format(iter + 1), end=" ")
                 self.C_ = self.compute_C()
-                tic = time.time()
-                res = self.expectation(data_list)
-                N, F, S, L, nframes = GMM.reduce_expectation_res(res)
-                self.maximization(N, F, S)
-                print("[llk = {:.2f}]\t[elaps = {:.2f}s]".format(L / nframes, time.time() - tic))
+                res = [self.expectation(i) for i in [X, X]]
+                Z, F, S, L, nframes = reduce_expectation_res(res)
+                self.maximization(Z, F, S)
+                llk = L / nframes
+                print('EM iter#: {} llk={}'.format(iter + 1, llk))
                 del res
             if mix < self.nmix:
                 self.gmm_mixup()
             mix *= 2
-        p.close()
-        if gmmFilename:
-            print('\nSaving GMM to file {}'.format(gmmFilename))
-            self.save(gmmFilename)
 
-    def load_data(self, datalist, p):
-        # check the match between ndim and features dimensionality
-        features_list = np.genfromtxt(datalist, dtype='str')
-        nparts = self.nworkers * 10  # NOTE: this is set empirically
-        split_f_list = np.array_split(features_list, nparts)
-        data = p.map(read_data, split_f_list)
-        return data
+    def score(self, X, y=None):
+        pass
 
-    def expectation(self, data_list):
+    def transform(X):
+        pass
+
+    # ==================== math helper ==================== #
+    def lgmmprob(self, X):
+        precision = 1 / (self.sigma + EPS) # (D, M)
+        D = np.dot(X ** 2, precision) - \
+            2 * np.dot(X, self.mu * precision) + \
+            self.ndim * np.log(2 * np.pi)
+        return -0.5 * (self.C_ + D) # (N, M)
+
+    def postprob(self, data):
+        post = self.lgmmprob(data)
+        llk = logsumexp(post, axis=1)
+        post = np.exp(post - llk)
+        return post, llk
+
+    def compute_C(self):
+        precision = 1 / (self.sigma + EPS)
+        log_det = np.sum(np.log(self.sigma + EPS), 0, keepdims=True)
+        return np.sum(self.mu * self.mu * precision, 0, keepdims=True) + \
+            log_det - \
+            2 * np.log(self.w)
+
+    def expectation(self, X):
         # The Map
-        data = read_data(data_list, self.ds_factor)
-        nfr, ndim = data.shape
+        nfr, ndim = X.shape
         if ndim != self.ndim:
-            raise ValueError('Dimensionality of the data ({}) does not match the specified dimension ndim={}!'.format(ndim, self.ndim))
-        parts = 2500
-        nbatch = int(nfr / parts + 0.99999)
-        N, F, S, L = 0., 0., 0., 0.
-        for batch in range(nbatch):  # Careful for the index
-            start = batch * parts
-            fin = min((batch + 1) * parts, nfr)
-            data_b = data[start:fin, :]
-            post, llk = self.postprob(data_b)
-            N += GMM.compute_zeroStat(post)
-            F += GMM.compute_firstStat(data_b, post)
-            S += GMM.compute_secondStat(data_b, post)
+            raise ValueError('Dimensionality of the data ({}) does not match '
+                'the specified dimension ndim={}!'.format(ndim, self.ndim))
+        Z, F, S, L = 0., 0., 0., 0.
+        for start, end in batching(n=nfr, batch_size=128):
+            X_b = X[start:end, :]
+            post, llk = self.postprob(X_b)
+            Z += zeroStat(post)
+            F += firstStat(X_b, post)
+            S += secondStat(X_b, post)
             L += llk.sum()
-        print(N.shape)
-        print(F.shape)
-        print(S.shape)
-        print(L.shape)
-        print(nfr)
-        exit()
-        return N, F, S, L, nfr
+        return Z, F, S, L, nfr
 
-    @staticmethod
-    def reduce_expectation_res(res):
-        N, F, S, L, nframes = res[0]
-        for r in res[1:]:
-            n, f, s, l, nfr = r
-            N += n
-            F += f
-            S += s
-            L += l
-            nframes += nfr
-        return N, F, S, L, nframes
-
-    def maximization(self, N, F, S):
+    def maximization(self, Z, F, S, floor_const=None):
         # TheReduce
-        iN = 1. / (N + EPS)
-        self.w = N / N.sum()
+        iN = 1. / (Z + EPS)
+        self.w = Z / Z.sum()
         self.mu = F * iN
         self.sigma = S * iN - self.mu * self.mu
-#        self.apply_var_floors()
+        # applying variance floors
+        if floor_const is not None: # example: floor_const=1e-3
+            vFloor = self.sigma.dot(self.w.T) * floor_const
+            self.sigma = self.sigma.clip(vFloor)
 
     def gmm_mixup(self):
         ndim, nmix = self.sigma.shape
@@ -171,17 +218,6 @@ class GMM(GmmUtils):
         self.sigma = np.c_[self.sigma, self.sigma]
         self.w = 0.5 * np.c_[self.w, self.w]
 
-    def apply_var_floors(self, floor_const=1e-3):
-        vFloor = self.sigma.dot(self.w.T) * floor_const
-        self.sigma = self.sigma.clip(vFloor)
-
-    def load(self, gmmFilename):
-        self.mu, self.sigma, self.w = h5read(gmmFilename, ['means', 'variances', 'weights'])
-        self.C_ = self.compute_C()
-
-    def save(self, gmmFilename):
-        h5write(gmmFilename, [self.mu, self.sigma, self.w], ['means', 'variances', 'weights'])
-
     def compute_centered_stats(self, data):
         post = self.postprob(data)[0]
         N = GMM.compute_zeroStat(post)
@@ -191,10 +227,3 @@ class GMM(GmmUtils):
 
     def compute_log_lik(self, data):
         return self.postprob(data)[1]
-
-
-def read_data(feature_files, ds_factor=2):
-    data_list_temp = []
-    for X in feature_files:
-        data_list_temp.append(X[0::ds_factor, :])
-    return np.row_stack(data_list_temp)
