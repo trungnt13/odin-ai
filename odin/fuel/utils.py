@@ -127,13 +127,16 @@ class NoSQL(MutableMapping):
         except AttributeError as e:
             pass
 
-    def flush(self, save_all=False):
+    def flush(self, save_all=True):
         if self.read_only or self.is_closed:
             return
         self._flush(save_all=bool(save_all))
         return self
 
     # ==================== dictionary methods ==================== #
+    def __call__(self, key):
+        return self.__getitem__(key)
+
     def set(self, key, value):
         self.__setitem__(key, value)
         return self
@@ -357,7 +360,7 @@ class MmapDict(NoSQL):
         # store newly added value for fast query
         self._cache_dict[key] = value
         if len(self._cache_dict) > self.cache_size:
-            self.flush()
+            self.flush(save_all=False)
 
     def __getitem__(self, key):
         if key in self._cache_dict:

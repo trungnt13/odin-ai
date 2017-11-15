@@ -13,6 +13,7 @@ import six
 import math
 import copy
 import shutil
+import inspect
 import warnings
 from collections import OrderedDict, Mapping, defaultdict
 
@@ -21,7 +22,8 @@ from scipy.signal import lfilter
 
 from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
-                        get_all_files, is_pickleable, Progbar, mpi, ctext)
+                        get_all_files, is_pickleable, Progbar, mpi, ctext,
+                        is_fileobj)
 from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
@@ -56,7 +58,7 @@ timit_map = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er',
 # ===========================================================================
 # Basics
 # ===========================================================================
-def _read_pcm(path):
+def _read_pcm(path, encode):
     dtype = np.int16
     sr = None
     if encode is not None:
@@ -72,11 +74,11 @@ def _read_pcm(path):
 
 def read(path_or_file, encode=None):
     # ====== check input ====== #
-    if isinstance(path_or_file, file):
+    if is_fileobj(path_or_file):
         f = path_or_file
         path = f.name
     elif os.path.isfile(path_or_file):
-        f = open(path_or_file, 'r')
+        f = open(path_or_file, 'rb')
         path = path_or_file
     else:
         raise ValueError("Invalid type of `path_or_file` %s" %
@@ -272,7 +274,13 @@ class AudioReader(Extractor):
     Parameters
     ----------
     sr: int or None
-        provided sr for missing sr audio (i.e. pcm files)
+        provided sr for missing sr audio (i.e. pcm files),
+        NOTE this value only used when cannot find `sr` information
+        from audio file (example: reading raw pcm).
+    sr_new: int or None
+        resample sample rate for all provided audio, only
+        support downsample (i.e. must be smaller than sr).
+
 
     Input
     -----
@@ -355,7 +363,7 @@ class AudioReader(Extractor):
                 if 'path' in self.dataset:
                     path = self.dataset['path'][path_or_array]
         # read from file object
-        elif isinstance(path_or_array, file):
+        elif is_fileobj(path_or_array):
             path = path_or_array.name
             raw, sr = read(path_or_array, encode=encode)
         else:
@@ -411,7 +419,8 @@ class AudioReader(Extractor):
             duration = max(raw.shape) / sr
         # ====== check if absolute path====== #
         if path is not None:
-            path = str(path, 'utf-8')
+            if not is_string(path):
+                path = str(path, 'utf-8')
             if '/' != path[0]:
                 path = os.path.abspath(path)
         ret = {'raw': raw, 'sr': sr, 'duration': duration, # in second
@@ -945,8 +954,9 @@ class Read3ColSAD(Extractor):
         # ====== name_converter ====== #
         if name_converter is not None:
             if not hasattr(name_converter, '__call__'):
-                raise ValueError("`name_converter` must be call-able.")
-            name_converter = functionable(func=name_converter)
+                raise ValueError("`name_converter` must be call-able, or Mapping.")
+            if inspect.isfunction(name_converter):
+                name_converter = functionable(func=name_converter)
         self.name_converter = name_converter
         self.ref_key = as_tuple(ref_key, t=str)
         # ====== parse all file ====== #
@@ -975,7 +985,9 @@ class Read3ColSAD(Extractor):
         # ====== start ====== #
         if is_string(name):
             if self.name_converter is not None:
-                name = self.name_converter(name)
+                name = (self.name_converter[name]
+                    if isinstance(self.name_converter, Mapping) else
+                    self.name_converter(name))
             # ====== convert step_length ====== #
             step_length = self.step_length
             if step_length >= 1: # step_length is number of frames

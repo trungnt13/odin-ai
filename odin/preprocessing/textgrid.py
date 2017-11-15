@@ -89,6 +89,7 @@ from __future__ import print_function
 import sys
 import os
 import re
+from odin.utils import is_fileobj
 
 TEXTTIER = "TextTier"
 INTERVALTIER = "IntervalTier"
@@ -141,7 +142,7 @@ class TextGrid(object):
         """
         if isinstance(read_file, str) and os.path.isfile(read_file):
             read_file = open(read_file, 'r')
-        if isinstance(read_file, file):
+        if is_fileobj(read_file):
             tmp = read_file.read()
             read_file.close()
             read_file = tmp
@@ -149,7 +150,7 @@ class TextGrid(object):
         # clean the text little bit
         try:
             self.read_file = read_file.decode('utf-8')
-        except:
+        except Exception:
             self.read_file = read_file.decode('utf-16')
 
         self.size = 0

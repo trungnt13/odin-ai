@@ -9,7 +9,7 @@ import numpy as np
 
 from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
 
-from odin.utils import MPI, batching
+from odin.utils import MPI, batching, ctext, cpu_count, Progbar, is_number
 
 EPS = np.finfo(float).eps
 
@@ -17,10 +17,6 @@ EPS = np.finfo(float).eps
 # ===========================================================================
 # Helper
 # ===========================================================================
-def unwrap_expectation(args):
-    return GMM.expectation(*args)
-
-
 def zeroStat(post):
     return np.sum(post, axis=0, keepdims=True) # (1, M)
 
@@ -93,19 +89,35 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     def __init__(self, nmix, niter=16,
                  covariance_type='diag', init_algo='gmm',
                  downsample=1,
-                 device='mix', ncpu=1):
+                 batch_size=2056, device='mix', ncpu=1):
         super(GMM, self).__init__()
         self.nmix = 2**int(np.round(np.log2(nmix)))
         self.niter = int(niter)
         self.downsample = int(downsample)
+        self.init_algo = str(init_algo)
+        # ====== multi-processing ====== #
+        self.batch_size = int(batch_size)
         self.device = str(device)
-        self.ncpu = ncpu
+        if ncpu is None:
+            ncpu = cpu_count() - 1
+        self.ncpu = int(ncpu)
         # ====== state variable ====== #
         self._is_initialized = False
         self._is_fitted = False
         # 'means', 'variances', 'weights'
         # self.mu, self.sigma, self.w
         # self.C_ = self.compute_C()
+
+    def __str__(self):
+        if self._initialize:
+            mu, std, w = self.mu.shape, self.sigma.shape, self.w.shape
+        else:
+            mu, std, w = None, None, None
+        s = '<%s init:%s fitted:%s mu:%s std:%s weight:%s>' %\
+            (ctext('GMM:%d' % self.nmix, 'cyan'),
+                self._is_initialized, self._is_fitted,
+                mu, std, w)
+        return s
 
     # ==================== properties ==================== #
     def is_initialized(self):
@@ -130,12 +142,30 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         # (1, M)
         self.C_ = self.compute_C()
 
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, log=False):
         # ====== check input ====== #
         self._initialize(ndim=X.shape[1])
         assert X.ndim == 2 and X.shape[1] == self.ndim
+        # ====== divide the batches ====== #
+        nframes = X.shape[0]
+        jobs = np.linspace(start=0, stop=nframes, num=self.ncpu + 1, dtype='int32')
+        jobs = list(zip(jobs, jobs[1:]))
+
+        def _map_func(start_end):
+            start, end = start_end[0]
+            Z, F, S, L = 0., 0., 0., 0.
+            for s, e in batching(n=end - start, batch_size=self.batch_size):
+                s += start; e += start
+                x = X[s:e]
+                res_Z, res_F, res_S, res_L = self.expectation(x)
+                Z += res_Z
+                F += res_F
+                S += res_S
+                L += res_L
+                yield x.shape[0]
+            yield Z, F, S, L
+
         # ====== start GMM ====== #
-        print('\nInitializing the GMM hyperparameters ...\n')
         # supports 4096 components, modify for more components
         niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10]
         niter[int(np.log2(self.nmix))] = self.niter
@@ -144,11 +174,26 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             print('Re-estimating the GMM hyperparameters for {} components ...'.format(mix))
             for iter in range(niter[int(np.log2(mix))]):
                 self.C_ = self.compute_C()
-                res = [self.expectation(i) for i in [X, X]]
-                Z, F, S, L, nframes = reduce_expectation_res(res)
+                # Expectation
+                mpi = MPI(jobs, func=_map_func, ncpu=self.ncpu, batch=1, hwm=2**25,
+                          backend='python')
+                prog = Progbar(target=nframes, print_report=True,
+                               print_summary=True,
+                               name="#Mixture:%d  iter#:%d" % (mix, iter + 1))
+                Z, F, S, L = 0., 0., 0., 0.
+                for res in mpi:
+                    if is_number(res):
+                        prog.add(res)
+                    else:
+                        res_Z, res_F, res_S, res_L = res
+                        Z += res_Z
+                        F += res_F
+                        S += res_S
+                        L += res_L
+                # Maximization
                 self.maximization(Z, F, S)
                 llk = L / nframes
-                print('EM iter#: {} llk={}'.format(iter + 1, llk))
+                print("llk:", llk)
                 del res
             if mix < self.nmix:
                 self.gmm_mixup()
@@ -157,8 +202,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     def score(self, X, y=None):
         pass
 
-    def transform(X):
-        pass
+    def transform(self, X):
+        post, llk = self.postprob(X)
+        N = zeroStat(post)
+        F = firstStat(X, post)
+        F_hat = np.reshape(F - self.mu * N, (self.ndim * self.nmix, 1),
+                           order='F')
+        return N, F_hat
 
     # ==================== math helper ==================== #
     def lgmmprob(self, X):
@@ -168,34 +218,31 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             self.ndim * np.log(2 * np.pi)
         return -0.5 * (self.C_ + D) # (N, M)
 
-    def postprob(self, data):
-        post = self.lgmmprob(data)
-        llk = logsumexp(post, axis=1)
+    def postprob(self, X):
+        post = self.lgmmprob(X) # (N, M)
+        llk = logsumexp(post, axis=1) # (N, 1)
         post = np.exp(post - llk)
         return post, llk
 
     def compute_C(self):
         precision = 1 / (self.sigma + EPS)
         log_det = np.sum(np.log(self.sigma + EPS), 0, keepdims=True)
-        return np.sum(self.mu * self.mu * precision, 0, keepdims=True) + \
+        return np.sum((self.mu ** 2) * precision, 0, keepdims=True) + \
             log_det - \
             2 * np.log(self.w)
 
     def expectation(self, X):
         # The Map
-        nfr, ndim = X.shape
+        ndim = X.shape[1]
         if ndim != self.ndim:
             raise ValueError('Dimensionality of the data ({}) does not match '
                 'the specified dimension ndim={}!'.format(ndim, self.ndim))
-        Z, F, S, L = 0., 0., 0., 0.
-        for start, end in batching(n=nfr, batch_size=128):
-            X_b = X[start:end, :]
-            post, llk = self.postprob(X_b)
-            Z += zeroStat(post)
-            F += firstStat(X_b, post)
-            S += secondStat(X_b, post)
-            L += llk.sum()
-        return Z, F, S, L, nfr
+        post, llk = self.postprob(X)
+        Z = zeroStat(post)
+        F = firstStat(X, post)
+        S = secondStat(X, post)
+        L = llk.sum()
+        return Z, F, S, L
 
     def maximization(self, Z, F, S, floor_const=None):
         # TheReduce
@@ -217,13 +264,3 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         self.mu = np.c_[self.mu - perturb, self.mu + perturb]
         self.sigma = np.c_[self.sigma, self.sigma]
         self.w = 0.5 * np.c_[self.w, self.w]
-
-    def compute_centered_stats(self, data):
-        post = self.postprob(data)[0]
-        N = GMM.compute_zeroStat(post)
-        F = GMM.compute_firstStat(data, post)
-        F_hat = np.reshape(F - self.mu * N, (self.ndim * self.nmix, 1), order='F')
-        return N, F_hat
-
-    def compute_log_lik(self, data):
-        return self.postprob(data)[1]

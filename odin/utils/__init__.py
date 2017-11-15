@@ -1,5 +1,6 @@
 from __future__ import print_function
 import os
+import io
 import sys
 # import uuid
 import time
@@ -92,7 +93,7 @@ def _type_name(x):
 
 def dummy_formatter(x):
     s = str(x)
-    if len(s) < 120:
+    if len(s) < 120 and '\n' not in s:
         return s
     if isinstance(x, (tuple, list)):
         return "(list)length=%d;type=%s" % \
@@ -112,6 +113,15 @@ def dummy_formatter(x):
 # ===========================================================================
 # Basics
 # ===========================================================================
+def is_fileobj(f):
+    """ Check if an object `f` is intance of FileIO object created
+    by `open()`"""
+    return isinstance(f, io.TextIOBase) or \
+        isinstance(f, io.BufferedIOBase) or \
+        isinstance(f, io.RawIOBase) or \
+        isinstance(f, io.IOBase)
+
+
 def is_string(s):
     return isinstance(s, string_types)
 
@@ -270,7 +280,7 @@ class _LogWrapper():
     def close(self):
         try:
             self.stream.close()
-        except:
+        except Exception:
             pass
 
 
@@ -305,7 +315,7 @@ def stdio(path=None, suppress=False, stderr=True):
     # redirect to a file
     elif is_string(path):
         f = _LogWrapper(open(path, "w"))
-    elif isinstance(path, file):
+    elif is_fileobj(path):
         f = path
         path = f.name
     else:
