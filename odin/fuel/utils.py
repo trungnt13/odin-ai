@@ -226,7 +226,11 @@ class MmapDict(NoSQL):
 
     def _restore_dict(self, path, read_only, cache_size):
         # ====== already exist ====== #
-        if os.path.exists(path) and os.path.getsize(path) > 0:
+        if os.path.exists(path):
+            if os.path.getsize(path) == 0:
+                if read_only:
+                    raise Exception('File at path:"%s" has zero size, no data '
+                                    'found in (read-only mode).' % path)
             file = open(str(path), mode='rb+')
             if file.read(len(MmapDict.HEADER)) != MmapDict.HEADER:
                 raise Exception('Given file is not in the right format '
@@ -241,9 +245,6 @@ class MmapDict(NoSQL):
             self._indices_dict = async(lambda: cPickle.loads(pickled_indices))()
         # ====== create new file from scratch ====== #
         else:
-            if read_only:
-                raise Exception('File at path:"%s" does not exist '
-                                '(read-only mode).' % path)
             file = open(str(path), mode='wb+')
             file.write(MmapDict.HEADER)
             # just write the header
