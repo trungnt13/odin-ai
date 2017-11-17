@@ -76,14 +76,14 @@ class VariationalDense(NNOp):
             self.get_variable(initializer=self.b_init,
                 shape=(self.num_units,), name='b_logsigma', roles=BIAS)
 
-    def _apply(self, x):
-        input_shape = K.get_shape(x)
+    def _apply(self, X):
+        input_shape = K.get_shape(X)
         # calculate statistics
-        mean, logsigma = self.get_mean_logsigma(x)
+        mean, logsigma = self.get_mean_logsigma(X)
         # variational output
         output = mean
         if K.is_training():
-            output = self.sampling(x)
+            output = self.sampling(X)
         # set shape for output
         K.add_shape(output, input_shape[:-1] + (self.num_units,))
         return output

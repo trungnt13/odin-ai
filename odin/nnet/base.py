@@ -178,7 +178,7 @@ def nnop_scope(scope, prefix='', reuse=None):
     # ====== return the scope ====== #
     var_scope = tf.get_variable_scope().name
     # NO repeating the scope in variable scope
-    if scope in var_scope:
+    if any(s == scope for s in var_scope.split('/')): # this may cause error
         yield curr_scope
     else:
         with tf.variable_scope(scope, reuse=reuse):
@@ -419,7 +419,7 @@ class NNOp(object):
 
     Abstract
     --------
-    _apply(self, x, **kwargs): resulted variables
+    _apply(self, X, **kwargs): resulted variables
         apply take a list of variables and custom parameters to compute
         output variables
     _initialize(self, **kwargs):
@@ -484,6 +484,7 @@ class NNOp(object):
         # this store spontanious args and kwargs feeded to apply()
         new_op._current_args = ()
         new_op._current_kwargs = {}
+        new_op._device = None
         # all save-able attributes of NNOp store here
         new_op._save_states = {'_name': name}
         return new_op
@@ -517,6 +518,7 @@ class NNOp(object):
         # ====== default attribute ====== #
         self._current_args = ()
         self._current_kwargs = {}
+        self._device = None
         self._cache_outputs = {}
         self._new_args_called = False
         # ====== save states ====== #
@@ -536,6 +538,12 @@ class NNOp(object):
         return ('[__name__]' + self.name,)
 
     # ==================== properties ==================== #
+    def set_device(self, dev):
+        """ Set the tensorflow device `_initialize` and `_apply` will
+        be run on"""
+        self._device = str(dev)
+        return self
+
     def get(self, name):
         """"Simple shortcut for getting defined variable"""
         if isinstance(name, bytes):
@@ -905,6 +913,12 @@ class NNOp(object):
         # remove the scope here
         op_name = self.name.split('/')[-1]
         with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
+            # ====== special case, Op name mis match variable scope ====== #
+            if not self._is_initialized and \
+            self.name != tf.get_variable_scope().name:
+                # check Op name match variable scope
+                self._name = tf.get_variable_scope().name
+            # ====== processing argument information ====== #
             spec = inspect.getargspec(self._apply)
             # adding kwargs_new in Order
             kwargs_new = OrderedDict()
@@ -975,7 +989,11 @@ class NNOp(object):
             self._current_kwargs = op_kwargs
             # ====== initialize first ====== #
             if not self._is_initialized:
-                self._initialize()
+                if self._device is not None:
+                    with tf.device(self._device):
+                        self._initialize()
+                else:
+                    self._initialize()
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
                 _assign_new_nnop(self)
@@ -985,7 +1003,11 @@ class NNOp(object):
                 y = self._cache_outputs[footprint]
             # First time generate output given footprint
             else:
-                y = self._apply(*op_args, **op_kwargs)
+                if self._device is not None:
+                    with tf.device(self._device):
+                        y = self._apply(*op_args, **op_kwargs)
+                else:
+                    y = self._apply(*op_args, **op_kwargs)
                 # record cahced return
                 self._cache_outputs[footprint] = y
             # check if op_data given, then evaluate to get the results.
@@ -1327,7 +1349,7 @@ class ParametricRectifier(NNOp):
         self.alpha = self.get_variable(initializer=self.alpha_init,
             shape=shape, name="alpha", roles=Parameter)
 
-    def _apply(self, x):
+    def _apply(self, X):
         axes = iter(range(K.ndim(self.alpha)))
         pattern = ['x' if input_axis in self.shared_axes
                    else next(axes)

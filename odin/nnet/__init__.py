@@ -10,6 +10,8 @@ from .embedding import *
 from .helper import *
 from .rnn import *
 
+from . import models
+
 
 # ===========================================================================
 # Helper method for serialize NNOp

@@ -64,7 +64,7 @@ class Residual(NNOp):
         print(self.input_shape, kwargs)
         exit()
 
-    def _apply(self, x, **kwargs):
+    def _apply(self, X, **kwargs):
         pass
 
 

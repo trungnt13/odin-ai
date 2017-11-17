@@ -19,8 +19,8 @@ class Flatten(NNOp):
         super(Flatten, self).__init__(**kwargs)
         self.outdim = outdim
 
-    def _apply(self, x):
-        return K.flatten(x, outdim=self.outdim)
+    def _apply(self, X):
+        return K.flatten(X, outdim=self.outdim)
 
     def _transpose(self):
         return Reshape(shape=self.input_shape)
@@ -35,8 +35,8 @@ class Reshape(NNOp):
         super(Reshape, self).__init__(**kwargs)
         self.shape = shape
 
-    def _apply(self, x):
-        return K.reshape(x, shape=self.shape)
+    def _apply(self, X):
+        return K.reshape(X, shape=self.shape)
 
     def _transpose(self):
         return Reshape(shape=self.input_shape)
@@ -48,8 +48,8 @@ class Dimshuffle(NNOp):
         super(Dimshuffle, self).__init__(**kwargs)
         self.pattern = pattern
 
-    def _apply(self, x):
-        return K.dimshuffle(x, pattern=self.pattern)
+    def _apply(self, X):
+        return K.dimshuffle(X, pattern=self.pattern)
 
     def _transpose(self):
         return Reshape(shape=self.input_shape)
@@ -61,12 +61,12 @@ class Squeeze(NNOp):
         super(Squeeze, self).__init__(**kwargs)
         self.axis = axis
 
-    def _apply(self, x):
-        input_shape = x.get_shape()
+    def _apply(self, X):
+        input_shape = X.get_shape()
         if input_shape[self.axis] != 1:
             raise ValueError('The squeeze axis=%d must be 1, but got %d instead' %
                              (self.axis, input_shape[self.axis]))
-        return tf.squeeze(x, axis=self.axis)
+        return tf.squeeze(X, axis=self.axis)
 
     def _transpose(self):
         return InvertSqueeze(self)
