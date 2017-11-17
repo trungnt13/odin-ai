@@ -1,25 +1,38 @@
 from .base import Model
+
+import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
+from odin.utils import flatten_list
 from odin.nnet.base import Dense
 
 
-def renorm_rms(x, target_rms=1.0, axis=1):
-    """ scales the data such that RMS is 1.0
-    """
-    # scale = sqrt(x^t x / (D * target_rms^2)).
-    D = tf.sqrt(tf.cast(tf.shape(x)[axis], 'float32'))
-    x_rms = tf.sqrt(tf.reduce_sum(x * x, axis=0, keep_dims=True)) / D
-    # x_rms[x_rms == 0] = 1.
-    return target_rms * x / x_rms
-
-
 class BNF_1024_MFCC39(Model):
-    """ BNN """
+    """ Bottleneck fully connected network (1024-units):
+    + Feature: 39-D MFCCs with 13-D+detla+ddelta)
+       - sample_rate = 8000
+       - filter_lo_edge = 100
+       - filter_hi_edge = 4000
+       - num_cepstral_coefs = 13
+       - frame_length = 0.025
+       - frame_shift = 0.010
+       - preemphasis_coef = 0.97
+       - num_channels = 40
+       - num_fft_points = 512
+       - window_type = hamm
+       - spectrum_type = mag
+       - compression_type = log
+    + Context size: 21
+    + Nonlinearity: Relu
+    + Renorm: True (scales the data such that RMS is 1.0,
+             performed after the activation)
+    NOTE: the last layer (the bottleneck) is linear activated, and no renorm.
+    """
 
-    def __init__(self, **kwargs):
-        super(BNF_1024_MFCC39, self).__init__(**kwargs)
+    @property
+    def nb_layers(self):
+        return 5
 
     def get_input_info(self):
         w0 = self.get_loaded_param('w0')
@@ -27,19 +40,17 @@ class BNF_1024_MFCC39(Model):
         return {'X': ((None, nb_ceps), 'float32')}
 
     def _apply(self, X):
-        weights = (b0, w0, b1, w1, b2, w2, b3, w3, b4, w4) = \
-            self.get_loaded_param(('b0', 'w0', 'b1', 'w1',
-                                   'b2', 'w2', 'b3', 'w3',
-                                   'b4', 'w4'))
+        param_names = flatten_list([('b%d' % i, 'w%d' % i)
+                                    for i in range(self.nb_layers)])
+        weights = self.get_loaded_param(param_names)
         # ====== create ====== #
         layers = []
-        nb_layers = len(weights) // 2
-        for i in range(nb_layers):
+        for i in range(self.nb_layers):
             b = weights[i * 2].ravel()
             W = weights[i * 2 + 1].T
             num_units = b.shape[0]
-            if i == nb_layers - 1:
-                name = 'BNF'
+            if i == self.nb_layers - 1:
+                name = 'Bottleneck'
                 nonlinearity = K.linear
             else:
                 name = "Layer%d" % (i + 1)
@@ -50,5 +61,57 @@ class BNF_1024_MFCC39(Model):
         # ====== apply ====== #
         for l in layers[:-1]:
             X = l(X)
-            X = renorm_rms(X, axis=1)
+            X = K.renorm_rms(X, axis=1)
         return layers[-1](X)
+
+
+class BNF_2048_MFCC39(BNF_1024_MFCC39):
+    """ Bottleneck fully connected network (2048-units):
+    + Feature: 39-D MFCCs with 13-D+detla+ddelta)
+       - sample_rate = 8000
+       - filter_lo_edge = 100
+       - filter_hi_edge = 4000
+       - num_cepstral_coefs = 13
+       - frame_length = 0.025
+       - frame_shift = 0.010
+       - preemphasis_coef = 0.97
+       - num_channels = 40
+       - num_fft_points = 512
+       - window_type = hamm
+       - spectrum_type = mag
+       - compression_type = log
+    + Context size: 21
+    + Nonlinearity: Relu
+    + Renorm: True (scales the data such that RMS is 1.0,
+             performed after the activation)
+    NOTE: the last layer (the bottleneck) is linear activated, and no renorm.
+    """
+    @property
+    def nb_layers(self):
+        return 6
+
+
+class BNF_2048_MFCC40(BNF_1024_MFCC39):
+    """ Bottleneck fully connected network (2048-units):
+      + Feature: static 40-D MFCCs
+         - sample_rate = 8000
+         - filter_lo_edge = 100
+         - filter_hi_edge = 4000
+         - num_cepstral_coefs = 13
+         - frame_length = 0.025
+         - frame_shift = 0.010
+         - preemphasis_coef = 0.97
+         - num_channels = 40
+         - num_fft_points = 512
+         - window_type = hamm
+         - spectrum_type = mag
+         - compression_type = log
+      + Context size: 21
+      + Nonlinearity: Relu
+      + Renorm: True (scales the data such that RMS is 1.0,
+                performed after the activation)
+     NOTE: the last layer (the bottleneck) is linear activated, and no renorm.
+    """
+    @property
+    def nb_layers(self):
+        return 6
