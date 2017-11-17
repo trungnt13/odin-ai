@@ -5,7 +5,7 @@ matplotlib.use('Agg')
 
 from odin.utils import ArgController, stdio, one_hot
 args = ArgController(
-).add('-model', 'model name, specified in models_cifar.py', 'test'
+).add('-model', 'model name, specified in models_cifar.py', 'cnn'
 ).parse()
 
 import os
@@ -113,7 +113,7 @@ y_train = one_hot(ds['y_train'][:], nb_classes=nb_labels)
 X_test = ds['X_test'][:].astype('float32') / 255.
 y_test = one_hot(ds['y_test'][:], nb_classes=nb_labels)
 
-path = '/home/trung/.odin/models/cifar10_cnn'
+path = "{}"
 f = N.deserialize(path)
 outputs = f()
 inputs = f.placeholders
@@ -128,7 +128,7 @@ y_pred = np.concatenate(y_pred, axis=0)
 cm = confusion_matrix(y_true=np.argmax(y_test, axis=-1),
                       y_pred=np.argmax(y_pred, axis=-1))
 print(print_confusion(cm))
-"""
+""".format(MODEL_PATH)
 with open('/tmp/cifar10_tmp.py', 'w') as f:
     f.write(script)
 os.system('python /tmp/cifar10_tmp.py')

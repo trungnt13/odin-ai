@@ -69,7 +69,7 @@ def serialize(nnops, path, save_variables=True, variables=[],
 
 def deserialize(path):
     if not (os.path.exists(path) and os.path.isdir(path)):
-        raise ValueError("path must be path to a folder.")
+        raise ValueError("path must be path to a folder, but given: %s." % path)
     nnops_path = os.path.join(path, 'nnops.ai')
     vars_path = os.path.join(path, 'variables')
     # ====== load the NNOps ====== #
