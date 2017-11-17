@@ -597,7 +597,7 @@ class NNOp(object):
             # get tensor
             elif t == 'tensor':
                 name, footprint = var_name
-                op = K.get_operations(footprint=footprint)
+                op = K.get_all_operations(footprint=footprint)
                 if len(op) == 0:
                     raise RuntimeError("Cannot find any Op with given footprint: %s" % footprint)
                 var = op[0]._outputs[int(name.split(':')[-1])]

@@ -228,12 +228,12 @@ def get_normalized_name(x):
     return x
 
 
-def get_operations(type=None, device=None, sort=False, scope=None,
-                   footprint=None):
+def get_all_operations(otype=None, device=None, sort=False, scope=None,
+                       footprint=None):
     """ Return list of all operations in default graph
     The follow attributes can be access within the operation:
      * name : string
-     * type : string, type of the op (e.g. `"MatMul"`).
+     * otype : string, operation type (e.g. `"MatMul"`).
      * device:  string name of the device to which this op has been assigned
      * _inputs : list of `Tensor`
      * _outputs : list of `Tensor`
@@ -257,8 +257,8 @@ def get_operations(type=None, device=None, sort=False, scope=None,
             if op not in _ops_ID:
                 _ops_ID[op] = ID
     # filter out some op
-    if type is not None:
-        ops = [o for o in ops if _filter_string(type, o.type)]
+    if otype is not None:
+        ops = [o for o in ops if _filter_string(otype, o.type)]
     if device is not None:
         ops = [o for o in ops if _filter_string(device, o.device)]
     if scope is not None:
@@ -338,9 +338,11 @@ def get_all_variables(scope=None, name=None, full_name=None,
         name of tensor WITH variable scope.
     """
     var = []
+    # ====== first get all available variable ====== #
     for k in graph_keys:
         var += [i for i in tf.get_collection(k) if isinstance(i, tf.Variable)]
     var = list(set(var))
+    # ====== start filtering ====== #
     if scope is not None:
         scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
         var = [v for v in var if len(scope_name_pattern.findall(v.name))]
@@ -366,7 +368,7 @@ def get_all_tensors(name=None, full_name=None, device=None, scope=None):
     full_name: str
         name of tensor WITH variable scope.
     """
-    ops = get_operations(device=device, scope=scope, sort=False)
+    ops = get_all_operations(device=device, scope=scope, sort=False)
     alltensors = []
     for o in ops:
         alltensors += list(o._inputs) + list(o._outputs)
@@ -627,7 +629,7 @@ class ComputationGraph(object):
             else:
                 for o in outputs:
                     with o.graph.as_default():
-                        for op in get_operations(sort=False):
+                        for op in get_all_operations(sort=False):
                             for t in list(op._inputs) + list(op._outputs):
                                 yield t
         # store all the updates embedded into the Tensor Variables

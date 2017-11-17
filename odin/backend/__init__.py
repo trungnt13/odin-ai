@@ -80,7 +80,8 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
         raise ValueError("shape and name arguments cannot be None at the same time.")
     # ====== check duplicated placeholder ====== #
     if name is not None:
-        all_placeholders = [o._outputs[0] for o in get_operations(type='Placeholder')]
+        all_placeholders = [
+            o._outputs[0] for o in get_all_operations(otype='Placeholder')]
         for v in all_placeholders:
             v_shape = tuple(v.get_shape().as_list())
             if v.name == name + ':0': # found duplicated variable
@@ -131,6 +132,17 @@ def save_variables(var_list, path, session=None):
         cPickle.dump([collections, var_meta], f,
                      protocol=cPickle.HIGHEST_PROTOCOL)
     return checkpoint
+
+
+def save_graph(path, graph=None):
+    g = tf.summary.FileWriter(path)
+    if graph is None:
+        graph = get_session().graph
+    elif isinstance(graph, tf.Session):
+        graph = graph.graph
+    g.add_graph(graph)
+    g.flush()
+    g.close()
 
 
 def restore_variables(path, session=None):
