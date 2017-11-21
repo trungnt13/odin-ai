@@ -467,10 +467,10 @@ class SpectraExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -527,10 +527,10 @@ class CQTExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -605,10 +605,10 @@ class PitchExtractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -658,10 +658,10 @@ class SADextractor(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -718,10 +718,10 @@ class RASTAfilter(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -774,10 +774,10 @@ class AcousticNorm(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -821,17 +821,20 @@ class AcousticNorm(Extractor):
 
 class ApplyingSAD(Extractor):
     """ Applying SAD index to given features
+    This extractor cutting voiced segments out, using extracted
+    SAD labels previously
+
 
     Parameters
     ----------
+    sad_name: str
+        specific feature will be used name for the cutting
     threshold: None or float
         if `sad`, is continuous value, threshold need to be applied
     smooth_win: int (> 0)
         ammount of adjent frames will be taken into the SAD
     keep_unvoiced: bool
         if True, keep the whole audio file even though no SAD found
-    sad_name: str
-        feature name for `sad`
     feat_type: str, or list of str
         all features' name will be applied.
 
@@ -844,10 +847,10 @@ class ApplyingSAD(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:
@@ -857,10 +860,11 @@ class ApplyingSAD(Extractor):
         are not affected by the nosie).
     """
 
-    def __init__(self, threshold=None, smooth_win=None, keep_unvoiced=False,
-                 sad_name='sad', feat_type=('spec', 'mspec', 'mfcc',
-                                            'qspec', 'qmspec', 'qmfcc',
-                                            'pitch', 'f0', 'energy', 'sad')):
+    def __init__(self, sad_name='sad', threshold=None,
+                 smooth_win=None, keep_unvoiced=False,
+                 feat_type=('spec', 'mspec', 'mfcc',
+                            'qspec', 'qmspec', 'qmfcc',
+                            'pitch', 'f0', 'energy')):
         super(ApplyingSAD, self).__init__()
         self.threshold = float(threshold) if is_number(threshold) else None
         self.smooth_win = int(smooth_win) if is_number(smooth_win) else None
@@ -927,10 +931,10 @@ class Read3ColSAD(Extractor):
         - preemphasis
     + SpectraExtractor (or CQTExtractor):
         - Extracting the Spectra
-    + SADextractor:
-        - Extracting SAD (optional)
     + Rastafilt:
         - Rastafilt (optional for MFCC)
+    + SADextractor:
+        - Extracting SAD (optional)
     + DeltaExtractor
         - Calculate Deltas (and shifted delta for MFCCs).
     + Read3ColSAD, ApplyingSAD:

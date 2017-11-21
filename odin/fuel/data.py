@@ -845,7 +845,8 @@ class MmapData(Data):
         MmapData._INSTANCES[path] = new_instance
         return new_instance
 
-    def __init__(self, path, dtype='float32', shape=None, read_only=False):
+    def __init__(self, path, dtype='float32', shape=None,
+                 read_only=False):
         super(MmapData, self).__init__()
         # validate path
         path = os.path.abspath(path)

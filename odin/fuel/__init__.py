@@ -143,7 +143,8 @@ def load_glove(ndim=100):
     ndim = int(ndim)
     if ndim not in (50, 100, 200, 300):
         raise ValueError('Only support 50, 100, 200, 300 dimensions.')
-    link = 'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2dsb3ZlLjZCLiVkZA==\n'
-    link = base64.decodestring(link) % ndim
-    embedding = get_file(fname, link)
+    link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2dsb3ZlLjZCLiVkZA==\n'
+    link = base64.decodebytes(link) % ndim
+    fname = os.path.basename(str(link, 'utf-8'))
+    embedding = get_file(fname, link, outdir=get_datasetpath(root='~'))
     return MmapDict(embedding, read_only=True)
