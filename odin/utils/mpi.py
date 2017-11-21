@@ -217,7 +217,9 @@ class MPI(object):
         number of processes.
     batch: int
         the amount of samples grouped into list, and feed to each
-        process each iteration.
+        process each iteration. (i.e. func([job0, job1, ...]))
+        if `batch=1`, each input is feed individually to `func`
+        (i.e. func(job0); func(job1]); ...)
     hwm: int
         "high water mark" for SEND socket, is a hard limit on the
         maximum number of outstanding messages ØMQ shall queue
@@ -362,7 +364,10 @@ class MPI(object):
                 t = [self._jobs[i] for i in t]
                 # monitor current number of remain jobs
                 remain_jobs.add(-len(t))
-                ret = self._func(t)
+                if self._batch == 1: # batch=1, NO need for list of inputs
+                    ret = self._func(t[0])
+                else: # we have input is list of inputs here
+                    ret = self._func(t)
                 # if a generator is return, traverse through the
                 # iterator and return each result
                 if not isinstance(ret, types.GeneratorType):
@@ -426,7 +431,10 @@ class MPI(object):
                 # `t` is just list of indices
                 t = [self._jobs[i] for i in t]
                 remain_jobs.add(-len(t)) # monitor current number of remain jobs
-                ret = self._func(t)
+                if self._batch == 1: # batch=1, NO need for list of inputs
+                    ret = self._func(t[0])
+                else: # we have input is list of inputs here
+                    ret = self._func(t)
                 # if a generator is return, traverse through the
                 # iterator and return each result
                 if not isinstance(ret, types.GeneratorType):

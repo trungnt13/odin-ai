@@ -81,7 +81,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
                    name='PCA')
 
     def map_pca(X):
-        name, pca = X[0]
+        name, pca = X
         X = dataset[name]
         # No shuffling make iter much faster
         for x in X.set_batch(batch_size=batch_size, seed=None, shuffle_level=0):
@@ -422,10 +422,6 @@ class FeatureProcessor(object):
         self.extractor = extractor
 
     # ==================== Abstract properties ==================== #
-    def _map_multiple_works(self, jobs):
-        for j in jobs:
-            yield self.extractor.transform(j)
-
     def run(self):
         njobs = len(self.jobs)
         dataset = Dataset(self.path)
@@ -532,9 +528,8 @@ class FeatureProcessor(object):
             return file_name
         # ====== processing ====== #
         mpi = MPI(jobs=self.jobs,
-                  func=self._map_multiple_works,
-                  ncpu=self.ncpu,
-                  batch=min(8, max(len(self.jobs) // self.ncpu, 1)),
+                  func=self.extractor.transform,
+                  ncpu=self.ncpu, batch=1,
                   hwm=self.ncpu * 3,
                   backend='python')
         prog = Progbar(target=njobs, name=self.name,

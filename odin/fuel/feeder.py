@@ -560,6 +560,9 @@ class Feeder(MutableData):
 
         # ====== create wrapped functions ====== #
         def map_func(jobs):
+            if self.buffer_size == 1:
+                jobs = [jobs]
+            # calculating batch results
             batch = []
             for name in jobs:
                 X = []

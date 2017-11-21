@@ -355,15 +355,14 @@ class MiniBatchPCA(IncrementalPCA):
 
         # ====== run MPI jobs ====== #
         def map_func(batch):
-            for start, end in batch:
-                start, end = batch[0]
-                x = super(MiniBatchPCA, self).transform(X=X[start:end])
-                # doing dim reduction here save a lot of memory for
-                # inter-processors transfer
-                if n_components is not None:
-                    x = x[:, :n_components]
-                # just need to return the start for ordering
-                yield start, x
+            start, end = batch
+            x = super(MiniBatchPCA, self).transform(X=X[start:end])
+            # doing dim reduction here save a lot of memory for
+            # inter-processors transfer
+            if n_components is not None:
+                x = x[:, :n_components]
+            # just need to return the start for ordering
+            yield start, x
         mpi = MPI(batch_list, func=map_func,
                   ncpu=ncpu, batch=1, hwm=ncpu * 12,
                   backend='python')
