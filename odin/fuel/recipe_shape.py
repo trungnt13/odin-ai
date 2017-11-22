@@ -182,7 +182,7 @@ class HStack(FeederRecipe):
         if len(X) > 1 and len(data_idx) > 1:
             X_old = [x for i, x in enumerate(X) if i not in data_idx]
             X_new = [x for i, x in enumerate(X) if i in data_idx]
-            X = list(as_tuple(np.hstack(X_new))) + X_old
+            X = [np.hstack(X_new)] + X_old
         return name, X
 
     def shape_transform(self, shapes):
@@ -193,17 +193,20 @@ class HStack(FeederRecipe):
         if len(shapes) <= 1 or len(data_idx) <= 1:
             return shapes
         # merge
-        old_shapes = [(shp, ids) for idx, (shp, ids) in enumerate(shapes)
-                      if idx not in data_idx]
-        new_shapes = [(shp, ids) for idx, (shp, ids) in enumerate(shapes)
-                      if idx in data_idx]
+        old_shapes = []
+        new_shapes = []
+        for idx, (shp, ids) in enumerate(shapes):
+            if idx in data_idx:
+                new_shapes.append((shp, ids))
+            else:
+                old_shapes.append((shp, ids))
         # ====== horizontal stacking ====== #
-        first_shape, first_ids = new_shapes[0]
+        shape, ids = new_shapes[0]
         new_shapes = (
-            first_shape[:-1] + (sum(shp[-1] for shp, ids in new_shapes[1:]),),
-            first_ids
+            shape[:-1] + (sum(shp[-1] for shp, _ in new_shapes),),
+            ids
         )
-        return new_shapes + old_shapes
+        return [new_shapes] + old_shapes
 
 
 class ExpandDims(FeederRecipe):

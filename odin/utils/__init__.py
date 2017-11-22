@@ -700,6 +700,9 @@ def as_tuple(x, N=None, t=None):
 
     LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
     """
+    # special case numpy array
+    if isinstance(x, np.ndarray):
+        x = tuple(x.tolist())
     if not isinstance(x, tuple):
         if isinstance(x, (types.GeneratorType, list)):
             x = tuple(x)

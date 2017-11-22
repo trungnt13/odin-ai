@@ -317,6 +317,10 @@ class Feeder(MutableData):
         maximum number of outstanding messages ØMQ shall queue
         in memory for any single peer that the specified socket
         is communicating with.
+    mpi_backend: {'pyzmq', 'python'}
+        the A.P.I for message passing between process, sometimes
+        python Queue is faster than pyZMQ, but if pyZMQ is faster
+        it could up to 35%.
 
     Example
     -------
@@ -346,7 +350,8 @@ class Feeder(MutableData):
 
     def __init__(self, data_desc, dtype=None,
                  batch_filter=None, batch_mode='batch',
-                 ncpu=1, buffer_size=8, hwm=86):
+                 ncpu=1, buffer_size=8, hwm=86,
+                 mpi_backend='python'):
         super(Feeder, self).__init__()
         # ====== load indices ====== #
         self._data = as_tuple(data_desc, t=DataDescriptor)
@@ -368,7 +373,7 @@ class Feeder(MutableData):
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
         self._recipes.set_feeder_info(nb_desc=len(self._data))
-        self.set_multiprocessing(ncpu, buffer_size, hwm)
+        self.set_multiprocessing(ncpu, buffer_size, hwm, mpi_backend)
         # ====== cache shape information ====== #
         # store first dimension
         self._cache_shape = None
@@ -420,12 +425,15 @@ class Feeder(MutableData):
         self._running_iter = []
 
     # ==================== multiprocessing ==================== #
-    def set_multiprocessing(self, ncpu, buffer_size=None, hwm=None):
+    def set_multiprocessing(self, ncpu, buffer_size=None, hwm=None,
+                            mpi_backend=None):
         self.ncpu = ncpu
         if buffer_size is not None:
             self.buffer_size = int(buffer_size)
         if hwm is not None:
             self.hwm = int(hwm)
+        if mpi_backend is not None:
+            self.mpi_backend = str(mpi_backend)
         return self
 
     def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
@@ -587,7 +595,7 @@ class Feeder(MutableData):
         # ====== track and return ====== #
         it = MPI(jobs=all_keys, func=map_func, ncpu=self.ncpu,
                  batch=self.buffer_size, hwm=self.hwm,
-                 backend='python')
+                 backend=self.mpi_backend)
         self._running_iter.append(it)
         return iter(it)
 
