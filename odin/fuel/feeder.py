@@ -35,7 +35,7 @@ from odin.utils import (segment_list, one_hot, is_string, Progbar, batching,
 from odin.utils.mpi import MPI, async
 
 from .data import MutableData, as_data
-from .recipe_basic import RecipeList
+from .recipe_base import RecipeList
 
 
 # ===========================================================================

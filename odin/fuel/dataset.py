@@ -13,7 +13,7 @@ from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint)
-from .recipe_basic import FeederRecipe, RecipeList
+from .recipe_base import FeederRecipe, RecipeList
 
 
 __all__ = [

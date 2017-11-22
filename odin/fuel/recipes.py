@@ -16,7 +16,7 @@ from odin.utils import (one_hot, is_string, ctext, is_number,
 from odin.utils.decorators import functionable
 
 from .utils import MmapDict
-from .recipe_basic import FeederRecipe
+from .recipe_base import FeederRecipe
 from .recipe_shape import *
 from .recipe_norm import *
 

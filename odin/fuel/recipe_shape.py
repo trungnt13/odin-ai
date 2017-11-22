@@ -5,7 +5,7 @@ from collections import Counter, Mapping
 
 import numpy as np
 
-from .recipe_basic import FeederRecipe
+from .recipe_base import FeederRecipe
 from odin.utils.decorators import functionable
 from odin.preprocessing.signal import segment_axis, stack_frames
 from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number,
@@ -254,9 +254,16 @@ class Stacking(FeederRecipe):
         if None, shift = right_context
         else amount of frames will be shifted
     data_idx: int, list of int, or None
+    label_mode: string
+        'common': most common label in the sequence of label
+        'last': last seen label in the sequence
+        'first': first seen label in the sequence
+        'middle': middle of the sequence.
     label_idx: int, list of int, None, or empty list, tuple
+        which data is specified as label will be treated differently
+        based on label_mode
 
-    Note
+    NOTE
     ----
     You must be carefull applying stacking on label before one-hot
     encoded it.
@@ -356,11 +363,13 @@ class Sequencing(FeederRecipe):
     pad_mode: 'pre', 'post'
         if "pre", padding or wrapping at the beginning of the array.
         if "post", padding or wrapping at the ending of the array.
-    label_transform: call-able
-        a function transform a sequence of transcription value into
-        desire value for 1 sample.
     data_idx: int, list of int, None, or empty list, tuple
         list of index of all data will be applied
+    label_mode: string
+        'common': most common label in the sequence of label
+        'last': last seen label in the sequence
+        'first': first seen label in the sequence
+        'middle': middle of the sequence.
     label_idx: int, list of int, None, or empty list, tuple
         list of all label will be sequenced and applied the `label_transform`
 
