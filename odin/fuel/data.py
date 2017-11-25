@@ -108,11 +108,10 @@ class Data(object):
         # flag show that array valued changed
         self._status = 0
 
-    # ==================== abstract ==================== #
-    @abstractmethod
     def resize(self, shape):
         raise NotImplementedError
 
+    # ==================== abstract ==================== #
     @abstractmethod
     def _restore_data(self, info):
         raise NotImplementedError

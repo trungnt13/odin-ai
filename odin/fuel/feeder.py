@@ -160,27 +160,22 @@ def _preprocessing_indices(indices):
 class DataDescriptor(Data):
 
     def __init__(self, data, indices):
-        super(DataDescriptor, self).__init__()
+        super(DataDescriptor, self).__init__(data=data, read_only=True)
         # ====== states variables ====== #
         self._length = None
         # if True return name during __iter__
         self._return_name = False
         # ====== load indices ====== #
-        self._indices_loader = async(_preprocessing_indices,
-            callback=lambda result: self._loaded_callback())(indices)
+        self._indices_loader = async(_preprocessing_indices)(indices)
         self._indices_info = None
         self._indices = None # dictionary: name -> (start, end)
         # ====== Load data ====== #
-        if not isinstance(data, (tuple, list)):
-            data = (data,)
-        data = tuple([as_data(d) for d in data])
         # check all data have the same shape[0]
-        length = len(data[0])
-        if any(d.shape[0] != length for d in data):
+        length = len(self.data[0])
+        if any(d.shape[0] != length for d in self.data):
             raise ValueError('All Data must have the same length '
                              '(i.e. shape[0]), the given data have '
                              'shape: %s' % str([d.shape for d in data]))
-        self._data = data
 
     # ==================== Properties ==================== #
     @property
@@ -199,21 +194,15 @@ class DataDescriptor(Data):
     def nb_files(self):
         return len(self._indices)
 
-    @property
-    def nb_data(self):
-        return len(self._data)
-
     # ==================== pickling ==================== #
-    def _loaded_callback(self):
-        self._new_args = (self.indices_info, self.data,
-                          self._length, self._return_name)
+    @property
+    def data_info(self):
+        return (self.indices_info, self.data,
+                self._length, self._return_name)
 
-    def _restore_data(self):
-        if self._new_args is None:
-            raise RuntimeError("Indices have not been loaded before calling "
-                               "cPickle.dump on this class.")
+    def _restore_data(self, info):
         (self._indices_info, self._data,
-            self._length, self._return_name) = self._new_args
+            self._length, self._return_name) = info
         # deserialize indices
         ids_type, info = self._indices_info
         if ids_type == 'mapping':
@@ -242,20 +231,25 @@ class DataDescriptor(Data):
         for dat in self.data:
             s += '   (%s)%s: %s %s\n' % \
                 (dat.__class__.__name__,
-                    ctext(str(dat.path), 'yellow'),
-                    dat.shape, str(dat.dtype))
+                    ctext(str(dat.data_info), 'yellow'),
+                    dat.shape,
+                    str(dat.dtype))
         return s[:-1]
 
     # ==================== Strings ==================== #
-    def set_batch(self, batch_size=None, seed=-1, start=None, end=None,
-                  shuffle_level=None, return_name=None):
+    def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
+                  seed=-1, start=None, end=None, shuffle_level=None):
         pass
+
+    def keys(self):
+        return self.indices.keys()
 
     def __getitem__(self, key):
         if is_string(key):
             start, end = self.indices[key]
-            x = super(DataDescriptor, self).__getitem__(slice(start, end))
+            key = slice(start, end)
         x = super(DataDescriptor, self).__getitem__(key)
+        return x
 
     def __iter__(self):
         def _create_iter():
