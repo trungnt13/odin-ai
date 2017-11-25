@@ -60,6 +60,20 @@ def _apply_label_mode(y, mode):
 # ===========================================================================
 # Shape manipulation
 # ===========================================================================
+class Indexing(FeederRecipe):
+
+    """ Indexing """
+
+    def __init__(self, sad, data_idx=None):
+        super(Indexing, self).__init__()
+
+    def process(self, name, X):
+        pass
+
+    def shape_transform(self, shapes):
+        pass
+
+
 class Slice(FeederRecipe):
     """ Slice
     Parameters

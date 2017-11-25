@@ -9,7 +9,7 @@ import marshal
 from math import ceil
 from six import add_metaclass
 from contextlib import contextmanager
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
 from six.moves import range, zip, zip_longest
 from collections import OrderedDict, defaultdict
 
@@ -17,8 +17,7 @@ import numpy as np
 from numpy import ndarray
 
 from odin.utils.decorators import autoattr
-from odin.utils import (queue, struct, as_tuple,
-                        cache_memory, is_string)
+from odin.utils import (struct, as_tuple, cache_memory, is_string)
 
 __all__ = [
     'as_data',
@@ -31,8 +30,10 @@ __all__ = [
     'MmapData',
     'Hdf5Data',
     'DataIterator',
-    'DataMerge'
 ]
+
+# maximum batch size in bytes when performing apply
+MAX_BUFFER_SIZE = 100 * 1024 * 1024 # 100 MB
 
 
 # ===========================================================================
@@ -86,7 +87,7 @@ class Data(object):
     * `_new_args` must be picklable, and also be pickled.
     """
 
-    def __init__(self):
+    def __init__(self, data, read_only):
         # batch information
         self._batch_size = 256
         self._start = 0.
@@ -95,16 +96,55 @@ class Data(object):
         self._shuffle_level = 0
         # ====== main data ====== #
         # object that have shape, dtype ...
-        self._data = None
-        self._path = None
+        self._data = as_tuple(data)
+        if isinstance(data, (tuple, list)):
+            self._is_data_list = True
+        else:
+            self._is_data_list = False
+        self._read_only = bool(read_only)
         # ====== special flags ====== #
         # to detect if cPickle called with protocol >= 2
         self._new_args_called = False
-        self._new_args = None
         # flag show that array valued changed
         self._status = 0
 
+    # ==================== abstract ==================== #
+    @abstractmethod
+    def resize(self, shape):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _restore_data(self, info):
+        raise NotImplementedError
+
+    @abstractproperty
+    def data_info(self):
+        """This property return info for restore data object after
+        pickling.
+
+        NOTE
+        ----
+        The return values from this function will be introduce as
+        input argument to `_restore_data`
+        """
+        raise NotImplementedError
+
+    # ==================== basic ==================== #
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
     # ==================== basic properties ==================== #
+    @property
+    def is_data_list(self):
+        return self._is_data_list
+
+    @property
+    def read_only(self):
+        return self._read_only
+
     @property
     def batch_size(self):
         return self._batch_size
@@ -115,28 +155,21 @@ class Data(object):
 
     @property
     def array(self):
-        if isinstance(self._data, (tuple, list)):
-            return [dat[:] for dat in self._data]
-        return self._data[:]
+        """Convert any data manipulated by this object to
+        numpy.ndarray"""
+        a = [dat[:] for dat in self._data]
+        return a if self.is_data_list else a[0]
 
     def tolist(self):
-        array = self.array
-        if isinstance(array, (tuple, list)):
-            array = [i.tolist() for i in array]
-        else:
-            array = array.tolist()
-        return array
-
-    @property
-    def path(self):
-        if is_string(self._path):
-            return os.path.abspath(self._path)
-        return self._path
+        a = [dat.tolist() for dat in self._data]
+        return a if self.is_data_list else a[0]
 
     # ==================== For pickling ==================== #
-    @abstractmethod
-    def _restore_data(self):
-        raise NotImplementedError
+    @property
+    def new_args(self):
+        """ This positional arguments will be presented during
+        unpickling. """
+        return ()
 
     def __getstate__(self):
         if not self._new_args_called:
@@ -144,16 +177,20 @@ class Data(object):
                 "You must use argument `protocol=cPickle.HIGHEST_PROTOCOL` "
                 "when using `pickle` or `cPickle` to be able pickling Data.")
         self._new_args_called = False
-        return (self._batch_size, self._start, self._end, self._seed,
-                self._shuffle_level, self._new_args, self._path)
+        return (self._batch_size, self._start, self._end,
+                self._seed, self._shuffle_level,
+                self._is_data_list, self.data_info,
+                self._read_only)
 
     def __setstate__(self, states):
-        (self._batch_size, self._start, self._end, self._seed,
-         self._shuffle_level, self._new_args, self._path) = states
+        (self._batch_size, self._start, self._end,
+            self._seed, self._shuffle_level,
+            self._is_data_list, data_info,
+            self._read_only) = states
         self._status = 0
         self._new_args_called = False
         # ====== restore data ====== #
-        self._restore_data()
+        self._restore_data(data_info)
         if not hasattr(self, '_data') or self._data is None:
             raise RuntimeError("The `_data` attribute is None, and have not "
                                "been restored after pickling, you must properly "
@@ -162,119 +199,35 @@ class Data(object):
 
     def __getnewargs__(self):
         self._new_args_called = True
-        if self._new_args is not None:
-            return as_tuple(self._new_args)
-        return ()
-
-    # ==================== internal utilities ==================== #
-    ''' BigData instance store large dataset that need to be iterate over to
-    perform any operators.
-    '''
-    @cache_memory('_status')
-    def _iterating_operator(self, ops, axis, merge_func=sum, init_val=0.):
-        '''Execute a list of ops on X given the axis or axes'''
-        # ====== validate arguments ====== #
-        if axis is not None:
-            axis = _validate_operate_axis(axis)
-        if not isinstance(ops, (tuple, list)):
-            ops = [ops]
-        # ====== trick to process list of Data ====== #
-        old_data = self._data
-        data = old_data if isinstance(old_data, (tuple, list)) else (old_data,)
-        # ====== Processing ====== #
-        results = []
-        for dat in data:
-            self._data = dat
-            # init values all zeros
-            s = None
-            old_seed = self._seed
-            old_start = self._start
-            old_end = self._end
-            # less than million data points, not a big deal
-            it = iter(self.set_batch(start=0., end=1., seed=None))
-            for X in it:
-                if s is None:
-                    # list of results for each ops
-                    s = [o(X, axis) for o in ops]
-                else:
-                    # merge all results from last ops to new ops
-                    s = [merge_func((i, o(X, axis))) for i, o in zip(s, ops)]
-            self.set_batch(start=old_start, end=old_end, seed=old_seed)
-            results.append(s)
-        # ====== reset and return ====== #
-        self._data = old_data
-        return results if isinstance(old_data, (tuple, list)) else results[0]
-
-    def _iterate_update(self, y, ops):
-        """Support ops:
-        add; mul; div; sub; floordiv; pow
-        """
-        # ====== trick to process list of Data ====== #
-        old_data = self._data
-        data = old_data if isinstance(old_data, (tuple, list)) else (old_data,)
-        # ====== processing ====== #
-        for dat in data:
-            self._data = dat
-
-            shape = self._data.shape
-            # custom batch_size
-            idx = list(range(0, shape[0], 1024))
-            if idx[-1] < shape[0]:
-                idx.append(shape[0])
-            idx = list(zip(idx, idx[1:]))
-            Y = lambda start, end: (y[start:end] if hasattr(y, 'shape') and
-                                    y.shape[0] == shape[0]
-                                    else y)
-            for i in idx:
-                start, end = i
-                if 'add' == ops:
-                    self._data[start:end] += Y
-                elif 'mul' == ops:
-                    self._data[start:end] *= Y
-                elif 'div' == ops:
-                    self._data[start:end] /= Y
-                elif 'sub' == ops:
-                    self._data[start:end] -= Y
-                elif 'floordiv' == ops:
-                    self._data[start:end] //= Y
-                elif 'pow' == ops:
-                    self._data[start:end] **= Y
-        # ====== reset ====== #
-        self._data = old_data
+        return as_tuple(self.new_args)
 
     # ==================== properties ==================== #
     @property
     def ndim(self):
-        if isinstance(self._data, (tuple, list)):
-            return [len(dat.shape) for dat in self._data]
-        return len(self.shape)
+        d = [len(i.shape) for i in self._data]
+        return d if self.is_data_list else d[0]
 
     @property
     def shape(self):
-        # auto infer new shape
-        if isinstance(self._data, (tuple, list)):
-            return tuple([dat.shape for dat in self._data])
-        return self._data.shape
+        s = [i.shape for i in self._data]
+        return s if self.is_data_list else s[0]
 
     def __len__(self):
         """ len always return 1 number """
-        shape = self.shape
-        if isinstance(shape[0], (tuple, list)):
-            return min([s[0] for s in shape])
-        return shape[0]
+        length = [len(i) for i in self._data]
+        if len(set(length)) != 1:
+            raise RuntimeError("Incosistent length for all data: %s" % str(length))
+        return length[0]
 
     @property
     def T(self):
-        array = self.array
-        if isinstance(array, (tuple, list)):
-            return [i.T for i in array]
-        return array.T
+        x = [i.T for i in self._data]
+        return x if self.is_data_list else x[0]
 
     @property
     def dtype(self):
-        if isinstance(self._data, (tuple, list)):
-            return [dat.dtype for dat in self._data]
-        return self._data.dtype
+        x = [np.dtype(i.dtype) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     @contextmanager
     def set_batch_context(self, batch_size=None, seed=-1, start=None, end=None,
@@ -331,33 +284,32 @@ class Data(object):
 
     # ==================== Slicing methods ==================== #
     def __getitem__(self, y):
-        if isinstance(self._data, (tuple, list)):
-            return [dat.__getitem__(y) for dat in self._data]
-        return self._data.__getitem__(y)
+        x = [dat.__getitem__(y) for dat in self._data]
+        return x if self.is_data_list else x[0]
 
     @autoattr(_status=lambda x: x + 1)
     def __setitem__(self, x, y):
-        if isinstance(self._data, (tuple, list)):
-            for dat in self._data:
-                dat.__setitem__(x, y)
-            return
-        return self._data.__setitem__(x, y)
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode.")
+        # perform
+        for dat in self._data:
+            dat.__setitem__(x, y)
+        return self
 
     # ==================== iteration ==================== #
     def __iter__(self):
         def create_iteration():
-            # TODO: iter support _data is a list of Data
             batch_size = int(self._batch_size)
-            shape = self.shape
+            length = self.__len__()
             seed = self._seed
             shuffle_level = int(self._shuffle_level)
             self._seed = None
             # custom batch_size
-            start = _apply_approx(shape[0], self._start)
-            end = _apply_approx(shape[0], self._end)
-            if start > shape[0] or end > shape[0]:
+            start = _apply_approx(length, self._start)
+            end = _apply_approx(length, self._end)
+            if start > length or end > length:
                 raise ValueError('`start`={} or `end`={} excess `data_size`={}'
-                                 ''.format(start, end, shape[0]))
+                                 ''.format(start, end, length))
             # ====== create batch ====== #
             idx = list(range(start, end, batch_size))
             if idx[-1] < end:
@@ -375,9 +327,13 @@ class Data(object):
                     permutation_func = lambda x: x
             # this dummy return to make everything initialized
             yield None
+            # ====== start the iteration ====== #
             for start, end in idx:
-                x = self._data[start:end]
-                yield permutation_func(x)
+                x = [i[start:end] for i in self._data]
+                if self.is_data_list:
+                    yield [permutation_func(i) for i in x]
+                else:
+                    yield permutation_func(x[0])
         # ====== create, init, and return the iteration ====== #
         it = create_iteration()
         next(it)
@@ -393,261 +349,250 @@ class Data(object):
     # ==================== manipulation ==================== #
     @autoattr(_status=lambda x: x + 1)
     def append(self, *arrays):
-        # TODO: support list of data
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
         accepted_arrays = []
-        new_size = 0
-        shape = self._data.shape
-
-        for a in arrays:
+        add_size = 0
+        # ====== check if shape[1:] matching ====== #
+        for a, d in zip(arrays, self._data):
             if hasattr(a, 'shape'):
-                if a.shape[1:] == shape[1:]:
+                if a.shape[1:] == d.shape[1:]:
                     accepted_arrays.append(a)
-                    new_size += a.shape[0]
-        old_size = shape[0]
-        # special case, Mmap is init with temporary size = 1 (all zeros)
-        if old_size == 1 and np.sum(np.abs(self._data[:1])) == 0.:
+                    add_size += a.shape[0]
+            else:
+                accepted_arrays.append(None)
+        # ====== resize ====== #
+        old_size = self.__len__()
+        # special case, Mmap is init with temporary size = 1 (all zeros),
+        # NOTE: risky to calculate sum of big array here
+        if old_size == 1 and \
+        sum(np.sum(np.abs(d[:])) for d in self._data) == 0.:
             old_size = 0
         # resize and append data
-        self.resize(old_size + new_size) # resize only once will be faster
-        for a in accepted_arrays:
-            self._data[old_size:old_size + a.shape[0]] = a
-            old_size = old_size + a.shape[0]
+        self.resize(old_size + add_size) # resize only once will be faster
+        # ====== update values ====== #
+        for a, d in zip(accepted_arrays, self._data):
+            if a is not None:
+                d[old_size:old_size + a.shape[0]] = a
         return self
 
-    @autoattr(_status=lambda x: x + 1)
-    def prepend(self, *arrays):
-        # TODO: support list of data
-        accepted_arrays = []
-        new_size = 0
-        shape = self._data.shape
-
-        for a in arrays:
-            if hasattr(a, 'shape'):
-                if a.shape[1:] == shape[1:]:
-                    accepted_arrays.append(a)
-                    new_size += a.shape[0]
-        if new_size > shape[0]:
-            self.resize(new_size) # resize only once will be faster
-        size = 0
-        for a in accepted_arrays:
-            self._data[size:size + a.shape[0]] = a
-            size = size + a.shape[0]
-        return self
-
-    # ==================== abstract ==================== #
-    @abstractmethod
-    def resize(self, shape):
-        raise NotImplementedError
-
-    def flush(self):
-        pass
-
-    def close(self):
-        pass
-
     # ==================== high-level operators ==================== #
-    @abstractmethod
-    def sum(self, axis=0):
-        raise NotImplementedError
+    @cache_memory('_status')
+    def apply(self, f, f_merge=lambda x: x):
+        """ Iteratively execute a list of function `f` on the Data.
 
-    @abstractmethod
-    def cumsum(self, axis=None):
-        raise NotImplementedError
+        BigData instance store large dataset that need to be iterate
+        over to perform any operators.
 
-    @abstractmethod
-    def sum2(self, axis=0):
-        raise NotImplementedError
+        Parameters
+        ----------
+        f: call-able
+            a function applied on each returned batch
+        f_merge: call-able
+            a function applied on all batch results
+        """
+        # ====== validate arguments ====== #
+        if not hasattr(f, '__call__'):
+            raise ValueError("`f` must be call-able function.")
+        if not hasattr(f_merge, '__call__'):
+            raise ValueError("`f_merge` must be call-able function.")
+        # ====== Processing ====== #
+        results = []
+        old_batch_size = self._batch_size
+        old_seed = self._seed
+        old_start = self._start
+        old_end = self._end
+        bs = MAX_BUFFER_SIZE / sum(np.prod(i.shape[1:]) * i.dtype.itemsize
+                                   for i in self._data)
+        # less than million data points, not a big deal
+        for X in self.set_batch(batch_size=bs, start=0., end=1., seed=None):
+            results.append(f(X))
+        self.set_batch(batch_size=old_batch_size, start=old_start, end=old_end,
+                       seed=old_seed)
+        # ====== reset and return ====== #
+        return f_merge(results)
 
-    @abstractmethod
-    def pow(self, y):
-        raise NotImplementedError
-
-    @abstractmethod
-    def min(self, axis=None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def argmin(self, axis=None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def max(self, axis=None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def argmax(self, axis=None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def mean(self, axis=0):
-        raise NotImplementedError
-
-    @abstractmethod
-    def var(self, axis=0):
-        raise NotImplementedError
-
-    @abstractmethod
-    def std(self, axis=0):
-        raise NotImplementedError
-
-    @abstractmethod
-    def normalize(self, axis, mean=None, std=None):
-        raise NotImplementedError
-
-
-class MutableData(Data):
-
-    ''' Can only read, NO write or modify the values '''
-
-    def __setitem__(self, x, y):
-        raise NotImplementedError
-
-    def append(self, *arrays):
-        raise NotImplementedError
-
-    def prepend(self, *arrays):
-        raise NotImplementedError
-
-    def resize(self, shape):
-        raise NotImplementedError
-
-    # ==================== high-level operators ==================== #
-    def sum(self, axis=0):
-        ops = lambda x, axis: np.sum(x, axis=axis)
-        results = self._iterating_operator(ops, axis)
-        if isinstance(self._data, (tuple, list)):
-            return [i[0] for i in results]
-        return results[0]
-
-    def cumsum(self, axis=None):
-        if isinstance(self._data, (tuple, list)):
-            return [i.cumsum(axis) for i in self.array]
-        return self.array.cumsum(axis)
-
-    def sum2(self, axis=0):
-        ops = lambda x, axis: np.sum(np.power(x, 2), axis=axis)
-        results = self._iterating_operator(ops, axis)
-        if isinstance(self._data, (tuple, list)):
-            return [i[0] for i in results]
-        return results[0]
-
-    def pow(self, y):
-        if isinstance(self._data, (tuple, list)):
-            return [i.__pow__(y) for i in self.array]
-        return self.array.__pow__(y)
-
-    def min(self, axis=None):
-        ops = lambda x, axis: np.min(x, axis=axis)
-        results = self._iterating_operator(ops, axis,
-            merge_func=lambda x: np.where(x[0] < x[1], x[0], x[1]),
-            init_val=float('inf'))
-
-        if isinstance(self._data, (tuple, list)):
-            return [i[0] for i in results]
-        return results[0]
-
-    def argmin(self, axis=None):
-        if isinstance(self._data, (tuple, list)):
-            return [i.argmin(axis) for i in self.array]
-        return self.array.argmin(axis)
-
-    def max(self, axis=None):
-        ops = lambda x, axis: np.max(x, axis=axis)
-        results = self._iterating_operator(ops, axis,
-            merge_func=lambda x: np.where(x[0] > x[1], x[0], x[1]),
-            init_val=float('-inf'))[0]
-
-        if isinstance(self._data, (tuple, list)):
-            return [i[0] for i in results]
-        return results[0]
-
-    def argmax(self, axis=None):
-        if isinstance(self._data, (tuple, list)):
-            return [i.argmax(axis) for i in self.array]
-        return self.array.argmax(axis)
-
-    def mean(self, axis=0):
-        sum1 = self.sum(axis)
-
-        axis = _validate_operate_axis(axis)
-
-        if isinstance(sum1, (tuple, list)):
-            results = []
-            for s, shape in zip(sum1, self.shape):
-                n = np.prod([shape[i] for i in axis])
-                results.append(s / n)
-            return results
+    @cache_memory('_status')
+    def sum(self, axis=None):
+        if axis is None or 0 in as_tuple(axis, t=int):
+            y = self.apply(
+                f=lambda x: [i.sum(axis=axis)
+                             for i in as_tuple(x)],
+                f_merge=lambda x: [sum(j[i] for j in x)
+                                   for i in range(len(x[0]))])
         else:
-            n = np.prod([self.shape[i] for i in axis])
-            return sum1 / n
+            y = [i.sum(axis=axis)
+                 for i in self._data]
+        return y if self.is_data_list else y[0]
 
-    def var(self, axis=0):
-        sum1 = self.sum(axis)
-        sum2 = self.sum2(axis)
+    @cache_memory('_status')
+    def cumsum(self, axis=None):
+        x = [i.cumsum(axis) for i in self._data]
+        return x if self.is_data_list else x[0]
 
-        axis = _validate_operate_axis(axis)
-
-        if isinstance(sum1, (tuple, list)):
-            results = []
-            for s1, s2, shape in zip(sum1, sum2, self.shape):
-                n = np.prod([shape[i] for i in axis])
-                results.append((s2 - np.power(s1, 2) / n) / n)
-            return results
+    @cache_memory('_status')
+    def sum2(self, axis=None):
+        if axis is None or 0 in as_tuple(axis, t=int):
+            y = self.apply(
+                f=lambda x: [i.__pow__(2).sum(axis=axis)
+                             for i in as_tuple(x)],
+                f_merge=lambda x: [sum(j[i] for j in x)
+                                   for i in range(len(x[0]))])
         else:
-            n = np.prod([self.shape[i] for i in axis])
-            return (sum2 - np.power(sum1, 2) / n) / n
+            y = [i.__pow__(2).sum(axis=axis)
+                 for i in self._data]
+        return y if self.is_data_list else y[0]
 
-    def std(self, axis=0):
-        variances = self.var(axis)
-        if isinstance(variances, (tuple, list)):
-            return [np.sqrt(v) for v in variances]
-        return np.sqrt(variances)
+    @cache_memory('_status')
+    def pow(self, y):
+        x = [i.__pow__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
-    def normalize(self, axis, mean=None, std=None):
-        raise NotImplementedError
+    @cache_memory('_status')
+    def min(self, axis=None):
+        if axis is None or 0 in as_tuple(axis, t=int):
+            y = self.apply(
+                f=lambda x: [i.min(axis=axis)
+                             for i in as_tuple(x)],
+                f_merge=lambda x: [np.min([j[i] for j in x], axis=0)
+                                   for i in range(len(x[0]))])
+        else:
+            y = [i.min(axis=axis)
+                 for i in self._data]
+        return y if self.is_data_list else y[0]
+
+    @cache_memory('_status')
+    def argmin(self, axis=None):
+        x = [i.argmin(axis) for i in self._data]
+        return x if self.is_data_list else x[0]
+
+    @cache_memory('_status')
+    def max(self, axis=None):
+        if axis is None or 0 in as_tuple(axis, t=int):
+            y = self.apply(
+                f=lambda x: [i.max(axis=axis)
+                             for i in as_tuple(x)],
+                f_merge=lambda x: [np.max([j[i] for j in x], axis=0)
+                                   for i in range(len(x[0]))])
+        else:
+            y = [i.max(axis=axis)
+                 for i in self._data]
+        return y if self.is_data_list else y[0]
+
+    @cache_memory('_status')
+    def argmax(self, axis=None):
+        x = [i.argmax(axis) for i in self._data]
+        return x if self.is_data_list else x[0]
+
+    # ==================== probs and stats ==================== #
+    @cache_memory('_status')
+    def mean(self, axis=None):
+        sum1 = as_tuple(self.sum(axis))
+        results = []
+        for s1, dat in zip(sum1, self._data):
+            shape = dat.shape
+            if axis is None:
+                n = np.prod(shape)
+            else:
+                n = np.prod([shape[i] for i in as_tuple(axis, t=int)])
+            results.append(s1 / n)
+        return results if self.is_data_list else results[0]
+
+    @cache_memory('_status')
+    def var(self, axis=None):
+        sum1 = as_tuple(self.sum(axis))
+        sum2 = as_tuple(self.sum2(axis))
+
+        results = []
+        for s1, s2, dat in zip(sum1, sum2, self._data):
+            shape = dat.shape
+            if axis is None:
+                n = np.prod(shape)
+            else:
+                n = np.prod([shape[i] for i in as_tuple(axis, t=int)])
+            results.append((s2 - np.power(s1, 2) / n) / n)
+        return results if self.is_data_list else results[0]
+
+    @cache_memory('_status')
+    def std(self, axis=None):
+        s = [np.sqrt(v) for v in as_tuple(self.var(axis))]
+        return s if self.is_data_list else s[0]
 
     # ==================== low-level operator ==================== #
     def __add__(self, y):
-        return self.array.__add__(y)
+        x = [i.__add__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __sub__(self, y):
-        return self.array.__sub__(y)
+        x = [i.__sub__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __mul__(self, y):
-        return self.array.__mul__(y)
+        x = [i.__mul__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __div__(self, y):
-        return self.array.__div__(y)
+        x = [i.__div__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __floordiv__(self, y):
-        return self.array.__floordiv__(y)
+        x = [i.__floordiv__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __pow__(self, y):
-        return self.array.__pow__(y)
+        x = [i.__pow__(y) for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __neg__(self):
-        return self.array.__neg__()
+        x = [i.__neg__() for i in self._data]
+        return x if self.is_data_list else x[0]
 
     def __pos__(self):
-        return self.array.__pos__()
+        x = [i.__pos__() for i in self._data]
+        return x if self.is_data_list else x[0]
 
+    # ==================== update function ==================== #
+    @autoattr(_status=lambda x: x + 1)
     def __iadd__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__iadd__(y)
 
+    @autoattr(_status=lambda x: x + 1)
     def __isub__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__isub__(y)
 
+    @autoattr(_status=lambda x: x + 1)
     def __imul__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__imul__(y)
 
+    @autoattr(_status=lambda x: x + 1)
     def __idiv__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__idiv__(y)
 
+    @autoattr(_status=lambda x: x + 1)
     def __ifloordiv__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__ifloordiv__(y)
 
+    @autoattr(_status=lambda x: x + 1)
     def __ipow__(self, y):
-        raise NotImplementedError
+        if self.read_only:
+            raise RuntimeError("This Data is set in read-only mode")
+        for i in self._data:
+            i.__ipow__(y)
 
 
 # ===========================================================================
@@ -657,108 +602,20 @@ class NdarrayData(Data):
     """docstring for NdarrayData"""
 
     def __init__(self, array):
-        super(NdarrayData, self).__init__()
         if not isinstance(array, np.ndarray):
             raise ValueError('array must be instance of numpy ndarray')
-        self._data = array
-        self._path = None
-        self._new_args = array
+        super(NdarrayData, self).__init__(array, read_only=False)
 
-    def _restore_data(self):
-        self._data = self._new_args
+    @property
+    def data_info(self):
+        return self._data
+
+    def _restore_data(self, info):
+        self._data = info
 
     # ==================== abstract ==================== #
     def resize(self, shape):
         return self._data.resize(shape)
-
-    # ==================== high-level operators ==================== #
-    def sum(self, axis=0):
-        return self._data.sum(axis=axis)
-
-    def cumsum(self, axis=None):
-        return self._data.cumsum(axis=axis)
-
-    def sum2(self, axis=0):
-        return (self._data**2).sum(axis=axis)
-
-    def pow(self, y):
-        return self._data.pow(y)
-
-    def min(self, axis=None):
-        return self._data.min(axis=axis)
-
-    def argmin(self, axis=None):
-        return self._data.argmin(axis=axis)
-
-    def max(self, axis=None):
-        return self._data.max(axis=axis)
-
-    def argmax(self, axis=None):
-        return self._data.argmax(axis=axis)
-
-    def mean(self, axis=0):
-        return self._data.mean(axis=axis)
-
-    def var(self, axis=0):
-        return self._data.var(axis=axis)
-
-    def std(self, axis=0):
-        return self._data.std(axis=axis)
-
-    def normalize(self, axis, mean=None, std=None):
-        mean = self._data.mean(axis=axis) if mean is None else mean
-        std = self._data.std(axis=axis) if std is None else std
-        self._data = (self._data - mean) / std
-        return self
-
-    # ==================== low-level operator ==================== #
-    def __add__(self, y):
-        return self._data.__add__(y)
-
-    def __sub__(self, y):
-        return self._data.__sub__(y)
-
-    def __mul__(self, y):
-        return self._data.__mul__(y)
-
-    def __div__(self, y):
-        return self._data.__div__(y)
-
-    def __floordiv__(self, y):
-        return self._data.__floordiv__(y)
-
-    def __pow__(self, y):
-        return self._data.__pow__(y)
-
-    def __neg__(self):
-        return self._data.__neg__()
-
-    def __pos__(self):
-        return self._data.__pos__()
-
-    def __iadd__(self, y):
-        self._data.__iadd__(y)
-        return self
-
-    def __isub__(self, y):
-        self._data.__isub__(y)
-        return self
-
-    def __imul__(self, y):
-        self._data.__imul__(y)
-        return self
-
-    def __idiv__(self, y):
-        self._data.__idiv__(y)
-        return self
-
-    def __ifloordiv__(self, y):
-        self._data.__ifloordiv__(y)
-        return self
-
-    def __ipow__(self, y):
-        self._data.__ipow__(y)
-        return self
 
 # ===========================================================================
 # Memmap Data object
@@ -847,18 +704,17 @@ class MmapData(Data):
 
     def __init__(self, path, dtype='float32', shape=None,
                  read_only=False):
-        super(MmapData, self).__init__()
         # validate path
         path = os.path.abspath(path)
-        self.read_only = read_only
-        # ====== check shape info ====== #
+        # check shape info
         if shape is not None:
             if not isinstance(shape, (tuple, list, np.ndarray)):
                 shape = (shape,)
             shape = tuple([0 if i is None or i < 0 else i for i in shape])
         # read exist file
         if os.path.exists(path):
-            dtype, shape, f = MmapData.read_header(path, read_only=read_only,
+            dtype, shape, f = MmapData.read_header(path,
+                                                   read_only=read_only,
                                                    return_file=True)
         # create new file
         else:
@@ -880,24 +736,41 @@ class MmapData(Data):
             size = '%8d' % size
             f.write(size.encode())
             f.write(_)
+        # assign info
         self._file = f
-        self._data = np.memmap(f, dtype=dtype, shape=shape,
-                               mode = 'r' if read_only else 'r+',
-                               offset=_aligned_memmap_offset(dtype))
         self._path = path
-        self._new_args = path
+        data = np.memmap(f, dtype=dtype, shape=shape,
+                         mode = 'r' if read_only else 'r+',
+                         offset=_aligned_memmap_offset(dtype))
+        # finally call super initialize
+        super(MmapData, self).__init__(data=data, read_only=read_only)
 
-    def _restore_data(self):
-        dtype, shape, f = MmapData.read_header(self.path, mode='r+',
+    @property
+    def data_info(self):
+        return self._path
+
+    @property
+    def new_args(self):
+        return (self._path,)
+
+    def _restore_data(self, info):
+        # info here is the path
+        dtype, shape, f = MmapData.read_header(info, mode='r+',
                                                return_file=True)
         self._file = f
         self._data = np.memmap(f, dtype=dtype, shape=shape, mode='r+',
                                offset=_aligned_memmap_offset(dtype))
+        self._path = info
+
+    def flush(self):
+        if self.read_only:
+            return
+        self._data.flush()
 
     def close(self):
         # Check if exist global instance
-        if self.path in MmapData._INSTANCES:
-            del MmapData._INSTANCES[self.path]
+        if self.data_info in MmapData._INSTANCES:
+            del MmapData._INSTANCES[self.data_info]
             # flush in read-write mode
             if not self.read_only:
                 self.flush()
@@ -907,135 +780,9 @@ class MmapData(Data):
             self._file.close()
 
     # ==================== properties ==================== #
-    @property
-    def path(self):
-        return self._path
-
-    @property
-    def name(self):
-        return os.path.basename(self.path)
-
     def __str__(self):
         return '<MMAP dataset "%s": shape %s, type "<%s">' % \
-        (self.name, self.shape, self.dtype)
-
-    # ==================== High-level operator ==================== #
-    @cache_memory('_status')
-    def sum(self, axis=0):
-        return self._data.sum(axis)
-
-    @cache_memory('_status')
-    def cumsum(self, axis=None):
-        return self._data.cumsum(axis)
-
-    @cache_memory('_status')
-    def sum2(self, axis=0):
-        return self._data.__pow__(2).sum(axis)
-
-    @cache_memory('_status')
-    def pow(self, y):
-        return self._data.__pow__(y)
-
-    @cache_memory('_status')
-    def min(self, axis=None):
-        return self._data.min(axis)
-
-    @cache_memory('_status')
-    def argmin(self, axis=None):
-        return self._data.argmin(axis)
-
-    @cache_memory('_status')
-    def max(self, axis=None):
-        return self._data.max(axis)
-
-    @cache_memory('_status')
-    def argmax(self, axis=None):
-        return self._data.argmax(axis)
-
-    @cache_memory('_status')
-    def mean(self, axis=0):
-        sum1 = self.sum(axis)
-        if not isinstance(axis, (tuple, list)):
-            axis = (axis,)
-        n = np.prod([self._data.shape[i] for i in axis])
-        return sum1 / n
-
-    @cache_memory('_status')
-    def var(self, axis=0):
-        sum1 = self.sum(axis)
-        sum2 = self.sum2(axis)
-        if not isinstance(axis, (tuple, list)):
-            axis = (axis,)
-        n = np.prod([self._data.shape[i] for i in axis])
-        return (sum2 - np.power(sum1, 2) / n) / n
-
-    @cache_memory('_status')
-    def std(self, axis=0):
-        return np.sqrt(self.var(axis))
-
-    @autoattr(_status=lambda x: x + 1)
-    def normalize(self, axis, mean=None, std=None):
-        mean = mean if mean is not None else self.mean(axis)
-        std = std if std is not None else self.std(axis)
-        self._data -= mean
-        self._data /= std
-        return self
-
-    # ==================== Special operators ==================== #
-    def __add__(self, y):
-        return self._data.__add__(y)
-
-    def __sub__(self, y):
-        return self._data.__sub__(y)
-
-    def __mul__(self, y):
-        return self._data.__mul__(y)
-
-    def __div__(self, y):
-        return self._data.__div__(y)
-
-    def __floordiv__(self, y):
-        return self._data.__floordiv__(y)
-
-    def __pow__(self, y):
-        return self._data.__pow__(y)
-
-    @autoattr(_status=lambda x: x + 1)
-    def __iadd__(self, y):
-        self._data.__iadd__(y)
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __isub__(self, y):
-        self._data.__isub__(y)
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __imul__(self, y):
-        self._data.__imul__(y)
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __idiv__(self, y):
-        self._data.__idiv__(y)
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __ifloordiv__(self, y):
-        self._data.__ifloordiv__(y)
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __ipow__(self, y):
-        return self._data.__ipow__(y)
-
-    def __neg__(self):
-        self._data.__neg__()
-        return self
-
-    def __pos__(self):
-        self._data.__pos__()
-        return self
+        (self.data_info, self.shape, self.dtype)
 
     # ==================== Save ==================== #
     def resize(self, shape):
@@ -1068,15 +815,10 @@ class MmapData(Data):
         # extend the memmap
         mmap._mmap.close()
         del self._data
-        self._data = np.memmap(self._path, dtype=dtype, shape=shape,
-                               mode='r+', offset=_aligned_memmap_offset(dtype))
+        self._data = np.memmap(self.data_info, dtype=dtype, shape=shape,
+                               mode='r+',
+                               offset=_aligned_memmap_offset(dtype))
         return self
-
-    def flush(self):
-        if self.read_only:
-            return
-        self._data.flush()
-
 
 # ===========================================================================
 # Hdf5 Data object
@@ -1206,133 +948,6 @@ class Hdf5Data(Data):
     def hdf5(self):
         return self._hdf
 
-    # ==================== High-level operator ==================== #
-    @cache_memory('_status')
-    def sum(self, axis=0):
-        ops = lambda x, axis: np.sum(x, axis=axis)
-        return self._iterating_operator(ops, axis)[0]
-
-    @cache_memory('_status')
-    def cumsum(self, axis=None):
-        return self._data[:].cumsum(axis)
-
-    @cache_memory('_status')
-    def sum2(self, axis=0):
-        ops = lambda x, axis: np.sum(np.power(x, 2), axis=axis)
-        return self._iterating_operator(ops, axis)[0]
-
-    @cache_memory('_status')
-    def pow(self, y):
-        return self._data[:].__pow__(y)
-
-    @cache_memory('_status')
-    def min(self, axis=None):
-        ops = lambda x, axis: np.min(x, axis=axis)
-        return self._iterating_operator(ops, axis,
-            merge_func=lambda x: np.where(x[0] < x[1], x[0], x[1]),
-            init_val=float('inf'))[0]
-
-    @cache_memory('_status')
-    def argmin(self, axis=None):
-        return self._data[:].argmin(axis)
-
-    @cache_memory('_status')
-    def max(self, axis=None):
-        ops = lambda x, axis: np.max(x, axis=axis)
-        return self._iterating_operator(ops, axis,
-            merge_func=lambda x: np.where(x[0] > x[1], x[0], x[1]),
-            init_val=float('-inf'))[0]
-
-    @cache_memory('_status')
-    def argmax(self, axis=None):
-        return self._data[:].argmax(axis)
-
-    @cache_memory('_status')
-    def mean(self, axis=0):
-        sum1 = self.sum(axis)
-
-        axis = _validate_operate_axis(axis)
-        n = np.prod([self._data.shape[i] for i in axis])
-        return sum1 / n
-
-    @cache_memory('_status')
-    def var(self, axis=0):
-        sum1 = self.sum(axis)
-        sum2 = self.sum2(axis)
-
-        axis = _validate_operate_axis(axis)
-        n = np.prod([self._data.shape[i] for i in axis])
-        return (sum2 - np.power(sum1, 2) / n) / n
-
-    @cache_memory('_status')
-    def std(self, axis=0):
-        return np.sqrt(self.var(axis))
-
-    @autoattr(_status=lambda x: x + 1)
-    def normalize(self, axis, mean=None, std=None):
-        mean = mean if mean is not None else self.mean(axis)
-        std = std if std is not None else self.std(axis)
-        self._iterate_update(mean, 'sub')
-        self._iterate_update(std, 'div')
-        return self
-
-    # ==================== low-level operator ==================== #
-    def __add__(self, y):
-        return self._data.__add__(y)
-
-    def __sub__(self, y):
-        return self._data.__sub__(y)
-
-    def __mul__(self, y):
-        return self._data.__mul__(y)
-
-    def __div__(self, y):
-        return self._data.__div__(y)
-
-    def __floordiv__(self, y):
-        return self._data.__floordiv__(y)
-
-    def __pow__(self, y):
-        return self._data.__pow__(y)
-
-    @autoattr(_status=lambda x: x + 1)
-    def __iadd__(self, y):
-        self._iterate_update(y, 'add')
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __isub__(self, y):
-        self._iterate_update(y, 'sub')
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __imul__(self, y):
-        self._iterate_update(y, 'mul')
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __idiv__(self, y):
-        self._iterate_update(y, 'div')
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __ifloordiv__(self, y):
-        self._iterate_update(y, 'floordiv')
-        return self
-
-    @autoattr(_status=lambda x: x + 1)
-    def __ipow__(self, y):
-        self._iterate_update(y, 'pow')
-        return self
-
-    def __neg__(self):
-        self._data.__neg__()
-        return self
-
-    def __pos__(self):
-        self._data.__pos__()
-        return self
-
     # ==================== Save ==================== #
     def resize(self, shape):
         if self._hdf.mode == 'r':
@@ -1356,13 +971,13 @@ class Hdf5Data(Data):
             if self._hdf.mode == 'r':
                 return
             self._hdf.flush()
-        except:
+        except Exception:
             pass
 
     def close(self):
         try:
             self._hdf.close()
-        except:
+        except Exception:
             pass
 
 
@@ -1382,7 +997,7 @@ def _approximate_continuos_by_discrete(distribution):
     return x.astype(int)
 
 
-class DataIterator(MutableData):
+class DataIterator(Data):
 
     ''' Vertically merge several data object for iteration
     '''
@@ -1634,99 +1249,3 @@ def _get_closest_id(size, y):
         if y >= j:
             idx = i + 1
     return idx
-
-
-# ===========================================================================
-# DataMerge
-# ===========================================================================
-class DataMerge(MutableData):
-
-    '''
-    Parameters
-    ----------
-    data : list
-        list of Data objects
-    merge_func : __call__
-        function take a list of Data as argument (i.e func([data1, data2]))
-
-    Note
-    ----
-    First data in the list will be used as root to infer the shape after merge
-    '''
-
-    def __init__(self, data, merge_func):
-        super(DataMerge, self).__init__()
-
-        if not isinstance(data, (tuple, list)):
-            data = (data,)
-        self._data = [i for i in data if isinstance(i, Data)]
-        if len(self._data) == 0:
-            raise ValueError('Cannot find any instance of Data from given argument.')
-
-        if not hasattr(merge_func, '__call__'):
-            raise ValueError('Merge operator must be call-able and accept at '
-                             'least one argument.')
-        self._merge_func = merge_func
-
-    # ==================== properties ==================== #
-    @property
-    def shape(self):
-        shape = [i.shape for i in self._data]
-        raise NotImplementedError
-        return shape, self._merge_func(x)
-
-    @property
-    def dtype(self):
-        n = (12 + 8) // 10 # lucky number :D
-        tmp = [np.ones((n,) + i.shape[1:]).astype(i.dtype) for i in self._data]
-        return self._merge_func(tmp).dtype
-
-    @property
-    def array(self):
-        return self._merge_func([i[:] for i in self._data])
-
-    # ==================== Slicing methods ==================== #
-    def __getitem__(self, y):
-        n = self._data[0].shape[0]
-        data = [i.__getitem__(y) if len(i.shape) > 0 and i.shape[0] == n else i
-                for i in self._data]
-        x = self._merge_func(data)
-        return x
-
-    # ==================== iteration ==================== #
-    def _iter(self):
-        batch_size = self._batch_size
-        seed = self._seed; self._seed = None
-        # ====== prepare root first ====== #
-        shape = self._data[0].shape
-        # custom batch_size
-        start = _apply_approx(shape[0], self._start)
-        end = _apply_approx(shape[0], self._end)
-        if start > shape[0] or end > shape[0]:
-            raise ValueError('start={} or end={} excess data_size={}'
-                             ''.format(start, end, shape[0]))
-
-        idx = list(range(start, end, batch_size))
-        if idx[-1] < end:
-            idx.append(end)
-        idx = list(zip(idx, idx[1:]))
-        rng = None
-        if seed is not None:
-            rng = np.random.RandomState(seed)
-            rng.shuffle(idx)
-        idx = [slice(i[0], i[1]) for i in idx]
-        none_idx = [slice(None, None)] * len(idx)
-        # ====== check other data ====== #
-        batches = [idx]
-        for d in self._data[1:]:
-            if len(d.shape) > 0 and d.shape[0] == shape[0]:
-                batches.append(idx)
-            else:
-                batches.append(none_idx)
-
-        yield None # dummy return for initialize everything
-        for b in zip(*batches):
-            data = self._merge_func([i[j] for i, j in zip(self._data, b)])
-            if self._shuffle_level > 0 and rng is not None:
-                data = data[rng.permutation(data.shape[0])]
-            yield data

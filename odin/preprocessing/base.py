@@ -270,15 +270,23 @@ class EqualizeShape0(Extractor):
     This Extractor shrink the shape of all given features in `feat_type`
     to the same length.
 
+    Raise Error if given files is shorted than desire length
+
     Parameters
     ----------
     shrink_mode: 'center', 'left', 'right'
         center: remove data points from both left and right
         left: remove data points at the beginning (left)
         right: remove data points at the end (right)
+    length_dict: dict
+        dictionary mapping name of file to desire length.
+    keys: string, or list of string
+        if `length_dict` if provided, searching for the key in
+        this feature names.
     """
 
-    def __init__(self, feat_type, shrink_mode='right'):
+    def __init__(self, feat_type, shrink_mode='right',
+                 length_dict=None, keys=('name', 'path')):
         super(EqualizeShape0, self).__init__()
         if feat_type is None:
             pass
@@ -292,27 +300,48 @@ class EqualizeShape0(Extractor):
         if shrink_mode not in ('center', 'left', 'right'):
             raise ValueError("shrink mode support include: center, left, right")
         self.shrink_mode = shrink_mode
+        # ====== check length dict ====== #
+        if length_dict is not None and not isinstance(length_dict, Mapping):
+            raise ValueError("`length_dict` can be None or Mapping.")
+        self.length_dict = length_dict
+        self.keys = as_tuple(keys, t=str)
 
     def _transform(self, X):
         if isinstance(X, Mapping):
             equalized = {}
-            n = min(feat.shape[0]
-                    for name, feat in X.items()
-                    if _match_feat_name(self.feat_type, name))
+            # ====== searching for desire length ====== #
+            n = None
+            if self.length_dict is None:
+                n = min(feat.shape[0]
+                        for name, feat in X.items()
+                        if _match_feat_name(self.feat_type, name))
+            else:
+                for k in self.keys:
+                    if k in X and X[k] in self.length_dict:
+                        n = self.length_dict[X[k]]
+                        break
+            if n is None:
+                raise RuntimeError("Cannot find desire length.")
             # ====== equalize ====== #
             for name, feat in X.items():
                 # cut the features in left and right
                 # if the shape[0] is longer
                 if _match_feat_name(self.feat_type, name) and feat.shape[0] != n:
                     diff = feat.shape[0] - n
-                    if self.shrink_mode == 'center':
-                        diff_left = diff // 2
-                        diff_right = diff - diff_left
-                        feat = feat[diff_left:-diff_right]
-                    elif self.shrink_mode == 'right':
-                        feat = feat[:-diff]
-                    elif self.shrink_mode == 'left':
-                        feat = feat[diff:]
+                    if diff < 0:
+                        print("Feature length: %d which is smaller "
+                            "than desire length: %d, feature name is '%s'" %
+                            (feat.shape[0], n, X['name']))
+                        return None
+                    elif diff > 0:
+                        if self.shrink_mode == 'center':
+                            diff_left = diff // 2
+                            diff_right = diff - diff_left
+                            feat = feat[diff_left:-diff_right]
+                        elif self.shrink_mode == 'right':
+                            feat = feat[:-diff]
+                        elif self.shrink_mode == 'left':
+                            feat = feat[diff:]
                 equalized[name] = feat
             X = equalized
         return X

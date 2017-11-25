@@ -701,8 +701,6 @@ def as_tuple(x, N=None, t=None):
     LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
     """
     # special case numpy array
-    if isinstance(x, np.ndarray):
-        x = tuple(x.tolist())
     if not isinstance(x, tuple):
         if isinstance(x, (types.GeneratorType, list)):
             x = tuple(x)
@@ -797,31 +795,6 @@ def flatten_list(x, level=None):
 # ===========================================================================
 # Python
 # ===========================================================================
-class AttrRef(object):
-    """ The idea is create a reference object to specific
-    attributes of a specified object.
-
-    If the object is picklable, this AttrRef also picklable
-    """
-
-    def __init__(self, obj, attrs):
-        super(AttrRef, self).__init__()
-        self.obj = obj
-        self.attrs = as_tuple(attrs, t=str)
-
-    @property
-    def value(self):
-        return self.__call__()
-
-    def __call__(self):
-        for a in self.attrs:
-            if hasattr(self.obj, a):
-                return getattr(self.obj, a)
-        raise RuntimeError("Cannot find attributes with name: '%s' from "
-                           "object: '%s' in AttrRef." %
-                           (str(self.attrs), type(self.obj)))
-
-
 class struct(dict):
 
     '''Flexible object can be assigned any attribtues'''
@@ -880,69 +853,6 @@ class bidict(dict):
     def __delitem__(self, key):
         del self._inv[super(bidict, self).__getitem__(key)]
         return dict.__delitem__(self, key)
-
-
-class queue(object):
-
-    """ FIFO, fast, NO thread-safe queue
-    put : append to end of list
-    append : append to end of list
-    pop : remove data from end of list
-    get : remove data from end of list
-    empty : check if queue is empty
-    clear : remove all data in queue
-    """
-
-    def __init__(self):
-        super(queue, self).__init__()
-        self._data = []
-        self._idx = 0
-
-    # ====== queue ====== #
-    def put(self, value):
-        self._data.append(value)
-
-    def append(self, value):
-        self._data.append(value)
-
-    # ====== dequeue ====== #
-    def pop(self):
-        if self._idx == len(self._data):
-            raise ValueError('Queue is empty')
-        self._idx += 1
-        return self._data[self._idx - 1]
-
-    def get(self):
-        if self._idx == len(self._data):
-            raise ValueError('Queue is empty')
-        self._idx += 1
-        return self._data[self._idx - 1]
-
-    # ====== dqueue with default ====== #
-    def pop_default(self, default=None):
-        if self._idx == len(self._data):
-            return default
-        self._idx += 1
-        return self._data[self._idx - 1]
-
-    def get_default(self, default=None):
-        if self._idx == len(self._data):
-            return default
-        self._idx += 1
-        return self._data[self._idx - 1]
-
-    def empty(self):
-        if self._idx == len(self._data):
-            return True
-        return False
-
-    def clear(self):
-        del self._data
-        self._data = []
-        self._idx = 0
-
-    def __len__(self):
-        return len(self._data) - self._idx
 
 
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy

@@ -34,7 +34,7 @@ from odin.utils import (segment_list, one_hot, is_string, Progbar, batching,
                         as_tuple, ctext, is_number, is_primitives)
 from odin.utils.mpi import MPI, async
 
-from .data import MutableData, as_data
+from .data import Data, as_data
 from .recipe_base import RecipeList
 
 
@@ -157,7 +157,7 @@ def _preprocessing_indices(indices):
     return indices, indices_info
 
 
-class DataDescriptor(MutableData):
+class DataDescriptor(Data):
 
     def __init__(self, data, indices):
         super(DataDescriptor, self).__init__()
@@ -247,9 +247,15 @@ class DataDescriptor(MutableData):
         return s[:-1]
 
     # ==================== Strings ==================== #
-    def set_return_name(self, return_name):
-        self._return_name = bool(return_name)
-        return self
+    def set_batch(self, batch_size=None, seed=-1, start=None, end=None,
+                  shuffle_level=None, return_name=None):
+        pass
+
+    def __getitem__(self, key):
+        if is_string(key):
+            start, end = self.indices[key]
+            x = super(DataDescriptor, self).__getitem__(slice(start, end))
+        x = super(DataDescriptor, self).__getitem__(key)
 
     def __iter__(self):
         def _create_iter():
@@ -275,7 +281,7 @@ def _dummy_batch_filter(x):
     return x
 
 
-class Feeder(MutableData):
+class Feeder(Data):
     """ multiprocessing Feeder to 1 comsumer
     Process1    Process2 ...    Process3
         |          |     |          |
