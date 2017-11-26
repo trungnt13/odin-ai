@@ -203,8 +203,9 @@ class Data(object):
     # ==================== properties ==================== #
     @property
     def ndim(self):
-        d = [len(i.shape) for i in self._data]
-        return d if self.is_data_list else d[0]
+        if self.is_data_list:
+            return tuple([len(i) for i in self.shape])
+        return len(self.shape)
 
     @property
     def shape(self):
@@ -213,10 +214,9 @@ class Data(object):
 
     def __len__(self):
         """ len always return 1 number """
-        length = [len(i) for i in self._data]
-        if len(set(length)) != 1:
-            raise RuntimeError("Incosistent length for all data: %s" % str(length))
-        return length[0]
+        if self.is_data_list:
+            return self.shape[0][0]
+        return self.shape[0]
 
     @property
     def T(self):

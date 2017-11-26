@@ -408,11 +408,13 @@ class Sequencing(FeederRecipe):
                  end='cut', pad_value=0., pad_mode='post',
                  data_idx=None, label_mode='last', label_idx=()):
         super(Sequencing, self).__init__()
-        self.frame_length = int(frame_length)
-        self.step_length = frame_length // 2 if step_length is None else int(step_length)
+        frame_length = int(frame_length)
+        step_length = frame_length // 2 if step_length is None else int(step_length)
         if step_length > frame_length:
             raise ValueError("step_length=%d must be smaller than frame_length=%d"
                              % (step_length, frame_length))
+        self.frame_length = frame_length
+        self.step_length = step_length
         # ====== check mode ====== #
         end = str(end).lower()
         if end not in ('cut', 'pad', 'wrap', 'ignore'):

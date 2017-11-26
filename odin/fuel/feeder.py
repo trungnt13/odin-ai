@@ -237,35 +237,14 @@ class DataDescriptor(Data):
         return s[:-1]
 
     # ==================== Strings ==================== #
-    def set_batch(self, batch_size=None, batch_filter=None, batch_mode=None,
-                  seed=-1, start=None, end=None, shuffle_level=None):
-        pass
-
     def keys(self):
         return self.indices.keys()
 
     def __getitem__(self, key):
         if is_string(key):
-            start, end = self.indices[key]
-            key = slice(start, end)
+            key = slice(*self.indices[key])
         x = super(DataDescriptor, self).__getitem__(key)
         return x
-
-    def __iter__(self):
-        def _create_iter():
-            ret_name = bool(self._return_name)
-            yield None # just return for initialize the iteration
-            for name, (start, end) in self.indices.items():
-                dat = [d[start: end] for d in self.data]
-                if ret_name:
-                    dat = [name] + dat
-                yield dat[0] if len(dat) == 1 else dat
-        it = _create_iter()
-        next(it)
-        return it
-
-    def __del__(self):
-        pass
 
 
 # ===========================================================================
@@ -352,9 +331,8 @@ class Feeder(Data):
                  batch_filter=None, batch_mode='batch',
                  ncpu=1, buffer_size=8, hwm=86,
                  mpi_backend='python'):
-        super(Feeder, self).__init__()
-        # ====== load indices ====== #
-        self._data = as_tuple(data_desc, t=DataDescriptor)
+        super(Feeder, self).__init__(data=as_tuple(data_desc, t=DataDescriptor),
+                                     read_only=True)
         # find intersection of all indices in DataDescriptor
         self._indices_keys = async(
             lambda: np.array(
@@ -363,13 +341,7 @@ class Feeder(Data):
                 dtype=str)
         )()
         # ====== desire dtype ====== #
-        if dtype is None:
-            self._output_types = ()
-            for dat in self._data:
-                self._output_types += as_tuple(dat.dtype)
-        else:
-            self._output_types = tuple(
-                [np.dtype(t) for t in as_tuple(dtype, N=self.nb_data)])
+        self._output_dtype = dtype
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
         self._recipes.set_feeder_info(nb_desc=len(self._data))
@@ -401,25 +373,20 @@ class Feeder(Data):
             raise ValueError("Only support `batch_mode`: 'file'; 'batch', but "
                              "given value: '%s'" % batch_mode)
         self._batch_mode = batch_mode
-        # ====== for pickling ====== #
-        self._new_args = (self._data, self._recipes,
-                          self._output_types, self._cache_shape,
-                          self._batch_mode, self._batch_filter,
-                          self.ncpu, self.buffer_size, self.hwm)
 
     # ==================== pickling ==================== #
-    def _restore_data(self):
-        (self._data, self._recipes,
-         self._output_types, self._cache_shape,
+    @property
+    def data_info(self):
+        return (self._data, self.indices_keys, self._recipes,
+                self._output_dtype, self._cache_shape,
+                self._batch_mode, self._batch_filter,
+                self.ncpu, self.buffer_size, self.hwm)
+
+    def _restore_data(self, info):
+        (self._data, self._indices_keys, self._recipes,
+         self._output_dtype, self._cache_shape,
          self._batch_mode, self._batch_filter,
-         self.ncpu, self.buffer_size, self.hwm) = self._new_args
-        # find intersection of all indices in DataDescriptor
-        self._indices_keys = async(
-            lambda: np.array(
-                list(set.intersection(*[set(dat.indices.keys())
-                                        for dat in self._data])),
-                dtype=str)
-        )()
+         self.ncpu, self.buffer_size, self.hwm) = info
         # ====== basic attributes ====== #
         self._recipes_changed = False
         self._running_iter = []
@@ -466,10 +433,6 @@ class Feeder(Data):
         return len(self.indices_keys)
 
     @property
-    def nb_data(self):
-        return sum(dat.nb_data for dat in self._data)
-
-    @property
     def indices_keys(self):
         if not isinstance(self._indices_keys, np.ndarray):
             self._indices_keys = self._indices_keys.get()
@@ -477,7 +440,8 @@ class Feeder(Data):
 
     @property
     def dtype(self):
-        return self._output_types
+        n = len(self.shape)
+        return (self._output_dtype,) * n
 
     @property
     def shape(self):
@@ -508,11 +472,10 @@ class Feeder(Data):
                 shp for shp, ids in self._recipes.shape_transform(shapes_indices)
             ])
             del shapes_indices
-            self._cache_shape = shapes[0] if len(shapes) == 1 \
-                else shapes
+            self._cache_shape = tuple(shapes)
             self._recipes_changed = False
         # ====== get the cached shape ====== #
-        return tuple(self._cache_shape)
+        return self._cache_shape
 
     def __str__(self):
         padding = '   '
