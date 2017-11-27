@@ -331,7 +331,6 @@ class Progbar(object):
     def _new_epoch(self):
         if self.__pb is None or self._last_report is None:
             return
-        avg_time = self.__pb.avg_time
         nlines = len(self._last_report.split('\n'))
         # ====== reset progress bar (tqdm) ====== #
         if self.__keep: # keep the last progress on screen
@@ -344,7 +343,6 @@ class Progbar(object):
                 self.__pb.moveto(1)
             self.__pb.moveto(-(nlines * 2))
         self.__pb.close()
-        self.__pb = None
         # create epoch summary
         for key, values in self._epoch_hist[self._epoch_idx].items():
             values = [v for v in values]
@@ -352,10 +350,16 @@ class Progbar(object):
                 self._epoch_summary[self._epoch_idx][key] = np.mean(values)
             elif isinstance(values[0], np.ndarray):
                 self._epoch_summary[self._epoch_idx][key] = sum(v for v in values)
+        # total epoch time
+        total_time = time.time() - self._epoch_start_time
+        self._epoch_summary[self._epoch_idx]['__total_time__'] = total_time
+        # average time for 1 object
+        avg_time = self.__pb.avg_time
+        if avg_time is None:
+            avg_time = total_time / self.target
         self._epoch_summary[self._epoch_idx]['__avg_time__'] = avg_time
-        self._epoch_summary[self._epoch_idx]['__total_time__'] = \
-            time.time() - self._epoch_start_time
         # reset all flags
+        self.__pb = None
         self._last_report = None
         self._last_print_time = None
         self._epoch_start_time = None
