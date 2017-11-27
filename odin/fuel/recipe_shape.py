@@ -29,6 +29,8 @@ def _check_label_mode(mode):
         return np.clip(float(mode), 0., 1.)
     if is_string(mode):
         mode = mode.lower()
+        if mode == 'mid':
+            mode = 'middle'
         if mode not in ('common', 'last', 'first', 'middle'):
             raise ValueError(
                 "`label_mode` can be: 'common', 'last', 'first', 'middle'")
@@ -356,7 +358,7 @@ class Stacking(FeederRecipe):
         'common': most common label in the sequence of label
         'last': last seen label in the sequence
         'first': first seen label in the sequence
-        'middle': middle of the sequence.
+        'middle' or 'mid': middle of the sequence.
     label_idx: int, list of int, None, or empty list, tuple
         which data is specified as label will be treated differently
         based on label_mode
@@ -467,7 +469,7 @@ class Sequencing(FeederRecipe):
         'common': most common label in the sequence of label
         'last': last seen label in the sequence
         'first': first seen label in the sequence
-        'middle': middle of the sequence.
+        'middle' or 'mid': middle of the sequence.
     label_idx: int, list of int, None, or empty list, tuple
         list of all label will be sequenced and applied the `label_transform`
 
