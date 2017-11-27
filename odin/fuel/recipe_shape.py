@@ -7,7 +7,8 @@ import numpy as np
 
 from .recipe_base import FeederRecipe
 from odin.utils.decorators import functionable
-from odin.preprocessing.signal import segment_axis, stack_frames
+from odin.preprocessing.signal import (segment_axis, stack_frames,
+                                       mvn as _mvn, wmvn as _wmvn)
 from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number,
                         is_string)
 
@@ -62,16 +63,96 @@ def _apply_label_mode(y, mode):
 # ===========================================================================
 class Indexing(FeederRecipe):
 
-    """ Indexing """
+    """ Indexing
 
-    def __init__(self, sad, data_idx=None):
+    Parameters
+    ----------
+    idx: any object support `__getitem__`
+        pass
+    threshold: None, float, call-able
+        pass
+    mvn: bool
+        if True, applying mean-variance normalization
+    data_idx: int, list of int
+        any Data at given index will be indexed by `idx`
+    label_idx: int, list of int
+        any Data at given index won't be applied normalization,
+        since normalization on integer label can make everything
+        go zero!
+    """
+
+    def __init__(self, idx, threshold=None,
+                 mvn=False, varnorm=True,
+                 data_idx=None, label_idx=()):
         super(Indexing, self).__init__()
+        if not hasattr(idx, '__getitem__'):
+            raise ValueError("`sad` must has attribute __getitem__ which takes "
+                "file name as input and return array of index, same length as data.")
+        if threshold is not None and \
+        not hasattr(threshold, '__call__') and \
+        not is_number(threshold):
+            raise ValueError("`threshold` can be None, call-able, or number.")
+        self.idx = idx
+        self.threshold = threshold
+        self.data_idx = data_idx
+        self.label_idx = label_idx
+        # ====== for normalization ====== #
+        self.mvn = bool(mvn)
+        self.varnorm = bool(varnorm)
+
+    def _get_index(self, name):
+        index = self.idx[name]
+        if self.threshold is None:
+            index
+        elif hasattr(self.threshold, '__call__'):
+            index = self.threshold(index)
+        elif is_number(self.threshold):
+            index = index >= float(self.threshold)
+        if index.dtype != np.bool:
+            index = index.astype('bool')
+        return index
 
     def process(self, name, X):
-        pass
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(X),
+                                  return_tuple=True)
+        label_idx = axis_normalize(axis=self.label_idx,
+                                   ndim=len(X),
+                                   return_tuple=True)
+        index = self._get_index(name)
+        # ====== indexing ====== #
+        X_new = []
+        for i, x in enumerate(X):
+            if i in data_idx:
+                x = x[index]
+                # if NOT label, normalization
+                if self.mvn and i not in label_idx:
+                    x = _mvn(x, varnorm=self.varnorm)
+            X_new.append(x)
+        return name, X_new
 
     def shape_transform(self, shapes):
-        pass
+        data_idx = axis_normalize(axis=self.data_idx,
+                                  ndim=len(shapes),
+                                  return_tuple=True)
+        shapes_new = []
+        for i, (shp, ids) in enumerate(shapes):
+            if i in data_idx:
+                ids_new = []
+                n_total = 0
+                # ====== update the indices ====== #
+                for name, _ in ids:
+                    # this take a lot of time, but
+                    # we only calculate new shapes once.
+                    index = self._get_index(name)
+                    n = np.sum(index)
+                    n_total += n
+                    ids_new.append((name, n))
+                # ====== update the shape ====== #
+                ids = ids_new
+                shp = (n_total,) + shp[1:]
+            shapes_new.append((shp, ids))
+        return shapes_new
 
 
 class Slice(FeederRecipe):
@@ -522,118 +603,3 @@ class Sequencing(FeederRecipe):
                     shp = (n,) + shp[1:]
             new_shapes.append((shp, ids))
         return new_shapes
-
-
-class SADindex(FeederRecipe):
-    """ Voice activity indexing (i.e. only select frames
-    indicated by SAD from the )
-
-    Parameters
-    ----------
-    vad: dict, list of (indices, data)
-        anything take file name and return a list of SAD indices
-    frame_length: int
-        if `frame_length`=1, simply concatenate all VAD frames.
-    label_mode: str
-        One of the following
-        'last': the last element in the label list
-        'middle': the middle element in the label list
-        'first': the first element in the label list
-        'common': the most common in the label list
-        float value: position according to the percentile (0.0 - 1.0)
-
-    Note
-    ----
-    `frame_length` is also the minimum length for an SAD segment, any
-    segment smaller than given value will be removed.
-
-    """
-
-    def __init__(self, sad, frame_length, step_length=None,
-                 data_idx=None, label_idx=(), label_mode='last'):
-        super(SADindex, self).__init__()
-        if not isinstance(sad, Mapping):
-            raise ValueError('Unsupport "vad" type: %s' % type(sad).__name__)
-        self.sad = sad
-        self.frame_length = int(frame_length)
-        self.step_length = frame_length // 2 if step_length is None else \
-            int(step_length)
-        self.data_idx = data_idx
-        # ====== for labels ====== #
-        self.label_idx = label_idx
-        self.label_mode = _check_label_mode(label_mode)
-
-    def _estimate_n_segments(self, indices):
-        # indices is list of [(start, end), ...]
-        n = 0
-        for start, end in indices:
-            nb_samples = end - start
-            if nb_samples < self.frame_length:
-                pass # 0
-            elif nb_samples == self.frame_length:
-                n += 1
-            else: # cut mode
-                n += int(np.floor(
-                    (nb_samples - self.frame_length) / self.step_length)) + 1
-        return n
-
-    def process(self, name, X):
-        # ====== return None, ignore the file ====== #
-        if name not in self.sad:
-            return None
-        # ====== prepare the index ====== #
-        data_idx, label_idx = _get_data_label_idx(
-            self.data_idx, self.label_idx, len(X))
-        sad_indices = self.sad[name]
-        # ====== found the VAD, process it ====== #
-        X_new = []
-        for idx, x in enumerate(X):
-            if idx in data_idx or idx in label_idx:
-                x_new = []
-                for start, end in sad_indices:
-                    # zero-length SAD
-                    if end - start == 0:
-                        continue
-                    # get the SAD segments
-                    seg = x[start:end]
-                    if end - start == self.frame_length:
-                        x_new.append(np.expand_dims(seg, axis=0))
-                    elif end - start < self.frame_length:
-                        pass # too short just ignore it
-                    elif end - start > self.frame_length:
-                        x_new.append(segment_axis(seg,
-                            frame_length=self.frame_length,
-                            step_length=self.step_length,
-                            end='cut'))
-                # no SAD
-                if len(x_new) == 0:
-                    return None
-                # merge all segments together
-                x = np.concatenate(x_new, axis=0)
-                # label transform, axis = 1 (new generate axis)
-                if idx in label_idx:
-                    x = _apply_label_mode(x, self.label_mode)
-            X_new.append(x)
-        return name, X_new
-
-    def shape_transform(self, shapes):
-        # ====== prepare the index ====== #
-        data_idx, label_idx = _get_data_label_idx(
-            self.data_idx, self.label_idx, len(shapes))
-        # ====== shapes ====== #
-        shapes_new = []
-        for idx, (shp, ids) in enumerate(shapes):
-            total_sample = 0
-            ids_new = []
-            for name, _ in ids:
-                n = self._estimate_n_segments(self.sad[name])
-                total_sample += n
-                ids_new.append((name, n))
-            # Data INdex
-            if idx in data_idx:
-                shp = (total_sample, self.frame_length) + shp[1:]
-            # Label index
-            elif idx in label_idx:
-                shp = (total_sample,) + shp[1:]
-            shapes_new.append((shp, ids_new))
-        return tuple(shapes_new)

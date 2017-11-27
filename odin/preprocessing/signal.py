@@ -580,7 +580,7 @@ def mvn(x, varnorm=True):
     Parameters
     ----------
     x: [t, f]
-        time x frequency
+        [time, frequency]
 
     Note
     ----
@@ -599,7 +599,7 @@ def wmvn(x, w=301, varnorm=True):
     Parameters
     ----------
     x: [t, f]
-        time x frequency
+        [time, frequency]
 
     """
     if w < 3 or (w & 1) != 1:

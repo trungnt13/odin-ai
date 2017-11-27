@@ -745,6 +745,8 @@ def axis_normalize(axis, ndim,
     return_tuple: bool
         if True, always return a tuple of normalized axis
     """
+    if isinstance(axis, np.ndarray):
+        axis = axis.ravel().tolist()
     if ndim == 0:
         return ()
     if axis is None or \

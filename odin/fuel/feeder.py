@@ -341,7 +341,8 @@ class Feeder(Data):
                 dtype=str)
         )()
         # ====== desire dtype ====== #
-        self._output_dtype = dtype
+        nb_data = sum(len(dat._data) for dat in self._data)
+        self._output_dtype = as_tuple(dtype, N=nb_data)
         # ====== Set default recipes ====== #
         self._recipes = RecipeList()
         self._recipes.set_feeder_info(nb_desc=len(self._data))
@@ -440,8 +441,14 @@ class Feeder(Data):
 
     @property
     def dtype(self):
-        n = len(self.shape)
-        return (self._output_dtype,) * n
+        """ This is only return the desire dtype for input
+        Data, not the ones outputed by Feeder. """
+        all_dtypes = []
+        for dat in self._data:
+            for d in dat._data:
+                all_dtypes.append(d.dtype)
+        return tuple([j if i is None else i
+                      for i, j in zip(self._output_dtype, all_dtypes)])
 
     @property
     def shape(self):
@@ -484,7 +491,7 @@ class Feeder(Data):
                 len(self._running_iter), self.ncpu, self.buffer_size,
                 self.hwm, self._batch_mode)
         # ====== Shape and dtype ====== #
-        shape = (self.shape,) if is_number(self.shape[0]) else self.shape
+        shape = self.shape # this is always list of shape
         s += padding + ctext("Shape: ", 'magenta') + \
             ', '.join((str(s) for s in shape)) + '\n'
         s += padding + ctext("Dtype: ", 'magenta') + \
@@ -526,7 +533,7 @@ class Feeder(Data):
         for dat in self._data:
             for d in dat._data:
                 data_indices_dtype.append(
-                    (d, dat.indices, self.dtype[i]))
+                    (d, dat.indices, self._output_dtype[i]))
                 i += 1
 
         # ====== create wrapped functions ====== #
