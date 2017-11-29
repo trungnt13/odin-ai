@@ -397,10 +397,226 @@ def Cavg(y_llr, y_true, cluster_idx=None,
     return cluster_cost, total_cost
 
 
-def det_curve(y_true, probas_pred, pos_label=None,
-              sample_weight=None, drop_intermediate=True):
+def compute_minDCF(fpr, fnr, Cmiss=1, Cfa=1, Ptrue=0.5):
+    """ Estimating the min value of the  detection
+    cost function (DCF)
+
+    Parameters
+    ----------
+    fpr: array, [n_samples]
+        miss rate or false positive rate
+    fnr: array, [n_samples]
+        miss rate or false positive rate
+    Cmiss: scalar
+        weight for false positive mistakes
+    Cfa: scalar
+        weight for false negative mistakes
+    Ptrue: scalar [0., 1.]
+        prior probability of positive cases.
+
+    Return
+    ------
+    min_DCF: scalar
+        minimum value of the detection cost function for
+        a given detection error trade-off curve
+    Pmiss_optimum: scalar
+        the correcponding miss
+    Pfa_optimum: scalar
+        and false alarm trade-off probabilities.
+
+    """
+    Pmiss, Pfa = fpr, fnr
+    assert Pmiss.shape == Pfa.shape
+    Pfalse = 1 - Ptrue
+    # detection cost function vector
+    DCF_vector = (Cmiss * Pmiss * Ptrue) + \
+        (Cfa * Pfa * Pfalse)
+    # get the optimal value and corresponding index
+    min_idx = np.argmin(DCF_vector)
+    min_val = DCF_vector[min_idx]
+    return min_val, Pmiss[min_idx], Pfa[min_idx]
+
+
+def compute_AUC(x, y, reorder=False):
+    """Compute Area Under the Curve (AUC) using the trapezoidal rule
+
+    This is a general function, given points on a curve.  For computing the
+    area under the ROC-curve, see :func:`roc_auc_score`.  For an alternative
+    way to summarize a precision-recall curve, see
+    :func:`average_precision_score`.
+
+    Parameters
+    ----------
+    x : array, shape = [n]
+        x coordinates.
+    y : array, shape = [n]
+        y coordinates.
+    reorder : boolean, optional (default=False)
+        If True, assume that the curve is ascending in the case of ties, as for
+        an ROC curve. If the curve is non-ascending, the result will be wrong.
+
+    Returns
+    -------
+    auc : float
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sklearn import metrics
+    >>> y = np.array([1, 1, 2, 2])
+    >>> pred = np.array([0.1, 0.4, 0.35, 0.8])
+    >>> fpr, tpr, thresholds = metrics.roc_curve(y, pred, pos_label=2)
+    >>> metrics.auc(fpr, tpr)
+    0.75
+
+    """
+    from sklearn.metrics import auc
+    return auc(x, y, reorder)
+
+
+def roc_curve(y_true, y_score, pos_label=None, sample_weight=None,
+              drop_intermediate=True):
+    """Compute Receiver operating characteristic (ROC)
+
+    @copy from sklearn for convenience
+
+    Note: this implementation is restricted to the binary classification task.
+
+    Parameters
+    ----------
+
+    y_true : array, shape = [n_samples]
+        True binary labels in range {0, 1} or {-1, 1}.  If labels are not
+        binary, pos_label should be explicitly given.
+    y_score : array, shape = [n_samples]
+        Target scores, can either be probability estimates of the positive
+        class, confidence values, or non-thresholded measure of decisions
+        (as returned by "decision_function" on some classifiers).
+    pos_label : int or str, default=None
+        Label considered as positive and others are considered negative.
+    sample_weight : array-like of shape = [n_samples], optional
+        Sample weights.
+    drop_intermediate : boolean, optional (default=True)
+        Whether to drop some suboptimal thresholds which would not appear
+        on a plotted ROC curve. This is useful in order to create lighter
+        ROC curves.
+
+    Returns
+    -------
+    fpr : array, shape = [>2]
+        Increasing false positive rates such that element i is the false
+        positive rate of predictions with score >= thresholds[i].
+    tpr : array, shape = [>2]
+        Increasing true positive rates such that element i is the true
+        positive rate of predictions with score >= thresholds[i].
+    thresholds : array, shape = [n_thresholds]
+        Decreasing thresholds on the decision function used to compute
+        fpr and tpr. `thresholds[0]` represents no instances being predicted
+        and is arbitrarily set to `max(y_score) + 1`.
+
+    Notes
+    -----
+    Since the thresholds are sorted from low to high values, they
+    are reversed upon returning them to ensure they correspond to both ``fpr``
+    and ``tpr``, which are sorted in reversed order during their calculation.
+
+    References
+    ----------
+    .. [1] `Wikipedia entry for the Receiver operating characteristic
+            <https://en.wikipedia.org/wiki/Receiver_operating_characteristic>`_
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sklearn import metrics
+    >>> y = np.array([1, 1, 2, 2])
+    >>> scores = np.array([0.1, 0.4, 0.35, 0.8])
+    >>> fpr, tpr, thresholds = metrics.roc_curve(y, scores, pos_label=2)
+    >>> fpr
+    array([ 0. ,  0.5,  0.5,  1. ])
+    >>> tpr
+    array([ 0.5,  0.5,  1. ,  1. ])
+    >>> thresholds
+    array([ 0.8 ,  0.4 ,  0.35,  0.1 ])
+
+    """
+    from sklearn.metrics import roc_curve
+    return roc_curve(y_true, y_score, pos_label,
+                     sample_weight, drop_intermediate)
+
+
+def prc_curve(y_true, y_probas, pos_label=None,
+              sample_weight=None):
+    """Compute precision-recall pairs for different probability thresholds
+
+    Note: this implementation is restricted to the binary classification task.
+
+    The precision is the ratio ``tp / (tp + fp)`` where ``tp`` is the number of
+    true positives and ``fp`` the number of false positives. The precision is
+    intuitively the ability of the classifier not to label as positive a sample
+    that is negative.
+
+    The recall is the ratio ``tp / (tp + fn)`` where ``tp`` is the number of
+    true positives and ``fn`` the number of false negatives. The recall is
+    intuitively the ability of the classifier to find all the positive samples.
+
+    The last precision and recall values are 1. and 0. respectively and do not
+    have a corresponding threshold.  This ensures that the graph starts on the
+    x axis.
+
+    Read more in the :ref:`User Guide <precision_recall_f_measure_metrics>`.
+
+    Parameters
+    ----------
+    y_true : array, shape = [n_samples]
+        True targets of binary classification in range {-1, 1} or {0, 1}.
+    y_probas : array, shape = [n_samples]
+        Estimated probabilities or decision function.
+    pos_label : int or str, default=None
+        The label of the positive class
+    sample_weight : array-like of shape = [n_samples], optional
+        Sample weights.
+
+    Returns
+    -------
+    precision : array, shape = [n_thresholds + 1]
+        Precision values such that element i is the precision of
+        predictions with score >= thresholds[i] and the last element is 1.
+    recall : array, shape = [n_thresholds + 1]
+        Decreasing recall values such that element i is the recall of
+        predictions with score >= thresholds[i] and the last element is 0.
+    thresholds : array, shape = [n_thresholds <= len(np.unique(probas_pred))]
+        Increasing thresholds on the decision function used to compute
+        precision and recall.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sklearn.metrics import precision_recall_curve
+    >>> y_true = np.array([0, 0, 1, 1])
+    >>> y_scores = np.array([0.1, 0.4, 0.35, 0.8])
+    >>> precision, recall, thresholds = precision_recall_curve(
+    ...     y_true, y_scores)
+    >>> precision  # doctest: +ELLIPSIS
+    array([ 0.66...,  0.5       ,  1.        ,  1.        ])
+    >>> recall
+    array([ 1. ,  0.5,  0.5,  0. ])
+    >>> thresholds
+    array([ 0.35,  0.4 ,  0.8 ])
+
+    """
+    from sklearn.metrics import precision_recall_curve
+    return precision_recall_curve(y_true, y_probas, pos_label, sample_weight)
+
+
+def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
+              true_scores=None, false_scores=None):
     """Detection Error Tradeoff
     Compute error rates for different probability thresholds
+
+    @Original implementaion from NIST
+    The function is adapted to take input format same as
+    NIST original code and `sklearn.metrics`
 
     Note: this implementation is restricted to the binary classification task.
 
@@ -408,27 +624,28 @@ def det_curve(y_true, probas_pred, pos_label=None,
     ----------
     y_true : array, shape = [n_samples]
         True targets of binary classification in range {-1, 1} or {0, 1}.
-    probas_pred : array, shape = [n_samples]
+    y_score : array, shape = [n_samples]
         Estimated probabilities or decision function.
     pos_label : int, optional (default=None)
         The label of the positive class
     sample_weight : array-like of shape = [n_samples], optional
         Sample weights.
+    true_scores: array, shape = [n_true_samples]
+    false_scores:  array, shape = [n_false_samples]
+        are detection output scores for a set of detection trials,
+        given that the target hypothesis is true (false).
+        (By convention, the more positive the score, the more
+        likely is the target hypothesis.)
 
     Returns
     -------
-    fps : array, shape = [n_thresholds]
-        A count of false positives, at index i being the number of negative
-        samples assigned a score >= thresholds[i]. The total number of
-        negative samples is equal to fps[-1] (thus true negatives are given by
-        fps[-1] - fps).
-    fns : array, shape = [n_thresholds]
-        A count of false negatives, at index i being the number of positive
-        samples assigned a score < thresholds[i]. The total number of
-        positive samples is equal to tps[-1] (thus false negatives are given by
-        tps[-1] - tps).
-    thresholds : array, shape = [n_thresholds]
-        Decreasing score values.
+    with `n_samples = n_true_samples + n_false_samples`
+    fpr or P_miss : array, shape = [n_samples]
+        A rate of false positives, or miss probabilities
+    fnr or P_fa: array, shape = [n_samples]
+        A rate of false negatives, or false alarm probabilities
+    thresholds : array, shape = [n_samples]
+        increasing score values
 
     References
     ----------
@@ -448,27 +665,56 @@ def det_curve(y_true, probas_pred, pos_label=None,
     >>> y_true = np.array([0, 0, 1, 1])
     >>> y_scores = np.array([0.1, 0.4, 0.35, 0.8])
     >>> fps, fns, thresholds = K.metrics.det_curve(y_true, y_scores)
-    >>> print(fps)
+    >>> print(fpr)
     array([ 0.5,  0.5,  0. ])
-    >>> print(fns)
+    >>> print(fnr)
     array([ 0. ,  0.5,  0.5])
     >>> print(thresholds)
     array([ 0.35,  0.4 ,  0.8 ])
     """
-    from sklearn.metrics.ranking import _binary_clf_curve
-    fps, tps, thresholds = _binary_clf_curve(y_true, probas_pred,
-                                             pos_label=pos_label,
-                                             sample_weight=sample_weight)
-    fns = tps[-1] - tps
-    tp_count = tps[-1]
-    tn_count = (fps[-1] - fps)[0]
-
-    # start with false positives is zero and stop with false negatives zero
-    # and reverse the outputs so list of false positives is decreasing
-    last_ind = tps.searchsorted(tps[-1]) + 1
-    first_ind = fps[::-1].searchsorted(fps[0])
-    sl = range(first_ind, last_ind)[::-1]
-    return fps[sl] / tp_count, fns[sl] / tn_count, thresholds[sl]
+    # ====== preprocessing ====== #
+    if true_scores is None or false_scores is None:
+        if y_true is None or y_score is None:
+            raise ValueError("`y_true` and `y_score` must be specified when "
+                             "`true_scores` or `false_scores` are missing.")
+        if pos_label is None:
+            pos_label = 1
+        y_true = np.array(y_true)
+        # get true scores
+        true_idx = (y_true == pos_label)
+        if true_scores is None:
+            true_scores = y_score[true_idx]
+        # get false scores
+        false_idx = (y_true != pos_label)
+        if false_scores is None:
+            false_scores = y_score[false_idx]
+        if len(false_scores) + len(true_scores) != len(y_true):
+            raise RuntimeError("There are %d positive samples, and %d negative "
+                               "samples, but there are total %d samples." %
+                               (len(true_scores), len(false_scores), len(y_true)))
+    # ====== start ====== #
+    nb_true = max(true_scores.shape)
+    nb_false = max(false_scores.shape)
+    total = nb_true + nb_false
+    dtype = true_scores.dtype
+    # ====== create and sort the scores ====== #
+    scores = np.empty(shape=(total, 2), dtype=dtype)
+    scores[0:nb_false, 0] = false_scores
+    scores[0:nb_false, 1] = 0.
+    scores[nb_false:, 0] = true_scores
+    scores[nb_false:, 1] = 1.
+    # sort 2nd column decending order
+    idx = np.argsort(scores[:, 1], axis=0, kind='mergsort')
+    # now sort 1st column ascending
+    idx = idx[np.argsort(scores[:, 0], axis=0, kind='mergsort')]
+    scores = scores[idx]
+    # ====== calculate miss and fa rate ====== #
+    sumtrue = np.cumsum(scores[:, 1], axis=0, dtype='float64')
+    sumfalse = nb_false - (np.arange(1, total + 1) - sumtrue)
+    Pmiss = sumtrue / nb_true
+    Pfa = sumfalse / nb_false
+    threshold = scores[0, :]
+    return Pmiss, Pfa, threshold
 
 
 # ===========================================================================

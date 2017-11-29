@@ -464,7 +464,7 @@ class CudnnRNN(NNOp):
                                     for i in self.parameters
                                     if not has_roles(i, InitialState)])
         else:
-            parameters = self.params
+            parameters = self.get('params')
         # ====== return CuDNN RNN ====== #
         results = K.rnn_dnn(X, hidden_size=self.num_units, rnn_mode=self.rnn_mode,
                            num_layers=self.num_layers, parameters=parameters,

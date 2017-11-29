@@ -218,32 +218,6 @@ def argsort(x, k=None, name='argsort'):
     return tf.nn.top_k(x, k=k, sorted=True, name=name)[1]
 
 
-def one_hot(x, axis=-1, nb_classes=None, name="OneHot"):
-    """
-    Example
-    -------
-    >>> Input: [[0.0, 0.0, 0.5],
-    >>>         [0.0, 0.3, 0.1],
-    >>>         [0.6, 0.0, 0.2]]
-    >>> Output: [[0.0, 0.0, 1.0],
-    >>>         [0.0, 1.0, 0.0],
-    >>>         [1.0, 0.0, 0.0]]
-    """
-    if x.get_shape().ndims == 2:
-        return tf.cast(
-            tf.equal(tf.cast(tf.range(x.get_shape()[axis])[None, :], 'int32'),
-                     tf.cast(tf.expand_dims(tf.argmax(x, axis=axis), axis=axis), 'int32')
-                    ),
-            dtype=x.dtype.base_dtype,
-            name=name
-        )
-    else:
-        if nb_classes is None:
-            nb_classes = tf.cast(tf.reduce_max(x), dtype='int32')
-        return tf.one_hot(indices=x, depth=nb_classes,
-            axis=axis, dtype=x.dtype.base_dtype, name=name)
-
-
 def apply_mask(x, mask, name="ApplyMask"):
     """
     x : 3D tensor

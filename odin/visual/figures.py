@@ -990,10 +990,190 @@ def plot_show(block=True, tight_layout=False):
         plt.tight_layout()
     plt.show(block=block)
     if not block: # manually block
-        raw_input('<enter> to close all plots')
+        input('<enter> to close all plots')
     plt.close('all')
 
 
+# ===========================================================================
+# Detection plot
+# ===========================================================================
+def _ppndf(cum_prob):
+    """ @Original code from NIST
+    The input to this function is a cumulative probability.
+    The output from this function is the Normal deviate
+    that corresponds to that probability.
+    """
+    SPLIT = 0.42
+    A0 = 2.5066282388
+    A1 = -18.6150006252
+    A2 = 41.3911977353
+    A3 = -25.4410604963
+    B1 = -8.4735109309
+    B2 = 23.0833674374
+    B3 = -21.0622410182
+    B4 = 3.1308290983
+    C0 = -2.7871893113
+    C1 = -2.2979647913
+    C2 = 4.8501412713
+    C3 = 2.3212127685
+    D1 = 3.5438892476
+    D2 = 1.6370678189
+    # ====== preprocess ====== #
+    cum_prob = np.array(cum_prob)
+    eps = np.finfo(cum_prob.dtype).eps
+    cum_prob = np.clip(cum_prob, eps, 1 - eps)
+    adj_prob = cum_prob - 0.5
+    # ====== init ====== #
+    R = np.empty_like(cum_prob)
+    norm_dev = np.empty_like(cum_prob)
+    # ====== transform ====== #
+    centerindexes = np.argwhere(np.abs(adj_prob) <= SPLIT).ravel()
+    tailindexes = np.argwhere(np.abs(adj_prob) > SPLIT).ravel()
+    # do centerstuff first
+    R[centerindexes] = adj_prob[centerindexes] * adj_prob[centerindexes]
+    norm_dev[centerindexes] = adj_prob[centerindexes] * \
+        (((A3 * R[centerindexes] + A2) * R[centerindexes] + A1) * R[centerindexes] + A0)
+    norm_dev[centerindexes] = norm_dev[centerindexes] /\
+        ((((B4 * R[centerindexes] + B3) * R[centerindexes] + B2) * R[centerindexes] + B1) * R[centerindexes] + 1.0)
+    #find left and right tails
+    right = np.argwhere(cum_prob[tailindexes] > 0.5).ravel()
+    left = np.argwhere(cum_prob[tailindexes] < 0.5).ravel()
+    # do tail stuff
+    R[tailindexes] = cum_prob[tailindexes]
+    R[tailindexes[right]] = 1 - cum_prob[tailindexes[right]]
+    R[tailindexes] = np.sqrt((-1.0) * np.log(R[tailindexes]))
+    norm_dev[tailindexes] = (((C3 * R[tailindexes] + C2) * R[tailindexes] + C1) * R[tailindexes] + C0)
+    norm_dev[tailindexes] = norm_dev[tailindexes] / ((D2 * R[tailindexes] + D1) * R[tailindexes] + 1.0)
+    # swap sign on left tail
+    norm_dev[tailindexes[left]] = norm_dev[tailindexes[left]] * -1.0
+    return norm_dev
+
+
+def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
+                         ax=None, label=None, legend=True):
+    """
+    Parameters
+    ----------
+    x: array, or list|tuple of array
+        if list or tuple of array is given, plot multiple curves at once
+    y: array, or list|tuple of array
+        if list or tuple of array is given, plot multiple curves at once
+    curve: {'det', 'roc', 'prc'}
+        det: detection error trade-off
+        roc: receiver operating curve
+        prc: precision-recall curve
+    """
+    from matplotlib import pyplot as plt
+    from odin import backend as K
+    # ====== preprocessing ====== #
+    if not isinstance(x, (tuple, list)):
+        x = (x,)
+    if not isinstance(y, (tuple, list)):
+        y = (y,)
+    if not isinstance(label, (tuple, list)):
+        label = (label,)
+    if len(x) != len(y):
+        raise ValueError("Given %d series for `x`, but only get %d series for `y`."
+                         % (len(x), len(y)))
+    # ====== const ====== #
+    eps = np.finfo(x[0].dtype).eps
+    xticks, xlabels = None, None
+    yticks, ylabels = None, None
+    xlims, ylims = None, None
+    lines = []
+    points = []
+    # ====== check input arguments ====== #
+    curve = curve.lower()
+    if curve not in ('det', 'roc', 'prc'):
+        raise ValueError("`curve` can only be: 'det', 'roc', or 'prc'")
+    if ax is None:
+        ax = plt.gca()
+    # ====== select DET curve style ====== #
+    if curve == 'det':
+        xticks = np.array([
+            0.00001, 0.00002, 0.00005, 0.0001, 0.0002, 0.0005,
+            0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
+            0.1, 0.2, 0.4, 0.6, 0.8, 0.9,
+            0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
+            0.9995, 0.9998, 0.9999, 0.99995, 0.99998, 0.99999])
+        xlabels = [str(i) if '.0' != str(i)[-2:]
+                   else str(i)[:-2]
+                   for i in xticks * 100]
+        # convert to log scale
+        xticks = _ppndf(xticks)
+        yticks, ylabels = xticks, xlabels
+        if xlims is None:
+            xlims = (0.0005 + eps, 0.5 - eps)
+        xlims = _ppndf(xlims)
+        if ylims is None:
+            ylims = (0.0005 + eps, 0.5 - eps)
+        ylims = _ppndf(ylims)
+        # main line
+        name_fmt = lambda name, dcf: ('minDCF=%.2f' % dcf) if name is None else \
+            ('%s (EER=%.2f;minDCF=%.2f)' % (name, 0.12, dcf))
+        label_new = []
+        for i, j, name in zip(x, y, label):
+            # DCF point
+            dcf, i_opt, j_opt = K.metrics.compute_minDCF(fpr=i, fnr=j)
+            i_opt = _ppndf((i_opt,))
+            j_opt = _ppndf((j_opt,))
+            points.append(((i_opt, j_opt),
+                           {}))
+            # det curve
+            i = _ppndf(i)
+            j = _ppndf(j)
+            name = name_fmt(name, dcf)
+            lines.append(((i, j),
+                          {'lw': 1.3, 'label': name}))
+            label_new.append(name)
+        label = label_new
+    # ====== select ROC curve style ====== #
+    elif curve == 'roc':
+        xlims = (0, 1)
+        ylims = (0, 1)
+        # roc
+        name_fmt = lambda name, auc: ('AUC=%.2f' % auc) if name is None else \
+            ('%s (AUC=%.2f)' % (name, auc))
+        label_new = []
+        for i, j, name in zip(x, y, label):
+            auc = K.metrics.compute_AUC(i, j)
+            name = name_fmt(name, auc)
+            lines.append([(i, j),
+                          {'lw': 1.3, 'label': name}])
+            label_new.append(name)
+        label = label_new
+        # diagonal
+        lines.append([(xlims, ylims),
+                      {'lw': 0.8, 'linestyle': '-.', 'color': 'black'}])
+    # ====== select ROC curve style ====== #
+    elif curve == 'prc':
+        raise NotImplementedError
+    # ====== ploting ====== #
+    if xticks is not None and xlabels is not None:
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(xlabels)
+    if yticks is not None and ylabels is not None:
+        ax.set_yticks(yticks)
+        ax.set_yticklabels(ylabels)
+    # plot all lines
+    for args, kwargs in lines:
+        ax.plot(*args, **kwargs)
+    # plot all points
+    for arg, kwargs in points:
+        ax.scatter(*arg, **kwargs)
+    if xlims is not None:
+        ax.set_xlim(xlims)
+    if ylims is not None:
+        ax.set_ylim(ylims)
+    ax.grid(color='black', linestyle='--', linewidth=0.4)
+    # legend
+    if legend and any(i is not None for i in label):
+        plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+
+
+# ===========================================================================
+# Header
+# ===========================================================================
 def plot_close():
     from matplotlib import pyplot as plt
     plt.close('all')
