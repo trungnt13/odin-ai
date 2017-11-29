@@ -1090,27 +1090,35 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         ax = plt.gca()
     # ====== select DET curve style ====== #
     if curve == 'det':
+        # 0.00001, 0.00002,
+        # , 0.99995, 0.99998, 0.99999
         xticks = np.array([
-            0.00001, 0.00002, 0.00005, 0.0001, 0.0002, 0.0005,
+            0.00005, 0.0001, 0.0002, 0.0005,
             0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
             0.1, 0.2, 0.4, 0.6, 0.8, 0.9,
             0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
-            0.9995, 0.9998, 0.9999, 0.99995, 0.99998, 0.99999])
-        xlabels = [str(i) if '.0' != str(i)[-2:]
-                   else str(i)[:-2]
+            0.9995, 0.9998, 0.9999])
+        xlabels = [str(i)[:-2] if '.0' == str(i)[-2:]
+                   else (str(i) if i > 99.99 else str(i))
                    for i in xticks * 100]
+        if xlims is None:
+            xlims = (max(min(np.min(i) for i in x), xticks[0]),
+                     min(max(np.max(i) for i in x), xticks[-1]))
+        xlims = ([i for i in xticks if i <= xlims[0]][-1] + eps,
+                 [i for i in xticks if i >= xlims[1]][0] - eps)
+        if ylims is None:
+            ylims = (max(min(np.min(i) for i in y), xticks[0]),
+                     min(max(np.max(i) for i in y), xticks[-1]))
+        ylims = ([i for i in xticks if i <= ylims[0]][-1] + eps,
+                 [i for i in xticks if i >= ylims[1]][0] - eps)
         # convert to log scale
         xticks = _ppndf(xticks)
         yticks, ylabels = xticks, xlabels
-        if xlims is None:
-            xlims = (0.0005 + eps, 0.5 - eps)
-        xlims = _ppndf(xlims)
-        if ylims is None:
-            ylims = (0.0005 + eps, 0.5 - eps)
-        ylims = _ppndf(ylims)
+        xlims, ylims = _ppndf(xlims), _ppndf(ylims)
         # main line
+        # TODO: add EER value later
         name_fmt = lambda name, dcf: ('minDCF=%.2f' % dcf) if name is None else \
-            ('%s (EER=%.2f;minDCF=%.2f)' % (name, 0.12, dcf))
+            ('%s (minDCF=%.2f)' % (name, dcf))
         label_new = []
         for i, j, name in zip(x, y, label):
             # DCF point
@@ -1149,12 +1157,13 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     elif curve == 'prc':
         raise NotImplementedError
     # ====== ploting ====== #
+    fontsize = 10
     if xticks is not None and xlabels is not None:
         ax.set_xticks(xticks)
-        ax.set_xticklabels(xlabels)
+        ax.set_xticklabels(xlabels, rotation=-60, fontsize=fontsize)
     if yticks is not None and ylabels is not None:
         ax.set_yticks(yticks)
-        ax.set_yticklabels(ylabels)
+        ax.set_yticklabels(ylabels, fontsize=fontsize)
     # plot all lines
     for args, kwargs in lines:
         ax.plot(*args, **kwargs)
