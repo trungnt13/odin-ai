@@ -13,6 +13,7 @@ import copy
 import warnings
 import colorsys
 from six import string_types
+import itertools
 from collections import Mapping, OrderedDict
 from six.moves import zip, range
 from contextlib import contextmanager
@@ -730,16 +731,15 @@ def plot_images_old(x, fig=None, titles=None, show=False):
     if show:
         # plt.tight_layout()
         plt.show(block=True)
-        raw_input('<Enter> to close the figure ...')
+        input('<Enter> to close the figure ...')
     else:
         return fig
 
 
 def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
-    title=None):
+                          title=None):
     from matplotlib import pyplot as plt
     cmap = plt.cm.Blues
-
     # column normalize
     if np.max(cm) > 1:
         cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
@@ -752,14 +752,34 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
     if title is not None:
         axis.set_title(title)
     # axis.get_figure().colorbar(im)
-
     tick_marks = np.arange(len(labels))
     axis.set_xticks(tick_marks)
     axis.set_yticks(tick_marks)
-    axis.set_xticklabels(labels, rotation=90, fontsize=fontsize)
+    axis.set_xticklabels(labels, rotation=-57,
+                         fontsize=fontsize)
     axis.set_yticklabels(labels, fontsize=fontsize)
     axis.set_ylabel('True label', fontsize=fontsize)
     axis.set_xlabel('Predicted label', fontsize=fontsize)
+    # center text for value of each grid
+    worst_index = {i: np.argmax([val if j != i else -1
+                                 for j, val in enumerate(row)])
+                   for i, row in enumerate(cm)}
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        color = 'black'
+        weight = 'normal'
+        fs = fontsize
+        if i == j:
+            color = "darkgreen"
+            weight = 'bold'
+            fs = fontsize + 3
+        elif j == worst_index[i]:
+            color = 'red'
+            weight = 'semibold'
+            fs = fontsize
+        plt.text(j, i, '%.2f' % cm[i, j],
+                 weight=weight, color=color, fontsize=fs,
+                 verticalalignment="center",
+                 horizontalalignment="center")
     # Turns off grid on the left Axis.
     axis.grid(False)
 
@@ -1065,16 +1085,18 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     """
     from matplotlib import pyplot as plt
     from odin import backend as K
+    from odin.utils import as_tuple
     # ====== preprocessing ====== #
     if not isinstance(x, (tuple, list)):
         x = (x,)
     if not isinstance(y, (tuple, list)):
         y = (y,)
-    if not isinstance(label, (tuple, list)):
-        label = (label,)
     if len(x) != len(y):
         raise ValueError("Given %d series for `x`, but only get %d series for `y`."
                          % (len(x), len(y)))
+    if not isinstance(label, (tuple, list)):
+        label = (label,)
+    label = as_tuple(label, N=len(x))
     # ====== const ====== #
     eps = np.finfo(x[0].dtype).eps
     xticks, xlabels = None, None
@@ -1120,7 +1142,7 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         name_fmt = lambda name, dcf: ('minDCF=%.2f' % dcf) if name is None else \
             ('%s (minDCF=%.2f)' % (name, dcf))
         label_new = []
-        for i, j, name in zip(x, y, label):
+        for count, (i, j, name) in enumerate(zip(x, y, label)):
             # DCF point
             dcf, i_opt, j_opt = K.metrics.compute_minDCF(fpr=i, fnr=j)
             i_opt = _ppndf((i_opt,))
@@ -1132,7 +1154,8 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
             j = _ppndf(j)
             name = name_fmt(name, dcf)
             lines.append(((i, j),
-                          {'lw': 1.3, 'label': name}))
+                          {'lw': 1.3, 'label': name,
+                           'linestyle': '-' if count % 2 == 0 else '-.'}))
             label_new.append(name)
         label = label_new
     # ====== select ROC curve style ====== #
@@ -1143,11 +1166,12 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         name_fmt = lambda name, auc: ('AUC=%.2f' % auc) if name is None else \
             ('%s (AUC=%.2f)' % (name, auc))
         label_new = []
-        for i, j, name in zip(x, y, label):
+        for count, (i, j, name) in enumerate(zip(x, y, label)):
             auc = K.metrics.compute_AUC(i, j)
             name = name_fmt(name, auc)
             lines.append([(i, j),
-                          {'lw': 1.3, 'label': name}])
+                          {'lw': 1.3, 'label': name,
+                           'linestyle': '-' if count % 2 == 0 else '-.'}])
             label_new.append(name)
         label = label_new
         # diagonal
@@ -1157,7 +1181,7 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     elif curve == 'prc':
         raise NotImplementedError
     # ====== ploting ====== #
-    fontsize = 10
+    fontsize = 9
     if xticks is not None and xlabels is not None:
         ax.set_xticks(xticks)
         ax.set_xticklabels(xlabels, rotation=-60, fontsize=fontsize)

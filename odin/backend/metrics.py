@@ -236,14 +236,19 @@ def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
 
 
 @return_roles(ConfusionMatrix)
-def confusion_matrix(y_pred, y_true, labels, name='ConfusionMatrix'):
+def confusion_matrix(y_true, y_pred, labels, normalize=True,
+                     name='ConfusionMatrix'):
     """
     Computes the confusion matrix of given vectors containing
     actual observations and predicted observations.
     Parameters
     ----------
-    pred : 1-d or 2-d tensor variable
-    actual : 1-d or 2-d tensor variable
+    y_true : 1-d or 2-d tensor variable
+        true values
+    y_pred : 1-d or 2-d tensor variable
+        prediction values
+    normalize : bool
+        if True, normalize each row to [0., 1.]
     labels : array, shape = [nb_classes], int (nb_classes)
         List of labels to index the matrix. This may be used to reorder
         or select a subset of labels.
@@ -251,8 +256,22 @@ def confusion_matrix(y_pred, y_true, labels, name='ConfusionMatrix'):
         in ``y_true`` or ``y_pred`` are used in sorted order.
 
     """
+    # ====== numpy ndarray ====== #
+    if isinstance(y_true, np.ndarray) or isinstance(y_pred, np.ndarray):
+        from sklearn.metrics import confusion_matrix as sk_cm
+        if y_true.ndim > 1:
+            y_true = np.argmax(y_true, axis=-1)
+        if y_pred.ndim > 1:
+            y_pred = np.argmax(y_pred, axis=-1)
+        if is_number(labels):
+            labels = list(range(labels))
+        cm = sk_cm(y_true=y_true, y_pred=y_pred, labels=labels)
+        if normalize:
+            cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
+        return cm
+    # ====== tensorflow tensor ====== #
     with tf.variable_scope(name):
-        from tensorflow.contrib.metrics import confusion_matrix
+        from tensorflow.contrib.metrics import confusion_matrix as tf_cm
         if y_true.get_shape().ndims == 2:
             y_true = tf.argmax(y_true, -1)
         elif y_true.get_shape().ndims != 1:
@@ -267,8 +286,16 @@ def confusion_matrix(y_pred, y_true, labels, name='ConfusionMatrix'):
         elif hasattr(labels, '__len__'):
             labels = len(labels)
         # transpose to match the format of sklearn
-        return tf.transpose(
-            confusion_matrix(y_pred, y_true, num_classes=labels))
+        cm = tf_cm(labels=y_true, predictions=y_pred,
+                   num_classes=labels)
+        if normalize:
+            cm = tf.cast(cm, dtype='float32')
+            cm = cm / tf.reduce_sum(cm, axis=1, keep_dims=True)
+        return cm
+
+
+def detection_matrix(y_true, y_pred):
+    pass
 
 
 def to_llr(x, name="LogLikelihoodRatio"):
@@ -606,7 +633,8 @@ def prc_curve(y_true, y_probas, pos_label=None,
 
     """
     from sklearn.metrics import precision_recall_curve
-    return precision_recall_curve(y_true, y_probas, pos_label, sample_weight)
+    return precision_recall_curve(y_true, y_probas,
+                                  pos_label, sample_weight)
 
 
 def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,

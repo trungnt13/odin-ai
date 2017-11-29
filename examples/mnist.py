@@ -45,7 +45,8 @@ y_onehot = K.one_hot(y, nb_classes=10)
 cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred),
                       name='CE')
 cost_acc = K.metrics.categorical_accuracy(y_pred, y, name="Acc")
-cost_cm = K.metrics.confusion_matrix(y_pred, y, labels=10)
+cost_cm = K.metrics.confusion_matrix(y_pred=y_pred, y_true=y,
+                                     labels=10)
 
 parameters = ops.parameters
 optimizer = K.optimizers.SGD(lr=0.05)

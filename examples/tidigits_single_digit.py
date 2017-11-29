@@ -196,7 +196,7 @@ y_prob = tf.nn.softmax(y_logit)
 y = inputs[-1]
 ce = tf.losses.softmax_cross_entropy(y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_prob, y)
-cm = K.metrics.confusion_matrix(y_prob, y, labels=len(digits))
+cm = K.metrics.confusion_matrix(y_pred=y_prob, y_true=y, labels=len(digits))
 # ====== params and optimizing ====== #
 params = [p for p in f.parameters
           if K.role.has_roles(p, K.role.Parameter)]

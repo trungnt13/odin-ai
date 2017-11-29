@@ -49,7 +49,9 @@ outputs = model(*inputs)
 # ====== create losses ====== #
 ce = tf.losses.softmax_cross_entropy(inputs[-1], outputs['logit'])
 acc = K.metrics.categorical_accuracy(outputs['prob'], inputs[-1])
-cm = K.metrics.confusion_matrix(outputs['prob'], inputs[-1], labels=nb_labels)
+cm = K.metrics.confusion_matrix(y_pred=outputs['prob'],
+                                y_true=inputs[-1],
+                                labels=nb_labels)
 # ====== create optimizer ====== #
 optz = K.optimizers.Adam(lr=LEARNING_RATE)
 parameters = model.parameters

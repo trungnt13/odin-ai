@@ -65,7 +65,8 @@ K.set_training(False); y_pred_score = ops(X)
 cost_train = K.mean(K.categorical_crossentropy(y_pred_train, y))
 cost_test_1 = K.mean(K.categorical_crossentropy(y_pred_score, y))
 cost_test_2 = K.mean(K.categorical_accuracy(y_pred_score, y))
-cost_test_3 = K.confusion_matrix(y_pred_score, y, labels=range(10))
+cost_test_3 = K.metrics.confusion_matrix(y_pred=y_pred_score, y_true=y,
+                                         labels=list(range(10)))
 
 parameters = ops.parameters
 optimizer = K.optimizers.SGD(lr=arg['lr'])

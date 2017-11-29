@@ -128,7 +128,8 @@ y_onehot = tf.one_hot(tf.cast(y, dtype='int32'), depth=nb_classes)
 # ====== create cost ====== #
 cost_ce = tf.losses.softmax_cross_entropy(y_onehot, y_pred_logits)
 cost_acc = K.metrics.categorical_accuracy(y_pred_prob, y)
-cost_cm = K.metrics.confusion_matrix(y_pred_prob, y, labels=nb_classes)
+cost_cm = K.metrics.confusion_matrix(y_pred=y_pred_prob, y_true=y,
+                                     labels=nb_classes)
 
 # ====== create optimizer ====== #
 parameters = [p for p in f.parameters
