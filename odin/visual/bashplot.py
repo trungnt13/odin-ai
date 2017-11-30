@@ -261,7 +261,7 @@ def print_dist(d, height=12, pch="o", show_number=False,
 
 
 def _float2str(x):
-    return ('%.2f' % x)[1:] if x < 1.0 else '1.0'
+    return '1.0' if x > 0.995 else ('%.2f' % np.round(x, decimals=2))[1:]
 
 
 def print_confusion(arr, labels=None, inc_stats=True):
@@ -271,6 +271,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
     inc_stats: bool
         if True, include Precision, Recall, F1 ,False Alarm
     """
+    # ====== preprocessing ====== #
     LABEL_COLOR = 'magenta'
     if arr.ndim != 2:
         raise ValueError("Can only process 2-D confusion matrixf")
@@ -281,10 +282,10 @@ def print_confusion(arr, labels=None, inc_stats=True):
         labels = ['%d' % i for i in range(nb_classes)]
     max_label_length = max(len(i) for i in labels)
     lab_fmt = '%-' + str(max_label_length) + 's '
-    # calculate precision, recall, f1
-    arr_sum_row = arr.sum(-1).astype('int64')
+    # ====== calculate precision, recall, F1 ====== #
+    arr_sum_row = arr.sum(-1).astype('float64')
     total_samples = np.sum(arr_sum_row)
-    arr_sum_col = arr.sum(0).astype('int64')
+    arr_sum_col = arr.sum(0).astype('float64')
     info = {}
     nb_info = 5 # Precision, Recall, F1, FA, Sum
     if inc_stats:
@@ -334,7 +335,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
         if inc_stats:
             # print float, except the last one is int
             info_str = [_float2str(val) if i < (nb_info - 1) else
-                        ('%d' % val)
+                        ('%d' % np.round(val))
                         for i, val in enumerate(info[row_id])]
             fig += row_text + ' ' + '|'.join(info_str) + '\n'
         else:

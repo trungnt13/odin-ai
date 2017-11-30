@@ -6,7 +6,8 @@ import tensorflow as tf
 from odin.utils import is_number
 from odin.config import get_epsilon
 
-from .role import AccuracyValue, return_roles, DifferentialLoss, ConfusionMatrix
+from .role import (AccuracyValue, return_roles, DifferentialLoss,
+                   ConfusionMatrix, add_role)
 from .tensor import argsort, dimshuffle
 from .helpers import is_tensor
 
@@ -235,12 +236,12 @@ def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
         return reduction(match_values)
 
 
-@return_roles(ConfusionMatrix)
-def confusion_matrix(y_true, y_pred, labels, normalize=True,
+def confusion_matrix(y_true, y_pred, labels, normalize=False,
                      name='ConfusionMatrix'):
     """
     Computes the confusion matrix of given vectors containing
     actual observations and predicted observations.
+
     Parameters
     ----------
     y_true : 1-d or 2-d tensor variable
@@ -254,6 +255,11 @@ def confusion_matrix(y_true, y_pred, labels, normalize=True,
         or select a subset of labels.
         If none is given, those that appear at least once
         in ``y_true`` or ``y_pred`` are used in sorted order.
+
+    Note
+    ----
+    if you want to calculate: Precision, Recall, F1 scores from the
+    confusion matrix, set `normalize=False`
 
     """
     # ====== numpy ndarray ====== #
@@ -291,7 +297,7 @@ def confusion_matrix(y_true, y_pred, labels, normalize=True,
         if normalize:
             cm = tf.cast(cm, dtype='float32')
             cm = cm / tf.reduce_sum(cm, axis=1, keep_dims=True)
-        return cm
+        return add_role(cm, ConfusionMatrix)
 
 
 def detection_matrix(y_true, y_pred):
@@ -424,16 +430,16 @@ def Cavg(y_llr, y_true, cluster_idx=None,
     return cluster_cost, total_cost
 
 
-def compute_minDCF(fpr, fnr, Cmiss=1, Cfa=1, Ptrue=0.5):
+def compute_minDCF(Pfa, Pmiss, Cmiss=1, Cfa=1, Ptrue=0.5):
     """ Estimating the min value of the  detection
     cost function (DCF)
 
     Parameters
     ----------
-    fpr: array, [n_samples]
-        miss rate or false positive rate
-    fnr: array, [n_samples]
-        miss rate or false positive rate
+    Pfa: array, [n_samples]
+        false alarm rate or false positive rate
+    Pmiss: array, [n_samples]
+        miss rate or false negative rate
     Cmiss: scalar
         weight for false positive mistakes
     Cfa: scalar
@@ -446,13 +452,12 @@ def compute_minDCF(fpr, fnr, Cmiss=1, Cfa=1, Ptrue=0.5):
     min_DCF: scalar
         minimum value of the detection cost function for
         a given detection error trade-off curve
-    Pmiss_optimum: scalar
-        the correcponding miss
     Pfa_optimum: scalar
         and false alarm trade-off probabilities.
+    Pmiss_optimum: scalar
+        the correcponding miss
 
     """
-    Pmiss, Pfa = fpr, fnr
     assert Pmiss.shape == Pfa.shape
     Pfalse = 1 - Ptrue
     # detection cost function vector
@@ -461,7 +466,25 @@ def compute_minDCF(fpr, fnr, Cmiss=1, Cfa=1, Ptrue=0.5):
     # get the optimal value and corresponding index
     min_idx = np.argmin(DCF_vector)
     min_val = DCF_vector[min_idx]
-    return min_val, Pmiss[min_idx], Pfa[min_idx]
+    return min_val, Pfa[min_idx], Pmiss[min_idx]
+
+
+def compute_EER(Pfa, Pmiss):
+    """ computes the equal error rate (EER) given
+    Pmiss or False Negative Rate
+    and
+    Pfa or False Positive Rate
+    calculated for a range of operating points on the DET curve
+
+    @Author: "Timothee Kheyrkhah, Omid Sadjadi"
+    """
+    fpr = Pfa
+    fnr = Pmiss
+    diff_pm_fa = fnr - fpr
+    x1 = np.flatnonzero(diff_pm_fa >= 0)[0]
+    x2 = np.flatnonzero(diff_pm_fa < 0)[-1]
+    a = (fnr[x1] - fpr[x1]) / (fpr[x2] - fpr[x1] - (fnr[x2] - fnr[x1]))
+    return fnr[x1] + a * (fnr[x2] - fnr[x1])
 
 
 def compute_AUC(x, y, reorder=False):
@@ -668,10 +691,10 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
     Returns
     -------
     with `n_samples = n_true_samples + n_false_samples`
-    fpr or P_miss : array, shape = [n_samples]
-        A rate of false positives, or miss probabilities
-    fnr or P_fa: array, shape = [n_samples]
-        A rate of false negatives, or false alarm probabilities
+    P_fa: array, shape = [n_samples]
+        fpr - False Positive rate, or false alarm probabilities
+    P_miss : array, shape = [n_samples]
+        fnr - False Negative rate, or miss probabilities
     thresholds : array, shape = [n_samples]
         increasing score values
 
@@ -742,7 +765,7 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
     Pmiss = sumtrue / nb_true
     Pfa = sumfalse / nb_false
     threshold = scores[0, :]
-    return Pmiss, Pfa, threshold
+    return Pfa, Pmiss, threshold
 
 
 # ===========================================================================

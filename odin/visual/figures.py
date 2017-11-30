@@ -740,15 +740,24 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
                           title=None):
     from matplotlib import pyplot as plt
     cmap = plt.cm.Blues
+    # calculate F1
+    N_row = np.sum(cm, axis=-1)
+    N_col = np.sum(cm, axis=0)
+    TP = np.diagonal(cm)
+    FP = N_col - TP
+    FN = N_row - TP
+    precision = TP / (TP + FP)
+    recall = TP / (TP + FN)
+    F1 = 2 / (1 / precision + 1 / recall)
     # column normalize
-    if np.max(cm) > 1:
-        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    else:
-        cm_normalized = cm
+    nb_classes = cm.shape[0]
+    cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
+    cm = np.concatenate((cm, np.zeros(shape=(nb_classes, 2), dtype=cm.dtype)),
+                        axis=-1)
     if axis is None:
         axis = plt.gca()
 
-    im = axis.imshow(cm_normalized, interpolation='nearest', cmap=cmap)
+    im = axis.imshow(cm, interpolation='nearest', cmap=cmap)
     if title is not None:
         axis.set_title(title)
     # axis.get_figure().colorbar(im)
@@ -764,19 +773,22 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
     worst_index = {i: np.argmax([val if j != i else -1
                                  for j, val in enumerate(row)])
                    for i, row in enumerate(cm)}
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+    for i, j in itertools.product(range(nb_classes),
+                                  range(nb_classes)):
         color = 'black'
         weight = 'normal'
         fs = fontsize
-        if i == j:
-            color = "darkgreen"
+        text = '%.2f' % cm[i, j]
+        if i == j: # diagonal
+            color = "darkgreen" if cm[i, j] <= 0.7 else 'forestgreen'
             weight = 'bold'
-            fs = fontsize + 3
-        elif j == worst_index[i]:
+            fs = fontsize
+            text = '%.2f\nF1:%.2f' % (cm[i, j], F1[i])
+        elif j == worst_index[i]: # worst mis-classified
             color = 'red'
             weight = 'semibold'
             fs = fontsize
-        plt.text(j, i, '%.2f' % cm[i, j],
+        plt.text(j, i, text,
                  weight=weight, color=color, fontsize=fs,
                  verticalalignment="center",
                  horizontalalignment="center")
@@ -1082,6 +1094,12 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         det: detection error trade-off
         roc: receiver operating curve
         prc: precision-recall curve
+
+    Note
+    ----
+    for 'det': xaxis is FPR - Pfa, and yxais is FNR - Pmiss
+    for 'roc': xaxis is FPR - Pfa, and yaxis is TPR
+    for 'prc': xaxis is, yaxis is
     """
     from matplotlib import pyplot as plt
     from odin import backend as K
@@ -1099,8 +1117,9 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     label = as_tuple(label, N=len(x))
     # ====== const ====== #
     eps = np.finfo(x[0].dtype).eps
-    xticks, xlabels = None, None
-    yticks, ylabels = None, None
+    xticks, xticklabels = None, None
+    yticks, yticklabels = None, None
+    xlabel, ylabel = None, None
     xlims, ylims = None, None
     lines = []
     points = []
@@ -1112,6 +1131,8 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         ax = plt.gca()
     # ====== select DET curve style ====== #
     if curve == 'det':
+        xlabel = "False Alarm probability (in %)"
+        ylabel = "Miss probability (in %)"
         # 0.00001, 0.00002,
         # , 0.99995, 0.99998, 0.99999
         xticks = np.array([
@@ -1120,7 +1141,7 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
             0.1, 0.2, 0.4, 0.6, 0.8, 0.9,
             0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
             0.9995, 0.9998, 0.9999])
-        xlabels = [str(i)[:-2] if '.0' == str(i)[-2:]
+        xticklabels = [str(i)[:-2] if '.0' == str(i)[-2:]
                    else (str(i) if i > 99.99 else str(i))
                    for i in xticks * 100]
         if xlims is None:
@@ -1135,31 +1156,35 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
                  [i for i in xticks if i >= ylims[1]][0] - eps)
         # convert to log scale
         xticks = _ppndf(xticks)
-        yticks, ylabels = xticks, xlabels
+        yticks, yticklabels = xticks, xticklabels
         xlims, ylims = _ppndf(xlims), _ppndf(ylims)
         # main line
         # TODO: add EER value later
-        name_fmt = lambda name, dcf: ('minDCF=%.2f' % dcf) if name is None else \
-            ('%s (minDCF=%.2f)' % (name, dcf))
+        name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer, dcf)) \
+            if name is None else \
+            ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer, dcf))
         label_new = []
-        for count, (i, j, name) in enumerate(zip(x, y, label)):
+        for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, label)):
+            eer = K.metrics.compute_EER(Pfa=Pfa, Pmiss=Pmiss)
             # DCF point
-            dcf, i_opt, j_opt = K.metrics.compute_minDCF(fpr=i, fnr=j)
-            i_opt = _ppndf((i_opt,))
-            j_opt = _ppndf((j_opt,))
-            points.append(((i_opt, j_opt),
+            dcf, Pfa_opt, Pmiss_opt = K.metrics.compute_minDCF(Pfa=Pfa, Pmiss=Pmiss)
+            Pfa_opt = _ppndf((Pfa_opt,))
+            Pmiss_opt = _ppndf((Pmiss_opt,))
+            points.append(((Pfa_opt, Pmiss_opt),
                            {}))
             # det curve
-            i = _ppndf(i)
-            j = _ppndf(j)
-            name = name_fmt(name, dcf)
-            lines.append(((i, j),
+            Pfa = _ppndf(Pfa)
+            Pmiss = _ppndf(Pmiss)
+            name = name_fmt(name, eer, dcf)
+            lines.append(((Pfa, Pmiss),
                           {'lw': 1.3, 'label': name,
                            'linestyle': '-' if count % 2 == 0 else '-.'}))
             label_new.append(name)
         label = label_new
     # ====== select ROC curve style ====== #
     elif curve == 'roc':
+        xlabel = "False Positive probability"
+        ylabel = "True Positive probability"
         xlims = (0, 1)
         ylims = (0, 1)
         # roc
@@ -1182,12 +1207,17 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         raise NotImplementedError
     # ====== ploting ====== #
     fontsize = 9
-    if xticks is not None and xlabels is not None:
+    if xticks is not None:
         ax.set_xticks(xticks)
-        ax.set_xticklabels(xlabels, rotation=-60, fontsize=fontsize)
-    if yticks is not None and ylabels is not None:
+    if xticklabels is not None:
+        ax.set_xticklabels(xticklabels, rotation=-60, fontsize=fontsize)
+    if yticks is not None:
         ax.set_yticks(yticks)
-        ax.set_yticklabels(ylabels, fontsize=fontsize)
+    if yticklabels is not None:
+        ax.set_yticklabels(yticklabels, fontsize=fontsize)
+    # axes labels
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
     # plot all lines
     for args, kwargs in lines:
         ax.plot(*args, **kwargs)
