@@ -255,7 +255,8 @@ y_true = np.zeros(shape=(n_true + n_false,))
 y_true[:n_true] = 1
 y_score = np.concatenate((true, false))
 
-Pfa, Pmiss, _ = K.metrics.det_curve(y_true=y_true, y_score=y_score)
+Pfa, Pmiss = K.metrics.det_curve(y_true=y_true, y_score=y_score)
+
 min_DCF, Pfa_opt, Pmiss_opt = K.metrics.compute_minDCF(Pfa, Pmiss)
 print("MinDCF, Pmiss_opt, Pfa_opt:", min_DCF, Pmiss_opt, Pfa_opt)
 print("EER1:", K.metrics.compute_EER(Pfa, Pmiss))

@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 import tensorflow as tf
 
-from odin.utils import is_number
+from odin.utils import is_number, as_tuple
 from odin.config import get_epsilon
 
 from .role import (AccuracyValue, return_roles, DifferentialLoss,
@@ -337,7 +337,7 @@ def to_llh(x):
 
 
 def Cavg(y_llr, y_true, cluster_idx=None,
-         Ptar=0.5, Cfa=1., Cmiss=1.,
+         Ptrue=0.5, Cfa=1., Cmiss=1.,
          probability_input=False):
     ''' Fast calculation of Cavg (for only 1 clusters)
 
@@ -374,7 +374,7 @@ def Cavg(y_llr, y_true, cluster_idx=None,
     if is_tensor(y_llr) and is_tensor(y_true):
         if probability_input:
             y_llr = tf.log(y_llr / (1 - y_llr))
-        thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
+        thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
         nb_classes = y_llr.get_shape()[1].value
         if isinstance(y_true, (list, tuple)):
             y_true = np.asarray(y_true)
@@ -392,10 +392,10 @@ def Cavg(y_llr, y_true, cluster_idx=None,
             tf.reduce_sum(y_true, axis=0), 10e-8, 10e8) # no zero values
         # ====== Pmiss ====== #
         miss = tf.reduce_sum(y_true * y_negative, axis=0)
-        Pmiss = 100 * (Cmiss * Ptar * miss) / distribution
+        Pmiss = 100 * (Cmiss * Ptrue * miss) / distribution
         # ====== Pfa ====== # This calculation give different results
         fa = tf.reduce_sum(y_false * y_positive, axis=0)
-        Pfa = 100 * (Cfa * (1 - Ptar) * fa) / distribution
+        Pfa = 100 * (Cfa * (1 - Ptrue) * fa) / distribution
         Cavg = tf.reduce_mean(Pmiss) + tf.reduce_mean(Pfa) / (nb_classes - 1)
         return Cavg
     # ====== for numpy ====== #
@@ -408,7 +408,7 @@ def Cavg(y_llr, y_true, cluster_idx=None,
     y_true = np.asarray(y_true)
     y_llr = np.asarray(y_llr)
     # threshold
-    thresh = np.log(Cfa / Cmiss) - np.log(Ptar / (1 - Ptar))
+    thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
     cluster_cost = np.zeros(len(cluster_idx))
     for k, cluster in enumerate(cluster_idx):
         L = len(cluster) # number of languages in a cluster
@@ -425,9 +425,98 @@ def Cavg(y_llr, y_true, cluster_idx=None,
                     err = np.sum(y_llr[y_true == lang_i, lang_j] >= thresh) / N
                     fa += err
         # Calculate procentage
-        cluster_cost[k] = 100 * (Cmiss * Ptar * fr + Cfa * (1 - Ptar) * fa / (L - 1)) / L
+        cluster_cost[k] = 100 * (Cmiss * Ptrue * fr + Cfa * (1 - Ptrue) * fa / (L - 1)) / L
     total_cost = np.mean(cluster_cost)
     return cluster_cost, total_cost
+
+
+def compute_Cavg(y_true, y_score,
+                 Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.):
+    """ Computes normalized minimum detection cost function (DCF) given
+        the costs for false accepts and false rejects as well as a priori
+        probability for target speakers
+
+    (By convention, the more positive the score,
+    the more likely is the target hypothesis.)
+
+    Parameter
+    ---------
+    y_true: array [n_samples], or list of array
+        labels of binary or multi-classes detection tasks, can be
+        array of classes indices, or one-hot-encoded matrix.
+        If multiple array is given, calculating equalized cost
+        of all partitions
+    y_score: array [n_samples, n_classes], or list of array
+        the outputs scores, can be probabilities values or log-likelihood
+        values by default, the
+    Ptrue: float [0.,1.], or list of float
+        hypothesized prior probabilities of positive class,
+        you can given multiple values by providing an array
+    Cfa: float
+        weight for False Alarm - False Positive error
+    Cmiss: float
+        weight for Miss - False Negative error
+
+    Return
+    ------
+    C_norm: array [len(Ptrue)]
+        minimum detection cost accordingly for each given value of `Ptrue`.
+    C_norm_array: array [len(Ptrue), n_classes]
+        minimum detection cost for each class, accordingly to each
+        given value of `Ptrue`
+
+    """
+    y_true = as_tuple(y_true, t=np.ndarray)
+    y_score = as_tuple(y_score, t=np.ndarray)
+    if len(y_true) != len(y_score):
+        raise ValueError("There are %d partitions for `y_true`, but %d "
+                         "partitions for `y_score`." % (len(y_true), len(y_score)))
+    if len(set(i.shape[1] for i in y_score)) != 1:
+        raise ValueError("The number of classes among scores array is inconsistent.")
+    nb_partitions = len(y_true)
+    # ====== preprocessing ====== #
+    y_true = [np.argmax(i, axis=-1) if i.ndim >= 2 else i
+              for i in y_true]
+    nb_classes = y_score[0].shape[1]
+    # threshold
+    nb_threshold = len(Ptrue)
+    Ptrue = np.array(as_tuple(Ptrue, t=float))
+    beta = (Cfa / Cmiss) * ((1 - Ptrue) / Ptrue)
+    # ====== Cavg ====== #
+    global_cm_array = np.zeros(shape=(nb_threshold, nb_classes, nb_classes))
+    # Apply threshold on the scores and compute the confusion matrix
+    for scores, labels in zip(y_score, y_true):
+        actual_TP_per_class = np.lib.arraysetops.unique(
+            ar=labels, return_counts=True)[1]
+        for theta_ix, theta in enumerate(np.log(beta)):
+            thresholded_scores = (scores > theta).astype(int)
+            # compute confusion matrix, this is different from
+            # general implementation of confusion matrix above
+            cm = np.zeros(shape=(nb_classes, nb_classes), dtype=np.int64)
+            for i, (trial, target) in enumerate(zip(thresholded_scores, labels)):
+                cm[target, :] += trial
+            # miss and fa
+            predic_TP_per_class = cm.diagonal()
+            # Compute the number of miss per class
+            nb_miss_per_class = actual_TP_per_class - predic_TP_per_class
+            cm_miss_fa = cm
+            cm_miss_fa[np.diag_indices_from(cm)] = nb_miss_per_class
+            cm_probabilities = cm_miss_fa / actual_TP_per_class[:, None]
+            # update global
+            global_cm_array[theta_ix] += cm_probabilities
+    # normalize by partitions
+    global_cm_array /= nb_partitions
+    # Extract probabilities of false negatives from confusion matrix
+    p_miss_arr = global_cm_array.diagonal(0, 1, 2)
+    p_miss = p_miss_arr.mean(1)
+    # Extract probabilities of false positives from confusion matrix
+    p_false_alarm_arr = (global_cm_array.sum(1) - p_miss_arr) / (nb_classes - 1)
+    p_false_alarm = p_false_alarm_arr.mean(1)
+    # Compute costs per languages
+    C_Norm_arr = p_miss_arr + beta[:, None] * p_false_alarm_arr
+    # Compute overall cost
+    C_Norm = p_miss + beta * p_false_alarm
+    return C_Norm, C_Norm_arr
 
 
 def compute_minDCF(Pfa, Pmiss, Cmiss=1, Cfa=1, Ptrue=0.5):
@@ -660,8 +749,7 @@ def prc_curve(y_true, y_probas, pos_label=None,
                                   pos_label, sample_weight)
 
 
-def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
-              true_scores=None, false_scores=None):
+def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
     """Detection Error Tradeoff
     Compute error rates for different probability thresholds
 
@@ -670,6 +758,8 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
     NIST original code and `sklearn.metrics`
 
     Note: this implementation is restricted to the binary classification task.
+    (By convention, the more positive the score,
+    the more likely is the target hypothesis.)
 
     Parameters
     ----------
@@ -681,12 +771,6 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
         The label of the positive class
     sample_weight : array-like of shape = [n_samples], optional
         Sample weights.
-    true_scores: array, shape = [n_true_samples]
-    false_scores:  array, shape = [n_false_samples]
-        are detection output scores for a set of detection trials,
-        given that the target hypothesis is true (false).
-        (By convention, the more positive the score, the more
-        likely is the target hypothesis.)
 
     Returns
     -------
@@ -695,8 +779,6 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
         fpr - False Positive rate, or false alarm probabilities
     P_miss : array, shape = [n_samples]
         fnr - False Negative rate, or miss probabilities
-    thresholds : array, shape = [n_samples]
-        increasing score values
 
     References
     ----------
@@ -715,7 +797,7 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
     >>> from odin import backend as K
     >>> y_true = np.array([0, 0, 1, 1])
     >>> y_scores = np.array([0.1, 0.4, 0.35, 0.8])
-    >>> fps, fns, thresholds = K.metrics.det_curve(y_true, y_scores)
+    >>> fnr, fpr = K.metrics.det_curve(y_true, y_scores)
     >>> print(fpr)
     array([ 0.5,  0.5,  0. ])
     >>> print(fnr)
@@ -723,49 +805,41 @@ def det_curve(y_true=None, y_score=None, pos_label=None, sample_weight=None,
     >>> print(thresholds)
     array([ 0.35,  0.4 ,  0.8 ])
     """
-    # ====== preprocessing ====== #
-    if true_scores is None or false_scores is None:
-        if y_true is None or y_score is None:
-            raise ValueError("`y_true` and `y_score` must be specified when "
-                             "`true_scores` or `false_scores` are missing.")
-        if pos_label is None:
-            pos_label = 1
-        y_true = np.array(y_true)
-        # get true scores
-        true_idx = (y_true == pos_label)
-        if true_scores is None:
-            true_scores = y_score[true_idx]
-        # get false scores
-        false_idx = (y_true != pos_label)
-        if false_scores is None:
-            false_scores = y_score[false_idx]
-        if len(false_scores) + len(true_scores) != len(y_true):
-            raise RuntimeError("There are %d positive samples, and %d negative "
-                               "samples, but there are total %d samples." %
-                               (len(true_scores), len(false_scores), len(y_true)))
+    # ====== ravel everything in cased of multi-classes ====== #
+    y_score = y_score.ravel()
+    y_true = np.array(y_true)
+    if y_true.ndim >= 2:
+        y_true = np.argmax(y_true, axis=-1)
+    nb_classes = len(np.lib.arraysetops.unique(y_true))
+    # multi-classes
+    if nb_classes > 2:
+        total_samples = nb_classes * len(y_true)
+        indices = np.arange(0, total_samples, nb_classes) + y_true
+        y_true = np.zeros(total_samples, dtype=np.int32)
+        y_true[indices] = 1
+    # ====== check weights ====== #
+    if sample_weight is not None:
+        if len(sample_weight) != len(y_score):
+            raise ValueError("Provided `sample_weight` for %d samples, but got "
+                             "scores for %d samples." %
+                             (len(sample_weight), len(y_score)))
+    else:
+        sample_weight = np.ones(shape=(len(y_score),), dtype=y_score.dtype)
+    # ====== processing ====== #
+    if pos_label is None:
+        pos_label = 1
+    y_true = (y_true == pos_label).astype(np.int32)
     # ====== start ====== #
-    nb_true = max(true_scores.shape)
-    nb_false = max(false_scores.shape)
-    total = nb_true + nb_false
-    dtype = true_scores.dtype
-    # ====== create and sort the scores ====== #
-    scores = np.empty(shape=(total, 2), dtype=dtype)
-    scores[0:nb_false, 0] = false_scores
-    scores[0:nb_false, 1] = 0.
-    scores[nb_false:, 0] = true_scores
-    scores[nb_false:, 1] = 1.
-    # sort 2nd column decending order
-    idx = np.argsort(scores[:, 1], axis=0, kind='mergsort')
-    # now sort 1st column ascending
-    idx = idx[np.argsort(scores[:, 0], axis=0, kind='mergsort')]
-    scores = scores[idx]
-    # ====== calculate miss and fa rate ====== #
-    sumtrue = np.cumsum(scores[:, 1], axis=0, dtype='float64')
-    sumfalse = nb_false - (np.arange(1, total + 1) - sumtrue)
-    Pmiss = sumtrue / nb_true
-    Pfa = sumfalse / nb_false
-    threshold = scores[0, :]
-    return Pfa, Pmiss, threshold
+    sorted_ndx = np.argsort(y_score)
+    y_true = y_true[sorted_ndx]
+
+    tgt_weights = sample_weight * y_true
+    imp_weights = sample_weight * (1 - y_true)
+    # FNR
+    Pmiss = np.cumsum(tgt_weights) / np.sum(tgt_weights)
+    # FPR
+    Pfa = 1 - np.cumsum(imp_weights) / np.sum(imp_weights)
+    return Pfa, Pmiss
 
 
 # ===========================================================================
