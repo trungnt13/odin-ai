@@ -336,9 +336,9 @@ def to_llh(x):
         return tf.log(x)
 
 
-def Cavg(y_llr, y_true, cluster_idx=None,
-         Ptrue=0.5, Cfa=1., Cmiss=1.,
-         probability_input=False):
+def compute_Cavg(y_llr, y_true, cluster_idx=None,
+                 Ptrue=0.5, Cfa=1., Cmiss=1.,
+                 probability_input=False):
     ''' Fast calculation of Cavg (for only 1 clusters)
 
     Parameters
@@ -430,7 +430,7 @@ def Cavg(y_llr, y_true, cluster_idx=None,
     return cluster_cost, total_cost
 
 
-def compute_Cavg(y_true, y_score,
+def compute_Cnorm(y_true, y_score,
                  Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.):
     """ Computes normalized minimum detection cost function (DCF) given
         the costs for false accepts and false rejects as well as a priori
@@ -832,6 +832,8 @@ def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
     # ====== start ====== #
     sorted_ndx = np.argsort(y_score)
     y_true = y_true[sorted_ndx]
+    # sort the weights also, dont forget this
+    sample_weight = sample_weight[sorted_ndx]
 
     tgt_weights = sample_weight * y_true
     imp_weights = sample_weight * (1 - y_true)
