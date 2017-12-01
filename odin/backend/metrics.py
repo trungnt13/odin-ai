@@ -431,7 +431,7 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
 
 
 def compute_Cnorm(y_true, y_score,
-                 Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.):
+                  Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.):
     """ Computes normalized minimum detection cost function (DCF) given
         the costs for false accepts and false rejects as well as a priori
         probability for target speakers
@@ -479,8 +479,8 @@ def compute_Cnorm(y_true, y_score,
               for i in y_true]
     nb_classes = y_score[0].shape[1]
     # threshold
-    nb_threshold = len(Ptrue)
     Ptrue = np.array(as_tuple(Ptrue, t=float))
+    nb_threshold = len(Ptrue)
     beta = (Cfa / Cmiss) * ((1 - Ptrue) / Ptrue)
     # ====== Cavg ====== #
     global_cm_array = np.zeros(shape=(nb_threshold, nb_classes, nb_classes))

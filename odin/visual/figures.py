@@ -749,11 +749,10 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
     precision = TP / (TP + FP)
     recall = TP / (TP + FN)
     F1 = 2 / (1 / precision + 1 / recall)
+    F1[np.isnan(F1)] = 0.
     # column normalize
     nb_classes = cm.shape[0]
     cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
-    cm = np.concatenate((cm, np.zeros(shape=(nb_classes, 2), dtype=cm.dtype)),
-                        axis=-1)
     if axis is None:
         axis = plt.gca()
 
@@ -780,7 +779,7 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
         fs = fontsize
         text = '%.2f' % cm[i, j]
         if i == j: # diagonal
-            color = "darkgreen" if cm[i, j] <= 0.7 else 'forestgreen'
+            color = "darkgreen" if cm[i, j] <= 0.8 else 'forestgreen'
             weight = 'bold'
             fs = fontsize
             text = '%.2f\nF1:%.2f' % (cm[i, j], F1[i])
