@@ -41,7 +41,7 @@ ops = N.Sequence([
     N.Dense(10, activation=K.linear)
 ], debug=True)
 y_pred = ops(X)
-y_onehot = K.one_hot(y, nb_classes=10)
+y_onehot = tf.one_hot(y, depth=10)
 cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred),
                       name='CE')
 cost_acc = K.metrics.categorical_accuracy(y_pred, y, name="Acc")

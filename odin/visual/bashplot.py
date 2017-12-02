@@ -261,7 +261,7 @@ def print_dist(d, height=12, pch="o", show_number=False,
 
 
 def _float2str(x):
-    return '1.0' if x > 0.995 else ('%.2f' % np.round(x, decimals=2))[1:]
+    return '1.0' if x > 0.99 else ('%.2f' % x)[1:]
 
 
 def print_confusion(arr, labels=None, inc_stats=True):
