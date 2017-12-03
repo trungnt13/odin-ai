@@ -82,9 +82,7 @@ _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 class Data(object):
 
     """ Note for overriding `Data` class:
-    * If `_new_args` is not None it will be return at __getnewargs__
-      during unpickling.
-    * `_new_args` must be picklable, and also be pickled.
+    `_data` will always be a tuple.
     """
 
     def __init__(self, data, read_only):
@@ -108,7 +106,7 @@ class Data(object):
         # flag show that array valued changed
         self._status = 0
 
-    def resize(self, shape):
+    def resize(self, new_length):
         raise NotImplementedError
 
     # ==================== abstract ==================== #
@@ -340,10 +338,15 @@ class Data(object):
 
     # ==================== Strings ==================== #
     def __str__(self):
-        return self._data.__str__()
+        s = "<%s: " % self.__class__.__name__
+        for dat in self.data:
+            s += "(%s dtype:%s shape:%s)" % \
+                (dat.__class__.__name__, dat.dtype.name, dat.shape)
+        s += '>'
+        return s
 
     def __repr__(self):
-        return self._data.__repr__()
+        return self.__str__()
 
     # ==================== manipulation ==================== #
     @autoattr(_status=lambda x: x + 1)
@@ -613,8 +616,10 @@ class NdarrayData(Data):
         self._data = info
 
     # ==================== abstract ==================== #
-    def resize(self, shape):
-        return self._data.resize(shape)
+    def resize(self, new_length):
+        shape = self._data[0].shape
+        new_shape = (new_length,) + shape[1:]
+        return self._data[0].resize(new_shape)
 
 # ===========================================================================
 # Memmap Data object
@@ -764,7 +769,7 @@ class MmapData(Data):
     def flush(self):
         if self.read_only:
             return
-        self._data.flush()
+        self._data[0].flush()
 
     def close(self):
         # Check if exist global instance
@@ -774,7 +779,7 @@ class MmapData(Data):
             if not self.read_only:
                 self.flush()
             # close mmap and file
-            self._data._mmap.close()
+            self._data[0]._mmap.close()
             del self._data
             self._file.close()
 
@@ -784,39 +789,37 @@ class MmapData(Data):
         (self.data_info, self.shape, self.dtype)
 
     # ==================== Save ==================== #
-    def resize(self, shape):
+    def resize(self, new_length):
         if self.read_only:
             return
         # ====== local files ====== #
         f = self._file
-        mmap = self._data
+        mmap = self._data[0]
+        old_length = mmap.shape[0]
         # ====== check new shape ====== #
-        if not isinstance(shape, (tuple, list)):
-            shape = (shape,)
-        if any(i != j for i, j in zip(shape[1:], mmap.shape[1:])):
-            raise ValueError('Resize only support the first dimension, but '
-                             '{} != {}'.format(shape[1:], mmap.shape[1:]))
-        if shape[0] < mmap.shape[0]:
+        if new_length < old_length:
             raise ValueError('Only support extend memmap, and do not shrink the memory')
-        elif shape[0] == self._data.shape[0]: # nothing to resize
+        # nothing to resize
+        elif new_length == old_length:
             return self
         # ====== flush previous changes ====== #
         # resize by create new memmap and also rename old file
-        shape = (shape[0],) + tuple(mmap.shape[1:])
-        dtype = str(mmap.dtype)
+        shape = (new_length,) + mmap.shape[1:]
+        dtype = mmap.dtype.name
         # rewrite the header
         f.seek(len(MmapData.HEADER))
         meta = marshal.dumps([dtype, shape])
         size = '%8d' % len(meta)
-        f.write(size.encode())
+        f.write(size.encode(encoding='utf-8'))
         f.write(meta)
         f.flush()
         # extend the memmap
         mmap._mmap.close()
         del self._data
-        self._data = np.memmap(self.data_info, dtype=dtype, shape=shape,
-                               mode='r+',
-                               offset=_aligned_memmap_offset(dtype))
+        mmap = np.memmap(self.data_info, dtype=dtype, shape=shape,
+                         mode='r+',
+                         offset=_aligned_memmap_offset(dtype))
+        self._data = (mmap,)
         return self
 
 # ===========================================================================
@@ -925,10 +928,10 @@ class Hdf5Data(Data):
                     shape=shape, maxshape=(None, ) + shape[1:])
 
             self._data = hdf[dataset]
-            if shape is not None and self._data.shape[1:] != shape[1:]:
+            if shape is not None and self._data[0].shape[1:] != shape[1:]:
                 raise ValueError('Shape mismatch between predefined dataset '
                                  'and given shape, {} != {}'
-                                 ''.format(shape, self._data.shape))
+                                 ''.format(shape, self._data[0].shape))
             self._hdf = hdf
 
     # ==================== properties ==================== #
@@ -938,7 +941,7 @@ class Hdf5Data(Data):
 
     @property
     def name(self):
-        _ = self._data.name
+        _ = self._data[0].name
         if _[0] == '/':
             _ = _[1:]
         return _
@@ -954,15 +957,15 @@ class Hdf5Data(Data):
 
         if not isinstance(shape, (tuple, list)):
             shape = (shape,)
-        if any(i != j for i, j in zip(shape[1:], self._data.shape[1:])):
+        if any(i != j for i, j in zip(shape[1:], self._data[0].shape[1:])):
             raise ValueError('Resize only support the first dimension, but '
-                             '{} != {}'.format(shape[1:], self._data.shape[1:]))
-        if shape[0] < self._data.shape[0]:
+                             '{} != {}'.format(shape[1:], self._data[0].shape[1:]))
+        if shape[0] < self._data[0].shape[0]:
             raise ValueError('Only support extend memmap, and do not shrink the memory')
-        elif shape[0] == self._data.shape[0]:
+        elif shape[0] == self._data[0].shape[0]:
             return self
 
-        self._data.resize(shape[0], axis=0)
+        self._data[0].resize(shape[0], axis=0)
         return self
 
     def flush(self):

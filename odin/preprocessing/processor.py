@@ -74,11 +74,9 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
         else:
             pca_map[feat] = MiniBatchPCA(n_components=None, whiten=False,
                                          copy=True, batch_size=None)
-    # ====== run PCA extraction ====== #
-    add_notification("Selected features for PCA:" +
+    # ====== prepare MPI PCA ====== #
+    add_notification("Selected features for PCA: " +
         ctext(', '.join(feat_name), 'yellow'))
-    prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
-                   name='PCA')
 
     def map_pca(X):
         name, pca = X
@@ -90,13 +88,24 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
         # save PCA model
         with open(os.path.join(dataset.path, name + '_pca'), 'wb') as f:
             cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
-        prog.add_notification('Stored PCA model of: %s' %
-                              ctext(name, 'yellow'))
+        # finish return feature name
+        yield name
     mpi = MPI(jobs=list(pca_map.items()), func=map_pca,
               ncpu=None, batch=1, hwm=12082518,
               backend='python')
+    # ====== running the MPI ====== #
+    remain_features = list(pca_map.keys())
+    finished_features = []
+    prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
+                   name='PCA')
     for n in mpi:
-        prog.add(n)
+        if is_string(n):
+            remain_features.remove(n)
+            finished_features.append(n)
+        else:
+            prog['Remain'] = ', '.join(remain_features)
+            prog['Finished'] = ', '.join(finished_features)
+            prog.add(n)
     # ====== return ====== #
     if own_dataset:
         dataset.close()

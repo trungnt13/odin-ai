@@ -624,7 +624,7 @@ class Dataset(object):
                 data = Hdf5Data(key, hdf=f, dtype=dtype, shape=shape)
             # store new key
             self._data_map[key] = (data.dtype, data.shape, data, path)
-            data.prepend(value)
+            data[:shape[0]] = value
             # check maximum opened memmap
             self._validate_memmap_max_open(key)
         # ====== other types ====== #

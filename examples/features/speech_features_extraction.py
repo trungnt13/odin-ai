@@ -15,7 +15,7 @@ import shutil
 import os
 import sys
 from odin import visual
-from odin.utils import ctext
+from odin.utils import ctext, unique_labels, Progbar
 from odin import fuel as F, utils, preprocessing as pp
 from collections import defaultdict
 from odin.ml import MiniBatchPCA
@@ -31,14 +31,22 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 PCA = True
 center = True
-if True:
+if False:
     audio = F.WDIGITS.get_dataset()
+    filter_func = lambda x: len(x.split('_')[-1]) == 1
+    key_func = lambda x: x.split('_')[-1]
 else:
     audio = F.DIGITS.get_dataset()
+    filter_func = lambda x: True
+    key_func = lambda x:int(x[0])
 print(audio)
 all_files = list(audio['indices'].keys())
+labels_fn, labels = unique_labels(y=[f for f in all_files if filter_func(f)],
+                                  key_func=key_func,
+                                  return_labels=True)
 print("Found %d (.wav) files" % len(all_files))
 output_path = utils.get_datasetpath(name='digit')
+figpath = '/tmp/digits'
 # ===========================================================================
 # Extractor
 # ===========================================================================
@@ -67,8 +75,8 @@ extractors = pp.make_pipeline(steps=[
                            feat_type='energy'),
     pp.speech.RASTAfilter(rasta=True, sdc=0),
     pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
-                      feat_type=('mspec', 'qmspec', 'mfcc', 'qmfcc',
-                                 'energy', 'pitch')),
+                           feat_type=('mspec', 'qmspec', 'mfcc', 'qmfcc',
+                                      'energy', 'pitch')),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
                            feat_type=('mspec', 'mfcc',
                                       'qspec', 'qmfcc', 'qmspec')),
@@ -99,9 +107,8 @@ shutil.copy(readme_path,
             os.path.join(output_path, 'README.md'))
 pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
-print('Output path:', output_path)
 ds = F.Dataset(output_path, read_only=True)
-pp.validate_features(ds, path='/tmp/digits', nb_samples=8, override=True)
+pp.validate_features(ds, path=figpath, nb_samples=8, override=True)
 print(ds)
 # ====== print pipeline ====== #
 padding = '  '
@@ -126,63 +133,44 @@ for n in ds.keys():
                 ':', ' '.join(['%.2f' % i + '-' + '%.2f' % j
                 for i, j in zip(pca.explained_variance_ratio_[:8],
                                 pca.explained_variance_[:8])]))
-exit() # TODO: fix here
-# ====== plot the processed files ====== #
-figpath = '/tmp/speech_features.pdf'
-files = np.random.choice(list(ds['indices'].keys()),
-                         size=8, replace=False)
-for f in files:
-    with visual.figure(ncol = 1, nrow = 5, dpi = 180,
-                       show = False, tight_layout = True, title = f):
-        start, end = ds['indices'][f]
-        vad = ds['sad'][start:end]
-        pitch = ds['pitch'][start:end].astype('float32')
-        energy = ds['energy'][start:end][:].astype('float32')
-        spec = ds['spec'][start:end].astype('float32')
-        mspec = ds['mspec'][start:end][:, :40].astype('float32')
-        mfcc = ds['mfcc'][start:end][:, :20].astype('float32')
-        visual.subplot(5, 1, 1)
-        visual.plot(energy.ravel())
-        visual.subplot(5, 1, 2)
-        visual.plot(pitch.ravel())
-        visual.subplot(5, 1, 3)
-        visual.plot_spectrogram(spec.T, vad = vad)
-        visual.subplot(5, 1, 4)
-        visual.plot_spectrogram(mspec.T, vad = vad)
-        visual.subplot(5, 1, 5)
-        visual.plot_spectrogram(mfcc.T, vad = vad)
 # ====== check if any pitch or f0 allzeros ====== #
-indices = sorted([(name, s, e) for name, (s, e) in ds['indices']],
-                 key=lambda x: x[1])
-for name, start, end in indices:
-    pitch = ds['pitch'][start:end][:]
-    if not np.any(pitch):
-        print("Pitch and f0 of name: %s contains only zeros" % name)
+if 'pitch' in ds:
+    indices = sorted([(name, s, e) for name, (s, e) in ds['indices']],
+                     key=lambda x: x[1])
+    for name, start, end in indices:
+        pitch = ds['pitch'][start:end][:]
+        if not np.any(pitch):
+            print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
-if PCA and False:
+for feat in ('mspec', 'spec', 'mfcc'):
     from sklearn.manifold import TSNE
-    feat = 'mspec'
     X = []; y = []
     feat_pca = ds[feat + '_pca']
+    prog = Progbar(target=len(ds['indices']),
+                   print_summary=True, print_report=True,
+                   name="PCA transform: %s" % feat)
     for f, (start, end) in ds['indices']:
-        X.append(
-            np.mean(
-                feat_pca.transform(ds[feat][start:end]),
-                axis=0, keepdims=True)
-        )
-        y.append(int(f[0]))
-    X = np.concatenate(X, axis=0)
+        if filter_func(f):
+            X.append(
+                np.mean(
+                    feat_pca.transform(ds[feat][start:end]),
+                    axis=0, keepdims=True)
+            )
+            y.append(labels_fn(f))
+        prog.add(1)
+    X_pca = np.concatenate(X, axis=0)
     y = np.asarray(y)
-    X_ = TSNE(n_components=2).fit_transform(X)
-    colors = visual.generate_random_colors(len(set(y)), seed=12082518)
+    X_tsne = TSNE(n_components=2).fit_transform(X_pca)
+    colors = visual.generate_random_colors(len(labels), seed=12082518)
     y = [colors[i] for i in y]
     legend = {c: str(i) for i, c in enumerate(colors)}
-    with visual.figure(ncol=1, nrow=5):
-        visual.plot_scatter(X[:, 0], X[:, 1], color=y, legend=legend)
-    with visual.figure(ncol=1, nrow=5):
-        visual.plot_scatter(X_[:, 0], X_[:, 1], color=y, legend=legend)
-    # ====== save all the figure ====== #
-    visual.plot_save(figpath, tight_plot=True)
-    print("Figure saved to:", figpath)
-    ds.archive()
-    print("Archive at:", ds.archive_path)
+    with visual.figure(ncol=1, nrow=5, title='PCA: %s' % feat):
+        visual.plot_scatter(X_pca[:, 0], X_pca[:, 1], color=y, legend=legend)
+    with visual.figure(ncol=1, nrow=5, title='TSNE: %s' % feat):
+        visual.plot_scatter(X_tsne[:, 0], X_tsne[:, 1], color=y, legend=legend)
+# ====== save all the figure ====== #
+visual.plot_save(os.path.join(figpath, 'pca_tsne.pdf'),
+                 tight_plot=True)
+# ====== print log ====== #
+print('Output path:', ctext(output_path, 'cyan'))
+print('Figure path:', ctext(figpath, 'cyan'))
