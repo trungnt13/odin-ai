@@ -19,7 +19,7 @@ import pickle
 import numpy as np
 
 from odin import visual, nnet as N
-from odin.utils import ctext, unique_labels, Progbar
+from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
 
 # ===========================================================================
@@ -38,7 +38,7 @@ if True:
 else:
     audio = F.DIGITS.get_dataset()
     filter_func = lambda x: True
-    key_func = lambda x:int(x[0])
+    key_func = lambda x: int(x[0])
 print(audio)
 all_files = list(audio['indices'].keys())
 labels_fn, labels = unique_labels(y=[f for f in all_files if filter_func(f)],
@@ -163,7 +163,8 @@ for feat in ('mspec', 'spec', 'mfcc', 'dbf'):
         prog.add(1)
     X_pca = np.concatenate(X, axis=0)
     y = np.asarray(y)
-    X_tsne = TSNE(n_components=2).fit_transform(X_pca)
+    with UnitTimer(name="TSNE: feat='%s' N=%d" % (feat, X_pca.shape[0])):
+        X_tsne = TSNE(n_components=2).fit_transform(X_pca)
     colors = visual.generate_random_colors(len(labels), seed=12082518)
     y = [colors[i] for i in y]
     legend = {c: str(i) for i, c in enumerate(colors)}
