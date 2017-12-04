@@ -11,13 +11,14 @@ from .helper import *
 from .rnn import *
 
 from . import models
+from odin.utils import uuid, bin2folder, folder2bin
 
 
 # ===========================================================================
 # Helper method for serialize NNOp
 # ===========================================================================
-def serialize(nnops, path, save_variables=True, variables=[],
-              override=False):
+def serialize(nnops, path=None, save_variables=True, variables=[],
+              output_mode='folder', override=False):
     """ Serialize NNOp or list of NNOp and all necessary variables
     to a folder.
 
@@ -30,6 +31,12 @@ def serialize(nnops, path, save_variables=True, variables=[],
         if True, save all variables related to all given NNOps
     variables: list of tensorflow Variables
         additional list of variables to be saved with this model
+    output_mode: {'file', 'folder', 'bin'}
+        if 'folder' (by default), original way tensorflow serialize
+        all variables.
+        if 'bin' (or 'binary'), conver all files in the folder to binary
+        and save to a dictionary with its relative path.
+        if 'file', use pickle to save all binary data to a file
     override: bool
         if True, remove existed folder to override everythin.
 
@@ -38,17 +45,26 @@ def serialize(nnops, path, save_variables=True, variables=[],
     path: str
         path to the folder that store NNOps and variables
     """
+    # ====== check output_mode ====== #
+    output_mode = str(output_mode).lower()
+    if output_mode not in ('folder', 'file', 'bin'):
+        raise ValueError('`output_mode` can be: folder, file, or bin.')
+    if output_mode in ('folder', 'file') and path is None:
+        raise ValueError('`path` cannot be None in "folder" or "file" '
+                         'output mode.')
+    path_folder = '/tmp/tmp_%s' % uuid(length=12) \
+        if path is None or output_mode == 'file' else path
     # ====== checking path ====== #
-    if os.path.exists(path):
-        if os.path.isfile(path):
-            raise ValueError("path: '%s' is NOT a folder." % path)
+    if os.path.exists(path_folder):
+        if os.path.isfile(path_folder):
+            raise ValueError("path: '%s' is NOT a folder." % path_folder)
         elif override:
-            shutil.rmtree(path)
-            os.mkdir(path)
+            shutil.rmtree(path_folder)
+            os.mkdir(path_folder)
     else:
-        os.mkdir(path)
-    nnops_path = os.path.join(path, 'nnops.ai')
-    vars_path = os.path.join(path, 'variables')
+        os.mkdir(path_folder)
+    nnops_path = os.path.join(path_folder, 'nnops.ai')
+    vars_path = os.path.join(path_folder, 'variables')
     # ====== getting save data ====== #
     vars = []
     if save_variables:
@@ -64,12 +80,52 @@ def serialize(nnops, path, save_variables=True, variables=[],
     # save Variables
     if len(vars) > 0:
         K.save_variables(vars, vars_path)
+    # ====== convert folder to file or binary ====== #
+    if output_mode != 'folder':
+        data = folder2bin(path_folder)
+        if output_mode == 'bin':
+            return data
+        # check if override
+        if os.path.exists(path):
+            if override:
+                if os.path.isfile(path):
+                    os.remove(path)
+                else:
+                    shutil.rmtree(path)
+            else:
+                raise RuntimeError("File at path: %s exists, cannot override."
+                                   % path)
+        # write file
+        with open(path, 'wb') as f:
+            cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
+        shutil.rmtree(path_folder)
     return path
 
 
 def deserialize(path):
-    if not (os.path.exists(path) and os.path.isdir(path)):
-        raise ValueError("path must be path to a folder, but given: %s." % path)
+    data = None
+    path_folder = '/tmp/tmp_%s' % uuid(12)
+    delete_folder = True
+    # ====== check path ====== #
+    if is_string(path):
+        # path to a file
+        if os.path.isfile(path):
+            with open(path, 'rb') as f:
+                data = cPickle.load(f)
+        # path to a folder
+        elif os.path.isdir(path):
+            path_folder = path
+            delete_folder = False
+        else: # pickle string
+            data = cPickle.loads(path)
+    # given data
+    elif isinstance(path, dict):
+        data = path
+    # ====== check data ====== #
+    if data is not None:
+        bin2folder(data, path=path_folder)
+    path = path_folder
+    # ====== read normally from folder ====== #
     nnops_path = os.path.join(path, 'nnops.ai')
     vars_path = os.path.join(path, 'variables')
     # ====== load the NNOps ====== #
@@ -80,4 +136,7 @@ def deserialize(path):
     # ====== load the Variables ====== #
     if os.path.exists(vars_path + '.index'):
         K.restore_variables(vars_path)
+    # delete cached folder
+    if delete_folder:
+        shutil.rmtree(path)
     return nnops

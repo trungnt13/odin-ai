@@ -983,6 +983,68 @@ def get_all_ext(path):
     return list(set(file_list))
 
 
+def folder2bin(path):
+    """ This function read all files within a Folder
+    in binary mode,
+    then, store all the data in a dictionary mapping:
+    `relative_path -> binary_data`
+    """
+    if not os.path.isdir(path):
+        raise ValueError('`path`=%s must be a directory.' % path)
+    path = os.path.abspath(path)
+    files = get_all_files(path)
+    data = {}
+    for f in files:
+        name = f.replace(path + '/', '')
+        with open(f, 'rb') as f:
+            data[name] = f.read()
+    return data
+
+
+def bin2folder(data, path, override=False):
+    """ Convert serialized data from `folder2bin` back
+    to a folder at `path`
+
+    Parameters
+    ----------
+    data: {string, dict}
+        if string, `data` can be pickled string, or path to a file.
+        if dict, `data` is the output from `folder2bin`
+    path: string
+        path to a folder
+    override: bool
+        if True, override exist folder at `path`
+    """
+    # ====== check input ====== #
+    if is_string(data):
+        if os.path.isfile(data):
+            with open(data, 'rb') as f:
+                data = pickle.load(f)
+        else:
+            data = pickle.loads(data)
+    if not isinstance(data, dict):
+        raise ValueError("`data` must be dictionary type, or string, or path to file.")
+    # ====== check outpath ====== #
+    path = os.path.abspath(str(path))
+    if not os.path.exists(path):
+        os.mkdir(path)
+    elif os.path.isfile(path):
+        raise ValueError("`path` must be path to a directory.")
+    elif os.path.isdir(path):
+        if not override:
+            raise RuntimeError("Folder at path:%s exist, cannot override." % path)
+        shutil.rmtree(path)
+        os.mkdir(path)
+    # ====== deserialize ====== #
+    for name, dat in data.items():
+        with open(os.path.join(path, name), 'wb') as f:
+            f.write(dat)
+    return path
+
+
+# ===========================================================================
+# Package utils
+# ===========================================================================
 def package_installed(name, version=None):
     import pip
     for i in pip.get_installed_distributions():

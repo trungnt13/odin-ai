@@ -520,7 +520,6 @@ class NNOp(object):
         self._current_kwargs = {}
         self._device = None
         self._cache_outputs = {}
-        self._new_args_called = False
         # ====== save states ====== #
         self._save_states, nnops = states
         for key, val in self._save_states.items():

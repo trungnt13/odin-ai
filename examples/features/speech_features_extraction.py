@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = 'float32,cpu=1,thread=2,gpu=1,log'
+os.environ['ODIN'] = 'float32,cpu=1,thread=1,gpu=1'
 import sys
 import shutil
 
@@ -33,7 +33,7 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 PCA = True
 center = True
-if False:
+if True:
     audio = F.WDIGITS.get_dataset()
     filter_func = lambda x: len(x.split('_')[-1]) == 1
     key_func = lambda x: x.split('_')[-1]
