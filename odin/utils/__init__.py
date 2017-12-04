@@ -34,7 +34,6 @@ import numpy
 
 from .progbar import Progbar, add_notification
 from .mpi import segment_list, SharedCounter, async, MPI
-from .profile import *
 from .path_utils import *
 from .cache_utils import *
 from .python_utils import *
@@ -114,7 +113,7 @@ def dummy_formatter(x):
     return str(x)
 
 
-@contextmanager
+@contextlib.contextmanager
 def UnitTimer(factor=1, name=None):
     start = timeit.default_timer()
     yield None

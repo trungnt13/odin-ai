@@ -430,6 +430,21 @@ class AsType(Extractor):
         return X
 
 
+class DuplicateFeatures(Extractor):
+
+    def __init__(self, name, new_name):
+        super(DuplicateFeatures, self).__init__()
+        self.name = str(name)
+        self.new_name = str(new_name)
+
+    def _transform(self, X):
+        if self.name not in X:
+            raise RuntimeError("Cannot find feature with name: '%s' in processed "
+                               "features list." % self.name)
+        X[self.new_name] = X[self.name]
+        return X
+
+
 class RemoveFeatures(Extractor):
     """ Remove features by name from extracted features dictionary """
 

@@ -794,23 +794,29 @@ class RASTAfilter(Extractor):
 
     """
 
-    def __init__(self, rasta=True, sdc=1):
+    def __init__(self, rasta=True, sdc=1, feat_name='mfcc'):
         super(RASTAfilter, self).__init__()
         self.rasta = bool(rasta)
         self.sdc = int(sdc)
+        self.feat_name = str(feat_name)
 
     def _transform(self, feat):
-        if 'mfcc' in feat:
-            mfcc = feat['mfcc']
-            if self.rasta:
-                mfcc = rastafilt(mfcc)
-            if self.sdc >= 1:
-                mfcc = np.hstack([
-                    mfcc,
-                    shifted_deltas(mfcc, N=mfcc.shape[-1], d=self.sdc,
-                                   P=3, k=7)
-                ])
-            feat['mfcc'] = mfcc.astype("float32")
+        if self.feat_name not in feat:
+            raise RuntimeError("Cannot find feature with name: '%s' in "
+                               "processed feature list." % self.feat_name)
+        mfcc = feat[self.feat_name]
+        # apply RASTA
+        if self.rasta:
+            mfcc = rastafilt(mfcc)
+        # apply SDC if required
+        if self.sdc >= 1:
+            mfcc = np.hstack([
+                mfcc,
+                shifted_deltas(mfcc, N=mfcc.shape[-1], d=self.sdc,
+                               P=3, k=7)
+            ])
+        # store new feature
+        feat[self.feat_name] = mfcc.astype("float32")
         return feat
 
 
@@ -847,7 +853,7 @@ class AcousticNorm(Extractor):
 
     def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
                  win_length=301, var_norm=True,
-                 feat_type=('mspec', 'spec', 'mfcc',
+                 feat_type=('mspec', 'spec', 'mfcc', 'dbf',
                             'qspec', 'qmfcc', 'qmspec')):
         super(AcousticNorm, self).__init__()
         self.mean_var_norm = bool(mean_var_norm)
