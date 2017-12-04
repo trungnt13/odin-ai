@@ -14,13 +14,13 @@ import os
 os.environ['ODIN'] = 'float32,cpu=1,thread=1,gpu=1'
 import sys
 import shutil
+import pickle
 
 import numpy as np
+
 from odin import visual, nnet as N
 from odin.utils import ctext, unique_labels, Progbar
 from odin import fuel as F, utils, preprocessing as pp
-from collections import defaultdict
-from odin.ml import MiniBatchPCA
 
 # ===========================================================================
 # set LOG path
@@ -31,9 +31,7 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
-PCA = True
-center = True
-if True:
+if False:
     audio = F.WDIGITS.get_dataset()
     filter_func = lambda x: len(x.split('_')[-1]) == 1
     key_func = lambda x: x.split('_')[-1]
@@ -117,10 +115,10 @@ pp.validate_features(ds, path=figpath, nb_samples=8, override=True)
 print(ds)
 # ====== print pipeline ====== #
 padding = '  '
-# print(ctext("* Pipeline:", 'red'))
-# for _, extractor in ds['pipeline'].steps:
-#     for line in str(extractor).split('\n'):
-#         print(padding, line)
+print(ctext("* Pipeline:", 'red'))
+for _, extractor in ds['pipeline'].steps:
+    for line in str(extractor).split('\n'):
+        print(padding, line)
 # ====== print config ====== #
 print(ctext("* Configurations:", 'red'))
 for i, j in ds['config'].items():

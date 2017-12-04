@@ -137,6 +137,9 @@ class Extractor(BaseEstimator, TransformerMixin):
                                            "upper case.")
                     if name not in y:
                         y[name] = feat
+        # maybe someone implement __getstate__ and forget _debug
+        if not hasattr(self, '_debug'):
+            self._debug = False
         # ====== print debug text ====== #
         if self._debug:
             print(ctext("[Extractor]", 'cyan'),

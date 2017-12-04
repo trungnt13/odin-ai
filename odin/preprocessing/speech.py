@@ -610,6 +610,19 @@ class DBFExtractor(Extractor):
         self.context = int(context)
         self.mvn = bool(mvn)
 
+    def __getstate__(self):
+        from odin.nnet import serialize
+        if not self.network.is_initialized:
+            self.network()
+        return (self.input_feat, self.context, self.mvn,
+                serialize(self.network, output_mode='bin'))
+
+    def __setstate__(self, states):
+        from odin.nnet import deserialize
+        (self.input_feat, self.context, self.mvn,
+            self.network) = states
+        self.network = deserialize(self.network)
+
     def _transform(self, feat):
         if self.input_feat not in feat:
             raise RuntimeError("DBFExtractor require input feature with name: %s"
