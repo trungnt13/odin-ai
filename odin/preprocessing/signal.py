@@ -911,11 +911,23 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
     return X
 
 
-def stack_frames(X, frame_length, step_length=None, make_contigous=False):
+def stack_frames(X, frame_length, step_length=None,
+                 keepdims=False, make_contigous=False):
     """
 
     Parameters
     ----------
+    X: numpy.ndarray
+        2D arrray
+    frame_length: int
+        number of frames will be stacked into 1 sample.
+    step_length: {int, None}
+        number of shift frame, if None, its value equal to
+        `frame_length // 2`
+    keepdims: bool
+        if True, padding zeros to begin and end of `X` to
+        make the output array has the same length as original
+        array.
     make_contigous: bool
         if True, use `numpy.ascontiguousarray` to ensure input `X`
         is contiguous.
@@ -939,6 +951,16 @@ def stack_frames(X, frame_length, step_length=None, make_contigous=False):
     ...  [ 4  5  6  7  8  9 10 11 12 13]
     ...  [ 8  9 10 11 12 13 14 15 16 17]]
     """
+    if keepdims:
+        if step_length != 1:
+            raise ValueError("`keepdims` is only supported when `step_length` = 1.")
+        add_frames = (int(np.ceil(frame_length / 2)) - 1) * 2 + \
+            (1 if frame_length % 2 == 0 else 0)
+        right = add_frames // 2
+        left = add_frames - right
+        X = np.pad(X,
+                   pad_width=((left, right),) + ((0, 0),) * (X.ndim - 1),
+                   mode='constant')
     # ====== check input ====== #
     assert X.ndim == 2, "Only support 2D matrix for stacking frames."
     if not X.flags['C_CONTIGUOUS']:

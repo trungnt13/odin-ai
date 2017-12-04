@@ -18,6 +18,7 @@ import warnings
 from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
+import tensorflow as tf
 from scipy.signal import lfilter
 
 from odin.fuel import Dataset, MmapData, MmapDict
@@ -28,7 +29,7 @@ from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
-                     shifted_deltas)
+                     shifted_deltas, stack_frames)
 # import all OpenSMILE extractor
 from ._opensmile import *
 
@@ -516,7 +517,9 @@ class SpectraExtractor(Extractor):
 
 
 class CQTExtractor(Extractor):
-    """ CQTExtractor
+    """ Constant-Q transform
+    Using log-scale instead of linear-scale frequencies for
+    signal analysis
 
     Note
     ----
@@ -580,6 +583,48 @@ class CQTExtractor(Extractor):
                        padding=self.padding)
         # ====== add 'q' prefix for CQT features ====== #
         feat = {'q' + name: X for name, X in feat.items()}
+        return feat
+
+
+class DBFExtractor(Extractor):
+    """ Deep bottleneck feature extractor
+
+    Parameters
+    ----------
+    context: int
+        number of context frame on the left and right, the final
+        number of stacked frame is `context * 2 + 1`
+        NOTE: the stacking process, ignore `context` frames at the
+        beginning on the left, and at the end on the right.
+    mvn: bool
+        if True, preform mean-variance normalization on input features.
+    """
+
+    def __init__(self, input_feat, network, context=0, mvn=True):
+        super(DBFExtractor, self).__init__()
+        from odin.nnet import NNOp
+        self.input_feat = str(input_feat)
+        if not isinstance(network, NNOp):
+            raise ValueError("`network` must be instance of odin.nnet.NNOp")
+        self.network = network
+        self.context = int(context)
+        self.mvn = bool(mvn)
+
+    def _transform(self, feat):
+        if self.input_feat not in feat:
+            raise RuntimeError("DBFExtractor require input feature with name: %s"
+                               ", which is not found." % self.input_feat)
+        X = feat[self.input_feat]
+        # normalize
+        if self.mvn:
+            X = mvn(X, varnorm=True)
+        # stacking the context frames
+        if self.context > 0:
+            X = stack_frames(X, frame_length=self.context * 2 + 1,
+                             step_length=1, keepdims=True,
+                             make_contigous=True)
+        # make prediciton
+        feat['dbf'] = self.network(X)
         return feat
 
 

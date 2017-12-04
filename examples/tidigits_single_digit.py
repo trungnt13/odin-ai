@@ -40,7 +40,6 @@ FEAT = ['mspec', 'sad']
 ds = F.Dataset(get_datasetpath('digit'), read_only=True)
 print(ds)
 BATCH_SIZE = int(args.bs)
-
 MODEL_PATH = get_modelpath('tidigit', override=True)
 LOG_PATH = get_logpath('tidigit.log', override=True)
 stdio(LOG_PATH)

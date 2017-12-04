@@ -103,11 +103,29 @@ def dummy_formatter(x):
     if isinstance(x, Mapping):
         return "(map)length=%d;dtype=%s" % (len(x),
             ';'.join([_type_name(i) for i in next(iter(x.items()))]))
+    # dataset type
     if 'odin.fuel.dataset.Dataset' in str(type(x)):
         return ("(ds)path:%s" % x.path)
+    # NNOp types
+    if any('odin.nnet.base.NNOp' in str(i) for i in type.mro(type(x))):
+        return "\n" + '\n'.join(['\t' + line for line in str(x).split('\n')])
     if is_string(x):
         return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
     return str(x)
+
+
+@contextmanager
+def UnitTimer(factor=1, name=None):
+    start = timeit.default_timer()
+    yield None
+    end = timeit.default_timer()
+    # set name for timing task
+    if name is None:
+        name = 'Task'
+    print('["%s"]' % ctext(name, 'yellow'),
+        "Time:",
+        ctext((end - start) / factor, 'cyan'),
+        '(sec)')
 
 
 # ===========================================================================

@@ -12,7 +12,7 @@ import numpy as np
 
 from odin import backend as K
 from odin import nnet as N
-from odin.config import get_device, get_floatX, get_backend
+from odin.config import get_ngpu, get_floatX, get_backend
 
 import lasagne
 
@@ -196,7 +196,7 @@ class RNNTest(unittest.TestCase):
         self.assertAlmostEqual(np.sum(np.abs(out1 - out2)), 0.)
 
     def test_cudnn_rnn_backend(self):
-        if get_device() == 'cpu':
+        if get_ngpu() == 0:
             return
         print()
         np.random.seed(1208)
@@ -233,7 +233,7 @@ class RNNTest(unittest.TestCase):
                         # [np.array(i).sum() for i in output]
 
     def test_cudnn_rnn_nnet(self):
-        if get_device() == 'cpu':
+        if get_ngpu() == 0:
             return
         print()
         np.random.seed(1208)

@@ -46,7 +46,7 @@ def _query_gpu_info():
     this function use deviceQuery command, so you better have it
     in your path
     """
-    dev = {'n': 1,
+    dev = {'ngpu': 1,
            # deviceName: [cardName, computeCapability, mem(MB)]
            'dev0': ['Unknown', 3.0, 1024]}
     temp_dir = tempfile.mkdtemp()
@@ -67,7 +67,7 @@ def _query_gpu_info():
             r'Total amount of global memory:\s*\d*').findall(info)
         totalMems = [int(i.strip().split(':')[-1]) for i in totalMems]
         # ====== create dev ====== #
-        dev = {'n': ngpu}
+        dev = {'ngpu': ngpu}
         for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
             dev['dev%d' % i] = [name, com, mem]
     else:
@@ -102,6 +102,25 @@ def set_session(session):
 
 
 def get_session():
+    global _SESSION
+    if _SESSION is None:
+        # ====== initialize tensorflow session ====== #
+        import tensorflow as tf
+        session_args = {
+            'intra_op_parallelism_threads': CONFIG['nthread'],
+            'inter_op_parallelism_threads': CONFIG['ncpu'],
+            'allow_soft_placement': True,
+            'log_device_placement': CONFIG['debug'],
+        }
+        if CONFIG['ngpu'] > 0:
+            if CONFIG['cnmem'] > 0:
+                session_args['gpu_options'] = tf.GPUOptions(
+                    per_process_gpu_memory_fraction=CONFIG['cnmem'],
+                    allow_growth=False)
+            else:
+                session_args['gpu_options'] = tf.GPUOptions(
+                    allow_growth=True)
+        _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**session_args))
     return _SESSION
 
 
@@ -121,6 +140,8 @@ def auto_config(config=None):
         simple object (kind of dictionary) contain all configuraitons
 
     '''
+    global CONFIG
+    global _RNG_GENERATOR
     if CONFIG is not None:
         warnings.warn('You should not auto_config twice, old configuration already '
                       'existed, and cannot be re-configured.')
@@ -131,13 +152,20 @@ def auto_config(config=None):
 
     floatX = 'float32'
     epsilon = 1e-8
-    device = 'cpu'
     cnmem = 0.
     seed = 1208251813
     debug = False
+    # number of devices
+    ncpu = cpu_count()
+    ngpu = 0
+    nthread = 0
+    log_level = '3'
+    # ====== parsing the config ====== #
     if config is None: # load config from flags
-        ODIN_FLAGS = os.getenv("ODIN", "")
-        s = ODIN_FLAGS.split(',')
+        odin_flags = os.getenv("ODIN", "")
+        for c in (';', ':', '.', '*'):
+            odin_flags.replace(c, ',')
+        s = odin_flags.split(',')
         # ====== processing each tag ====== #
         for i in s:
             i = i.lower().strip()
@@ -146,9 +174,26 @@ def auto_config(config=None):
                 floatX = i
             # ====== Devices ====== #
             elif 'cpu' in i:
-                device = 'cpu'
+                if '=' not in i:
+                    print("[WARNING] Found `cpu` tag, but number of CPU is not "
+                          "specified, auto select all %d CPU-cores " % cpu_count())
+                else:
+                    ncpu = min(int(i.split('=')[-1]), ncpu)
             elif 'gpu' in i:
-                device = 'gpu'
+                if '=' not in i:
+                    print("[WARNING] Found `gpu` tag, but number of GPU is not "
+                          "specified, by default, use only 1 GPU.")
+                    ngpu = 1
+                else:
+                    ngpu = int(i.split('=')[-1])
+            # ====== number thread ====== #
+            elif 'thread' in i:
+                if '=' not in i:
+                    print("[WARNING] Found `thread` tag, but number of thread is "
+                        "not specified, only 1 thread per process (CPU-core) is "
+                        "used by default.")
+                else:
+                    nthread = int(i.split('=')[-1])
             # ====== cnmem ====== #
             elif 'cnmem' in i:
                 match = valid_cnmem_name.match(i)
@@ -168,60 +213,60 @@ def auto_config(config=None):
             # ====== debug ====== #
             elif 'debug' in i:
                 debug = True
+            # ====== log-leve ====== #
+            elif 'log' in i:
+                if '=' in i:
+                    log_level = i.split('=')[-1]
+                else:
+                    log_level = '0'
     else: # load config from object
         floatX = config['floatX']
-        device = config['device']
+        ncpu = config['ncpu']
+        ngpu = config['ngpu']
+        nthread = config['nthread']
         cnmem = config['cnmem']
         seed = config['seed']
         debug = config['debug']
-    # adject epsilon
-    if floatX == 'float16':
-        epsilon = 10e-5
-    elif floatX == 'float32':
-        epsilon = 10e-8
-    elif floatX == 'float64':
-        epsilon = 10e-12
+    # epsilon
+    epsilon = np.finfo(np.dtype(floatX)).eps
+    # devices
+    dev = {}
+    if ngpu > 0:
+        dev.update(_query_gpu_info())
+    else:
+        dev['ngpu'] = 0
+    dev['ncpu'] = ncpu
+    dev['nthread'] = nthread
     # ====== Log the configuration ====== #
-    sys.stderr.write('[Auto-Config] Device : %s\n' % device)
+    sys.stderr.write('[Auto-Config] #CPU : %d\n' % dev['ncpu'])
+    sys.stderr.write(' * #Thread/core : %d\n' % dev['nthread'])
+    sys.stderr.write('[Auto-Config] #GPU : %d\n' % dev['ngpu'])
+    if dev['ngpu'] > 0:
+        for i in range(dev['ngpu']):
+            sys.stderr.write(' * GPU-dev%d : %s\n' %
+                            (i, dev['dev%d' % i]))
     sys.stderr.write('[Auto-Config] FloatX : %s\n' % floatX)
     sys.stderr.write('[Auto-Config] Epsilon: %s\n' % epsilon)
     sys.stderr.write('[Auto-Config] CNMEM  : %s\n' % cnmem)
     sys.stderr.write('[Auto-Config] SEED  : %s\n' % seed)
     sys.stderr.write('[Auto-Config] Debug  : %s\n' % debug)
-    if device == 'gpu':
-        dev = _query_gpu_info()
-    else:
-        dev = {'n': cpu_count()}
     # ==================== create theano flags ==================== #
-    if device == 'cpu':
+    if dev['ngpu'] == 0:
         os.environ['CUDA_VISIBLE_DEVICES'] = ""
     # ====== Return global objects ====== #
-    global CONFIG
     CONFIG = AttributeDict()
-    CONFIG.update({'device': device,
+    CONFIG.update({'ncpu': dev['ncpu'],
+                   'ngpu': dev['ngpu'],
+                   'nthread': dev['nthread'],
                    'device_info': dev,
-                   'floatX': floatX, 'epsilon': epsilon,
-                   'cnmem': cnmem, 'seed': seed,
+                   'floatX': floatX,
+                   'epsilon': epsilon,
+                   'cnmem': cnmem,
+                   'seed': seed,
                    'debug': debug})
-    global _RNG_GENERATOR
     _RNG_GENERATOR = np.random.RandomState(seed=seed)
-    # ====== initialize tensorflow session ====== #
-    import tensorflow as tf
-    global _SESSION
-    __session_args = {
-        'intra_op_parallelism_threads': CONFIG['device_info']['n'],
-        'allow_soft_placement': True,
-        'log_device_placement': debug,
-    }
-    if CONFIG['device'] == 'gpu':
-        if CONFIG['cnmem'] > 0:
-            __session_args['gpu_options'] = tf.GPUOptions(
-                per_process_gpu_memory_fraction=CONFIG['cnmem'],
-                allow_growth=False)
-        else:
-            __session_args['gpu_options'] = tf.GPUOptions(
-                allow_growth=True)
-    _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**__session_args))
+    # tensorflow log level
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
     return CONFIG
 
 
@@ -235,8 +280,8 @@ def __validate_config():
 
 def get_rng():
     """return the numpy random state as a Randomness Generator"""
+    global _RNG_GENERATOR
     if _RNG_GENERATOR is None:
-        global _RNG_GENERATOR
         _RNG_GENERATOR = np.random.RandomState(seed=120825)
     return _RNG_GENERATOR
 
@@ -247,10 +292,22 @@ def randint(low=0, high=10e8, size=None, dtype='int32'):
         dtype=dtype)
 
 
-def get_device():
-    """ Return type of device: cpu or gpu """
+def get_ncpu():
+    """ Return number of inter_op_parallelism_threads """
     __validate_config()
-    return CONFIG['device']
+    return CONFIG['ncpu']
+
+
+def get_ngpu():
+    """ Return number of GPU """
+    __validate_config()
+    return CONFIG['ngpu']
+
+
+def get_nthread():
+    """ Return number of intra_op_parallelism_threads """
+    __validate_config()
+    return CONFIG['nthread']
 
 
 def get_nb_processors():
@@ -281,11 +338,6 @@ def get_floatX():
 def get_epsilon():
     __validate_config()
     return CONFIG['epsilon']
-
-
-def get_multigpu():
-    __validate_config()
-    return CONFIG['multigpu']
 
 
 def get_optimizer():

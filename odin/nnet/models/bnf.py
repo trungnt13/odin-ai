@@ -23,6 +23,8 @@ class BNF_1024_MFCC39(Model):
        - window_type = hamm
        - spectrum_type = mag
        - compression_type = log
+       - NO RASTA filter applied on MFCC
+    + Input features must be normalized: (x - mean) / std
     + Context size: 21
     + Nonlinearity: Relu
     + Renorm: True (scales the data such that RMS is 1.0,
@@ -80,6 +82,8 @@ class BNF_2048_MFCC39(BNF_1024_MFCC39):
        - window_type = hamm
        - spectrum_type = mag
        - compression_type = log
+       - NO RASTA filter applied on MFCC
+    + Input features must be normalized: (x - mean) / std
     + Context size: 21
     + Nonlinearity: Relu
     + Renorm: True (scales the data such that RMS is 1.0,
@@ -106,6 +110,8 @@ class BNF_2048_MFCC40(BNF_1024_MFCC39):
          - window_type = hamm
          - spectrum_type = mag
          - compression_type = log
+         - NO RASTA filter applied on MFCC
+      + Input features must be normalized: (x - mean) / std
       + Context size: 21
       + Nonlinearity: Relu
       + Renorm: True (scales the data such that RMS is 1.0,

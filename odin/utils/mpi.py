@@ -257,7 +257,10 @@ class MPI(object):
         # never use all available CPU
         if ncpu is None:
             ncpu = cpu_count() - 1
-        self._ncpu = np.clip(int(ncpu), 1, cpu_count() - 1)
+        self._ncpu = min(
+            np.clip(int(ncpu), 1, cpu_count() - 1),
+            len(jobs)
+        )
         self._batch = max(1, int(batch))
         self._hwm = max(0, int(hwm))
         # ====== internal states ====== #

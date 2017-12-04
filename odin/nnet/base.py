@@ -881,7 +881,7 @@ class NNOp(object):
                         shape=x.shape, dtype=x.dtype, name=name)
                 desc = self._kwargs_desc[name]
             # validating
-            if desc.shape != x.shape or \
+            if desc.shape[1:] != x.shape[1:] or \
             np.dtype(desc.dtype) != np.dtype(x.dtype):
                 raise ValueError("NNOp has input description: '%s', given "
                                  "ndarray: shape=%s dtype=%s" %

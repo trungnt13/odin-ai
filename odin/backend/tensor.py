@@ -10,7 +10,7 @@ from collections import defaultdict
 import numpy as np
 
 import tensorflow as tf
-from odin.config import get_session, get_device, get_floatX
+from odin.config import get_session, get_ngpu, get_floatX
 from odin.utils import as_tuple, uuid, is_number
 from .helpers import set_shape, is_tensor, is_training
 
@@ -686,7 +686,7 @@ def rnn_dnn(X, hidden_size, rnn_mode,
     dropout is turn off if K.set_training(False) or K.is_training() == False
 
     """
-    if get_device() == 'cpu':
+    if get_ngpu() == 0:
         raise Exception('This opt is not supported with CPU.')
     if name is None: name = uuid()
     # ====== Check arguments ====== #

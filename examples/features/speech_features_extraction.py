@@ -10,11 +10,13 @@ from __future__ import print_function, division, absolute_import
 import matplotlib
 matplotlib.use('Agg')
 
-import numpy as np
-import shutil
 import os
+os.environ['ODIN'] = 'float32,cpu=1,thread=2,gpu=1,log'
 import sys
-from odin import visual
+import shutil
+
+import numpy as np
+from odin import visual, nnet as N
 from odin.utils import ctext, unique_labels, Progbar
 from odin import fuel as F, utils, preprocessing as pp
 from collections import defaultdict
@@ -54,14 +56,15 @@ padding = False
 frame_length = 0.025
 step_length = 0.005
 dtype = 'float32'
+dbf_network = N.models.BNF_1024_MFCC39()
 extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True, preemphasis=0.97,
                           dataset=audio),
     pp.speech.SpectraExtractor(frame_length=frame_length,
                                step_length=step_length,
-                               nfft=512, nmels=40, nceps=20,
-                               fmin=64, fmax=4000, padding=padding),
+                               nfft=512, nmels=40, nceps=13,
+                               fmin=100, fmax=4000, padding=padding),
     # pp.speech.CQTExtractor(frame_length=frame_length,
     #                        step_length=step_length,
     #                        nbins=96, nmels=40, nceps=20,
@@ -73,14 +76,16 @@ extractors = pp.make_pipeline(steps=[
     #                          voiceProb=True, loudness=True),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_type='energy'),
-    pp.speech.RASTAfilter(rasta=True, sdc=0),
     pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
                            feat_type=('mspec', 'qmspec', 'mfcc', 'qmfcc',
                                       'energy', 'pitch')),
+    pp.speech.DBFExtractor(input_feat='mfcc', network=dbf_network,
+                           context=10, mvn=True),
+    # pp.speech.RASTAfilter(rasta=True, sdc=0),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
-                           feat_type=('mspec', 'mfcc',
+                           feat_type=('mspec', 'mfcc', 'dbf',
                                       'qspec', 'qmfcc', 'qmspec')),
-    pp.base.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc',
+    pp.base.EqualizeShape0(feat_type=('spec', 'mspec', 'mfcc', 'dbf',
                                       'qspec', 'qmspec', 'qmfcc',
                                       'pitch', 'f0', 'sad', 'energy',
                                       'sap', 'loudness')),
@@ -90,7 +95,7 @@ extractors = pp.make_pipeline(steps=[
                     'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
                     'pitch': dtype, 'f0': dtype, 'sap': dtype,
                     'sad': dtype, 'energy': dtype, 'loudness': dtype,
-                    'raw': dtype}),
+                    'raw': dtype, 'dbf': dtype}),
 ], debug=False)
 # extractors.transform(all_files[0])
 # exit()
@@ -112,10 +117,10 @@ pp.validate_features(ds, path=figpath, nb_samples=8, override=True)
 print(ds)
 # ====== print pipeline ====== #
 padding = '  '
-print(ctext("* Pipeline:", 'red'))
-for _, extractor in ds['pipeline'].steps:
-    for line in str(extractor).split('\n'):
-        print(padding, line)
+# print(ctext("* Pipeline:", 'red'))
+# for _, extractor in ds['pipeline'].steps:
+#     for line in str(extractor).split('\n'):
+#         print(padding, line)
 # ====== print config ====== #
 print(ctext("* Configurations:", 'red'))
 for i, j in ds['config'].items():
@@ -142,7 +147,7 @@ if 'pitch' in ds:
         if not np.any(pitch):
             print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
-for feat in ('mspec', 'spec', 'mfcc'):
+for feat in ('mspec', 'spec', 'mfcc', 'dbf'):
     from sklearn.manifold import TSNE
     X = []; y = []
     feat_pca = ds[feat + '_pca']
