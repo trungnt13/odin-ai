@@ -29,6 +29,23 @@ import numpy as np
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _ctext(s, color='red'):
+    # just a copy of ctext implementation to make
+    # the config log look better.
+    try:
+        from colorama import Fore
+        color = color.upper()
+        color = getattr(Fore, color, '')
+        return color + str(s) + Fore.RESET
+    except ImportError:
+        pass
+    return s
+
+
+def _warning(text):
+    print(_ctext('[WARNING]', 'red'), text)
+
+
 def _check_package_available(name):
     for i in pip.get_installed_distributions():
         if name.lower() == i.key.lower():
@@ -71,7 +88,7 @@ def _query_gpu_info():
         for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
             dev['dev%d' % i] = [name, com, mem]
     else:
-        print('[WARNING] Cannot use "deviceQuery" to get GPU information for configuration.')
+        _warning('Cannot use "deviceQuery" to get GPU information for configuration.')
     # remove temp-dir
     shutil.rmtree(temp_dir)
     return dev
@@ -156,7 +173,7 @@ def auto_config(config=None):
     seed = 1208251813
     debug = False
     # number of devices
-    ncpu = cpu_count()
+    ncpu = 0
     ngpu = 0
     nthread = 0
     log_level = '3'
@@ -175,23 +192,24 @@ def auto_config(config=None):
             # ====== Devices ====== #
             elif 'cpu' in i:
                 if '=' not in i:
-                    print("[WARNING] Found `cpu` tag, but number of CPU is not "
-                          "specified, auto select all %d CPU-cores " % cpu_count())
+                    _warning("Found `cpu` tag, but number of CPU is not "
+                             "specified, auto select all %d CPU-cores " %
+                             cpu_count())
                 else:
                     ncpu = min(int(i.split('=')[-1]), ncpu)
             elif 'gpu' in i:
                 if '=' not in i:
-                    print("[WARNING] Found `gpu` tag, but number of GPU is not "
-                          "specified, by default, use only 1 GPU.")
+                    _warning("Found `gpu` tag, but number of GPU is not "
+                             "specified, by default, use only 1 GPU.")
                     ngpu = 1
                 else:
                     ngpu = int(i.split('=')[-1])
             # ====== number thread ====== #
             elif 'thread' in i:
                 if '=' not in i:
-                    print("[WARNING] Found `thread` tag, but number of thread is "
-                        "not specified, only 1 thread per process (CPU-core) is "
-                        "used by default.")
+                    _warning("Found `thread` tag, but number of thread is "
+                             "not specified, only 1 thread per process (CPU-core) is "
+                             "used by default.")
                 else:
                     nthread = int(i.split('=')[-1])
             # ====== cnmem ====== #
@@ -237,19 +255,30 @@ def auto_config(config=None):
         dev['ngpu'] = 0
     dev['ncpu'] = ncpu
     dev['nthread'] = nthread
+
     # ====== Log the configuration ====== #
-    sys.stderr.write('[Auto-Config] #CPU : %d\n' % dev['ncpu'])
-    sys.stderr.write(' * #Thread/core : %d\n' % dev['nthread'])
-    sys.stderr.write('[Auto-Config] #GPU : %d\n' % dev['ngpu'])
+    def print_log(tag, value, nested=False):
+        if nested:
+            s = _ctext('  * ', 'MAGENTA')
+        else:
+            s = '[Auto-Config] '
+        s += _ctext(tag, 'yellow') + ' : '
+        s += _ctext(value, 'cyan') + '\n'
+        sys.stderr.write(s)
+    print_log('#CPU', 'auto' if dev['ncpu'] == 0 else dev['ncpu'])
+    print_log('#Thread/core',
+              'auto' if dev['nthread'] == 0 else dev['nthread'],
+              nested=True)
+    print_log('#GPU', dev['ngpu'])
     if dev['ngpu'] > 0:
         for i in range(dev['ngpu']):
-            sys.stderr.write(' * GPU-dev%d : %s\n' %
-                            (i, dev['dev%d' % i]))
-    sys.stderr.write('[Auto-Config] FloatX : %s\n' % floatX)
-    sys.stderr.write('[Auto-Config] Epsilon: %s\n' % epsilon)
-    sys.stderr.write('[Auto-Config] CNMEM  : %s\n' % cnmem)
-    sys.stderr.write('[Auto-Config] SEED  : %s\n' % seed)
-    sys.stderr.write('[Auto-Config] Debug  : %s\n' % debug)
+            print_log('GPU-dev%d' % i, dev['dev%d' % i], nested=True)
+    print_log('FloatX', floatX)
+    print_log('Epsilon', epsilon)
+    print_log('CNMEM', cnmem)
+    print_log('SEED', seed)
+    print_log('Debug', debug)
+    print_log('Log-level', log_level)
     # ==================== create theano flags ==================== #
     if dev['ngpu'] == 0:
         os.environ['CUDA_VISIBLE_DEVICES'] = ""

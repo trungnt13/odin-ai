@@ -31,7 +31,7 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
-if False:
+if True:
     audio = F.WDIGITS.get_dataset()
     filter_func = lambda x: len(x.split('_')[-1]) == 1
     key_func = lambda x: x.split('_')[-1]
