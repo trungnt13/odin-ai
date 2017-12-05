@@ -57,15 +57,15 @@ marker_styles = [
 ]
 
 
-def generate_random_colors(n, seed=None):
+def generate_random_colors(n, seed=5218):
     if seed is not None:
         np.random.seed(seed)
     colors = []
     for i in range(n):
-        h = 0.05 + i / n # we want maximizing hue
-        l = 0.4 + np.random.rand(1)[0] / 3  # lightness
-        s = 0.5 + np.random.rand(1)[0] / 10 # saturation
-        rgb = colorsys.hls_to_rgb(h, l, s)
+        hue = 0.05 + i / n # we want maximizing hue
+        lightness = 0.4 + np.random.rand(1)[0] / 3  # lightness
+        saturation = 0.5 + np.random.rand(1)[0] / 10 # saturation
+        rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
         colors.append(rgb)
     return colors
 
@@ -541,7 +541,7 @@ def plot_features(features, order=None, title=None, fig_width=4):
     features = [(name, features[name]) for name in order
                 if name in features and
                 isinstance(features[name], np.ndarray) and
-                (features[name].ndim == 1 or features[name].ndim == 2)]
+                features[name].ndim <= 4]
     plt.figure(figsize=(int(fig_width), len(features)))
     for i, (name, X) in enumerate(features):
         X = X.astype('float32')
@@ -556,6 +556,11 @@ def plot_features(features, order=None, title=None, fig_width=4):
             plt.ylabel(name, fontsize=6)
         elif X.ndim == 2: # transpose to frequency x time
             plot_spectrogram(X.T, title=name)
+        elif X.ndim == 3:
+            plt.imshow(X)
+            plt.xticks(())
+            plt.yticks(())
+            plt.ylabel(name, fontsize=6)
         else:
             raise RuntimeError("No support for >= 3D features.")
         # auto, equal
@@ -1159,9 +1164,9 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
         xlims, ylims = _ppndf(xlims), _ppndf(ylims)
         # main line
         # TODO: add EER value later
-        name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer, dcf)) \
+        name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
             if name is None else \
-            ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer, dcf))
+            ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
         label_new = []
         for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, label)):
             eer = K.metrics.compute_EER(Pfa=Pfa, Pmiss=Pmiss)

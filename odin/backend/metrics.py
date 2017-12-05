@@ -4,15 +4,12 @@ import numpy as np
 import tensorflow as tf
 
 from odin.utils import is_number, as_tuple
-from odin.config import get_epsilon
+from odin.config import EPS
 
 from .role import (AccuracyValue, return_roles, DifferentialLoss,
                    ConfusionMatrix, add_role)
 from .tensor import argsort, dimshuffle
 from .helpers import is_tensor
-
-
-EPSILON = get_epsilon()
 
 
 # ===========================================================================
@@ -91,15 +88,14 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None, reduction=tf.reduce_mean
         elif nb_classes is None:
             nb_classes = y_true.get_shape()[1].value
         # avoid numerical instability with _EPSILON clipping
-        y_pred = tf.clip_by_value(y_pred, EPSILON, 1.0 - EPSILON)
+        y_pred = tf.clip_by_value(y_pred, EPS, 1.0 - EPS)
         # ====== check distribution ====== #
         distribution = tf.reduce_sum(y_true, axis=0)
         # probability distribution of each class
         prob_distribution = dimshuffle(distribution / tf.reduce_sum(distribution),
                                        ('x', 0))
         # we need to clip the prior probability distribution also
-        prob_distribution = tf.clip_by_value(
-            prob_distribution, EPSILON, 1.0 - EPSILON)
+        prob_distribution = tf.clip_by_value(prob_distribution, EPS, 1.0 - EPS)
         # ====== init confusion info loss ====== #
         # weighted by y_true
         loss = y_true * tf.log(y_pred)

@@ -50,7 +50,8 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
     elif isinstance(dataset, FeatureProcessor):
         dataset = Dataset(dataset.path, read_only=True)
     else:
-        raise ValueError("Cannot acquire Dataset from input: %s" % str(dataset))
+        raise ValueError("Cannot acquire Dataset from input: %s" %
+                         str(dataset))
     # ====== extract all feat_name ====== #
     if is_string(feat_name) and feat_name == 'auto':
         feat_name = []
@@ -59,7 +60,9 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
             if hasattr(X, 'ndim') and X.ndim == 2 and X.shape[-1] > 1:
                 feat_name.append(k)
     else:
-        feat_name = as_tuple(feat_name, t=str)
+        feat_name = [name
+                     for name in as_tuple(feat_name, t=str)
+                     if name in dataset]
     # ====== load PCA ====== #
     from odin.ml import MiniBatchPCA
     # init PCA

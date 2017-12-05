@@ -109,6 +109,7 @@ class AttributeDict(dict):
 # Auto config
 # ===========================================================================
 CONFIG = None
+EPS = None
 _SESSION = None
 _RNG_GENERATOR = None
 
@@ -159,6 +160,7 @@ def auto_config(config=None):
     '''
     global CONFIG
     global _RNG_GENERATOR
+    global EPS
     if CONFIG is not None:
         warnings.warn('You should not auto_config twice, old configuration already '
                       'existed, and cannot be re-configured.')
@@ -246,7 +248,7 @@ def auto_config(config=None):
         seed = config['seed']
         debug = config['debug']
     # epsilon
-    epsilon = np.finfo(np.dtype(floatX)).eps
+    EPS = np.finfo(np.dtype(floatX)).eps
     # devices
     dev = {}
     if ngpu > 0:
@@ -362,11 +364,6 @@ def get_device_info():
 def get_floatX():
     __validate_config()
     return CONFIG['floatX']
-
-
-def get_epsilon():
-    __validate_config()
-    return CONFIG['epsilon']
 
 
 def get_optimizer():

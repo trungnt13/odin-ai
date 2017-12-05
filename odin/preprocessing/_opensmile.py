@@ -65,7 +65,7 @@ class _openSMILEbase(Extractor):
     def __init__(self, sr):
         verify_dependencies()
         super(_openSMILEbase, self).__init__()
-        self._id = uuid()
+        self._id = uuid(length=25)
         self.sr = sr
         self._first_config_generated = False
         self._conf = _get_conf_file('%s.cfg' % self.__class__.__name__)
@@ -155,19 +155,43 @@ class openSMILEpitch(_openSMILEbase):
     """
     Parameters
     ----------
+    fmin: int
+        minimum pitch frequency
+    fmax: int
+        maximum pitch frequency
+    voicingCutoff_pitch: float [0-1]
+        This sets the voicing probability threshold for pitch
+        detection [0.0 - 1.0]. Frames with voicing probability
+        values above this threshold will be considered as voiced.
+        for 'shs', default value is `0.7`
+        for 'acf', default value is `0.55`
+    f0min: int
+        minimum F0-frequency
+    f0max: int
+        maximum F0-frequency
+    n_candidates: int [1-20]
+        The number of F0 candidates to output [1-20] (0 disables
+        ouput of candidates AND their voicing probs.).
+    voicingCutoff_f0: float [0-1]
+        same value applied for F0 extracting
+    method: 'shs', 'acf'
+        shs: subharmonic summation
+        acf: autocorrelation function
+    f0: bool
+        if True, return F0 frequency also.
     loudness: bool
         if True, append loudness values to the output
     voiceProb: bool
         if True, append `sap` speech activities probabilities to
         the output
-    method: 'shs', 'acf'
-        shs: subharmonic summation
-        acf: autocorrelation function
     """
 
     def __init__(self, frame_length, step_length=None,
-                 window='gauss', fmin=52, fmax=620,
-                 f0=False, loudness=False, voiceProb=False, method='shs',
+                 window='gauss',
+                 fmin=52, fmax=620, voicingCutoff_pitch=0.7,
+                 f0min=64, f0max=400, n_candidates=8, voicingCutoff_f0=0.45,
+                 method='shs',
+                 f0=False, loudness=False, voiceProb=False,
                  sr=None):
         super(openSMILEpitch, self).__init__(sr=sr)
         # ====== config ====== #
@@ -176,12 +200,20 @@ class openSMILEpitch(_openSMILEbase):
             step_length = frame_length / 4
         self.step_length = float(step_length)
         self.window = str(window)
+        # for pitch
         self.fmin = int(fmin)
         self.fmax = int(fmax)
-        self.loudness = bool(loudness)
-        self.voiceProb = bool(voiceProb)
+        self.voicingCutoff_pitch = np.clip(float(voicingCutoff_pitch), 0., 1.)
+        # for F0
         self.f0 = bool(f0)
         self.f0_config = _get_conf_file('smileF0.cfg')
+        self.f0min = int(f0min)
+        self.f0max = int(f0max)
+        self.n_candidates = int(n_candidates)
+        self.voicingCutoff_f0 = np.clip(float(voicingCutoff_f0), 0., 1.)
+        # others
+        self.loudness = bool(loudness)
+        self.voiceProb = bool(voiceProb)
         # ====== method ====== #
         method = str(method).lower()
         self.method_name = method
@@ -196,7 +228,9 @@ class openSMILEpitch(_openSMILEbase):
     @property
     def config(self):
         # check method for extracting pitch
-        method = self.method.format(**{'fmin': self.fmin, 'fmax': self.fmax})
+        method = self.method.format(**{
+            'fmin': self.fmin, 'fmax': self.fmax,
+            'voicingCutoff': self.voicingCutoff_pitch})
         method_path = self.config_path + '.method'
         with open(method_path, 'w') as f:
             f.write(method)
@@ -206,8 +240,11 @@ class openSMILEpitch(_openSMILEbase):
                 turn_on_specscale = ''
             else:
                 turn_on_specscale = ';'
-            f0_config = self.f0_config.format(**{'fmin': self.fmin, 'fmax': self.fmax,
-                                                 'turn_on_specscale': turn_on_specscale})
+            f0_config = self.f0_config.format(**{
+                'fmin': self.f0min, 'fmax': self.f0max,
+                'nCandidates': self.n_candidates,
+                'turn_on_specscale': turn_on_specscale,
+                'voicingCutoff': self.voicingCutoff_f0})
             f0_path = self.config_path + '.f0'
             with open(f0_path, 'w') as f:
                 f.write(f0_config)
