@@ -102,7 +102,27 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
     return path
 
 
-def deserialize(path):
+def deserialize(path, force_restore_vars=False):
+    """
+    Parameters
+    ----------
+    force_restore_vars : bool
+        if `False`, this is special tricks, the unpickled NNOp stay useless
+        until its variables are restored,
+        but if we restore the variables right away, it create a
+        session and prevent any possibility of running
+        tensorflow with multiprocessing
+        => store the `_restore_vars_path` in NNOp for later,
+        and restore the variable when the NNOp is actually in used.
+
+    Note
+    ----
+    if `force_restore_vars = False`, this create 1 flaw,
+    if the nested NNOp is called before the unpickled NNOp
+    restore its variables, the nested Ops cannot acquire its
+    variables.
+
+    """
     data = None
     path_folder = '/tmp/tmp_%s' % uuid(12)
     delete_folder = True
@@ -135,8 +155,12 @@ def deserialize(path):
         nnops = cPickle.load(f)
     # ====== load the Variables ====== #
     if os.path.exists(vars_path + '.index'):
-        K.restore_variables(vars_path)
-    # delete cached folder
-    if delete_folder:
-        shutil.rmtree(path)
+        if force_restore_vars:
+            K.restore_variables(vars_path)
+            # delete cached folder
+            if delete_folder:
+                shutil.rmtree(path)
+        else:
+            nnops._restore_vars_path = vars_path
+            nnops._delete_vars_folder = delete_folder
     return nnops

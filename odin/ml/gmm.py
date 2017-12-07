@@ -67,20 +67,22 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         'gpu' (only run on tensorflow implementation using GPU)
         'cpu' (only run on numpy implemetation using CPU)
         'mix' (using both GPU and CPU)
-    ncpu: int
-        number of processes for parallel calculating Expectation
+    downsample: int
+        downsampling factor
     stochastic_downsample: bool
         if True, a subset of data is selected differently after
         each iteration => the training is stochastic.
         if False, a deterministic selection of data is performed
         each iteration => the training is deterministic.
+    ncpu: int
+        number of processes for parallel calculating Expectation
     seed: int
         random seed for reproducible
     """
 
     def __init__(self, nmix, niter=16, batch_size=2056,
                  covariance_type='diag', init_algo='split',
-                 downsample=1, stochastic_downsample=True, seed=5218,
+                 downsample=4, stochastic_downsample=True, seed=5218,
                  device='mix', ncpu=1):
         super(GMM, self).__init__()
         self._nmix = 2**int(np.round(np.log2(nmix)))
@@ -218,8 +220,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                           ncpu=min(len(jobs), self.ncpu),
                           batch=1, hwm=2**25, backend='python')
                 prog = Progbar(target=nb_samples,
-                               print_report=True, print_summary=False,
-                               name="GMM:%d" % self.nmix)
+                        print_report=True, print_summary=False,
+                        name="[GMM] nmix:%d  max_nmix:%d" % (curr_nmix, self.nmix))
                 Z, F, S, L, nfr = 0., 0., 0., 0., 0
                 for res in mpi:
                     # returned number of processed samples

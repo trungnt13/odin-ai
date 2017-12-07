@@ -611,17 +611,18 @@ class DBFExtractor(Extractor):
         self.mvn = bool(mvn)
 
     def __getstate__(self):
-        from odin.nnet import serialize
+        from odin import nnet as N
         if not self.network.is_initialized:
             self.network()
         return (self.input_feat, self.context, self.mvn,
-                serialize(self.network, output_mode='bin'))
+                N.serialize(self.network, output_mode='bin'))
 
     def __setstate__(self, states):
-        from odin.nnet import deserialize
+        from odin import nnet as N
         (self.input_feat, self.context, self.mvn,
             self.network) = states
-        self.network = deserialize(self.network)
+        self.network = N.deserialize(self.network,
+                                     force_restore_vars=False)
 
     def _transform(self, feat):
         if self.input_feat not in feat:

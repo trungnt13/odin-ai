@@ -503,6 +503,14 @@ class NNOp(object):
         self._variable_info = OrderedDict()
         # special flags to detect if cPickle called with protocol >= 2
         self._new_args_called = False
+        # this is special tricks, the unpickled ops stay useless
+        # until its variables are restored, but if we restore the
+        # variable right away, it create a session and prevent
+        # any possibility of running tensorflow with multiprocessing
+        # => store the _restore_vars_path for later, and restore
+        # the variable when the NNOp is actually in used.
+        self._restore_vars_path = None
+        self._delete_vars_folder = False
 
     # ==================== pickling method ==================== #
     def __getstate__(self):
@@ -518,7 +526,6 @@ class NNOp(object):
         # ====== default attribute ====== #
         self._current_args = ()
         self._current_kwargs = {}
-        self._device = None
         self._cache_outputs = {}
         # ====== save states ====== #
         self._save_states, nnops = states
@@ -536,13 +543,23 @@ class NNOp(object):
         self._new_args_called = True
         return ('[__name__]' + self.name,)
 
-    # ==================== properties ==================== #
-    def set_device(self, dev):
-        """ Set the tensorflow device `_initialize` and `_apply` will
-        be run on"""
-        self._device = str(dev)
-        return self
+    def _restore_variables(self):
+        """ This method can be called anywhere to make sure
+        the variable related to this NNOp is restored after
+        pickling.
+        """
+        if hasattr(self, '_restore_vars_path') and \
+        self._restore_vars_path is not None:
+            folder_path = os.path.dirname(self._restore_vars_path)
+            if os.path.exists(folder_path):
+                K.restore_variables(self._restore_vars_path)
+                # delte cached folder if necessary
+                if self._delete_vars_folder:
+                    shutil.rmtree(folder_path)
+                self._restore_vars_path = None
+                self._delete_vars_folder = False
 
+    # ==================== properties ==================== #
     def get(self, name):
         """"Simple shortcut for getting defined variable"""
         if isinstance(name, bytes):
@@ -568,6 +585,7 @@ class NNOp(object):
         roles: `odin.backend.role.Role`
             categories of this variable
         """
+        self._restore_variables() # restore variable first
         if name in self.__dict__:
             raise RuntimeError("name='%s' has been defined in dictionary of "
                                "NNOp: '%s', type: %s" %
@@ -702,6 +720,7 @@ class NNOp(object):
          - Variables belone to related Tensor within this Op.
          - Variables within the scope of this NNOp.
         """
+        self._restore_variables()  # restore variable first
         global_vars = {v.name: v for v in K.get_all_variables()}
         all_vars = []
         tensors = []
@@ -754,6 +773,16 @@ class NNOp(object):
             if vtype == 'nnop':
                 ops.append(var)
         ops += get_all_nnops(scope=self.name)
+        # make sure all the nested NNOp has the same _restore_vars_path
+        # TODO: this is not good idea, if nested NNOp also restore the
+        # variables, it will restore variables multiple times.
+        # if hasattr(self, '_restore_vars_path') and \
+        # self._restore_vars_path is not None:
+        #     for o in ops:
+        #         if not hasattr(o, '_restore_vars_path') or \
+        #         o._restore_vars_path is None:
+        #             o._restore_vars_path = self._restore_vars_path
+        #             o._delete_vars_folder = self._delete_vars_folder
         return sorted([o for o in ops if o is not self],
                       key=lambda x: x.name)
 
@@ -910,6 +939,7 @@ class NNOp(object):
     def apply(self, *args, **kwargs):
         # self.name can contain Model varable scope, hence,
         # remove the scope here
+        self._restore_variables()  # restore variable first
         op_name = self.name.split('/')[-1]
         with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
             # ====== special case, Op name mis match variable scope ====== #
@@ -988,11 +1018,7 @@ class NNOp(object):
             self._current_kwargs = op_kwargs
             # ====== initialize first ====== #
             if not self._is_initialized:
-                if self._device is not None:
-                    with tf.device(self._device):
-                        self._initialize()
-                else:
-                    self._initialize()
+                self._initialize()
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
                 _assign_new_nnop(self)
@@ -1002,11 +1028,7 @@ class NNOp(object):
                 y = self._cache_outputs[footprint]
             # First time generate output given footprint
             else:
-                if self._device is not None:
-                    with tf.device(self._device):
-                        y = self._apply(*op_args, **op_kwargs)
-                else:
-                    y = self._apply(*op_args, **op_kwargs)
+                y = self._apply(*op_args, **op_kwargs)
                 # record cahced return
                 self._cache_outputs[footprint] = y
             # check if op_data given, then evaluate to get the results.

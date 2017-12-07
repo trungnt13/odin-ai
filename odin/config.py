@@ -22,6 +22,13 @@ import subprocess
 import warnings
 from six import string_types
 from multiprocessing import cpu_count
+try:
+    from functools import lru_cache
+except ImportError:
+    def lru_cache(maxsize=128):
+        def tmp_func(func):
+            return func
+        return tmp_func
 
 import numpy as np
 
@@ -72,6 +79,7 @@ def _query_gpu_info():
                               shell=True,
                               stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE) == 0
+    dev = {}
     if queried: # found deviceQuery
         info = open(p, 'r').read()
         devNames = re.compile(r'Device \d: ".*"').findall(info)
@@ -84,11 +92,18 @@ def _query_gpu_info():
             r'Total amount of global memory:\s*\d*').findall(info)
         totalMems = [int(i.strip().split(':')[-1]) for i in totalMems]
         # ====== create dev ====== #
-        dev = {'ngpu': ngpu}
+        dev['ngpu'] = ngpu
         for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
             dev['dev%d' % i] = [name, com, mem]
     else:
         _warning('Cannot use "deviceQuery" to get GPU information for configuration.')
+        from tensorflow.python.client import device_lib
+        local_device_protos = device_lib.list_local_devices()
+        dev['ngpu'] = 0
+        for i, name in (x.name for x in local_device_protos
+                        if x.device_type == 'GPU'):
+            dev['dev%d' % i] = [name, None, None]
+            dev['ngpu'] += 1
     # remove temp-dir
     shutil.rmtree(temp_dir)
     return dev
@@ -176,7 +191,7 @@ def auto_config(config=None):
     debug = False
     # number of devices
     ncpu = 0
-    ngpu = 0
+    ngpu = False
     nthread = 0
     log_level = '3'
     # ====== parsing the config ====== #
@@ -200,12 +215,7 @@ def auto_config(config=None):
                 else:
                     ncpu = min(int(i.split('=')[-1]), ncpu)
             elif 'gpu' in i:
-                if '=' not in i:
-                    _warning("Found `gpu` tag, but number of GPU is not "
-                             "specified, by default, use only 1 GPU.")
-                    ngpu = 1
-                else:
-                    ngpu = int(i.split('=')[-1])
+                ngpu = True
             # ====== number thread ====== #
             elif 'thread' in i:
                 if '=' not in i:
@@ -251,7 +261,7 @@ def auto_config(config=None):
     EPS = np.finfo(np.dtype(floatX)).eps
     # devices
     dev = {}
-    if ngpu > 0:
+    if ngpu:
         dev.update(_query_gpu_info())
     else:
         dev['ngpu'] = 0
