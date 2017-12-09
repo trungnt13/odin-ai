@@ -80,12 +80,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         random seed for reproducible
     """
 
-    def __init__(self, nmix, niter=16, batch_size=2056,
+    def __init__(self, nmix, nmix_start=1, niter=16, batch_size=2056,
                  covariance_type='diag', init_algo='split',
                  downsample=4, stochastic_downsample=True, seed=5218,
                  device='mix', ncpu=1):
         super(GMM, self).__init__()
         self._nmix = 2**int(np.round(np.log2(nmix)))
+        self._curr_nmix = np.clip(int(nmix_start), 1, self._nmix)
         self._niter = int(niter)
         self.batch_size = int(batch_size)
         # ====== downsample ====== #
@@ -155,11 +156,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         self._is_initialized = True
         # ====== init ====== #
         # (D, M)
-        self.mu = np.zeros((ndim, 1), dtype='f4')
+        self.mu = np.zeros((ndim, self._curr_nmix), dtype='f4')
         # (D, M)
-        self.sigma = np.ones((ndim, 1), dtype='f4')
+        self.sigma = np.ones((ndim, self._curr_nmix), dtype='f4')
         # (1, M)
-        self.w = np.ones((1, 1), dtype='f4')
+        self.w = np.ones((1, self._curr_nmix), dtype='f4')
         # (1, M)
         self.C_ = self.compute_C()
 
@@ -177,8 +178,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         jobs = np.linspace(start=0, stop=nb_samples,
                            num=self.ncpu + 1, dtype='int32')
         jobs = list(zip(jobs, jobs[1:]))
-        curr_nmix = 1
-        curr_niter = 0
 
         # ====== mapping method ====== #
         def _map_func(start_end):
@@ -186,7 +185,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             Z, F, S, L, nfr = 0., 0., 0., 0., 0
             # stochastic downsasmple, seed change every iter and mixup
             if self.stochastic_downsample:
-                random.seed(self.seed + curr_nmix + curr_niter)
+                random.seed(self.seed + self._curr_nmix + self._curr_niter)
             else: # deterministic
                 random.seed(self.seed)
             # iterate over batches
@@ -207,11 +206,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         # ====== start GMM ====== #
         # supports 4096 components, modify for more components
         niter = self.niter
-        while curr_nmix <= self._nmix:
+        while self._curr_nmix <= self._nmix:
             print(ctext(
-                'Re-estimating the GMM for {} components ...'.format(curr_nmix),
+                'Re-estimating the GMM for {} components ...'.format(self._curr_nmix),
                 'cyan'))
-            for curr_niter in range(niter[int(np.log2(curr_nmix))]):
+            for self._curr_niter in range(niter[int(np.log2(self._curr_nmix))]):
                 start_time = time.time()
                 # New C_ value
                 self.C_ = self.compute_C()
@@ -220,8 +219,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                           ncpu=min(len(jobs), self.ncpu),
                           batch=1, hwm=2**25, backend='python')
                 prog = Progbar(target=nb_samples,
-                        print_report=True, print_summary=False,
-                        name="[GMM] nmix:%d  max_nmix:%d" % (curr_nmix, self.nmix))
+                               print_report=True, print_summary=False,
+                               name="[GMM] cmix:%d nmix:%d iter:%d" %
+                               (self._curr_nmix, self.nmix, self._curr_niter))
                 Z, F, S, L, nfr = 0., 0., 0., 0., 0
                 for res in mpi:
                     # returned number of processed samples
@@ -239,15 +239,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                 self.maximization(Z, F, S)
                 # print Log-likelihood
                 self._llk.append(L / nfr)
-                print("#iter:", ctext('%.2d' % (curr_niter + 1), 'yellow'),
+                print("#iter:", ctext('%.2d' % (self._curr_niter + 1), 'yellow'),
                       "llk:", ctext('%.4f' % self._llk[-1], 'yellow'),
                       "%.2f(s)" % (time.time() - start_time))
                 # release memory
                 del Z, F, S
             # update the mixtures
-            if curr_nmix < self._nmix:
+            if self._curr_nmix < self._nmix:
                 self.gmm_mixup()
-            curr_nmix *= 2
+            self._curr_nmix *= 2
         # set is_fit and return
         self._is_fitted = True
         return self

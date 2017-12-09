@@ -179,13 +179,14 @@ def restore_variables(path, session=None):
 def _eval_single_tensor(x, feed_dict=None):
     if hasattr(x, 'eval') and inspect.ismethod(x.eval):
         if 'feed_dict' in inspect.getargspec(x.eval).args:
-            return x.eval(session=get_session(), feed_dict=feed_dict)
+            return x.eval(session=get_session(x.graph),
+                          feed_dict=feed_dict)
         else:
-            return x.eval(session=get_session())
+            return x.eval(session=get_session(x.graph))
     elif is_string(x):
         return builtins.eval(x)
     elif isinstance(x, tf.Operation):
-        return get_session().run(x, feed_dict=feed_dict)
+        return get_session(x.graph).run(x, feed_dict=feed_dict)
     raise ValueError("Type %s don't have the eval function." % str(x, 'utf-8'))
 
 
@@ -201,5 +202,5 @@ def eval(x, feed_dict=None):
                 for tensor in x]
     elif isinstance(x, Mapping):
         return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
-            for name, tensor in x.items()}
+                for name, tensor in x.items()}
     return _eval_single_tensor(x, feed_dict=feed_dict)

@@ -134,7 +134,7 @@ def set_session(session):
     _SESSION = session
 
 
-def get_session():
+def get_session(graph=None):
     global _SESSION
     if _SESSION is None:
         # ====== initialize tensorflow session ====== #
@@ -153,7 +153,8 @@ def get_session():
             else:
                 session_args['gpu_options'] = tf.GPUOptions(
                     allow_growth=True)
-        _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**session_args))
+        _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**session_args),
+                                         graph=graph)
     return _SESSION
 
 
