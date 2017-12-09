@@ -125,7 +125,7 @@ class AttributeDict(dict):
 # ===========================================================================
 CONFIG = None
 EPS = None
-_SESSION = None
+_SESSION = {}
 _RNG_GENERATOR = None
 
 
@@ -135,8 +135,7 @@ def set_session(session):
 
 
 def get_session(graph=None):
-    global _SESSION
-    if _SESSION is None:
+    if graph not in _SESSION:
         # ====== initialize tensorflow session ====== #
         import tensorflow as tf
         session_args = {
@@ -153,9 +152,9 @@ def get_session(graph=None):
             else:
                 session_args['gpu_options'] = tf.GPUOptions(
                     allow_growth=True)
-        _SESSION = tf.InteractiveSession(config=tf.ConfigProto(**session_args),
-                                         graph=graph)
-    return _SESSION
+        _SESSION[graph] = tf.Session(config=tf.ConfigProto(**session_args),
+                                     graph=graph)
+    return _SESSION[graph]
 
 
 def auto_config(config=None):
