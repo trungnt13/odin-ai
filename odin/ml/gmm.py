@@ -6,42 +6,181 @@ __email__ = 'omid.sadjadi@nist.gov'
 """
 import time
 import random
+import threading
 
 import numpy as np
+import tensorflow as tf
 
 from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
 
+from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder
-from odin.utils import MPI, batching, ctext, cpu_count, Progbar, is_number
+from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
+                        is_number, as_tuple, uuid, is_string)
+from odin.config import EPS, get_ngpu
 
-EPS = np.finfo(float).eps
+
+# minimum batch size that will be optimal to transfer
+# the data to GPU for calculation (tested on Titan X)
+# NOTE: tensorflow has a lagging effect, it will be
+#       slower than numpy if you evaluate the
+#       expression for first time.
+MINIMUM_GPU_BLOCK = 8000 * 120 * 4 # bytes
+STANDARD_BATCH_SIZE = 36 * 1024 * 1024 # 36 Megabytes
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
 def zeroStat(post):
+    """ Shape: (1, nmix)
     # sum over all samples
-    return np.sum(post, axis=0, keepdims=True) # (1, M)
+    # Zero-order statistics over all samples and dimension for
+    each components
+    """
+    # ====== tensorflow tensor or variable ====== #
+    if K.is_tensor(post, inc_distribution=True, inc_variable=True):
+        y = tf.reduce_sum(post, axis=0, keep_dims=True,
+                          name="zero_stat")
+    # ====== numpy array ====== #
+    else:
+        y = np.sum(post, axis=0, keepdims=True) # (1, M)
+    return y
 
 
 def firstStat(X, post):
-    return np.dot(X.T, post) # (D, M)
+    """ Shape: (feat_dim, nmix)
+    First-order statistics over all samples for each components
+    """
+    # ====== tensorflow tensor or variable ====== #
+    if K.is_tensor(X, inc_distribution=True, inc_variable=True):
+        y = tf.matmul(tf.transpose(X), post, name='first_stat')
+    # ====== numpy array ====== #
+    else:
+        y = np.dot(X.T, post)
+    return y
 
 
 def secondStat(X, post):
-    return np.dot((X ** 2).T, post) # (D, M)
-
-
-def logsumexp(x, axis):
-    xmax = x.max(axis=axis, keepdims=True)
-    y = xmax + np.log(np.sum(np.exp(x - xmax), axis=axis, keepdims=True))
+    """ Shape: (feat_dim, nmix)
+    Second-order statistics over all samples for each components
+    """
+    # ====== tensorflow tensor or variable ====== #
+    if K.is_tensor(X, inc_distribution=True, inc_variable=True):
+        y = tf.matmul(tf.transpose(tf.pow(X, 2)), post, name="second_stat")
+    # ====== numpy array ====== #
+    else:
+        y = np.dot((X ** 2).T, post)
     return y
+
+
+def logsumexp(X, axis):
+    """
+    Compute log(sum(exp(x),dim)) while avoiding numerical underflow
+    """
+    # ====== tensorflow tensor or variable ====== #
+    if K.is_tensor(X, inc_distribution=True, inc_variable=True):
+        xmax = tf.reduce_max(X, axis=axis, keep_dims=True)
+        y = tf.add_n(inputs=[
+            xmax,
+            tf.log(tf.reduce_sum(input_tensor=tf.exp(X - xmax),
+                                 axis=axis,
+                                 keep_dims=True))],
+            name='llk')
+    # ====== numpy array ====== #
+    else:
+        xmax = np.max(X, axis=axis, keepdims=True)
+        y = xmax + np.log(np.sum(a=np.exp(X - xmax),
+                                 axis=axis,
+                                 keepdims=True))
+    return y
+
+
+def _split_jobs(nb_samples, gpu_factor, ncpu, device):
+    # number of GPU
+    ngpu = get_ngpu()
+    if ngpu == 0:
+        device = 'cpu'
+    # jobs split based on both number of CPU and GPU
+    if device == 'mix':
+        njob = ncpu + 1 + ngpu * gpu_factor
+    elif device == 'cpu':
+        njob = ncpu + 1
+    elif device == 'gpu':
+        njob = ngpu + 1
+    jobs = np.linspace(start=0, stop=nb_samples,
+                       num=njob, dtype='int32')
+    jobs = list(zip(jobs, jobs[1:]))
+    # use both GPU and CPU
+    if device == 'mix':
+        jobs_gpu = [(jobs[i * gpu_factor][0],
+                     jobs[i * gpu_factor + gpu_factor - 1][1])
+                    for i in range(ngpu)]
+        jobs_cpu = [jobs[i] for i in range(ngpu * gpu_factor, len(jobs))]
+    elif device == 'gpu': # only GPU
+        jobs_gpu = jobs
+        jobs_cpu = []
+    elif device == 'cpu': # only CPU
+        jobs_gpu = []
+        jobs_cpu = jobs
+    return jobs_cpu, jobs_gpu
+
+
+def _create_batch(start, end, batch_size,
+                  downsample, stochastic,
+                  seed, curr_nmix, curr_niter):
+    """ Return:
+    (start, end, nframe, is_batch_selected)
+    """
+    # stochastic downsasmple, seed change every iter and mixup
+    if stochastic:
+        random.seed(seed + curr_nmix + curr_niter)
+    else: # deterministic
+        random.seed(seed)
+    # iterate over batches
+    for s, e in batching(n=end - start, batch_size=batch_size):
+        selected = False
+        n = e - s
+        s += start
+        e += start
+        # downsample by randomly ignore a batch
+        if downsample == 1 or \
+        (downsample > 1 and random.random() <= 1. / downsample):
+            selected = True
+        yield s, e, n, selected
 
 
 # ===========================================================================
 # Main GMM
 # ===========================================================================
+class _ExpectationResults(object):
+    """ ExpectationResult """
+
+    def __init__(self, nb_samples, name):
+        super(_ExpectationResults, self).__init__()
+        # thread lock
+        self.lock = threading.Lock()
+        # progress bar
+        self.prog = Progbar(target=nb_samples, print_report=True,
+                            print_summary=False, name=name)
+        # Z, F, S, L, nfr
+        self.stats = [0., 0., 0., 0., 0]
+
+    def update(self, res):
+        # thread-safe udpate
+        self.lock.acquire()
+        try:
+            # returned number of processed samples
+            if is_number(res):
+                self.prog.add(res)
+            # return the statistics, end of process
+            else:
+                for i, r in enumerate(res):
+                    self.stats[i] += r
+        finally:
+            self.lock.release()
+
+
 class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """ The following symbol is used:
     N: number of samples (frames)
@@ -50,6 +189,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
+    batch_size: {int, 'auto'}
+        if 'auto', used 36 Megabytes block for batch size.
     covariance_type : {'full', 'tied', 'diag', 'spherical'},
             defaults to 'full'.
         String describing the type of covariance parameters to use.
@@ -59,183 +200,315 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             'tied' (all components share the same general covariance matrix),
             'diag' (each component has its own diagonal covariance matrix),
             'spherical' (each component has its own single variance).
-    init_algo: {'split', 'kmean'}
-        'split'
-        'kmean'
     device: {'gpu', 'cpu', 'mix'}
         which devices using for the EM
         'gpu' (only run on tensorflow implementation using GPU)
         'cpu' (only run on numpy implemetation using CPU)
         'mix' (using both GPU and CPU)
-    downsample: int
-        downsampling factor
+    gpu_factor: int (> 0)
+        how much jobs GPU will handle more than CPU
+        (i.e. `njob_gpu = gpu_factor * njob_cpu`)
+    ncpu: int
+        number of processes for parallel calculating Expectation
     stochastic_downsample: bool
         if True, a subset of data is selected differently after
         each iteration => the training is stochastic.
         if False, a deterministic selection of data is performed
         each iteration => the training is deterministic.
-    ncpu: int
-        number of processes for parallel calculating Expectation
     seed: int
         random seed for reproducible
     """
 
-    def __init__(self, nmix, nmix_start=1, niter=16, batch_size=2056,
-                 covariance_type='diag', init_algo='split',
-                 downsample=4, stochastic_downsample=True, seed=5218,
-                 device='mix', ncpu=1):
+    def __init__(self, nmix, nmix_start=1, niter=16, batch_size='auto',
+                 covariance_type='diag',
+                 downsample=2, stochastic_downsample=True, seed=5218,
+                 device='gpu', gpu_factor=80, ncpu=None, name=None):
         super(GMM, self).__init__()
+        # start from 1 mixture, then split and up
         self._nmix = 2**int(np.round(np.log2(nmix)))
         self._curr_nmix = np.clip(int(nmix_start), 1, self._nmix)
+        self._feat_dim = None
         self._niter = int(niter)
-        self.batch_size = int(batch_size)
+        self.batch_size = batch_size
         # ====== downsample ====== #
         self.downsample = int(downsample)
         self.stochastic_downsample = bool(stochastic_downsample)
         self.seed = int(seed)
         # ====== different mode ====== #
-        self.init_algo = str(init_algo)
         self.covariance_type = str(covariance_type)
         # ====== multi-processing ====== #
-        self.device = str(device)
+        # cpu
         if ncpu is None:
             ncpu = cpu_count() - 1
         self.ncpu = int(ncpu)
+        # gpu
+        self.gpu_factor = int(gpu_factor)
+        # device
+        device = str(device).lower()
+        if device not in ('mix', 'gpu', 'cpu'):
+            raise ValueError("`device` can only be one of following option±: "
+                             "'mix', 'gpu', 'cpu'.")
+        self.device = device
         # ====== state variable ====== #
-        self._is_initialized = False
-        self._is_fitted = False
         self._llk = [] # store history of LLK
+        # ====== name ====== #
+        if name is None:
+            name = uuid(length=8)
+            self._name = 'GMM_%s' % name
+        else:
+            self._name = str(name)
+
+    def __getstate__(self):
         # 'means', 'variances', 'weights'
         # self.mu, self.sigma, self.w
-        # self.C_ = self.compute_C()
+        pass
+
+    def __setstate__(self, states):
+        pass
 
     def __str__(self):
-        if self._initialize:
-            mu, std, w = self.mu.shape, self.sigma.shape, self.w.shape
-        else:
-            mu, std, w = None, None, None
-        s = '<%s init:%s fitted:%s mu:%s std:%s weight:%s>' %\
-            (ctext('GMM:%d' % self._nmix, 'cyan'),
-                self._is_initialized, self._is_fitted,
-                mu, std, w)
+        s = '<"%s" nmix:%s ndim:%s initted:%s fitted:%s>' %\
+            (ctext(self.name, 'yellow'),
+                ctext(self._nmix, 'cyan'),
+                ctext(self._feat_dim, 'cyan'),
+                self.is_initialized, self.is_fitted)
         return s
 
     # ==================== properties ==================== #
     @property
+    def name(self):
+        return self._name
+
+    @property
     def is_initialized(self):
-        return self._is_initialized
+        return self._feat_dim is not None
 
     @property
     def is_fitted(self):
-        return self._is_fitted
-
-    @property
-    def niter(self):
-        if self.init_algo == 'split':
-            n = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10]
-            n[int(np.log2(self._nmix))] = self._niter
-        else:
-            raise NotImplementedError
-        return n
+        return self._curr_nmix == self._nmix
 
     @property
     def nmix(self):
         return self._nmix
 
     @property
-    def ndim(self):
+    def feat_dim(self):
         if not self.is_initialized:
-            raise RuntimeError("GMM has not been fitted on data.")
-        return self._ndim
+            raise RuntimeError("GMM has not been initialized on data.")
+        return self._feat_dim
 
-    # ==================== sklearn ==================== #
-    def _initialize(self, ndim):
-        if self._is_initialized:
+    # ==================== initialization ==================== #
+    def _resfresh_cpu_posterior(self):
+        """ Refresh cached value for CPu computations. """
+        expressions = {}
+        precision = 1 / (self.sigma + EPS)
+        C = np.sum((self.mu ** 2) * precision, axis=0, keepdims=True) + \
+            np.sum(np.log(self.sigma + EPS), axis=0, keepdims=True) - \
+            2 * np.log(self.w)
+        mu_precision = self.mu * precision
+        expressions['precision'] = precision
+        expressions['mu_precision'] = mu_precision
+        expressions['C'] = C
+        self.__expressions_cpu = expressions
+
+    def _refresh_gpu_posterior(self):
+        """ Call this function when you update the mixture
+        components.
+        Unlike CPU computation, tensorflow graph on need to
+        renew it placeholder which represent: mu, sigma, weight
+        when GMM mixup.
+        """
+        expressions = {}
+        # ====== proper scope ====== #
+        if self._curr_nmix < self.nmix:
+            scope = self.name + str(self._curr_nmix)
+        else:
+            scope = self.name
+        # ====== build the graph ====== #
+        with tf.variable_scope(scope):
+            mu = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
+                                dtype='float32',
+                                name='GMM_mu')
+            sigma = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
+                                  dtype='float32',
+                                  name='GMM_sigma')
+            w = tf.placeholder(shape=(1, self._curr_nmix),
+                              dtype='float32',
+                              name='GMM_weight')
+            expressions['mu'] = mu
+            expressions['sigma'] = sigma
+            expressions['w'] = w
+            # ====== log probability ====== #
+            # (feat_dim, nmix)
+            precision = 1 / (sigma + EPS)
+            C = tf.reduce_sum((mu ** 2) * precision,
+                              axis=0, keep_dims=True) + \
+                tf.reduce_sum(tf.log(sigma + EPS),
+                              axis=0, keep_dims=True) - \
+                2 * tf.log(w)
+            D = tf.matmul(self.X_ ** 2, precision) - \
+                2 * tf.matmul(self.X_, mu * precision) + \
+                self.feat_dim * np.log(2 * np.pi)
+            # (batch_size, nmix)
+            logprob = tf.multiply(x=-0.5, y=C + D,
+                                  name='logprob')
+            expressions['logprob'] = logprob # (batch_size, nmix)
+            # ====== posterior and likelihood ====== #
+            llk = logsumexp(logprob, axis=1) # (batch_size, 1)
+            post = tf.exp(logprob - llk, name='postprob') # (batch_size, nmix)
+            expressions['llk'] = llk
+            expressions['post'] = post
+            # ====== expectation ====== #
+            expressions['zero'] = zeroStat(post)
+            expressions['first'] = firstStat(self.X_, post)
+            expressions['second'] = secondStat(self.X_, post)
+            expressions['L'] = tf.reduce_sum(llk, axis=None, name='sum_llk')
+        self.__expressions_gpu = expressions
+
+    def _initialize(self, X):
+        # ====== get input info ====== #
+        if hasattr(X, 'ndim'):
+            ndim = X.ndim
+        elif hasattr(X, 'get_shape'):
+            ndim = len(X.get_shape().as_list())
+        else:
+            raise ValueError("Cannot number of dimension from input.")
+
+        if hasattr(X, 'shape'):
+            feat_dim = X.shape[1]
+        elif hasattr(X, 'get_shape'):
+            feat_dim = X.get_shape().as_list()[1]
+        else:
+            raise ValueError("Cannot get feature dimension from input.")
+        # ====== already init ====== #
+        if self.is_initialized:
+            # validate the inputs
+            if ndim != 2 or feat_dim != self._feat_dim:
+                raise RuntimeError("Input must be 2-D matrix with the 1st "
+                    "dimension equal to: %d" % feat_dim)
             return
-        self._ndim = ndim
-        self._is_initialized = True
+        # ====== create input placeholder ====== #
+        self._feat_dim = int(feat_dim)
+        self._feat_const = self.feat_dim * np.log(2 * np.pi)
+        if is_string(self.batch_size):
+            self.batch_size = STANDARD_BATCH_SIZE / self.feat_dim * 4
+        # [batch_size, feat_dim]
+        self.X_ = tf.placeholder(shape=(None, self.feat_dim),
+                                 dtype=X.dtype,
+                                 name='GMM_input')
         # ====== init ====== #
         # (D, M)
-        self.mu = np.zeros((ndim, self._curr_nmix), dtype='f4')
+        self.mu = np.zeros((feat_dim, self._curr_nmix), dtype='f4')
         # (D, M)
-        self.sigma = np.ones((ndim, self._curr_nmix), dtype='f4')
+        self.sigma = np.ones((feat_dim, self._curr_nmix), dtype='f4')
         # (1, M)
         self.w = np.ones((1, self._curr_nmix), dtype='f4')
-        # (1, M)
-        self.C_ = self.compute_C()
+        # init posterior
+        self._resfresh_cpu_posterior()
+        self._refresh_gpu_posterior()
 
+    # ==================== sklearn ==================== #
     def fit(self, X, y=None):
+        """
+        NOTE
+        ----
+        from 1-8 components, python multi-threading is fastest
+        from 16-32 components, python multi-processing is fastest
+        from > 64 components, GPU scales much much better.
+        """
         if not isinstance(X, (Data, np.ndarray)):
             raise ValueError("`X` must be numpy.ndarray or instance of odin.fuel.Data.")
         if isinstance(X, Feeder):
             raise ValueError("No support for fitting GMM on odin.fuel.Feeder")
+        if X.shape[0] < self.batch_size:
+            raise RuntimeError("Input has shape %s, not enough data points for a "
+                               "single batch of size: %d." %
+                               (str(X.shape), self.batch_size))
         # ====== check input ====== #
-        self._initialize(ndim=X.shape[1])
-        assert (X.ndim == 2 or X.ndim == [2]) and X.shape[1] == self._ndim
+        self._initialize(X)
         is_indices = True if isinstance(X, DataDescriptor) else False
         # ====== divide the batches ====== #
         nb_samples = len(X.indices) if is_indices else X.shape[0]
-        jobs = np.linspace(start=0, stop=nb_samples,
-                           num=self.ncpu + 1, dtype='int32')
-        jobs = list(zip(jobs, jobs[1:]))
 
         # ====== mapping method ====== #
-        def _map_func(start_end):
-            start, end = start_end
-            Z, F, S, L, nfr = 0., 0., 0., 0., 0
-            # stochastic downsasmple, seed change every iter and mixup
-            if self.stochastic_downsample:
-                random.seed(self.seed + self._curr_nmix + self._curr_niter)
-            else: # deterministic
-                random.seed(self.seed)
-            # iterate over batches
-            for s, e in batching(n=end - start, batch_size=self.batch_size):
+        def map_expectation(start_end_dev_bs):
+            (start, end), device, batch_size = start_end_dev_bs
+            # Z, F, S, L, nfr
+            results = [0., 0., 0., 0., 0]
+            for s, e, n, selected in _create_batch(start, end, batch_size,
+                downsample=self.downsample, stochastic=self.stochastic_downsample,
+                seed=self.seed, curr_nmix=self._curr_nmix, curr_niter=self._curr_niter):
                 # downsample by randomly ignore a batch
-                if self.downsample == 1 or \
-                (self.downsample > 1 and random.random() <= 1. / self.downsample):
-                    s += start; e += start
+                if selected:
                     x = X[s:e]
-                    res_Z, res_F, res_S, res_L = self.expectation(x)
-                    Z += res_Z
-                    F += res_F
-                    S += res_S
-                    L += res_L
-                    nfr += x.shape[0]
-                yield e - s
-            yield Z, F, S, L, nfr
+                    for i, res in enumerate(self.expectation(x, gpu=device)):
+                        results[i] += res
+                    results[-1] += x.shape[0]
+                yield n
+            yield tuple(results)
+
+        def thread_expectation(results, start_end, device):
+            if device == 'cpu':
+                device = False
+                batch_size = self.batch_size
+            elif device == 'gpu':
+                device = True
+                batch_size = max(int(MINIMUM_GPU_BLOCK / self.feat_dim / 4),
+                                 self.batch_size)
+            for res in map_expectation((start_end, device, batch_size)):
+                results.update(res)
+
         # ====== start GMM ====== #
-        # supports 4096 components, modify for more components
-        niter = self.niter
-        while self._curr_nmix <= self._nmix:
-            print(ctext(
-                'Re-estimating the GMM for {} components ...'.format(self._curr_nmix),
-                'cyan'))
-            for self._curr_niter in range(niter[int(np.log2(self._curr_nmix))]):
+        # supports 16384 components, modify for more components
+        niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10, 16, 16]
+        niter[int(np.log2(self._nmix))] = self._niter
+        # run the algorithm
+        while True:
+            print(ctext('Estimating the GMM for %s components ...' % self._curr_nmix,
+                        'cyan'))
+            # spliting the jobs
+            jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nb_samples,
+                        gpu_factor=self.gpu_factor, ncpu=self.ncpu,
+                        device='cpu' if self._curr_nmix <= 32 else self.device)
+            # fitting the mixtures
+            idx = int(np.log2(self._curr_nmix))
+            for self._curr_niter in range(niter[idx]):
+                # ====== init ====== #
                 start_time = time.time()
-                # New C_ value
-                self.C_ = self.compute_C()
-                # Expectation
-                mpi = MPI(jobs=jobs, func=_map_func,
-                          ncpu=min(len(jobs), self.ncpu),
-                          batch=1, hwm=2**25, backend='python')
-                prog = Progbar(target=nb_samples,
-                               print_report=True, print_summary=False,
-                               name="[GMM] cmix:%d nmix:%d iter:%d" %
+                # Z, F, S, L, nfr
+                results = _ExpectationResults(nb_samples=nb_samples,
+                    name="[GMM] cmix:%d nmix:%d iter:%d" %
                                (self._curr_nmix, self.nmix, self._curr_niter))
-                Z, F, S, L, nfr = 0., 0., 0., 0., 0
+                # ====== run multiprocessing ====== #
+                # create CPU processes
+                mpi = []
+                cpu_threads = []
+                if len(jobs_cpu) > 0:
+                    if 0 <= self._curr_nmix < 16:
+                        cpu_threads = [threading.Thread(target=thread_expectation,
+                                                        args=(results, j, 'cpu'))
+                                       for j in jobs_cpu]
+                    elif 16 <= self._curr_nmix:
+                        mpi = MPI(jobs=[(j, False, self.batch_size)
+                                        for j in jobs_cpu],
+                                  func=map_expectation,
+                                  ncpu=self.ncpu, batch=1, hwm=2**25,
+                                  backend='python')
+                # create GPU threads
+                gpu_threads = [threading.Thread(target=thread_expectation,
+                                                args=(results, j, 'gpu'))
+                               for j in jobs_gpu]
+                # start gpu and cpu threads
+                for t in gpu_threads + cpu_threads:
+                    t.start()
+                # start the cpu processes
                 for res in mpi:
-                    # returned number of processed samples
-                    if is_number(res):
-                        prog.add(res)
-                    # return the statistics, end of process
-                    else:
-                        res_Z, res_F, res_S, res_L, res_nfr = res
-                        Z += res_Z
-                        F += res_F
-                        S += res_S
-                        L += res_L
-                        nfr += res_nfr
-                # Maximization
+                    results.update(res)
+                # finish all threads
+                for t in gpu_threads + cpu_threads:
+                    t.join()
+                # ====== Maximization ====== #
+                Z, F, S, L, nfr = results.stats
                 self.maximization(Z, F, S)
                 # print Log-likelihood
                 self._llk.append(L / nfr)
@@ -247,16 +520,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             # update the mixtures
             if self._curr_nmix < self._nmix:
                 self.gmm_mixup()
-            self._curr_nmix *= 2
-        # set is_fit and return
-        self._is_fitted = True
+            else:
+                break
         return self
 
     def score(self, X, y=None):
         # compute_llk
         if not self.is_initialized or not self.is_fitted:
             raise RuntimeError("GMM has not been fitted on data.")
-        post = self.lgmmprob(X) # (N, M)
+        post = self.logprob(X) # (N, M)
         return logsumexp(post, axis=1)
 
     def transform(self, X):
@@ -266,41 +538,79 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         Z = zeroStat(post) # (1, M)
         F = firstStat(X, post) # (D, M)
         F_hat = np.reshape(F - self.mu * Z,
-                           newshape=(self._ndim * self._nmix, 1))
+                           newshape=(self._feat_dim * self._nmix, 1))
         return Z, F_hat
 
     # ==================== math helper ==================== #
-    def lgmmprob(self, X):
-        precision = 1 / (self.sigma + EPS) # (D, M)
-        D = np.dot(X ** 2, precision) - \
-            2 * np.dot(X, self.mu * precision) + \
-            self._ndim * np.log(2 * np.pi)
-        return -0.5 * (self.C_ + D) # (N, M)
+    def logprob(self, X, gpu='auto'):
+        """ Shape: [batch_size, nmix]
+        the log probability of each observations to each components
+        given the GMM.
+        """
+        self._initialize(X)
+        return self.__expressions['logprob']
 
-    def postprob(self, X):
-        post = self.lgmmprob(X) # (N, M)
-        llk = logsumexp(post, axis=1) # (N, 1)
-        post = np.exp(post - llk)
-        return post, llk
+    def postprob(self, X, gpu='auto'):
+        """ Shape: (batch_size, nmix)
+        The posterior probability of mixtures for each frame
+        """
+        self._initialize(X)
+        return self.__expressions['post']
 
-    def compute_C(self):
-        precision = 1 / (self.sigma + EPS)
-        log_det = np.sum(np.log(self.sigma + EPS), 0, keepdims=True)
-        return np.sum((self.mu ** 2) * precision, 0, keepdims=True) + \
-            log_det - \
-            2 * np.log(self.w)
+    def llk(self, X, gpu='auto'):
+        """ Shape: (batch_size, 1)
+        The log-likelihood value of each frame to all components
+        """
+        self._initialize(X)
+        return self.__expressions['llk']
 
-    def expectation(self, X):
-        # The Map
-        ndim = X.shape[1]
-        if ndim != self._ndim:
-            raise ValueError('Dimensionality of the data ({}) does not match '
-                'the specified dimension ndim={}!'.format(ndim, self._ndim))
-        post, llk = self.postprob(X)
+    def expectation(self, X, gpu='auto'):
+        """
+        Parameters
+        ----------
+        X : numpy.ndarray [batch_size, feat_dim]
+            input array, with feature dimension is the final dimension
+        gpu : {True, False, 'auto'}
+            if True, always perform calculation on GPU
+            if False, always on CPU
+            if 'auto', based on shape of `X`, select optimial method
+            (numpy on CPU, or tensorflow on GPU)
+        """
+        self._initialize(X)
+        if is_string(gpu) and gpu.lower() == 'auto':
+            n = np.prod(X.shape) * 4 # assume always float32
+            if n >= MINIMUM_GPU_BLOCK:
+                gpu = True
+            else:
+                gpu = False
+        # ====== run on GPU ====== #
+        if gpu and get_ngpu() > 0:
+            Z, F, S, L = [self.__expressions_gpu[name]
+                          for name in ('zero', 'first', 'second', 'L')]
+            feed_dict = {self.X_: X}
+            feed_dict[self.__expressions_gpu['mu']] = self.mu
+            feed_dict[self.__expressions_gpu['sigma']] = self.sigma
+            feed_dict[self.__expressions_gpu['w']] = self.w
+            return K.eval(x=(Z, F, S, L), feed_dict=feed_dict)
+        # ====== run on numpy ====== #
+        # (feat_dim, nmix)
+        precision = self.__expressions_cpu['precision']
+        mu_precision = self.__expressions_cpu['mu_precision']
+        C = self.__expressions_cpu['C']
+        X_2 = X ** 2
+        D = np.dot(X_2, precision) - \
+            2 * np.dot(X, mu_precision) + \
+            self._feat_const
+        # (batch_size, nmix)
+        logprob = -0.5 * (C + D)
+        # ====== posterior and likelihood ====== #
+        llk = logsumexp(logprob, axis=1) # (batch_size, 1)
+        post = np.exp(logprob - llk) # (batch_size, nmix)
+        # ====== expectation ====== #
         Z = zeroStat(post)
         F = firstStat(X, post)
-        S = secondStat(X, post)
-        L = llk.sum()
+        S = np.dot(X_2.T, post) # dont calculate X**2 again
+        L = np.sum(llk, axis=None)
         return Z, F, S, L
 
     def maximization(self, Z, F, S, floor_const=None):
@@ -313,6 +623,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         if floor_const is not None: # example: floor_const=1e-3
             vFloor = self.sigma.dot(self.w.T) * floor_const
             self.sigma = self.sigma.clip(vFloor)
+        # refresh cpu cached value
+        self._resfresh_cpu_posterior()
 
     def gmm_mixup(self):
         ndim, nmix = self.sigma.shape
@@ -323,3 +635,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         self.mu = np.c_[self.mu - perturb, self.mu + perturb]
         self.sigma = np.c_[self.sigma, self.sigma]
         self.w = 0.5 * np.c_[self.w, self.w]
+        # update information
+        self._curr_nmix = min(2 * self._curr_nmix, self.nmix)
+        self._refresh_gpu_posterior()
+        self._resfresh_cpu_posterior()
