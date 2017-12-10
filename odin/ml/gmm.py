@@ -150,6 +150,17 @@ def _create_batch(start, end, batch_size,
         yield s, e, n, selected
 
 
+def _select_device(X, gpu):
+    if is_string(gpu) and gpu.lower() == 'auto':
+        n = np.prod(X.shape) * 4 # assume always float32
+        if n >= MINIMUM_GPU_BLOCK:
+            gpu = True
+        else:
+            gpu = False
+    gpu &= (get_ngpu() > 0)
+    return gpu
+
+
 # ===========================================================================
 # Main GMM
 # ===========================================================================
@@ -524,21 +535,27 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                 break
         return self
 
-    def score(self, X, y=None):
-        # compute_llk
-        if not self.is_initialized or not self.is_fitted:
-            raise RuntimeError("GMM has not been fitted on data.")
-        post = self.logprob(X) # (N, M)
-        return logsumexp(post, axis=1)
+    def score(self, X, y=None, gpu='auto'):
+        """ Compute the log-likelihood of each example to
+        the Mixture of Components.
+        """
+        post = self.logprob(X, gpu=gpu)  # (batch_size, nmix)
+        return logsumexp(post, axis=1) # (batch_size, 1)
 
-    def transform(self, X):
-        if not self.is_initialized or not self.is_fitted:
-            raise RuntimeError("GMM has not been fitted on data.")
-        post = self.postprob(X)[0]
-        Z = zeroStat(post) # (1, M)
-        F = firstStat(X, post) # (D, M)
+    def transform(self, X, gpu='auto'):
+        """ Compute centered statistics given X and fitted mixtures
+
+
+        NOTE
+        ----
+        For more option check `GMM.expectation`
+        """
+        Z, F = self.expectation(X, gpu=gpu,
+                                zero=True, first=True,
+                                second=False, llk=False)
+        # this equal to: .ravel()[:, np.newaxis]
         F_hat = np.reshape(F - self.mu * Z,
-                           newshape=(self._feat_dim * self._nmix, 1))
+                           newshape=(self._feat_dim * self._curr_nmix, 1))
         return Z, F_hat
 
     # ==================== math helper ==================== #
@@ -548,50 +565,40 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         given the GMM.
         """
         self._initialize(X)
-        return self.__expressions['logprob']
+        gpu = _select_device(X, gpu)
+        if gpu:
+            feed_dict = {self.X_: X}
+            feed_dict[self.__expressions_gpu['mu']] = self.mu
+            feed_dict[self.__expressions_gpu['sigma']] = self.sigma
+            feed_dict[self.__expressions_gpu['w']] = self.w
+            return K.eval(x=self.__expressions_gpu['logprob'],
+                          feed_dict=feed_dict)
+        # ====== run on numpy ====== #
+        # (feat_dim, nmix)
+        precision = self.__expressions_cpu['precision']
+        mu_precision = self.__expressions_cpu['mu_precision']
+        C = self.__expressions_cpu['C']
+        X_2 = X ** 2
+        D = np.dot(X_2, precision) - \
+            2 * np.dot(X, mu_precision) + \
+            self._feat_const
+        # (batch_size, nmix)
+        logprob = -0.5 * (C + D)
+        return logprob
 
     def postprob(self, X, gpu='auto'):
         """ Shape: (batch_size, nmix)
         The posterior probability of mixtures for each frame
         """
         self._initialize(X)
-        return self.__expressions['post']
-
-    def llk(self, X, gpu='auto'):
-        """ Shape: (batch_size, 1)
-        The log-likelihood value of each frame to all components
-        """
-        self._initialize(X)
-        return self.__expressions['llk']
-
-    def expectation(self, X, gpu='auto'):
-        """
-        Parameters
-        ----------
-        X : numpy.ndarray [batch_size, feat_dim]
-            input array, with feature dimension is the final dimension
-        gpu : {True, False, 'auto'}
-            if True, always perform calculation on GPU
-            if False, always on CPU
-            if 'auto', based on shape of `X`, select optimial method
-            (numpy on CPU, or tensorflow on GPU)
-        """
-        self._initialize(X)
-        if is_string(gpu) and gpu.lower() == 'auto':
-            n = np.prod(X.shape) * 4 # assume always float32
-            if n >= MINIMUM_GPU_BLOCK:
-                gpu = True
-            else:
-                gpu = False
-        # ====== run on GPU ====== #
-        if gpu and get_ngpu() > 0:
-            Z, F, S, L = [self.__expressions_gpu[name]
-                          for name in ('zero', 'first', 'second', 'L')]
+        gpu = _select_device(X, gpu)
+        if gpu:
             feed_dict = {self.X_: X}
             feed_dict[self.__expressions_gpu['mu']] = self.mu
             feed_dict[self.__expressions_gpu['sigma']] = self.sigma
             feed_dict[self.__expressions_gpu['w']] = self.w
-            return K.eval(x=(Z, F, S, L), feed_dict=feed_dict)
+            return K.eval(x=self.__expressions_gpu['post'],
+                          feed_dict=feed_dict)
         # ====== run on numpy ====== #
         # (feat_dim, nmix)
         precision = self.__expressions_cpu['precision']
@@ -606,27 +613,141 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         # ====== posterior and likelihood ====== #
         llk = logsumexp(logprob, axis=1) # (batch_size, 1)
         post = np.exp(logprob - llk) # (batch_size, nmix)
-        # ====== expectation ====== #
-        Z = zeroStat(post)
-        F = firstStat(X, post)
-        S = np.dot(X_2.T, post) # dont calculate X**2 again
-        L = np.sum(llk, axis=None)
-        return Z, F, S, L
+        return post
+
+    def llk(self, X, gpu='auto'):
+        """ Shape: (batch_size, 1)
+        The log-likelihood value of each frame to all components
+        """
+        self._initialize(X)
+        gpu = _select_device(X, gpu)
+        if gpu:
+            feed_dict = {self.X_: X}
+            feed_dict[self.__expressions_gpu['mu']] = self.mu
+            feed_dict[self.__expressions_gpu['sigma']] = self.sigma
+            feed_dict[self.__expressions_gpu['w']] = self.w
+            return K.eval(x=self.__expressions_gpu['llk'],
+                          feed_dict=feed_dict)
+        # ====== run on numpy ====== #
+        # (feat_dim, nmix)
+        precision = self.__expressions_cpu['precision']
+        mu_precision = self.__expressions_cpu['mu_precision']
+        C = self.__expressions_cpu['C']
+        X_2 = X ** 2
+        D = np.dot(X_2, precision) - \
+            2 * np.dot(X, mu_precision) + \
+            self._feat_const
+        # (batch_size, nmix)
+        logprob = -0.5 * (C + D)
+        # ====== posterior and likelihood ====== #
+        llk = logsumexp(logprob, axis=1) # (batch_size, 1)
+        return llk
+
+    def expectation(self, X, gpu='auto',
+                    zero=True, first=True, second=True,
+                    llk=True):
+        """
+        Parameters
+        ----------
+        X : numpy.ndarray [batch_size, feat_dim]
+            input array, with feature dimension is the final dimension
+        gpu : {True, False, 'auto'}
+            if True, always perform calculation on GPU
+            if False, always on CPU
+            if 'auto', based on shape of `X`, select optimial method
+            (numpy on CPU, or tensorflow on GPU)
+        zero : bool (default: True)
+            if True, return zero-order statistics
+        first : bool (default: True)
+            if True, return first-order statistics
+        second : bool (default: True)
+            if True, return second-order statistics
+        llk : bool (default: True)
+            if True, return log-likelihood
+
+        Return
+        ------
+        The order of return value:
+        zero  (optional) : ndarray [1, nmix]
+        first (optional) : ndarray [feat_dim, nmix]
+        second(optional) : ndarray [feat_dim, nmix]
+        llk   (optional) : scalar ()
+        """
+        self._initialize(X)
+        gpu = _select_device(X, gpu)
+        # ====== run on GPU ====== #
+        if gpu:
+            Z, F, S, L = [self.__expressions_gpu[name]
+                          for name in ('zero', 'first', 'second', 'L')]
+            feed_dict = {self.X_: X}
+            feed_dict[self.__expressions_gpu['mu']] = self.mu
+            feed_dict[self.__expressions_gpu['sigma']] = self.sigma
+            feed_dict[self.__expressions_gpu['w']] = self.w
+            outputs = [i for i, j in zip((Z, F, S, L),
+                                         (zero, first, second, llk))
+                       if j]
+            results = K.eval(x=outputs, feed_dict=feed_dict)
+        # ====== run on numpy ====== #
+        else:
+            results = []
+            # (feat_dim, nmix)
+            precision = self.__expressions_cpu['precision']
+            mu_precision = self.__expressions_cpu['mu_precision']
+            C = self.__expressions_cpu['C']
+            X_2 = X ** 2
+            D = np.dot(X_2, precision) - \
+                2 * np.dot(X, mu_precision) + \
+                self._feat_const
+            # (batch_size, nmix)
+            logprob = -0.5 * (C + D)
+            # ====== posterior and likelihood ====== #
+            LLK = logsumexp(logprob, axis=1) # (batch_size, 1)
+            post = np.exp(logprob - LLK) # (batch_size, nmix)
+            # ====== expectation ====== #
+            if zero:
+                Z = zeroStat(post)
+                results.append(Z)
+            if first:
+                F = firstStat(X, post)
+                results.append(F)
+            if second:
+                S = np.dot(X_2.T, post) # dont calculate X**2 again
+                results.append(S)
+            if llk:
+                L = np.sum(LLK, axis=None)
+                results.append(L)
+        # ====== return ====== #
+        return results if len(results) > 1 else results[0]
 
     def maximization(self, Z, F, S, floor_const=None):
+        """
+        Parameters
+        ----------
+        Z : numpy.ndarray (1, nmix)
+            zero statistics
+        F : numpy.ndarray (feat_dim, nmix)
+            first-order statistics
+        S : numpy.ndarray (feat_dim, nmix)
+            second-order statistics
+        floor_const : {None, small float}
+            numerical stablize the sigma (e.g. 1e-3)
+        """
         # TheReduce
         iN = 1. / (Z + EPS)
         self.w = Z / Z.sum()
         self.mu = F * iN
         self.sigma = S * iN - self.mu * self.mu
         # applying variance floors
-        if floor_const is not None: # example: floor_const=1e-3
+        if floor_const is not None:
             vFloor = self.sigma.dot(self.w.T) * floor_const
             self.sigma = self.sigma.clip(vFloor)
         # refresh cpu cached value
         self._resfresh_cpu_posterior()
 
     def gmm_mixup(self):
+        if self._curr_nmix >= self._nmix:
+            return
+        # ====== double up the components ====== #
         ndim, nmix = self.sigma.shape
         sig_max, arg_max = self.sigma.max(0), self.sigma.argmax(0)
         eps = np.zeros((ndim, nmix), dtype='f')

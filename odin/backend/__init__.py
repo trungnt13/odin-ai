@@ -176,31 +176,66 @@ def restore_variables(path, session=None):
         role.add_role(v, collections[v.name])
 
 
-def _eval_single_tensor(x, feed_dict=None):
-    if hasattr(x, 'eval') and inspect.ismethod(x.eval):
-        if 'feed_dict' in inspect.getargspec(x.eval).args:
-            return x.eval(session=get_session(x.graph),
-                          feed_dict=feed_dict)
-        else:
-            return x.eval(session=get_session(x.graph))
-    elif is_string(x):
-        return builtins.eval(x)
-    elif isinstance(x, tf.Operation):
-        return get_session(x.graph).run(x, feed_dict=feed_dict)
-    raise ValueError("Type %s don't have the eval function." % str(x, 'utf-8'))
-
-
 def eval(x, feed_dict=None):
     '''Evaluates the value of a tensor.
+
     Parameters
     ----------
     x: list, tuple, dictionary, `Tensor`
         tensorfow `Tensor` for evaluation
     '''
+    # ====== list of Tensor or string ====== #
     if isinstance(x, (tuple, list)):
-        return [_eval_single_tensor(tensor, feed_dict=feed_dict)
-                for tensor in x]
+        string_eval = []
+        tensor_eval = []
+        tensor_idx = []
+        # evaluate string expression
+        for i, j in enumerate(x):
+            if is_string(j):
+                string_eval.append(builtins.eval(j))
+            else:
+                tensor_eval.append(j)
+                tensor_idx.append(i)
+        # evaluate tensor
+        if len(tensor_eval) > 0:
+            graph = [i.graph for i in tensor_eval]
+            if len(set(graph)) > 1:
+                raise RuntimeError("Cannot evaluate multiple `Tensor` come from "
+                                   "different `Graph`.")
+            tensor_eval = get_session(graph[0]).run(tensor_eval,
+                                                    feed_dict=feed_dict)
+        return tuple([tensor_eval.pop(0) if i in tensor_idx else
+                      string_eval.pop(0)
+                      for i in range(len(x))])
+    # ====== mapping ====== #
     elif isinstance(x, Mapping):
-        return {name: _eval_single_tensor(tensor, feed_dict=feed_dict)
-                for name, tensor in x.items()}
-    return _eval_single_tensor(x, feed_dict=feed_dict)
+        results = {}
+        tensor_eval_key = []
+        tensor_eval_value = []
+        for k, v in x.items():
+            if is_string(v):
+                results[k] = builtins.eval(v)
+            else:
+                tensor_eval_key.append(k)
+                tensor_eval_value.append(v)
+        # evaluate tensor
+        if len(tensor_eval) > 0:
+            graph = [i.graph for i in tensor_eval_value]
+            if len(set(graph)) > 1:
+                raise RuntimeError("Cannot evaluate multiple `Tensor` come from "
+                                   "different `Graph`.")
+            tensor_eval_value = get_session(graph[0]).run(tensor_eval_value,
+                                                          feed_dict=feed_dict)
+        # update results
+        for k, v in zip(tensor_eval_key, tensor_eval_value):
+            results[k] = v
+        return results
+    # ====== just a string ====== #
+    elif is_string(x):
+        return builtins.eval(x)
+    # ====== just a Tensorflow object ====== #
+    elif isinstance(x, tf.Operation) or \
+    is_tensor(x, inc_distribution=True, inc_variable=True):
+        return get_session(x.graph).run(x, feed_dict=feed_dict)
+    # ====== exception ====== #
+    raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
