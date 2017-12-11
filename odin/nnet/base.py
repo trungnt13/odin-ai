@@ -499,6 +499,12 @@ class NNOp(object):
         self._last_input_footprint = ''
         self._transpose_ops = None
         self._is_initialized = False
+        # this store the sorted, concatenated name of
+        # all initialized variables belong to this NNOp
+        # if there is change in list of Variables, the
+        # the NNOp will automatically initialize all the
+        # variable again.
+        self._is_initialized_all_variables = ''
         # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
         self._variable_info = OrderedDict()
         # special flags to detect if cPickle called with protocol >= 2
@@ -560,15 +566,32 @@ class NNOp(object):
                 self._delete_vars_folder = False
 
     # ==================== properties ==================== #
-    def get(self, name):
-        """"Simple shortcut for getting defined variable"""
-        if isinstance(name, bytes):
-            name = str(name, 'utf-8')
-        elif not is_string(name):
-            raise ValueError("`name` must be string.")
-        if name not in self._variable_info:
-            raise ValueError("Variable with name: '%s' hasn't been created." % name)
-        return self.get_variable(name)
+    def get(self, name, nnop=False):
+        """"Simple shortcut for getting defined Variable, or NNOp
+        within the scope of this `NNOp`
+
+        Parameters
+        ----------
+        name : string
+            the name, or part of the name of the `Variable` or `NNOp`
+        nnop : bool
+            if you want to get a `NNOp` with given name instead of
+            `Variable`
+        """
+        # ====== get variable ====== #
+        if not nnop:
+            if isinstance(name, bytes):
+                name = str(name, 'utf-8')
+            elif not is_string(name):
+                raise ValueError("`name` must be string.")
+            if name not in self._variable_info:
+                raise ValueError("Variable with name: '%s' hasn't been created." % name)
+            return self.get_variable(name)
+        # ====== nnop ====== #
+        for op in self.nnops:
+            if name == op.name:
+                return op
+        raise ValueError("Cannot find `NNOp` with name: '%s'" % name)
 
     @cache_memory
     def get_variable(self, name, shape=None, initializer=None, roles=[]):
@@ -712,6 +735,19 @@ class NNOp(object):
             self._transpose_ops._transpose_ops = self
         return self._transpose_ops
 
+    def initialize_all_variables(self):
+        """Manually initialize all variables (basically, all Variables
+        within this NNOp scope are initialized when you call
+        `NNOp.variables`.
+
+        This is just another reasonable shortcut.
+
+        Return
+        ------
+        All initialized Variables
+        """
+        return self.variables
+
     @property
     def variables(self):
         """ Get all variables related to this Op, which include:
@@ -738,7 +774,14 @@ class NNOp(object):
             all_vars += op.variables
         # all variables within the scope
         all_vars += K.get_all_variables(scope=self.name)
-        return sorted(set(all_vars), key=lambda x: x.name)
+        all_vars = tuple(sorted(set(all_vars), key=lambda x: x.name))
+        # make sure all variables are initialized
+        vars_footprint = ';'.join([v.name for v in all_vars])
+        if vars_footprint != self._is_initialized_all_variables:
+            self._is_initialized_all_variables = vars_footprint
+            K.initialize_all_variables(all_vars)
+        # return
+        return all_vars
 
     @property
     def nb_variables(self):
@@ -1018,6 +1061,7 @@ class NNOp(object):
             self._current_kwargs = op_kwargs
             # ====== initialize first ====== #
             if not self._is_initialized:
+                # call NNOp initialize
                 self._initialize()
                 self._is_initialized = True
                 # only assign new NNOp if it is initialized
@@ -1033,6 +1077,10 @@ class NNOp(object):
                 self._cache_outputs[footprint] = y
             # check if op_data given, then evaluate to get the results.
             if len(op_data) > 0:
+                # only need to make sure all variables
+                # initialized if we need to evaluate some
+                # expressions.
+                self.initialize_all_variables()
                 y = K.eval(y, feed_dict=op_data)
         # ====== reset the current information ====== #
         self._current_args = ()

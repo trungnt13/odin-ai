@@ -154,6 +154,7 @@ class Extractor(BaseEstimator, TransformerMixin):
             # inputs
             if not _equal_inputs_outputs(X, y):
                 print('  ', ctext("Inputs:", 'yellow'))
+                print('  ', ctext("-------", 'yellow'))
                 if isinstance(X, Mapping):
                     for k, v in X.items():
                         print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))
@@ -161,6 +162,7 @@ class Extractor(BaseEstimator, TransformerMixin):
                     print('    ', dummy_formatter(X))
             # outputs
             print('  ', ctext("Outputs:", 'yellow'))
+            print('  ', ctext("-------", 'yellow'))
             if isinstance(y, Mapping):
                 for k, v in y.items():
                     print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))

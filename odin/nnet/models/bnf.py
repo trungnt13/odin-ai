@@ -1,14 +1,56 @@
-from .base import Model
 
-import numpy as np
-import tensorflow as tf
+from six import add_metaclass
+from abc import ABCMeta, abstractproperty
 
 from odin import backend as K
 from odin.utils import flatten_list
 from odin.nnet.base import Dense
 
+from .base import Model
 
-class BNF_1024_MFCC39(Model):
+
+@add_metaclass(ABCMeta)
+class _BNFbase(Model):
+
+    @abstractproperty
+    def nb_layers(self):
+        raise NotImplementedError
+
+    def get_input_info(self):
+        w0 = self.get_loaded_param('w0')
+        nb_ceps = w0.shape[1]
+        return {'X': ((None, nb_ceps), 'float32')}
+
+    def _initialize(self):
+        param_names = flatten_list([('b%d' % i, 'w%d' % i)
+                                    for i in range(self.nb_layers)])
+        weights = self.get_loaded_param(param_names)
+        # ====== create ====== #
+        layers = []
+        for i in range(self.nb_layers):
+            b = weights[i * 2].ravel()
+            W = weights[i * 2 + 1].T
+            num_units = b.shape[0]
+            if i == self.nb_layers - 1:
+                name = 'Bottleneck'
+                nonlinearity = K.linear
+            else:
+                name = "Layer%d" % (i + 1)
+                nonlinearity = K.relu
+            op = Dense(num_units=num_units, W_init=W, b_init=b,
+                       activation=nonlinearity, name=name)
+            layers.append(op)
+        self.layers = layers
+
+    def _apply(self, X):
+        # ====== apply ====== #
+        for op in self.layers[:-1]:
+            X = op(X)
+            X = K.renorm_rms(X, axis=1)
+        return self.layers[-1](X)
+
+
+class BNF_1024_MFCC39(_BNFbase):
     """ Bottleneck fully connected network (1024-units):
     + Feature: 39-D MFCCs with 13-D+detla+ddelta)
        - sample_rate = 8000
@@ -36,38 +78,8 @@ class BNF_1024_MFCC39(Model):
     def nb_layers(self):
         return 5
 
-    def get_input_info(self):
-        w0 = self.get_loaded_param('w0')
-        nb_ceps = w0.shape[1]
-        return {'X': ((None, nb_ceps), 'float32')}
 
-    def _apply(self, X):
-        param_names = flatten_list([('b%d' % i, 'w%d' % i)
-                                    for i in range(self.nb_layers)])
-        weights = self.get_loaded_param(param_names)
-        # ====== create ====== #
-        layers = []
-        for i in range(self.nb_layers):
-            b = weights[i * 2].ravel()
-            W = weights[i * 2 + 1].T
-            num_units = b.shape[0]
-            if i == self.nb_layers - 1:
-                name = 'Bottleneck'
-                nonlinearity = K.linear
-            else:
-                name = "Layer%d" % (i + 1)
-                nonlinearity = K.relu
-            layers.append(
-                Dense(num_units=num_units, W_init=W, b_init=b,
-                      activation=nonlinearity, name=name))
-        # ====== apply ====== #
-        for l in layers[:-1]:
-            X = l(X)
-            X = K.renorm_rms(X, axis=1)
-        return layers[-1](X)
-
-
-class BNF_2048_MFCC39(BNF_1024_MFCC39):
+class BNF_2048_MFCC39(_BNFbase):
     """ Bottleneck fully connected network (2048-units):
     + Feature: 39-D MFCCs with 13-D+detla+ddelta)
        - sample_rate = 8000
@@ -95,7 +107,7 @@ class BNF_2048_MFCC39(BNF_1024_MFCC39):
         return 6
 
 
-class BNF_2048_MFCC40(BNF_1024_MFCC39):
+class BNF_2048_MFCC40(_BNFbase):
     """ Bottleneck fully connected network (2048-units):
       + Feature: static 40-D MFCCs
          - sample_rate = 8000

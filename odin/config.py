@@ -135,8 +135,18 @@ def set_session(session):
 
 
 def get_session(graph=None):
+    # avoid duplicate Session for the same Graph when
+    # graph is None
+    if graph is None:
+        import tensorflow as tf
+        default_graph = tf.get_default_graph()
+        if default_graph in _SESSION:
+            _SESSION[None] = _SESSION[default_graph]
+    # another case
+    elif None in _SESSION and _SESSION[None].graph == graph:
+        _SESSION[graph] = _SESSION[None]
+    # ====== initialize tensorflow session ====== #
     if graph not in _SESSION:
-        # ====== initialize tensorflow session ====== #
         import tensorflow as tf
         session_args = {
             'intra_op_parallelism_threads': CONFIG['nthread'],

@@ -23,7 +23,8 @@ from . import rand
 from . import rnn_cell
 
 
-def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
+def variable(value=None, shape=None, dtype=floatX, name=None, roles=[],
+             initialize=False):
     '''Instantiates a tensor, automatically initialize the variable
     in tensorflow
 
@@ -35,6 +36,10 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
         tensor type.
     name: str
         optional name string for the tensor.
+    roles: {Role, list of Role}
+        given Role for initialized Variable from `odin.backend.role`
+    initialize : bool
+        if True, call Session run to initialize the variable.
 
     Returns
     -------
@@ -65,14 +70,35 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[]):
             raise ValueError("Given value has shape:%s, but the given shape is"
                              ":%s." % (value.shape, shape))
         variable = tf.Variable(value, dtype=dtype, name=name)
-    if tf.get_default_graph() is get_session().graph:
-        get_session().run(variable.initializer)
-    else:
-        raise Exception("The default tensorflow session have not been associated "
-                        "with ODIN session, hence, cannot initialized the variable."
-                        "Consider using set_session() to manually assign current "
-                        "ODIN session.")
+    # initialize variable
+    if initialize:
+        get_session(graph=variable.graph).run(variable.initializer)
     return role.add_role(variable, roles)
+
+
+def initialize_all_variables(vars=None):
+    if vars is None:
+        vars = get_all_variables()
+    else:
+        vars = [v for v in as_tuple(vars)
+                if is_variable(v)]
+    # ====== check if variable not initialized ====== #
+    init_info = eval([tf.is_variable_initialized(v) for v in vars])
+    vars = [v for v, inited in zip(vars, init_info) if not inited]
+    # ====== build mapping graph -> list of vars ====== #
+    graph = defaultdict(list)
+    for var in get_all_variables():
+        graph[var.graph].append(var)
+    # ====== run the initialization ====== #
+    for g, v in graph.items():
+        get_session(graph=g).run([i.initializer for i in v])
+
+
+def is_variable_initialized(var):
+    if not is_variable(var):
+        raise ValueError("`var` must be instance of tensorflow.Variable, "
+                         "but given type: %s" % type(var))
+    return eval(tf.is_variable_initialized(var))
 
 
 def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
