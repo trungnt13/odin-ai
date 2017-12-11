@@ -586,7 +586,7 @@ class CQTExtractor(Extractor):
         return feat
 
 
-class DBFExtractor(Extractor):
+class BNFExtractor(Extractor):
     """ Deep bottleneck feature extractor
 
     Parameters
@@ -601,7 +601,7 @@ class DBFExtractor(Extractor):
     """
 
     def __init__(self, input_feat, network, context=0, mvn=True):
-        super(DBFExtractor, self).__init__()
+        super(BNFExtractor, self).__init__()
         from odin.nnet import NNOp
         self.input_feat = str(input_feat)
         if not isinstance(network, NNOp):
@@ -626,7 +626,7 @@ class DBFExtractor(Extractor):
 
     def _transform(self, feat):
         if self.input_feat not in feat:
-            raise RuntimeError("DBFExtractor require input feature with name: %s"
+            raise RuntimeError("BNFExtractor require input feature with name: %s"
                                ", which is not found." % self.input_feat)
         X = feat[self.input_feat]
         # normalize
@@ -731,16 +731,16 @@ class SADextractor(Extractor):
     """
 
     def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
-                 feat_type='energy'):
+                 feat_name='energy'):
         super(SADextractor, self).__init__()
         self.nb_mixture = int(nb_mixture)
         self.nb_train_it = int(nb_train_it)
         self.smooth_window = int(smooth_window)
-        self.feat_type = str(feat_type).lower()
+        self.feat_name = str(feat_name).lower()
 
     def _transform(self, feat):
         # ====== select features type ====== #
-        features = feat[self.feat_type]
+        features = feat[self.feat_name]
         if features.ndim > 1:
             features = features.sum(axis=-1)
         # ====== calculate VAD ====== #
@@ -854,7 +854,7 @@ class AcousticNorm(Extractor):
 
     def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
                  win_length=301, var_norm=True,
-                 feat_type=('mspec', 'spec', 'mfcc', 'dbf',
+                 feat_name=('mspec', 'spec', 'mfcc', 'dbf',
                             'qspec', 'qmfcc', 'qmspec')):
         super(AcousticNorm, self).__init__()
         self.mean_var_norm = bool(mean_var_norm)
@@ -868,13 +868,13 @@ class AcousticNorm(Extractor):
             raise ValueError("win_length must >= 3")
         self.win_length = win_length
         # ====== check which features will be normalized ====== #
-        self.feat_type = as_tuple(feat_type, t=str)
+        self.feat_name = as_tuple(feat_name, t=str)
 
     def _transform(self, feat):
         feat_normalized = {}
         # all `features` is [t, f] shape
         for name, features in feat.items():
-            if name in self.feat_type:
+            if name in self.feat_name:
                 if self.mean_var_norm:
                     features = mvn(features, varnorm=self.var_norm)
                 if self.window_mean_var_norm:
@@ -900,7 +900,7 @@ class ApplyingSAD(Extractor):
         ammount of adjent frames will be taken into the SAD
     keep_unvoiced: bool
         if True, keep the whole audio file even though no SAD found
-    feat_type: str, or list of str
+    feat_name: str, or list of str
         all features' name will be applied.
 
     Note
@@ -927,14 +927,14 @@ class ApplyingSAD(Extractor):
 
     def __init__(self, sad_name='sad', threshold=None,
                  smooth_win=None, keep_unvoiced=False,
-                 feat_type=('spec', 'mspec', 'mfcc',
+                 feat_name=('spec', 'mspec', 'mfcc',
                             'qspec', 'qmspec', 'qmfcc',
                             'pitch', 'f0', 'energy')):
         super(ApplyingSAD, self).__init__()
         self.threshold = float(threshold) if is_number(threshold) else None
         self.smooth_win = int(smooth_win) if is_number(smooth_win) else None
         self.sad_name = str(sad_name)
-        self.feat_type = as_tuple(feat_type, t=str)
+        self.feat_name = as_tuple(feat_name, t=str)
         self.keep_unvoiced = bool(keep_unvoiced)
 
     def _transform(self, X):
@@ -952,7 +952,7 @@ class ApplyingSAD(Extractor):
             # ====== start ====== #
             X_new = {}
             for feat_name, feat in X.items():
-                if feat_name in self.feat_type:
+                if feat_name in self.feat_name:
                     assert len(sad) == max(feat.shape),\
                         "Length of sad labels is: %d, but number of sample is: %s"\
                         % (len(sad), max(feat.shape))
@@ -977,13 +977,13 @@ class Read3ColSAD(Extractor):
     keep_unvoiced: bool
         if True, keep all the the features of utterances even though
         cannot file SAD for it. Otherwise, return None.
-    feat_type: list of string
+    feat_name: list of string
         all features type will be applied using given SAD
 
     Return
     ------
      - add 'sad': [(start, end), ...] to the features dictionary
-     - each features specified in `feat_type` is cutted into segments of SAD,
+     - each features specified in `feat_name` is cutted into segments of SAD,
      then concatenated into single matrix (hence, you can use features['sad']
      to get back the separated segments).
 
@@ -1011,12 +1011,12 @@ class Read3ColSAD(Extractor):
 
     def __init__(self, path_or_map, step_length,
                  name_converter=None, ref_key='path', file_regex='.*',
-                 keep_unvoiced=False, feat_type=('spec', 'mspec', 'mfcc',
+                 keep_unvoiced=False, feat_name=('spec', 'mspec', 'mfcc',
                                                  'qspec', 'qmspec', 'qmfcc',
                                                  'pitch', 'f0', 'sad', 'energy')):
         super(Read3ColSAD, self).__init__()
         self.keep_unvoiced = bool(keep_unvoiced)
-        self.feat_type = as_tuple(feat_type, t=str)
+        self.feat_name = as_tuple(feat_name, t=str)
         self.step_length = float(step_length)
         # ====== file regex ====== #
         file_regex = re.compile(str(file_regex))
@@ -1077,7 +1077,7 @@ class Read3ColSAD(Extractor):
                         if end_idx - start_idx == 0:
                             continue
                         # cut SAD out from feats
-                        for _, ftype in enumerate(self.feat_type):
+                        for _, ftype in enumerate(self.feat_name):
                             X = feats[ftype]
                             X = X[start_idx:min(end_idx, X.shape[0])]
                             if X.shape[0] != 0:

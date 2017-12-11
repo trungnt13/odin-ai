@@ -200,33 +200,34 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    batch_size: {int, 'auto'}
+    batch_size : {int, 'auto'}
         if 'auto', used 36 Megabytes block for batch size.
     covariance_type : {'full', 'tied', 'diag', 'spherical'},
             defaults to 'full'.
         String describing the type of covariance parameters to use.
         Must be one of::
-
             'full' (each component has its own general covariance matrix),
             'tied' (all components share the same general covariance matrix),
             'diag' (each component has its own diagonal covariance matrix),
             'spherical' (each component has its own single variance).
-    device: {'gpu', 'cpu', 'mix'}
+    device : {'gpu', 'cpu', 'mix'}
         which devices using for the EM
         'gpu' (only run on tensorflow implementation using GPU)
         'cpu' (only run on numpy implemetation using CPU)
         'mix' (using both GPU and CPU)
-    gpu_factor: int (> 0)
+        * It is suggested to use mix of GPU and CPU if you have
+          more than 24 cores CPU, and keep the `gpu_factor` high-enough.
+    gpu_factor : int (> 0)
         how much jobs GPU will handle more than CPU
         (i.e. `njob_gpu = gpu_factor * njob_cpu`)
-    ncpu: int
+    ncpu : int
         number of processes for parallel calculating Expectation
-    stochastic_downsample: bool
+    stochastic_downsample : bool
         if True, a subset of data is selected differently after
         each iteration => the training is stochastic.
         if False, a deterministic selection of data is performed
         each iteration => the training is deterministic.
-    seed: int
+    seed : int
         random seed for reproducible
     """
 

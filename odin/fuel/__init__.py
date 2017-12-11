@@ -121,20 +121,15 @@ class DIGITS(DataLoader):
 
 
 # ===========================================================================
-# Others
+# More experimental dataset
 # ===========================================================================
 class IRIS(DataLoader):
     pass
 
 
-class openSMILEsad(DataLoader):
-    """ This dataset contains 2 files:
-    * lstmvad_rplp18d_12.net
-    * rplp18d_norm.dat
-    """
-    pass
-
-
+# ===========================================================================
+# Others
+# ===========================================================================
 def load_glove(ndim=100):
     """ Automaticall load a MmapDict which contains the mapping
         (word -> [vector])
@@ -148,3 +143,42 @@ def load_glove(ndim=100):
     fname = os.path.basename(str(link, 'utf-8'))
     embedding = get_file(fname, link, outdir=get_datasetpath(root='~'))
     return MmapDict(embedding, read_only=True)
+
+
+class openSMILEsad(DataLoader):
+    """ This dataset contains 2 files:
+    * lstmvad_rplp18d_12.net
+    * rplp18d_norm.dat
+    """
+    pass
+
+
+def load_lre_sad():
+    link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2xyZV9zYWQ=\n'
+    link = str(base64.decodebytes(link), 'utf-8')
+    path = get_file(fname=os.path.basename(link),
+                    origin=link,
+                    outdir=get_datasetpath(root='~'))
+    return MmapDict(path=path, read_only=True)
+
+
+def load_lre_list():
+    """ The header include following column:
+    * name: LDC2017E22/data/ara-acm/ar-20031215-034005_0-a.sph
+    * lre: {'train17', 'eval15', 'train15', 'dev17', 'eval17'}
+    * language: {'ara-arb', 'eng-sas', 'fre-hat', 'zho-wuu',
+                 'eng-gbr', 'ara-ary', 'eng-usg', 'spa-lac',
+                 'ara-apc', 'qsl-pol', 'spa-eur', 'fre-waf',
+                 'zho-cdo', 'qsl-rus', 'spa-car', 'ara-arz',
+                 'zho-cmn', 'por-brz', 'zho-yue', 'zho-nan',
+                 'ara-acm'}
+    * corpus: {'pcm', 'alaw', 'babel', 'ulaw', 'vast', 'mls14'}
+    * duration: {'3', '30', '5', '15', '10', '20', '1000', '25'}
+    """
+    link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2xyZV9saXN0LnR4dA==\n'
+    link = str(base64.decodebytes(link), 'utf-8')
+    path = get_file(fname=os.path.basename(link),
+                    origin=link,
+                    outdir=get_datasetpath(root='~'))
+    return np.genfromtxt(fname=path, dtype=str, delimiter=' ',
+                         skip_header=1)

@@ -14,13 +14,20 @@ from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter)
-from .signal import delta
+from .signal import delta, mvn, stack_frames
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
 def make_pipeline(steps, debug=False):
+    """ NOTE: this method automatically:
+
+     - Flatten list or dictionary found in steps.
+     - Remove any object that not is instance of `Extractor`
+
+    during creation of `Pipeline`.
+    """
     ID = [0]
 
     def item2step(x):
@@ -168,12 +175,12 @@ class Extractor(BaseEstimator, TransformerMixin):
 # ===========================================================================
 # General extractor
 # ===========================================================================
-def _match_feat_name(feat_type, name):
-    if feat_type is None:
+def _match_feat_name(feat_name, name):
+    if feat_name is None:
         return True
-    elif hasattr(feat_type, '__call__'):
-        return bool(feat_type(name))
-    return name in feat_type
+    elif hasattr(feat_name, '__call__'):
+        return bool(feat_name(name))
+    return name in feat_name
 
 
 class NameConverter(Extractor):
@@ -230,11 +237,11 @@ class DeltaExtractor(Extractor):
     axis: int
         which dimension calculating the data
         (suggest time-dimension for acoustic features)
-    feat_type: list of str
+    feat_name: list of str
         list of all features name for calculating the delta
     """
 
-    def __init__(self, width=9, order=(0, 1), axis=0, feat_type=None):
+    def __init__(self, width=9, order=(0, 1), axis=0, feat_name=None):
         super(DeltaExtractor, self).__init__()
         # ====== check width ====== #
         width = int(width)
@@ -245,13 +252,13 @@ class DeltaExtractor(Extractor):
         self.order = as_tuple(order, t=int)
         # ====== axis ====== #
         self.axis = axis
-        self.feat_type = feat_type
+        self.feat_name = feat_name
 
     def _transform(self, X):
         if isinstance(X, Mapping):
             max_order = max(self.order)
             for name, feat in X.items():
-                if _match_feat_name(self.feat_type, name):
+                if _match_feat_name(self.feat_name, name):
                     all_deltas = delta(data=feat, width=self.width,
                                        order=max_order, axis=self.axis)
                     if not isinstance(all_deltas, (tuple, list)):
@@ -270,14 +277,18 @@ class EqualizeShape0(Extractor):
     """ EqualizeShape0
     The final length of all features is the `minimum length`.
 
-    This Extractor shrink the shape of all given features in `feat_type`
+    This Extractor shrink the shape of all given features in `feat_name`
     to the same length.
 
     Raise Error if given files is shorted than desire length
 
     Parameters
     ----------
-    shrink_mode: 'center', 'left', 'right'
+    feat_name: None or list of string
+        list of features name will be used for calculating the
+        running statistics.
+        If None, calculate the statistics for all `numpy.ndarray`
+   shrink_mode: 'center', 'left', 'right'
         center: remove data points from both left and right
         left: remove data points at the beginning (left)
         right: remove data points at the end (right)
@@ -288,17 +299,17 @@ class EqualizeShape0(Extractor):
         this feature names.
     """
 
-    def __init__(self, feat_type, shrink_mode='right',
+    def __init__(self, feat_name, shrink_mode='right',
                  length_dict=None, keys=('name', 'path')):
         super(EqualizeShape0, self).__init__()
-        if feat_type is None:
+        if feat_name is None:
             pass
-        elif hasattr(feat_type, '__call__'):
-            if not is_pickleable(feat_type):
-                raise ValueError("`feat_type` must be a pickle-able call-able.")
+        elif hasattr(feat_name, '__call__'):
+            if not is_pickleable(feat_name):
+                raise ValueError("`feat_name` must be a pickle-able call-able.")
         else:
-            feat_type = tuple([f.lower() for f in as_tuple(feat_type, t=str)])
-        self.feat_type = feat_type
+            feat_name = tuple([f.lower() for f in as_tuple(feat_name, t=str)])
+        self.feat_name = feat_name
         shrink_mode = str(shrink_mode).lower()
         if shrink_mode not in ('center', 'left', 'right'):
             raise ValueError("shrink mode support include: center, left, right")
@@ -317,7 +328,7 @@ class EqualizeShape0(Extractor):
             if self.length_dict is None:
                 n = min(feat.shape[0]
                         for name, feat in X.items()
-                        if _match_feat_name(self.feat_type, name))
+                        if _match_feat_name(self.feat_name, name))
             else:
                 for k in self.keys:
                     if k in X and X[k] in self.length_dict:
@@ -329,7 +340,7 @@ class EqualizeShape0(Extractor):
             for name, feat in X.items():
                 # cut the features in left and right
                 # if the shape[0] is longer
-                if _match_feat_name(self.feat_type, name) and feat.shape[0] != n:
+                if _match_feat_name(self.feat_name, name) and feat.shape[0] != n:
                     diff = feat.shape[0] - n
                     if diff < 0:
                         print("Feature length: %d which is smaller "
@@ -355,16 +366,16 @@ class RunningStatistics(Extractor):
 
     Parameters
     ----------
-    feat_type: None or list of string
+    feat_name: None or list of string
         list of features name will be used for calculating the
         running statistics.
         If None, calculate the statistics for all `numpy.ndarray`
     """
 
-    def __init__(self, feat_type=None, axis=0, prefix=''):
+    def __init__(self, feat_name=None, axis=0, prefix=''):
         super(RunningStatistics, self).__init__()
-        self.feat_type = None if feat_type is None else \
-            as_tuple(feat_type, t=str)
+        self.feat_name = None if feat_name is None else \
+            as_tuple(feat_name, t=str)
         self.axis = axis
         self.prefix = str(prefix)
 
@@ -376,13 +387,13 @@ class RunningStatistics(Extractor):
 
     def _transform(self, X):
         if isinstance(X, Mapping):
-            # ====== preprocessing feat_type ====== #
-            feat_type = self.feat_type
-            if feat_type is None:
-                feat_type = [name for name, feat in X.items()
+            # ====== preprocessing feat_name ====== #
+            feat_name = self.feat_name
+            if feat_name is None:
+                feat_name = [name for name, feat in X.items()
                              if isinstance(feat, np.ndarray) and feat.ndim >= 1]
             # ====== calculate the statistics ====== #
-            for feat_name in feat_type:
+            for feat_name in feat_name:
                 feat = X[feat_name]
                 # ====== SUM of x^1 ====== #
                 sum1 = np.sum(feat, axis=self.axis,
@@ -417,16 +428,16 @@ class AsType(Extractor):
         super(AsType, self).__init__()
         if isinstance(type_map, Mapping):
             type_map = type_map.items()
-        self.type_map = {str(feat_name): np.dtype(feat_type)
-                         for feat_name, feat_type in type_map}
+        self.type_map = {str(feat_name): np.dtype(feat_name)
+                         for feat_name, feat_name in type_map}
 
     def _transform(self, X):
         if isinstance(X, Mapping):
-            for feat_name, feat_type in self.type_map.items():
+            for feat_name, feat_name in self.type_map.items():
                 if feat_name in X:
                     feat = X[feat_name]
-                    if isinstance(feat, np.ndarray) and feat_type != feat.dtype:
-                        X[feat_name] = feat.astype(feat_type)
+                    if isinstance(feat, np.ndarray) and feat_name != feat.dtype:
+                        X[feat_name] = feat.astype(feat_name)
         return X
 
 
@@ -448,15 +459,59 @@ class DuplicateFeatures(Extractor):
 class RemoveFeatures(Extractor):
     """ Remove features by name from extracted features dictionary """
 
-    def __init__(self, feat_type=()):
+    def __init__(self, feat_name=()):
         super(RemoveFeatures, self).__init__()
-        self.feat_type = as_tuple(feat_type, t=str)
+        self.feat_name = as_tuple(feat_name, t=str)
 
     def _transform(self, X):
         return X
 
     def transform(self, X):
         if isinstance(X, Mapping):
-            for f in self.feat_type:
+            for f in self.feat_name:
                 del X[f]
         return super(RemoveFeatures, self).transform(X)
+
+
+# ===========================================================================
+# Shape
+# ===========================================================================
+class StackFeatures(Extractor):
+    """ Stack context (or splice multiple frames) into
+    single vector.
+
+    Parameters
+    ----------
+    feat_name: None or list of string
+        list of features name will be used for calculating the
+        running statistics.
+        If None, calculate the statistics for all `numpy.ndarray`
+    context: int
+        number of context frame on the left and right, the final
+        number of stacked frame is `context * 2 + 1`
+        NOTE: the stacking process, ignore `context` frames at the
+        beginning on the left, and at the end on the right.
+    mvn: bool
+        if True, preform mean-variance normalization on input features.
+    """
+
+    def __init__(self, context, feat_name=(), mvn=True):
+        super(StackFeatures, self).__init__()
+        self.context = int(context)
+        self.mvn = bool(mvn)
+        self.feat_name = as_tuple(feat_name, t=str)
+
+    def _transform(self, X):
+        for name in self.feat_name:
+            if name in X:
+                y = X[name]
+                # normalize
+                if self.mvn:
+                    y = mvn(y, varnorm=True)
+                # stacking the context frames
+                if self.context > 0:
+                    y = stack_frames(y, frame_length=self.context * 2 + 1,
+                                     step_length=1, keepdims=True,
+                                     make_contigous=True)
+                X[name] = y
+        return X
