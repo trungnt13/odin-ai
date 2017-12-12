@@ -598,7 +598,8 @@ class BNFExtractor(Extractor):
    - Mean-variance normalization
   """
 
-  def __init__(self, input_feat, network, batch_size=512):
+  def __init__(self, input_feat, network,
+               batch_size=2048):
     super(BNFExtractor, self).__init__()
     from odin.nnet import NNOp
     self.input_feat = str(input_feat)
