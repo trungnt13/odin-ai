@@ -430,16 +430,16 @@ class AsType(Extractor):
         super(AsType, self).__init__()
         if isinstance(type_map, Mapping):
             type_map = type_map.items()
-        self.type_map = {str(feat_name): np.dtype(feat_name)
-                         for feat_name, feat_name in type_map}
+        self.type_map = {str(feat_name): np.dtype(dtype)
+                         for feat_name, dtype in type_map}
 
     def _transform(self, X):
         if isinstance(X, Mapping):
-            for feat_name, feat_name in self.type_map.items():
+            for feat_name, dtype in self.type_map.items():
                 if feat_name in X:
                     feat = X[feat_name]
-                    if isinstance(feat, np.ndarray) and feat_name != feat.dtype:
-                        X[feat_name] = feat.astype(feat_name)
+                    if isinstance(feat, np.ndarray) and dtype != feat.dtype:
+                        X[feat_name] = feat.astype(dtype)
         return X
 
 
@@ -497,19 +497,15 @@ class StackFeatures(Extractor):
         if True, preform mean-variance normalization on input features.
     """
 
-    def __init__(self, context, feat_name=(), mvn=True):
+    def __init__(self, context, feat_name=()):
         super(StackFeatures, self).__init__()
         self.context = int(context)
-        self.mvn = bool(mvn)
         self.feat_name = as_tuple(feat_name, t=str)
 
     def _transform(self, X):
         for name in self.feat_name:
             if name in X:
                 y = X[name]
-                # normalize
-                if self.mvn:
-                    y = mvn(y, varnorm=True)
                 # stacking the context frames
                 if self.context > 0:
                     y = stack_frames(y, frame_length=self.context * 2 + 1,

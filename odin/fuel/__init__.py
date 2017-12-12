@@ -174,6 +174,11 @@ def load_lre_list():
                  'ara-acm'}
     * corpus: {'pcm', 'alaw', 'babel', 'ulaw', 'vast', 'mls14'}
     * duration: {'3', '30', '5', '15', '10', '20', '1000', '25'}
+
+    Note
+    ----
+    Suggested namming scheme:
+      `lre/lang/corpus/dur/base_name`
     """
     link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2xyZV9saXN0LnR4dA==\n'
     link = str(base64.decodebytes(link), 'utf-8')
