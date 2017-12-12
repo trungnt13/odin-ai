@@ -51,7 +51,7 @@ from odin import config
 from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable, Progbar, mpi, ctext,
-                        is_fileobj)
+                        is_fileobj, batching)
 from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
@@ -598,23 +598,25 @@ class BNFExtractor(Extractor):
    - Mean-variance normalization
   """
 
-  def __init__(self, input_feat, network):
+  def __init__(self, input_feat, network, batch_size=512):
     super(BNFExtractor, self).__init__()
     from odin.nnet import NNOp
     self.input_feat = str(input_feat)
     if not isinstance(network, NNOp):
       raise ValueError("`network` must be instance of odin.nnet.NNOp")
     self.network = network
+    self.batch_size = int(batch_size)
 
   def __getstate__(self):
     from odin import nnet as N
     if not self.network.is_initialized:
       self.network()
-    return (self.input_feat, N.serialize(self.network, output_mode='bin'))
+    return (self.input_feat, self.batch_size,
+            N.serialize(self.network, output_mode='bin'))
 
   def __setstate__(self, states):
     from odin import nnet as N
-    (self.input_feat, self.network) = states
+    (self.input_feat, self.batch_size, self.network) = states
     self.network = N.deserialize(self.network,
                                  force_restore_vars=False)
 
@@ -622,9 +624,12 @@ class BNFExtractor(Extractor):
     if self.input_feat not in feat:
       raise RuntimeError("BNFExtractor require input feature with name: %s"
                          ", which is not found." % self.input_feat)
+    X = feat[self.input_feat]
+    y = []
     # make prediciton
-    X = self.network(feat[self.input_feat])
-    feat['bnf'] = X
+    for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
+      y.append(self.network(X[s:e]))
+    feat['bnf'] = np.concatenate(y, axis=0)
     return feat
 
 
