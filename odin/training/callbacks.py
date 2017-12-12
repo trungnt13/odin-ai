@@ -26,18 +26,18 @@ from odin.utils import as_tuple, is_string, add_notification
 from odin.utils.decorators import functionable
 
 __all__ = [
-    'SIG_TRAIN_SAVE',
-    'SIG_TRAIN_ROLLBACK',
-    'SIG_TRAIN_STOP',
-    'Callback',
-    'Debug',
-    'CallbackList',
-    'NaNDetector',
-    'Checkpoint',
-    'EarlyStop',
-    'EarlyStopGeneralizationLoss',
-    'EarlyStopPatience',
-    'LRdecay',
+  'SIG_TRAIN_SAVE',
+  'SIG_TRAIN_ROLLBACK',
+  'SIG_TRAIN_STOP',
+  'Callback',
+  'Debug',
+  'CallbackList',
+  'NaNDetector',
+  'Checkpoint',
+  'EarlyStop',
+  'EarlyStopGeneralizationLoss',
+  'EarlyStopPatience',
+  'LRdecay',
 ]
 
 # This SIGNAL can terminate running iterator (or generator),
@@ -59,24 +59,24 @@ _ALLOW_MSG = {
 # Helpers
 # ===========================================================================
 def _parse_result(result):
-    if isinstance(result, (tuple, list)) and len(str(result)) > 20:
-        type_str = ''
-        if len(result) > 0:
-            type_str = type(result[0]).__name__
-        return 'list;%d;%s' % (len(result), type_str)
-    s = str(result)
-    return s[:20]
+  if isinstance(result, (tuple, list)) and len(str(result)) > 20:
+    type_str = ''
+    if len(result) > 0:
+      type_str = type(result[0]).__name__
+    return 'list;%d;%s' % (len(result), type_str)
+  s = str(result)
+  return s[:20]
 
 
 TASK_TYPES = ['task', 'subtask', 'crosstask', 'othertask']
 
 
 def time2date(timestamp):
-    return datetime.fromtimestamp(timestamp).strftime('%y-%m-%d %H:%M:%S')
+  return datetime.fromtimestamp(timestamp).strftime('%y-%m-%d %H:%M:%S')
 
 
 def date2time(date):
-    return time.mktime(datetime.datetime.strptime(date, '%y-%m-%d %H:%M:%S').timetuple())
+  return time.mktime(datetime.datetime.strptime(date, '%y-%m-%d %H:%M:%S').timetuple())
 
 
 # ===========================================================================
@@ -84,220 +84,220 @@ def date2time(date):
 # ===========================================================================
 class Callback(object):
 
-    """Callback
-    Order of execution:
-     - task_start(self, task, results)
-     - epoch_start(self, task, results)
-     - batch_start(self, task, results)
-     - batch_end(self, task, results)
-     - epoch_end(self, task, results)
-     - task_end(self, task, results)
+  """Callback
+  Order of execution:
+   - task_start(self, task, results)
+   - epoch_start(self, task, results)
+   - batch_start(self, task, results)
+   - batch_end(self, task, results)
+   - epoch_end(self, task, results)
+   - task_end(self, task, results)
 
-    Some accessible properties from `task`
-     - curr_epoch: Total number of epoch finished since the beginning of the Task
-     - curr_iter: Total number of iteration finished since the beginning of the Task
-     - curr_samples: Total number of samples finished since the beginning of the Task
-     - curr_epoch_iter: Number of iteration within current epoch
-     - curr_epoch_samples: Number of samples within current epoch
+  Some accessible properties from `task`
+   - curr_epoch: Total number of epoch finished since the beginning of the Task
+   - curr_iter: Total number of iteration finished since the beginning of the Task
+   - curr_samples: Total number of samples finished since the beginning of the Task
+   - curr_epoch_iter: Number of iteration within current epoch
+   - curr_epoch_samples: Number of samples within current epoch
+  """
+
+  def __init__(self, log=True):
+    super(Callback, self).__init__()
+    self.log = log
+
+  def batch_start(self, task, batch):
+    pass
+
+  def batch_end(self, task, batch_results):
+    pass
+
+  def epoch_start(self, task, data):
+    pass
+
+  def epoch_end(self, task, epoch_results):
+    pass
+
+  def task_start(self, task):
+    pass
+
+  def task_end(self, task, task_results):
+    pass
+
+  def event(self, event_name):
+    """ This function is directly called by MainLoop when
+    special event triggered, for example:
+     - SIG_TRAIN_ROLLBACK
+     - SIG_TRAIN_STOP
+     - SIG_TRAIN_SAVE
     """
+    pass
 
-    def __init__(self, log=True):
-        super(Callback, self).__init__()
-        self.log = log
-
-    def batch_start(self, task, batch):
-        pass
-
-    def batch_end(self, task, batch_results):
-        pass
-
-    def epoch_start(self, task, data):
-        pass
-
-    def epoch_end(self, task, epoch_results):
-        pass
-
-    def task_start(self, task):
-        pass
-
-    def task_end(self, task, task_results):
-        pass
-
-    def event(self, event_name):
-        """ This function is directly called by MainLoop when
-        special event triggered, for example:
-         - SIG_TRAIN_ROLLBACK
-         - SIG_TRAIN_STOP
-         - SIG_TRAIN_SAVE
-        """
-        pass
-
-    def send_notification(self, msg):
-        if self.log:
-            add_notification('[%s]%s' % (self.__class__.__name__, msg))
-        return self
+  def send_notification(self, msg):
+    if self.log:
+      add_notification('[%s]%s' % (self.__class__.__name__, msg))
+    return self
 
 
 class Debug(Callback):
-    """docstring for Debug"""
+  """docstring for Debug"""
 
-    def __init__(self):
-        super(Debug, self).__init__()
+  def __init__(self):
+    super(Debug, self).__init__()
 
-    def batch_start(self, task, batch):
-        print("Batch Start:", task.name, task.curr_epoch, task.curr_samples,
-              [(i.shape, i.dtype, type(i)) for i in batch])
+  def batch_start(self, task, batch):
+    print("Batch Start:", task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in batch])
 
-    def batch_end(self, task, batch_results):
-        print("Batch End:", task.name, task.curr_epoch, task.curr_samples,
-              [(i.shape, i.dtype, type(i)) for i in as_tuple(batch_results)])
+  def batch_end(self, task, batch_results):
+    print("Batch End:", task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in as_tuple(batch_results)])
 
-    def epoch_start(self, task, data):
-        print("Epoch Start:", task.name, task.curr_epoch, task.curr_samples,
-              [(i.shape, i.dtype, type(i)) for i in data])
+  def epoch_start(self, task, data):
+    print("Epoch Start:", task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in data])
 
-    def epoch_end(self, task, epoch_results):
-        print("Epoch End:", task.name, task.curr_epoch, task.curr_samples,
-              [(i, len(j), type(j[0])) for i, j in epoch_results.items()])
+  def epoch_end(self, task, epoch_results):
+    print("Epoch End:", task.name, task.curr_epoch, task.curr_samples,
+          [(i, len(j), type(j[0])) for i, j in epoch_results.items()])
 
-    def task_start(self, task):
-        print("Task Start:", task.name, task.curr_epoch, task.curr_samples)
+  def task_start(self, task):
+    print("Task Start:", task.name, task.curr_epoch, task.curr_samples)
 
-    def task_end(self, task, task_results):
-        print("Task End:", task.name, task.curr_epoch, task.curr_samples,
-            [(i, [(n, len(v), type(v[0])) for n, v in j.items()])
-             for i, j in task_results.items()])
+  def task_end(self, task, task_results):
+    print("Task End:", task.name, task.curr_epoch, task.curr_samples,
+        [(i, [(n, len(v), type(v[0])) for n, v in j.items()])
+         for i, j in task_results.items()])
 
 
 class CallbackList(Callback):
 
-    ''' Broadcast signal to all its children'''
+  ''' Broadcast signal to all its children'''
 
-    def __init__(self, callbacks=None):
-        super(CallbackList, self).__init__()
-        self.set_callbacks(callbacks)
+  def __init__(self, callbacks=None):
+    super(CallbackList, self).__init__()
+    self.set_callbacks(callbacks)
 
-    def set_callbacks(self, callbacks):
-        if callbacks is None:
-            callbacks = []
-        elif isinstance(callbacks, CallbackList):
-            callbacks = callbacks._callbacks
-        else:
-            callbacks = as_tuple(callbacks, t = Callback)
-        self._callbacks = [i for i in set(callbacks)]
-        return self
+  def set_callbacks(self, callbacks):
+    if callbacks is None:
+      callbacks = []
+    elif isinstance(callbacks, CallbackList):
+      callbacks = callbacks._callbacks
+    else:
+      callbacks = as_tuple(callbacks, t = Callback)
+    self._callbacks = [i for i in set(callbacks)]
+    return self
 
-    def __str__(self):
-        return '<CallbackList: ' + \
-        ', '.join([i.__class__.__name__ for i in self._callbacks]) + '>'
+  def __str__(self):
+    return '<CallbackList: ' + \
+    ', '.join([i.__class__.__name__ for i in self._callbacks]) + '>'
 
-    def batch_start(self, task, batch):
-        msg = []
-        for i in self._callbacks:
-            m = i.batch_start(task, batch)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def batch_start(self, task, batch):
+    msg = []
+    for i in self._callbacks:
+      m = i.batch_start(task, batch)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def batch_end(self, task, batch_results):
-        msg = []
-        for i in self._callbacks:
-            m = i.batch_end(task, batch_results)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def batch_end(self, task, batch_results):
+    msg = []
+    for i in self._callbacks:
+      m = i.batch_end(task, batch_results)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def epoch_start(self, task, data):
-        msg = []
-        for i in self._callbacks:
-            m = i.epoch_start(task, data)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def epoch_start(self, task, data):
+    msg = []
+    for i in self._callbacks:
+      m = i.epoch_start(task, data)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def epoch_end(self, task, epoch_results):
-        msg = []
-        for i in self._callbacks:
-            m = i.epoch_end(task, epoch_results)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def epoch_end(self, task, epoch_results):
+    msg = []
+    for i in self._callbacks:
+      m = i.epoch_end(task, epoch_results)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def task_start(self, task):
-        msg = []
-        for i in self._callbacks:
-            m = i.task_start(task)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def task_start(self, task):
+    msg = []
+    for i in self._callbacks:
+      m = i.task_start(task)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def task_end(self, task, task_results):
-        msg = []
-        for i in self._callbacks:
-            m = i.task_end(task, task_results)
-            msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
-        return msg
+  def task_end(self, task, task_results):
+    msg = []
+    for i in self._callbacks:
+      m = i.task_end(task, task_results)
+      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+    return msg
 
-    def event(self, event_name):
-        for i in self._callbacks:
-            i.event(event_name)
+  def event(self, event_name):
+    for i in self._callbacks:
+      i.event(event_name)
 
 
 # ===========================================================================
 # NaN value detection
 # ===========================================================================
 class NaNDetector(Callback):
-    """docstring for NaNDetector"""
+  """docstring for NaNDetector"""
 
-    def __init__(self, task_name=None, patience=-1, log=True):
-        super(NaNDetector, self).__init__(log)
-        self._task_name = task_name
-        self._patience = patience
+  def __init__(self, task_name=None, patience=-1, log=True):
+    super(NaNDetector, self).__init__(log)
+    self._task_name = task_name
+    self._patience = patience
 
-    def batch_end(self, task, batch_results):
-        if self._task_name is not None and task.name != self._task_name:
-            return
-        # found any NaN values
-        if any(np.any(np.isnan(r)) for r in as_tuple(batch_results)):
-            signal = SIG_TRAIN_ROLLBACK
-            self._patience -= 1
-            if self._patience <= 0: # but if out of patience, stop
-                signal = SIG_TRAIN_STOP
-            self.send_notification('Found NaN value, task:"%s"' % task.name)
-            return signal
+  def batch_end(self, task, batch_results):
+    if self._task_name is not None and task.name != self._task_name:
+      return
+    # found any NaN values
+    if any(np.any(np.isnan(r)) for r in as_tuple(batch_results)):
+      signal = SIG_TRAIN_ROLLBACK
+      self._patience -= 1
+      if self._patience <= 0: # but if out of patience, stop
+        signal = SIG_TRAIN_STOP
+      self.send_notification('Found NaN value, task:"%s"' % task.name)
+      return signal
 
 
 class Checkpoint(Callback):
-    """docstring for NaNDetector"""
+  """docstring for NaNDetector"""
 
-    def __init__(self, task_name, epoch_percent=1., log=True):
-        super(Checkpoint, self).__init__(log)
-        self._task_name = task_name
-        self._epoch_percent = epoch_percent
+  def __init__(self, task_name, epoch_percent=1., log=True):
+    super(Checkpoint, self).__init__(log)
+    self._task_name = task_name
+    self._epoch_percent = epoch_percent
 
-    def batch_end(self, task, batch_results):
-        if task.name == self._task_name:
-            if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
-                return SIG_TRAIN_SAVE
-        return None
+  def batch_end(self, task, batch_results):
+    if task.name == self._task_name:
+      if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
+        return SIG_TRAIN_SAVE
+    return None
 
 
 # ===========================================================================
 # Learning rate manipulation
 # ===========================================================================
 class LRdecay(Callback):
-    """ LRdecay
-    whenever SIG_TRAIN_ROLLBACK is triggered, decrease the learning
-    rate by `decay_rate`
-    """
+  """ LRdecay
+  whenever SIG_TRAIN_ROLLBACK is triggered, decrease the learning
+  rate by `decay_rate`
+  """
 
-    def __init__(self, lr, decay_rate=0.5):
-        super(LRdecay, self).__init__()
-        from odin import backend as K
-        self.lr = lr
-        self.lr_value = K.get_value(lr)
-        self.decay_rate = decay_rate
+  def __init__(self, lr, decay_rate=0.5):
+    super(LRdecay, self).__init__()
+    from odin import backend as K
+    self.lr = lr
+    self.lr_value = K.get_value(lr)
+    self.decay_rate = decay_rate
 
-    def event(self, event_name):
-        if event_name == SIG_TRAIN_ROLLBACK:
-            from odin import backend as K
-            self.lr_value *= self.decay_rate
-            K.set_value(self.lr, self.lr_value)
+  def event(self, event_name):
+    if event_name == SIG_TRAIN_ROLLBACK:
+      from odin import backend as K
+      self.lr_value *= self.decay_rate
+      K.set_value(self.lr, self.lr_value)
 
 
 # ===========================================================================
@@ -305,204 +305,204 @@ class LRdecay(Callback):
 # ===========================================================================
 @add_metaclass(ABCMeta)
 class EarlyStop(Callback):
-    """
-    Early Stopping algorithm based on Generalization Loss criterion,
-    this is strict measure on validation
+  """
+  Early Stopping algorithm based on Generalization Loss criterion,
+  this is strict measure on validation
 
-    ``LOWER is better``
+  ``LOWER is better``
 
-    Parameters
-    ----------
-    name : string
-        task name for checking this criterion
-    threshold : float
-        for example, threshold = 5, if we loss 5% of performance on validation
-        set, then stop
-    patience: int
-        how many cross the threshold that still can be rollbacked
-    get_value : function
-        function to process the results of whole epoch (i.e list of results
-        returned from batch_end) to return comparable number.
-        For example, lambda x: np.mean(x)
-    stop_callback: function
-        will be called when stop signal triggered
-    save_callback: function
-        will be called when save signal triggered
+  Parameters
+  ----------
+  name : string
+      task name for checking this criterion
+  threshold : float
+      for example, threshold = 5, if we loss 5% of performance on validation
+      set, then stop
+  patience: int
+      how many cross the threshold that still can be rollbacked
+  get_value : function
+      function to process the results of whole epoch (i.e list of results
+      returned from batch_end) to return comparable number.
+      For example, lambda x: np.mean(x)
+  stop_callback: function
+      will be called when stop signal triggered
+  save_callback: function
+      will be called when save signal triggered
 
-    Note
-    ----
-    * The early stop checking will be performed at the end of an epoch.
-    * By default, the return value from epoch mean the loss value, i.e lower
-    is better
-    * If multiple value returned, you have to modify the get_value function
-    """
+  Note
+  ----
+  * The early stop checking will be performed at the end of an epoch.
+  * By default, the return value from epoch mean the loss value, i.e lower
+  is better
+  * If multiple value returned, you have to modify the get_value function
+  """
 
-    def __init__(self, task_name, output_name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x), log=True):
-        super(EarlyStop, self).__init__(log)
-        self._task_name = str(task_name)
-        self._output_name = output_name if is_string(output_name) \
-            else output_name.name
+  def __init__(self, task_name, output_name, threshold, patience=1,
+               get_value=lambda x: np.mean(x), log=True):
+    super(EarlyStop, self).__init__(log)
+    self._task_name = str(task_name)
+    self._output_name = output_name if is_string(output_name) \
+        else output_name.name
 
-        self._threshold = float(threshold)
-        self._patience = int(patience)
+    self._threshold = float(threshold)
+    self._patience = int(patience)
 
-        if get_value is None:
-            get_value = lambda x: x
-        elif not hasattr(get_value, '__call__'):
-            raise ValueError('get_value must call-able')
-        self._get_value = functionable(get_value)
-        # ====== history ====== #
-        self._history = []
+    if get_value is None:
+      get_value = lambda x: x
+    elif not hasattr(get_value, '__call__'):
+      raise ValueError('get_value must call-able')
+    self._get_value = functionable(get_value)
+    # ====== history ====== #
+    self._history = []
 
-    # ==================== main callback methods ==================== #
-    def epoch_end(self, task, epoch_results):
-        if self._task_name != task.name:
-            return
-        self._history.append(self._get_value(epoch_results[self._output_name]))
-        # ====== check early stop ====== #
-        shouldSave, shouldStop = self.earlystop(self._history, self._threshold)
-        msg = None
-        if shouldSave > 0:
-            msg = SIG_TRAIN_SAVE
-        if shouldStop > 0:
-            msg = SIG_TRAIN_ROLLBACK
-            # check patience
-            self._patience -= 1
-            if self._patience < 0:
-                msg = SIG_TRAIN_STOP
-        self.send_notification('Message "%s"' % str(msg))
-        return msg
+  # ==================== main callback methods ==================== #
+  def epoch_end(self, task, epoch_results):
+    if self._task_name != task.name:
+      return
+    self._history.append(self._get_value(epoch_results[self._output_name]))
+    # ====== check early stop ====== #
+    shouldSave, shouldStop = self.earlystop(self._history, self._threshold)
+    msg = None
+    if shouldSave > 0:
+      msg = SIG_TRAIN_SAVE
+    if shouldStop > 0:
+      msg = SIG_TRAIN_ROLLBACK
+      # check patience
+      self._patience -= 1
+      if self._patience < 0:
+        msg = SIG_TRAIN_STOP
+    self.send_notification('Message "%s"' % str(msg))
+    return msg
 
-    @abstractmethod
-    def earlystop(self, history, threshold):
-        """ Any algorithm return: shouldSave, shouldStop """
-        pass
+  @abstractmethod
+  def earlystop(self, history, threshold):
+    """ Any algorithm return: shouldSave, shouldStop """
+    pass
 
 
 class EarlyStopGeneralizationLoss(EarlyStop):
-    """ Early Stopping algorithm based on Generalization Loss criterion,
-    this is strict measure on validation
+  """ Early Stopping algorithm based on Generalization Loss criterion,
+  this is strict measure on validation
 
-    ``LOWER is better``
+  ``LOWER is better``
 
-    Parameters
-    ----------
-    name : string
-        task name for checking this criterion
-    threshold : float
-        for example, threshold = 5, if we loss 5% of performance on validation
-        set, then stop
-    patience: int
-        how many cross the threshold that still can be rollbacked
-    get_value : function
-        function to process the results of whole epoch (i.e list of results
-        returned from batch_end) to return comparable number.
+  Parameters
+  ----------
+  name : string
+      task name for checking this criterion
+  threshold : float
+      for example, threshold = 5, if we loss 5% of performance on validation
+      set, then stop
+  patience: int
+      how many cross the threshold that still can be rollbacked
+  get_value : function
+      function to process the results of whole epoch (i.e list of results
+      returned from batch_end) to return comparable number.
 
-    Note
-    ----
-    The early stop checking will be performed at the end of an epoch.
-    By default, the return value from epoch mean the loss value, i.e lower
-    is better.
-    By default, the `get_value` function will only take the first returned
-    value for evaluation.
-    """
+  Note
+  ----
+  The early stop checking will be performed at the end of an epoch.
+  By default, the return value from epoch mean the loss value, i.e lower
+  is better.
+  By default, the `get_value` function will only take the first returned
+  value for evaluation.
+  """
 
-    def __init__(self, task_name, output_name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x), log=True):
-        super(EarlyStopGeneralizationLoss, self).__init__(
-            task_name, output_name, threshold, patience,
-            get_value, log)
+  def __init__(self, task_name, output_name, threshold, patience=1,
+               get_value=lambda x: np.mean(x), log=True):
+    super(EarlyStopGeneralizationLoss, self).__init__(
+        task_name, output_name, threshold, patience,
+        get_value, log)
 
-    def earlystop(self, history, threshold):
-        gl_exit_threshold = threshold
-        longest_remain_performance = int(gl_exit_threshold + 1)
-        epsilon = 1e-8
+  def earlystop(self, history, threshold):
+    gl_exit_threshold = threshold
+    longest_remain_performance = int(gl_exit_threshold + 1)
+    epsilon = 1e-8
 
-        if len(history) == 0: # no save, no stop
-            return 0, 0
-        shouldStop = 0
-        shouldSave = 0
+    if len(history) == 0: # no save, no stop
+      return 0, 0
+    shouldStop = 0
+    shouldSave = 0
 
-        gl_t = 100 * (history[-1] / (min(history) + epsilon) - 1)
-        if gl_t <= 0 and np.argmin(history) == (len(history) - 1):
-            shouldSave = 1
-            shouldStop = -1
-        elif gl_t > gl_exit_threshold:
-            shouldStop = 1
-            shouldSave = -1
+    gl_t = 100 * (history[-1] / (min(history) + epsilon) - 1)
+    if gl_t <= 0 and np.argmin(history) == (len(history) - 1):
+      shouldSave = 1
+      shouldStop = -1
+    elif gl_t > gl_exit_threshold:
+      shouldStop = 1
+      shouldSave = -1
 
-        # check stay the same performance for so long
-        if len(history) > longest_remain_performance:
-            remain_detected = 0
-            j = history[-longest_remain_performance]
-            for i in history[-longest_remain_performance:]:
-                if abs(i - j) < 1e-5:
-                    remain_detected += 1
-            if remain_detected >= longest_remain_performance:
-                shouldStop = 1
-        return shouldSave, shouldStop
+    # check stay the same performance for so long
+    if len(history) > longest_remain_performance:
+      remain_detected = 0
+      j = history[-longest_remain_performance]
+      for i in history[-longest_remain_performance:]:
+        if abs(i - j) < 1e-5:
+          remain_detected += 1
+      if remain_detected >= longest_remain_performance:
+        shouldStop = 1
+    return shouldSave, shouldStop
 
 
 class EarlyStopPatience(EarlyStop):
-    """
-    EarlyStopPatience(self, name, threshold, patience=1,
-              get_value=lambda x: np.mean([i[0] for i in x]
-                                          if isinstance(x[0], (tuple, list))
-                                          else x),
-              stop_callback=None,
-              save_callback=None)
+  """
+  EarlyStopPatience(self, name, threshold, patience=1,
+            get_value=lambda x: np.mean([i[0] for i in x]
+                                        if isinstance(x[0], (tuple, list))
+                                        else x),
+            stop_callback=None,
+            save_callback=None)
 
 
-    Adapted algorithm from keras:
-    All contributions by François Chollet:
-    Copyright (c) 2015, François Chollet.
-    All rights reserved.
+  Adapted algorithm from keras:
+  All contributions by François Chollet:
+  Copyright (c) 2015, François Chollet.
+  All rights reserved.
 
-    All contributions by Google:
-    Copyright (c) 2015, Google, Inc.
-    All rights reserved.
+  All contributions by Google:
+  Copyright (c) 2015, Google, Inc.
+  All rights reserved.
 
-    All other contributions:
-    Copyright (c) 2015, the respective contributors.
-    All rights reserved.
+  All other contributions:
+  Copyright (c) 2015, the respective contributors.
+  All rights reserved.
 
-    LICENSE: https://github.com/fchollet/keras/blob/master/LICENSE
+  LICENSE: https://github.com/fchollet/keras/blob/master/LICENSE
 
-    Stop training when a monitored quantity has stopped improving.
+  Stop training when a monitored quantity has stopped improving.
 
-    Parameters
-    ----------
-    name : string
-        task name for checking this criterion
-    threshold : float
-        for example, threshold = 5, if we loss 5% of performance on validation
-        set, then stop
-    patience: int
-        how many cross the threshold that still can be rollbacked
-    get_value : function
-        function to process the results of whole epoch (i.e list of results
-        returned from batch_end) to return comparable number.
-        for example, lambda x: np.mean(x)
+  Parameters
+  ----------
+  name : string
+      task name for checking this criterion
+  threshold : float
+      for example, threshold = 5, if we loss 5% of performance on validation
+      set, then stop
+  patience: int
+      how many cross the threshold that still can be rollbacked
+  get_value : function
+      function to process the results of whole epoch (i.e list of results
+      returned from batch_end) to return comparable number.
+      for example, lambda x: np.mean(x)
 
-    """
+  """
 
-    def __init__(self, task_name, output_name, threshold, patience=1,
-                 get_value=lambda x: np.mean(x), log=True):
-        super(EarlyStopPatience, self).__init__(
-            task_name, output_name, threshold, patience,
-            get_value, log)
+  def __init__(self, task_name, output_name, threshold, patience=1,
+               get_value=lambda x: np.mean(x), log=True):
+    super(EarlyStopPatience, self).__init__(
+        task_name, output_name, threshold, patience,
+        get_value, log)
 
-    def earlystop(self, history, threshold):
-        if not hasattr(self, 'wait'): self.wait = 0
-        shouldSave, shouldStop = 0, 0
-        # showed improvement, should not equal to old best
-        if len(history) <= 1 or history[-1] < np.min(history[:-1]):
-            self.wait = 0
-            shouldSave = 1
-        else:
-            if self.wait >= threshold:
-                shouldSave = -1
-                shouldStop = 1
-            self.wait += 1
-        return shouldSave, shouldStop
+  def earlystop(self, history, threshold):
+    if not hasattr(self, 'wait'): self.wait = 0
+    shouldSave, shouldStop = 0, 0
+    # showed improvement, should not equal to old best
+    if len(history) <= 1 or history[-1] < np.min(history[:-1]):
+      self.wait = 0
+      shouldSave = 1
+    else:
+      if self.wait >= threshold:
+        shouldSave = -1
+        shouldStop = 1
+      self.wait += 1
+    return shouldSave, shouldStop

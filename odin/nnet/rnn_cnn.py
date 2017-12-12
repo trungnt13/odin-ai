@@ -4,8 +4,8 @@ from .rnn import BaseRNN
 
 
 class LSTMcnn(BaseRNN):
-    """ LSTMcnn """
+  """ LSTMcnn """
 
-    def __init__(self, arg):
-        super(LSTMcnn, self).__init__()
-        self.arg = arg
+  def __init__(self, arg):
+    super(LSTMcnn, self).__init__()
+    self.arg = arg

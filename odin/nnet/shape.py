@@ -11,19 +11,19 @@ from .base import NNOp
 # Flatten
 # ===========================================================================
 class Flatten(NNOp):
-    """ Flatten the array from the right.
-    i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
-    """
+  """ Flatten the array from the right.
+  i.e. turn shape=(128,28,28) with outdim=2 into shape=(128, 784)
+  """
 
-    def __init__(self, outdim=2, **kwargs):
-        super(Flatten, self).__init__(**kwargs)
-        self.outdim = outdim
+  def __init__(self, outdim=2, **kwargs):
+    super(Flatten, self).__init__(**kwargs)
+    self.outdim = outdim
 
-    def _apply(self, X):
-        return K.flatten(X, outdim=self.outdim)
+  def _apply(self, X):
+    return K.flatten(X, outdim=self.outdim)
 
-    def _transpose(self):
-        return Reshape(shape=self.input_shape)
+  def _transpose(self):
+    return Reshape(shape=self.input_shape)
 
 
 # ===========================================================================
@@ -31,54 +31,54 @@ class Flatten(NNOp):
 # ===========================================================================
 class Reshape(NNOp):
 
-    def __init__(self, shape, **kwargs):
-        super(Reshape, self).__init__(**kwargs)
-        self.shape = shape
+  def __init__(self, shape, **kwargs):
+    super(Reshape, self).__init__(**kwargs)
+    self.shape = shape
 
-    def _apply(self, X):
-        return K.reshape(X, shape=self.shape)
+  def _apply(self, X):
+    return K.reshape(X, shape=self.shape)
 
-    def _transpose(self):
-        return Reshape(shape=self.input_shape)
+  def _transpose(self):
+    return Reshape(shape=self.input_shape)
 
 
 class Dimshuffle(NNOp):
 
-    def __init__(self, pattern, **kwargs):
-        super(Dimshuffle, self).__init__(**kwargs)
-        self.pattern = pattern
+  def __init__(self, pattern, **kwargs):
+    super(Dimshuffle, self).__init__(**kwargs)
+    self.pattern = pattern
 
-    def _apply(self, X):
-        return K.dimshuffle(X, pattern=self.pattern)
+  def _apply(self, X):
+    return K.dimshuffle(X, pattern=self.pattern)
 
-    def _transpose(self):
-        return Reshape(shape=self.input_shape)
+  def _transpose(self):
+    return Reshape(shape=self.input_shape)
 
 
 class Squeeze(NNOp):
 
-    def __init__(self, axis, **kwargs):
-        super(Squeeze, self).__init__(**kwargs)
-        self.axis = axis
+  def __init__(self, axis, **kwargs):
+    super(Squeeze, self).__init__(**kwargs)
+    self.axis = axis
 
-    def _apply(self, X):
-        input_shape = X.get_shape()
-        if input_shape[self.axis] != 1:
-            raise ValueError('The squeeze axis=%d must be 1, but got %d instead' %
-                             (self.axis, input_shape[self.axis]))
-        return tf.squeeze(X, axis=self.axis)
+  def _apply(self, X):
+    input_shape = X.get_shape()
+    if input_shape[self.axis] != 1:
+      raise ValueError('The squeeze axis=%d must be 1, but got %d instead' %
+                       (self.axis, input_shape[self.axis]))
+    return tf.squeeze(X, axis=self.axis)
 
-    def _transpose(self):
-        return InvertSqueeze(self)
+  def _transpose(self):
+    return InvertSqueeze(self)
 
 
 # NNTranspose
 class InvertSqueeze(NNOp):
 
-    def _apply(self, X):
-        ndim = len(self.T.input_shape)
-        axis = self.T.axis % ndim
-        pattern = ['x' if i == axis
-                   else (i - 1 if i > axis else i)
-                   for i in range(ndim)]
-        return K.dimshuffle(X, pattern)
+  def _apply(self, X):
+    ndim = len(self.T.input_shape)
+    axis = self.T.axis % ndim
+    pattern = ['x' if i == axis
+               else (i - 1 if i > axis else i)
+               for i in range(ndim)]
+    return K.dimshuffle(X, pattern)

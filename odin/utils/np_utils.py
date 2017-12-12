@@ -48,107 +48,107 @@ nd_2_idx = {0: b'0', 1: b'1', 2: b'2', 3: b'3', 4: b'4',
 
 
 def array2bytes(a):
-    """ Fastest way to convert `numpy.ndarray` and all its
-    metadata to bytes array.
-    """
-    shape = marshal.dumps(a.shape, 0)
-    array = a.tobytes() + shape + dt_2_idx[a.dtype.name] + nd_2_idx[a.ndim]
-    return array
+  """ Fastest way to convert `numpy.ndarray` and all its
+  metadata to bytes array.
+  """
+  shape = marshal.dumps(a.shape, 0)
+  array = a.tobytes() + shape + dt_2_idx[a.dtype.name] + nd_2_idx[a.ndim]
+  return array
 
 
 def bytes2array(b):
-    """ Deserialize result from `array2bytes` back to `numpy.ndarray` """
-    ndim = int(b[-1:])
-    dtype = idx_2_dt[b[-2:-1]]
-    i = -((ndim + 1) * 5) - 2
-    shape = marshal.loads(b[i:-2])
-    return np.frombuffer(b[:i], dtype=dtype).reshape(shape)
+  """ Deserialize result from `array2bytes` back to `numpy.ndarray` """
+  ndim = int(b[-1:])
+  dtype = idx_2_dt[b[-2:-1]]
+  i = -((ndim + 1) * 5) - 2
+  shape = marshal.loads(b[i:-2])
+  return np.frombuffer(b[:i], dtype=dtype).reshape(shape)
 
 
 # ===========================================================================
 # Helper
 # ===========================================================================
 class LabelsIndexing(object):
-    """ LabelsIndexing
+  """ LabelsIndexing
 
-    Parameters
-    ----------
-    key_func: callabe
-        a function transform each element of `y` into unique ID
-        for labeling.
-    fast_index: dict
-        mapping from label -> index
-    sorted_labels: list
-        list of all labels, sorted for unique order
-    """
+  Parameters
+  ----------
+  key_func: callabe
+      a function transform each element of `y` into unique ID
+      for labeling.
+  fast_index: dict
+      mapping from label -> index
+  sorted_labels: list
+      list of all labels, sorted for unique order
+  """
 
-    def __init__(self, key_func, fast_index, sorted_labels):
-        super(LabelsIndexing, self).__init__()
-        self._key_func = key_func
-        self._fast_index = fast_index
-        self._sorted_labels = sorted_labels
+  def __init__(self, key_func, fast_index, sorted_labels):
+    super(LabelsIndexing, self).__init__()
+    self._key_func = key_func
+    self._fast_index = fast_index
+    self._sorted_labels = sorted_labels
 
-    def __call__(self, x):
-        x = self._key_func(x)
-        if x in self._fast_index:
-            return self._fast_index[x]
-        raise ValueError("Cannot find key: '%s' in %s" %
-                         (str(x), str(self._sorted_labels)))
+  def __call__(self, x):
+    x = self._key_func(x)
+    if x in self._fast_index:
+      return self._fast_index[x]
+    raise ValueError("Cannot find key: '%s' in %s" %
+                     (str(x), str(self._sorted_labels)))
 
 
 # ===========================================================================
 # Main
 # ===========================================================================
 def one_hot(y, nb_classes=None):
-    '''Convert class vector (integers from 0 to nb_classes)
-    to binary class matrix, for use with categorical_crossentropy
+  '''Convert class vector (integers from 0 to nb_classes)
+  to binary class matrix, for use with categorical_crossentropy
 
-    Note
-    ----
-    if any class index in y is smaller than 0, then all of its one-hot
-    values is 0.
-    '''
-    y = np.asarray(y, dtype='int32')
-    if not nb_classes:
-        nb_classes = np.max(y) + 1
-    Y = np.zeros((len(y), nb_classes), dtype='int32')
-    for i, j in enumerate(y):
-        if j >= 0:
-            Y[i, j] = 1
-    return Y
+  Note
+  ----
+  if any class index in y is smaller than 0, then all of its one-hot
+  values is 0.
+  '''
+  y = np.asarray(y, dtype='int32')
+  if not nb_classes:
+    nb_classes = np.max(y) + 1
+  Y = np.zeros((len(y), nb_classes), dtype='int32')
+  for i, j in enumerate(y):
+    if j >= 0:
+      Y[i, j] = 1
+  return Y
 
 
 def unique_labels(y, key_func=None, return_labels=False):
-    """
-    Parameters
-    ----------
-    y: list, tuple, `numpy.ndarray`
-        list of object that is label or contain label information.
-    key_func: callabe
-        a function transform each element of `y` into unique ID for labeling.
-    return_labels: bool
-        if True, return the ordered labels.
+  """
+  Parameters
+  ----------
+  y: list, tuple, `numpy.ndarray`
+      list of object that is label or contain label information.
+  key_func: callabe
+      a function transform each element of `y` into unique ID for labeling.
+  return_labels: bool
+      if True, return the ordered labels.
 
-    Returns
-    -------
-    (call-able, tuple):
-        function that transform any object into unique label index
-        (optional) list of ordered labels.
-    """
-    if not isinstance(y, (list, tuple, np.ndarray)):
-        raise ValueError("`y` must be iterable (list, tuple, or numpy.ndarray).")
-    # ====== Get an unique order of y ====== #
-    if key_func is None or not hasattr(key_func, '__call__'):
-        key_func = lambda _: str(_)
-    sorted_labels = list(sorted(set(key_func(i) for i in y)))
-    fast_index = {j: i for i, j in enumerate(sorted_labels)}
-    # ====== create label indexing object ====== #
-    labels_indexing = LabelsIndexing(key_func,
-                                     fast_index,
-                                     sorted_labels)
-    if return_labels:
-        return labels_indexing, tuple(sorted_labels)
-    return labels_indexing
+  Returns
+  -------
+  (call-able, tuple):
+      function that transform any object into unique label index
+      (optional) list of ordered labels.
+  """
+  if not isinstance(y, (list, tuple, np.ndarray)):
+    raise ValueError("`y` must be iterable (list, tuple, or numpy.ndarray).")
+  # ====== Get an unique order of y ====== #
+  if key_func is None or not hasattr(key_func, '__call__'):
+    key_func = lambda _: str(_)
+  sorted_labels = list(sorted(set(key_func(i) for i in y)))
+  fast_index = {j: i for i, j in enumerate(sorted_labels)}
+  # ====== create label indexing object ====== #
+  labels_indexing = LabelsIndexing(key_func,
+                                   fast_index,
+                                   sorted_labels)
+  if return_labels:
+    return labels_indexing, tuple(sorted_labels)
+  return labels_indexing
 
 
 # ===========================================================================
@@ -158,31 +158,31 @@ _CACHE_SPLITTER = {}
 
 
 class _label_split_helper(object):
-    def __init__(self, pos, delimiter):
-        super(_label_split_helper, self).__init__()
-        self.pos = pos
-        self.delimiter = delimiter
+  def __init__(self, pos, delimiter):
+    super(_label_split_helper, self).__init__()
+    self.pos = pos
+    self.delimiter = delimiter
 
-    def __call__(self, x):
-        if isinstance(x, string_types):
-            return x.split(self.delimiter)[self.pos]
-        elif isinstance(x, (tuple, list, np.ndarray)):
-            for i in x:
-                if isinstance(i, string_types):
-                    return i.split(self.delimiter)[self.pos]
-        else:
-            raise RuntimeError("Unsupport type=%s for label splitter" %
-                str(type(x)))
+  def __call__(self, x):
+    if isinstance(x, string_types):
+      return x.split(self.delimiter)[self.pos]
+    elif isinstance(x, (tuple, list, np.ndarray)):
+      for i in x:
+        if isinstance(i, string_types):
+          return i.split(self.delimiter)[self.pos]
+    else:
+      raise RuntimeError("Unsupport type=%s for label splitter" %
+          str(type(x)))
 
 
 def label_splitter(pos, delimiter='/'):
-    pos = int(pos)
-    delimiter = str(delimiter)
-    splitter_id = str(pos) + delimiter
-    if splitter_id not in _CACHE_SPLITTER:
-        splitter = _label_split_helper(pos, delimiter)
-        _CACHE_SPLITTER[splitter_id] = splitter
-    return _CACHE_SPLITTER[splitter_id]
+  pos = int(pos)
+  delimiter = str(delimiter)
+  splitter_id = str(pos) + delimiter
+  if splitter_id not in _CACHE_SPLITTER:
+    splitter = _label_split_helper(pos, delimiter)
+    _CACHE_SPLITTER[splitter_id] = splitter
+  return _CACHE_SPLITTER[splitter_id]
 
 
 # def replace(array, value, new_value):

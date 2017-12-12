@@ -54,7 +54,7 @@ padding = False
 frame_length = 0.025
 step_length = 0.005
 dtype = 'float32'
-dbf_network = N.models.BNF_1024_MFCC39()
+bnf_network = N.models.BNF_1024_MFCC39()
 extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True, preemphasis=0.97,
@@ -75,12 +75,12 @@ extractors = pp.make_pipeline(steps=[
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_name='energy'),
     pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
-                           feat_name=('mspec', 'qmspec', 'mfcc', 'qmfcc',
-                                      'energy', 'pitch')),
+                           feat_name=('mspec', 'qmspec', 'mfcc',
+                                      'qmfcc', 'energy', 'pitch')),
     # BNF require SAD
     pp.speech.ApplyingSAD(stack_context={'mfcc': 10}, smooth_win=8,
                           keep_unvoiced=True, feat_name='mfcc'),
-    pp.speech.BNFExtractor(input_feat='mfcc', network=dbf_network),
+    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network),
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
                            feat_name=('mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),
@@ -146,7 +146,7 @@ if 'pitch' in ds:
     if not np.any(pitch):
       print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
-for feat in ('mspec', 'spec', 'mfcc', 'dbf'):
+for feat in ('mspec', 'spec', 'mfcc', 'bnf'):
   from sklearn.manifold import TSNE
   X = []; y = []
   feat_pca = ds[feat + '_pca']

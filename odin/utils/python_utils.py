@@ -11,18 +11,18 @@ import numpy as np
 # Async file IO
 # ===========================================================================
 class keydefaultdict(defaultdict):
-    def __missing__(self, key):
-        if self.default_factory is None:
-            raise KeyError(key)
-        else:
-            ret = self[key] = self.default_factory(key)
-            return ret
+  def __missing__(self, key):
+    if self.default_factory is None:
+      raise KeyError(key)
+    else:
+      ret = self[key] = self.default_factory(key)
+      return ret
 
 
 class abstractclassmethod(classmethod):
 
-    __isabstractmethod__ = True
+  __isabstractmethod__ = True
 
-    def __init__(self, method):
-        method.__isabstractmethod__ = True
-        super(abstractclassmethod, self).__init__(method)
+  def __init__(self, method):
+    method.__isabstractmethod__ = True
+    super(abstractclassmethod, self).__init__(method)

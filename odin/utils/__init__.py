@@ -27,9 +27,9 @@ from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
 
 try:
-    from numba import jit, autojit, vectorize, guvectorize
+  from numba import jit, autojit, vectorize, guvectorize
 except:
-    pass
+  pass
 import numpy
 
 from .progbar import Progbar, add_notification
@@ -48,233 +48,233 @@ from . import decorators
 # Pretty print
 # ===========================================================================
 def ctext(s, color='red'):
-    """ Colored text support
-    * BLACK
-    * RED
-    * GREEN
-    * YELLOW
-    * BLUE
-    * MAGENTA
-    * CYAN
-    * WHITE
-    * RESET
-    * LIGHTBLACK_EX
-    * LIGHTRED_EX
-    * LIGHTGREEN_EX
-    * LIGHTYELLOW_EX
-    * LIGHTBLUE_EX
-    * LIGHTMAGENTA_EX
-    * LIGHTCYAN_EX
-    * LIGHTWHITE_EX
+  """ Colored text support
+  * BLACK
+  * RED
+  * GREEN
+  * YELLOW
+  * BLUE
+  * MAGENTA
+  * CYAN
+  * WHITE
+  * RESET
+  * LIGHTBLACK_EX
+  * LIGHTRED_EX
+  * LIGHTGREEN_EX
+  * LIGHTYELLOW_EX
+  * LIGHTBLUE_EX
+  * LIGHTMAGENTA_EX
+  * LIGHTCYAN_EX
+  * LIGHTWHITE_EX
 
-    Note
-    ----
-    * colored text is longer in length and can overlength the screen
-    (i.e. make the progress-bar ugly).
-    * ctext(x + y + z) is BETTER than ctext(x) + ctext(y) + ctext(z)
-    because it save more space.
-    """
-    try:
-        from colorama import Fore
-        color = color.upper()
-        color = getattr(Fore, color, '')
-        return color + str(s) + Fore.RESET
-    except ImportError:
-        pass
-    return s
+  Note
+  ----
+  * colored text is longer in length and can overlength the screen
+  (i.e. make the progress-bar ugly).
+  * ctext(x + y + z) is BETTER than ctext(x) + ctext(y) + ctext(z)
+  because it save more space.
+  """
+  try:
+    from colorama import Fore
+    color = color.upper()
+    color = getattr(Fore, color, '')
+    return color + str(s) + Fore.RESET
+  except ImportError:
+    pass
+  return s
 
 
 def _type_name(x):
-    if isinstance(x, np.dtype):
-        return x.name
-    return type(x).__name__
+  if isinstance(x, np.dtype):
+    return x.name
+  return type(x).__name__
 
 
 def dummy_formatter(x):
-    s = str(x)
-    if len(s) < 120 and '\n' not in s:
-        return s
-    if isinstance(x, (tuple, list)):
-        return "(list)length=%d;type=%s" % \
-            (len(x), _type_name(x[0]) if len(x) > 0 else '*empty*')
-    if isinstance(x, np.ndarray):
-        return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
-    if isinstance(x, Mapping):
-        return "(map)length=%d;dtype=%s" % (len(x),
-            ';'.join([_type_name(i) for i in next(iter(x.items()))]))
-    # dataset type
-    if 'odin.fuel.dataset.Dataset' in str(type(x)):
-        return ("(ds)path:%s" % x.path)
-    # NNOp types
-    if any('odin.nnet.base.NNOp' in str(i) for i in type.mro(type(x))):
-        return "\n" + '\n'.join(['\t' + line for line in str(x).split('\n')])
-    if is_string(x):
-        return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
-    return str(x)
+  s = str(x)
+  if len(s) < 120 and '\n' not in s:
+    return s
+  if isinstance(x, (tuple, list)):
+    return "(list)length=%d;type=%s" % \
+        (len(x), _type_name(x[0]) if len(x) > 0 else '*empty*')
+  if isinstance(x, np.ndarray):
+    return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
+  if isinstance(x, Mapping):
+    return "(map)length=%d;dtype=%s" % (len(x),
+        ';'.join([_type_name(i) for i in next(iter(x.items()))]))
+  # dataset type
+  if 'odin.fuel.dataset.Dataset' in str(type(x)):
+    return ("(ds)path:%s" % x.path)
+  # NNOp types
+  if any('odin.nnet.base.NNOp' in str(i) for i in type.mro(type(x))):
+    return "\n" + '\n'.join(['\t' + line for line in str(x).split('\n')])
+  if is_string(x):
+    return str(x) if len(x) < 250 else '(str)length:%d' % len(x)
+  return str(x)
 
 
 @contextlib.contextmanager
 def UnitTimer(factor=1, name=None):
-    start = timeit.default_timer()
-    yield None
-    end = timeit.default_timer()
-    # set name for timing task
-    if name is None:
-        name = 'Task'
-    print('["%s"]' % ctext(name, 'yellow'),
-        "Time:",
-        ctext((end - start) / factor, 'cyan'),
-        '(sec)')
+  start = timeit.default_timer()
+  yield None
+  end = timeit.default_timer()
+  # set name for timing task
+  if name is None:
+    name = 'Task'
+  print('["%s"]' % ctext(name, 'yellow'),
+      "Time:",
+      ctext((end - start) / factor, 'cyan'),
+      '(sec)')
 
 
 # ===========================================================================
 # Basics
 # ===========================================================================
 def is_fileobj(f):
-    """ Check if an object `f` is intance of FileIO object created
-    by `open()`"""
-    return isinstance(f, io.TextIOBase) or \
-        isinstance(f, io.BufferedIOBase) or \
-        isinstance(f, io.RawIOBase) or \
-        isinstance(f, io.IOBase)
+  """ Check if an object `f` is intance of FileIO object created
+  by `open()`"""
+  return isinstance(f, io.TextIOBase) or \
+      isinstance(f, io.BufferedIOBase) or \
+      isinstance(f, io.RawIOBase) or \
+      isinstance(f, io.IOBase)
 
 
 def is_string(s):
-    return isinstance(s, string_types)
+  return isinstance(s, string_types)
 
 
 def is_path(path):
-    if is_string(path):
-        try:
-            os.path.exists(path)
-            return True
-        except Exception as e:
-            return False
-    return False
+  if is_string(path):
+    try:
+      os.path.exists(path)
+      return True
+    except Exception as e:
+      return False
+  return False
 
 
 def is_number(i):
-    return isinstance(i, numbers.Number)
+  return isinstance(i, numbers.Number)
 
 
 def is_bool(b):
-    return isinstance(b, type(True))
+  return isinstance(b, type(True))
 
 
 def is_primitives(x, inc_ndarray=True, exception_types=[]):
-    """Primitive types include: number, string, boolean, None
-    and numpy.ndarray (optional) and numpy.generic (optional)
+  """Primitive types include: number, string, boolean, None
+  and numpy.ndarray (optional) and numpy.generic (optional)
 
-    Parameters
-    ----------
-    inc_ndarray: bool
-        if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
-    """
-    # complex list or Mapping
-    if isinstance(x, (tuple, list)):
-        return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                                 exception_types=exception_types)
-                   for i in x)
-    elif isinstance(x, Mapping):
-        return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                                 exception_types=exception_types) and
-                   is_primitives(j, inc_ndarray=inc_ndarray,
-                                 exception_types=exception_types)
-                   for i, j in x.items())
-    # check for number, string, bool, and numpy array
-    if is_number(x) or is_string(x) or is_bool(x) or x is None or \
-    (any(isinstance(x, t) for t in exception_types)) or \
-    (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
-        return True
-    return False
+  Parameters
+  ----------
+  inc_ndarray: bool
+      if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
+  """
+  # complex list or Mapping
+  if isinstance(x, (tuple, list)):
+    return all(is_primitives(i, inc_ndarray=inc_ndarray,
+                             exception_types=exception_types)
+               for i in x)
+  elif isinstance(x, Mapping):
+    return all(is_primitives(i, inc_ndarray=inc_ndarray,
+                             exception_types=exception_types) and
+               is_primitives(j, inc_ndarray=inc_ndarray,
+                             exception_types=exception_types)
+               for i, j in x.items())
+  # check for number, string, bool, and numpy array
+  if is_number(x) or is_string(x) or is_bool(x) or x is None or \
+  (any(isinstance(x, t) for t in exception_types)) or \
+  (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
+    return True
+  return False
 
 
 def type_path(obj):
-    clazz = type(obj)
-    return clazz.__module__ + "." + clazz.__name__
+  clazz = type(obj)
+  return clazz.__module__ + "." + clazz.__name__
 
 
 def is_lambda(v):
-    LAMBDA = lambda: 0
-    return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
+  LAMBDA = lambda: 0
+  return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
 
 
 def is_pickleable(x):
-    try:
-        cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
-        return True
-    except cPickle.PickleError:
-        return False
+  try:
+    cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
+    return True
+  except cPickle.PickleError:
+    return False
 
 
 def iter_chunk(it, n):
-    """ Chunking an iterator into small chunk of size `n`
-    Note: this can be used to slice data into mini batches
-    """
-    if not isinstance(it, Iterator):
-        it = iter(it)
+  """ Chunking an iterator into small chunk of size `n`
+  Note: this can be used to slice data into mini batches
+  """
+  if not isinstance(it, Iterator):
+    it = iter(it)
+  obj = list(islice(it, n))
+  while obj:
+    yield obj
     obj = list(islice(it, n))
-    while obj:
-        yield obj
-        obj = list(islice(it, n))
 
 
 def to_bytes(x, nbytes=None, order='little'):
-    """ Convert some python object to bytes array, support type:
-    * string, unicode
-    * integer
-    * numpy.ndarray
+  """ Convert some python object to bytes array, support type:
+  * string, unicode
+  * integer
+  * numpy.ndarray
 
-    Note
-    ----
-    This method is SLOW
-    """
-    if is_string(x):
-        return x.encode()
-    elif isinstance(x, int):
-        return x.to_bytes(nbytes, order, signed=False)
-    elif isinstance(x, np.ndarray):
-        return x.tobytes()
-    else:
-        raise ValueError("Not support bytes conversion for type: %s" %
-            type(x).__name__)
+  Note
+  ----
+  This method is SLOW
+  """
+  if is_string(x):
+    return x.encode()
+  elif isinstance(x, int):
+    return x.to_bytes(nbytes, order, signed=False)
+  elif isinstance(x, np.ndarray):
+    return x.tobytes()
+  else:
+    raise ValueError("Not support bytes conversion for type: %s" %
+        type(x).__name__)
 
 
 def batching(n, batch_size):
-    """
-    Parameters
-    ----------
-    n: int
-        number of samples
-    batch_size: int
-        number of samples for 1 single batch.
+  """
+  Parameters
+  ----------
+  n: int
+      number of samples
+  batch_size: int
+      number of samples for 1 single batch.
 
-    Return
-    ------
-    iteration: [(start, end), (start, end), ...]
-    """
-    return ((i, min(i + batch_size, n))
-            for i in range(0, n + batch_size, batch_size)
-            if i < n)
+  Return
+  ------
+  iteration: [(start, end), (start, end), ...]
+  """
+  return ((i, min(i + batch_size, n))
+          for i in range(0, n + batch_size, batch_size)
+          if i < n)
 
 
 def read_lines(file_path):
-    if not os.path.exists(file_path):
-        raise ValueError('File at path: %s does not exist.' % file_path)
-    if os.path.isdir(file_path):
-        raise ValueError("Path to %s is a folder" % file_path)
-    lines = []
-    with open(file_path, 'r') as f:
-        for i in f:
-            lines.append(i[:-1] if i[-1] == '\n' else i)
-    return lines
+  if not os.path.exists(file_path):
+    raise ValueError('File at path: %s does not exist.' % file_path)
+  if os.path.isdir(file_path):
+    raise ValueError("Path to %s is a folder" % file_path)
+  lines = []
+  with open(file_path, 'r') as f:
+    for i in f:
+      lines.append(i[:-1] if i[-1] == '\n' else i)
+  return lines
 
 
 # ===========================================================================
 # Others
 # ===========================================================================
 def raise_return(e):
-    raise e
+  raise e
 
 
 _CURRENT_STDIO = None
@@ -282,87 +282,87 @@ _CURRENT_STDIO = None
 
 class _LogWrapper():
 
-    def __init__(self, stream):
-        self.stream = stream
+  def __init__(self, stream):
+    self.stream = stream
 
-    def write(self, message):
-        # no backtrack for writing to file
-        self.stream.write(message.replace("\b", ''))
-        sys.__stdout__.write(message)
+  def write(self, message):
+    # no backtrack for writing to file
+    self.stream.write(message.replace("\b", ''))
+    sys.__stdout__.write(message)
 
-    def flush(self):
-        self.stream.flush()
-        sys.__stdout__.flush()
+  def flush(self):
+    self.stream.flush()
+    sys.__stdout__.flush()
 
-    def close(self):
-        try:
-            self.stream.close()
-        except Exception:
-            pass
+  def close(self):
+    try:
+      self.stream.close()
+    except Exception:
+      pass
 
 
 def get_stdio_path():
-    return _CURRENT_STDIO
+  return _CURRENT_STDIO
 
 
 def stdio(path=None, suppress=False, stderr=True):
-    """
-    Parameters
-    ----------
-    path: None, str
-        if str, specified path for saving all stdout (and stderr)
-        if None, reset stdout and stderr back to normal
-    suppress: boolean
-        totally turn-off all stdout (and stdeer)
-    stderr:
-        apply output file with stderr also
+  """
+  Parameters
+  ----------
+  path: None, str
+      if str, specified path for saving all stdout (and stderr)
+      if None, reset stdout and stderr back to normal
+  suppress: boolean
+      totally turn-off all stdout (and stdeer)
+  stderr:
+      apply output file with stderr also
 
-    NOTE
-    ----
-    Redirect the system logging can slightly decrease the
-    performance in logging intensive application.
-    """
-    # turn off stdio
-    if suppress:
-        f = open(os.devnull, "w")
-        path = None
-    # reset
-    elif path is None:
-        f = None
-    # redirect to a file
-    elif is_string(path):
-        f = _LogWrapper(open(path, "w"))
-    elif is_fileobj(path):
-        f = path
-        path = f.name
-    else:
-        raise ValueError("Unsupport for path=`%s` in `stdio`." %
-            str(type(path)))
-    # ====== set current stdio path ====== #
-    global _CURRENT_STDIO
-    _CURRENT_STDIO = path
-    # ====== assign stdio ====== #
-    if f is None: # reset
-        if isinstance(sys.stdout, _LogWrapper):
-            sys.stdout.close()
-        if isinstance(sys.stderr, _LogWrapper):
-            sys.stderr.close()
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
-    else: # redirect to file
-        sys.stdout = f
-        if stderr:
-            sys.stderr = f
+  NOTE
+  ----
+  Redirect the system logging can slightly decrease the
+  performance in logging intensive application.
+  """
+  # turn off stdio
+  if suppress:
+    f = open(os.devnull, "w")
+    path = None
+  # reset
+  elif path is None:
+    f = None
+  # redirect to a file
+  elif is_string(path):
+    f = _LogWrapper(open(path, "w"))
+  elif is_fileobj(path):
+    f = path
+    path = f.name
+  else:
+    raise ValueError("Unsupport for path=`%s` in `stdio`." %
+        str(type(path)))
+  # ====== set current stdio path ====== #
+  global _CURRENT_STDIO
+  _CURRENT_STDIO = path
+  # ====== assign stdio ====== #
+  if f is None: # reset
+    if isinstance(sys.stdout, _LogWrapper):
+      sys.stdout.close()
+    if isinstance(sys.stderr, _LogWrapper):
+      sys.stderr.close()
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+  else: # redirect to file
+    sys.stdout = f
+    if stderr:
+      sys.stderr = f
 
 
 def eprint(text):
-    """Print ERROR message to stderr"""
-    print(ctext('[Error]', 'red') + str(text), file=sys.stderr)
+  """Print ERROR message to stderr"""
+  print(ctext('[Error]', 'red') + str(text), file=sys.stderr)
 
 
 def wprint(text):
-    """Print WARNING message to stderr"""
-    print(ctext('[Warning]', 'yellow') + str(text), file=sys.stderr)
+  """Print WARNING message to stderr"""
+  print(ctext('[Warning]', 'yellow') + str(text), file=sys.stderr)
 
 
 # ===========================================================================
@@ -375,440 +375,440 @@ _uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:
 
 
 def uuid(length=8):
-    """ Generate random UUID 8 characters with very very low collision """
-    # m = time.time()
-    # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
-    # uniqid = str(uuid.uuid4())[:8]
-    uniquid = ''.join(
-        _uuid_random_state.choice(_uuid_chars,
-                                  size=length,
-                                  replace=True))
-    return uniquid
+  """ Generate random UUID 8 characters with very very low collision """
+  # m = time.time()
+  # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
+  # uniqid = str(uuid.uuid4())[:8]
+  uniquid = ''.join(
+      _uuid_random_state.choice(_uuid_chars,
+                                size=length,
+                                replace=True))
+  return uniquid
 
 
 @contextlib.contextmanager
 def change_recursion_limit(limit):
-    """Temporarily changes the recursion limit."""
-    old_limit = sys.getrecursionlimit()
-    if old_limit < limit:
-        sys.setrecursionlimit(limit)
-    yield
-    sys.setrecursionlimit(old_limit)
+  """Temporarily changes the recursion limit."""
+  old_limit = sys.getrecursionlimit()
+  if old_limit < limit:
+    sys.setrecursionlimit(limit)
+  yield
+  sys.setrecursionlimit(old_limit)
 
 
 @contextlib.contextmanager
 def signal_handling(sigint=None, sigtstp=None, sigquit=None):
-    # We cannot handle SIGTERM, because it prevent subproces from
-    # .terminate()
-    orig_int = signal.getsignal(signal.SIGINT)
-    orig_tstp = signal.getsignal(signal.SIGTSTP)
-    orig_quit = signal.getsignal(signal.SIGQUIT)
+  # We cannot handle SIGTERM, because it prevent subproces from
+  # .terminate()
+  orig_int = signal.getsignal(signal.SIGINT)
+  orig_tstp = signal.getsignal(signal.SIGTSTP)
+  orig_quit = signal.getsignal(signal.SIGQUIT)
 
-    if sigint is not None: signal.signal(signal.SIGINT, sigint)
-    if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
-    if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
+  if sigint is not None: signal.signal(signal.SIGINT, sigint)
+  if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
+  if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
 
-    yield
-    # reset
-    signal.signal(signal.SIGINT, orig_int)
-    signal.signal(signal.SIGTSTP, orig_tstp)
-    signal.signal(signal.SIGQUIT, orig_quit)
+  yield
+  # reset
+  signal.signal(signal.SIGINT, orig_int)
+  signal.signal(signal.SIGTSTP, orig_tstp)
+  signal.signal(signal.SIGQUIT, orig_quit)
 
 
 # ===========================================================================
 # UniqueHasher
 # ===========================================================================
 class UniqueHasher(object):
-    """ This hash create strictly unique hash value by using
-    its memory to remember which key has been assigned
+  """ This hash create strictly unique hash value by using
+  its memory to remember which key has been assigned
 
-    Note
-    ----
-    This function use deterministic hash, which give the same
-    id for all labels, whenever you call it
-    """
+  Note
+  ----
+  This function use deterministic hash, which give the same
+  id for all labels, whenever you call it
+  """
 
-    def __init__(self, nb_labels=None):
-        super(UniqueHasher, self).__init__()
-        self.nb_labels = nb_labels
-        self._memory = {} # map: key -> hash_key
-        self._current_hash = {} # map: hash_key -> key
+  def __init__(self, nb_labels=None):
+    super(UniqueHasher, self).__init__()
+    self.nb_labels = nb_labels
+    self._memory = {} # map: key -> hash_key
+    self._current_hash = {} # map: hash_key -> key
 
-    def hash(self, value):
-        key = abs(hash(value))
-        if self.nb_labels is not None:
-            key = key % self.nb_labels
-        # already processed hash
-        if value in self._current_hash:
-            return self._current_hash[value]
-        # not yet processed
-        if key in self._memory:
-            if self.nb_labels is not None and \
-                len(self._memory) >= self.nb_labels:
-                raise Exception('All %d labels have been assigned, outbound value:"%s"' %
-                                (self.nb_labels, value))
-            else:
-                while key in self._memory:
-                    key += 1
-                    if self.nb_labels is not None and key >= self.nb_labels:
-                        key = 0
-        # key not in memory
-        self._current_hash[value] = key
-        self._memory[key] = value
-        return key
+  def hash(self, value):
+    key = abs(hash(value))
+    if self.nb_labels is not None:
+      key = key % self.nb_labels
+    # already processed hash
+    if value in self._current_hash:
+      return self._current_hash[value]
+    # not yet processed
+    if key in self._memory:
+      if self.nb_labels is not None and \
+          len(self._memory) >= self.nb_labels:
+        raise Exception('All %d labels have been assigned, outbound value:"%s"' %
+                        (self.nb_labels, value))
+      else:
+        while key in self._memory:
+          key += 1
+          if self.nb_labels is not None and key >= self.nb_labels:
+            key = 0
+    # key not in memory
+    self._current_hash[value] = key
+    self._memory[key] = value
+    return key
 
-    def __call__(self, value):
-        return self.hash(value)
+  def __call__(self, value):
+    return self.hash(value)
 
-    def map(self, order, array):
-        """ Re-order an ndarray to new column order """
-        order = as_tuple(order)
-        # get current order
-        curr_order = self._current_hash.items()
-        curr_order.sort(key=lambda x: x[1])
-        curr_order = [i[0] for i in curr_order]
-        # new column order
-        order = [curr_order.index(i) for i in order]
-        return array[:, order]
+  def map(self, order, array):
+    """ Re-order an ndarray to new column order """
+    order = as_tuple(order)
+    # get current order
+    curr_order = self._current_hash.items()
+    curr_order.sort(key=lambda x: x[1])
+    curr_order = [i[0] for i in curr_order]
+    # new column order
+    order = [curr_order.index(i) for i in order]
+    return array[:, order]
 
 
 class FuncDesc(object):
-    """ This class store the description of arguments given a function.
-    Automatically match the argument and keyword-arguments in following
-    order:
-     - Match all positional arguments.
-     - if the function has `varargs`, keep the remains positional arguments.
-     - if the function has `keywords`, keep the unknown argument name in `kwargs`
-     - Add the missing default kwargs.
-     - Return new tuple of (arg, kwargs)
-    """
+  """ This class store the description of arguments given a function.
+  Automatically match the argument and keyword-arguments in following
+  order:
+   - Match all positional arguments.
+   - if the function has `varargs`, keep the remains positional arguments.
+   - if the function has `keywords`, keep the unknown argument name in `kwargs`
+   - Add the missing default kwargs.
+   - Return new tuple of (arg, kwargs)
+  """
 
-    def __init__(self, func):
-        super(FuncDesc, self).__init__()
-        # copy information from other FuncDesc
-        if isinstance(func, FuncDesc):
-            self._args = func._args
-            self._defaults = func._defaults
-            self._inc_args = func._inc_args
-            self._inc_kwargs = func._inc_kwargs
-            self._func = func._func
-        # extract information from a function or method
-        elif inspect.isfunction(func) or inspect.ismethod(func) or \
-        isinstance(func, decorators.functionable):
-            if isinstance(func, decorators.functionable):
-                spec = inspect.getargspec(func.function)
-            else:
-                spec = inspect.getargspec(func)
-            self._args = tuple(spec.args)
-            self._inc_args = spec.varargs is not None
-            self._inc_kwargs = spec.keywords is not None
-            self._defaults = {}
-            if spec.defaults is not None:
-                for name, val in zip(self._args[::-1], spec.defaults[::-1]):
-                    self._defaults[name] = val
-            self._func = func
-        else:
-            raise ValueError("`func` must be function, method, or FuncDesc.")
-        self.__name__ = self._func.__name__
+  def __init__(self, func):
+    super(FuncDesc, self).__init__()
+    # copy information from other FuncDesc
+    if isinstance(func, FuncDesc):
+      self._args = func._args
+      self._defaults = func._defaults
+      self._inc_args = func._inc_args
+      self._inc_kwargs = func._inc_kwargs
+      self._func = func._func
+    # extract information from a function or method
+    elif inspect.isfunction(func) or inspect.ismethod(func) or \
+    isinstance(func, decorators.functionable):
+      if isinstance(func, decorators.functionable):
+        spec = inspect.getargspec(func.function)
+      else:
+        spec = inspect.getargspec(func)
+      self._args = tuple(spec.args)
+      self._inc_args = spec.varargs is not None
+      self._inc_kwargs = spec.keywords is not None
+      self._defaults = {}
+      if spec.defaults is not None:
+        for name, val in zip(self._args[::-1], spec.defaults[::-1]):
+          self._defaults[name] = val
+      self._func = func
+    else:
+      raise ValueError("`func` must be function, method, or FuncDesc.")
+    self.__name__ = self._func.__name__
 
-    @property
-    def args(self):
-        return tuple(self._args)
+  @property
+  def args(self):
+    return tuple(self._args)
 
-    @property
-    def defaults(self):
-        return dict(self._defaults)
+  @property
+  def defaults(self):
+    return dict(self._defaults)
 
-    @property
-    def is_args(self):
-        return self._inc_args
+  @property
+  def is_args(self):
+    return self._inc_args
 
-    @property
-    def is_kwargs(self):
-        return self._inc_kwargs
+  @property
+  def is_kwargs(self):
+    return self._inc_kwargs
 
-    def match(self, *args, **kwargs):
-        keywords = OrderedDict()
-        for name, val in zip(self.args, args):
-            keywords[name] = val
-        # extra args
-        if self._inc_args and len(self.args) < len(args):
-            args = args[len(self.args):]
-        else:
-            args = ()
-        # remove extra kwargs in inc_kwargs=False
-        if not self._inc_kwargs:
-            kwargs = {name: kwargs[name] for name in self._args
-                      if name in kwargs}
-        keywords.update(kwargs)
-        # ====== update the default ====== #
-        for name, val in self._defaults.items():
-            if name not in keywords:
-                keywords[name] = val
-        return args, keywords
+  def match(self, *args, **kwargs):
+    keywords = OrderedDict()
+    for name, val in zip(self.args, args):
+      keywords[name] = val
+    # extra args
+    if self._inc_args and len(self.args) < len(args):
+      args = args[len(self.args):]
+    else:
+      args = ()
+    # remove extra kwargs in inc_kwargs=False
+    if not self._inc_kwargs:
+      kwargs = {name: kwargs[name] for name in self._args
+                if name in kwargs}
+    keywords.update(kwargs)
+    # ====== update the default ====== #
+    for name, val in self._defaults.items():
+      if name not in keywords:
+        keywords[name] = val
+    return args, keywords
 
-    def __call__(self, *args, **kwargs):
-        args, kwargs = self.match(*args, **kwargs)
-        return self._func(*args, **kwargs)
+  def __call__(self, *args, **kwargs):
+    args, kwargs = self.match(*args, **kwargs)
+    return self._func(*args, **kwargs)
 
-    def __str__(self):
-        s = "<%s>args:%s defaults:%s varargs:%s keywords:%s" % \
-            (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
-                self._inc_args, self._inc_kwargs)
-        return s
+  def __str__(self):
+    s = "<%s>args:%s defaults:%s varargs:%s keywords:%s" % \
+        (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
+            self._inc_args, self._inc_kwargs)
+    return s
 
 
 # ===========================================================================
 # ArgCOntrol
 # ===========================================================================
 class ArgController(object):
-    """ Simple interface to argparse """
+  """ Simple interface to argparse """
 
-    def __init__(self, print_parsed=True):
-        super(ArgController, self).__init__()
-        self.parser = None
-        self._require_input = False
-        self.arg_dict = {}
-        self.name = []
-        self.print_parsed = print_parsed
+  def __init__(self, print_parsed=True):
+    super(ArgController, self).__init__()
+    self.parser = None
+    self._require_input = False
+    self.arg_dict = {}
+    self.name = []
+    self.print_parsed = print_parsed
 
-    def _is_positional(self, name):
-        if name[0] != '-' and name[:2] != '--':
-            return True
-        return False
+  def _is_positional(self, name):
+    if name[0] != '-' and name[:2] != '--':
+      return True
+    return False
 
-    def _parse_input(self, key, val):
-        # ====== search if manual preprocessing available ====== #
-        for i, preprocess in self.arg_dict.items():
-            if key in i and preprocess is not None:
-                return preprocess(val)
-        # ====== auto preprocess ====== #
-        try:
-            val = float(val)
-            if int(val) == val:
-                val = int(val)
-        except Exception as e:
-            val = str(val)
-        return val
+  def _parse_input(self, key, val):
+    # ====== search if manual preprocessing available ====== #
+    for i, preprocess in self.arg_dict.items():
+      if key in i and preprocess is not None:
+        return preprocess(val)
+    # ====== auto preprocess ====== #
+    try:
+      val = float(val)
+      if int(val) == val:
+        val = int(val)
+    except Exception as e:
+      val = str(val)
+    return val
 
-    def add(self, name, help, default=None, preprocess=None):
-        """ NOTE: if the default value is not given, the argument is
-        required
+  def add(self, name, help, default=None, preprocess=None):
+    """ NOTE: if the default value is not given, the argument is
+    required
 
-        Parameters
-        ----------
-        name: str
-            [-name] for optional parameters
-            [name] for positional parameters
-        help: str
-            description of the argument
-        default: str
-            default value for the argument
-        preprocess: call-able
-            take in the parsed argument and preprocess it into necessary
-            information
-        """
-        if self.parser is None:
-            self.parser = argparse.ArgumentParser(
-                description='Automatic argument parser (yes,true > True; no,false > False)',
-                add_help=True)
-        # ====== NO default value ====== #
-        if default is None:
-            if self._is_positional(name):
-                self.parser.add_argument(name, help=help, type=str, action="store",
-                    metavar='')
-            else:
-                self.parser.add_argument(name, help=help, type=str, action="store",
-                    required=True, metavar='')
-            self._require_input = True
-        # ====== boolean default value ====== #
-        elif isinstance(default, bool):
-            help += ' (default: %s)' % str(default)
-            self.parser.add_argument(name, help=help,
-                                     action="store_%s" % str(not default).lower())
-            preprocess = lambda x: bool(x)
-        # ====== add defaults value ====== #
-        else:
-            help += ' (default: %s)' % str(default)
-            self.parser.add_argument(name, help=help, type=str, action="store",
-                default=str(default), metavar='')
+    Parameters
+    ----------
+    name: str
+        [-name] for optional parameters
+        [name] for positional parameters
+    help: str
+        description of the argument
+    default: str
+        default value for the argument
+    preprocess: call-able
+        take in the parsed argument and preprocess it into necessary
+        information
+    """
+    if self.parser is None:
+      self.parser = argparse.ArgumentParser(
+          description='Automatic argument parser (yes,true > True; no,false > False)',
+          add_help=True)
+    # ====== NO default value ====== #
+    if default is None:
+      if self._is_positional(name):
+        self.parser.add_argument(name, help=help, type=str, action="store",
+            metavar='')
+      else:
+        self.parser.add_argument(name, help=help, type=str, action="store",
+            required=True, metavar='')
+      self._require_input = True
+    # ====== boolean default value ====== #
+    elif isinstance(default, bool):
+      help += ' (default: %s)' % str(default)
+      self.parser.add_argument(name, help=help,
+                               action="store_%s" % str(not default).lower())
+      preprocess = lambda x: bool(x)
+    # ====== add defaults value ====== #
+    else:
+      help += ' (default: %s)' % str(default)
+      self.parser.add_argument(name, help=help, type=str, action="store",
+          default=str(default), metavar='')
 
-        # store preprocess dictionary
-        if not hasattr(preprocess, '__call__'):
-            preprocess = None
-        self.arg_dict[name] = preprocess
-        return self
+    # store preprocess dictionary
+    if not hasattr(preprocess, '__call__'):
+      preprocess = None
+    self.arg_dict[name] = preprocess
+    return self
 
-    def parse(self, config_path=None):
-        if self.parser is None:
-            raise Exception('Call add to assign at least 1 argument for '
-                            'for the function.')
-        # TODO fix bug here
-        exit_now = False
-        try:
-            if len(sys.argv) == 1 and self._require_input:
-                self.parser.print_help()
-                exit_now = True
-            else:
-                args = self.parser.parse_args()
-        except Exception as e:
-            # if specfy version or help, don't need to print anything else
-            if all(i not in ['-h', '--help', '-v', '--version']
-                   for i in sys.argv):
-                self.parser.print_help()
-            exit_now = True
-        if exit_now: exit()
-        # parse the arguments
-        try:
-            args = {i: self._parse_input(i, j)
-                    for i, j in args._get_kwargs()}
-        except Exception as e:
-            print('Error parsing given arguments: "%s"' % str(e))
-            self.parser.print_help()
-            exit()
-        # reset everything
-        self.parser = None
-        self.arg_dict = {}
-        self._require_input = False
-        # print the parsed arguments if necessary
-        if self.print_parsed:
-            max_len = max(len(i) for i in args.keys())
-            max_len = '%-' + str(max_len) + 's'
-            print('\n******** Parsed arguments ********')
-            for i, j in args.items():
-                print(max_len % i, ': ', j)
-            print('**********************************\n')
-        # convert it to struct
-        return struct(args)
+  def parse(self, config_path=None):
+    if self.parser is None:
+      raise Exception('Call add to assign at least 1 argument for '
+                      'for the function.')
+    # TODO fix bug here
+    exit_now = False
+    try:
+      if len(sys.argv) == 1 and self._require_input:
+        self.parser.print_help()
+        exit_now = True
+      else:
+        args = self.parser.parse_args()
+    except Exception as e:
+      # if specfy version or help, don't need to print anything else
+      if all(i not in ['-h', '--help', '-v', '--version']
+             for i in sys.argv):
+        self.parser.print_help()
+      exit_now = True
+    if exit_now: exit()
+    # parse the arguments
+    try:
+      args = {i: self._parse_input(i, j)
+              for i, j in args._get_kwargs()}
+    except Exception as e:
+      print('Error parsing given arguments: "%s"' % str(e))
+      self.parser.print_help()
+      exit()
+    # reset everything
+    self.parser = None
+    self.arg_dict = {}
+    self._require_input = False
+    # print the parsed arguments if necessary
+    if self.print_parsed:
+      max_len = max(len(i) for i in args.keys())
+      max_len = '%-' + str(max_len) + 's'
+      print('\n******** Parsed arguments ********')
+      for i, j in args.items():
+        print(max_len % i, ': ', j)
+      print('**********************************\n')
+    # convert it to struct
+    return struct(args)
 
 
 # ===========================================================================
 # Simple math and processing
 # ===========================================================================
 def as_tuple(x, N=None, t=None):
-    """
-    Coerce a value to a tuple of given length (and possibly given type).
+  """
+  Coerce a value to a tuple of given length (and possibly given type).
 
-    Parameters
-    ----------
-    x : value or iterable
-    N : integer
-        length of the desired tuple
-    t : type, optional
-        required type for all elements
+  Parameters
+  ----------
+  x : value or iterable
+  N : integer
+      length of the desired tuple
+  t : type, optional
+      required type for all elements
 
-    Returns
-    -------
-    tuple
-        ``tuple(x)`` if `x` is iterable, ``(x,) * N`` otherwise.
+  Returns
+  -------
+  tuple
+      ``tuple(x)`` if `x` is iterable, ``(x,) * N`` otherwise.
 
-    Raises
-    ------
-    TypeError
-        if `type` is given and `x` or any of its elements do not match it
-    ValueError
-        if `x` is iterable, but does not have exactly `N` elements
+  Raises
+  ------
+  TypeError
+      if `type` is given and `x` or any of its elements do not match it
+  ValueError
+      if `x` is iterable, but does not have exactly `N` elements
 
-    Note
-    ----
-    This function is adpated from Lasagne
-    Original work Copyright (c) 2014-2015 lasagne contributors
-    All rights reserved.
+  Note
+  ----
+  This function is adpated from Lasagne
+  Original work Copyright (c) 2014-2015 lasagne contributors
+  All rights reserved.
 
-    LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-    """
-    # special case numpy array
-    if not isinstance(x, tuple):
-        if isinstance(x, (types.GeneratorType, list)):
-            x = tuple(x)
-        else:
-            x = (x,)
-    # ====== check length ====== #
-    if is_number(N):
-        N = int(N)
-        if len(x) == 1:
-            x = x * N
-        elif len(x) != N:
-            raise ValueError('x has length=%d, but required length N=%d' %
-                             (len(x), N))
-    # ====== check type ====== #
-    if (t is not None) and not all(isinstance(v, t) for v in x):
-        raise TypeError("expected a single value or an iterable "
-                        "of {0}, got {1} instead".format(t.__name__, x))
-    return x
+  LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
+  """
+  # special case numpy array
+  if not isinstance(x, tuple):
+    if isinstance(x, (types.GeneratorType, list)):
+      x = tuple(x)
+    else:
+      x = (x,)
+  # ====== check length ====== #
+  if is_number(N):
+    N = int(N)
+    if len(x) == 1:
+      x = x * N
+    elif len(x) != N:
+      raise ValueError('x has length=%d, but required length N=%d' %
+                       (len(x), N))
+  # ====== check type ====== #
+  if (t is not None) and not all(isinstance(v, t) for v in x):
+    raise TypeError("expected a single value or an iterable "
+                    "of {0}, got {1} instead".format(t.__name__, x))
+  return x
 
 
 def as_tuple_of_shape(x):
-    if not isinstance(x, (tuple, list)):
-        x = (x,)
-    if is_number(x[0]):
-        x = (x,)
-    return x
+  if not isinstance(x, (tuple, list)):
+    x = (x,)
+  if is_number(x[0]):
+    x = (x,)
+  return x
 
 
 def as_list(x, N=None, t=None):
-    return list(as_tuple(x, N, t))
+  return list(as_tuple(x, N, t))
 
 
 def axis_normalize(axis, ndim,
                    return_tuple=False):
-    """ Normalize the axis
-     * -1 => ndim - 1
-     * 10 => 10 % ndim
-     * None => list(range(ndim))
+  """ Normalize the axis
+   * -1 => ndim - 1
+   * 10 => 10 % ndim
+   * None => list(range(ndim))
 
-    Parameters
-    ----------
-    return_tuple: bool
-        if True, always return a tuple of normalized axis
-    """
-    if isinstance(axis, np.ndarray):
-        axis = axis.ravel().tolist()
-    if ndim == 0:
-        return ()
-    if axis is None or \
-    (isinstance(axis, (tuple, list)) and len(axis) == 1 and axis[0] is None):
-        return list(range(ndim))
-    if not hasattr(axis, '__len__'):
-        axis = int(axis) % ndim
-        return (axis,) if return_tuple else axis
-    axis = as_tuple(axis, t=int)
-    return tuple([i % ndim for i in axis])
+  Parameters
+  ----------
+  return_tuple: bool
+      if True, always return a tuple of normalized axis
+  """
+  if isinstance(axis, np.ndarray):
+    axis = axis.ravel().tolist()
+  if ndim == 0:
+    return ()
+  if axis is None or \
+  (isinstance(axis, (tuple, list)) and len(axis) == 1 and axis[0] is None):
+    return list(range(ndim))
+  if not hasattr(axis, '__len__'):
+    axis = int(axis) % ndim
+    return (axis,) if return_tuple else axis
+  axis = as_tuple(axis, t=int)
+  return tuple([i % ndim for i in axis])
 
 
 def flatten_list(x, level=None):
-    """
-    Parameters
-    ----------
-    level: int, or None
-        how deep the function go into element of x to search for list and
-        flatten it. If None is given, flatten all list found.
+  """
+  Parameters
+  ----------
+  level: int, or None
+      how deep the function go into element of x to search for list and
+      flatten it. If None is given, flatten all list found.
 
-    Example
-    -------
-    >>> l = [1, 2, 3, [4], [[5], [6]], [[7], [[8], [9]]]]
-    >>> print(flatten_list(l, level=1))
-    >>> # [1, 2, 3, 4, [5], [6], [7], [[8], [9]]]
-    >>> print(flatten_list(l, level=2))
-    >>> # [1, 2, 3, 4, 5, 6, 7, [8], [9]]
-    >>> print(flatten_list(l, level=None))
-    >>> # [1, 2, 3, 4, 5, 6, 7, 8, 9]
-    """
-    if isinstance(x, Iterator):
-        x = list(x)
-    if level is None:
-        level = 10e8
-    if not isinstance(x, (tuple, list)):
-        return [x]
-    if any(isinstance(i, (tuple, list)) for i in x):
-        _ = []
-        for i in x:
-            if isinstance(i, (tuple, list)) and level > 0:
-                _ += flatten_list(i, level - 1)
-            else:
-                _.append(i)
-        return _
-    return x
+  Example
+  -------
+  >>> l = [1, 2, 3, [4], [[5], [6]], [[7], [[8], [9]]]]
+  >>> print(flatten_list(l, level=1))
+  >>> # [1, 2, 3, 4, [5], [6], [7], [[8], [9]]]
+  >>> print(flatten_list(l, level=2))
+  >>> # [1, 2, 3, 4, 5, 6, 7, [8], [9]]
+  >>> print(flatten_list(l, level=None))
+  >>> # [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  """
+  if isinstance(x, Iterator):
+    x = list(x)
+  if level is None:
+    level = 10e8
+  if not isinstance(x, (tuple, list)):
+    return [x]
+  if any(isinstance(i, (tuple, list)) for i in x):
+    _ = []
+    for i in x:
+      if isinstance(i, (tuple, list)) and level > 0:
+        _ += flatten_list(i, level - 1)
+      else:
+        _.append(i)
+    return _
+  return x
 
 
 # ===========================================================================
@@ -816,382 +816,382 @@ def flatten_list(x, level=None):
 # ===========================================================================
 class struct(dict):
 
-    '''Flexible object can be assigned any attribtues'''
+  '''Flexible object can be assigned any attribtues'''
 
-    def __init__(self, *args, **kwargs):
-        super(struct, self).__init__(*args, **kwargs)
-        # copy all dict to attr
-        for i, j in self.items():
-            if is_string(i) and not hasattr(self, i):
-                super(struct, self).__setattr__(i, j)
+  def __init__(self, *args, **kwargs):
+    super(struct, self).__init__(*args, **kwargs)
+    # copy all dict to attr
+    for i, j in self.items():
+      if is_string(i) and not hasattr(self, i):
+        super(struct, self).__setattr__(i, j)
 
-    def __setattr__(self, name, val):
-        super(struct, self).__setattr__(name, val)
-        super(struct, self).__setitem__(name, val)
+  def __setattr__(self, name, val):
+    super(struct, self).__setattr__(name, val)
+    super(struct, self).__setitem__(name, val)
 
-    def __setitem__(self, x, y):
-        super(struct, self).__setitem__(x, y)
-        if is_string(x):
-            super(struct, self).__setattr__(x, y)
+  def __setitem__(self, x, y):
+    super(struct, self).__setitem__(x, y)
+    if is_string(x):
+      super(struct, self).__setattr__(x, y)
 
 
 class bidict(dict):
-    """ Bi-directional dictionary (i.e. a <-> b)
-    Note
-    ----
-    When you iterate over this dictionary, it will be a doubled size
-    dictionary
-    """
+  """ Bi-directional dictionary (i.e. a <-> b)
+  Note
+  ----
+  When you iterate over this dictionary, it will be a doubled size
+  dictionary
+  """
 
-    def __init__(self, *args, **kwargs):
-        super(bidict, self).__init__(*args, **kwargs)
-        # this is duplication
-        self._inv = dict()
-        for i, j in self.items():
-            self._inv[j] = i
+  def __init__(self, *args, **kwargs):
+    super(bidict, self).__init__(*args, **kwargs)
+    # this is duplication
+    self._inv = dict()
+    for i, j in self.items():
+      self._inv[j] = i
 
-    @property
-    def inv(self):
-        return self._inv
+  @property
+  def inv(self):
+    return self._inv
 
-    def __setitem__(self, key, value):
-        super(bidict, self).__setitem__(key, value)
-        self._inv[value] = key
-        return None
+  def __setitem__(self, key, value):
+    super(bidict, self).__setitem__(key, value)
+    self._inv[value] = key
+    return None
 
-    def __getitem__(self, key):
-        if key not in self:
-            return self._inv[key]
-        return super(bidict, self).__getitem__(key)
+  def __getitem__(self, key):
+    if key not in self:
+      return self._inv[key]
+    return super(bidict, self).__getitem__(key)
 
-    def update(self, *args, **kwargs):
-        for k, v in dict(*args, **kwargs).items():
-            self[k] = v
-            self._inv[v] = k
+  def update(self, *args, **kwargs):
+    for k, v in dict(*args, **kwargs).items():
+      self[k] = v
+      self._inv[v] = k
 
-    def __delitem__(self, key):
-        del self._inv[super(bidict, self).__getitem__(key)]
-        return dict.__delitem__(self, key)
+  def __delitem__(self, key):
+    del self._inv[super(bidict, self).__getitem__(key)]
+    return dict.__delitem__(self, key)
 
 
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
 # urllib module, known to have issues with proxy management
 if sys.version_info[0] == 2:
-    def urlretrieve(url, filename, reporthook=None, data=None):
-        '''
-        This function is adpated from: https://github.com/fchollet/keras
-        Original work Copyright (c) 2014-2015 keras contributors
-        '''
-        def chunk_read(response, chunk_size=8192, reporthook=None):
-            total_size = response.info().get('Content-Length').strip()
-            total_size = int(total_size)
-            count = 0
-            while 1:
-                chunk = response.read(chunk_size)
-                if not chunk:
-                    break
-                count += 1
-                if reporthook:
-                    reporthook(count, chunk_size, total_size)
-                yield chunk
+  def urlretrieve(url, filename, reporthook=None, data=None):
+    '''
+    This function is adpated from: https://github.com/fchollet/keras
+    Original work Copyright (c) 2014-2015 keras contributors
+    '''
+    def chunk_read(response, chunk_size=8192, reporthook=None):
+      total_size = response.info().get('Content-Length').strip()
+      total_size = int(total_size)
+      count = 0
+      while 1:
+        chunk = response.read(chunk_size)
+        if not chunk:
+          break
+        count += 1
+        if reporthook:
+          reporthook(count, chunk_size, total_size)
+        yield chunk
 
-        response = urlopen(url, data)
-        with open(filename, 'wb') as fd:
-            for chunk in chunk_read(response, reporthook=reporthook):
-                fd.write(chunk)
+    response = urlopen(url, data)
+    with open(filename, 'wb') as fd:
+      for chunk in chunk_read(response, reporthook=reporthook):
+        fd.write(chunk)
 else:
-    from six.moves.urllib.request import urlretrieve
+  from six.moves.urllib.request import urlretrieve
 
 
 def get_file(fname, origin, outdir):
-    '''
-    Parameters
-    ----------
-    fname: output file name
-    origin: url, link
-    outdir: path to output dir
-    '''
-    fpath = os.path.join(outdir, fname)
-    # ====== remove empty folder ====== #
-    if os.path.exists(fpath):
-        if os.path.isdir(fpath) and len(os.listdir(fpath)) == 0:
-            shutil.rmtree(fpath)
-    # ====== download package ====== #
-    if not os.path.exists(fpath):
-        prog = Progbar(target=-1, name="Downloading: %s" % origin,
-                       print_report=True, print_summary=True)
+  '''
+  Parameters
+  ----------
+  fname: output file name
+  origin: url, link
+  outdir: path to output dir
+  '''
+  fpath = os.path.join(outdir, fname)
+  # ====== remove empty folder ====== #
+  if os.path.exists(fpath):
+    if os.path.isdir(fpath) and len(os.listdir(fpath)) == 0:
+      shutil.rmtree(fpath)
+  # ====== download package ====== #
+  if not os.path.exists(fpath):
+    prog = Progbar(target=-1, name="Downloading: %s" % origin,
+                   print_report=True, print_summary=True)
 
-        def dl_progress(count, block_size, total_size):
-            if prog.target < 0:
-                prog.target = total_size
-            else:
-                prog.add(count * block_size - prog.seen_so_far)
-        error_msg = 'URL fetch failure on {}: {} -- {}'
-        try:
-            try:
-                urlretrieve(origin, fpath, dl_progress)
-            except URLError as e:
-                raise Exception(error_msg.format(origin, e.errno, e.reason))
-            except HTTPError as e:
-                raise Exception(error_msg.format(origin, e.code, e.msg))
-        except (Exception, KeyboardInterrupt) as e:
-            if os.path.exists(fpath):
-                os.remove(fpath)
-            raise
-    return fpath
+    def dl_progress(count, block_size, total_size):
+      if prog.target < 0:
+        prog.target = total_size
+      else:
+        prog.add(count * block_size - prog.seen_so_far)
+    error_msg = 'URL fetch failure on {}: {} -- {}'
+    try:
+      try:
+        urlretrieve(origin, fpath, dl_progress)
+      except URLError as e:
+        raise Exception(error_msg.format(origin, e.errno, e.reason))
+      except HTTPError as e:
+        raise Exception(error_msg.format(origin, e.code, e.msg))
+    except (Exception, KeyboardInterrupt) as e:
+      if os.path.exists(fpath):
+        os.remove(fpath)
+      raise
+  return fpath
 
 
 # ===========================================================================
 # Python utilities
 # ===========================================================================
 def get_all_files(path, filter_func=None):
-    ''' Recurrsively get all files in the given path '''
-    file_list = []
-    if os.access(path, os.R_OK):
-        for p in os.listdir(path):
-            p = os.path.join(path, p)
-            if os.path.isdir(p):
-                file_list += get_all_files(p, filter_func)
-            else:
-                if filter_func is not None and not filter_func(p):
-                    continue
-                # remove dump files of Mac
-                if '.DS_Store' in p or '.DS_STORE' in p or \
-                    '._' == os.path.basename(p)[:2]:
-                    continue
-                file_list.append(p)
-    return file_list
+  ''' Recurrsively get all files in the given path '''
+  file_list = []
+  if os.access(path, os.R_OK):
+    for p in os.listdir(path):
+      p = os.path.join(path, p)
+      if os.path.isdir(p):
+        file_list += get_all_files(p, filter_func)
+      else:
+        if filter_func is not None and not filter_func(p):
+          continue
+        # remove dump files of Mac
+        if '.DS_Store' in p or '.DS_STORE' in p or \
+            '._' == os.path.basename(p)[:2]:
+          continue
+        file_list.append(p)
+  return file_list
 
 
 def get_all_ext(path):
-    ''' Recurrsively get all extension of files in the given path '''
-    file_list = []
-    if os.access(path, os.R_OK):
-        for p in os.listdir(path):
-            p = os.path.join(path, p)
-            if os.path.isdir(p):
-                file_list += get_all_ext(p)
-            else:
-                # remove dump files of Mac
-                if '.DS_Store' in p or '.DS_STORE' in p or \
-                    '._' == os.path.basename(p)[:2]:
-                    continue
-                ext = p.split('.')
-                if len(ext) > 1:
-                    file_list.append(ext[-1])
-    return list(set(file_list))
+  ''' Recurrsively get all extension of files in the given path '''
+  file_list = []
+  if os.access(path, os.R_OK):
+    for p in os.listdir(path):
+      p = os.path.join(path, p)
+      if os.path.isdir(p):
+        file_list += get_all_ext(p)
+      else:
+        # remove dump files of Mac
+        if '.DS_Store' in p or '.DS_STORE' in p or \
+            '._' == os.path.basename(p)[:2]:
+          continue
+        ext = p.split('.')
+        if len(ext) > 1:
+          file_list.append(ext[-1])
+  return list(set(file_list))
 
 
 def folder2bin(path):
-    """ This function read all files within a Folder
-    in binary mode,
-    then, store all the data in a dictionary mapping:
-    `relative_path -> binary_data`
-    """
-    if not os.path.isdir(path):
-        raise ValueError('`path`=%s must be a directory.' % path)
-    path = os.path.abspath(path)
-    files = get_all_files(path)
-    data = {}
-    for f in files:
-        name = f.replace(path + '/', '')
-        with open(f, 'rb') as f:
-            data[name] = f.read()
-    return data
+  """ This function read all files within a Folder
+  in binary mode,
+  then, store all the data in a dictionary mapping:
+  `relative_path -> binary_data`
+  """
+  if not os.path.isdir(path):
+    raise ValueError('`path`=%s must be a directory.' % path)
+  path = os.path.abspath(path)
+  files = get_all_files(path)
+  data = {}
+  for f in files:
+    name = f.replace(path + '/', '')
+    with open(f, 'rb') as f:
+      data[name] = f.read()
+  return data
 
 
 def bin2folder(data, path, override=False):
-    """ Convert serialized data from `folder2bin` back
-    to a folder at `path`
+  """ Convert serialized data from `folder2bin` back
+  to a folder at `path`
 
-    Parameters
-    ----------
-    data: {string, dict}
-        if string, `data` can be pickled string, or path to a file.
-        if dict, `data` is the output from `folder2bin`
-    path: string
-        path to a folder
-    override: bool
-        if True, override exist folder at `path`
-    """
-    # ====== check input ====== #
-    if is_string(data):
-        if os.path.isfile(data):
-            with open(data, 'rb') as f:
-                data = pickle.load(f)
-        else:
-            data = pickle.loads(data)
-    if not isinstance(data, dict):
-        raise ValueError("`data` must be dictionary type, or string, or path to file.")
-    # ====== check outpath ====== #
-    path = os.path.abspath(str(path))
-    if not os.path.exists(path):
-        os.mkdir(path)
-    elif os.path.isfile(path):
-        raise ValueError("`path` must be path to a directory.")
-    elif os.path.isdir(path):
-        if not override:
-            raise RuntimeError("Folder at path:%s exist, cannot override." % path)
-        shutil.rmtree(path)
-        os.mkdir(path)
-    # ====== deserialize ====== #
-    for name, dat in data.items():
-        with open(os.path.join(path, name), 'wb') as f:
-            f.write(dat)
-    return path
+  Parameters
+  ----------
+  data: {string, dict}
+      if string, `data` can be pickled string, or path to a file.
+      if dict, `data` is the output from `folder2bin`
+  path: string
+      path to a folder
+  override: bool
+      if True, override exist folder at `path`
+  """
+  # ====== check input ====== #
+  if is_string(data):
+    if os.path.isfile(data):
+      with open(data, 'rb') as f:
+        data = pickle.load(f)
+    else:
+      data = pickle.loads(data)
+  if not isinstance(data, dict):
+    raise ValueError("`data` must be dictionary type, or string, or path to file.")
+  # ====== check outpath ====== #
+  path = os.path.abspath(str(path))
+  if not os.path.exists(path):
+    os.mkdir(path)
+  elif os.path.isfile(path):
+    raise ValueError("`path` must be path to a directory.")
+  elif os.path.isdir(path):
+    if not override:
+      raise RuntimeError("Folder at path:%s exist, cannot override." % path)
+    shutil.rmtree(path)
+    os.mkdir(path)
+  # ====== deserialize ====== #
+  for name, dat in data.items():
+    with open(os.path.join(path, name), 'wb') as f:
+      f.write(dat)
+  return path
 
 
 # ===========================================================================
 # Package utils
 # ===========================================================================
 def package_installed(name, version=None):
-    import pip
-    for i in pip.get_installed_distributions():
-        if name.lower() == i.key.lower() and \
-        (version is None or version == i.version):
-            return True
-    return False
+  import pip
+  for i in pip.get_installed_distributions():
+    if name.lower() == i.key.lower() and \
+    (version is None or version == i.version):
+      return True
+  return False
 
 
 def package_list(include_version=False):
-    """
-    Return
-    ------
-    ['odin', 'lasagne', 'keras', ...] if include_version is False
-    else ['odin==8.12', 'lasagne==25.18', ...]
-    """
+  """
+  Return
+  ------
+  ['odin', 'lasagne', 'keras', ...] if include_version is False
+  else ['odin==8.12', 'lasagne==25.18', ...]
+  """
 
-    all_packages = []
-    import pip
-    for i in pip.get_installed_distributions():
-        all_packages.append(i.key +
-            (('==' + i.version) if include_version is True else ''))
-    return all_packages
+  all_packages = []
+  import pip
+  for i in pip.get_installed_distributions():
+    all_packages.append(i.key +
+        (('==' + i.version) if include_version is True else ''))
+  return all_packages
 
 
 def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
                          prefer_compiled=False):
-    ''' Algorithms:
-     - Search all files in the `path` matched `prefix` and `suffix`
-     - Exclude all files contain any str in `exclude`
-     - Sorted all files based on alphabet
-     - Load all modules based on `prefer_compiled`
-     - return list of identifier found in all modules
+  ''' Algorithms:
+   - Search all files in the `path` matched `prefix` and `suffix`
+   - Exclude all files contain any str in `exclude`
+   - Sorted all files based on alphabet
+   - Load all modules based on `prefer_compiled`
+   - return list of identifier found in all modules
 
-    Parameters
-    ----------
-    identifier : str
-        identifier of object, function or anything in script files
-    prefix : str
-        prefix of file to search in the `path`
-    suffix : str
-        suffix of file to search in the `path`
-    path : str
-        searching path of script files
-    exclude : str, list(str)
-        any files contain str in this list will be excluded
-    prefer_compiled : bool
-        True mean prefer .pyc file, otherwise prefer .py
+  Parameters
+  ----------
+  identifier : str
+      identifier of object, function or anything in script files
+  prefix : str
+      prefix of file to search in the `path`
+  suffix : str
+      suffix of file to search in the `path`
+  path : str
+      searching path of script files
+  exclude : str, list(str)
+      any files contain str in this list will be excluded
+  prefer_compiled : bool
+      True mean prefer .pyc file, otherwise prefer .py
 
-    Returns
-    -------
-    list(object, function, ..) :
-        any thing match given identifier in all found script file
+  Returns
+  -------
+  list(object, function, ..) :
+      any thing match given identifier in all found script file
 
-    Notes
-    -----
-    File with multiple . character my procedure wrong results
-    If the script run this this function match the searching process, a
-    infinite loop may happen!
-    * This function try to import each modules and find desire function,
-    it may mess up something.
+  Notes
+  -----
+  File with multiple . character my procedure wrong results
+  If the script run this this function match the searching process, a
+  infinite loop may happen!
+  * This function try to import each modules and find desire function,
+  it may mess up something.
 
-    '''
-    import re
-    import imp
-    # ====== validate input ====== #
-    if exclude == '': exclude = []
-    if type(exclude) not in (list, tuple, numpy.ndarray):
-        exclude = [exclude]
-    prefer_flag = -1
-    if prefer_compiled: prefer_flag = 1
-    # ====== create pattern and load files ====== #
-    pattern = re.compile('^%s.*%s\.pyc?' % (prefix, suffix)) # py or pyc
-    files = os.listdir(path)
-    files = [f for f in files
-             if pattern.match(f) and
-             sum([i in f for i in exclude]) == 0]
-    # ====== remove duplicated pyc files ====== #
-    files = sorted(files, key=lambda x: prefer_flag * len(x)) # pyc is longer
-    # .pyc go first get overrided by .py
-    files = sorted({f.split('.')[0]: f for f in files}.values())
-    # ====== load all modules ====== #
-    modules = []
-    for f in files:
-        try:
-            if '.pyc' in f:
-                modules.append(
-                    imp.load_compiled(f.split('.')[0],
-                                      os.path.join(path, f))
-                )
-            else:
-                modules.append(
-                    imp.load_source(f.split('.')[0],
-                                    os.path.join(path, f))
-                )
-        except:
-            pass
-    # ====== Find all identifier in modules ====== #
-    ids = []
-    for m in modules:
-        for i in inspect.getmembers(m):
-            if identifier in i:
-                ids.append(i[1])
-    # remove duplicate py
-    return ids
+  '''
+  import re
+  import imp
+  # ====== validate input ====== #
+  if exclude == '': exclude = []
+  if type(exclude) not in (list, tuple, numpy.ndarray):
+    exclude = [exclude]
+  prefer_flag = -1
+  if prefer_compiled: prefer_flag = 1
+  # ====== create pattern and load files ====== #
+  pattern = re.compile('^%s.*%s\.pyc?' % (prefix, suffix)) # py or pyc
+  files = os.listdir(path)
+  files = [f for f in files
+           if pattern.match(f) and
+           sum([i in f for i in exclude]) == 0]
+  # ====== remove duplicated pyc files ====== #
+  files = sorted(files, key=lambda x: prefer_flag * len(x)) # pyc is longer
+  # .pyc go first get overrided by .py
+  files = sorted({f.split('.')[0]: f for f in files}.values())
+  # ====== load all modules ====== #
+  modules = []
+  for f in files:
+    try:
+      if '.pyc' in f:
+        modules.append(
+            imp.load_compiled(f.split('.')[0],
+                              os.path.join(path, f))
+        )
+      else:
+        modules.append(
+            imp.load_source(f.split('.')[0],
+                            os.path.join(path, f))
+        )
+    except:
+      pass
+  # ====== Find all identifier in modules ====== #
+  ids = []
+  for m in modules:
+    for i in inspect.getmembers(m):
+      if identifier in i:
+        ids.append(i[1])
+  # remove duplicate py
+  return ids
 
 
 def ordered_set(seq):
-    seen = {}
-    result = []
-    for marker in seq:
-        if marker in seen: continue
-        seen[marker] = 1
-        result.append(marker)
-    return result
+  seen = {}
+  result = []
+  for marker in seq:
+    if marker in seen: continue
+    seen[marker] = 1
+    result.append(marker)
+  return result
 
 
 def dict_union(*dicts, **kwargs):
-    r"""Return union of a sequence of disjoint dictionaries.
+  r"""Return union of a sequence of disjoint dictionaries.
 
-    Parameters
-    ----------
-    dicts : dicts
-        A set of dictionaries with no keys in common. If the first
-        dictionary in the sequence is an instance of `OrderedDict`, the
-        result will be OrderedDict.
-    \*\*kwargs
-        Keywords and values to add to the resulting dictionary.
+  Parameters
+  ----------
+  dicts : dicts
+      A set of dictionaries with no keys in common. If the first
+      dictionary in the sequence is an instance of `OrderedDict`, the
+      result will be OrderedDict.
+  \*\*kwargs
+      Keywords and values to add to the resulting dictionary.
 
-    Raises
-    ------
-    ValueError
-        If a key appears twice in the dictionaries or keyword arguments.
+  Raises
+  ------
+  ValueError
+      If a key appears twice in the dictionaries or keyword arguments.
 
-    """
-    dicts = list(dicts)
-    if dicts and isinstance(dicts[0], OrderedDict):
-        result = OrderedDict()
-    else:
-        result = {}
-    for d in list(dicts) + [kwargs]:
-        duplicate_keys = set(result.keys()) & set(d.keys())
-        if duplicate_keys:
-            raise ValueError("The following keys have duplicate entries: {}"
-                             .format(", ".join(str(key) for key in
-                                               duplicate_keys)))
-        result.update(d)
-    return result
+  """
+  dicts = list(dicts)
+  if dicts and isinstance(dicts[0], OrderedDict):
+    result = OrderedDict()
+  else:
+    result = {}
+  for d in list(dicts) + [kwargs]:
+    duplicate_keys = set(result.keys()) & set(d.keys())
+    if duplicate_keys:
+      raise ValueError("The following keys have duplicate entries: {}"
+                       .format(", ".join(str(key) for key in
+                                         duplicate_keys)))
+    result.update(d)
+  return result
 
 
 # ===========================================================================
@@ -1199,204 +1199,204 @@ def dict_union(*dicts, **kwargs):
 # ===========================================================================
 @contextlib.contextmanager
 def TemporaryDirectory(add_to_path=False):
-    """
-    add_to_path: bool
-        temporary add the directory to system $PATH
-    """
-    temp_dir = tempfile.mkdtemp()
-    if add_to_path:
-        os.environ['PATH'] = temp_dir + ':' + os.environ['PATH']
-    current_dir = os.getcwd()
-    os.chdir(temp_dir)
-    yield temp_dir
-    os.chdir(current_dir)
-    if add_to_path:
-        os.environ['PATH'] = os.environ['PATH'].replace(temp_dir + ':', '')
-    shutil.rmtree(temp_dir)
+  """
+  add_to_path: bool
+      temporary add the directory to system $PATH
+  """
+  temp_dir = tempfile.mkdtemp()
+  if add_to_path:
+    os.environ['PATH'] = temp_dir + ':' + os.environ['PATH']
+  current_dir = os.getcwd()
+  os.chdir(temp_dir)
+  yield temp_dir
+  os.chdir(current_dir)
+  if add_to_path:
+    os.environ['PATH'] = os.environ['PATH'].replace(temp_dir + ':', '')
+  shutil.rmtree(temp_dir)
 
 
 def get_tempdir():
-    return tempfile.mkdtemp()
+  return tempfile.mkdtemp()
 
 
 def _get_managed_path(folder, name, override, is_folder=False, root='~'):
-    if root == '~':
-        root = os.path.expanduser('~')
-    datadir_base = os.path.join(root, '.odin')
-    if not os.path.exists(datadir_base):
-        os.mkdir(datadir_base)
-    elif not os.access(datadir_base, os.W_OK):
-        raise Exception('Cannot acesss path: ' + datadir_base)
-    datadir = os.path.join(datadir_base, folder)
-    if not os.path.exists(datadir):
-        os.makedirs(datadir)
-    # ====== check given path with name ====== #
-    if is_string(name):
-        datadir = os.path.join(datadir, str(name))
-        if os.path.exists(datadir) and override:
-            if os.path.isfile(datadir): # remove file
-                os.remove(datadir)
-            else: # remove and create new folder
-                shutil.rmtree(datadir)
-        if is_folder and not os.path.exists(datadir):
-            os.mkdir(datadir)
-    return datadir
+  if root == '~':
+    root = os.path.expanduser('~')
+  datadir_base = os.path.join(root, '.odin')
+  if not os.path.exists(datadir_base):
+    os.mkdir(datadir_base)
+  elif not os.access(datadir_base, os.W_OK):
+    raise Exception('Cannot acesss path: ' + datadir_base)
+  datadir = os.path.join(datadir_base, folder)
+  if not os.path.exists(datadir):
+    os.makedirs(datadir)
+  # ====== check given path with name ====== #
+  if is_string(name):
+    datadir = os.path.join(datadir, str(name))
+    if os.path.exists(datadir) and override:
+      if os.path.isfile(datadir): # remove file
+        os.remove(datadir)
+      else: # remove and create new folder
+        shutil.rmtree(datadir)
+    if is_folder and not os.path.exists(datadir):
+      os.mkdir(datadir)
+  return datadir
 
 
 def get_datasetpath(name=None, override=False, is_folder=True, root='~'):
-    return _get_managed_path('datasets', name, override,
-                             is_folder=is_folder, root=root)
+  return _get_managed_path('datasets', name, override,
+                           is_folder=is_folder, root=root)
 
 
 def get_modelpath(name=None, override=False, root='~'):
-    """ Default model path for saving O.D.I.N networks """
-    return _get_managed_path('models', name, override,
-                             is_folder=True, root=root)
+  """ Default model path for saving O.D.I.N networks """
+  return _get_managed_path('models', name, override,
+                           is_folder=True, root=root)
 
 
 def get_logpath(name=None, override=False, root='~'):
-    return _get_managed_path('logs', name, override,
-                             is_folder=False, root=root)
+  return _get_managed_path('logs', name, override,
+                           is_folder=False, root=root)
 
 
 def get_resultpath(tag, name=None, override=False, prompt=False,
                    root='~'):
-    """
-    Parameters
-    ----------
-    tag: string
-        specific tag for the task you are working on
-    name: string
-        name of the folder contains all the results (NOTE: the
-        name can has subfolder)
-    override: bool
-        if True, remove exist folder
-    prompt: bool
-        if True, display prompt and require (Y) input before
-        delete old folder, if (N), the program exit.
-    root: string
-        root path for the results (default: "~/.odin")
-    """
-    path = _get_managed_path('results', tag, False,
-                             is_folder=True, root=root)
-    # only return the main folder
-    if name is None:
-        return path
-    # return the sub-folder
-    name = str(name).split('/')
-    for i in name:
-        path = os.path.join(path, i)
-        if not os.path.exists(path):
-            os.mkdir(path)
-    # ====== check if override ====== #
-    if override and len(os.listdir(path)) > 0:
-        if prompt:
-            user_cmd = raw_input('Do you want to delete "%s" (Y for yes):').lower()
-            if user_cmd != 'y':
-                exit()
-        shutil.rmtree(path)
-        os.mkdir(path)
+  """
+  Parameters
+  ----------
+  tag: string
+      specific tag for the task you are working on
+  name: string
+      name of the folder contains all the results (NOTE: the
+      name can has subfolder)
+  override: bool
+      if True, remove exist folder
+  prompt: bool
+      if True, display prompt and require (Y) input before
+      delete old folder, if (N), the program exit.
+  root: string
+      root path for the results (default: "~/.odin")
+  """
+  path = _get_managed_path('results', tag, False,
+                           is_folder=True, root=root)
+  # only return the main folder
+  if name is None:
     return path
+  # return the sub-folder
+  name = str(name).split('/')
+  for i in name:
+    path = os.path.join(path, i)
+    if not os.path.exists(path):
+      os.mkdir(path)
+  # ====== check if override ====== #
+  if override and len(os.listdir(path)) > 0:
+    if prompt:
+      user_cmd = raw_input('Do you want to delete "%s" (Y for yes):').lower()
+      if user_cmd != 'y':
+        exit()
+    shutil.rmtree(path)
+    os.mkdir(path)
+  return path
 
 
 # ===========================================================================
 # Misc
 # ===========================================================================
 def exec_commands(cmds, print_progress=True):
-    ''' Execute a command or list of commands in parallel with multiple process
-    (as much as we have CPU)
+  ''' Execute a command or list of commands in parallel with multiple process
+  (as much as we have CPU)
 
-    Parameters
-    ----------
-    cmds: str or list of str
-        string represent command you want to run
+  Parameters
+  ----------
+  cmds: str or list of str
+      string represent command you want to run
 
-    Return
-    ------
-    failed: list of failed command
+  Return
+  ------
+  failed: list of failed command
 
-    '''
-    if not cmds: return [] # empty list
-    if not isinstance(cmds, (list, tuple)):
-        cmds = [cmds]
-    else:
-        cmds = list(cmds)
+  '''
+  if not cmds: return [] # empty list
+  if not isinstance(cmds, (list, tuple)):
+    cmds = [cmds]
+  else:
+    cmds = list(cmds)
 
-    def done(p):
-        return p.poll() is not None
+  def done(p):
+    return p.poll() is not None
 
-    def success(p):
-        return p.returncode == 0
+  def success(p):
+    return p.returncode == 0
 
-    max_task = cpu_count()
-    processes = []
-    processes_map = {}
-    failed = []
-    if print_progress:
-        prog = Progbar(target=len(cmds), name="Execute Commands")
-    while True:
-        while cmds and len(processes) < max_task:
-            task = cmds.pop()
-            p = subprocess.Popen(task, shell=True)
-            processes.append(p)
-            processes_map[p] = task
-            # print process
-            if print_progress:
-                prog.add(1)
+  max_task = cpu_count()
+  processes = []
+  processes_map = {}
+  failed = []
+  if print_progress:
+    prog = Progbar(target=len(cmds), name="Execute Commands")
+  while True:
+    while cmds and len(processes) < max_task:
+      task = cmds.pop()
+      p = subprocess.Popen(task, shell=True)
+      processes.append(p)
+      processes_map[p] = task
+      # print process
+      if print_progress:
+        prog.add(1)
 
-        for p in processes:
-            if done(p):
-                if success(p):
-                    processes.remove(p)
-                else:
-                    failed.append(processes_map[p])
-
-        if not processes and not cmds:
-            break
+    for p in processes:
+      if done(p):
+        if success(p):
+          processes.remove(p)
         else:
-            time.sleep(0.005)
-    return failed
+          failed.append(processes_map[p])
+
+    if not processes and not cmds:
+      break
+    else:
+      time.sleep(0.005)
+  return failed
 
 
 def save_wav(path, s, fs):
-    from scipy.io import wavfile
-    wavfile.write(path, fs, s)
+  from scipy.io import wavfile
+  wavfile.write(path, fs, s)
 
 
 def play_audio(data, fs, volumn=1, speed=1):
-    ''' Play audio from numpy array.
+  ''' Play audio from numpy array.
 
-    Parameters
-    ----------
-    data : numpy.ndarray
-            signal data
-    fs : int
-            sample rate
-    volumn: float
-            between 0 and 1
-    speed: float
-            > 1 mean faster, < 1 mean slower
+  Parameters
+  ----------
+  data : numpy.ndarray
+          signal data
+  fs : int
+          sample rate
+  volumn: float
+          between 0 and 1
+  speed: float
+          > 1 mean faster, < 1 mean slower
 
-    Note
-    ----
-    Only support play audio on MacOS
-    '''
-    import soundfile as sf
-    import os
+  Note
+  ----
+  Only support play audio on MacOS
+  '''
+  import soundfile as sf
+  import os
 
-    data = numpy.asarray(data, dtype=numpy.int16)
-    if data.ndim == 1:
-        channels = 1
-    else:
-        channels = data.shape[1]
-    with TemporaryDirectory() as temppath:
-        path = os.path.join(temppath, 'tmp_play.wav')
-        with sf.SoundFile(path, 'w', fs, channels, subtype=None,
-            endian=None, format=None, closefd=None) as f:
-            f.write(data)
-        os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
-        raw_input('<enter> to stop audio.')
-        os.system("kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
+  data = numpy.asarray(data, dtype=numpy.int16)
+  if data.ndim == 1:
+    channels = 1
+  else:
+    channels = data.shape[1]
+  with TemporaryDirectory() as temppath:
+    path = os.path.join(temppath, 'tmp_play.wav')
+    with sf.SoundFile(path, 'w', fs, channels, subtype=None,
+        endian=None, format=None, closefd=None) as f:
+      f.write(data)
+    os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
+    raw_input('<enter> to stop audio.')
+    os.system("kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
 
 
 # ===========================================================================
@@ -1409,74 +1409,74 @@ def get_process_status(pid=None, memory_usage=False, memory_shared=False,
                        memory_virtual=False, memory_maps=False,
                        cpu_percent=False, threads=False,
                        status=False, name=False, io_counters=False):
-    import psutil
-    if pid is None:
-        pid = os.getpid()
-    if pid in __process_pid_map:
-        process = __process_pid_map[pid]
-    else:
-        process = psutil.Process(pid)
-        __process_pid_map[pid] = process
+  import psutil
+  if pid is None:
+    pid = os.getpid()
+  if pid in __process_pid_map:
+    process = __process_pid_map[pid]
+  else:
+    process = psutil.Process(pid)
+    __process_pid_map[pid] = process
 
-    if status:
-        return process.status()
-    if name:
-        return process.name()
-    if io_counters:
-        return process.io_counters()
-    if memory_usage:
-        return process.memory_info().rss / float(2 ** 20)
-    if memory_shared:
-        return process.memory_info().shared / float(2 ** 20)
-    if memory_virtual:
-        return process.memory_info().vms / float(2 ** 20)
-    if memory_maps:
-        return {i[0]: i[1] / float(2 ** 20)
-                for i in process.memory_maps()}
-    if cpu_percent:
-        # first time call always return 0
-        process.cpu_percent(None)
-        return process.cpu_percent(None)
-    if threads:
-        return {i.id: (i.user_time, i.system_time) for i in process.threads()}
+  if status:
+    return process.status()
+  if name:
+    return process.name()
+  if io_counters:
+    return process.io_counters()
+  if memory_usage:
+    return process.memory_info().rss / float(2 ** 20)
+  if memory_shared:
+    return process.memory_info().shared / float(2 ** 20)
+  if memory_virtual:
+    return process.memory_info().vms / float(2 ** 20)
+  if memory_maps:
+    return {i[0]: i[1] / float(2 ** 20)
+            for i in process.memory_maps()}
+  if cpu_percent:
+    # first time call always return 0
+    process.cpu_percent(None)
+    return process.cpu_percent(None)
+  if threads:
+    return {i.id: (i.user_time, i.system_time) for i in process.threads()}
 
 
 def get_system_status(memory_total=False, memory_total_actual=False,
                       memory_total_usage=False, memory_total_free=False,
                       all_pids=False, swap_memory=False, pid=False):
-    """
-    Parameters
-    ----------
-    threads: bool
-        return dict {id: (user_time, system_time)}
-    memory_maps: bool
-        return dict {path: rss}
+  """
+  Parameters
+  ----------
+  threads: bool
+      return dict {id: (user_time, system_time)}
+  memory_maps: bool
+      return dict {path: rss}
 
-    Note
-    ----
-    All memory is returned in `MiB`
-    To calculate memory_percent:
-        get_system_status(memory_usage=True) / get_system_status(memory_total=True) * 100
-    """
-    import psutil
-    # ====== general system query ====== #
-    if memory_total:
-        return psutil.virtual_memory().total / float(2 ** 20)
-    if memory_total_actual:
-        return psutil.virtual_memory().available / float(2 ** 20)
-    if memory_total_usage:
-        return psutil.virtual_memory().used / float(2 ** 20)
-    if memory_total_free:
-        return psutil.virtual_memory().free / float(2 ** 20)
-    if swap_memory:
-        tmp = psutil.swap_memory()
-        tmp.total /= float(2 ** 20)
-        tmp.used /= float(2 ** 20)
-        tmp.free /= float(2 ** 20)
-        tmp.sin /= float(2**20)
-        tmp.sout /= float(2**20)
-        return tmp
-    if all_pids:
-        return psutil.pids()
-    if pid:
-        return os.getpid()
+  Note
+  ----
+  All memory is returned in `MiB`
+  To calculate memory_percent:
+      get_system_status(memory_usage=True) / get_system_status(memory_total=True) * 100
+  """
+  import psutil
+  # ====== general system query ====== #
+  if memory_total:
+    return psutil.virtual_memory().total / float(2 ** 20)
+  if memory_total_actual:
+    return psutil.virtual_memory().available / float(2 ** 20)
+  if memory_total_usage:
+    return psutil.virtual_memory().used / float(2 ** 20)
+  if memory_total_free:
+    return psutil.virtual_memory().free / float(2 ** 20)
+  if swap_memory:
+    tmp = psutil.swap_memory()
+    tmp.total /= float(2 ** 20)
+    tmp.used /= float(2 ** 20)
+    tmp.free /= float(2 ** 20)
+    tmp.sin /= float(2**20)
+    tmp.sout /= float(2**20)
+    return tmp
+  if all_pids:
+    return psutil.pids()
+  if pid:
+    return os.getpid()

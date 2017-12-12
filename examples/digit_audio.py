@@ -89,7 +89,7 @@ valid.set_recipes(recipes)
 print(train)
 
 with open('/tmp/test_feeder', 'w') as f:
-    cPickle.dump(test, f, protocol=2)
+  cPickle.dump(test, f, protocol=2)
 
 inputs = [K.placeholder(shape=(None,) + shape[1:], name='input_%d' % i)
           for i, shape in enumerate(train.shape)]
@@ -100,28 +100,28 @@ y = inputs[-1]
 # Create network
 # ===========================================================================
 with N.nnop_scope(ops=['Pool'], mode='max', pool_size=2):
-    f = N.Sequence([
-        # ====== CNN ====== #
-        N.Dimshuffle(pattern=(0, 1, 2, 'x')),
-        N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
-               b_init=None, activation=K.linear),
-        N.BatchNorm(activation=K.relu),
+  f = N.Sequence([
+      # ====== CNN ====== #
+      N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+      N.Conv(num_filters=32, filter_size=3, pad='same', strides=1,
+             b_init=None, activation=K.linear),
+      N.BatchNorm(activation=K.relu),
 
-        N.Conv(num_filters=64, filter_size=3, pad='same', strides=1,
-               b_init=None, activation=K.linear),
-        N.BatchNorm(activation=K.relu),
-        N.Pool(strides=None, pad='valid'),
-        # ====== RNN ====== #
-        N.Flatten(outdim=3),
-        N.CudnnRNN(128, rnn_mode='lstm', num_layers=1,
-                   bidirectional=True),
-        # ====== Dense ====== #
-        N.Flatten(outdim=2),
-        N.Dense(num_units=1024, activation=K.relu),
-        N.Dropout(level=0.5), # adding dropout does not help
-        N.Dense(num_units=512, activation=K.relu),
-        N.Dense(num_units=nb_classes)
-    ], debug=True)
+      N.Conv(num_filters=64, filter_size=3, pad='same', strides=1,
+             b_init=None, activation=K.linear),
+      N.BatchNorm(activation=K.relu),
+      N.Pool(strides=None, pad='valid'),
+      # ====== RNN ====== #
+      N.Flatten(outdim=3),
+      N.CudnnRNN(128, rnn_mode='lstm', num_layers=1,
+                 bidirectional=True),
+      # ====== Dense ====== #
+      N.Flatten(outdim=2),
+      N.Dense(num_units=1024, activation=K.relu),
+      N.Dropout(level=0.5), # adding dropout does not help
+      N.Dense(num_units=512, activation=K.relu),
+      N.Dense(num_units=nb_classes)
+  ], debug=True)
 y_pred_logits = f(X)
 y_pred_prob = tf.nn.softmax(y_pred_logits)
 y_onehot = tf.one_hot(tf.cast(y, dtype='int32'), depth=nb_classes)

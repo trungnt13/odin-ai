@@ -49,22 +49,22 @@ stdio(LOG_PATH)
 # Helper
 # ===========================================================================
 def is_train(x):
-    return x.split('_')[0] == 'train'
+  return x.split('_')[0] == 'train'
 
 
 def extract_spk(x):
-    return x.split('_')[4]
+  return x.split('_')[4]
 
 
 def extract_gender(x):
-    return x.split('_')[1]
+  return x.split('_')[1]
 
 
 def extract_digit(x):
-    i = x.split('_')[6]
-    if '_jackson_' in x and i == '0':
-        i = 'z'
-    return i
+  i = x.split('_')[6]
+  if '_jackson_' in x and i == '0':
+    i = 'z'
+  return i
 
 # ===========================================================================
 # Load and visual the dataset
@@ -72,12 +72,12 @@ def extract_digit(x):
 train = {}
 test = {}
 for name, (start, end) in ds['indices'].items():
-    assert end - start > 0
-    if len(extract_digit(name)) == 1:
-        if is_train(name):
-            train[name] = (start, end)
-        else:
-            test[name] = (start, end)
+  assert end - start > 0
+  if len(extract_digit(name)) == 1:
+    if is_train(name):
+      train[name] = (start, end)
+    else:
+      test[name] = (start, end)
 print(ctext("#Train:", 'yellow'), len(train))
 print(ctext("#Test:", 'yellow'), len(test))
 # ====== gender and single digit distribution ====== #
@@ -148,20 +148,20 @@ print(test)
 # just to evaluate if we correctly estimate the right amount
 # of data in the FeederRecipes
 if True:
-    n = 0
-    for X, sad, y in train:
-        n += X.shape[0]
-    assert n == len(train)
-    #
-    n = 0
-    for name, idx, X, sad, y in test:
-        n += X.shape[0]
-    assert n == len(test)
-    #
-    n = 0
-    for X, sad, y in valid:
-        n += X.shape[0]
-    assert n == len(valid)
+  n = 0
+  for X, sad, y in train:
+    n += X.shape[0]
+  assert n == len(train)
+  #
+  n = 0
+  for name, idx, X, sad, y in test:
+    n += X.shape[0]
+  assert n == len(test)
+  #
+  n = 0
+  for X, sad, y in valid:
+    n += X.shape[0]
+  assert n == len(valid)
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -173,22 +173,22 @@ print("Inputs:", inputs)
 
 with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
                   pad='same'):
-    with N.args_scope(ops=['BatchNorm'], activation=K.relu):
-        f = N.Sequence([
-            N.Dimshuffle(pattern=(0, 1, 2, 'x')),
-            N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Conv(num_filters=32, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Conv(num_filters=128, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
-            N.Flatten(outdim=2),
-            N.Dense(1024, b_init=0, activation=K.relu),
-            N.Dropout(0.5),
-            N.Dense(len(digits))
-        ], debug=True)
+  with N.args_scope(ops=['BatchNorm'], activation=K.relu):
+    f = N.Sequence([
+        N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+        N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Conv(num_filters=32, filter_size=(3, 3)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Conv(num_filters=128, filter_size=(3, 3)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2, mode='avg'),
+        N.Flatten(outdim=2),
+        N.Dense(1024, b_init=0, activation=K.relu),
+        N.Dropout(0.5),
+        N.Dense(len(digits))
+    ], debug=True)
 y_logit = f(inputs[0])
 y_prob = tf.nn.softmax(y_logit)
 # ====== create loss ====== #
@@ -243,12 +243,12 @@ y_true = []
 y_pred = []
 for outputs in Progbar(test, name="Evaluating",
                        count_func=lambda x: x[-1].shape[0]):
-    name = str(outputs[0])
-    idx = int(outputs[1])
-    data = outputs[2:]
-    assert idx == 0
-    y_true.append(f_digits(name))
-    y_pred.append(f_pred(*data))
+  name = str(outputs[0])
+  idx = int(outputs[1])
+  data = outputs[2:]
+  assert idx == 0
+  y_true.append(f_digits(name))
+  y_pred.append(f_pred(*data))
 y_true = np.array(y_true, dtype='int32')
 y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
 # ====== Acc ====== #

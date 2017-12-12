@@ -83,9 +83,9 @@ ACC = []
 CM = []
 for X, y in zip(ds['X_test'].set_batch(128, seed=None),
                 ds['y_test'].set_batch(128, seed=None)):
-    ce, acc, cm = f_test(X, y)
-    ACC.append(acc)
-    CM.append(cm)
+  ce, acc, cm = f_test(X, y)
+  ACC.append(acc)
+  CM.append(cm)
 print("Accuracy:", np.mean(ACC))
 print("CM:")
 print(sum(cm for cm in CM))

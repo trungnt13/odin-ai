@@ -43,9 +43,9 @@ K.get_rng().shuffle(indices)
 # ====== gender and single digit distribution ====== #
 gender_digits = defaultdict(int)
 for name, (start, end) in indices:
-    name = name.split('_')
-    if len(name[-1]) == 1:
-        gender_digits[name[1] + '-' + name[-1]] += 1
+  name = name.split('_')
+  if len(name[-1]) == 1:
+    gender_digits[name[1] + '-' + name[-1]] += 1
 gender_digits = sorted(gender_digits.items(), key=lambda x: x[0][0])
 print(print_dist(gender_digits, show_number=True))
 # ====== length ====== #
@@ -59,10 +59,10 @@ f_gender, genders = unique_labels([i[0] for i in indices],
 train = []
 test = []
 for name, (start, end) in indices:
-    if name.split('_')[0] == 'train':
-        train.append((name, start, end))
-    else:
-        test.append((name, start, end))
+  if name.split('_')[0] == 'train':
+    train.append((name, start, end))
+  else:
+    test.append((name, start, end))
 print(print_dist(freqcount(train, key=lambda x: x[0].split('_')[1]), show_number=True))
 print(print_dist(freqcount(test, key=lambda x: x[0].split('_')[1]), show_number=True))
 # ===========================================================================
@@ -91,7 +91,7 @@ feeder_train.set_recipes(recipes)
 feeder_valid.set_recipes(recipes)
 feeder_test.set_recipes(recipes)
 for X, y in feeder_train:
-    print(X.shape, y.shape)
+  print(X.shape, y.shape)
 exit()
 # ===========================================================================
 # Create model
@@ -104,21 +104,21 @@ print("Outputs:", y)
 
 with N.nnop_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
                   pad='same'):
-    with N.nnop_scope(ops=['BatchNorm'], activation=K.relu):
-        f = N.Sequence([
-            N.Dimshuffle(pattern=(0, 1, 2, 'x')),
-            N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Conv(num_filters=32, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
-            N.Pool(pool_size=(3, 2), strides=2),
-            N.Flatten(outdim=2),
-            N.Dense(1024), N.BatchNorm(),
-            N.Dense(128),
-            N.Dense(512), N.BatchNorm(),
-            N.Dense(len(genders))
-        ], debug=True)
+  with N.nnop_scope(ops=['BatchNorm'], activation=K.relu):
+    f = N.Sequence([
+        N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+        N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Conv(num_filters=32, filter_size=(3, 3)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
+        N.Pool(pool_size=(3, 2), strides=2),
+        N.Flatten(outdim=2),
+        N.Dense(1024), N.BatchNorm(),
+        N.Dense(128),
+        N.Dense(512), N.BatchNorm(),
+        N.Dense(len(genders))
+    ], debug=True)
 
 y_logit = f(X)
 y_prob = tf.nn.softmax(y_logit)
@@ -167,13 +167,13 @@ y_true = []
 y_pred = []
 for outputs in Progbar(feeder_test, name="Evaluating",
                        count_func=lambda x: x[-1].shape[0]):
-    name = str(outputs[0])
-    idx = int(outputs[1])
-    data = outputs[2:]
-    if idx >= 1:
-        raise ValueError("NOPE")
-    y_true.append(f_gender(name))
-    y_pred.append(f_pred(*data))
+  name = str(outputs[0])
+  idx = int(outputs[1])
+  data = outputs[2:]
+  if idx >= 1:
+    raise ValueError("NOPE")
+  y_true.append(f_gender(name))
+  y_pred.append(f_pred(*data))
 y_true = np.array(y_true, dtype='int32')
 y_pred = np.argmax(np.array(y_pred, dtype='float32'), -1)
 
