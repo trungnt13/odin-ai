@@ -11,6 +11,7 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils.mpi import MPI
+from odin.utils import batching
 from odin.fuel import Data
 
 __all__ = [
@@ -326,11 +327,9 @@ class MiniBatchPCA(IncrementalPCA):
       batch_size = 12 * len(self.mean_)
     else:
       batch_size = self.batch_size
-    batch_list = [(i, min(i + batch_size, n))
-        for i in range(0, n + batch_size, batch_size) if i < n]
     # ====== start transforming ====== #
     X_transformed = []
-    for start, end in batch_list:
+    for start, end in batching(n=n, batch_size=batch_size):
       x = super(MiniBatchPCA, self).transform(X=X[start:end])
       if n_components is not None:
         x = x[:, :n_components]

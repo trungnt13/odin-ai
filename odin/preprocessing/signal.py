@@ -46,7 +46,6 @@ VAD_MODE_STANDARD = 2.
 VAD_MODE_SENSITIVE = 2.4
 __current_vad_mode = VAD_MODE_STANDARD # alpha for vad energy
 
-
 def set_vad_mode(mode):
   """
   Paramters
@@ -59,7 +58,6 @@ def set_vad_mode(mode):
     global __current_vad_mode
     mode = min(max(mode, 1.), 2.4)
     __current_vad_mode = float(mode)
-
 
 def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
   """ Fitting Gaussian mixture model on the log-energy and the voice
@@ -99,7 +97,6 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
   # Apply frame selection with the current threshold
   label = log_energy.ravel() > threshold
   return label, threshold
-
 
 def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
                     frame_length=128, nb_mixtures=3, threshold=0.6,
@@ -240,7 +237,6 @@ def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
   results = [segments] + results
   return results[0] if len(results) == 1 else results
 
-
 # ===========================================================================
 #
 # ===========================================================================
@@ -282,7 +278,6 @@ def hz2mel(frequencies):
   log_t = (frequencies >= min_log_hz)
   mels[log_t] = min_log_mel + np.log(frequencies[log_t] / min_log_hz) / logstep
   return mels
-
 
 def mel2hz(mels):
   """Convert mel bin numbers to frequencies
@@ -326,7 +321,6 @@ def mel2hz(mels):
   freqs[log_t] = min_log_hz * np.exp(logstep * (mels[log_t] - min_log_mel))
   return freqs
 
-
 def db2power(S_db, ref=1.0):
   '''Convert a dB-scale spectrogram to a power spectrogram.
 
@@ -353,7 +347,6 @@ def db2power(S_db, ref=1.0):
   This function caches at level 30.
   '''
   return ref * np.power(10.0, 0.1 * S_db)
-
 
 def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
   """Convert a power spectrogram (amplitude/magnitude squared)
@@ -400,7 +393,6 @@ def power2db(S, ref=1.0, amin=1e-10, top_db=80.0):
       raise ValueError('top_db must be non-negative')
     log_spec = np.maximum(log_spec, log_spec.max() - top_db)
   return log_spec
-
 
 @cache_memory
 def dct_filters(n_filters, n_input):
@@ -454,7 +446,6 @@ def dct_filters(n_filters, n_input):
   for i in range(1, n_filters):
     basis[i, :] = np.cos(i * samples) * np.sqrt(2.0 / n_input)
   return basis
-
 
 @cache_memory
 def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
@@ -533,7 +524,6 @@ def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
           'reducing n_mels.')
   return weights
 
-
 @cache_memory
 def get_window(window, frame_length, periodic=True):
   ''' Cached version of scipy.signal.get_window '''
@@ -572,8 +562,11 @@ def resample(y, sr_orig, sr_new, axis=0, best_algorithm=True):
             filter='kaiser_best' if best_algorithm else 'kaiser_fast')
   return y
 
+_fnorm1 = lambda x, x_stat, keepdims: x - x_stat.mean(axis=0, keepdims=keepdims)
+_fnorm2 = lambda x, x_stat, keepdims: ((x - x_stat.mean(axis=0, keepdims=keepdims)) /
+                                       (x_stat.std(axis=0, keepdims=keepdims) + 1e-18))
 
-def mvn(x, varnorm=True):
+def mvn(x, varnorm=True, indices=None):
   """ Mean and Variance Normalization
   Normalization is applied on time-axis
 
@@ -581,44 +574,70 @@ def mvn(x, varnorm=True):
   ----------
   x: [t, f]
       [time, frequency]
+  varnorm : bool
+    if True, normalized by standard deviation
+  indices : numpy.ndarray [time,]
+    the speech activities boolean indices, which frames
+    will be taken into account for calculating the `mean`
+    and `std`
 
   Note
   ----
   Just standard normalization, not a big deal for its name
   """
-  y = x - x.mean(0, keepdims=True)
+  x_stat = x[indices] if indices is not None else x
   if varnorm:
-    y /= (x.std(0, keepdims=True) + 1e-20)
-  return y
+    return _fnorm2(x, x_stat, True)
+  else:
+    return _fnorm1(x, x_stat, True)
 
 
-def wmvn(x, w=301, varnorm=True):
+def wmvn(x, w=301, varnorm=True, indices=None):
   """ Windowed - Mean and Variance Normalization
   Normalization is applied on time-axis
 
   Parameters
   ----------
-  x: [t, f]
+  x : [t, f]
       [time, frequency]
+  w : int
+    width of normalization window.
+  varnorm : bool
+    if True, normalized by standard deviation
+  indices : numpy.ndarray [time,]
+    the speech activities boolean indices, which frames
+    will be taken into account for calculating the `mean`
+    and `std`
 
   """
   if w < 3 or (w & 1) != 1:
     raise ValueError('Window length should be an odd integer >= 3')
   nobs, ndim = x.shape
   if nobs < w:
-    return mvn(x, varnorm)
+    return mvn(x, varnorm=varnorm, indices=indices)
+  fnorm = _fnorm2 if varnorm else _fnorm1
+  # ====== init ====== #
   hlen = int((w - 1) / 2)
   y = np.zeros((nobs, ndim), dtype=x.dtype)
-  y[:hlen, :] = x[:hlen, :] - x[:w, :].mean(0, keepdims=True)
+  # ====== first window ====== #
+  # applying indices
+  x_stat = x[:w] if indices is None else x[:w][indices[:w]]
+  # normalize
+  y[:hlen] = fnorm(x[:hlen], x_stat, True)
+  # ====== iterate ====== #
   for ix in range(hlen, nobs - hlen):
-    y[ix, :] = x[ix, :] - x[ix - hlen:ix + hlen + 1, :].mean(0)
-  y[nobs - hlen:nobs, :] = x[nobs - hlen:nobs, :] - \
-      x[nobs - w:, :].mean(0, keepdims=True)
-  if varnorm:
-    y[:hlen, :] /= (x[:w, :].std(0, keepdims=True) + 1e-20)
-    for ix in range(hlen, nobs - hlen):
-      y[ix, :] /= (x[ix - hlen:ix + hlen + 1, :].std(0) + 1e-20)
-    y[nobs - hlen:nobs, :] /= (x[nobs - w:, :].std(0, keepdims=True) + 1e-20)
+    # applying indices
+    if indices is None:
+      x_stat = x[ix - hlen:ix + hlen + 1]
+    else:
+      sad = indices[ix - hlen:ix + hlen + 1]
+      x_stat = x[ix - hlen:ix + hlen + 1][sad]
+    # normalize
+    y[ix] = fnorm(x[ix], x_stat, False)
+  # ====== last window ====== #
+  # applying indices
+  x_stat = x[nobs - w:] if indices is None else x[nobs - w:][indices[nobs - w:]]
+  y[nobs - hlen:nobs] = fnorm(x[nobs - hlen:nobs], x_stat, True)
   return y
 
 

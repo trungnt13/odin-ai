@@ -772,12 +772,15 @@ class AcousticNorm(Extractor):
     normalization
   sad_name : str
     feature name of SAD indices, only used if `sad_stats=True`
+  ignore_sad_error : bool
+    if True, when length of SAD and feature mismatch, still perform
+    normalization, otherwise raise `RuntimeError`.
 
   """
 
   def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
                win_length=301, var_norm=True,
-               sad_stats=False, sad_name='sad',
+               sad_stats=False, sad_name='sad', ignore_sad_error=True,
                feat_name=('mspec', 'spec', 'mfcc', 'bnf',
                           'qspec', 'qmfcc', 'qmspec')):
     super(AcousticNorm, self).__init__()
@@ -793,18 +796,39 @@ class AcousticNorm(Extractor):
     self.win_length = win_length
     # ====== check which features will be normalized ====== #
     self.feat_name = as_tuple(feat_name, t=str)
+    # ====== SAD ====== #
+    self.sad_stats = bool(sad_stats)
+    self.sad_name = str(sad_name)
+    self.ignore_sad_error = bool(ignore_sad_error)
 
   def _transform(self, feat):
+    # ====== check SAD indices ====== #
+    sad = None
+    if self.sad_stats:
+      if self.sad_name not in feat:
+        raise RuntimeError("Cannot find SAD with name: '%s'" % self.sad_name)
+      sad = feat[self.sad_name]
+    # ====== normalize ====== #
     feat_normalized = {}
     # all `features` is [t, f] shape
-    for name, features in feat.items():
+    for name, X in feat.items():
       if name in self.feat_name:
+        X_sad = sad
+        if sad is not None and len(sad) != len(X):
+          if self.ignore_sad_error:
+            X_sad = None
+          else:
+            raise RuntimeError("Features with name: '%s' have length %d, but "
+                               "given SAD has length %d" %
+                               (name, len(X), len(sad)))
+        # mean-variance normalization
         if self.mean_var_norm:
-          features = mvn(features, varnorm=self.var_norm)
+          X = mvn(X, varnorm=self.var_norm, indices=X_sad)
+        # windowed normalization
         if self.window_mean_var_norm:
-          features = wmvn(features, w=self.win_length,
-                          varnorm=False)
-      feat_normalized[name] = features
+          X = wmvn(X, w=self.win_length, varnorm=False, indices=X_sad)
+      # update new features
+      feat_normalized[name] = X
     return feat_normalized
 
 

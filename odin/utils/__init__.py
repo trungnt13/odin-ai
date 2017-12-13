@@ -121,7 +121,7 @@ def UnitTimer(factor=1, name=None):
   # set name for timing task
   if name is None:
     name = 'Task'
-  print('["%s"]' % ctext(name, 'yellow'),
+  print('"%s"' % ctext(name, 'yellow'),
       "Time:",
       ctext((end - start) / factor, 'cyan'),
       '(sec)')

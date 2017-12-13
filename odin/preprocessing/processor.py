@@ -30,7 +30,7 @@ from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
                         add_notification, keydefaultdict,
                         stdio, get_stdio_path, wprint,
-                        add_notification)
+                        add_notification, flatten_list)
 from odin.fuel import Dataset, MmapDict, MmapData
 
 from .base import Extractor
@@ -71,8 +71,8 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
   for feat in feat_name:
     nb_samples += dataset[feat].shape[0]
     # found exist pca model
-    if feat + '_pca' in dataset and not override:
-      pca_map[feat] = dataset[feat + '_pca']
+    if 'pca_' + feat in dataset and not override:
+      pca_map[feat] = dataset['pca_' + feat]
     # create new PCA
     else:
       pca_map[feat] = MiniBatchPCA(n_components=None, whiten=False,
@@ -89,7 +89,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
       pca.partial_fit(x)
       yield x.shape[0]
     # save PCA model
-    with open(os.path.join(dataset.path, name + '_pca'), 'wb') as f:
+    with open(os.path.join(dataset.path, 'pca_' + name), 'wb') as f:
       cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
     # finish return feature name
     yield name
@@ -202,8 +202,9 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   all_keys = [k for k in ds.keys() if k not in ('config', 'pipeline')]
   # store all features (included the features in external_indices
   all_features = []
-  external_indices = [k.split('_')[1] for k in all_keys
-                      if 'indices' in k and k != 'indices']
+  # the external indices can be: indices_mfcc_bnf
+  external_indices = flatten_list([k.split('_')[1:] for k in all_keys
+                                   if 'indices' in k and k != 'indices'])
   # ====== checking indices ====== #
   main_indices = {name: (start, end)
                   for name, (start, end) in ds['indices'].items()}
@@ -261,8 +262,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   for feat_name in all_features:
     dtype = str(ds[feat_name].dtype)
     # checking all data
-    indices = ds['indices'] if feat_name not in external_indices else \
-        ds['indices_%s' % feat_name]
+    indices = ds.find_prefix(feat_name, 'indices')
     prog = Progbar(target=len(indices), interval=0.1,
                    print_report=True,
                    name='Checking: %s(%s)' % (feat_name, dtype))
@@ -330,10 +330,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   for sample_id, file_name in enumerate(all_samples):
     X = {}
     for feat_name in all_features:
-      if feat_name in external_indices:
-        start, end = ds['indices_%s' % feat_name][file_name]
-      else:
-        start, end = ds['indices'][file_name]
+      start, end = ds.find_prefix(feat_name, 'indices')[file_name]
       feat = ds[feat_name][start:end]
       X[feat_name] = feat
       # some special handling

@@ -565,6 +565,25 @@ class Dataset(object):
   def __contains__(self, key):
     return key in self._data_map
 
+  def find_prefix(self, feat_name, prefix):
+    """ Specialized method for searching for Data or NoSQL
+    with prefix, for example `prefix='indices'`:
+      - `indices_%s_%s` % (feat1_name, feat2, ...)
+    if no indices found, return the default indices with
+    name 'indices'
+    """
+    indices = self[prefix] if prefix in self else None
+    for key in self.keys():
+      if prefix == key[:len(prefix)] and '_' + feat_name in key:
+        indices = self[key]
+    if indices is None:
+      raise RuntimeError("Cannot find prefix: '%s' for feature with name: '%s', "
+                         "all available name with given prefix are: %s" %
+                         (prefix, feat_name, ','.join([k for k in self.keys()
+                                                       if prefix == k[:len(k)]])
+                         ))
+    return indices
+
   def __getitem__(self, key):
     if is_string(key):
       if key not in self._data_map:

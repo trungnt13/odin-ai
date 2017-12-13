@@ -18,7 +18,7 @@ import pickle
 
 import numpy as np
 
-from odin import visual, nnet as N
+from odin import visual as V, nnet as N
 from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
 
@@ -40,7 +40,7 @@ else:
   filter_func = lambda x: True
   key_func = lambda x: int(x[0])
 print(audio)
-all_files = list(audio['indices'].keys())
+all_files = sorted(list(audio['indices'].keys()))
 labels_fn, labels = unique_labels(y=[f for f in all_files if filter_func(f)],
                                   key_func=key_func,
                                   return_labels=True)
@@ -77,17 +77,20 @@ extractors = pp.make_pipeline(steps=[
     pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
                            feat_name=('mspec', 'qmspec', 'mfcc',
                                       'qmfcc', 'energy', 'pitch')),
-    # BNF require SAD
+    # BNF
     pp.speech.ApplyingSAD(stack_context={'mfcc': 10}, smooth_win=8,
                           keep_unvoiced=True, feat_name='mfcc'),
     pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network),
+    # normalization
     pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
-                           feat_name=('mspec', 'mfcc', 'bnf',
+                           sad_stats=False, sad_name='sad',
+                           ignore_sad_error=True,
+                           feat_name=('spec', 'mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),
-    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-                                      'qspec', 'qmspec', 'qmfcc',
-                                      'pitch', 'f0', 'sad', 'energy',
-                                      'sap', 'loudness')),
+    # pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
+    #                                   'qspec', 'qmspec', 'qmfcc',
+    #                                   'pitch', 'f0', 'sad', 'energy',
+    #                                   'sap', 'loudness')),
     pp.base.RemoveFeatures(feat_name=('raw')),
     pp.base.RunningStatistics(),
     pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
@@ -96,7 +99,9 @@ extractors = pp.make_pipeline(steps=[
                     'sad': dtype, 'energy': dtype, 'loudness': dtype,
                     'raw': dtype, 'bnf': dtype}),
 ], debug=False)
-# extractors.transform(all_files[0])
+# tmp = extractors.transform(all_files[0])
+# V.plot_features(tmp)
+# V.plot_save('/tmp/tmp.pdf')
 # exit()
 # ===========================================================================
 # Processor
@@ -114,6 +119,11 @@ pp.calculate_pca(processor, override=True)
 ds = F.Dataset(output_path, read_only=True)
 pp.validate_features(ds, path=figpath, nb_samples=8, override=True)
 print(ds)
+# ====== print all indices ====== #
+print("All indices:")
+for k in ds.keys():
+  if 'indices' in k:
+    print(' - ', ctext(k, 'yellow'))
 # ====== print pipeline ====== #
 padding = '  '
 print(ctext("* Pipeline:", 'red'))
@@ -146,36 +156,39 @@ if 'pitch' in ds:
     if not np.any(pitch):
       print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
-for feat in ('mspec', 'spec', 'mfcc', 'bnf'):
+for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
+  if feat not in ds:
+    continue
   from sklearn.manifold import TSNE
   X = []; y = []
-  feat_pca = ds[feat + '_pca']
-  prog = Progbar(target=len(ds['indices']),
+  # get right feat and indices
+  feat_pca = ds.find_prefix(feat, 'pca')
+  indices = ds.find_prefix(feat, 'indices')
+  # transform
+  prog = Progbar(target=len(indices),
                  print_summary=True, print_report=True,
                  name="PCA transform: %s" % feat)
-  for f, (start, end) in ds['indices']:
+  for f, (start, end) in indices:
     if filter_func(f):
-      X.append(
-          np.mean(
-              feat_pca.transform(ds[feat][start:end]),
-              axis=0, keepdims=True)
-      )
+      X.append(np.mean(
+          feat_pca.transform(ds[feat][start:end]),
+          axis=0, keepdims=True))
       y.append(labels_fn(f))
     prog.add(1)
   X_pca = np.concatenate(X, axis=0)
   y = np.asarray(y)
   with UnitTimer(name="TSNE: feat='%s' N=%d" % (feat, X_pca.shape[0])):
     X_tsne = TSNE(n_components=2).fit_transform(X_pca)
-  colors = visual.generate_random_colors(len(labels), seed=12082518)
+  colors = V.generate_random_colors(len(labels), seed=12082518)
   y = [colors[i] for i in y]
   legend = {c: str(i) for i, c in enumerate(colors)}
-  with visual.figure(ncol=1, nrow=5, title='PCA: %s' % feat):
-    visual.plot_scatter(X_pca[:, 0], X_pca[:, 1], color=y, legend=legend)
-  with visual.figure(ncol=1, nrow=5, title='TSNE: %s' % feat):
-    visual.plot_scatter(X_tsne[:, 0], X_tsne[:, 1], color=y, legend=legend)
+  with V.figure(ncol=1, nrow=5, title='PCA: %s' % feat):
+    V.plot_scatter(X_pca[:, 0], X_pca[:, 1], color=y, legend=legend)
+  with V.figure(ncol=1, nrow=5, title='TSNE: %s' % feat):
+    V.plot_scatter(X_tsne[:, 0], X_tsne[:, 1], color=y, legend=legend)
 # ====== save all the figure ====== #
-visual.plot_save(os.path.join(figpath, 'pca_tsne.pdf'),
-                 tight_plot=True)
+V.plot_save(os.path.join(figpath, 'pca_tsne.pdf'),
+            tight_plot=True)
 # ====== print log ====== #
 print('Output path:', ctext(output_path, 'cyan'))
 print('Figure path:', ctext(figpath, 'cyan'))
