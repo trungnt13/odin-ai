@@ -577,9 +577,9 @@ def mvn(x, varnorm=True, indices=None):
   varnorm : bool
     if True, normalized by standard deviation
   indices : numpy.ndarray [time,]
-    the speech activities boolean indices, which frames
-    will be taken into account for calculating the `mean`
-    and `std`
+    `numpy.bool` array, the speech activities boolean indices,
+    which frames will be taken into account for calculating
+    the `mean` and `std`
 
   Note
   ----
@@ -605,9 +605,9 @@ def wmvn(x, w=301, varnorm=True, indices=None):
   varnorm : bool
     if True, normalized by standard deviation
   indices : numpy.ndarray [time,]
-    the speech activities boolean indices, which frames
-    will be taken into account for calculating the `mean`
-    and `std`
+    `numpy.bool` array, the speech activities boolean indices,
+    which frames will be taken into account for calculating
+    the `mean` and `std`
 
   """
   if w < 3 or (w & 1) != 1:

@@ -53,8 +53,8 @@ figpath = '/tmp/digits'
 padding = False
 frame_length = 0.025
 step_length = 0.005
-dtype = 'float32'
-bnf_network = N.models.BNF_1024_MFCC39()
+dtype = 'float16'
+bnf_network = N.models.BNF_2048_MFCC39()
 extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
                           remove_dc_n_dither=True, preemphasis=0.97,
@@ -75,23 +75,22 @@ extractors = pp.make_pipeline(steps=[
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_name='energy'),
     pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
-                           feat_name=('mspec', 'qmspec', 'mfcc',
-                                      'qmfcc', 'energy', 'pitch')),
+                           feat_name='mfcc'),
     # BNF
-    pp.speech.ApplyingSAD(stack_context={'mfcc': 10}, smooth_win=8,
-                          keep_unvoiced=True, feat_name='mfcc'),
-    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network),
+    pp.base.StackFeatures(context=10, feat_name='mfcc'),
+    # pp.speech.ApplyingSAD(stack_context={'mfcc': 10}, smooth_win=8,
+    #                       keep_unvoiced=True, feat_name='mfcc'),
+    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network,
+                           pre_mvn=True),
     # normalization
-    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
-                           sad_stats=False, sad_name='sad',
-                           ignore_sad_error=True,
+    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
+                           sad_stats=True, sad_name='sad', ignore_sad_error=True,
                            feat_name=('spec', 'mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),
-    # pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-    #                                   'qspec', 'qmspec', 'qmfcc',
-    #                                   'pitch', 'f0', 'sad', 'energy',
-    #                                   'sap', 'loudness')),
-    pp.base.RemoveFeatures(feat_name=('raw')),
+    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
+                                      'qspec', 'qmspec', 'qmfcc',
+                                      'pitch', 'f0', 'sad', 'energy',
+                                      'sap', 'loudness')),
     pp.base.RunningStatistics(),
     pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
                     'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,

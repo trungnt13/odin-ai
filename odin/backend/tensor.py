@@ -25,15 +25,50 @@ def _normalize_axis(axis, ndim):
             for a in axis])
   return axis % ndim
 
+def prior2weights(prior, exponential=False,
+                  min_value=0.1, max_value=None,
+                  norm=False):
+  """ TODO: finish this
+
+  Parameters
+  ----------
+  prior: numpy.ndarray [nb_classes,]
+      probabilty values of each classes prior,
+      sum of all prior must be equal to 1.
+  exponential: bool
+  min_value: bool
+  max_value: bool
+  norm: bool
+      if True, normalize output weights to sum up to 1.
+  """
+  # idea is the one with highest prior equal to 1.
+  # and all other classes is the ratio to this prior
+  prior = np.array(prior).ravel()
+  prior = 1 / prior * np.max(prior)
+  # print(prior)
+  if exponential:
+    prior = sorted([(i, p) for i, p in enumerate(prior)],
+                   key=lambda x: x[-1], reverse=False)
+    alpha = interp.expIn(n=len(prior), power=10)
+    prior = {i: a * p for a, (i, p) in zip(alpha, prior)}
+    prior = np.array([prior[i] for i in range(len(prior))]) + 1
+  # ====== rescale everything within max_value ====== #
+  if min_value is not None and max_value is not None:
+    min_value = float(min_value)
+    max_value = float(max_value)
+    prior = (max_value - min_value) * (prior - np.min(prior)) \
+        / (np.max(prior) - np.min(prior)) + min_value
+  # ====== normaize by ====== #
+  if norm:
+    prior = prior / np.sum(prior)
+  return prior
 
 def entropy(p):
   """Return simple calculation of discrete Shanon entropy"""
   return -tf.reduce_sum(p * tf.log(p))
 
-
 def linear(x):
   return x
-
 
 def upsample(x, scale, axes, method='nn', name="Upsample"):
   """
@@ -111,25 +146,25 @@ def upsample(x, scale, axes, method='nn', name="Upsample"):
         s * scale_map[i] if is_number(s) else None
         for i, s in enumerate(input_shape_int)])
 
-
 def eye(n, m, dtype, name='eye'):
   x = tf.Variable(initial_value=np.eye(n, m, dtype=dtype), dtype=dtype,
                   name=name)
   get_session().run(x.initializer)
   return x
 
-
 # ===========================================================================
 # Linear Algebra
 # ===========================================================================
 def dot(x, y, name='Dot'):
-  '''Multiplies 2 tensors.
+  """ Theano-style dot product
   When attempting to multiply a ND tensor
   with a ND tensor, reproduces the Theano behavior
-  e.g.
-  (2, 3).(4, 3, 5) = (2, 4, 5)
-  (2, 3, 4).(4, 5) = (2, 3, 5)
-  '''
+
+  Example
+  -------
+   (2, 3).(4, 3, 5) => (2, 4, 5)
+   (2, 3, 4).(4, 5) => (2, 3, 5)
+  """
   with tf.variable_scope(name):
     shapeX = x.get_shape().as_list()
     shapeY = y.get_shape().as_list()
@@ -150,7 +185,6 @@ def dot(x, y, name='Dot'):
                     for i in shapeX[:-1] + outshapeY]
     output = tf.reshape(tf.matmul(x, y), output_shape)
   return output
-
 
 def batched_dot(x, y, name='BatchedDot'):
   """Batchwise dot product.

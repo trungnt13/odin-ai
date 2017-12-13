@@ -11,7 +11,7 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils.mpi import MPI
-from odin.utils import batching
+from odin.utils import batching, ctext
 from odin.fuel import Data
 
 __all__ = [
@@ -373,3 +373,17 @@ class MiniBatchPCA(IncrementalPCA):
       X_transformed = sorted(X_transformed, key=lambda x: x[0])
     X_transformed = np.concatenate([x[-1] for x in X_transformed], axis=0)
     return X_transformed
+
+  def __str__(self):
+    if self.is_fitted:
+      explained_vars = ';'.join([ctext('%.2f' % i, 'cyan')
+                                 for i in self.explained_variance_ratio_[:8]])
+    else:
+      explained_vars = 0
+    s = '%s(batch_size=%s, #components=%s, #samples=%s, vars=%s)' % \
+        (ctext('MiniBatchPCA', 'yellow'),
+         ctext(self.batch_size, 'cyan'),
+         ctext(self.n_components, 'cyan'),
+         ctext(self.n_samples_seen_, 'cyan'),
+         explained_vars)
+    return s

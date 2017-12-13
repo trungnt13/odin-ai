@@ -66,24 +66,22 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
   # ====== load PCA ====== #
   from odin.ml import MiniBatchPCA
   # init PCA
-  pca_map = {}
   nb_samples = 0
   for feat in feat_name:
     nb_samples += dataset[feat].shape[0]
-    # found exist pca model
-    if 'pca_' + feat in dataset and not override:
-      pca_map[feat] = dataset['pca_' + feat]
-    # create new PCA
-    else:
-      pca_map[feat] = MiniBatchPCA(n_components=None, whiten=False,
-                                   copy=True, batch_size=None)
   # ====== prepare MPI PCA ====== #
   add_notification("Selected features for PCA: " +
       ctext(', '.join(feat_name), 'yellow'))
 
-  def map_pca(X):
-    name, pca = X
+  def map_pca(name):
     X = dataset[name]
+    # found exist pca model
+    if 'pca_' + feat in dataset and not override:
+      pca = dataset['pca_' + feat]
+    # create new PCA
+    else:
+      pca = MiniBatchPCA(n_components=None, whiten=False,
+                         copy=True, batch_size=None)
     # No shuffling make iter much faster
     for x in X.set_batch(batch_size=batch_size, seed=None, shuffle_level=0):
       pca.partial_fit(x)
@@ -93,11 +91,11 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
       cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
     # finish return feature name
     yield name
-  mpi = MPI(jobs=list(pca_map.items()), func=map_pca,
+  mpi = MPI(jobs=feat_name, func=map_pca,
             ncpu=None, batch=1, hwm=12082518,
             backend='python')
   # ====== running the MPI ====== #
-  remain_features = list(pca_map.keys())
+  remain_features = list(feat_name)
   finished_features = []
   prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
                  name='PCA')
@@ -112,7 +110,6 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
   # ====== return ====== #
   if own_dataset:
     dataset.close()
-  return pca_map
 
 
 # ===========================================================================
@@ -218,10 +215,11 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       assert now[2] - now[1] > 0, "Zero length in indices"
     # final length match length of Data
     if ids_name != 'indices':
-      feat_name = ids_name.split('_')[-1]
-      assert now[-1] == len(ds[feat_name]), \
-          "Indices and data length mismatch, name: %s" % ids_name
-      all_features.append(feat_name)
+      for feat_name in ids_name.split('_')[1:]:
+        assert now[-1] == len(ds[feat_name]), \
+            "Indices and data length mismatch, indices:'%s' feat:'%s'" % \
+            (ids_name, feat_name)
+        all_features.append(feat_name)
     else:
       for feat_name in all_keys:
         if feat_name not in external_indices and \

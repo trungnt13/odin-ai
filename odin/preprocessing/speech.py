@@ -588,6 +588,15 @@ class BNFExtractor(Extractor):
     name of input feature
   network : odin.nnet.base.NNOp
     instance pre-trained NNOp
+  batch_size : int
+    batch size when feeding data to the network, suggest
+    to have as much data as possible.
+  pre_mvn : bool (default: False)
+    perform mean-variance normalization before feeding
+    data to network.
+  post_mvn : bool (default: False)
+    perform mean-variance normalization after the
+    transformation.
 
   Note
   ----
@@ -599,7 +608,8 @@ class BNFExtractor(Extractor):
   """
 
   def __init__(self, input_feat, network,
-               batch_size=2048):
+               batch_size=2048,
+               pre_mvn=False, post_mvn=False):
     super(BNFExtractor, self).__init__()
     from odin.nnet import NNOp
     self.input_feat = str(input_feat)
@@ -607,6 +617,8 @@ class BNFExtractor(Extractor):
       raise ValueError("`network` must be instance of odin.nnet.NNOp")
     self.network = network
     self.batch_size = int(batch_size)
+    self.pre_mvn = bool(pre_mvn)
+    self.post_mvn = bool(post_mvn)
 
   def __getstate__(self):
     from odin import nnet as N
@@ -626,11 +638,19 @@ class BNFExtractor(Extractor):
       raise RuntimeError("BNFExtractor require input feature with name: %s"
                          ", which is not found." % self.input_feat)
     X = feat[self.input_feat]
+    # ====== pre-normalization ====== #
+    if self.pre_mvn:
+      X = mvn(X, varnorm=True)
+    # ====== transform ====== #
     y = []
     # make prediciton
     for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
       y.append(self.network(X[s:e]))
-    feat['bnf'] = np.concatenate(y, axis=0)
+    y = np.concatenate(y, axis=0)
+    # ====== post-normalization ====== #
+    if self.post_mvn:
+      y = mvn(y, varnorm=True)
+    feat['bnf'] = y
     return feat
 
 
@@ -767,6 +787,11 @@ class AcousticNorm(Extractor):
   """
   Parameters
   ----------
+  mean_var_norm : bool (default: True)
+    mean-variance normalization
+  windowed_mean_var_norm : bool (default: False)
+    perform standardization on small windows, very computaiton
+    intensive.
   sad_stats : bool
     if True, using statistics from SAD indexed frames for
     normalization
@@ -778,14 +803,15 @@ class AcousticNorm(Extractor):
 
   """
 
-  def __init__(self, mean_var_norm=True, window_mean_var_norm=True,
+  def __init__(self, mean_var_norm=True,
+               windowed_mean_var_norm=False,
                win_length=301, var_norm=True,
                sad_stats=False, sad_name='sad', ignore_sad_error=True,
                feat_name=('mspec', 'spec', 'mfcc', 'bnf',
                           'qspec', 'qmfcc', 'qmspec')):
     super(AcousticNorm, self).__init__()
     self.mean_var_norm = bool(mean_var_norm)
-    self.window_mean_var_norm = bool(window_mean_var_norm)
+    self.windowed_mean_var_norm = bool(windowed_mean_var_norm)
     self.var_norm = bool(var_norm)
     # ====== check win_length ====== #
     win_length = int(win_length)
@@ -808,6 +834,8 @@ class AcousticNorm(Extractor):
       if self.sad_name not in feat:
         raise RuntimeError("Cannot find SAD with name: '%s'" % self.sad_name)
       sad = feat[self.sad_name]
+      if sad.dtype != np.bool:
+        sad = sad.astype(np.bool)
     # ====== normalize ====== #
     feat_normalized = {}
     # all `features` is [t, f] shape
@@ -825,7 +853,7 @@ class AcousticNorm(Extractor):
         if self.mean_var_norm:
           X = mvn(X, varnorm=self.var_norm, indices=X_sad)
         # windowed normalization
-        if self.window_mean_var_norm:
+        if self.windowed_mean_var_norm:
           X = wmvn(X, w=self.win_length, varnorm=False, indices=X_sad)
       # update new features
       feat_normalized[name] = X

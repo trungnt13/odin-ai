@@ -170,7 +170,7 @@ extractors = [
     pp.speech.RASTAfilter(rasta=True, sdc=1),
     pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
                       feat_name=('mspec', 'qmspec')),
-    pp.speech.AcousticNorm(mean_var_norm=True, window_mean_var_norm=True,
+    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                            feat_name=('mspec', 'mfcc',
                                       'qspec', 'qmfcc', 'qmspec')),
     pp.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc',
