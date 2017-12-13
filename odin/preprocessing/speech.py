@@ -600,11 +600,24 @@ class BNFExtractor(Extractor):
 
   Note
   ----
-  It is suggested to process the input features in following order:
+  There are 2 way to prepare features for BNF:
+
+  First:
+   - delta and delta delta extraction (optional)
    - mean_var_norm based on SAD frames statistics.
    - Stacking the left and right context frames.
    - Applying SAD indices.
    - Mean-variance normalization
+   => BNFExtractor
+
+  Second:
+   - delta and delta delta extraction (optional)
+   - Stacking the left and right context frames.
+   - mean_var_norm based on SAD frames statistics.
+   - Mean-variance normalization
+   => BNFExtractor
+   - Applying SAD indices.
+
   """
 
   def __init__(self, input_feat, network,

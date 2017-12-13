@@ -309,15 +309,17 @@ def auto_config(config=None):
     os.environ['CUDA_VISIBLE_DEVICES'] = ""
   # ====== Return global objects ====== #
   CONFIG = AttributeDict()
-  CONFIG.update({'ncpu': dev['ncpu'],
-       'ngpu': dev['ngpu'],
-       'nthread': dev['nthread'],
-       'device_info': dev,
-       'floatX': floatX,
-       'epsilon': epsilon,
-       'cnmem': cnmem,
-       'seed': seed,
-       'debug': debug})
+  CONFIG.update({
+      'ncpu': dev['ncpu'],
+      'ngpu': dev['ngpu'],
+      'nthread': dev['nthread'],
+      'device_info': dev,
+      'floatX': floatX,
+      'epsilon': epsilon,
+      'cnmem': cnmem,
+      'seed': seed,
+      'debug': debug
+  })
   _RNG_GENERATOR = np.random.RandomState(seed=seed)
   # tensorflow log level
   os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
