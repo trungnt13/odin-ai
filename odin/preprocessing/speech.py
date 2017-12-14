@@ -9,12 +9,14 @@ The following order is recommended for extracting spectra:
     - preemphasis
 + SpectraExtractor (or CQTExtractor):
     - Extracting the Spectra
-+ Rastafilt:
-    - Rastafilt (optional for MFCC)
+# ===== SAD ===== #
 + SADextractor:
     - Extracting SAD (optional)
 + Read3ColSAD:
     - Generating SAD labels from 3-cols files
+# ===== Normalization ===== #
++ Rastafilt:
+    - Rastafilt (optional for MFCC)
 + DeltaExtractor (calculated before applying SAD)
     - Calculate Deltas (and shifted delta for MFCCs).
 + ApplyingSAD:

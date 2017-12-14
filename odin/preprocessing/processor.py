@@ -41,6 +41,12 @@ _default_module = re.compile('__.*__')
 # PCA calculation
 # ===========================================================================
 def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
+  """ Using parallel MiniBatchPCA to do PCA for multiple features
+  at once.
+
+  """
+  # TODO: add different pca prefix (e.g. pca_full_mspec, pca_sami_mspec)
+  # add reading data from indices also
   # ====== check input dataset ====== #
   own_dataset = True
   if is_string(dataset) and os.path.isdir(dataset):
@@ -149,6 +155,7 @@ def _special_cases(X, feat_name, file_name, ds, path):
 
 def validate_features(ds_or_processor, path, nb_samples=25,
                       override=False, seed=12082518, fig_width=4):
+  # TODO: add PCA visualization
   def logger(title, tag, check):
     check = bool(check)
     text_color = 'yellow' if check else 'red'

@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-# openSMILE LICENSE
-# ===========
-# Authors: Florian Eyben, Felix Weninger, Martin Woellmer, Bjoern Schuller
-# Copyright (C) 2008-2013, Institute for Human-Machine Communication, TUM
-# Copyright (C) 2013-2014, audEERING UG (haftungsbeschrÃ¤nkt)
-# http://www.audeering.com/research-and-open-source/files/openSMILE-open-source-license.txt
+"""
+openSMILE LICENSE
+=================
+Authors: Florian Eyben, Felix Weninger, Martin Woellmer, Bjoern Schuller
+Copyright (C) 2008-2013, Institute for Human-Machine Communication, TUM
+Copyright (C) 2013-2014, audEERING UG (haftungsbeschrÃ¤nkt)
+http://www.audeering.com/research-and-open-source/files/openSMILE-open-source-license.txt
+"""
 from __future__ import print_function, division, absolute_import
 
 import os
 import re
+import random
 import subprocess
 from six import add_metaclass
 from collections import Mapping
@@ -117,7 +120,7 @@ class _openSMILEbase(Extractor):
     if self.sr is None:
       raise RuntimeError("Cannot acquire sample rate for the input.")
     # ====== extract SAD ====== #
-    unique_id = os.getpid()
+    unique_id = os.getpid() + random.randint(0, 10e8)
     inpath = os.path.join(
         get_logpath(), '%s%d.wav' % (self.__class__.__name__, unique_id))
     outpath = os.path.join(

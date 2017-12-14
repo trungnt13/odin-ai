@@ -492,25 +492,29 @@ def plot_features(features, order=None, title=None, fig_width=4):
       specified in `order`
   title: None or string
       title for the figure
+
+  Note
+  ----
+  delta or delta delta features should have suffix: '_d1' and '_d2'
   """
   known_order = [
       # For audio processing
       'raw',
-      'energy',
+      'energy', 'energy_d1', 'energy_d2',
       'vad',
       'sad',
-      'sap',
-      'pitch',
-      'loudness',
-      'f0',
-      'spec',
-      'mspec',
-      'mfcc',
-      'qspec',
-      'qmspec',
-      'qmfcc',
-      'bnf',
-      'ivec',
+      'sap', 'sap_d1', 'sap_d2',
+      'pitch', 'pitch_d1', 'pitch_d2',
+      'loudness', 'loudness_d1', 'loudness_d2',
+      'f0', 'f0_d1', 'f0_d2',
+      'spec', 'spec_d1', 'spec_d2',
+      'mspec', 'mspec_d1', 'mspec_d2',
+      'mfcc', 'mfcc_d1', 'mfcc_d2',
+      'qspec', 'qspec_d1', 'qspec_d2',
+      'qmspec', 'qmspec_d1', 'qmspec_d2',
+      'qmfcc', 'qmfcc_d1', 'qmfcc_d2',
+      'bnf', 'bnf_d1', 'bnf_d2',
+      'ivec', 'ivec_d1', 'ivec_d2',
       # For image processing
       # For video processing
   ]
