@@ -310,7 +310,10 @@ class AudioReader(Extractor):
   sr_new: int or None
       resample sample rate for all provided audio, only
       support downsample (i.e. must be smaller than sr).
-
+  remove_dc_n_dither : bool
+    dithering adds noise to the signal to remove periodic noise
+  preemphasis : {None, int(0-1)}
+    pre-emphasis filter, if 0 or None, no filter applied
 
   Input
   -----
@@ -328,7 +331,7 @@ class AudioReader(Extractor):
   """
 
   def __init__(self, sr=None, sr_new=None, best_resample=True,
-               remove_dc_n_dither=True, preemphasis=0.97,
+               remove_dc_n_dither=False, preemphasis=0.97,
                dataset=None):
     super(AudioReader, self).__init__()
     self.sr = sr

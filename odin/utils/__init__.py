@@ -964,7 +964,14 @@ def get_all_files(path, filter_func=None):
 
 
 def get_all_ext(path):
-  ''' Recurrsively get all extension of files in the given path '''
+  """ Recurrsively get all extension of files in the given path
+
+  Parameters
+  ----------
+  path : str
+    input folder
+
+  """
   file_list = []
   if os.access(path, os.R_OK):
     for p in os.listdir(path):
@@ -979,7 +986,8 @@ def get_all_ext(path):
         ext = p.split('.')
         if len(ext) > 1:
           file_list.append(ext[-1])
-  return list(set(file_list))
+  file_list = list(set(file_list))
+  return file_list
 
 
 def folder2bin(path):

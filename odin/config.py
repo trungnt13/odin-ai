@@ -134,6 +134,24 @@ def set_session(session):
   _SESSION = session
 
 
+def get_session_config():
+  import tensorflow as tf
+  session_args = {
+      'intra_op_parallelism_threads': CONFIG['nthread'],
+      'inter_op_parallelism_threads': CONFIG['ncpu'],
+      'allow_soft_placement': True,
+      'log_device_placement': CONFIG['debug'],
+  }
+  if CONFIG['ngpu'] > 0:
+    if CONFIG['cnmem'] > 0:
+      session_args['gpu_options'] = tf.GPUOptions(
+          per_process_gpu_memory_fraction=CONFIG['cnmem'],
+          allow_growth=False)
+    else:
+      session_args['gpu_options'] = tf.GPUOptions(
+          allow_growth=True)
+  return session_args
+
 def get_session(graph=None):
   """ Calling this method will make sure you create
   only 1 Session per graph.
@@ -151,22 +169,9 @@ def get_session(graph=None):
   # ====== initialize tensorflow session ====== #
   if graph not in _SESSION:
     import tensorflow as tf
-    session_args = {
-        'intra_op_parallelism_threads': CONFIG['nthread'],
-        'inter_op_parallelism_threads': CONFIG['ncpu'],
-        'allow_soft_placement': True,
-        'log_device_placement': CONFIG['debug'],
-    }
-    if CONFIG['ngpu'] > 0:
-      if CONFIG['cnmem'] > 0:
-        session_args['gpu_options'] = tf.GPUOptions(
-            per_process_gpu_memory_fraction=CONFIG['cnmem'],
-            allow_growth=False)
-      else:
-        session_args['gpu_options'] = tf.GPUOptions(
-            allow_growth=True)
+    session_args = get_session_config()
     _SESSION[graph] = tf.Session(config=tf.ConfigProto(**session_args),
-             graph=graph)
+                                 graph=graph)
   return _SESSION[graph]
 
 
