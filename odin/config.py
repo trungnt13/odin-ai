@@ -231,7 +231,7 @@ def auto_config(config=None):
              "specified, auto select all %d CPU-cores " %
              cpu_count())
         else:
-          ncpu = min(int(i.split('=')[-1]), ncpu)
+          ncpu = min(int(i.split('=')[-1]), cpu_count())
       elif 'gpu' in i:
         ngpu = True
       # ====== number thread ====== #
