@@ -65,6 +65,12 @@ class DataLoader(object):
     return clazz.get_dataset(clazz=clazz, ext=ext, override=override)
 
   @classmethod
+  def get_link(clazz, ext=''):
+    name = clazz.get_name(ext) + '.zip'
+    path = base64.decodestring(DataLoader.ORIGIN).decode() + name
+    return path
+
+  @classmethod
   def get_dataset(clazz, ext='', override=False):
     # ====== all path ====== #
     name = clazz.get_name(ext) + '.zip'
@@ -89,21 +95,17 @@ class DataLoader(object):
     unzip_folder(zip_path, out_path, remove_zip=True)
     return Dataset(out_path, read_only=True)
 
-
 # ===========================================================================
 # Images dataset
 # ===========================================================================
 class MNIST(DataLoader):
   pass
 
-
 class CIFAR10(DataLoader):
   pass
 
-
 class CIFAR100(DataLoader):
   pass
-
 
 # ===========================================================================
 # AUdio dataset
@@ -114,11 +116,9 @@ class WDIGITS(DataLoader):
   """
   pass
 
-
 class DIGITS(DataLoader):
   """ 501 short file for single digits recognition from audio """
   pass
-
 
 # ===========================================================================
 # More experimental dataset
@@ -126,6 +126,24 @@ class DIGITS(DataLoader):
 class IRIS(DataLoader):
   pass
 
+# ===========================================================================
+# Speech synthesis
+# ===========================================================================
+class CMUarctic(DataLoader):
+  pass
+
+# ===========================================================================
+# Others
+# ===========================================================================
+class MUSAN(DataLoader):
+  pass
+
+class openSMILEsad(DataLoader):
+  """ This dataset contains 2 files:
+  * lstmvad_rplp18d_12.net
+  * rplp18d_norm.dat
+  """
+  pass
 
 # ===========================================================================
 # Others
@@ -139,19 +157,10 @@ def load_glove(ndim=100):
   if ndim not in (50, 100, 200, 300):
     raise ValueError('Only support 50, 100, 200, 300 dimensions.')
   link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2dsb3ZlLjZCLiVkZA==\n'
-  link = base64.decodebytes(link) % ndim
-  fname = os.path.basename(str(link, 'utf-8'))
+  link = str(base64.decodebytes(link) % ndim, 'utf-8')
+  fname = os.path.basename(link)
   embedding = get_file(fname, link, outdir=get_datasetpath(root='~'))
   return MmapDict(embedding, read_only=True)
-
-
-class openSMILEsad(DataLoader):
-  """ This dataset contains 2 files:
-  * lstmvad_rplp18d_12.net
-  * rplp18d_norm.dat
-  """
-  pass
-
 
 def load_lre_sad():
   link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2xyZV9zYWQ=\n'
