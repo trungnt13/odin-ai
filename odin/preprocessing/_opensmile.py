@@ -74,8 +74,23 @@ class _openSMILEbase(Extractor):
     self.sr = sr
     self._first_config_generated = False
     self._conf = _get_conf_file('%s.cfg' % self.__class__.__name__)
+    self._log_level = -1
 
   # ==================== abstract ==================== #
+  def set_log_level(self, level):
+    """ level: {int, bool}
+      if `int`, log-level in integer (from 0 - 9) higher
+      means more detail, -1 for turning off the log.
+      if True, set the log-level to default: 2
+    """
+    if is_number(level):
+      self._log_level = int(level)
+    elif bool(level):
+      self._log_level = 2
+    else:
+      self._log_level = -1
+    return self
+
   @abstractproperty
   def config(self):
     pass
@@ -97,9 +112,6 @@ class _openSMILEbase(Extractor):
       f.write(self._conf.format(**self.config))
 
   def _transform(self, X):
-    if not self._first_config_generated:
-      self._first_config_generated = True
-      self._update_config()
     # ====== file input file ====== #
     raw = None
     path = None
@@ -110,6 +122,7 @@ class _openSMILEbase(Extractor):
         if self.sr is None:
           self.sr = X['sr']
           self._update_config()
+          self._first_config_generated = True
         elif self.sr != X['sr']:
           raise ValueError("Given sample rate: %d, but the audio file has "
                            "sample rate: %d" % (self.sr, X['sr']))
@@ -124,6 +137,10 @@ class _openSMILEbase(Extractor):
     # no sample rate specified, cannot generate appropriate config
     if self.sr is None:
       raise RuntimeError("Cannot acquire sample rate for the input.")
+    # ====== first time generate config ====== #
+    if not self._first_config_generated:
+      self._first_config_generated = True
+      self._update_config()
     # ====== extract SAD ====== #
     unique_id = os.getpid() + random.randint(0, 10e8)
     inpath = os.path.join(
@@ -139,8 +156,9 @@ class _openSMILEbase(Extractor):
         from soundfile import write
         write(inpath, data=raw, samplerate=self.sr)
         path = inpath
-      command = 'SMILExtract -loglevel -1 -C %s -I %s -O %s' % \
-          (self.config_path, path, outpath)
+      # if in debug mode or not
+      command = 'SMILExtract -loglevel %d -C %s -I %s -O %s' % \
+          (self._log_level, self.config_path, path, outpath)
       os.system(command)
       results = np.genfromtxt(outpath, dtype='float32',
                               delimiter=',', skip_header=0)
@@ -162,10 +180,11 @@ class _openSMILEbase(Extractor):
 # Extractor
 # ===========================================================================
 class openSMILEf0(_openSMILEbase):
+  """ HNR based on F0 harmonics and other spectral peaks """
 
   def __init__(self, frame_length, step_length=None,
                fmin=52, fmax=620, voicingCutoff=0.7,
-               sr=None):
+               n_candidates=8, sr=None):
     super(openSMILEf0, self).__init__(sr=sr)
     self.frame_length = float(frame_length)
     if step_length is None:
@@ -175,6 +194,7 @@ class openSMILEf0(_openSMILEbase):
     self.fmin = int(fmin)
     self.fmax = int(fmax)
     self.voicingCutoff = float(voicingCutoff)
+    self.n_candidates = int(n_candidates)
 
   @property
   def config(self):
@@ -182,18 +202,22 @@ class openSMILEf0(_openSMILEbase):
             'framestep': self.step_length,
             'fmin': self.fmin,
             'fmax': self.fmax,
+            'ncandidates': self.n_candidates,
             'voicingCutoff': self.voicingCutoff}
     return args
 
   def _post_processing(self, X):
-    f0 = X[:, 0][:-1]
+    f0 = X[:-1]
     return {'f0': f0}
 
 
 class openSMILEloudness(_openSMILEbase):
+  """ Loudness via simple auditory band model
+  """
 
-  def __init__(self, frame_length, step_length=None, nmel=40,
-               fmin=20, fmax=4000, sr=None):
+  def __init__(self, frame_length, step_length=None,
+               nmel=40, fmin=20, fmax=None,
+               to_intensity=False, sr=None):
     super(openSMILEloudness, self).__init__(sr=sr)
     self.frame_length = float(frame_length)
     if step_length is None:
@@ -202,10 +226,13 @@ class openSMILEloudness(_openSMILEbase):
     self.nmel = int(nmel)
     self._config_file = _get_conf_file('openSMILEintensity.cfg')
     self.fmin = int(fmin)
-    self.fmax = int(fmax)
+    self.fmax = fmax
+    self.to_intensity = bool(to_intensity)
 
   @property
   def config(self):
+    if self.fmax is None:
+      self.fmax = self.sr // 2
     args = {'framesize': self.frame_length,
             'framestep': self.step_length,
             'fmin': self.fmin,
@@ -214,7 +241,11 @@ class openSMILEloudness(_openSMILEbase):
     return args
 
   def _post_processing(self, X):
-    return {'loudness': X}
+    name = 'loudness'
+    if self.to_intensity:
+      X = X * 60
+      name = 'intensity'
+    return {name: X}
 
 class openSMILEpitch(_openSMILEbase):
   """
@@ -247,7 +278,8 @@ class openSMILEpitch(_openSMILEbase):
   loudness: bool
       if True, append loudness values to the output
       `L : L = (I/I0)^0.3`
-      where `I` is intensity values, and I0 = 0.000001
+      where `I` is intensity values, and I0 is constant for 60 dB and
+      max. amplitude = 1.0 (I0 = 10^-6 or 0.000001)
       (for sample values normalised to the range -1..1)",0)
       intensity values is mean of squared input values
       multiplied by a Hamming window.
@@ -255,7 +287,6 @@ class openSMILEpitch(_openSMILEbase):
       if True, append `sap` speech activities probabilities to
       the output
   """
-  I0 = 1e-6
 
   def __init__(self, frame_length, step_length=None,
                window='gauss',
