@@ -25,6 +25,8 @@ from odin.utils import (is_string, get_script_path, ctext, is_number,
 from .base import Extractor
 
 __all__ = [
+    'openSMILEloudness',
+    'openSMILEf0',
     'openSMILEpitch',
     'openSMILEsad'
 ]
@@ -60,7 +62,7 @@ def _get_conf_file(name):
 
 
 # ===========================================================================
-# Main extractor
+# Base
 # ===========================================================================
 @add_metaclass(ABCMeta)
 class _openSMILEbase(Extractor):
@@ -100,6 +102,7 @@ class _openSMILEbase(Extractor):
       self._update_config()
     # ====== file input file ====== #
     raw = None
+    path = None
     if isinstance(X, Mapping):
       if 'path' in X:
         path = X['path']
@@ -114,6 +117,8 @@ class _openSMILEbase(Extractor):
         raw = X['raw']
     elif is_string(X):
       path = X
+    elif isinstance(X, np.ndarray):
+      raw = X
     else:
       raise ValueError("openSMILE extractor require path to audio file.")
     # no sample rate specified, cannot generate appropriate config
@@ -126,7 +131,7 @@ class _openSMILEbase(Extractor):
     outpath = os.path.join(
         get_logpath(), '%s%d.csv' % (self.__class__.__name__, unique_id))
     try:
-      if not os.path.exists(path):
+      if path is None or not os.path.exists(path):
         if raw is None:
           raise RuntimeError("openSMILE require input audio file, since "
               "we cannot find any audio file, it is required to provide "
@@ -153,6 +158,63 @@ class _openSMILEbase(Extractor):
       raise ValueError("_post_processing must return a dictionary.")
     return X_update
 
+# ===========================================================================
+# Extractor
+# ===========================================================================
+class openSMILEf0(_openSMILEbase):
+
+  def __init__(self, frame_length, step_length=None,
+               fmin=52, fmax=620, voicingCutoff=0.7,
+               sr=None):
+    super(openSMILEf0, self).__init__(sr=sr)
+    self.frame_length = float(frame_length)
+    if step_length is None:
+      step_length = frame_length / 4
+    self.step_length = float(step_length)
+    self._config_file = _get_conf_file('openSMILEintensity.cfg')
+    self.fmin = int(fmin)
+    self.fmax = int(fmax)
+    self.voicingCutoff = float(voicingCutoff)
+
+  @property
+  def config(self):
+    args = {'framesize': self.frame_length,
+            'framestep': self.step_length,
+            'fmin': self.fmin,
+            'fmax': self.fmax,
+            'voicingCutoff': self.voicingCutoff}
+    return args
+
+  def _post_processing(self, X):
+    f0 = X[:, 0][:-1]
+    return {'f0': f0}
+
+
+class openSMILEloudness(_openSMILEbase):
+
+  def __init__(self, frame_length, step_length=None, nmel=40,
+               fmin=20, fmax=4000, sr=None):
+    super(openSMILEloudness, self).__init__(sr=sr)
+    self.frame_length = float(frame_length)
+    if step_length is None:
+      step_length = frame_length / 4
+    self.step_length = float(step_length)
+    self.nmel = int(nmel)
+    self._config_file = _get_conf_file('openSMILEintensity.cfg')
+    self.fmin = int(fmin)
+    self.fmax = int(fmax)
+
+  @property
+  def config(self):
+    args = {'framesize': self.frame_length,
+            'framestep': self.step_length,
+            'fmin': self.fmin,
+            'fmax': self.fmax,
+            'nmel': self.nmel}
+    return args
+
+  def _post_processing(self, X):
+    return {'loudness': X}
 
 class openSMILEpitch(_openSMILEbase):
   """
@@ -184,10 +246,16 @@ class openSMILEpitch(_openSMILEbase):
       if True, return F0 frequency also.
   loudness: bool
       if True, append loudness values to the output
+      `L : L = (I/I0)^0.3`
+      where `I` is intensity values, and I0 = 0.000001
+      (for sample values normalised to the range -1..1)",0)
+      intensity values is mean of squared input values
+      multiplied by a Hamming window.
   voiceProb: bool
       if True, append `sap` speech activities probabilities to
       the output
   """
+  I0 = 1e-6
 
   def __init__(self, frame_length, step_length=None,
                window='gauss',

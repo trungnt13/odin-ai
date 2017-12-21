@@ -479,7 +479,8 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
   return ax
 
 
-def plot_features(features, order=None, title=None, fig_width=4):
+def plot_features(features, order=None, title=None, fig_width=4,
+                  sharex=False):
   """ Plot a series of 1D and 2D in the same scale for comparison
 
   Parameters
@@ -577,7 +578,8 @@ def plot_features(features, order=None, title=None, fig_width=4):
     # add title to the first subplot
     if i == 0 and title is not None:
       plt.title(str(title), fontsize=8)
-
+    if sharex:
+      plt.subplots_adjust(hspace=0)
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
                      linewidth=0.5, title=None):

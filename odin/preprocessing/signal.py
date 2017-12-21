@@ -240,6 +240,12 @@ def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
 # ===========================================================================
 #
 # ===========================================================================
+def loudness2intensity(loudness):
+  """ 60dB is consider the standard """
+  if loudness.ndim == 2:
+    loudness = loudness[:, 0]
+  return loudness * 60
+
 def hz2mel(frequencies):
   """Convert Hz to Mels
   Original code: librosa
