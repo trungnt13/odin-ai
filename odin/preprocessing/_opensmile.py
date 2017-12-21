@@ -208,7 +208,7 @@ class openSMILEf0(_openSMILEbase):
 
   def _post_processing(self, X):
     f0 = X[:-1]
-    return {'f0': f0}
+    return {'f0': f0[:, np.newaxis]}
 
 
 class openSMILEloudness(_openSMILEbase):
@@ -245,7 +245,8 @@ class openSMILEloudness(_openSMILEbase):
     if self.to_intensity:
       X = X * 60
       name = 'intensity'
-    return {name: X}
+    return {name: X[:, np.newaxis]}
+
 
 class openSMILEpitch(_openSMILEbase):
   """

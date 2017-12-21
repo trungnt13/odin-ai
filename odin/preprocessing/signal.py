@@ -327,6 +327,45 @@ def mel2hz(mels):
   freqs[log_t] = min_log_hz * np.exp(logstep * (mels[log_t] - min_log_mel))
   return freqs
 
+def mel_frequencies(n_mels=128, fmin=0.0, fmax=11025.0):
+  """Compute the center frequencies of mel bands.
+  Original code: librosa
+
+  Parameters
+  ----------
+  n_mels    : int > 0 [scalar]
+      number of Mel bins
+  fmin      : float >= 0 [scalar]
+      minimum frequency (Hz)
+  fmax      : float >= 0 [scalar]
+      maximum frequency (Hz)
+
+  Returns
+  -------
+  bin_frequencies : ndarray [shape=(n_mels,)]
+      vector of n_mels frequencies in Hz which are uniformly spaced on the Mel
+      axis.
+
+  Examples
+  --------
+  >>> librosa.mel_frequencies(n_mels=40)
+  array([     0.   ,     85.317,    170.635,    255.952,
+            341.269,    426.586,    511.904,    597.221,
+            682.538,    767.855,    853.173,    938.49 ,
+           1024.856,   1119.114,   1222.042,   1334.436,
+           1457.167,   1591.187,   1737.532,   1897.337,
+           2071.84 ,   2262.393,   2470.47 ,   2697.686,
+           2945.799,   3216.731,   3512.582,   3835.643,
+           4188.417,   4573.636,   4994.285,   5453.621,
+           5955.205,   6502.92 ,   7101.009,   7754.107,
+           8467.272,   9246.028,  10096.408,  11025.   ])
+
+  """
+  min_mel = hz2mel(fmin)
+  max_mel = hz2mel(fmax)
+  mels = np.linspace(min_mel, max_mel, n_mels)
+  return mel2hz(mels)
+
 def db2power(S_db, ref=1.0):
   '''Convert a dB-scale spectrogram to a power spectrogram.
 
