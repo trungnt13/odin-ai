@@ -27,7 +27,7 @@ from odin.config import EPS, get_ngpu
 #       slower than numpy if you evaluate the
 #       expression for first time.
 MINIMUM_GPU_BLOCK = 8000 * 120 * 4 # bytes
-STANDARD_BATCH_SIZE = 8 * 1024 * 1024 # 8 Megabytes
+STANDARD_BATCH_SIZE = 1 * 1024 * 1024 # 1 Megabytes
 
 
 # ===========================================================================
@@ -206,7 +206,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   Parameters
   ----------
   batch_size : {int, 'auto'}
-      if 'auto', used `8 Megabytes` block for batch size.
+      if 'auto', used `1 Megabytes` block for batch size.
   covariance_type : {'full', 'tied', 'diag', 'spherical'},
           defaults to 'full'.
       String describing the type of covariance parameters to use.
@@ -270,9 +270,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                        "'mix', 'gpu', 'cpu'.")
     self.device = device
     # ====== state variable ====== #
-    self._llk = [] # store history of LLK
+    self._llk_hist = [] # store history of [(nmix, niter, llk), ...]
     # ====== name ====== #
-    self.dtype = dtype
+    self._dtype = dtype
     if name is None:
       name = uuid(length=8)
       self._name = 'GMM_%s' % name
@@ -284,15 +284,38 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # self.mu, self.sigma, self.w
     if not self.is_initialized:
       raise RuntimeError("GMM hasn't been initialized, nothing to save")
-    pass
+    return (self.mu, self.sigma, self.w,
+            self._nmix, self._curr_nmix, self._feat_dim,
+            self._niter, self.batch_size,
+            self.downsample, self.stochastic_downsample, self.seed,
+            self.covariance_type, self._llk_hist,
+            self.ncpu, self.gpu_factor, self.device,
+            self._dtype, self._name)
 
   def __setstate__(self, states):
-    pass
+    (self.mu, self.sigma, self.w,
+     self._nmix, self._curr_nmix, self._feat_dim,
+     self._niter, self.batch_size,
+     self.downsample, self.stochastic_downsample, self.seed,
+     self.covariance_type, self._llk_hist,
+     self.ncpu, self.gpu_factor, self.device,
+     self._dtype, self._name) = states
+    # basic constants
+    self._feat_const = self.feat_dim * np.log(2 * np.pi)
+    self.X_ = tf.placeholder(shape=(None, self.feat_dim),
+                             dtype='float32',
+                             name='GMM_input')
+    # init posterior
+    self._resfresh_cpu_posterior()
+    self._refresh_gpu_posterior()
+    # ====== warning no GPU ====== #
+    if self.device == 'gpu' and get_ngpu() == 0:
+      wprint("Enabled GPU device, but no GPU found!")
 
   def __str__(self):
     if not self.is_initialized:
       return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
-    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s bs:%d>' %\
+    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s bs:%s>' %\
         (ctext(self.name, 'yellow'),
             ctext(self._nmix, 'cyan'),
             ctext(self._feat_dim, 'cyan'),
@@ -326,6 +349,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       raise RuntimeError("GMM has not been initialized on data.")
     return self._feat_dim
 
+  @property
+  def history(self):
+    """ Return the history of fitting this GMM in following format:
+      `[(current_nmix, current_niter, llk), ...]`
+    """
+    return tuple(self._llk_hist)
+
   # ==================== initialization ==================== #
   def _resfresh_cpu_posterior(self):
     """ Refresh cached value for CPu computations. """
@@ -356,13 +386,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== build the graph ====== #
     with tf.variable_scope(scope):
       mu = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
-                          dtype=self.dtype,
+                          dtype=self._dtype,
                           name='GMM_mu')
       sigma = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
-                            dtype=self.dtype,
+                            dtype=self._dtype,
                             name='GMM_sigma')
       w = tf.placeholder(shape=(1, self._curr_nmix),
-                        dtype=self.dtype,
+                        dtype=self._dtype,
                         name='GMM_weight')
       expressions['mu'] = mu
       expressions['sigma'] = sigma
@@ -418,20 +448,22 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       return
     # ====== create input placeholder ====== #
     self._feat_dim = int(feat_dim)
+    # const for specific dimension
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
     if is_string(self.batch_size):
-      self.batch_size = int(STANDARD_BATCH_SIZE / self.feat_dim * 4)
+      self.batch_size = int(STANDARD_BATCH_SIZE /
+       self.feat_dim * np.dtype(self._dtype).itemsize)
     # [batch_size, feat_dim]
     self.X_ = tf.placeholder(shape=(None, self.feat_dim),
                              dtype='float32',
                              name='GMM_input')
     # ====== init ====== #
     # (D, M)
-    self.mu = np.zeros((feat_dim, self._curr_nmix), dtype=self.dtype)
+    self.mu = np.zeros((feat_dim, self._curr_nmix), dtype=self._dtype)
     # (D, M)
-    self.sigma = np.ones((feat_dim, self._curr_nmix), dtype=self.dtype)
+    self.sigma = np.ones((feat_dim, self._curr_nmix), dtype=self._dtype)
     # (1, M)
-    self.w = np.ones((1, self._curr_nmix), dtype=self.dtype)
+    self.w = np.ones((1, self._curr_nmix), dtype=self._dtype)
     # init posterior
     self._resfresh_cpu_posterior()
     self._refresh_gpu_posterior()
@@ -444,9 +476,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """
     NOTE
     ----
-    from 1-8 components, python multi-threading is fastest
-    from 16-32 components, python multi-processing is fastest
-    from > 64 components, GPU scales much much better.
+    from 1, 2, 4 components, python multi-threading is fastest
+    from 8, 16 components, python multi-processing is fastest
+    from > 32 components, GPU scales much much better.
     """
     if not isinstance(X, (Data, np.ndarray)):
       raise ValueError("`X` must be numpy.ndarray or instance of odin.fuel.Data.")
@@ -502,7 +534,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       # spliting the jobs
       jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nb_samples,
                   gpu_factor=self.gpu_factor, ncpu=self.ncpu,
-                  device='cpu' if self._curr_nmix <= 32 else self.device)
+                  device='cpu' if self._curr_nmix <= 16 else self.device)
       # fitting the mixtures
       idx = int(np.log2(self._curr_nmix))
       print(ctext('Estimating the GMM for %s components in %d iter ...' %
@@ -520,11 +552,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         mpi = []
         cpu_threads = []
         if len(jobs_cpu) > 0:
-          if 0 <= self._curr_nmix < 16:
+          if 0 <= self._curr_nmix <= 4:
             cpu_threads = [threading.Thread(target=thread_expectation,
                                             args=(results, j, 'cpu'))
                            for j in jobs_cpu]
-          elif 16 <= self._curr_nmix:
+          elif 8 <= self._curr_nmix:
             mpi = MPI(jobs=[(j, False, self.batch_size)
                             for j in jobs_cpu],
                       func=map_expectation,
@@ -543,14 +575,23 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         # finish all threads
         for t in gpu_threads + cpu_threads:
           t.join()
+        time_Estep = time.time() - start_time
         # ====== Maximization ====== #
         Z, F, S, L, nfr = results.stats
+        start_time = time.time()
         self.maximization(Z, F, S)
+        time_Mstep = time.time() - start_time
         # print Log-likelihood
-        self._llk.append(L / nfr)
-        print("#iter:", ctext('%.2d' % (self._curr_niter + 1), 'yellow'),
-              "llk:", ctext('%.4f' % self._llk[-1], 'yellow'),
-              "%.2f(s)" % (time.time() - start_time))
+        L_mean = L / nfr
+        # store history
+        self._llk_hist.append((self._curr_nmix, self._curr_niter + 1, L_mean))
+        # print log
+        print("#iter:%s llk:%s Estep:%s(s) Mstep:%s(s)" %
+          (ctext('%.2d' % (self._curr_niter + 1), 'yellow'),
+           ctext('%.4f' % L_mean, 'yellow'),
+           ctext('%.2f' % time_Estep, 'yellow'),
+           ctext('%.4f' % time_Mstep, 'yellow'),
+          ))
         # release memory
         del Z, F, S
       # update the mixtures
