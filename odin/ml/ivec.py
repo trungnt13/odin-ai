@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """"
 This module contains tools T matrix training and i-vector extraction
-__author__ = 'Omid Sadjadi, Timothee Kheyrkhah'
-__email__ = 'omid.sadjadi@nist.gov'
+
+author: Omid Sadjadi, Timothee Kheyrkhah
+email: omid.sadjadi@nist.gov
 """
-
-
 import os
 import time
 import glob
@@ -14,15 +13,14 @@ import string
 import multiprocessing as mp
 import numpy as np
 from scipy.linalg import inv, svd, cholesky, solve
-
-from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
+# from .utils import h5read, h5write, mkdir_p
 
 
 def unwrap_expectation_tv(args):
   return TMatrix.expectation_tv(*args)
 
 
-class Ivector(BaseEstimator, TransformerMixin):
+class Ivector:
 
   def __init__(self, tv_dim, ndim, nmix):
     self.tv_dim = tv_dim

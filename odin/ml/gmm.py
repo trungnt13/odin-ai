@@ -26,7 +26,7 @@ from odin.config import EPS, get_ngpu
 #       slower than numpy if you evaluate the
 #       expression for first time.
 MINIMUM_GPU_BLOCK = 8000 * 120 * 4 # bytes
-STANDARD_BATCH_SIZE = 36 * 1024 * 1024 # 36 Megabytes
+STANDARD_BATCH_SIZE = 8 * 1024 * 1024 # 8 Megabytes
 
 
 # ===========================================================================
@@ -137,14 +137,18 @@ def _create_batch(start, end, batch_size,
     random.seed(seed + curr_nmix + curr_niter)
   else: # deterministic
     random.seed(seed)
+  all_batches = list(batching(n=end - start, batch_size=batch_size))
+  random.shuffle(all_batches)
   # iterate over batches
-  for s, e in batching(n=end - start, batch_size=batch_size):
+  for batch_id, (s, e) in enumerate(all_batches):
     selected = False
     n = e - s
     s += start
     e += start
+    # first batch always selected,
     # downsample by randomly ignore a batch
-    if downsample == 1 or \
+    if batch_id == 0 or \
+    downsample == 1 or \
     (downsample > 1 and random.random() <= 1. / downsample):
       selected = True
     yield s, e, n, selected
@@ -201,7 +205,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   Parameters
   ----------
   batch_size : {int, 'auto'}
-      if 'auto', used 36 Megabytes block for batch size.
+      if 'auto', used `8 Megabytes` block for batch size.
   covariance_type : {'full', 'tied', 'diag', 'spherical'},
           defaults to 'full'.
       String describing the type of covariance parameters to use.
@@ -229,12 +233,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       each iteration => the training is deterministic.
   seed : int
       random seed for reproducible
+  dtype : {str, numpy.dtype}
+      desire dtype for mean, std, weights and input matrices
   """
 
   def __init__(self, nmix, nmix_start=1, niter=16, batch_size='auto',
                covariance_type='diag',
                downsample=2, stochastic_downsample=True, seed=5218,
-               device='gpu', gpu_factor=80, ncpu=None, name=None):
+               device='gpu', gpu_factor=80, ncpu=None,
+               dtype='float32', name=None):
     super(GMM, self).__init__()
     # start from 1 mixture, then split and up
     self._nmix = 2**int(np.round(np.log2(nmix)))
@@ -264,6 +271,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== state variable ====== #
     self._llk = [] # store history of LLK
     # ====== name ====== #
+    self.dtype = dtype
     if name is None:
       name = uuid(length=8)
       self._name = 'GMM_%s' % name
@@ -273,17 +281,23 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   def __getstate__(self):
     # 'means', 'variances', 'weights'
     # self.mu, self.sigma, self.w
+    if not self.is_initialized:
+      raise RuntimeError("GMM hasn't been initialized, nothing to save")
     pass
 
   def __setstate__(self, states):
     pass
 
   def __str__(self):
-    s = '<"%s" nmix:%s ndim:%s initted:%s fitted:%s>' %\
+    if not self.is_initialized:
+      return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
+    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s>' %\
         (ctext(self.name, 'yellow'),
             ctext(self._nmix, 'cyan'),
             ctext(self._feat_dim, 'cyan'),
-            self.is_initialized, self.is_fitted)
+            ctext(self.mu.shape, 'cyan'),
+            ctext(self.sigma.shape, 'cyan'),
+            ctext(self.w.shape, 'cyan'))
     return s
 
   # ==================== properties ==================== #
@@ -339,13 +353,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== build the graph ====== #
     with tf.variable_scope(scope):
       mu = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
-                          dtype='float32',
+                          dtype=self.dtype,
                           name='GMM_mu')
       sigma = tf.placeholder(shape=(self.feat_dim, self._curr_nmix),
-                            dtype='float32',
+                            dtype=self.dtype,
                             name='GMM_sigma')
       w = tf.placeholder(shape=(1, self._curr_nmix),
-                        dtype='float32',
+                        dtype=self.dtype,
                         name='GMM_weight')
       expressions['mu'] = mu
       expressions['sigma'] = sigma
@@ -403,18 +417,18 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self._feat_dim = int(feat_dim)
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
     if is_string(self.batch_size):
-      self.batch_size = STANDARD_BATCH_SIZE / self.feat_dim * 4
+      self.batch_size = int(STANDARD_BATCH_SIZE / self.feat_dim * 4)
     # [batch_size, feat_dim]
     self.X_ = tf.placeholder(shape=(None, self.feat_dim),
-                             dtype=X.dtype,
+                             dtype='float32',
                              name='GMM_input')
     # ====== init ====== #
     # (D, M)
-    self.mu = np.zeros((feat_dim, self._curr_nmix), dtype='f4')
+    self.mu = np.zeros((feat_dim, self._curr_nmix), dtype=self.dtype)
     # (D, M)
-    self.sigma = np.ones((feat_dim, self._curr_nmix), dtype='f4')
+    self.sigma = np.ones((feat_dim, self._curr_nmix), dtype=self.dtype)
     # (1, M)
-    self.w = np.ones((1, self._curr_nmix), dtype='f4')
+    self.w = np.ones((1, self._curr_nmix), dtype=self.dtype)
     # init posterior
     self._resfresh_cpu_posterior()
     self._refresh_gpu_posterior()
@@ -432,12 +446,12 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       raise ValueError("`X` must be numpy.ndarray or instance of odin.fuel.Data.")
     if isinstance(X, Feeder):
       raise ValueError("No support for fitting GMM on odin.fuel.Feeder")
+    # ====== check input ====== #
+    self._initialize(X)
     if X.shape[0] < self.batch_size:
       raise RuntimeError("Input has shape %s, not enough data points for a "
                          "single batch of size: %d." %
                          (str(X.shape), self.batch_size))
-    # ====== check input ====== #
-    self._initialize(X)
     is_indices = True if isinstance(X, DataDescriptor) else False
     # ====== divide the batches ====== #
     nb_samples = len(X.indices) if is_indices else X.shape[0]
@@ -448,8 +462,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       # Z, F, S, L, nfr
       results = [0., 0., 0., 0., 0]
       for s, e, n, selected in _create_batch(start, end, batch_size,
-          downsample=self.downsample, stochastic=self.stochastic_downsample,
-          seed=self.seed, curr_nmix=self._curr_nmix, curr_niter=self._curr_niter):
+                                  downsample=self.downsample,
+                                  stochastic=self.stochastic_downsample,
+                                  seed=self.seed,
+                                  curr_nmix=self._curr_nmix,
+                                  curr_niter=self._curr_niter):
         # downsample by randomly ignore a batch
         if selected:
           x = X[s:e]
@@ -476,14 +493,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     niter[int(np.log2(self._nmix))] = self._niter
     # run the algorithm
     while True:
-      print(ctext('Estimating the GMM for %s components ...' % self._curr_nmix,
-                  'cyan'))
       # spliting the jobs
       jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nb_samples,
                   gpu_factor=self.gpu_factor, ncpu=self.ncpu,
                   device='cpu' if self._curr_nmix <= 32 else self.device)
       # fitting the mixtures
       idx = int(np.log2(self._curr_nmix))
+      print(ctext('Estimating the GMM for %s components in %d iter ...' %
+                  (self._curr_nmix, niter[idx]),
+                  color='cyan'))
       for self._curr_niter in range(niter[idx]):
         # ====== init ====== #
         start_time = time.time()

@@ -73,9 +73,11 @@ extractors = pp.make_pipeline(steps=[
     #                        fmin=64, fmax=4000, padding=padding),
     # ====== pitch ====== #
     pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
-                             fmin=32, fmax=620, voicingCutoff_pitch=0.55,
-                             f0min=64, f0max=420, voicingCutoff_f0=0.45,
-                             method='shs', f0=True, voiceProb=True, loudness=True),
+                             fmin=32, fmax=620, voicingCutoff_pitch=0.7,
+                             f0min=64, f0max=420, voicingCutoff_f0=0.55,
+                             method='shs', f0=True, voiceProb=True, loudness=False),
+    pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
+                                nmel=40, fmin=20, fmax=None, to_intensity=False),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_name='energy'),
     # ====== BNF ====== #
