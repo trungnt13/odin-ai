@@ -16,7 +16,8 @@ from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
 from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
-                        is_number, as_tuple, uuid, is_string)
+                        is_number, as_tuple, uuid, is_string,
+                        wprint)
 from odin.config import EPS, get_ngpu
 
 
@@ -291,13 +292,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   def __str__(self):
     if not self.is_initialized:
       return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
-    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s>' %\
+    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s bs:%d>' %\
         (ctext(self.name, 'yellow'),
             ctext(self._nmix, 'cyan'),
             ctext(self._feat_dim, 'cyan'),
             ctext(self.mu.shape, 'cyan'),
             ctext(self.sigma.shape, 'cyan'),
-            ctext(self.w.shape, 'cyan'))
+            ctext(self.w.shape, 'cyan'),
+            ctext(self.batch_size, 'cyan'),
+          )
     return s
 
   # ==================== properties ==================== #
@@ -391,7 +394,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       expressions['L'] = tf.reduce_sum(llk, axis=None, name='sum_llk')
     self.__expressions_gpu = expressions
 
-  def _initialize(self, X):
+  def initialize(self, X):
     # ====== get input info ====== #
     if hasattr(X, 'ndim'):
       ndim = X.ndim
@@ -432,6 +435,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # init posterior
     self._resfresh_cpu_posterior()
     self._refresh_gpu_posterior()
+    # ====== warning no GPU ====== #
+    if self.device == 'gpu' and get_ngpu() == 0:
+      wprint("Enabled GPU device, but no GPU found!")
 
   # ==================== sklearn ==================== #
   def fit(self, X, y=None):
@@ -447,7 +453,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     if isinstance(X, Feeder):
       raise ValueError("No support for fitting GMM on odin.fuel.Feeder")
     # ====== check input ====== #
-    self._initialize(X)
+    self.initialize(X)
     if X.shape[0] < self.batch_size:
       raise RuntimeError("Input has shape %s, not enough data points for a "
                          "single batch of size: %d." %
@@ -583,7 +589,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     the log probability of each observations to each components
     given the GMM.
     """
-    self._initialize(X)
+    self.initialize(X)
     gpu = _select_device(X, gpu)
     if gpu:
       feed_dict = {self.X_: X}
@@ -609,7 +615,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """ Shape: (batch_size, nmix)
     The posterior probability of mixtures for each frame
     """
-    self._initialize(X)
+    self.initialize(X)
     gpu = _select_device(X, gpu)
     if gpu:
       feed_dict = {self.X_: X}
@@ -638,7 +644,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """ Shape: (batch_size, 1)
     The log-likelihood value of each frame to all components
     """
-    self._initialize(X)
+    self.initialize(X)
     gpu = _select_device(X, gpu)
     if gpu:
       feed_dict = {self.X_: X}
@@ -692,7 +698,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     second(optional) : ndarray [feat_dim, nmix]
     llk   (optional) : scalar ()
     """
-    self._initialize(X)
+    self.initialize(X)
     gpu = _select_device(X, gpu)
     # ====== run on GPU ====== #
     if gpu:

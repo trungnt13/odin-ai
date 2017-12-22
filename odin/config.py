@@ -209,7 +209,7 @@ def auto_config(config=None):
   debug = False
   # number of devices
   ncpu = 0
-  ngpu = False
+  ngpu = 0
   nthread = 0
   log_level = '3'
   # ====== parsing the config ====== #
@@ -233,7 +233,10 @@ def auto_config(config=None):
         else:
           ncpu = min(int(i.split('=')[-1]), cpu_count())
       elif 'gpu' in i:
-        ngpu = True
+        if '=' in i:
+          ngpu = int(i.split('=')[-1])
+        else:
+          ngpu = 1
       # ====== number thread ====== #
       elif 'thread' in i:
         if '=' not in i:
@@ -279,7 +282,7 @@ def auto_config(config=None):
   EPS = np.finfo(np.dtype(floatX)).eps
   # devices
   dev = {}
-  if ngpu:
+  if ngpu > 0:
     dev.update(_query_gpu_info())
   else:
     dev['ngpu'] = 0
