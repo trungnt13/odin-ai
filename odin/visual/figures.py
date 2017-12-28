@@ -385,8 +385,10 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
   return ax
 
 
-def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
-                fontsize=8):
+def plot_scatter(x, y, color=None, marker=None, size=4.0,
+                legend=None, legend_loc='upper center',
+                legend_ncol=3, legend_colspace=0.4,
+                ax=None, fontsize=8):
   '''Plot the amplitude envelope of a waveform.
   Parameters
   ----------
@@ -441,7 +443,7 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
   else:
     axes = []
     legend_ = []
-    for code, name in legend.items():
+    for code, name in sorted(legend.items(), key=lambda x: x[-1]):
       c, m = list(code)
       x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
       y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
@@ -449,8 +451,11 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0, legend=None, ax=None,
       _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
       axes.append(_)
     # add all the legend
-    ax.legend(axes, legend_, scatterpoints=1, loc='upper center',
-              bbox_to_anchor=(0.5, -0.1), ncol=3, fontsize=fontsize)
+    legend = ax.legend(axes, legend_, markerscale=1.5,
+      scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=legend_ncol,
+      columnspacing=legend_colspace, labelspacing=0.,
+      fontsize=fontsize, handletextpad=0.1)
   return ax
 
 
