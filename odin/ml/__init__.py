@@ -1,4 +1,3 @@
 from .decompositions import *
 from .clustering import *
-from .gmm import GMM
-from .ivec import Ivector
+from .gmm import GMM, Ivector

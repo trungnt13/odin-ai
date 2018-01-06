@@ -471,6 +471,28 @@ def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
     ax.plot(x, y, c=color, lw=lw, **kwargs)
   return ax
 
+def plot_ellipses(gmm, ax):
+  import matplotlib as mpl
+  import matplotlib.pyplot as plt
+  for n, color in enumerate(colors):
+    if gmm.covariance_type == 'full':
+      covariances = gmm.covariances_[n][:2, :2]
+    elif gmm.covariance_type == 'tied':
+      covariances = gmm.covariances_[:2, :2]
+    elif gmm.covariance_type == 'diag':
+      covariances = np.diag(gmm.covariances_[n][:2])
+    elif gmm.covariance_type == 'spherical':
+      covariances = np.eye(gmm.means_.shape[1]) * gmm.covariances_[n]
+    v, w = np.linalg.eigh(covariances)
+    u = w[0] / np.linalg.norm(w[0])
+    angle = np.arctan2(u[1], u[0])
+    angle = 180 * angle / np.pi  # convert to degrees
+    v = 2. * np.sqrt(2.) * np.sqrt(v)
+    ell = mpl.patches.Ellipse(gmm.means_[n, :2], v[0], v[1],
+                              180 + angle, color=color)
+    ell.set_clip_box(ax.bbox)
+    ell.set_alpha(0.5)
+    ax.add_artist(ell)
 
 def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
   from matplotlib import pyplot as plt
