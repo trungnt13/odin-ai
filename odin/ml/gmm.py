@@ -4,10 +4,11 @@ This module contains tools for Gaussian mixture modeling (GMM)
 __author__ = 'Omid Sadjadi, Timothee Kheyrkhah'
 __email__ = 'omid.sadjadi@nist.gov'
 """
+import os
 import time
 import random
 import threading
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, Mapping
 
 import numpy as np
 from scipy import linalg
@@ -19,7 +20,7 @@ from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid, is_string,
-                        wprint)
+                        wprint, segment_list, defaultdictkey)
 from odin.config import EPS, get_ngpu
 
 
@@ -29,7 +30,6 @@ from odin.config import EPS, get_ngpu
 #       slower than numpy if you evaluate the
 #       expression for first time.
 MINIMUM_GPU_BLOCK = 8000 * 120 * 4 # bytes
-STANDARD_BATCH_SIZE = 1.2 * 1024 * 1024 # 1 Megabytes
 # how much jobs GPU will handle more than CPU
 # (i.e. `njob_gpu = gpu_factor * njob_cpu`)
 GPU_FACTOR = 120
@@ -239,6 +239,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     weights of each component
 
   """
+
+  STANDARD_BATCH_SIZE = 1.2 * 1024 * 1024 # 8 Megabytes
 
   def __init__(self, nmix, nmix_start=1, niter=16, batch_size='auto',
                covariance_type='diag',
@@ -456,7 +458,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # const for specific dimension
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
     if is_string(self.batch_size):
-      self.batch_size = int(STANDARD_BATCH_SIZE /
+      self.batch_size = int(GMM.STANDARD_BATCH_SIZE /
        (self.feat_dim * self.dtype.itemsize))
     # [batch_size, feat_dim]
     self.X_ = tf.placeholder(shape=(None, self.feat_dim),
@@ -517,7 +519,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     post = self.logprob(X)  # (batch_size, nmix)
     return logsumexp(post, axis=1) # (batch_size, 1)
 
-  def transform(self, X):
+  def transform(self, X, device=None):
     """ Compute centered statistics given X and fitted mixtures
 
     Return
@@ -525,20 +527,124 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     zero-th statistics: [1, nmix]
       e.g. the assignment score each samples to each components, hence,
       `#frames = Z.sum()`
-    first statistics: [feat_dim * nmix, 1]
+    first statistics: [1, feat_dim * nmix]
       dot-product of each sample and the posteriors.
 
     NOTE
     ----
     For more option check `GMM.expectation`
     """
+    if device is None:
+      device = self.device
     Z, F = self._fast_expectation(X, zero=True, first=True,
                                   second=False, llk=False,
-                                  on_gpu=self.device != 'cpu')
-    # this equal to: .ravel()[:, np.newaxis]
+                                  on_gpu=device != 'cpu')
+    # this equal to: .ravel()[np.newaxis, :]
     F_hat = np.reshape(F - self.mu * Z,
-                       newshape=(self._feat_dim * self._curr_nmix, 1))
+                       newshape=(1, self.feat_dim * self._curr_nmix),
+                       order='F')
     return Z, F_hat
+
+  def transform_to_disk(self, X, indices, pathZ=None, pathF=None,
+                        dtype='float32', device='cpu', override=True):
+    """ Same as `transform`, however, save the transformed statistics
+    to file using `odin.fuel.MmapData`
+
+    Return
+    ------
+    zero-th statistics: [1, nmix]
+      e.g. the assignment score each samples to each components, hence,
+      `#frames = Z.sum()`
+    first statistics: [1, feat_dim * nmix]
+      dot-product of each sample and the posteriors.
+
+    Note
+    ----
+    If your data contain many very long utterances, it is suggested to use
+    `device='gpu'`, otherwise, 'cpu' is mostly significant faster.
+    """
+    from odin.fuel import MmapData
+    if device is None:
+      device = self.device
+    on_gpu = True if device != 'cpu' and get_ngpu() > 0 else False
+    name_list = []
+    prog = Progbar(target=len(indices),
+                   print_report=True, print_summary=True,
+                   name="Saving zero-th and first order statistics")
+    # ====== init data files ====== #
+    if pathZ is not None:
+      if os.path.exists(pathZ):
+        if not override:
+          raise RuntimeError("Path at %s exist and cannot be overrided" % pathZ)
+        os.remove(pathZ)
+      z_dat = MmapData(path=pathZ, dtype=dtype, shape=(0, self.nmix))
+    else:
+      z_dat = None
+    if pathF is not None:
+      if os.path.exists(pathF):
+        if not override:
+          raise RuntimeError("Path at %s exist and cannot be overrided" % pathF)
+        os.remove(pathF)
+      f_dat = MmapData(path=pathF, dtype=dtype, shape=(0, self.nmix * self.feat_dim))
+    else:
+      f_dat = None
+    # ====== running on GPU ====== #
+    if on_gpu:
+      for name, (start, end) in indices:
+        res = self._fast_expectation(X[start:end],
+                                     zero=z_dat is not None or f_dat is not None,
+                                     first=f_dat is not None,
+                                     second=False, llk=False, on_gpu=True)
+        if z_dat is not None:
+          z_dat.append(res[0])
+        if f_dat is not None:
+          Z, F = res
+          f_dat.append(np.reshape(F - self.mu * Z,
+                                  newshape=(1, self._feat_dim * self._curr_nmix),
+                                  order='F'))
+        name_list.append(name)
+        prog.add(1)
+    # ====== run on CPU ====== #
+    else:
+      if isinstance(indices, Mapping):
+        indices = list(indices.items())
+
+      def map_func(j):
+        Z, F = [], []
+        for name, (start, end) in j:
+          res = self._fast_expectation(X[start:end],
+                                       zero=z_dat is not None or f_dat is not None,
+                                       first=f_dat is not None,
+                                       second=False, llk=False, on_gpu=True)
+          Z.append(res[0])
+          if f_dat is not None:
+            z, f = res
+            F.append(np.reshape(f - self.mu * z,
+                                newshape=(1, self._feat_dim * self._curr_nmix),
+                                order='F'))
+        # concatenate into single large matrix
+        if len(Z) > 0:
+          Z = np.concatenate(Z, axis=0)
+        if len(F) > 0:
+          F = np.concatenate(F, axis=0)
+        return Z, F, len(j)
+      # run the MPI task
+      mpi = MPI(jobs=indices, func=map_func, ncpu=self.ncpu,
+                batch=max(1, self.batch_size // self.ncpu))
+      for Z, F, n in mpi:
+        prog.add(n)
+        if z_dat is not None:
+          z_dat.append(Z)
+        if f_dat is not None:
+          f_dat.append(F)
+    # ====== flush and return ====== #
+    if z_dat is not None:
+      z_dat.flush()
+      z_dat.close()
+    if f_dat is not None:
+      f_dat.flush()
+      f_dat.close()
+    return name_list
 
   # ==================== math helper ==================== #
   def logprob(self, X):
@@ -814,6 +920,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       self.sigma = self.sigma.clip(vFloor)
     # refresh cpu cached value
     self._resfresh_cpu_posterior()
+    return self
 
   def expectation_maximization(self, X, device=None, print_progress=True):
     self.initialize(X)
@@ -870,10 +977,6 @@ class _CenteredStatsIter(object):
                X=None, Z=None, F=None, indices=None,
                start=None, end=None):
     super(_CenteredStatsIter, self).__init__()
-    # ====== just single data points ====== #
-    if X is not None and indices is None:
-      X = as_tuple(X)
-    # ====== assign ====== #
     self.gmm = gmm
     self.batch_size = batch_size
     self.X = X
@@ -883,16 +986,29 @@ class _CenteredStatsIter(object):
     # start and end only for provided Z and F
     self.start = 0 if start is None else start
     self.end = Z.shape[0] if end is None and Z is not None else end
+    # ====== infer length (i.e. number of files) ====== #
+    if self.indices is not None:
+      self._length = len(self.indices)
+    elif self.X is not None:
+      self._length = len(as_tuple(self.X))
+    elif Z is not None and F is not None:
+      self._length = self.end - self.start
+    else:
+      raise RuntimeError("No data is given.")
+
+  def __len__(self):
+    return self._length
 
   def __iter__(self):
     get_stats = None
-    # ====== given list of utterances ====== #
-    if isinstance(self.X, (tuple, list)):
-      get_stats = (self.gmm.transform(x) for x in self.X)
     # ====== given indices ====== #
-    elif self.indices is not None:
-      get_stats = (self.gmm.transform(self.X[start:end])
+    if self.indices is not None:
+      get_stats = (self.gmm.transform(self.X[start:end], device='cpu')
                    for name, (start, end) in self.indices)
+    # ====== given list of utterances ====== #
+    elif self.X is not None:
+      get_stats = (self.gmm.transform(x, device='cpu')
+                   for x in as_tuple(self.X))
     # ====== given raw data ====== #
     if get_stats is not None:
       Z, F = [], []
@@ -901,13 +1017,13 @@ class _CenteredStatsIter(object):
         F.append(y[1])
         if len(Z) >= self.batch_size:
           Z = np.concatenate(Z, axis=0)
-          F = np.concatenate(F, axis=1)
+          F = np.concatenate(F, axis=0)
           yield Z, F
           Z, F = [], []
       # final batch
       if len(Z) > 0:
         Z = np.concatenate(Z, axis=0)
-        F = np.concatenate(F, axis=1)
+        F = np.concatenate(F, axis=0)
         yield Z, F
     # ====== given Z and F ====== #
     elif self.Z is not None and self.F is not None:
@@ -915,7 +1031,7 @@ class _CenteredStatsIter(object):
                                  batch_size=self.batch_size):
         start += self.start
         end += self.start
-        yield self.Z[start:end, :], self.F[:, start:end]
+        yield self.Z[start:end, :], self.F[start:end, :]
     # ====== exception ====== #
     else:
       raise RuntimeError("No data for iteration.")
@@ -928,63 +1044,53 @@ class _CenteredStatsIter(object):
     self.indices = None
 
 class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
+  STANDARD_BATCH_SIZE = 25 * 1024 * 1024 # 20 Megabytes
 
-  def __init__(self, tv_dim, gmm, niter=16, batch_size='auto',
-               device='gpu', ncpu=None,
-               dtype='float32', seed=5218,
-               name=None):
+  def __init__(self, tv_dim, gmm, niter=16,
+               batch_size='auto', dtype='float32',
+               seed=5218, name=None):
     super(Ivector, self).__init__()
-    # ====== set gmm ====== #
-    if not isinstance(gmm, GMM):
-      raise ValueError("`gmm` must be instance of odin.ml.gmm.GMM")
-    if not gmm.is_initialized:
-      raise ValueError("`gmm` must be initialized.")
-    if gmm._curr_nmix != gmm._nmix:
-      raise ValueError("`gmm` must be fitted.")
+    # ====== init ====== #
+    self.niter = niter
+    self._tv_dim = tv_dim
+    self._t2_dim = tv_dim * (tv_dim + 1) // 2
+    self._feat_dim = gmm.feat_dim
+    self._nmix = gmm.nmix
     self._gmm = gmm
-    self._feat_dim = self._gmm.feat_dim
-    self._nmix = self._gmm.nmix
-    # ====== training info ====== #
-    self._dtype = np.dtype(dtype)
-    if is_string(batch_size):
-      batch_size = int(STANDARD_BATCH_SIZE /
-       (self.feat_dim * self._dtype.itemsize))
-    self.batch_size = batch_size
-    self.seed = seed
-    # ====== multi-processing ====== #
-    if ncpu is None:
-      ncpu = cpu_count() - 1
-    self.ncpu = int(ncpu)
-    # device
-    device = str(device).lower()
-    if device not in ('mix', 'gpu', 'cpu'):
-      raise ValueError("`device` can only be one of following option: "
-                       "'mix', 'gpu', 'cpu'.")
-    self.device = device
-    # ====== name ====== #
+    # ====== others ====== #
+    self._llk_hist = []
     if name is None:
       name = uuid(length=8)
       self._name = 'Ivector_%s' % name
     else:
       self._name = str(name)
-    # ====== temp variable to prevent duplicate allocation ====== #
+    # ====== training ====== #
+    self._dtype = np.dtype(dtype)
+    if is_string(batch_size):
+      batch_size = int(Ivector.STANDARD_BATCH_SIZE /
+       ((self.feat_dim * self.nmix * self.dtype.itemsize) +
+        (self.nmix * self.dtype.itemsize)))
+    self.batch_size = batch_size
+    # ====== load ubm ====== #
+    self.Im = np.eye(self.tv_dim, dtype=self.dtype)
+    self.Sigma = np.array(
+        gmm.sigma.reshape((1, self.feat_dim * self.nmix), order='F'),
+        dtype=self.dtype)
+    np.random.seed(seed)
+    self.Tm = (np.random.randn(self.tv_dim, self.feat_dim * self.nmix) *
+               self.Sigma.sum() * 0.001).astype(self.dtype)
+    self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
+    # ====== cache, 10% faster here ====== #
+    self._itril = np.tril_indices(tv_dim)
     self._mix_idx = [np.arange(self.feat_dim) + mix * self.feat_dim
                      for mix in range(self.nmix)]
-    self._itril = np.tril_indices(tv_dim)
-    # ====== set ivec dim ====== #
-    self._tv_dim = int(tv_dim)
-    self.Sigma = np.array(self.gmm.sigma.reshape(1, self.feat_dim * self.nmix),
-                          dtype=self.dtype)
-    # ====== T-matrix ====== #
-    np.random.seed(self.seed)
-    # (tdim, feat_dim * nmix)
-    self.Tm = np.random.randn(self.tv_dim, self.feat_dim * self.nmix) * self.Sigma.sum() * 0.001
-    self.Im = np.eye(self.tv_dim, dtype=self.dtype)
-    # ====== others ====== #
-    # (self.tv_dim, self.feat_dim * self.nmix)
-    self.T_iS = self.Tm / self.Sigma
-    # (self.nmix, self.tv_dim * (self.tv_dim + 1) / 2)
-    self.T_iS_Tt = self.comp_T_invS_Tt()
+    self._Ex_Exx_llk = defaultdictkey(
+        lambda nfiles: (np.empty((nfiles, self.tv_dim), dtype=self.dtype),
+                        np.empty((nfiles, self.t2_dim), dtype=self.dtype),
+                        np.empty((nfiles, 1), dtype=self.dtype)))
+    # ====== calculate stats first ====== #
+    self._refresh_T_statistics()
+    self._refresh_gpu()
 
   # ==================== properties ==================== #
   @property
@@ -994,6 +1100,10 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   @property
   def tv_dim(self):
     return self._tv_dim
+
+  @property
+  def t2_dim(self):
+    return self._t2_dim
 
   @property
   def nmix(self):
@@ -1011,65 +1121,64 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   def gmm(self):
     return self._gmm
 
-  def comp_T_invS_Tt(self):
+  # ==================== i-vec ==================== #
+  def _refresh_T_statistics(self):
+    """ depend on: Tm and Sigma """
+    # (self.tv_dim, self.feat_dim * self.nmix)
+    self.T_invS = self.Tm / self.Sigma
+    # (self.nmix, self.tv_dim * (self.tv_dim + 1) / 2)
     T_invS2 = self.Tm / np.sqrt(self.Sigma)
-    T_invS_Tt = np.zeros((self.nmix, self.tv_dim * (self.tv_dim + 1) // 2),
-                         dtype=self.dtype)
-    for mix in range(self.nmix):
-      idx = np.arange(self.feat_dim) + mix * self.feat_dim
+    # update each row for each mixture
+    for mix, idx in enumerate(self._mix_idx):
       tmp = T_invS2[:, idx].dot(T_invS2[:, idx].T)
-      T_invS_Tt[mix] = tmp[self._itril]
-    return T_invS_Tt
+      self.T_invS_Tt[mix] = tmp[self._itril]
 
-  def fit(self, X, y=None):
-    pass
+  def _refresh_gpu(self):
+    with tf.variable_scope(self.name):
+      Z = K.placeholder(shape=(None, self.nmix),
+                        dtype=self.dtype,
+                        name='ZeroStats')
+      F = K.placeholder(shape=(None, self.nmix * self.feat_dim),
+                        dtype=self.dtype,
+                        name='ZeroStats')
+      Tm = K.placeholder(shape=self.Tm.shape,
+                         dtype=self.dtype,
+                         name='Tmatrix')
+      T_invS_Tt = K.placeholder(shape=self.T_invS_Tt.shape,
+                                dtype=self.dtype,
+                                name='T_invS_Tt')
+      Sigma = tf.constant(value=self.Sigma,
+                          dtype=self.dtype,
+                          name='Sigma')
+      Im = tf.eye(self.tv_dim, dtype=self.dtype, name='Im')
+      # ====== start the calculation ====== #
+      T_invS = Tm / Sigma
+      L1 = K.dot(Z, T_invS_Tt)
+      B1 = K.dot(F, tf.transpose(T_invS))
+      # ====== repeat for each utterance (file) ====== #
+      ix = 0
+      L = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
+                        updates=L1[ix],
+                        shape=(self.tv_dim, self.tv_dim),
+                        name='L')
+      L = L + tf.transpose(L) + Im
+      # tf.matrix_band_part
+      print(L)
+      print(tf.diag(L))
+      exit()
 
-  def transform(self, X=None, Z=None, F=None):
-    L = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
-    L[self._itril] = np.dot(N, self.T_iS_Tt)
-    L += np.tril(L, -1).T + self.Im
-    Cxx = linalg.inv(L)
-    B = np.dot(self.T_iS, F)
-    Ex = np.dot(Cxx, B)
-    return Ex
-
-  def expectation(self, X=None, Z=None, F=None, indices=None):
-    # ====== given samples ====== #
-    if X is not None:
-      centered_stats = [self.gmm.transform(x)
-                        for x in as_tuple(X)]
-      Z = np.concatenate([i[0] for i in centered_stats],
-                         axis=0)
-      F = np.concatenate([i[1] for i in centered_stats],
-                         axis=1)
-    # ====== given centered statistics ====== #
-    else:
-      if Z.shape[1] != self.nmix:
-        raise ValueError("`Z`: the zero-th statistics must has shape (n, %d), but "
-                         "given shape: %s" % (self.nmix, str(Z.shape)))
-      if F.shape[0] != self.nmix * self.feat_dim:
-        raise ValueError("`F`: the first statistics must has shape (%d, n), but "
-                         "given shape: %s" % (self.nmix * self.feat_dim, str(F.shape)))
-    # ====== init ====== #
-    nfiles = F.shape[1]
-    LU, RU, LLK = 0., 0., 0.
-    # (tdim, feat_dim * nmix)
-    T_invS = self.Tm / self.Sigma
-    # (nmix, tdim * (tdim + 1) / 2)
-    T_iS_Tt = self.comp_T_invS_Tt()
-    # (nfiles, tdim * (tdim + 1) / 2)
-    L1 = np.dot(Z, T_iS_Tt)
-    # (nfiles, tdim)
-    B1 = np.dot(T_invS, F).T
-
-    Ex = np.empty((nfiles, self.tv_dim), dtype=self.dtype)
-    Exx = np.empty((nfiles, self.tv_dim * (self.tv_dim + 1) // 2),
-                   dtype=self.dtype)
-    llk = np.zeros((nfiles, 1), dtype=self.dtype)
+  def _fast_expectation(self, Z, F):
+    nframes = np.ceil(Z.sum())
+    nfiles = F.shape[0]
+    # (nfiles, tv_dim * (tv_dim + 1) / 2)
+    L1 = np.dot(Z, self.T_invS_Tt)
+    # (nfiles, feat_dim * nmix)
+    B1 = np.dot(F, self.T_invS.T)
+    Ex, Exx, llk = self._Ex_Exx_llk[nfiles]
     for ix in range(nfiles):
-      L = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+      L = np.zeros((self.tv_dim, self.tv_dim))
       L[self._itril] = L1[ix]
-      L += np.tril(L, -1).T + self.Im
+      L = L + np.tril(L, -1).T + self.Im
       Cxx = linalg.inv(L)
       B = B1[ix][:, np.newaxis]
       this_Ex = Cxx.dot(B)
@@ -1077,14 +1186,26 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       Ex[ix] = this_Ex.T
       Exx[ix] = (Cxx + this_Ex.dot(this_Ex.T))[self._itril]
     # (tdim, nmix * feat_dim)
-    RU += np.dot(F, Ex).T
+    RU = np.dot(Ex.T, F)
     # (nmix, tdim * (tdim + 1) / 2)
-    LU += np.dot(Z.T, Exx)
-    LLK += llk.sum()
-    # Z.sum() is total number of frames
-    return LU, RU, LLK, Z.sum()
+    LU = np.dot(Z.T, Exx)
+    return LU, RU, llk.sum(), nframes
 
-  def maximization(self, LU, RU, nframes,
+  def expectation(self, Z, F):
+    nfiles = Z.shape[0]
+    # single batch
+    if nfiles < self.batch_size:
+      results = self._fast_expectation(Z=Z, F=F)
+    # multiple batches
+    else:
+      results = [0., 0., 0., 0.]
+      for start, end in batching(nfiles, batch_size=self.batch_size):
+        for i, r in enumerate(self._fast_expectation(Z[start:end], F[start:end])):
+          results[i] += r
+    # return
+    return results
+
+  def maximization(self, LU, RU, nframes=None,
                    min_div_est=True, orthogonalize=True):
     # ML re-estimation of the total subspace matrix or the factor loading
     # matrix
@@ -1095,11 +1216,56 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       self.Tm[:, idx] = linalg.solve(Lu, RU[:, idx])
     # min_div_est
     if min_div_est:
+      if nframes is None:
+        raise ValueError("`nframes` must be specified if `min_div_est=True`")
       Lu = np.zeros((self.tv_dim, self.tv_dim))
       Lu[self._itril] = LU.sum(0) / nframes
       Lu += np.tril(Lu, -1).T
       self.Tm = np.dot(linalg.cholesky(Lu), self.Tm)
     # orthogonalize the columns
     if orthogonalize:
-      U, s, V = linalg.svd(self.Tm, full_matrices=False)
-      self.Tm = np.diag(s).dot(V)
+      U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
+      self.Tm = np.diag(s_).dot(V_)
+    # refresh stats
+    self._refresh_T_statistics()
+    return self
+
+  def expectation_maximization(self, Z, F, print_progress=True):
+    nfiles = Z.shape[0]
+    # ====== Expectation ====== #
+    start_time = time.time()
+    LU, RU, LLK, nframes = self.expectation(Z=Z, F=F)
+    time_Estep = time.time() - start_time
+    # ====== maximization ====== #
+    start_time = time.time()
+    self.maximization(LU, RU, nframes,
+                      min_div_est=True, orthogonalize=True)
+    time_Mstep = time.time() - start_time
+    # store history
+    LLK = LLK / nfiles
+    self._llk_hist.append(LLK)
+    # print log
+    if print_progress:
+      print("#iter:%s llk:%s Estep:%s(s) Mstep:%s(s)" %
+        (ctext('%.2d' % len(self._llk_hist), 'yellow'),
+         ctext('%.4f' % LLK, 'yellow'),
+         ctext('%.2f' % time_Estep, 'yellow'),
+         ctext('%.4f' % time_Mstep, 'yellow'),
+        ))
+    return self
+
+  # ==================== sklearn ==================== #
+  def transform(self, Z, F):
+    L = np.zeros((self.tv_dim, self.tv_dim))
+    L[self._itril] = Z.dot(self.T_iS_Tt)
+    L += np.tril(L, -1).T + self.Im
+    Cxx = linalg.inv(L)
+    B = np.dot(self.T_invS, F)
+    Ex = np.dot(Cxx, B)
+    return Ex
+
+  def fit(self, Z, F):
+    print('Re-estimating the total subspace with {} factors ...'.format(self.tv_dim))
+    # LU, RU, LLK, nframes
+    for iter in range(self.niter):
+      self.expectation_maximization(Z, F)

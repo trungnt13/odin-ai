@@ -25,6 +25,65 @@ def _normalize_axis(axis, ndim):
             for a in axis])
   return axis % ndim
 
+def tril(m, k=0, name='LowerTriangle'):
+  """
+  Lower triangle of an array.
+
+  Return a copy of an array with elements above the `k`-th diagonal zeroed.
+
+  Parameters
+  ----------
+  m : array_like, shape (M, N)
+      Input array.
+  k : int, optional
+      Diagonal above which to zero elements.  `k = 0` (the default) is the
+      main diagonal, `k < 0` is below it and `k > 0` is above.
+
+  Returns
+  -------
+  tril : ndarray, shape (M, N)
+      Lower triangle of `m`, of same shape and data-type as `m`.
+  """
+  if k == 0:
+    return tf.matrix_band_part(input=m, num_lower=-1, num_upper=0, name=name)
+  if k < 0:
+    return tf.subtract(m,
+      tf.matrix_band_part(input=m, num_lower=np.abs(k) - 1, num_upper=-1),
+      name=name)
+  # k > 0
+  return tf.matrix_band_part(input=m, num_lower=-1, num_upper=k, name=name)
+
+def tril_indices(n, k=0, name='LowerTriangleIndices'):
+  """ Similar as `numpy.tril_indices`
+  @Author: avdrher
+  https://github.com/GPflow/GPflow/issues/439
+
+  Return the indices for the lower-triangle of an (n, m) array.
+
+  Parameters
+  ----------
+  n : int
+      The row dimension of the arrays for which the returned
+      indices will be valid.
+  k : int, optional
+      Diagonal above which to zero elements.  `k = 0` (the default) is the
+      main diagonal, `k < 0` is below it and `k > 0` is above.
+
+  Returns
+  -------
+  inds : tuple of arrays
+      The indices for the triangle. The returned tuple contains two arrays,
+      each with the indices along one dimension of the array.
+
+  """
+  with tf.variable_scope(name):
+    M1 = tf.tile(tf.expand_dims(tf.range(n), axis=0), [n, 1])
+    M2 = tf.tile(tf.expand_dims(tf.range(n), axis=1), [1, n])
+    mask = tf.transpose((M1 - M2) >= -k)
+    ix1 = tf.boolean_mask(M2, mask)
+    ix2 = tf.boolean_mask(M1, mask)
+    return ix1, ix2
+
 def prior2weights(prior, exponential=False,
                   min_value=0.1, max_value=None,
                   norm=False):

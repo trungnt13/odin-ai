@@ -10,7 +10,7 @@ import numpy as np
 # ===========================================================================
 # Async file IO
 # ===========================================================================
-class keydefaultdict(defaultdict):
+class defaultdictkey(defaultdict):
   def __missing__(self, key):
     if self.default_factory is None:
       raise KeyError(key)

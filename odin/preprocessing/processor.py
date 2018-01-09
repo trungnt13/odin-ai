@@ -28,7 +28,7 @@ from sklearn.pipeline import Pipeline
 from odin.utils.mpi import MPI
 from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
-                        add_notification, keydefaultdict,
+                        add_notification, defaultdictkey,
                         stdio, get_stdio_path, wprint,
                         add_notification, flatten_list)
 from odin.fuel import Dataset, MmapDict, MmapData
@@ -444,7 +444,7 @@ class FeatureProcessor(object):
     else:
       cache_limit = int(self.ncache)
     # ====== indices ====== #
-    databases = keydefaultdict(lambda key:
+    databases = defaultdictkey(lambda key:
         MmapDict(path=os.path.join(dataset.path, key), cache_size=10000,
                  read_only=False))
     # ====== statistic ====== #
