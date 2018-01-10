@@ -30,9 +30,6 @@ from odin.config import EPS, get_ngpu
 #       slower than numpy if you evaluate the
 #       expression for first time.
 MINIMUM_GPU_BLOCK = 8000 * 120 * 4 # bytes
-# how much jobs GPU will handle more than CPU
-# (i.e. `njob_gpu = gpu_factor * njob_cpu`)
-GPU_FACTOR = 120
 
 # ===========================================================================
 # Helper
@@ -101,14 +98,15 @@ def logsumexp(X, axis):
   return y
 
 
-def _split_jobs(nb_samples, ncpu, device):
+def _split_jobs(nb_samples, ncpu, device, gpu_factor):
+  """ Return: jobs_cpu, jobs_gpu"""
   # number of GPU
   ngpu = get_ngpu()
   if ngpu == 0:
     device = 'cpu'
   # jobs split based on both number of CPU and GPU
   if device == 'mix':
-    njob = ncpu + 1 + ngpu * GPU_FACTOR
+    njob = ncpu + 1 + ngpu * gpu_factor
   elif device == 'cpu':
     njob = ncpu + 1
   elif device == 'gpu':
@@ -120,10 +118,10 @@ def _split_jobs(nb_samples, ncpu, device):
   jobs = list(zip(jobs, jobs[1:]))
   # use both GPU and CPU
   if device == 'mix':
-    jobs_gpu = [(jobs[i * GPU_FACTOR][0],
-                 jobs[i * GPU_FACTOR + GPU_FACTOR - 1][1])
+    jobs_gpu = [(jobs[i * gpu_factor][0],
+                 jobs[i * gpu_factor + gpu_factor - 1][1])
                 for i in range(ngpu)]
-    jobs_cpu = [jobs[i] for i in range(ngpu * GPU_FACTOR, len(jobs))]
+    jobs_cpu = [jobs[i] for i in range(ngpu * gpu_factor, len(jobs))]
   elif device == 'gpu': # only GPU
     jobs_gpu = jobs
     jobs_cpu = []
@@ -166,18 +164,23 @@ def _create_batch(start, end, batch_size,
 class _ExpectationResults(object):
   """ ExpectationResult """
 
-  def __init__(self, nb_samples, name, print_progress):
+  def __init__(self, nb_samples, nb_results, name, print_progress):
     super(_ExpectationResults, self).__init__()
     # thread lock
     self.lock = threading.Lock()
     # progress bar
     self.prog = Progbar(target=nb_samples, print_report=True,
                         print_summary=False, name=name)
-    # Z, F, S, L, nfr
-    self.stats = [0., 0., 0., 0., 0]
+    # GMM: Z, F, S, L, nframes
+    # I-vector: LU, RU, llk, nframes
+    self.stats = [0. for i in range(int(nb_results))]
     self.print_progress = bool(print_progress)
 
   def update(self, res):
+    """
+    integer (or a number): number of processed samples (update the progress bar)
+    otherwise: list of results (update the statistics)
+    """
     # thread-safe udpate
     self.lock.acquire()
     try:
@@ -219,6 +222,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         performance
   ncpu : int
       number of processes for parallel calculating Expectation
+  gpu_factor : int
+      how much jobs GPU will handle more than CPU
+      (i.e. `njob_gpu = gpu_factor * njob_cpu`)
   stochastic_downsample : bool
       if True, a subset of data is selected differently after
       each iteration => the training is stochastic.
@@ -245,7 +251,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   def __init__(self, nmix, nmix_start=1, niter=16, batch_size='auto',
                covariance_type='diag',
                downsample=2, stochastic_downsample=True,
-               device='gpu', ncpu=None,
+               device='gpu', ncpu=None, gpu_factor=80,
                dtype='float32', seed=5218, name=None):
     super(GMM, self).__init__()
     # start from 1 mixture, then split and up
@@ -261,6 +267,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== different mode ====== #
     self.covariance_type = str(covariance_type)
     # ====== multi-processing ====== #
+    self.gpu_factor = int(gpu_factor)
     # cpu
     if ncpu is None:
       ncpu = cpu_count() - 1
@@ -854,9 +861,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         results.update(res)
     # ====== split the jobs ====== #
     jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nb_samples,
-                                     ncpu=self.ncpu, device=device)
+                                     ncpu=self.ncpu, device=device,
+                                     gpu_factor=self.gpu_factor)
     # Z, F, S, L, nfr
-    results = _ExpectationResults(nb_samples=nb_samples,
+    results = _ExpectationResults(nb_samples=nb_samples, nb_results=5,
         name="[GMM] cmix:%d nmix:%d iter:%d" %
                    (curr_nmix, self.nmix, curr_niter),
         print_progress=print_progress)
@@ -1048,6 +1056,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __init__(self, tv_dim, gmm, niter=16,
                batch_size='auto', dtype='float32',
+               device='gpu', ncpu=1, gpu_factor=3,
                seed=5218, name=None):
     super(Ivector, self).__init__()
     # ====== init ====== #
@@ -1071,6 +1080,19 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
        ((self.feat_dim * self.nmix * self.dtype.itemsize) +
         (self.nmix * self.dtype.itemsize)))
     self.batch_size = batch_size
+    # ====== select device ====== #
+    device = str(device).lower()
+    if device not in ('cpu', 'gpu', 'mix'):
+      raise ValueError("`device` must be one of the following: 'cpu', 'gpu', or 'mix'")
+    if device in ('gpu', 'mix') and get_ngpu() == 0:
+      wprint("Using GPU device but NO GPU detected, "
+             "tensorflow will switch to slower CPU computation!")
+    self.device = device
+    # cpu
+    if ncpu is None:
+      ncpu = cpu_count() // 2
+    self.ncpu = int(ncpu)
+    self.gpu_factor = int(gpu_factor)
     # ====== load ubm ====== #
     self.Im = np.eye(self.tv_dim, dtype=self.dtype)
     self.Sigma = np.array(
@@ -1134,6 +1156,8 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       self.T_invS_Tt[mix] = tmp[self._itril]
 
   def _refresh_gpu(self):
+    if hasattr(self, '_gpu_inputs') and hasattr(self, '_gpu_outputs'):
+      return
     with tf.variable_scope(self.name):
       Z = K.placeholder(shape=(None, self.nmix),
                         dtype=self.dtype,
@@ -1153,57 +1177,122 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       Im = tf.eye(self.tv_dim, dtype=self.dtype, name='Im')
       # ====== start the calculation ====== #
       T_invS = Tm / Sigma
-      L1 = K.dot(Z, T_invS_Tt)
-      B1 = K.dot(F, tf.transpose(T_invS))
-      # ====== repeat for each utterance (file) ====== #
-      ix = 0
-      L = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
-                        updates=L1[ix],
-                        shape=(self.tv_dim, self.tv_dim),
-                        name='L')
-      L = L + tf.transpose(L) + Im
-      # tf.matrix_band_part
-      print(L)
-      print(tf.diag(L))
-      exit()
+      L1B1 = tf.concat((
+          tf.matmul(Z, T_invS_Tt, name='L1'), # (nfiles, t2_dim)
+          tf.matmul(F, tf.transpose(T_invS), name='B1')), # (nfiles, tv_dim)
+      axis=-1)
 
-  def _fast_expectation(self, Z, F):
+      # ====== repeat for each utterance (file) ====== #
+      def map_fn(L1B1):
+        L1 = L1B1[:self.t2_dim]
+        B1 = L1B1[self.t2_dim:]
+        L = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
+                          updates=L1,
+                          shape=(self.tv_dim, self.tv_dim),
+                          name='L')
+        L = L + tf.transpose(K.tril(L, k=-1)) + Im
+        Cxx = tf.linalg.inv(L)
+        B = tf.expand_dims(B1, axis=-1)
+        this_Ex = tf.matmul(Cxx, B)
+        Ex = tf.transpose(this_Ex)
+        llk = -0.5 * tf.matmul(Ex, B - this_Ex) + tf.matmul(Ex, B)
+        Exx = tf.gather_nd(params=(Cxx + tf.matmul(this_Ex, Ex)),
+                           indices=[(i, j) for i, j in zip(*self._itril)])
+        return tf.concat(
+            (tf.squeeze(llk, axis=0), tf.squeeze(Ex, axis=0), Exx), axis=0)
+      # ====== compute ====== #
+      llk_Ex_Exx = tf.map_fn(fn=map_fn, elems=L1B1, dtype=self.dtype,
+                             back_prop=False)
+      llk = llk_Ex_Exx[:, 0]
+      Ex = llk_Ex_Exx[:, 1:1 + self.tv_dim]
+      Exx = llk_Ex_Exx[:, 1 + self.tv_dim:]
+      RU = tf.matmul(tf.transpose(Ex), F)
+      LU = tf.matmul(tf.transpose(Z), Exx)
+      llk = tf.reduce_sum(llk)
+      # ====== assign inputs outputs for GPU function ====== #
+      self._gpu_inputs = [Z, F, Tm, T_invS_Tt]
+      self._gpu_outputs = [LU, RU, llk]
+
+  def _fast_expectation(self, Z, F, on_gpu):
     nframes = np.ceil(Z.sum())
     nfiles = F.shape[0]
+    # ====== GPU ====== #
+    if on_gpu:
+      LU, RU, llk = K.eval(self._gpu_outputs,
+        feed_dict={i: j for i, j in zip(self._gpu_inputs,
+                                        (Z, F, self.Tm, self.T_invS_Tt))}
+      )
+      return LU, RU, llk, nframes
+    # ====== CPU ====== #
     # (nfiles, tv_dim * (tv_dim + 1) / 2)
     L1 = np.dot(Z, self.T_invS_Tt)
-    # (nfiles, feat_dim * nmix)
+    # (nfiles, tv_dim)
     B1 = np.dot(F, self.T_invS.T)
     Ex, Exx, llk = self._Ex_Exx_llk[nfiles]
     for ix in range(nfiles):
       L = np.zeros((self.tv_dim, self.tv_dim))
       L[self._itril] = L1[ix]
-      L = L + np.tril(L, -1).T + self.Im
+      L = L + np.tril(L, k=-1).T + self.Im
       Cxx = linalg.inv(L)
       B = B1[ix][:, np.newaxis]
-      this_Ex = Cxx.dot(B)
-      llk[ix] = -0.5 * this_Ex.T.dot(B - this_Ex) + this_Ex.T.dot(B)
-      Ex[ix] = this_Ex.T
-      Exx[ix] = (Cxx + this_Ex.dot(this_Ex.T))[self._itril]
+      this_Ex = np.dot(Cxx, B)
+      this_ExT = this_Ex.T
+      Ex[ix] = this_ExT
+      llk[ix] = -0.5 * this_ExT.dot(B - this_Ex) + this_ExT.dot(B)
+      Exx[ix] = (Cxx + this_Ex.dot(this_ExT))[self._itril]
     # (tdim, nmix * feat_dim)
     RU = np.dot(Ex.T, F)
     # (nmix, tdim * (tdim + 1) / 2)
     LU = np.dot(Z.T, Exx)
     return LU, RU, llk.sum(), nframes
 
-  def expectation(self, Z, F):
+  def expectation(self, Z, F, device=None, print_progress=True):
+    if device is None:
+      device = self.device
     nfiles = Z.shape[0]
-    # single batch
+    # ====== single batch ====== #
     if nfiles < self.batch_size:
-      results = self._fast_expectation(Z=Z, F=F)
-    # multiple batches
+      results = self._fast_expectation(Z=Z, F=F,
+                    on_gpu=True if device in ('gpu', 'mix') else False)
+    # ====== multiple batches ====== #
     else:
-      results = [0., 0., 0., 0.]
-      for start, end in batching(nfiles, batch_size=self.batch_size):
-        for i, r in enumerate(self._fast_expectation(Z[start:end], F[start:end])):
-          results[i] += r
+      def map_expectation(start_end_onGPU):
+        (start, end), on_gpu = start_end_onGPU
+        tmp = [0., 0., 0., 0.] # LU, RU, llk, nframes
+        for s, e in batching(n=end - start, batch_size=self.batch_size):
+          s += start
+          e += start
+          results.update(e - s)
+          # update local results
+          for i, r in enumerate(self._fast_expectation(Z=Z[s:e], F=F[s:e],
+                                                       on_gpu=on_gpu)):
+            tmp[i] += r
+        # update actual results
+        results.update(tmp)
+      # ====== prepare the jobs ====== #
+      jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nfiles, ncpu=self.ncpu,
+                                       device=device,
+                                       gpu_factor=self.gpu_factor)
+      jobs_cpu = [(j, False) for j in jobs_cpu]
+      jobs_gpu = [(j, True) for j in jobs_gpu]
+      # LU, RU, llk, nframes
+      results = _ExpectationResults(nb_samples=nfiles, nb_results=4,
+          name="[Ivector] Tdim:%d nmix:%d feat_dim:%d iter:%d" %
+                     (self.tv_dim, self.nmix, self.feat_dim,
+                      len(self._llk_hist) + 1),
+          print_progress=print_progress)
+      # ====== create gpu thread ====== #
+      threads = [threading.Thread(target=map_expectation,
+                                  args=(j,))
+                 for j in jobs_gpu + jobs_cpu]
+      # start gpu and threads
+      for t in threads:
+        t.start()
+      # finish all threads
+      for t in threads:
+        t.join()
     # return
-    return results
+    return results.stats
 
   def maximization(self, LU, RU, nframes=None,
                    min_div_est=True, orthogonalize=True):
@@ -1230,11 +1319,12 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._refresh_T_statistics()
     return self
 
-  def expectation_maximization(self, Z, F, print_progress=True):
+  def expectation_maximization(self, Z, F, device=None, print_progress=True):
     nfiles = Z.shape[0]
     # ====== Expectation ====== #
     start_time = time.time()
-    LU, RU, LLK, nframes = self.expectation(Z=Z, F=F)
+    LU, RU, LLK, nframes = self.expectation(Z=Z, F=F, device=device,
+                                            print_progress=print_progress)
     time_Estep = time.time() - start_time
     # ====== maximization ====== #
     start_time = time.time()
