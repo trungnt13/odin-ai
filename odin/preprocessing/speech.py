@@ -884,18 +884,22 @@ class Read3ColSAD(Extractor):
 
   Parameters
   ----------
-  path: str
+  path_or_map : {str, Mapping}
       path to folder contain all SAD files
+      if Mapping, it is a map from `ref_key` to SAD dictionary
+  step_length : float
+      step length to convert second to frame index.
+  ref_feat : str
+      name of a reference features that must have the
+      same length with the SAD.
   name_converter: call-able
       convert the 'path' element in features dictionary (provided to
       `transform`) to name for search in parsed SAD dictionary.
+  ref_key : str (default: path)
+      reference key in the pipeline can be use to get SAD
+      from given dictionary.
   file_regex: str
       regular expression for filtering the files name
-  keep_unvoiced: bool
-      if True, keep all the the features of utterances even though
-      cannot file SAD for it. Otherwise, return None.
-  feat_name: list of string
-      all features type will be applied using given SAD
 
   Return
   ------
