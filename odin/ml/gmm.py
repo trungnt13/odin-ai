@@ -259,7 +259,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== downsample ====== #
     self.downsample = int(downsample)
     self.stochastic_downsample = bool(stochastic_downsample)
-    self.seed = int(seed)
+    self._seed = int(seed)
     # ====== multi-processing ====== #
     self.gpu_factor = int(gpu_factor)
     # cpu
@@ -292,7 +292,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             self._nmix, self._curr_nmix, self._feat_dim,
             self._niter, self.batch_size,
             self.downsample, self.stochastic_downsample,
-            self.seed, self._llk_hist,
+            self._seed, self._llk_hist,
             self.ncpu, self.device, self.gpu_factor,
             self._dtype, self._name)
 
@@ -301,7 +301,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
      self._nmix, self._curr_nmix, self._feat_dim,
      self._niter, self.batch_size,
      self.downsample, self.stochastic_downsample,
-     self.seed, self._llk_hist,
+     self._seed, self._llk_hist,
      self.ncpu, self.device, self.gpu_factor,
      self._dtype, self._name) = states
     # basic constants
@@ -836,7 +836,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       for s, e, n, selected in _create_batch(start, end, batch_size,
                                   downsample=self.downsample,
                                   stochastic=self.stochastic_downsample,
-                                  seed=self.seed,
+                                  seed=self._seed,
                                   curr_nmix=curr_nmix,
                                   curr_niter=curr_niter):
         # downsample by randomly ignore a batch
@@ -1014,7 +1014,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
 
   """
 
-  STANDARD_BATCH_SIZE = 25 * 1024 * 1024 # 20 Megabytes
+  STANDARD_BATCH_SIZE = 18 * 1024 * 1024 # 20 Megabytes
 
   def __init__(self, tv_dim, gmm, niter=16,
                batch_size='auto', dtype='float32',
@@ -1032,6 +1032,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._nmix = gmm.nmix
     self._gmm = gmm
     # ====== others ====== #
+    self._seed = seed
     self._llk_hist = []
     if name is None:
       name = uuid(length=8)
@@ -1066,7 +1067,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self.Sigma = np.array(
         gmm.sigma.reshape((1, self.feat_dim * self.nmix), order='F'),
         dtype=self.dtype)
-    np.random.seed(seed)
+    np.random.seed(self._seed)
     self.Tm = (np.random.randn(self.tv_dim, self.feat_dim * self.nmix) *
                self.Sigma.sum() * 0.001).astype(self.dtype)
     self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
@@ -1083,16 +1084,16 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._refresh_gpu()
 
   def __getstate__(self):
-    return (self.Im, self.Sigma, self.Tm, self.gmm,
+    return (self.Im, self.Sigma, self.Tm, self._gmm,
             self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
-            self.seed, self._llk_hist, self.batch_size, self.niter,
+            self._seed, self._llk_hist, self.batch_size, self.niter,
             self.ncpu, self.device, self.gpu_factor,
             self.cache_path, self._dtype, self._name)
 
   def __setstate__(self, states):
-    (self.Im, self.Sigma, self.Tm, self.gmm,
+    (self.Im, self.Sigma, self.Tm, self._gmm,
      self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
-     self.seed, self._llk_hist, self.batch_size, self.niter,
+     self._seed, self._llk_hist, self.batch_size, self.niter,
      self.ncpu, self.device, self.gpu_factor,
      self.cache_path, self._dtype, self._name) = states
     # ====== re-init ====== #
@@ -1109,17 +1110,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._refresh_gpu()
 
   def __str__(self):
-    if not self.is_initialized:
-      return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
-    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s bs:%s>' %\
+    s = '<"%s" Tdim:%s nmix:%s ndim:%s niter:%d>' %\
         (ctext(self.name, 'yellow'),
-            ctext(self._nmix, 'cyan'),
-            ctext(self._feat_dim, 'cyan'),
-            ctext(self.mu.shape, 'cyan'),
-            ctext(self.sigma.shape, 'cyan'),
-            ctext(self.w.shape, 'cyan'),
-            ctext(self.batch_size, 'cyan'),
-          )
+         ctext(self._tv_dim, 'cyan'),
+         ctext(self._nmix, 'cyan'),
+         ctext(self._feat_dim, 'cyan'),
+         ctext(len(self._llk_hist), 'cyan'),
+        )
     return s
 
   # ==================== properties ==================== #
@@ -1345,7 +1342,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # print log
     if print_progress:
       print("T-dim:%s #iter:%s llk:%s Estep:%s(s) Mstep:%s(s)" %
-        (ctext('%d' % self.tv_dim, 'yellow'),
+        (ctext('%d' % self.tv_dim, 'cyan'),
          ctext('%.2d' % len(self._llk_hist), 'yellow'),
          ctext('%.4f' % LLK, 'yellow'),
          ctext('%.2f' % time_Estep, 'yellow'),
