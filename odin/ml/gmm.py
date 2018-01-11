@@ -17,7 +17,7 @@ import tensorflow as tf
 from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
 
 from odin import backend as K
-from odin.fuel import Data, DataDescriptor, Feeder
+from odin.fuel import Data, DataDescriptor, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid, is_string,
                         wprint, segment_list, defaultdictkey)
@@ -196,23 +196,19 @@ class _ExpectationResults(object):
 
 
 class GMM(DensityMixin, BaseEstimator, TransformerMixin):
-  """ The following symbol is used:
-  N: number of samples (frames)
-  D: number of features dimension
-  M: current number of mixture
+  """ Gaussian Mixture Model
 
   Parameters
   ----------
+  nmix : int
+    number of mixtures
+  nmix_start : int
+    the algorithm start from given number of mixture, then perform
+    E-M and split to increase the mixtures to desire number
+  niter : int (default: 16)
+    number of iteration for E-M algorithm
   batch_size : {int, 'auto'}
-      if 'auto', used `1 Megabytes` block for batch size.
-  covariance_type : {'full', 'tied', 'diag', 'spherical'},
-          defaults to 'full'.
-      String describing the type of covariance parameters to use.
-      Must be one of::
-          'full' (each component has its own general covariance matrix),
-          'tied' (all components share the same general covariance matrix),
-          'diag' (each component has its own diagonal covariance matrix),
-          'spherical' (each component has its own single variance).
+      if 'auto', used `2.5 Megabytes` block for batch size.
   device : {'cpu', 'gpu', 'mix'}
       'gpu' - run the computaiton on GPU
       'cpu' - use multiprocessing for multiple cores
@@ -246,10 +242,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   """
 
-  STANDARD_BATCH_SIZE = 1.2 * 1024 * 1024 # 8 Megabytes
+  STANDARD_BATCH_SIZE = 2.5 * 1024 * 1024 # 8 Megabytes
 
-  def __init__(self, nmix, nmix_start=1, niter=16, batch_size='auto',
-               covariance_type='diag',
+  def __init__(self, nmix, nmix_start=1,
+               niter=16, batch_size='auto',
                downsample=2, stochastic_downsample=True,
                device='gpu', ncpu=None, gpu_factor=80,
                dtype='float32', seed=5218, name=None):
@@ -264,8 +260,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self.downsample = int(downsample)
     self.stochastic_downsample = bool(stochastic_downsample)
     self.seed = int(seed)
-    # ====== different mode ====== #
-    self.covariance_type = str(covariance_type)
     # ====== multi-processing ====== #
     self.gpu_factor = int(gpu_factor)
     # cpu
@@ -297,18 +291,18 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     return (self.mu, self.sigma, self.w,
             self._nmix, self._curr_nmix, self._feat_dim,
             self._niter, self.batch_size,
-            self.downsample, self.stochastic_downsample, self.seed,
-            self.covariance_type, self._llk_hist,
-            self.ncpu, self.device,
+            self.downsample, self.stochastic_downsample,
+            self.seed, self._llk_hist,
+            self.ncpu, self.device, self.gpu_factor,
             self._dtype, self._name)
 
   def __setstate__(self, states):
     (self.mu, self.sigma, self.w,
      self._nmix, self._curr_nmix, self._feat_dim,
      self._niter, self.batch_size,
-     self.downsample, self.stochastic_downsample, self.seed,
-     self.covariance_type, self._llk_hist,
-     self.ncpu, self.device,
+     self.downsample, self.stochastic_downsample,
+     self.seed, self._llk_hist,
+     self.ncpu, self.device, self.gpu_factor,
      self._dtype, self._name) = states
     # basic constants
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
@@ -570,7 +564,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     If your data contain many very long utterances, it is suggested to use
     `device='gpu'`, otherwise, 'cpu' is mostly significant faster.
     """
-    from odin.fuel import MmapData
     if device is None:
       device = self.device
     on_gpu = True if device != 'cpu' and get_ngpu() > 0 else False
@@ -601,7 +594,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         res = self._fast_expectation(X[start:end],
                                      zero=z_dat is not None or f_dat is not None,
                                      first=f_dat is not None,
-                                     second=False, llk=False, on_gpu=True)
+                                     second=False, llk=False,
+                                     on_gpu=True)
         if z_dat is not None:
           z_dat.append(res[0])
         if f_dat is not None:
@@ -613,16 +607,14 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         prog.add(1)
     # ====== run on CPU ====== #
     else:
-      if isinstance(indices, Mapping):
-        indices = list(indices.items())
-
       def map_func(j):
         Z, F = [], []
         for name, (start, end) in j:
           res = self._fast_expectation(X[start:end],
                                        zero=z_dat is not None or f_dat is not None,
                                        first=f_dat is not None,
-                                       second=False, llk=False, on_gpu=True)
+                                       second=False, llk=False,
+                                       on_gpu=False)
           Z.append(res[0])
           if f_dat is not None:
             z, f = res
@@ -636,8 +628,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
           F = np.concatenate(F, axis=0)
         return Z, F, len(j)
       # run the MPI task
-      mpi = MPI(jobs=indices, func=map_func, ncpu=self.ncpu,
-                batch=max(1, self.batch_size // self.ncpu))
+      mpi = MPI(jobs=list(indices.items()) if isinstance(indices, Mapping)
+                else indices,
+                func=map_func,
+                ncpu=self.ncpu,
+                batch=max(2, self.batch_size // (self.ncpu * 2)))
       for Z, F, n in mpi:
         prog.add(n)
         if z_dat is not None:
@@ -978,87 +973,57 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 # ===========================================================================
 # Ivector
 # ===========================================================================
-class _CenteredStatsIter(object):
-  """_CenteredStatsIter"""
-
-  def __init__(self, gmm, batch_size,
-               X=None, Z=None, F=None, indices=None,
-               start=None, end=None):
-    super(_CenteredStatsIter, self).__init__()
-    self.gmm = gmm
-    self.batch_size = batch_size
-    self.X = X
-    self.Z = Z
-    self.F = F
-    self.indices = indices
-    # start and end only for provided Z and F
-    self.start = 0 if start is None else start
-    self.end = Z.shape[0] if end is None and Z is not None else end
-    # ====== infer length (i.e. number of files) ====== #
-    if self.indices is not None:
-      self._length = len(self.indices)
-    elif self.X is not None:
-      self._length = len(as_tuple(self.X))
-    elif Z is not None and F is not None:
-      self._length = self.end - self.start
-    else:
-      raise RuntimeError("No data is given.")
-
-  def __len__(self):
-    return self._length
-
-  def __iter__(self):
-    get_stats = None
-    # ====== given indices ====== #
-    if self.indices is not None:
-      get_stats = (self.gmm.transform(self.X[start:end], device='cpu')
-                   for name, (start, end) in self.indices)
-    # ====== given list of utterances ====== #
-    elif self.X is not None:
-      get_stats = (self.gmm.transform(x, device='cpu')
-                   for x in as_tuple(self.X))
-    # ====== given raw data ====== #
-    if get_stats is not None:
-      Z, F = [], []
-      for y in get_stats:
-        Z.append(y[0])
-        F.append(y[1])
-        if len(Z) >= self.batch_size:
-          Z = np.concatenate(Z, axis=0)
-          F = np.concatenate(F, axis=0)
-          yield Z, F
-          Z, F = [], []
-      # final batch
-      if len(Z) > 0:
-        Z = np.concatenate(Z, axis=0)
-        F = np.concatenate(F, axis=0)
-        yield Z, F
-    # ====== given Z and F ====== #
-    elif self.Z is not None and self.F is not None:
-      for start, end in batching(n=self.end - self.start,
-                                 batch_size=self.batch_size):
-        start += self.start
-        end += self.start
-        yield self.Z[start:end, :], self.F[start:end, :]
-    # ====== exception ====== #
-    else:
-      raise RuntimeError("No data for iteration.")
-
-  def __del__(self):
-    self.gmm = None
-    self.X = None
-    self.Z = None
-    self.F = None
-    self.indices = None
-
 class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
+  """ Super vector based on total varibility space.
+
+  Parameters
+  ----------
+  tv_dim : int
+    dimension of T-matrix
+  gmm : odin.ml.gmm.GMM
+    initialized and fitted GMM
+  niter : int (default: 16)
+    number of iteration for E-M algorithm
+  batch_size : {int, 'auto'}
+      if 'auto', used `25 Megabytes` block for batch size.
+  dtype : {str, numpy.dtype}
+      desire dtype for mean, std, weights and input matrices
+  device : {'cpu', 'gpu', 'mix'}
+      'gpu' - run the computaiton on GPU
+      'cpu' - use multiprocessing for multiple cores
+      'mix' - use both GPU and multi-processing
+      * It is suggested to use mix of GPU and CPU if you have
+        more than 24 cores CPU, otherwise, 'gpu' gives the best
+        performance
+  ncpu : int
+      number of processes for parallel calculating Expectation
+  gpu_factor : int
+      how much jobs GPU will handle more than CPU
+      (i.e. `njob_gpu = gpu_factor * njob_cpu`)
+  cache_path : str
+    path to cache folder when fitting
+  seed : int
+      random seed for reproducible
+  name : {str, None}
+    special name for this `Ivector` instance
+
+  Attributes
+  ----------
+  Tm : (tv_dim, feat_dim * nmix)
+    latent vector for each mixtures and features
+
+  """
+
   STANDARD_BATCH_SIZE = 25 * 1024 * 1024 # 20 Megabytes
 
   def __init__(self, tv_dim, gmm, niter=16,
                batch_size='auto', dtype='float32',
-               device='gpu', ncpu=1, gpu_factor=3,
-               seed=5218, name=None):
+               device='mix', ncpu=1, gpu_factor=3,
+               cache_path='/tmp', seed=5218, name=None):
     super(Ivector, self).__init__()
+    if not (isinstance(gmm, GMM) and gmm.is_initialized and gmm.is_fitted):
+      raise ValueError("`gmm` must be instance of odin.ml.gmm.GMM "
+                       "both is_initialized and is_fitted.")
     # ====== init ====== #
     self.niter = niter
     self._tv_dim = tv_dim
@@ -1073,6 +1038,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       self._name = 'Ivector_%s' % name
     else:
       self._name = str(name)
+    if not os.path.isdir(cache_path):
+      raise ValueError('`cache_path` must be a directory.')
+    self.cache_path = cache_path
     # ====== training ====== #
     self._dtype = np.dtype(dtype)
     if is_string(batch_size):
@@ -1103,7 +1071,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                self.Sigma.sum() * 0.001).astype(self.dtype)
     self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
     # ====== cache, 10% faster here ====== #
-    self._itril = np.tril_indices(tv_dim)
+    self._itril = np.tril_indices(self.tv_dim)
     self._mix_idx = [np.arange(self.feat_dim) + mix * self.feat_dim
                      for mix in range(self.nmix)]
     self._Ex_Exx_llk = defaultdictkey(
@@ -1113,6 +1081,46 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== calculate stats first ====== #
     self._refresh_T_statistics()
     self._refresh_gpu()
+
+  def __getstate__(self):
+    return (self.Im, self.Sigma, self.Tm, self.gmm,
+            self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
+            self.seed, self._llk_hist, self.batch_size, self.niter,
+            self.ncpu, self.device, self.gpu_factor,
+            self.cache_path, self._dtype, self._name)
+
+  def __setstate__(self, states):
+    (self.Im, self.Sigma, self.Tm, self.gmm,
+     self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
+     self.seed, self._llk_hist, self.batch_size, self.niter,
+     self.ncpu, self.device, self.gpu_factor,
+     self.cache_path, self._dtype, self._name) = states
+    # ====== re-init ====== #
+    self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
+    self._itril = np.tril_indices(self.tv_dim)
+    self._mix_idx = [np.arange(self.feat_dim) + mix * self.feat_dim
+                     for mix in range(self.nmix)]
+    self._Ex_Exx_llk = defaultdictkey(
+        lambda nfiles: (np.empty((nfiles, self.tv_dim), dtype=self.dtype),
+                        np.empty((nfiles, self.t2_dim), dtype=self.dtype),
+                        np.empty((nfiles, 1), dtype=self.dtype)))
+    # ====== calculate stats first ====== #
+    self._refresh_T_statistics()
+    self._refresh_gpu()
+
+  def __str__(self):
+    if not self.is_initialized:
+      return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
+    s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s bs:%s>' %\
+        (ctext(self.name, 'yellow'),
+            ctext(self._nmix, 'cyan'),
+            ctext(self._feat_dim, 'cyan'),
+            ctext(self.mu.shape, 'cyan'),
+            ctext(self.sigma.shape, 'cyan'),
+            ctext(self.w.shape, 'cyan'),
+            ctext(self.batch_size, 'cyan'),
+          )
+    return s
 
   # ==================== properties ==================== #
   @property
@@ -1336,8 +1344,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._llk_hist.append(LLK)
     # print log
     if print_progress:
-      print("#iter:%s llk:%s Estep:%s(s) Mstep:%s(s)" %
-        (ctext('%.2d' % len(self._llk_hist), 'yellow'),
+      print("T-dim:%s #iter:%s llk:%s Estep:%s(s) Mstep:%s(s)" %
+        (ctext('%d' % self.tv_dim, 'yellow'),
+         ctext('%.2d' % len(self._llk_hist), 'yellow'),
          ctext('%.4f' % LLK, 'yellow'),
          ctext('%.2f' % time_Estep, 'yellow'),
          ctext('%.4f' % time_Mstep, 'yellow'),
@@ -1345,17 +1354,76 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     return self
 
   # ==================== sklearn ==================== #
-  def transform(self, Z, F):
-    L = np.zeros((self.tv_dim, self.tv_dim))
-    L[self._itril] = Z.dot(self.T_iS_Tt)
+  def transform(self, X):
+    """ Extract i-vector from trained T-matrix
+
+    Parameters
+    ----------
+    X : {tuple, list; or numpy.ndarray}
+      if tuple or list is given, the inputs include:
+      Z-(1, nmix); F-(1, nmix*feat_dim)
+      if numpy.ndarray is given, shape must be (n, feat_dim)
+    """
+    # ====== GMM transform ====== #
+    if isinstance(X, (tuple, list)):
+      Z = [i for i in X if i.shape[1] == self.nmix][0]
+      F = [i for i in X if i.shape[1] == self.nmix * self.feat_dim][0]
+    else:
+      Z, F = self.gmm.transform(X)
+    # ====== pass ====== #
+    L = np.zeros((self.tv_dim, self.tv_dim),
+                 dtype=self.dtype)
+    L[self._itril] = np.dot(Z, self.T_invS_Tt)
     L += np.tril(L, -1).T + self.Im
     Cxx = linalg.inv(L)
-    B = np.dot(self.T_invS, F)
-    Ex = np.dot(Cxx, B)
+    B = np.dot(self.T_invS, F.T)
+    Ex = np.dot(Cxx, B).T
     return Ex
 
-  def fit(self, Z, F):
-    print('Re-estimating the total subspace with {} factors ...'.format(self.tv_dim))
-    # LU, RU, LLK, nframes
-    for iter in range(self.niter):
-      self.expectation_maximization(Z, F)
+  def fit(self, X, y=None):
+    """ Extract i-vector from trained T-matrix
+
+    Parameters
+    ----------
+    X : {tuple, list; or numpy.ndarray}
+      if tuple or list is given, the inputs include:
+      Z-(1, nmix); F-(1, nmix*feat_dim)
+      if numpy.ndarray is given, shape must be (n, feat_dim)
+    """
+    randID = uuid(length=12)
+    cache_Z = os.path.join(self.cache_path, 'Z_%s' % randID)
+    cache_F = os.path.join(self.cache_path, 'F_%s' % randID)
+    try:
+      # ====== preprocessing inputs ====== #
+      if not isinstance(X, (tuple, list)) and len(X) != 2:
+        raise ValueError("`X` must be tuple or list of length 2.")
+      ### given X and indices
+      if any((hasattr(i, 'shape') and i.shape[1] == self.feat_dim) for i in X) and \
+      any(isinstance(i, (tuple, list, Mapping)) for i in X):
+        tmp = [i for i in X
+               if hasattr(i, 'shape') and i.shape[1] == self.feat_dim][0]
+        indices = [i for i in X if i != tmp][0]
+        X = tmp
+        self.gmm.transform_to_disk(X, indices, pathZ=cache_Z, pathF=cache_F,
+                                   dtype='float32', device='cpu',
+                                   override=True)
+        Z = MmapData(cache_Z, read_only=True)
+        F = MmapData(cache_F, read_only=True)
+      ### given Z and F
+      elif any(i.shape[1] == self.nmix for i in X) and \
+      any(i.shape[1] == self.feat_dim * self.nmix for i in X):
+        Z = [i for i in X if i.shape[1] == self.nmix][0]
+        F = [i for i in X if i.shape[1] == self.nmix * self.feat_dim][0]
+      else:
+        raise ValueError("The input arguments must be tuple of (Z, F) or (X, indices).")
+      # ====== EM ====== #
+      # LU, RU, LLK, nframes
+      for iter in range(self.niter):
+        self.expectation_maximization(Z, F, device=self.device,
+                                      print_progress=True)
+    # ====== exception ====== #
+    finally:
+      if os.path.exists(cache_Z):
+        os.remove(cache_Z)
+      if os.path.exists(cache_F):
+        os.remove(cache_F)
