@@ -158,9 +158,6 @@ def _create_batch(start, end, batch_size,
       selected = True
     yield s, e, n, selected
 
-# ===========================================================================
-# Main GMM
-# ===========================================================================
 class _ExpectationResults(object):
   """ ExpectationResult """
 
@@ -194,9 +191,11 @@ class _ExpectationResults(object):
     finally:
       self.lock.release()
 
-
+# ===========================================================================
+# Main GMM
+# ===========================================================================
 class GMM(DensityMixin, BaseEstimator, TransformerMixin):
-  """ Gaussian Mixture Model
+  """ Gaussian Mixture Model with diagonal covariance.
 
   Parameters
   ----------
@@ -246,13 +245,18 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __init__(self, nmix, nmix_start=1,
                niter=16, batch_size='auto',
-               downsample=2, stochastic_downsample=True,
+               downsample=1, stochastic_downsample=True,
                device='gpu', ncpu=None, gpu_factor=80,
                dtype='float32', seed=5218, name=None):
     super(GMM, self).__init__()
     # start from 1 mixture, then split and up
-    self._nmix = 2**int(np.round(np.log2(nmix)))
+    # ====== set number of mixtures ====== #
+    nmix = int(nmix)
+    if nmix < 1:
+      raise ValueError("Number of Mixture must be greater than 1.")
+    self._nmix = nmix
     self._curr_nmix = np.clip(int(nmix_start), 1, self._nmix)
+    # others dimension
     self._feat_dim = None
     self._niter = int(niter)
     self.batch_size = batch_size
@@ -285,10 +289,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __getstate__(self):
     # 'means', 'variances', 'weights'
-    # self.mu, self.sigma, self.w
+    # self.mean, self.sigma, self.w
     if not self.is_initialized:
       raise RuntimeError("GMM hasn't been initialized, nothing to save")
-    return (self.mu, self.sigma, self.w,
+    return (self.mean, self.sigma, self.w,
             self._nmix, self._curr_nmix, self._feat_dim,
             self._niter, self.batch_size,
             self.downsample, self.stochastic_downsample,
@@ -297,7 +301,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             self._dtype, self._name)
 
   def __setstate__(self, states):
-    (self.mu, self.sigma, self.w,
+    (self.mean, self.sigma, self.w,
      self._nmix, self._curr_nmix, self._feat_dim,
      self._niter, self.batch_size,
      self.downsample, self.stochastic_downsample,
@@ -323,7 +327,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         (ctext(self.name, 'yellow'),
             ctext(self._nmix, 'cyan'),
             ctext(self._feat_dim, 'cyan'),
-            ctext(self.mu.shape, 'cyan'),
+            ctext(self.mean.shape, 'cyan'),
             ctext(self.sigma.shape, 'cyan'),
             ctext(self.w.shape, 'cyan'),
             ctext(self.batch_size, 'cyan'),
@@ -369,10 +373,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """ Refresh cached value for CPu computations. """
     expressions = {}
     precision = 1 / (self.sigma + EPS)
-    C = np.sum((self.mu ** 2) * precision, axis=0, keepdims=True) + \
+    C = np.sum((self.mean ** 2) * precision, axis=0, keepdims=True) + \
         np.sum(np.log(self.sigma + EPS), axis=0, keepdims=True) - \
-        2 * np.log(self.w)
-    mu_precision = self.mu * precision
+        2 * np.log(self.w + EPS) # TODO: check here if add EPS to self.w
+    mu_precision = self.mean * precision
     expressions['precision'] = precision
     expressions['mu_precision'] = mu_precision
     expressions['C'] = C
@@ -467,7 +471,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                              name='GMM_input')
     # ====== init ====== #
     # (D, M)
-    self.mu = np.zeros((feat_dim, self._curr_nmix), dtype=self._dtype)
+    self.mean = np.zeros((feat_dim, self._curr_nmix), dtype=self._dtype)
     # (D, M)
     self.sigma = np.ones((feat_dim, self._curr_nmix), dtype=self._dtype)
     # (1, M)
@@ -541,7 +545,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                                   second=False, llk=False,
                                   on_gpu=device != 'cpu')
     # this equal to: .ravel()[np.newaxis, :]
-    F_hat = np.reshape(F - self.mu * Z,
+    F_hat = np.reshape(F - self.mean * Z,
                        newshape=(1, self.feat_dim * self._curr_nmix),
                        order='F')
     return Z, F_hat
@@ -603,7 +607,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         # save first
         if f_dat is not None:
           Z, F = res
-          f_dat.append(np.reshape(F - self.mu * Z,
+          f_dat.append(np.reshape(F - self.mean * Z,
                                   newshape=(1, self._feat_dim * self._curr_nmix),
                                   order='F'))
         # update the name list
@@ -622,7 +626,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
           Z.append(res[0])
           if f_dat is not None:
             z, f = res
-            F.append(np.reshape(f - self.mu * z,
+            F.append(np.reshape(f - self.mean * z,
                                 newshape=(1, self._feat_dim * self._curr_nmix),
                                 order='F'))
         # concatenate into single large matrix
@@ -661,7 +665,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self.initialize(X)
     if self.device != 'cpu':
       feed_dict = {self.X_: X}
-      feed_dict[self.__expressions_gpu['mu']] = self.mu
+      feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
       feed_dict[self.__expressions_gpu['w']] = self.w
       return K.eval(x=self.__expressions_gpu['logprob'],
@@ -686,7 +690,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self.initialize(X)
     if self.device != 'cpu':
       feed_dict = {self.X_: X}
-      feed_dict[self.__expressions_gpu['mu']] = self.mu
+      feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
       feed_dict[self.__expressions_gpu['w']] = self.w
       return K.eval(x=self.__expressions_gpu['post'],
@@ -714,7 +718,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self.initialize(X)
     if self.device != 'cpu':
       feed_dict = {self.X_: X}
-      feed_dict[self.__expressions_gpu['mu']] = self.mu
+      feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
       feed_dict[self.__expressions_gpu['w']] = self.w
       return K.eval(x=self.__expressions_gpu['llk'],
@@ -741,7 +745,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       Z, F, S, L = [self.__expressions_gpu[name]
                     for name in ('zero', 'first', 'second', 'L')]
       feed_dict = {self.X_: X}
-      feed_dict[self.__expressions_gpu['mu']] = self.mu
+      feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
       feed_dict[self.__expressions_gpu['w']] = self.w
       outputs = [i for i, j in zip((Z, F, S, L),
@@ -919,8 +923,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # TheReduce
     iN = 1. / (Z + EPS)
     self.w = Z / Z.sum()
-    self.mu = F * iN
-    self.sigma = S * iN - self.mu * self.mu
+    self.mean = F * iN
+    self.sigma = S * iN - self.mean ** 2
     # applying variance floors
     if floor_const is not None:
       vFloor = self.sigma.dot(self.w.T) * floor_const
@@ -959,15 +963,25 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   def gmm_mixup(self):
     if self._curr_nmix >= self._nmix:
       return
-    # ====== double up the components ====== #
+    # ====== create perturb ====== #
     ndim, nmix = self.sigma.shape
     sig_max, arg_max = self.sigma.max(0), self.sigma.argmax(0)
     eps = np.zeros((ndim, nmix), dtype='f')
     eps[arg_max, np.arange(nmix)] = np.sqrt(sig_max)
     perturb = 0.55 * eps
-    self.mu = np.c_[self.mu - perturb, self.mu + perturb]
-    self.sigma = np.c_[self.sigma, self.sigma]
-    self.w = 0.5 * np.c_[self.w, self.w]
+    # ====== double up the components ====== #
+    if self._curr_nmix * 2 <= self._nmix:
+      self.mean = np.c_[self.mean - perturb, self.mean + perturb]
+      self.sigma = np.c_[self.sigma, self.sigma]
+      self.w = 0.5 * np.c_[self.w, self.w]
+    # ====== if too many components removes to match desire number ====== #
+    else:
+      # TODO: better strategy for mixup here
+      self.mean = np.c_[self.mean - perturb, self.mean + perturb][:, :self.nmix]
+      self.sigma = np.c_[self.sigma, self.sigma]
+      self.sigma = self.sigma[:, :self.nmix]
+      self.w = 0.5 * np.c_[self.w, self.w]
+      self.w = self.w[:, :self.nmix]
     # update current number of mixture information
     self._curr_nmix = min(2 * self._curr_nmix, self.nmix)
     self._refresh_gpu_posterior()
