@@ -568,9 +568,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       device = self.device
     on_gpu = True if device != 'cpu' and get_ngpu() > 0 else False
     name_list = []
-    prog = Progbar(target=len(indices),
+    prog = Progbar(target=len(indices) + 1,
                    print_report=True, print_summary=True,
                    name="Saving zero-th and first order statistics")
+    prog.add(1)
     # ====== init data files ====== #
     if pathZ is not None:
       if os.path.exists(pathZ):
@@ -596,13 +597,16 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                                      first=f_dat is not None,
                                      second=False, llk=False,
                                      on_gpu=True)
+        # save zero
         if z_dat is not None:
           z_dat.append(res[0])
+        # save first
         if f_dat is not None:
           Z, F = res
           f_dat.append(np.reshape(F - self.mu * Z,
                                   newshape=(1, self._feat_dim * self._curr_nmix),
                                   order='F'))
+        # update the name list
         name_list.append(name)
         prog.add(1)
     # ====== run on CPU ====== #
@@ -1321,6 +1325,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
       self.Tm = np.diag(s_).dot(V_)
     # refresh stats
+    self.Tm = self.Tm.astype(self.dtype)
     self._refresh_T_statistics()
     return self
 
@@ -1360,6 +1365,10 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       if tuple or list is given, the inputs include:
       Z-(1, nmix); F-(1, nmix*feat_dim)
       if numpy.ndarray is given, shape must be (n, feat_dim)
+
+    Return
+    ------
+    I-vector : (1, tv_dim)
     """
     # ====== GMM transform ====== #
     if isinstance(X, (tuple, list)):
