@@ -111,7 +111,7 @@ class Progbar(object):
   FP = sys.stderr
 
   def __init__(self, target, interval=0.08, keep=False,
-               print_report=False, print_summary=False,
+               print_report=True, print_summary=False,
                count_func=None, report_func=None,
                name=None):
     self.__pb = None # tqdm object

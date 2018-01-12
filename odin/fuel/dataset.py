@@ -13,7 +13,7 @@ from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
-                        is_callable)
+                        is_callable, flatten_list)
 from .recipe_base import FeederRecipe, RecipeList
 
 
@@ -570,7 +570,54 @@ class Dataset(object):
       if data_filter is None:
         all_data = list(self.keys())
       else:
-        all_data = [i for i in self.keys() if data_filter(i)]
+        all_data = [i for i in self.keys()
+                    if data_filter(i)]
+      # list of data with separated indices
+      separated_data = flatten_list(
+          [k.split('_')[1:] for k in self.keys()
+         if 'indices_' == k[:8]])
+      # iterate over indices and copy one by one data
+      for ids_name in [k for k in self.keys() if 'indices' == k[:7]]:
+        indices = [(n, (s, e))
+                   for n, (s, e) in self[ids_name]
+                   if indices_filter(n)]
+        # no match indices, skip
+        if len(indices) == 0:
+          continue
+        nb_samples = sum(e - s for n, (s, e) in indices)
+        # get all data assigned to given indices
+        data = ids_name.split('_')[1:]
+        if len(data) == 0:
+          data = [i for i in all_data if i not in separated_data]
+        else:
+          data = [i for i in data if i in all_data]
+        # if still no data found, skip
+        if len(data) == 0:
+          continue
+        # copy each data
+        for data_name in data:
+          X = self[data_name]
+          Y = MmapData(path=os.path.join(destination, data_name),
+                       dtype=X.dtype, shape=(0,) + X.shape[1:],
+                       read_only=False)
+          prog = Progbar(target=nb_samples,
+                         print_report=True, print_summary=True,
+                         name="Copying data: '%s' to path:'%s'" %
+                         (ctext(data_name, 'yellow'),
+                          ctext(Y.data_info, 'cyan')))
+          for n, (s, e) in indices:
+            Y.append(X[s:e])
+            prog.add(e - s)
+        # copy the indices
+        new_indices = MmapDict(os.path.join(destination, ids_name),
+                               cache_size=80000, read_only=False)
+        start = 0
+        for n, (s, e) in indices:
+          size = e - s
+          new_indices[n] = (start, start + size)
+          start += size
+        new_indices.flush(save_all=True)
+        new_indices.close()
     # ====== copy other files ====== #
     for f in other_files:
       org_path = os.path.join(self.path, f)
