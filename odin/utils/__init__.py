@@ -138,6 +138,8 @@ def is_fileobj(f):
       isinstance(f, io.RawIOBase) or \
       isinstance(f, io.IOBase)
 
+def is_callable(x):
+  return hasattr(x, '__call__')
 
 def is_string(s):
   return isinstance(s, string_types)

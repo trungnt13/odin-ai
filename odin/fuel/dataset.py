@@ -12,14 +12,37 @@ from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
 from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
-                        ctext, as_tuple, eprint, wprint)
+                        ctext, as_tuple, eprint, wprint,
+                        is_callable)
 from .recipe_base import FeederRecipe, RecipeList
 
 
 __all__ = [
     'Dataset',
+    'copy_dataset2'
 ]
 
+# ===========================================================================
+# Utilities
+# ===========================================================================
+def copy_dataset2(origin, destination,
+                  indices_filter=None, data_filter=None,
+                  override=False):
+  # ====== prepare input ====== #
+  if is_string(origin):
+    origin = Dataset(origin, read_only=True)
+    own_ds = True
+  elif isinstance(origin, Dataset):
+    own_ds = False
+  # ====== pass ====== #
+  ds = origin.copy(destination,
+                   indices_filter=indices_filter,
+                   data_filter=data_filter,
+                   override=override)
+  # ====== end and return ====== #
+  if own_ds:
+    origin.close()
+  return ds
 
 # ===========================================================================
 # dataset
@@ -286,6 +309,10 @@ class Dataset(object):
     return {name: ids
             for name, ids in self._saved_indices.items()}
 
+  def __len__(self):
+    """ Return total number of data """
+    return len(self._data_map)
+
   def __iter__(self):
     return self.items()
 
@@ -482,38 +509,82 @@ class Dataset(object):
     return feeder.set_recipes(recipes)
 
   # ==================== Data management ==================== #
-  def copy(self, destination):
+  def copy(self, destination,
+           indices_filter=None, data_filter=None,
+           override=False):
     """ Copy the dataset to a new folder and closed
     the old dataset
 
-    Note
-    ----
-    if the dataset size >= 1GB, need confirmation for copying
     """
+    from distutils.dir_util import copy_tree
     read_only = self.read_only
-    if self.size > 1024:
-      confirmation = raw_input(
-          'The size of the dataset at path: "%s" is %d (MB)\n'
-          'Do you want to copy everything to "%s" (Y - yes):')
-      if 'y' not in confirmation.lower():
-        return self
+    # indices
+    if indices_filter is not None and \
+    not is_callable(indices_filter) and \
+    not isinstance(indices_filter, (tuple, list)):
+      raise ValueError('`indices_filter` must be callable, tuple, list or None')
+    if isinstance(indices_filter, (tuple, list)):
+      tmp = tuple(indices_filter)
+      indices_filter = lambda x: x in tmp
+    # data name
+    if data_filter is not None and \
+    not is_callable(data_filter) and \
+    not isinstance(data_filter, (tuple, list)):
+      raise ValueError('`data_filter` must be callable, tuple, list or None')
+    if isinstance(data_filter, (tuple, list)):
+      tmp = tuple(data_filter)
+      data_filter = lambda x: x in tmp
+    # ====== other files which are not Data ====== #
+    other_files = [i for i in os.listdir(self.path)
+                   if i not in self]
+    # ====== preprocessing ====== #
     destination = os.path.abspath(str(destination))
     if not os.path.exists(destination):
       os.mkdir(destination)
     elif not os.path.isdir(destination):
       raise ValueError('path at "%s" must be a folder' % destination)
+    elif override:
+      shutil.rmtree(destination)
+      os.mkdir(destination)
     else:
-      ds = Dataset(destination, read_only=read_only)
-      if ds.size != self.size:
-        raise RuntimeError("Found another Dataset at path: '%s' has "
-                           "size %d(MB), which is different from size "
-                           "of this Dataset %d(MB)." %
-                           (destination, ds.size, self.size))
-      return ds
-    from distutils.dir_util import copy_tree
-    copy_tree(self.path, destination)
-    # ====== open new dataset ====== #
-    self.close()
+      raise ValueError("A folder exist at path: '%s', cannot be overrided." %
+                       destination)
+    # ====== copy everything ====== #
+    if indices_filter is None and data_filter is None:
+      print("Copying %s files from '%s' to '%s' ..." %
+        (ctext(len(self), 'cyan'),
+         ctext(self.path, 'yellow'),
+         ctext(destination, 'yellow')))
+      copy_tree(self.path, destination)
+    # ====== only data_filter ====== #
+    elif indices_filter is None:
+      for name in [i for i in self.keys() if data_filter(i)]:
+        org_path = os.path.join(self.path, name)
+        dst_path = os.path.join(destination, name)
+        print("Copying from '%s' to '%s' ..." %
+              (ctext(org_path, 'yellow'),
+               ctext(dst_path, 'yellow')))
+        shutil.copy2(org_path, dst_path)
+    # ====== use indices_filter and data_filter ====== #
+    else:
+      if data_filter is None:
+        all_data = list(self.keys())
+      else:
+        all_data = [i for i in self.keys() if data_filter(i)]
+    # ====== copy other files ====== #
+    for f in other_files:
+      org_path = os.path.join(self.path, f)
+      dst_path = os.path.join(destination, f)
+      if not os.path.exists(dst_path):
+        if os.path.isdir(org_path):
+          copy_tree(org_path, dst_path)
+        else:
+          shutil.copy2(org_path, dst_path)
+    # ====== readme ====== #
+    readme_name = os.path.basename(self._readme_path)
+    dst_path = os.path.join(destination, readme_name)
+    if not os.path.exists(dst_path):
+      shutil.copy2(self._readme_path, dst_path)
     return Dataset(destination, read_only=read_only)
 
   def flush(self):
