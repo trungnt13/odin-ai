@@ -597,17 +597,38 @@ class Dataset(object):
         # copy each data
         for data_name in data:
           X = self[data_name]
-          Y = MmapData(path=os.path.join(destination, data_name),
-                       dtype=X.dtype, shape=(0,) + X.shape[1:],
-                       read_only=False)
-          prog = Progbar(target=nb_samples,
-                         print_report=True, print_summary=True,
-                         name="Copying data: '%s' to path:'%s'" %
-                         (ctext(data_name, 'yellow'),
-                          ctext(Y.data_info, 'cyan')))
-          for n, (s, e) in indices:
-            Y.append(X[s:e])
-            prog.add(e - s)
+          # copy MmapDict
+          if isinstance(X, MmapDict):
+            new_path = os.path.join(destination, os.path.basename(X.path))
+            print("Copying MmapDict from '%s' to '%s'" % (
+                ctext(X.path, 'cyan'),
+                ctext(new_path, 'cyan')))
+            if len(X) == len(self[ids_name]): # indices type
+              new_dict = MmapDict(new_path, cache_size=80000, read_only=False)
+              for n, (s, e) in indices:
+                new_dict[n] = X[n]
+              new_dict.flush(save_all=True)
+              new_dict.close()
+            else: # just copy directly the files
+              shutil.copy2(X.path, new_path)
+          # copy MmapData
+          elif isinstance(X, MmapData):
+            Y = MmapData(path=os.path.join(destination, data_name),
+                         dtype=X.dtype, shape=(0,) + X.shape[1:],
+                         read_only=False)
+            prog = Progbar(target=nb_samples,
+                           print_report=True, print_summary=True,
+                           name="Copying data: '%s' to path:'%s'" %
+                           (ctext(data_name, 'yellow'),
+                            ctext(Y.data_info, 'cyan')))
+            for n, (s, e) in indices:
+              Y.append(X[s:e])
+              prog.add(e - s)
+          # unknown data-type
+          else:
+            print("Cannot copy: '%s' - %s" %
+              (ctext(data_name, 'cyan'),
+               ctext(type(self[data_name]), 'yellow')))
         # copy the indices
         new_indices = MmapDict(os.path.join(destination, ids_name),
                                cache_size=80000, read_only=False)
@@ -618,14 +639,14 @@ class Dataset(object):
           start += size
         new_indices.flush(save_all=True)
         new_indices.close()
-    # ====== copy other files ====== #
+    # ====== copy others files ====== #
     for f in other_files:
       org_path = os.path.join(self.path, f)
       dst_path = os.path.join(destination, f)
       if not os.path.exists(dst_path):
-        if os.path.isdir(org_path):
+        if os.path.isdir(org_path): # directory
           copy_tree(org_path, dst_path)
-        else:
+        else: # single file
           shutil.copy2(org_path, dst_path)
     # ====== readme ====== #
     readme_name = os.path.basename(self._readme_path)
