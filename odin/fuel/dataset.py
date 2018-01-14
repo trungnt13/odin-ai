@@ -597,20 +597,17 @@ class Dataset(object):
         # copy each data
         for data_name in data:
           X = self[data_name]
-          # copy MmapDict
-          if isinstance(X, MmapDict):
+          # copy big MmapDict
+          if isinstance(X, MmapDict) and len(X) == len(self[ids_name]):
             new_path = os.path.join(destination, os.path.basename(X.path))
             print("Copying MmapDict from '%s' to '%s'" % (
                 ctext(X.path, 'cyan'),
                 ctext(new_path, 'cyan')))
-            if len(X) == len(self[ids_name]): # indices type
-              new_dict = MmapDict(new_path, cache_size=80000, read_only=False)
-              for n, (s, e) in indices:
-                new_dict[n] = X[n]
-              new_dict.flush(save_all=True)
-              new_dict.close()
-            else: # just copy directly the files
-              shutil.copy2(X.path, new_path)
+            new_dict = MmapDict(new_path, cache_size=80000, read_only=False)
+            for n, (s, e) in indices:
+              new_dict[n] = X[n]
+            new_dict.flush(save_all=True)
+            new_dict.close()
           # copy MmapData
           elif isinstance(X, MmapData):
             Y = MmapData(path=os.path.join(destination, data_name),
@@ -626,9 +623,18 @@ class Dataset(object):
               prog.add(e - s)
           # unknown data-type
           else:
-            print("Cannot copy: '%s' - %s" %
-              (ctext(data_name, 'cyan'),
-               ctext(type(self[data_name]), 'yellow')))
+            org_path = os.path.join(self.path, data_name)
+            new_path = os.path.join(destination, data_name)
+            # just copy directly the files
+            if os.path.isfile(org_path) or \
+            not os.path.exists(new_path):
+              shutil.copy2(org_path, new_path)
+              print("Copying '%s' to '%s' ..." %
+                (ctext(org_path, 'cyan'), ctext(new_path, 'yellow')))
+            else:
+              wprint("Cannot copy: '%s' - %s" %
+                (ctext(data_name, 'cyan'),
+                 ctext(type(self[data_name]), 'yellow')))
         # copy the indices
         new_indices = MmapDict(os.path.join(destination, ids_name),
                                cache_size=80000, read_only=False)
