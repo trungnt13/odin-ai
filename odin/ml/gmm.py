@@ -1273,12 +1273,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._refresh_gpu()
 
   def __str__(self):
-    s = '<"%s" Tdim:%s nmix:%s ndim:%s niter:%d>' %\
+    s = '<"%s" Tdim:%s nmix:%s ndim:%s niter:%s bs:%s>' %\
         (ctext(self.name, 'yellow'),
          ctext(self._tv_dim, 'cyan'),
          ctext(self._nmix, 'cyan'),
          ctext(self._feat_dim, 'cyan'),
          ctext(len(self._llk_hist), 'cyan'),
+         ctext(self.batch_size, 'cyan'),
         )
     return s
 

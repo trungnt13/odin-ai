@@ -1120,11 +1120,11 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
   import re
   import imp
   # ====== validate input ====== #
-  if exclude == '': exclude = []
+  if exclude == '':
+    exclude = []
   if type(exclude) not in (list, tuple, numpy.ndarray):
     exclude = [exclude]
-  prefer_flag = -1
-  if prefer_compiled: prefer_flag = 1
+  prefer_flag = 1 if prefer_compiled else -1
   # ====== create pattern and load files ====== #
   pattern = re.compile('^%s.*%s\.pyc?' % (prefix, suffix)) # py or pyc
   files = os.listdir(path)
@@ -1149,8 +1149,9 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
             imp.load_source(f.split('.')[0],
                             os.path.join(path, f))
         )
-    except:
-      pass
+    except Exception as e:
+      eprint("Cannot loading modules from file: '%s' - %s" %
+        (ctext(f, 'yellow'), ctext(str(e), 'red')))
   # ====== Find all identifier in modules ====== #
   ids = []
   for m in modules:

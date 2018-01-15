@@ -16,7 +16,7 @@ import scipy as sp
 from six import string_types
 
 from .cache_utils import cache_memory
-
+from .decorators import functionable
 
 __all__ = [
     'array2bytes',
@@ -68,7 +68,7 @@ def bytes2array(b):
 # ===========================================================================
 # Helper
 # ===========================================================================
-class LabelsIndexing(object):
+class _LabelsIndexing(object):
   """ LabelsIndexing
 
   Parameters
@@ -83,8 +83,8 @@ class LabelsIndexing(object):
   """
 
   def __init__(self, key_func, fast_index, sorted_labels):
-    super(LabelsIndexing, self).__init__()
-    self._key_func = key_func
+    super(_LabelsIndexing, self).__init__()
+    self._key_func = functionable(key_func)
     self._fast_index = fast_index
     self._sorted_labels = sorted_labels
 
@@ -143,7 +143,7 @@ def unique_labels(y, key_func=None, return_labels=False):
   sorted_labels = list(sorted(set(key_func(i) for i in y)))
   fast_index = {j: i for i, j in enumerate(sorted_labels)}
   # ====== create label indexing object ====== #
-  labels_indexing = LabelsIndexing(key_func,
+  labels_indexing = _LabelsIndexing(key_func,
                                    fast_index,
                                    sorted_labels)
   if return_labels:

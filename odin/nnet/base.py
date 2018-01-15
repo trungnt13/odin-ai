@@ -438,6 +438,32 @@ class NNOp(object):
   """
   _ALL_NNOPS = {}
 
+  @classmethod
+  def search(clazz, name, path=None, prefix='model'):
+    """ This method search for any objects decorated or instance
+    of given NNOp
+    from given `path` with all script have given `prefix`
+    """
+    # ====== check path ====== #
+    possible_path = ['.', './models', './model', './.models', './.model']
+    script_path = os.path.dirname(sys.argv[0])
+    if path is None:
+      path = [os.path.join(script_path, p) for p in possible_path]
+      path = [p for p in path if os.path.exists(p) and os.path.isdir(p)]
+    elif not isinstance(path, (tuple, list)):
+      path = [path]
+    if len(path) == 0:
+      raise ValueError("Cannot find any available directory that contain the "
+                       "model script.")
+    # ====== search for model ====== #
+    for p in path:
+      model_func = get_module_from_path(name, path=p, prefix=prefix)
+      model_func = [f for f in model_func if isinstance(f, clazz)]
+    if len(model_func) == 0:
+      raise ValueError("Cannot find any model creator function with name='%s' "
+                       "at paths='%s'" % (name, '; '.join(path)))
+    return model_func[0]
+
   def __new__(clazz, *args, **kwargs):
     # ====== cPickle call __new__ ====== #
     if len(args) == 1 and len(kwargs) == 0 and \
@@ -1210,31 +1236,6 @@ class Lambda(NNOp):
    >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
    >>> f()
   """
-  @staticmethod
-  def search(name, path=None, prefix='model'):
-    """ This method search for any objects decorated with `Lambda`
-    from given `path` with all script have given `prefix`
-    """
-    # ====== check path ====== #
-    possible_path = ['.', './models', './model', './.models', './.model']
-    script_path = os.path.dirname(sys.argv[0])
-    if path is None:
-      path = [os.path.join(script_path, p) for p in possible_path]
-      path = [p for p in path if os.path.exists(p) and os.path.isdir(p)]
-    elif not isinstance(path, (tuple, list)):
-      path = [path]
-    if len(path) == 0:
-      raise ValueError("Cannot find any available directory that contain the "
-                       "model script.")
-    # ====== search for model ====== #
-    for p in path:
-      model_func = get_module_from_path(name, path = p, prefix = prefix)
-      model_func = [f for f in model_func if isinstance(f, Lambda)]
-    if len(model_func) == 0:
-      raise ValueError("Cannot find any model creator function with name=%s "
-                       "at paths=%s." % (name, ', '.join(path)))
-    return model_func[0]
-
   def __init__(self, func, funcT=None, var_init={}, **kwargs):
     super(Lambda, self).__init__(**kwargs)
     # check main function

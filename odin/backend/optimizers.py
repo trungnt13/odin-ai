@@ -25,14 +25,14 @@ floatX = CONFIG.floatX
 
 
 __all__ = [
-  "Optimizer",
-  "SGD",
-  "RMSProp",
-  "Adadelta",
-  "Adam",
-  "Adamax",
-  "Nadam",
-  "Adagrad"
+    "Optimizer",
+    "SGD",
+    "RMSProp",
+    "Adadelta",
+    "Adam",
+    "Adamax",
+    "Nadam",
+    "Adagrad"
 ]
 
 
@@ -154,7 +154,7 @@ class Optimizer(object):
           global_step=self._step)
     # ====== initialize ====== #
     init = tf.global_variables_initializer()
-    init.run()
+    get_session().run(init)
     return updates
 
   def __call__(self, loss_or_grads, params):
