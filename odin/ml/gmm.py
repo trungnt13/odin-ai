@@ -310,11 +310,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       ncpu = cpu_count() - 1
     self.ncpu = int(ncpu)
     # device
-    device = str(device).lower()
-    if device not in ('mix', 'gpu', 'cpu'):
-      raise ValueError("`device` can only be one of following option: "
-                       "'mix', 'gpu', 'cpu'.")
-    self.device = device
+    self.set_device(device)
     # ====== state variable ====== #
     # store history of {nmix -> [llk_1, llk_2] ...}
     self._llk_hist = defaultdict(list)
@@ -337,7 +333,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
             self._niter, self.batch_size_cpu, self.batch_size_gpu,
             self.downsample, self.stochastic_downsample,
             self._seed, self._llk_hist,
-            self.ncpu, self.device, self.gpu_factor,
+            self.ncpu, self._device, self.gpu_factor,
             self._dtype, self._path, self._name)
 
   def __setstate__(self, states):
@@ -346,7 +342,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
      self._niter, self.batch_size_cpu, self.batch_size_gpu,
      self.downsample, self.stochastic_downsample,
      self._seed, self._llk_hist,
-     self.ncpu, self.device, self.gpu_factor,
+     self.ncpu, self._device, self.gpu_factor,
      self._dtype, self._path, self._name) = states
     # basic constants
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
@@ -357,7 +353,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     self._resfresh_cpu_posterior()
     self._refresh_gpu_posterior()
     # ====== warning no GPU ====== #
-    if self.device == 'gpu' and get_ngpu() == 0:
+    if self._device in ('gpu', 'mix') and get_ngpu() == 0:
       wprint("Enabled GPU device, but no GPU found!")
 
   def __str__(self):
@@ -376,6 +372,21 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     return s
 
   # ==================== properties ==================== #
+  def set_device(self, device):
+    device = str(device).lower()
+    if device not in ('cpu', 'gpu', 'mix'):
+      raise ValueError("`device` must be one of the following: 'cpu', 'gpu', or 'mix'")
+    # ====== warning no GPU ====== #
+    if device in ('gpu', 'mix') and get_ngpu() == 0:
+      wprint("Using GPU device but NO GPU detected, "
+             "tensorflow will switch to slower CPU computation!")
+    self._device = device
+    return self
+
+  @property
+  def device(self):
+    return self._device
+
   @property
   def path(self):
     return self._path
@@ -544,9 +555,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # init posterior
     self._resfresh_cpu_posterior()
     self._refresh_gpu_posterior()
-    # ====== warning no GPU ====== #
-    if self.device == 'gpu' and get_ngpu() == 0:
-      wprint("Enabled GPU device, but no GPU found!")
     return X, indices
 
   # ==================== sklearn ==================== #
@@ -612,7 +620,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     For more option check `GMM.expectation`
     """
     if device is None:
-      device = self.device
+      device = self._device
     Z, F = self._fast_expectation(X, zero=True, first=True,
                                   second=False, llk=False,
                                   on_gpu=device != 'cpu')
@@ -641,7 +649,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     `device='gpu'`, otherwise, 'cpu' is mostly significant faster.
     """
     if device is None:
-      device = self.device
+      device = self._device
     on_gpu = True if device != 'cpu' and get_ngpu() > 0 else False
     name_list = []
     prog = Progbar(target=len(indices),
@@ -762,7 +770,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     given the GMM.
     """
     self.initialize(X)
-    if self.device != 'cpu':
+    if self._device != 'cpu':
       feed_dict = {self.X_: X}
       feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
@@ -787,7 +795,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     The posterior probability of mixtures for each frame
     """
     self.initialize(X)
-    if self.device != 'cpu':
+    if self._device != 'cpu':
       feed_dict = {self.X_: X}
       feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
@@ -815,7 +823,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     The log-likelihood value of each frame to all components
     """
     self.initialize(X)
-    if self.device != 'cpu':
+    if self._device != 'cpu':
       feed_dict = {self.X_: X}
       feed_dict[self.__expressions_gpu['mu']] = self.mean
       feed_dict[self.__expressions_gpu['sigma']] = self.sigma
@@ -921,20 +929,20 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     else:
       nb_samples = sum(end - start for name, (start, end) in indices)
     # ====== pick device ====== #
-    device = self.device if device is None else str(device).lower()
+    device = self._device if device is None else str(device).lower()
     if device not in ('gpu', 'cpu', 'mix'):
       raise ValueError("`device` can only be of the following:"
                        "'gpu', 'cpu', and 'mix'.")
     # ====== only 1 batch ====== #
-    if (nb_samples <= self.batch_size_cpu and self.device == 'cpu') or\
-    (nb_samples <= self.batch_size_gpu and self.device in ('gpu', 'mix')):
+    if (nb_samples <= self.batch_size_cpu and self._device == 'cpu') or\
+    (nb_samples <= self.batch_size_gpu and self._device in ('gpu', 'mix')):
       if indices is None: # no indices
         results = self._fast_expectation(X, zero, first, second, llk,
-                                         on_gpu=self.device != 'cpu')
+                                         on_gpu=self._device != 'cpu')
       else: # given indices
         results = np.array([self._fast_expectation(X[start:end],
                                                    zero, first, second, llk,
-                                                   on_gpu=self.device != 'cpu')
+                                                   on_gpu=self._device != 'cpu')
                             for name, (start, end) in indices]
                             ).sum(axis=0).tolist()
       if llk:
@@ -1194,7 +1202,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   """
 
   STANDARD_CPU_BATCH_SIZE = 25 * 1024 * 1024 # 25 Megabytes
-  STANDARD_GPU_BATCH_SIZE = 12 * 1024 * 1024 # 12 Megabytes
+  STANDARD_GPU_BATCH_SIZE = 18 * 1024 * 1024 # 18 Megabytes
 
   def __init__(self, tv_dim, gmm, niter=16, dtype='float64',
                batch_size_cpu='auto', batch_size_gpu='auto',
@@ -1239,13 +1247,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         (self.nmix * self.dtype.itemsize)))
     self.batch_size_gpu = batch_size_gpu
     # ====== select device ====== #
-    device = str(device).lower()
-    if device not in ('cpu', 'gpu', 'mix'):
-      raise ValueError("`device` must be one of the following: 'cpu', 'gpu', or 'mix'")
-    if device in ('gpu', 'mix') and get_ngpu() == 0:
-      wprint("Using GPU device but NO GPU detected, "
-             "tensorflow will switch to slower CPU computation!")
-    self.device = device
+    self.set_device(device)
     # cpu
     if ncpu is None:
       ncpu = cpu_count() // 2
@@ -1277,7 +1279,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
             self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
             self._seed, self._llk_hist,
             self.batch_size_cpu, self.batch_size_gpu,
-            self.niter, self.ncpu, self.device, self.gpu_factor,
+            self.niter, self.ncpu, self._device, self.gpu_factor,
             self.cache_path, self._dtype,
             self._path, self._name)
 
@@ -1286,7 +1288,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
      self._tv_dim, self._t2_dim, self._feat_dim, self._nmix,
      self._seed, self._llk_hist,
      self.batch_size_cpu, self.batch_size_gpu,
-     self.niter, self.ncpu, self.device, self.gpu_factor,
+     self.niter, self.ncpu, self._device, self.gpu_factor,
      self.cache_path, self._dtype,
      self._path, self._name) = states
     # ====== re-init ====== #
@@ -1301,6 +1303,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== calculate stats first ====== #
     self._refresh_T_statistics()
     self._refresh_gpu()
+    # ====== warning no GPU ====== #
+    if self._device in ('gpu', 'mix') and get_ngpu() == 0:
+      wprint("Enabled GPU device, but no GPU found!")
 
   def __str__(self):
     s = '<"%s" Tdim:%s nmix:%s ndim:%s niter:%s CPU:%s GPU:%s>' %\
@@ -1315,6 +1320,21 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     return s
 
   # ==================== properties ==================== #
+  def set_device(self, device):
+    device = str(device).lower()
+    if device not in ('cpu', 'gpu', 'mix'):
+      raise ValueError("`device` must be one of the following: 'cpu', 'gpu', or 'mix'")
+    # ====== warning no GPU ====== #
+    if device in ('gpu', 'mix') and get_ngpu() == 0:
+      wprint("Using GPU device but NO GPU detected, "
+             "tensorflow will switch to slower CPU computation!")
+    self._device = device
+    return self
+
+  @property
+  def device(self):
+    return self._device
+
   @property
   def feat_dim(self):
     return self._feat_dim
@@ -1417,6 +1437,30 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       # ====== assign inputs outputs for GPU function ====== #
       self._gpu_inputs = [Z, F, Tm, T_invS_Tt]
       self._gpu_outputs = [LU, RU, llk]
+      # ==================== GPU maximization ==================== #
+      # # ML re-estimation of the total subspace matrix or the factor loading
+      # # matrix
+      # for mix, idx in enumerate(self._mix_idx):
+      #   Lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+      #   Lu[self._itril] = LU[mix, :]
+      #   Lu += np.tril(Lu, -1).T
+      #   self.Tm[:, idx] = linalg.solve(Lu, RU[:, idx])
+      # # min_div_est
+      # if min_div_est:
+      #   if nframes is None:
+      #     raise ValueError("`nframes` must be specified if `min_div_est=True`")
+      #   Lu = np.zeros((self.tv_dim, self.tv_dim))
+      #   Lu[self._itril] = LU.sum(0) / nframes
+      #   Lu += np.tril(Lu, -1).T
+      #   self.Tm = np.dot(linalg.cholesky(Lu), self.Tm)
+      # # orthogonalize the columns
+      # if orthogonalize:
+      #   U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
+      #   self.Tm = np.diag(s_).dot(V_)
+      # # refresh stats
+      # self.Tm = self.Tm.astype(self.dtype)
+      # self._refresh_T_statistics()
+      # return self
 
   def _fast_expectation(self, Z, F, on_gpu):
     nframes = np.ceil(Z.sum())
@@ -1453,18 +1497,20 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
 
   def expectation(self, Z, F, device=None, print_progress=True):
     if device is None:
-      device = self.device
+      device = self._device
     nfiles = Z.shape[0]
     # ====== single batch ====== #
-    if nfiles < self.batch_size:
+    if (nfiles <= self.batch_size_cpu and device == 'cpu') or \
+    (nfiles <= self.batch_size_gpu and device in ('mix', 'gpu')):
       results = self._fast_expectation(Z=Z, F=F,
-                    on_gpu=True if device in ('gpu', 'mix') else False)
+                                       on_gpu=False if device == 'cpu' else True)
     # ====== multiple batches ====== #
     else:
       def map_expectation(start_end_onGPU):
         (start, end), on_gpu = start_end_onGPU
+        batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
         tmp = [0., 0., 0., 0.] # LU, RU, llk, nframes
-        for s, e in batching(n=end - start, batch_size=self.batch_size):
+        for s, e in batching(n=end - start, batch_size=batch_size):
           s += start
           e += start
           results.update(e - s)
@@ -1503,19 +1549,22 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                    min_div_est=True, orthogonalize=True):
     # ML re-estimation of the total subspace matrix or the factor loading
     # matrix
+    prog = Progbar(target=self.nmix, print_report=True, print_summary=False,
+                  name="[Ivector] Maximization #iter:%d" % len(self._llk_hist))
     for mix, idx in enumerate(self._mix_idx):
-      Lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
-      Lu[self._itril] = LU[mix, :]
-      Lu += np.tril(Lu, -1).T
-      self.Tm[:, idx] = linalg.solve(Lu, RU[:, idx])
+      prog.add(1)
+      lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+      lu[self._itril] = LU[mix, :]
+      lu += np.tril(lu, -1).T
+      self.Tm[:, idx] = linalg.solve(lu, RU[:, idx])
     # min_div_est
     if min_div_est:
       if nframes is None:
         raise ValueError("`nframes` must be specified if `min_div_est=True`")
-      Lu = np.zeros((self.tv_dim, self.tv_dim))
-      Lu[self._itril] = LU.sum(0) / nframes
-      Lu += np.tril(Lu, -1).T
-      self.Tm = np.dot(linalg.cholesky(Lu), self.Tm)
+      lu = np.zeros((self.tv_dim, self.tv_dim))
+      lu[self._itril] = LU.sum(0) / nframes
+      lu += np.tril(lu, -1).T
+      self.Tm = np.dot(linalg.cholesky(lu), self.Tm)
     # orthogonalize the columns
     if orthogonalize:
       U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
@@ -1627,7 +1676,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       # ====== EM ====== #
       # LU, RU, LLK, nframes
       for iter in range(self.niter):
-        self.expectation_maximization(Z, F, device=self.device,
+        self.expectation_maximization(Z, F, device=self._device,
                                       print_progress=True)
     # ====== exception ====== #
     finally:
