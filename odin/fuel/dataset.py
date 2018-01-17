@@ -558,13 +558,24 @@ class Dataset(object):
       copy_tree(self.path, destination)
     # ====== only data_filter ====== #
     elif indices_filter is None:
-      for name in [i for i in self.keys() if data_filter(i)]:
+      data_list = [i for i in self.keys() if data_filter(i)]
+      # copy all the data
+      for name in data_list:
         org_path = os.path.join(self.path, name)
         dst_path = os.path.join(destination, name)
         print("Copying from '%s' to '%s' ..." %
               (ctext(org_path, 'yellow'),
                ctext(dst_path, 'yellow')))
         shutil.copy2(org_path, dst_path)
+      # copy all the related indices
+      for name in self.keys():
+        org_path = os.path.join(self.path, name)
+        dst_path = os.path.join(destination, name)
+        if not os.path.exists(dst_path) and \
+        ('indices' == name or any(i in data_list for i in name.split('_')[1:])):
+          print("Copying Indices from '%s' to '%s'" % (ctext(org_path, 'cyan'),
+                                                       ctext(dst_path, 'cyan')))
+          shutil.copy2(org_path, dst_path)
     # ====== use indices_filter and data_filter ====== #
     else:
       if data_filter is None:
