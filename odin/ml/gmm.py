@@ -299,7 +299,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   STANDARD_GPU_BATCH_SIZE = 25 * 1024 * 1024 # 25 Megabytes
 
   def __init__(self, nmix, nmix_start=1, niter=16, dtype='float32',
-               error_handling='rollback', robust_level=0,
+               error_handling='continue', robust_level=0,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=1, stochastic_downsample=True,
                device='gpu', ncpu=None, gpu_factor=80,
@@ -1288,10 +1288,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   of your code is already multithreaded.
   Therefore there is no point trying to parallelize on top of that.
 
+  You should increase the `batch_size` instead of `ncpu` if there
+  are idle resources.
+
   """
 
-  STANDARD_CPU_BATCH_SIZE = 25 * 1024 * 1024 # 25 Megabytes
-  STANDARD_GPU_BATCH_SIZE = 18 * 1024 * 1024 # 18 Megabytes
+  STANDARD_CPU_BATCH_SIZE = 64 * 1024 * 1024 # 64 Megabytes
+  STANDARD_GPU_BATCH_SIZE = 64 * 1024 * 1024 # 64 Megabytes
 
   def __init__(self, tv_dim, gmm, niter=16, dtype='float64',
                batch_size_cpu='auto', batch_size_gpu='auto',
@@ -1502,7 +1505,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                           shape=(self.tv_dim, self.tv_dim),
                           name='L')
         L = L + tf.transpose(K.tril(L, k=-1)) + Im
-        Cxx = tf.linalg.inv(L)
+        # matrix inverse NOT implemented on GPU anyway
+        with tf.device('/cpu:0'):
+          Cxx = tf.linalg.inv(L)
         B = tf.expand_dims(b1, axis=-1)
         this_Ex = tf.matmul(Cxx, B)
         Ex = tf.transpose(this_Ex)
@@ -1516,7 +1521,8 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       llk_Ex_Exx = tf.map_fn(fn=map_expectation_fn,
                              elems=IDX, dtype=self.dtype,
                              parallel_iterations=self.batch_size_gpu,
-                             swap_memory=False, back_prop=False)
+                             swap_memory=False,
+                             back_prop=False)
       llk = llk_Ex_Exx[:, 0]
       Ex = llk_Ex_Exx[:, 1:1 + self.tv_dim]
       Exx = llk_Ex_Exx[:, 1 + self.tv_dim:]
@@ -1538,27 +1544,28 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                          dtype=self.dtype,
                          name='RU_plh')
       # add mixture ID
-      MIX_ID = tf.expand_dims(tf.range(start=0, limit=self.nmix,
-                                       dtype=self.dtype),
-                              axis=1)
-      LU_MIX = tf.concat((LU, MIX_ID), axis=1)
+      MIX_ID = tf.range(start=0, limit=self.nmix, dtype='int32')
 
       # ====== repeat for each mixture ====== #
-      def map_maximization_fn(lu_mix):
-        lu = lu_mix[:self.t2_dim]
-        mix = tf.cast(lu_mix[self.t2_dim], 'int32')
+      def map_maximization_fn(mix):
+        # lu
         lu = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
-                           updates=lu,
+                           updates=LU[mix],
                            shape=(self.tv_dim, self.tv_dim),
                            name='lu')
         lu = lu + tf.transpose(K.tril(lu, k=-1))
+        # ru
         ru = RU[:, mix * self.feat_dim: mix * self.feat_dim + self.feat_dim]
         ru.set_shape((self.tv_dim, self.feat_dim))
-        return tf.linalg.solve(matrix=lu, rhs=ru, adjoint=False, name=None)
+        # solve, faster when done on CPU for tensorflow
+        with tf.device('/cpu:0'):
+          t = tf.linalg.solve(matrix=lu, rhs=ru, adjoint=False, name=None)
+        return t
       Tm = tf.map_fn(fn=map_maximization_fn,
-                     elems=LU_MIX, dtype=self.dtype,
+                     elems=MIX_ID, dtype=self.dtype,
                      parallel_iterations=self.batch_size_gpu,
-                     swap_memory=False, back_prop=False)
+                     swap_memory=False,
+                     back_prop=False)
       self._gpu_m_inputs = [LU, RU]
       self._gpu_m_outputs = Tm
 
@@ -1596,6 +1603,14 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     return LU, RU, llk.sum(), nframes
 
   def expectation(self, Z, F, device=None, print_progress=True):
+    """
+    Return
+    ------
+    LU : numpy.ndarray (tdim, nmix * feat_dim)
+    RU : numpy.ndarray (nmix, tdim * (tdim + 1) / 2)
+    llk : scalar (float)
+    nframes : scalar (int)
+    """
     if device is None:
       device = self._device
     nfiles = Z.shape[0]
@@ -1673,6 +1688,8 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         start = self.feat_dim * mix
         end = start + self.feat_dim
         self.Tm[:, start:end] = solution
+    print(self.Tm.sum(), self.Tm.mean(), self.Tm.std(),
+          np.percentile(self.Tm, 5), np.percentile(self.Tm, 95))
     # ====== min_div_est ====== #
     if min_div_est:
       if nframes is None:

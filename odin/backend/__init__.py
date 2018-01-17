@@ -202,13 +202,43 @@ def restore_variables(path, session=None):
     role.add_role(v, collections[v.name])
 
 
-def eval(x, feed_dict=None):
+def eval(x, feed_dict=None, options=None,
+         run_metadata=None):
   '''Evaluates the value of a tensor.
 
   Parameters
   ----------
-  x: list, tuple, dictionary, `Tensor`
+  x : list, tuple, dictionary, `Tensor`
       tensorfow `Tensor` for evaluation
+  feed_dict : dict
+      Input dictionary, mapping placeholder -> values
+  options: tensorflow.RunOptions
+      thhe options allow controlling the behavior of
+      this particular step (e.g. turning tracing on).
+  run_metadata: tensorflow.RunMetadata
+      When appropriate, the non-Tensor output of this
+      step will be collected there. For example,
+      when users turn on tracing in options, the
+      profiled info will be collected into
+      this argument and passed back.
+
+  Example
+  -------
+  >>> import tensorflow as tf
+  >>> from odin import backend as K
+  >>> run_metadata = tf.RunMetadata()
+  >>> K.eval(...,
+  ...        options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE,
+  ...                              output_partition_graphs=True),
+  ...        run_metadata=run_metadata)
+  >>> with open('log_path', 'w') as f:
+  >>>   f.write(str(run_metadata))
+
+  Note
+  ----
+  If "Couldn't open CUDA library libcupti.so.8.0" appears when you
+  adding RunOptions, try adding "/usr/local/cuda/extras/CUPTI/lib64/"
+  to your LD_LIBRARY_PATH
   '''
   # ====== list of Tensor or string ====== #
   if isinstance(x, (tuple, list)):
@@ -229,7 +259,9 @@ def eval(x, feed_dict=None):
         raise RuntimeError("Cannot evaluate multiple `Tensor` come from "
                            "different `Graph`.")
       tensor_eval = get_session(graph[0]).run(tensor_eval,
-                                              feed_dict=feed_dict)
+                                              feed_dict=feed_dict,
+                                              options=options,
+                                              run_metadata=run_metadata)
     return tuple([tensor_eval.pop(0) if i in tensor_idx else
                   string_eval.pop(0)
                   for i in range(len(x))])
@@ -251,7 +283,9 @@ def eval(x, feed_dict=None):
         raise RuntimeError("Cannot evaluate multiple `Tensor` come from "
                            "different `Graph`.")
       tensor_eval_value = get_session(graph[0]).run(tensor_eval_value,
-                                                    feed_dict=feed_dict)
+                                                    feed_dict=feed_dict,
+                                                    options=options,
+                                                    run_metadata=run_metadata)
     # update results
     for k, v in zip(tensor_eval_key, tensor_eval_value):
       results[k] = v
@@ -262,6 +296,8 @@ def eval(x, feed_dict=None):
   # ====== just a Tensorflow object ====== #
   elif isinstance(x, tf.Operation) or \
   is_tensor(x, inc_distribution=True, inc_variable=True):
-    return get_session(x.graph).run(x, feed_dict=feed_dict)
+    return get_session(x.graph).run(x, feed_dict=feed_dict,
+                                    options=options,
+                                    run_metadata=run_metadata)
   # ====== exception ====== #
   raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
