@@ -13,7 +13,7 @@ from odin.ml import GMM
 from odin import visual as V
 
 np.random.seed(5218)
-nmix = 4
+nmix = 8
 pdf_path = '/tmp/tmp.pdf'
 
 # ===========================================================================
@@ -24,7 +24,8 @@ y = []
 stats_mean = []
 stats_sigma = []
 for i in range(nmix):
-  m = np.random.randint(-8, 8, size=(1, 2))
+  m = (np.random.randint(-18, 18, size=(1, 2)) +
+       np.random.randint(-18, 18, size=(1, 2)))
   s = np.random.rand(1, 2) + np.random.rand(1, 2)
   stats_mean.append(m)
   stats_sigma.append(np.diag(s.ravel()))
@@ -39,14 +40,20 @@ stats_mean = np.concatenate(stats_mean, axis=0)
 # ===========================================================================
 # Plot
 # ===========================================================================
-for niter in (4, 8, 16):
+for niter in (8, 16, 128):
   for downsample in (1, 4, 16):
     for stochastic in (True, False):
+      error_handling = 3
       gmm = GMM(nmix=nmix, nmix_start=1, niter=niter,
+                error_handling=error_handling,
+                robust_level=1,
                 downsample=downsample,
                 stochastic_downsample=stochastic,
-                batch_size=25,
+                batch_size_cpu=25,
+                batch_size_gpu=25,
                 device='gpu')
+      gmm.initialize(X)
+      print(gmm)
       gmm.fit(X)
       # ====== match each components to closest mean ====== #
       gmm_mean = [None] * nmix

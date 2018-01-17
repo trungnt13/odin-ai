@@ -22,7 +22,7 @@ from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid, is_string,
-                        wprint, segment_list, defaultdictkey)
+                        wprint, eprint, segment_list, defaultdictkey)
 from odin.config import EPS, get_ngpu
 
 # minimum batch size that will be optimal to transfer
@@ -234,6 +234,23 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     E-M and split to increase the mixtures to desire number
   niter : int (default: 16)
     number of iteration for E-M algorithm
+  dtype : {str, numpy.dtype} (default: float32)
+      desire dtype for mean, std, weights and input matrices
+      It is recommended to keep 'float32', since this speed up
+      a lot on GPU
+  error_handling : {0, 1, 2, 3, 'continue', 'rollback', 'exit', 'safe'}
+      Error handling policy, decide what will the fitting algorithm
+      will do when numberical instability appeared (i.e. `sigma` values
+      went to <= 0).
+       - 'continue' or 0: continue fitting, `sigma` is cliped to be >= 0
+       - 'rollback' or 1: reset the `mean`, `sigma` and `w` to the last
+          stable iteration.
+       - 'exit' or 2: just stop fitting, clip `sigma` values to be >= 0
+       - 'safe' or 3: stop fitting, and rollback the parameters to last
+          stable checkpoint.
+  robust_level : {0, 1}
+      if `robust_level` == 0, `error_handling` only triggered when
+      `sigma < 0`. Otherwise, it is triggered when `sigma` <= 0.
   batch_size : {int, 'auto'}
       if 'auto', used `2.5 Megabytes` block for batch size.
   device : {'cpu', 'gpu', 'mix'}
@@ -253,10 +270,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       each iteration => the training is stochastic.
       if False, a deterministic selection of data is performed
       each iteration => the training is deterministic.
-  dtype : {str, numpy.dtype} (default: float32)
-      desire dtype for mean, std, weights and input matrices
-      It is recommended to keep 'float32', since this speed up
-      a lot on GPU
   seed : int
       random seed for reproducible
   path : {str, None}
@@ -275,13 +288,18 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   w : (1, nmix)
     weights of each component
 
+  Note
+  ----
+  Memory throughput is the bottleneck in most of the case,
+  try to move the data to faster storage before fitting.
+
   """
 
   STANDARD_CPU_BATCH_SIZE = 12 * 1024 * 1024 # 25 Megabytes
   STANDARD_GPU_BATCH_SIZE = 25 * 1024 * 1024 # 25 Megabytes
 
-  def __init__(self, nmix, nmix_start=1,
-               niter=16, dtype='float32',
+  def __init__(self, nmix, nmix_start=1, niter=16, dtype='float32',
+               error_handling='rollback', robust_level=0,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=1, stochastic_downsample=True,
                device='gpu', ncpu=None, gpu_factor=80,
@@ -314,6 +332,27 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== state variable ====== #
     # store history of {nmix -> [llk_1, llk_2] ...}
     self._llk_hist = defaultdict(list)
+    # ====== error handling ====== #
+    if is_string(error_handling):
+      error_handling = error_handling.lower()
+      if error_handling == 'continue':
+        error_handling = 0
+      elif error_handling == 'rollback':
+        error_handling = 1
+      elif error_handling == 'exit':
+        error_handling = 2
+      elif error_handling == 'safe':
+        error_handling = 3
+      else:
+        raise ValueError("`error_handling` must be one of the following: "
+                         "'continue', 'rollback', 'exit', or 'safe'")
+    elif is_number(error_handling):
+      if error_handling not in (0, 1, 2, 3):
+        raise ValueError('`error_handling` must be one of the following number: '
+                         "0, 1, 2, or 4")
+    self._error_handling = int(error_handling)
+    self._robust_level = int(robust_level)
+    self._stop_fitting = False
     # ====== name ====== #
     self._dtype = np.dtype(dtype)
     if name is None:
@@ -329,6 +368,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     if not self.is_initialized:
       raise RuntimeError("GMM hasn't been initialized, nothing to save")
     return (self.mean, self.sigma, self.w,
+            self._error_handling, self._robust_level,
             self._nmix, self._curr_nmix, self._feat_dim,
             self._niter, self.batch_size_cpu, self.batch_size_gpu,
             self.downsample, self.stochastic_downsample,
@@ -338,6 +378,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __setstate__(self, states):
     (self.mean, self.sigma, self.w,
+     self._error_handling, self._robust_level,
      self._nmix, self._curr_nmix, self._feat_dim,
      self._niter, self.batch_size_cpu, self.batch_size_gpu,
      self.downsample, self.stochastic_downsample,
@@ -345,6 +386,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
      self.ncpu, self._device, self.gpu_factor,
      self._dtype, self._path, self._name) = states
     # basic constants
+    self._stop_fitting = False
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
     self.X_ = tf.placeholder(shape=(None, self.feat_dim),
                              dtype=self.dtype,
@@ -441,6 +483,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   def _refresh_gpu_posterior(self):
     """ Call this function when you update the mixture
     components.
+
     Unlike CPU computation, tensorflow graph on need to
     renew it placeholder which represent: mu, sigma, weight
     when GMM mixup.
@@ -579,6 +622,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # supports 16384 components, modify for more components
     niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10, 16, 16]
     niter[int(np.log2(self._nmix))] = self._niter
+    self._stop_fitting = False
     # run the algorithm
     while True:
       # fitting the mixtures
@@ -589,6 +633,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       if curr_niter > 0:
         for i in range(curr_niter):
           self.expectation_maximization(X, print_progress=True)
+          # check if stop now
+          if self._stop_fitting:
+            return self
         print('---')
       # update the mixtures
       if curr_nmix < self._nmix:
@@ -1071,6 +1118,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     floor_const : {None, small float}
         numerical stablize the sigma (e.g. 1e-3)
     """
+    last_parameters = [np.array(self.w),
+                       np.array(self.mean),
+                       np.array(self.sigma)]
     # TheReduce
     iN = 1. / (Z + EPS)
     self.w = Z / Z.sum()
@@ -1081,9 +1131,36 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       vFloor = self.sigma.dot(self.w.T) * floor_const
       self.sigma = self.sigma.clip(vFloor)
     # IMPORTANT: keep sigma >= 0 for numberical stability
-    self.sigma = np.clip(self.sigma, a_min=0., a_max=np.Inf)
+    error = False
+    if np.any(self.sigma == 0.):
+      wprint("[GMM] Some Sigma elements go to zeros")
+      if self._robust_level != 0:
+        error = True
+    if np.any(self.sigma < 0.):
+      eprint("[GMM] Numberical instability, Sigma values went smaller than 0!")
+      error = True
+    # ====== handle error ====== #
+    if error:
+      if self._error_handling == 0: # continue
+        self.sigma = np.clip(self.sigma, a_min=0., a_max=np.Inf)
+      elif self._error_handling == 1: # rollback and continue
+        self.w = last_parameters[0]
+        self.mean = last_parameters[1]
+        self.sigma = last_parameters[2]
+        eprint('[GMM-error_handling] Rollback to last stable iteration.')
+      elif self._error_handling == 2: # exit
+        self.sigma = np.clip(self.sigma, a_min=0., a_max=np.Inf)
+        self._stop_fitting = True
+        eprint('[GMM-error_handling] Stop fitting immediately!')
+      elif self._error_handling == 3: # rollback then exit
+        self.w = last_parameters[0]
+        self.mean = last_parameters[1]
+        self.sigma = last_parameters[2]
+        self._stop_fitting = True
+        eprint('[GMM-error_handling] Rollback and stop fitting immediately!')
     # refresh cpu cached value
     self._resfresh_cpu_posterior()
+    del last_parameters
     return self
 
   def expectation_maximization(self, X, device=None, print_progress=True):
@@ -1198,6 +1275,18 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   ----------
   Tm : (tv_dim, feat_dim * nmix)
     latent vector for each mixtures and features
+  T_invS : (tv_dim, feat_dim * nmix)
+    Tm / GMM.Sigma
+  T_invS_Tt : (nmix, tv_dim * (tv_dim + 1) / 2)
+    lower half of the inverted T-matrix
+
+  Note
+  ----
+  If you have built numpy with an optimized BLAS like OpenBLAS or
+  MKL (which is the case if you got numpy from pypi or anaconda),
+  it's likely that the inv operation which is probably the bottleneck
+  of your code is already multithreaded.
+  Therefore there is no point trying to parallelize on top of that.
 
   """
 
@@ -1264,8 +1353,6 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
     # ====== cache, 10% faster here ====== #
     self._itril = np.tril_indices(self.tv_dim)
-    self._mix_idx = [np.arange(self.feat_dim) + mix * self.feat_dim
-                     for mix in range(self.nmix)]
     self._Ex_Exx_llk = defaultdictkey(
         lambda nfiles: (np.empty((nfiles, self.tv_dim), dtype=self.dtype),
                         np.empty((nfiles, self.t2_dim), dtype=self.dtype),
@@ -1294,8 +1381,6 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== re-init ====== #
     self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
     self._itril = np.tril_indices(self.tv_dim)
-    self._mix_idx = [np.arange(self.feat_dim) + mix * self.feat_dim
-                     for mix in range(self.nmix)]
     self._Ex_Exx_llk = defaultdictkey(
         lambda nfiles: (np.empty((nfiles, self.tv_dim), dtype=self.dtype),
                         np.empty((nfiles, self.t2_dim), dtype=self.dtype),
@@ -1375,8 +1460,10 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # (self.nmix, self.tv_dim * (self.tv_dim + 1) / 2)
     T_invS2 = self.Tm / (np.sqrt(self.Sigma) + EPS)
     # update each row for each mixture
-    for mix, idx in enumerate(self._mix_idx):
-      tmp = T_invS2[:, idx].dot(T_invS2[:, idx].T)
+    for mix in range(self.nmix):
+      start = self.feat_dim * mix
+      end = start + self.feat_dim
+      tmp = T_invS2[:, start:end].dot(T_invS2[:, start:end].T)
       self.T_invS_Tt[mix] = tmp[self._itril]
 
   def _refresh_gpu(self):
@@ -1388,44 +1475,46 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                         name='ZeroStats')
       F = K.placeholder(shape=(None, self.nmix * self.feat_dim),
                         dtype=self.dtype,
-                        name='ZeroStats')
+                        name='FirstStats')
       Tm = K.placeholder(shape=self.Tm.shape,
                          dtype=self.dtype,
-                         name='Tmatrix')
+                         name='T_matrix')
       T_invS_Tt = K.placeholder(shape=self.T_invS_Tt.shape,
                                 dtype=self.dtype,
                                 name='T_invS_Tt')
       Sigma = tf.constant(value=self.Sigma,
                           dtype=self.dtype,
-                          name='Sigma')
+                          name='GMM_Sigma')
       Im = tf.eye(self.tv_dim, dtype=self.dtype, name='Im')
       # ====== start the calculation ====== #
       T_invS = Tm / Sigma
-      L1B1 = tf.concat((
-          tf.matmul(Z, T_invS_Tt, name='L1'), # (nfiles, t2_dim)
-          tf.matmul(F, tf.transpose(T_invS), name='B1')), # (nfiles, tv_dim)
-      axis=-1)
+      L1 = tf.matmul(Z, T_invS_Tt, name='L1') # (nfiles, t2_dim)
+      B1 = tf.matmul(F, tf.transpose(T_invS), name='B1') # (nfiles, tv_dim)
+      nb_samples = tf.shape(L1)[0]
+      IDX = tf.range(start=0, limit=nb_samples, dtype='int32')
 
       # ====== repeat for each utterance (file) ====== #
-      def map_fn(L1B1):
-        L1 = L1B1[:self.t2_dim]
-        B1 = L1B1[self.t2_dim:]
+      def map_expectation_fn(idx):
+        l1 = L1[idx]
+        b1 = B1[idx]
         L = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
-                          updates=L1,
+                          updates=l1,
                           shape=(self.tv_dim, self.tv_dim),
                           name='L')
         L = L + tf.transpose(K.tril(L, k=-1)) + Im
         Cxx = tf.linalg.inv(L)
-        B = tf.expand_dims(B1, axis=-1)
+        B = tf.expand_dims(b1, axis=-1)
         this_Ex = tf.matmul(Cxx, B)
         Ex = tf.transpose(this_Ex)
         llk = -0.5 * tf.matmul(Ex, B - this_Ex) + tf.matmul(Ex, B)
         Exx = tf.gather_nd(params=(Cxx + tf.matmul(this_Ex, Ex)),
                            indices=[(i, j) for i, j in zip(*self._itril)])
-        return tf.concat(
-            (tf.squeeze(llk, axis=0), tf.squeeze(Ex, axis=0), Exx), axis=0)
+        return tf.concat((tf.squeeze(llk, axis=0),
+                          tf.squeeze(Ex, axis=0),
+                          Exx), axis=0)
       # ====== compute ====== #
-      llk_Ex_Exx = tf.map_fn(fn=map_fn, elems=L1B1, dtype=self.dtype,
+      llk_Ex_Exx = tf.map_fn(fn=map_expectation_fn,
+                             elems=IDX, dtype=self.dtype,
                              parallel_iterations=self.batch_size_gpu,
                              swap_memory=False, back_prop=False)
       llk = llk_Ex_Exx[:, 0]
@@ -1434,41 +1523,52 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       RU = tf.matmul(tf.transpose(Ex), F)
       LU = tf.matmul(tf.transpose(Z), Exx)
       llk = tf.reduce_sum(llk)
-      # ====== assign inputs outputs for GPU function ====== #
-      self._gpu_inputs = [Z, F, Tm, T_invS_Tt]
-      self._gpu_outputs = [LU, RU, llk]
+      # ====== assign inputs outputs ====== #
+      self._gpu_e_inputs = [Z, F, Tm, T_invS_Tt]
+      self._gpu_e_outputs = [LU, RU, llk]
       # ==================== GPU maximization ==================== #
-      # # ML re-estimation of the total subspace matrix or the factor loading
-      # # matrix
-      # for mix, idx in enumerate(self._mix_idx):
-      #   Lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
-      #   Lu[self._itril] = LU[mix, :]
-      #   Lu += np.tril(Lu, -1).T
-      #   self.Tm[:, idx] = linalg.solve(Lu, RU[:, idx])
-      # # min_div_est
-      # if min_div_est:
-      #   if nframes is None:
-      #     raise ValueError("`nframes` must be specified if `min_div_est=True`")
-      #   Lu = np.zeros((self.tv_dim, self.tv_dim))
-      #   Lu[self._itril] = LU.sum(0) / nframes
-      #   Lu += np.tril(Lu, -1).T
-      #   self.Tm = np.dot(linalg.cholesky(Lu), self.Tm)
-      # # orthogonalize the columns
-      # if orthogonalize:
-      #   U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
-      #   self.Tm = np.diag(s_).dot(V_)
-      # # refresh stats
-      # self.Tm = self.Tm.astype(self.dtype)
-      # self._refresh_T_statistics()
-      # return self
+      # ML re-estimation of the total subspace matrix or the factor loading
+      # matrix
+      # (nmix, tdim * (tdim + 1) / 2)
+      LU = K.placeholder(shape=(self.nmix, self.t2_dim),
+                         dtype=self.dtype,
+                         name='LU_plh')
+      # (tdim, nmix * feat_dim)
+      RU = K.placeholder(shape=(self.tv_dim, self.nmix * self.feat_dim),
+                         dtype=self.dtype,
+                         name='RU_plh')
+      # add mixture ID
+      MIX_ID = tf.expand_dims(tf.range(start=0, limit=self.nmix,
+                                       dtype=self.dtype),
+                              axis=1)
+      LU_MIX = tf.concat((LU, MIX_ID), axis=1)
+
+      # ====== repeat for each mixture ====== #
+      def map_maximization_fn(lu_mix):
+        lu = lu_mix[:self.t2_dim]
+        mix = tf.cast(lu_mix[self.t2_dim], 'int32')
+        lu = tf.scatter_nd(indices=[(i, j) for i, j in zip(*self._itril)],
+                           updates=lu,
+                           shape=(self.tv_dim, self.tv_dim),
+                           name='lu')
+        lu = lu + tf.transpose(K.tril(lu, k=-1))
+        ru = RU[:, mix * self.feat_dim: mix * self.feat_dim + self.feat_dim]
+        ru.set_shape((self.tv_dim, self.feat_dim))
+        return tf.linalg.solve(matrix=lu, rhs=ru, adjoint=False, name=None)
+      Tm = tf.map_fn(fn=map_maximization_fn,
+                     elems=LU_MIX, dtype=self.dtype,
+                     parallel_iterations=self.batch_size_gpu,
+                     swap_memory=False, back_prop=False)
+      self._gpu_m_inputs = [LU, RU]
+      self._gpu_m_outputs = Tm
 
   def _fast_expectation(self, Z, F, on_gpu):
     nframes = np.ceil(Z.sum())
     nfiles = F.shape[0]
     # ====== GPU ====== #
     if on_gpu:
-      LU, RU, llk = K.eval(self._gpu_outputs,
-        feed_dict={i: j for i, j in zip(self._gpu_inputs,
+      LU, RU, llk = K.eval(self._gpu_e_outputs,
+        feed_dict={i: j for i, j in zip(self._gpu_e_inputs,
                                         (Z, F, self.Tm, self.T_invS_Tt))}
       )
       return LU, RU, llk, nframes
@@ -1549,15 +1649,31 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                    min_div_est=True, orthogonalize=True):
     # ML re-estimation of the total subspace matrix or the factor loading
     # matrix
-    prog = Progbar(target=self.nmix, print_report=True, print_summary=False,
-                  name="[Ivector] Maximization #iter:%d" % len(self._llk_hist))
-    for mix, idx in enumerate(self._mix_idx):
-      prog.add(1)
-      lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
-      lu[self._itril] = LU[mix, :]
-      lu += np.tril(lu, -1).T
-      self.Tm[:, idx] = linalg.solve(lu, RU[:, idx])
-    # min_div_est
+    # ====== Multi-processing on CPU ====== #
+    if self.device == 'cpu':
+      prog = Progbar(target=self.nmix,
+                     print_report=True,
+                     print_summary=False,
+                     name="[Ivector] Maximization #mix:%d #iter:%d" %
+                          (self.nmix, len(self._llk_hist)))
+      for mix in range(self.nmix):
+        prog.add(1)
+        lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+        lu[self._itril] = LU[mix, :]
+        lu += np.tril(lu, -1).T
+        start = self.feat_dim * mix
+        end = start + self.feat_dim
+        self.Tm[:, start:end] = linalg.solve(lu, RU[:, start:end])
+    # ====== on GPU ====== #
+    else:
+      Tm = K.eval(self._gpu_m_outputs,
+                  feed_dict={i: j for i, j in zip(self._gpu_m_inputs,
+                                                  (LU, RU))})
+      for mix, solution in enumerate(Tm):
+        start = self.feat_dim * mix
+        end = start + self.feat_dim
+        self.Tm[:, start:end] = solution
+    # ====== min_div_est ====== #
     if min_div_est:
       if nframes is None:
         raise ValueError("`nframes` must be specified if `min_div_est=True`")
@@ -1565,7 +1681,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       lu[self._itril] = LU.sum(0) / nframes
       lu += np.tril(lu, -1).T
       self.Tm = np.dot(linalg.cholesky(lu), self.Tm)
-    # orthogonalize the columns
+    # ====== orthogonalize the columns ====== #
     if orthogonalize:
       U_, s_, V_ = linalg.svd(self.Tm, full_matrices=False)
       self.Tm = np.diag(s_).dot(V_)
