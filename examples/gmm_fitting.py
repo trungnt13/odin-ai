@@ -43,10 +43,8 @@ stats_mean = np.concatenate(stats_mean, axis=0)
 for niter in (8, 16, 128):
   for downsample in (1, 4, 16):
     for stochastic in (True, False):
-      error_handling = 3
       gmm = GMM(nmix=nmix, nmix_start=1, niter=niter,
-                error_handling=error_handling,
-                robust_level=1,
+                allow_rollback=True, exit_on_error=True,
                 downsample=downsample,
                 stochastic_downsample=stochastic,
                 batch_size_cpu=25,

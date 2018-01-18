@@ -238,21 +238,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       desire dtype for mean, std, weights and input matrices
       It is recommended to keep 'float32', since this speed up
       a lot on GPU
-  error_handling : {0, 1, 2, 3, 'continue', 'rollback', 'exit', 'safe'}
-      Error handling policy, decide what will the fitting algorithm
-      will do when numberical instability appeared (i.e. `sigma` values
-      went to <= 0).
-       - 'continue' or 0: continue fitting, `sigma` is cliped to be >= 0
-       - 'rollback' or 1: reset the `mean`, `sigma` and `w` to the last
-          stable iteration.
-       - 'exit' or 2: just stop fitting, clip `sigma` values to be >= 0
-       - 'safe' or 3: stop fitting, and rollback the parameters to last
-          stable checkpoint.
-  robust_level : {0, 1}
-      if `robust_level` == 0, `error_handling` only triggered when
-      `sigma < 0`. Otherwise, it is triggered when `sigma` <= 0.
+  allow_rollback : bool (default: True)
+      If True, reset the `mean`, `sigma` and `w` to the last
+      stable iteration, when `sigma` values smaller than 0
+  exit_on_error : bool (default: True)
+      Stop fitting when EM reach singular value and `sigma` become
+      numerical instabable (i.e. its values are smaller than 0)
   batch_size : {int, 'auto'}
-      if 'auto', used `2.5 Megabytes` block for batch size.
+      if 'auto', used `12 Megabytes` block for CPU batch and
+      `25 Megabytes` block for GPU batch
   device : {'cpu', 'gpu', 'mix'}
       'gpu' - run the computaiton on GPU
       'cpu' - use multiprocessing for multiple cores
@@ -295,11 +289,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   """
 
-  STANDARD_CPU_BATCH_SIZE = 12 * 1024 * 1024 # 25 Megabytes
+  STANDARD_CPU_BATCH_SIZE = 12 * 1024 * 1024 # 12 Megabytes
   STANDARD_GPU_BATCH_SIZE = 25 * 1024 * 1024 # 25 Megabytes
 
   def __init__(self, nmix, nmix_start=1, niter=16, dtype='float32',
-               error_handling='continue', robust_level=0,
+               allow_rollback=True, exit_on_error=False,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=1, stochastic_downsample=True,
                device='gpu', ncpu=None, gpu_factor=80,
@@ -333,25 +327,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # store history of {nmix -> [llk_1, llk_2] ...}
     self._llk_hist = defaultdict(list)
     # ====== error handling ====== #
-    if is_string(error_handling):
-      error_handling = error_handling.lower()
-      if error_handling == 'continue':
-        error_handling = 0
-      elif error_handling == 'rollback':
-        error_handling = 1
-      elif error_handling == 'exit':
-        error_handling = 2
-      elif error_handling == 'safe':
-        error_handling = 3
-      else:
-        raise ValueError("`error_handling` must be one of the following: "
-                         "'continue', 'rollback', 'exit', or 'safe'")
-    elif is_number(error_handling):
-      if error_handling not in (0, 1, 2, 3):
-        raise ValueError('`error_handling` must be one of the following number: '
-                         "0, 1, 2, or 4")
-    self._error_handling = int(error_handling)
-    self._robust_level = int(robust_level)
+    self.allow_rollback = bool(allow_rollback)
+    self.exit_on_error = bool(exit_on_error)
     self._stop_fitting = False
     # ====== name ====== #
     self._dtype = np.dtype(dtype)
@@ -368,7 +345,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     if not self.is_initialized:
       raise RuntimeError("GMM hasn't been initialized, nothing to save")
     return (self.mean, self.sigma, self.w,
-            self._error_handling, self._robust_level,
+            self.allow_rollback, self.exit_on_error,
             self._nmix, self._curr_nmix, self._feat_dim,
             self._niter, self.batch_size_cpu, self.batch_size_gpu,
             self.downsample, self.stochastic_downsample,
@@ -378,7 +355,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __setstate__(self, states):
     (self.mean, self.sigma, self.w,
-     self._error_handling, self._robust_level,
+     self.allow_rollback, self.exit_on_error,
      self._nmix, self._curr_nmix, self._feat_dim,
      self._niter, self.batch_size_cpu, self.batch_size_gpu,
      self.downsample, self.stochastic_downsample,
@@ -403,14 +380,14 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       return '<"%s" nmix:%d initialized:False>' % (self.name, self._nmix)
     s = '<"%s" nmix:%s ndim:%s mean:%s std:%s w:%s CPU:%s GPU:%s>' %\
         (ctext(self.name, 'yellow'),
-            ctext(self._nmix, 'cyan'),
-            ctext(self._feat_dim, 'cyan'),
-            ctext(self.mean.shape, 'cyan'),
-            ctext(self.sigma.shape, 'cyan'),
-            ctext(self.w.shape, 'cyan'),
-            ctext(self.batch_size_cpu, 'cyan'),
-            ctext(self.batch_size_gpu, 'cyan'),
-          )
+         ctext(self._nmix, 'cyan'),
+         ctext(self._feat_dim, 'cyan'),
+         ctext(self.mean.shape, 'cyan'),
+         ctext(self.sigma.shape, 'cyan'),
+         ctext(self.w.shape, 'cyan'),
+         ctext(self.batch_size_cpu, 'cyan'),
+         ctext(self.batch_size_gpu, 'cyan'),
+        )
     return s
 
   # ==================== properties ==================== #
@@ -1131,33 +1108,20 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       vFloor = self.sigma.dot(self.w.T) * floor_const
       self.sigma = self.sigma.clip(vFloor)
     # IMPORTANT: keep sigma >= 0 for numberical stability
-    error = False
     if np.any(self.sigma == 0.):
       wprint("[GMM] Some Sigma elements go to zeros")
-      if self._robust_level != 0:
-        error = True
     if np.any(self.sigma < 0.):
       eprint("[GMM] Numberical instability, Sigma values went smaller than 0!")
-      error = True
-    # ====== handle error ====== #
-    if error:
-      if self._error_handling == 0: # continue
-        self.sigma = np.clip(self.sigma, a_min=0., a_max=np.Inf)
-      elif self._error_handling == 1: # rollback and continue
+      # check if rollback
+      if self.allow_rollback:
         self.w = last_parameters[0]
         self.mean = last_parameters[1]
         self.sigma = last_parameters[2]
-        eprint('[GMM-error_handling] Rollback to last stable iteration.')
-      elif self._error_handling == 2: # exit
+      else:
         self.sigma = np.clip(self.sigma, a_min=0., a_max=np.Inf)
+      # check if quit fitting
+      if self.exit_on_error:
         self._stop_fitting = True
-        eprint('[GMM-error_handling] Stop fitting immediately!')
-      elif self._error_handling == 3: # rollback then exit
-        self.w = last_parameters[0]
-        self.mean = last_parameters[1]
-        self.sigma = last_parameters[2]
-        self._stop_fitting = True
-        eprint('[GMM-error_handling] Rollback and stop fitting immediately!')
     # refresh cpu cached value
     self._resfresh_cpu_posterior()
     del last_parameters
@@ -1688,8 +1652,6 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         start = self.feat_dim * mix
         end = start + self.feat_dim
         self.Tm[:, start:end] = solution
-    print(self.Tm.sum(), self.Tm.mean(), self.Tm.std(),
-          np.percentile(self.Tm, 5), np.percentile(self.Tm, 95))
     # ====== min_div_est ====== #
     if min_div_est:
       if nframes is None:
