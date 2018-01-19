@@ -190,7 +190,7 @@ class openSMILEf0(_openSMILEbase):
     if step_length is None:
       step_length = frame_length / 4
     self.step_length = float(step_length)
-    self._config_file = _get_conf_file('openSMILEintensity.cfg')
+    self._config_file = _get_conf_file('openSMILEf0.cfg')
     self.fmin = int(fmin)
     self.fmax = int(fmax)
     self.voicingCutoff = float(voicingCutoff)
@@ -224,7 +224,7 @@ class openSMILEloudness(_openSMILEbase):
       step_length = frame_length / 4
     self.step_length = float(step_length)
     self.nmel = int(nmel)
-    self._config_file = _get_conf_file('openSMILEintensity.cfg')
+    self._config_file = _get_conf_file('openSMILEloudness.cfg')
     self.fmin = int(fmin)
     self.fmax = fmax
     self.to_intensity = bool(to_intensity)

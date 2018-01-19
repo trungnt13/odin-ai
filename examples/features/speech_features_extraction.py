@@ -26,6 +26,10 @@ from odin import visual as V, nnet as N
 from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
 
+args = utils.ArgController(
+).add('path', 'path to RAW dataset'
+).parse()
+
 # ===========================================================================
 # set LOG path
 # ===========================================================================
@@ -35,21 +39,18 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
-if True:
-  audio = F.WDIGITS.get_dataset()
-  filter_func = lambda x: len(x.split('_')[-1]) == 1
-  key_func = lambda x: x.split('_')[-1]
-else:
-  audio = F.DIGITS.get_dataset()
-  filter_func = lambda x: True
-  key_func = lambda x: int(x[0])
+audio = F.Dataset(args.path, read_only=True)
 print(audio)
+
+filter_func = lambda x: len(x.split('_')[-1]) == 1
+key_func = lambda x: x.split('_')[-1]
+
 all_files = sorted(list(audio['indices'].keys()))
 labels_fn, labels = unique_labels(y=[f for f in all_files if filter_func(f)],
                                   key_func=key_func,
                                   return_labels=True)
 print("Found %d (.wav) files" % len(all_files))
-output_path = utils.get_datasetpath(name='digit')
+output_path = utils.get_datasetpath(name='digits')
 figpath = '/tmp/digits'
 # ===========================================================================
 # Extractor
@@ -61,7 +62,7 @@ dtype = 'float16'
 bnf_network = N.models.BNF_2048_MFCC39()
 extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr_new=8000, best_resample=True,
-                          remove_dc_n_dither=True, preemphasis=0.97,
+                          remove_dc_n_dither=False, preemphasis=0.97,
                           dataset=audio),
     pp.speech.SpectraExtractor(frame_length=frame_length,
                                step_length=step_length,
@@ -72,12 +73,12 @@ extractors = pp.make_pipeline(steps=[
     #                        nbins=96, nmels=40, nceps=20,
     #                        fmin=64, fmax=4000, padding=padding),
     # ====== pitch ====== #
-    pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
-                             fmin=32, fmax=620, voicingCutoff_pitch=0.7,
-                             f0min=64, f0max=420, voicingCutoff_f0=0.55,
-                             method='shs', f0=True, voiceProb=True, loudness=False),
-    pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
-                                nmel=40, fmin=20, fmax=None, to_intensity=False),
+    # pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
+    #                          fmin=32, fmax=620, voicingCutoff_pitch=0.7,
+    #                          f0min=64, f0max=420, voicingCutoff_f0=0.55,
+    #                          method='shs', f0=True, voiceProb=True, loudness=False),
+    # pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
+    #                             nmel=40, fmin=20, fmax=None, to_intensity=False),
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_name='energy'),
     # ====== BNF ====== #
@@ -90,7 +91,8 @@ extractors = pp.make_pipeline(steps=[
                            pre_mvn=True),
     # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           sad_stats=False, sad_name='sad', ignore_sad_error=True,
+                           sad_stats=False, sad_name='sad',
+                           ignore_sad_error=True,
                            feat_name=('spec', 'mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),
     # ====== post processing ====== #

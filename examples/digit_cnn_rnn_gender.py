@@ -28,18 +28,21 @@ from odin.stats import train_valid_test_split, freqcount
 from odin import training
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
-                        as_tuple_of_shape, stdio)
+                        as_tuple_of_shape, stdio, get_datasetpath)
 # ===========================================================================
 # Const
 # ===========================================================================
 FEAT = 'mspec'
-MODEL_PATH = get_modelpath('tidigit', override=True)
-LOG_PATH = get_logpath('tidigit.log', override=True)
+MODEL_PATH = get_modelpath(name='digit', override=True)
+LOG_PATH = get_logpath(name='digit.log', override=True)
 stdio(LOG_PATH)
 
-ds = F.Dataset('/home/trung/data/tidigits', read_only=True)
-indices = ds['indices'].items()
+ds = F.WDIGITS.get_dataset()
+print(ds)
+indices = list(ds['indices'].items())
+print(indices[0])
 K.get_rng().shuffle(indices)
+exit()
 # ====== gender and single digit distribution ====== #
 gender_digits = defaultdict(int)
 for name, (start, end) in indices:

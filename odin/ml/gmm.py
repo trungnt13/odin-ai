@@ -654,7 +654,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                        order='F')
     return Z, F_hat
 
-  def transform_to_disk(self, X, indices, pathZ=None, pathF=None,
+  def transform_to_disk(self, X, indices,
+                        pathZ=None, pathF=None, name_path=None,
                         dtype='float32', device='cpu', override=True):
     """ Same as `transform`, however, save the transformed statistics
     to file using `odin.fuel.MmapData`
@@ -679,38 +680,32 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     prog = Progbar(target=len(indices),
                    print_report=True, print_summary=True,
                    name="Saving zero-th and first order statistics")
-    nb_samples = len(indices)
-    current_count = [0] # count for assign data
     # ====== init data files ====== #
     if pathZ is not None:
       if os.path.exists(pathZ):
-        if not override:
-          raise RuntimeError("Path at %s exist and cannot be overrided" % pathZ)
-        os.remove(pathZ)
-      z_dat = MmapData(path=pathZ, dtype=dtype, shape=(nb_samples, self.nmix))
+        if override:
+          os.remove(pathZ)
+      z_dat = MmapData(path=pathZ, dtype=dtype,
+                       shape=(None, self.nmix))
     else:
       z_dat = None
     if pathF is not None:
       if os.path.exists(pathF):
-        if not override:
-          raise RuntimeError("Path at %s exist and cannot be overrided" % pathF)
-        os.remove(pathF)
+        if override:
+          os.remove(pathF)
       f_dat = MmapData(path=pathF, dtype=dtype,
-                       shape=(nb_samples, self.nmix * self.feat_dim))
+                       shape=(None, self.nmix * self.feat_dim))
     else:
       f_dat = None
 
     # ====== helper ====== #
     def _update_zf(Z, F):
-      start = current_count[0]
-      end = current_count[0] + Z.shape[0]
       # save zero-th stats
       if z_dat is not None:
-        z_dat[start:end] = Z
+        z_dat.append(Z)
       # save first stats
       if f_dat is not None:
-        f_dat[start:end] = F
-      current_count[0] += Z.shape[0]
+        f_dat.append(F)
 
     def _batched_transform(x, on_gpu):
       batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
@@ -785,6 +780,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     if f_dat is not None:
       f_dat.flush()
       f_dat.close()
+    # ====== save name_list ====== #
+    if is_string(name_path):
+      np.savetxt(fname=name_path, X=name_list, fmt='%s')
     return name_list
 
   # ==================== math helper ==================== #
@@ -1262,7 +1260,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
 
   def __init__(self, tv_dim, gmm, niter=16, dtype='float64',
                batch_size_cpu='auto', batch_size_gpu='auto',
-               device='mix', ncpu=1, gpu_factor=2,
+               device='mix', ncpu=1, gpu_factor=3,
                cache_path='/tmp', seed=5218,
                path=None, name=None):
     super(Ivector, self).__init__()
@@ -1422,9 +1420,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   # ==================== i-vec ==================== #
   def _refresh_T_statistics(self):
     """ depend on: Tm and Sigma """
-    # (self.tv_dim, self.feat_dim * self.nmix)
+    # (tv_dim, feat_dim * nmix)
     self.T_invS = self.Tm / (self.Sigma + EPS)
-    # (self.nmix, self.tv_dim * (self.tv_dim + 1) / 2)
+    # T_invS_Tt: (nmix, tv_dim * (tv_dim + 1) / 2)
     T_invS2 = self.Tm / (np.sqrt(self.Sigma) + EPS)
     # update each row for each mixture
     for mix in range(self.nmix):
@@ -1585,26 +1583,36 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                                        on_gpu=False if device == 'cpu' else True)
     # ====== multiple batches ====== #
     else:
-      def map_expectation(start_end_onGPU):
-        (start, end), on_gpu = start_end_onGPU
+      def _map_expectation(start, end, on_gpu):
         batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
-        tmp = [0., 0., 0., 0.] # LU, RU, llk, nframes
         for s, e in batching(n=end - start, batch_size=batch_size):
           s += start
           e += start
-          results.update(e - s)
-          # update local results
-          for i, r in enumerate(self._fast_expectation(Z=Z[s:e], F=F[s:e],
-                                                       on_gpu=on_gpu)):
+          nfiles = e - s
+          yield (self._fast_expectation(Z=Z[s:e], F=F[s:e], on_gpu=on_gpu),
+                 nfiles)
+
+      def _mpi_fn(start_end):
+        start, end = start_end
+        tmp = [0., 0., 0., 0.] # LU, RU, llk, nframes
+        for res, nfiles in _map_expectation(start, end, on_gpu=False):
+          yield nfiles
+          for i, r in enumerate(res):
             tmp[i] += r
-        # update actual results
+        yield tmp
+
+      def _thread_fn(start_end):
+        start, end = start_end
+        tmp = [0., 0., 0., 0.] # LU, RU, llk, nframes
+        for res, nfiles in _map_expectation(start, end, on_gpu=True):
+          results.update(nfiles)
+          for i, r in enumerate(res):
+            tmp[i] += r
         results.update(tmp)
       # ====== prepare the jobs ====== #
       jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nfiles, ncpu=self.ncpu,
                                        device=device,
                                        gpu_factor=self.gpu_factor)
-      jobs_cpu = [(j, False) for j in jobs_cpu]
-      jobs_gpu = [(j, True) for j in jobs_gpu]
       # LU, RU, llk, nframes
       results = _ExpectationResults(nb_samples=nfiles, nb_results=4,
           name="[Ivector] Tdim:%d nmix:%d feat_dim:%d iter:%d" %
@@ -1612,12 +1620,17 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                       len(self._llk_hist) + 1),
           print_progress=print_progress)
       # ====== create gpu thread ====== #
-      threads = [threading.Thread(target=map_expectation,
-                                  args=(j,))
-                 for j in jobs_gpu + jobs_cpu]
+      mpi = MPI(jobs=jobs_cpu, func=_mpi_fn,
+                ncpu=self.ncpu, batch=1, hwm=2**25)
+      # yield in _map_expectation, make it become a generator
+      threads = [threading.Thread(target=_thread_fn, args=(j,))
+                 for j in jobs_gpu]
       # start gpu and threads
       for t in threads:
         t.start()
+      # run the mpi
+      for r in mpi:
+        results.update(r)
       # finish all threads
       for t in threads:
         t.join()
@@ -1629,12 +1642,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     # ML re-estimation of the total subspace matrix or the factor loading
     # matrix
     # ====== Multi-processing on CPU ====== #
+    prog = Progbar(target=self.nmix,
+                   print_report=True,
+                   print_summary=False,
+                   name="[Ivector] Maximization #mix:%d #iter:%d device:%s" %
+                        (self.nmix, len(self._llk_hist),
+                         'CPU' if self.device == 'cpu' else 'GPU'))
     if self.device == 'cpu':
-      prog = Progbar(target=self.nmix,
-                     print_report=True,
-                     print_summary=False,
-                     name="[Ivector] Maximization #mix:%d #iter:%d" %
-                          (self.nmix, len(self._llk_hist)))
       for mix in range(self.nmix):
         prog.add(1)
         lu = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
@@ -1713,6 +1727,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     Return
     ------
     I-vector : (1, tv_dim)
+
+    Note
+    ----
+    No need to parallel this function, `numpy.linalg.inv` is
+    already a multi-threaded method, and will be bottleneck
+    for `multiprocessing`
+
     """
     # ====== GMM transform ====== #
     if isinstance(X, (tuple, list)):
@@ -1725,10 +1746,88 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                  dtype=self.dtype)
     L[self._itril] = np.dot(Z, self.T_invS_Tt)
     L += np.tril(L, -1).T + self.Im
+    # (tv_dim, tv_dim)
     Cxx = linalg.inv(L)
+    # (tv_dim, 1)
     B = np.dot(self.T_invS, F.T)
-    Ex = np.dot(Cxx, B).T
-    return Ex
+    # (tv_dim, 1)
+    Ex = np.dot(Cxx, B)
+    # (1, tv_dim)
+    return Ex.T
+
+  def transform_to_disk(self, path,
+                        X=None, indices=None,
+                        Z=None, F=None,
+                        name_path=None,
+                        dtype='float32', override=True):
+    """ Same as `transform`, however, save the transformed statistics
+    to file using `odin.fuel.MmapData`
+
+    Parameters
+    ----------
+    path : str
+    X : {None, numpy.ndarray, odin.fuel.data.MmapData}
+    indices : {None, list, dict}
+    Z : {None, numpy.ndarray, odin.fuel.data.MmapData}
+    F : {None, numpy.ndarray, odin.fuel.data.MmapData}
+    name_path : {None, str}
+
+    Return
+    ------
+    i-vector : (1, tv_dim)
+
+    """
+    dtype = self.dtype if dtype is None else np.dtype(dtype)
+    # ====== prepare inputs ====== #
+    if indices is not None and X is not None:
+      pass
+    elif Z is not None and F is not None:
+      nb_samples = Z.shape[0]
+      if Z.shape[0] != F.shape[0]:
+        raise ValueError("Number of samples in `Z` is %d which is different "
+                         "from %d samples in `F`" % (Z.shape[0], F.shape[0]))
+    else:
+      raise ValueError("Input arguments must contain `X` and `indices`, or "
+                       "`Z` and `F`.")
+    # ====== Progbar ====== #
+    name_list = []
+    prog = Progbar(target=nb_samples,
+                   print_report=True, print_summary=True,
+                   name="Extracting %d-D i-vector" % self.tv_dim)
+    # ====== init data files ====== #
+    if os.path.exists(path):
+      if override:
+        os.remove(path)
+    dat = MmapData(path=path, dtype=dtype, shape=(None, self.tv_dim))
+
+    # ====== run on CPU ====== #
+    def extract_ivec(idx):
+      vecs = []
+      for i in idx:
+        L = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+        L[self._itril] = np.dot(Z[i:i + 1], self.T_invS_Tt)
+        L += np.tril(L, -1).T + self.Im
+        # (tv_dim, tv_dim)
+        Cxx = linalg.inv(L)
+        # (tv_dim, 1)
+        B = np.dot(self.T_invS, F[i:i + 1].T)
+        # (tv_dim, 1)
+        Ex = np.dot(Cxx, B)
+        # (1, tv_dim)
+        ivec = Ex.T
+        if ivec.dtype != dtype:
+          ivec = ivec.astype(dtype)
+        vecs.append(ivec)
+      return np.concatenate(vecs, axis=0)
+    mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
+              ncpu=self.ncpu,
+              batch=max(12, self.batch_size_cpu))
+    for i in mpi:
+      dat.append(i)
+      prog.add(i.shape[0])
+    # ====== flush and close ====== #
+    dat.flush()
+    dat.close()
 
   def fit(self, X, y=None):
     """ Extract i-vector from trained T-matrix

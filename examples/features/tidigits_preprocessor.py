@@ -1,30 +1,38 @@
 from __future__ import print_function, division, absolute_import
 
-from odin.utils import ArgController
-args = ArgController(
-).add('--reset', 'force re-run the wave convertion, and wave dataset preprocessing', False
-).parse()
-
 import matplotlib
 matplotlib.use('Agg')
 
 import os
 os.environ['ODIN'] = "cpu,float32"
 import shutil
-from six.moves import cPickle
 
 import numpy as np
 
-from odin.visual import plot_save
+from odin import fuel as F
 from odin import preprocessing as pp
-from odin import nnet as N, fuel as F, backend as K
-from odin.utils import get_all_files, get_all_ext, exec_commands, cpu_count
+from odin.utils import (get_all_files, get_all_ext, exec_commands,
+                        MPI, cpu_count, Progbar)
 
 README = \
 """
 Original sample rate: 20,000 Hz
 Downsampled sample rate: 8,000 Hz
 
+Saved WAV file format:
+    * [train|test]
+    * [m|w|b|g] (alias for man, women, boy, girl)
+    * [age]
+    * [dialectID]
+    * [speakerID]
+    * [production]
+    * [digit_sequence]
+    => "train_g_08_17_as_a_4291815"
+
+    train material, child "g"irl, age is "08", dialect group is "17",
+    speaker code "as", "a" is first production,
+    digit sequence "4-2-9-1-8-1-5".
+--------------------
 Category       Symbol    Number    Age Range (years)
   Man            M        111           21 - 70
   Woman          W        114           17 - 59
@@ -50,19 +58,6 @@ Example of original data:
      test material, adult female, speaker code "pf",
      digit sequence "one", "b" is second production.
 
-Saved WAV file format:
-    * [train|test]
-    * [m|w|b|g] (alias for man, women, boy, girl)
-    * [age]
-    * [dialectID]
-    * [speakerID]
-    * [production]
-    * [digit_sequence]
-    => "train_g_08_17_as_a_4291815.wav"
-
-    train material, child "g"irl, age is "08", dialect group is "17",
-    speaker code "as", "a" is first production,
-    digit sequence "4-2-9-1-8-1-5".
 """
 
 
@@ -70,7 +65,6 @@ Saved WAV file format:
 # CONST
 # ===========================================================================
 inpath = "/mnt/sdb1/TIDIGITS"
-outpath = '/home/trung/data/tidigits'
 wav_path = os.path.join(inpath, "wave")
 wav_ds = os.path.join(inpath, "raw")
 infopath = os.path.join(inpath, 'data/children/doc/spkrinfo.txt')
@@ -103,95 +97,63 @@ usage_map = {
     "TRN": "train"
 }
 
-
 def get_name(path):
-    # integrate all info into the name
-    usage, gender, ID, digits = path.split('/')[-4:]
-    production = digits[-5]
-    digits = digits[:-5]
-    gender = gender_map[gender]
-    gender_, age_, dialect_, usage_ = info[ID]
-    usage_ = usage_map[usage_]
-    assert usage == usage_ and gender == gender_, path
-    name = '%s_%s_%s_%s_%s_%s_%s.wav' % \
-        (usage, gender, age_, dialect_, ID, production, digits)
-    return name
-
+  # integrate all info into the name
+  usage, gender, ID, digits = path.split('/')[-4:]
+  production = digits[-5]
+  digits = digits[:-5]
+  gender = gender_map[gender]
+  gender_, age_, dialect_, usage_ = info[ID]
+  usage_ = usage_map[usage_]
+  assert usage == usage_ and gender == gender_, path
+  name = '%s_%s_%s_%s_%s_%s_%s.wav' % \
+      (usage, gender, age_, dialect_, ID, production, digits)
+  return name
 # ===========================================================================
 # Convert all SPHERE to wav using sph2pipe
 # ===========================================================================
+if os.path.exists(wav_path):
+  shutil.rmtree(wav_path)
 # ====== convert all compress audio to .wav using sph2pipe ====== #
 if not os.path.exists(wav_path):
-    os.mkdir(wav_path)
-    cmds = ["sph2pipe %s %s -f rif" % (path, os.path.join(wav_path, get_name(path)))
-            for path in audio_files]
-    exec_commands(cmds, print_progress=True)
+  os.mkdir(wav_path)
+  cmds = ["sph2pipe %s %s -f rif" % (path, os.path.join(wav_path, get_name(path)))
+          for path in audio_files]
+
+  def mpi_fn(cmd):
+    exec_commands(cmd, print_progress=False)
+    yield len(cmd)
+  mpi = MPI(jobs=cmds, func=mpi_fn,
+            ncpu=cpu_count() - 1, batch=12)
+  prog = Progbar(target=len(cmds),
+                 print_report=True, print_summary=True,
+                 name='Converting .sph to .wav')
+  for i in mpi:
+    prog.add(i)
+# ===========================================================================
+# store everything in one dataset
+# ===========================================================================
+if os.path.exists(wav_ds):
+  shutil.rmtree(wav_ds)
 # ====== create new segments list ====== #
-segments = get_all_files(wav_path, filter_func=lambda f: f[-4:] == '.wav')
-# ====== store everything in one dataset ====== #
-if args.reset and os.path.exists(wav_ds):
-    shutil.rmtree(wav_ds)
+segments = get_all_files(wav_path,
+                         filter_func=lambda f: f[-4:] == '.wav')
 if not os.path.exists(wav_ds):
-    wave = pp.FeatureProcessor(segments,
-        extractor=[
-            pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
-                                  remove_dc_n_dither=False, preemphasis=0.97),
-            pp.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
-                             keys='path'),
-            pp.AsType({'raw': 'float16'})
-        ],
-        path=wav_ds, ncache=300, ncpu=8, override=True)
-    wave.run()
-    pp.validate_features(wave, '/tmp/tidigits_wave', override=True,
-                         nb_samples=8)
-    with open(os.path.join(wav_ds, 'README'), 'w') as f:
-        f.write(README)
-# ===========================================================================
-# Acoustic feature extractor
-# ===========================================================================
-# ====== plot sampling of files ====== #
-ds = F.Dataset(wav_ds, read_only=True)
-print(ds)
-# ====== processing ====== #
-frame_length = 0.025
-step_length = 0.005
-nfft = 512
-nmels = 40
-nceps = 20
-padding = False
-extractors = [
-    pp.speech.RawDSReader(path_or_ds=ds),
-    pp.speech.SpectraExtractor(frame_length=frame_length, step_length=step_length,
-                               nfft=nfft, nmels=nmels, nceps=nceps,
-                               fmin=64, fmax=None, padding=padding),
-    pp.speech.PitchExtractor(frame_length=frame_length, step_length=step_length,
-                             threshold=1., f0=True, algo='rapt'),
-    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25, feat_name='energy'),
-    pp.speech.RASTAfilter(rasta=True, sdc=1),
-    pp.DeltaExtractor(width=9, order=(1, 2), axis=0,
-                      feat_name=('mspec', 'qmspec')),
-    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           feat_name=('mspec', 'mfcc',
-                                      'qspec', 'qmfcc', 'qmspec')),
-    pp.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc',
-                                 'qspec', 'qmspec', 'qmfcc',
-                                 'pitch', 'f0', 'vad', 'energy')),
-    pp.RemoveFeatures(feat_name=('raw')),
-    pp.RunningStatistics(),
-    pp.AsType({'spec': 'float16', 'mspec': 'float16', 'mfcc': 'float16',
-               'qspec': 'float16', 'qmspec': 'float16', 'qmfcc': 'float16',
-               'pitch': 'float16', 'f0': 'float16',
-               'vad': 'float16', 'energy': 'float16'})
-]
-acous = pp.FeatureProcessor(jobs=ds['indices'].keys(), extractor=extractors,
-                            path=outpath, pca=True, ncache=500,
-                            ncpu=(cpu_count() - 1), override=True)
-acous.run()
-pp.validate_features(acous, path='/tmp/tidigits', nb_samples=12, override=True)
-# copy README
-with open(os.path.join(outpath, 'README'), 'w') as f:
+  wave = pp.FeatureProcessor(segments,
+      extractor=[
+          pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
+                                remove_dc_n_dither=False, preemphasis=None),
+          pp.base.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
+                                keys='path'),
+          pp.base.AsType(type_map={'raw': 'float16'})
+      ],
+      path=wav_ds, ncache=300, ncpu=8, override=True)
+  wave.run()
+  pp.validate_features(wave, '/tmp/tidigits_wave', override=True,
+                       nb_samples=8)
+  with open(os.path.join(wav_ds, 'README'), 'w') as f:
     f.write(README)
-# ====== validate saved dataset ====== #
-ds = F.Dataset(outpath, read_only=True)
+# ====== validate the data ====== #
+ds = F.Dataset(wav_ds, read_only=True)
 print(ds)
 ds.close()
