@@ -16,7 +16,9 @@ from .helpers import set_shape, is_tensor, is_training
 
 floatX = get_floatX()
 
-
+# ===========================================================================
+# Helper
+# ===========================================================================
 def _normalize_axis(axis, ndim):
   if axis is None:
     return None
@@ -25,6 +27,51 @@ def _normalize_axis(axis, ndim):
             for a in axis])
   return axis % ndim
 
+# ===========================================================================
+# Conversion
+# ===========================================================================
+def to_llh(x, name=None):
+  ''' Convert a matrix of probabilities into log-likelihood
+  :math:`LLH = log(prob(data|target))`
+  '''
+  # ====== numpy ====== #
+  if not is_tensor(x):
+    x /= np.sum(x, axis=-1, keepdims=True)
+    x = np.clip(x, 10e-8, 1. - 10e-8)
+    return np.log(x)
+  # ====== Tensorflow ====== #
+  else:
+    with tf.name_scope(name, "log_likelihood", [x]):
+      x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
+      x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
+      return tf.log(x)
+
+def to_llr(x, name=None):
+  ''' Convert a matrix of probabilities into log-likelihood ratio
+  :math:`LLR = log(\\frac{prob(data|target)}{prob(data|non-target)})`
+  '''
+  # ====== numpy ====== #
+  if not is_tensor(x):
+    x /= np.sum(x, axis=-1, keepdims=True)
+    x = np.clip(x, 10e-8, 1. - 10e-8)
+    return np.log(x / (np.cast(1., x.dtype) - x))
+  # ====== tensorflow ====== #
+  else:
+    with tf.name_scope(name, "log_likelihood_ratio", [x]):
+      x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
+      x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
+      return tf.log(x / (tf.cast(1., x.dtype.base_dtype) - x))
+
+def to_nonzeros(x, value):
+  if is_tensor(x):
+    x = tf.where(tf.equal(x, 0.), tf.zeros_like(x) + value, x)
+  else:
+    x[x == 0] = value
+  return x
+
+# ===========================================================================
+# Allocation
+# ===========================================================================
 def tril(m, k=0, name='LowerTriangle'):
   """
   Lower triangle of an array.

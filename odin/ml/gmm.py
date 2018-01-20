@@ -1780,7 +1780,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     dtype = self.dtype if dtype is None else np.dtype(dtype)
     # ====== prepare inputs ====== #
     if indices is not None and X is not None:
-      pass
+      raise NotImplementedError
     elif Z is not None and F is not None:
       nb_samples = Z.shape[0]
       if Z.shape[0] != F.shape[0]:
@@ -1790,7 +1790,6 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       raise ValueError("Input arguments must contain `X` and `indices`, or "
                        "`Z` and `F`.")
     # ====== Progbar ====== #
-    name_list = []
     prog = Progbar(target=nb_samples,
                    print_report=True, print_summary=True,
                    name="Extracting %d-D i-vector" % self.tv_dim)

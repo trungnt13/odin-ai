@@ -8,7 +8,7 @@ from odin.config import EPS
 
 from .role import (AccuracyValue, return_roles, DifferentialLoss,
                    ConfusionMatrix, add_role)
-from .tensor import argsort, dimshuffle
+from .tensor import argsort, dimshuffle, to_nonzeros
 from .helpers import is_tensor
 
 
@@ -65,14 +65,122 @@ def LER(y_true, y_pred, return_mean=True):
     return np.mean(results)
   return results
 
+# ===========================================================================
+# Similarity measurement
+# ===========================================================================
+@return_roles(roles=DifferentialLoss)
+def contrastive_loss(y_true, y_pred, margin=1, name=None):
+  """
+  Reference
+  ---------
+  [1] http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
+  """
+  # ====== tensorflow Tensor ====== #
+  if is_tensor(y_true) and is_tensor(y_pred):
+    with tf.name_scope(name, 'contrastive_loss', [y_true, y_pred]):
+      loss = tf.reduce_mean(
+          y_true * tf.square(y_pred) +
+          (1 - y_true) * tf.square(tf.maximum(margin - y_pred, 0)))
+  # ====== ndarray or similar ====== #
+  else:
+    loss = np.mean(y_true * np.square(y_pred) +
+                  (1 - y_true) * np.square(np.maximum(margin - y_pred, 0)))
+  return loss
+
+@return_roles(roles=DifferentialLoss)
+def triplet_loss(y_true, y_pred):
+  pass
+
+def contrastive_loss_andre(left_feature, right_feature, label, margin):
+  """
+  Compute the contrastive loss as in
+  https://gitlab.idiap.ch/biometric/xfacereclib.cnn/blob/master/xfacereclib/cnn/scripts/experiment.py#L156
+  With Y = [-1 +1] --> [POSITIVE_PAIR NEGATIVE_PAIR]
+  L = log( m + exp( Y * d^2)) / N
+  **Parameters**
+   left_feature: First element of the pair
+   right_feature: Second element of the pair
+   label: Label of the pair (0 or 1)
+   margin: Contrastive margin
+  **Returns**
+   Return the loss operation
+  """
+
+  with tf.name_scope("contrastive_loss_andre"):
+    label = tf.to_float(label)
+    d = compute_euclidean_distance(left_feature, right_feature)
+
+    loss = tf.log(tf.exp(tf.mul(label, d)))
+    loss = tf.reduce_mean(loss)
+
+    # Within class part
+    genuine_factor = tf.mul(label - 1, 0.5)
+    within_class = tf.reduce_mean(tf.log(tf.exp(tf.mul(genuine_factor, d))))
+
+    # Between class part
+    impostor_factor = tf.mul(label + 1, 0.5)
+    between_class = tf.reduce_mean(tf.log(tf.exp(tf.mul(impostor_factor, d))))
+
+    # first_part = tf.mul(one - label, tf.square(d))  # (Y-1)*(d^2)
+    return loss, between_class, within_class
+
+@return_roles(DifferentialLoss)
+def cosine_similarity(y_true, y_pred, weights=1.0,
+                      unit_norm=True, one_vs_all=True,
+                      name=None):
+  """
+  Parameters
+  ----------
+  y_true : {Tensor, ndarray}
+      enrollment vectors, one sample per row
+      (i.e. shape=(nb_samples, nb_features))
+  y_pred : {Tensor, ndarray}
+      test vectors, one sample per row
+      (i.e. shape=(nb_samples, nb_features))
+  unit_norm : bool (default: True)
+      if True, normalize length of each vector to 1
+  one_vs_all : bool (default: True)
+      if True, calculate the similarity of one to all other
+      samples, otherwise, it is `one_vs_one`
+
+  Return
+  ------
+  scores : score matrix,
+      comparing all models against all tests
+
+  """
+  # ====== tensorflow Tensor ====== #
+  if is_tensor(y_true) and is_tensor(y_pred):
+    with tf.name_scope(name, "cosine_similarity", (y_true, y_pred, weights)):
+      y_pred.get_shape().assert_is_compatible_with(y_true.get_shape())
+      if unit_norm:
+        y_true /= to_nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True), 1.)
+        y_pred /= to_nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True), 1.)
+      if one_vs_all:
+        scores = tf.matmul(tf.transpose(y_true), y_pred)
+      else:
+        scores = 1 - tf.reduce_sum(tf.multiply(y_true, y_pred),
+                                   axis=(-1,), keep_dims=True)
+  # ====== ndarray or similar ====== #
+  else:
+    assert y_true.shape == y_pred.shape
+    if unit_norm:
+      y_true /= to_nonzeros(np.linalg.norm(y_true, ord=2, axis=-1, keepdims=True), 1.)
+      y_pred /= to_nonzeros(np.linalg.norm(y_pred, ord=2, axis=-1, keepdims=True), 1.)
+    if one_vs_all:
+      scores = np.dot(y_true.T, y_pred)
+    else:
+      scores = np.sum(y_true * y_pred,
+                      axis=(-1,), keepdims=True)
+  return scores
 
 # ===========================================================================
 # Losses
 # ===========================================================================
 @return_roles(DifferentialLoss)
-def bayes_crossentropy(y_pred, y_true, nb_classes=None, reduction=tf.reduce_mean,
-                       name="BayesCrossentropy"):
-  with tf.variable_scope(name):
+def bayes_crossentropy(y_true, y_pred, nb_classes=None, reduction=tf.reduce_mean,
+                       name=None):
+  with tf.name_scope(name, "bayes_crossentropy", [y_true, y_pred]):
     y_pred_shape = y_pred.get_shape()
     if y_pred_shape.ndims == 1 or y_pred_shape[-1].value == 1:
       if y_pred_shape.ndims == 1:
@@ -102,104 +210,17 @@ def bayes_crossentropy(y_pred, y_true, nb_classes=None, reduction=tf.reduce_mean
     loss = - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
     return reduction(loss)
 
-
 @return_roles(DifferentialLoss)
-def bayes_binary_crossentropy(y_pred, y_true):
+def bayes_binary_crossentropy(y_true, y_pred):
   y_pred = tf.concat([1 - y_pred, y_pred], axis=-1)
   y_true = tf.one_hot(tf.cast(y_true, 'int32'), depth=2)
   return bayes_crossentropy(y_pred, y_true, nb_classes=2)
 
-
-@return_roles(DifferentialLoss)
-def binary_hinge_loss(predictions, targets, delta=1, log_odds=None,
-                      binary=True):
-  """Computes the binary hinge loss between predictions and targets.
-  .. math:: L_i = \\max(0, \\delta - t_i p_i)
-  Parameters
-  ----------
-  predictions : Theano tensor
-      Predictions in (0, 1), such as sigmoidal output of a neural network
-      (or log-odds of predictions depending on `log_odds`).
-  targets : Theano tensor
-      Targets in {0, 1} (or in {-1, 1} depending on `binary`), such as
-      ground truth labels.
-  delta : scalar, default 1
-      The hinge loss margin
-  log_odds : bool, default None
-      ``False`` if predictions are sigmoid outputs in (0, 1), ``True`` if
-      predictions are sigmoid inputs, or log-odds. If ``None``, will assume
-      ``True``, but warn that the default will change to ``False``.
-  binary : bool, default True
-      ``True`` if targets are in {0, 1}, ``False`` if they are in {-1, 1}
-  Returns
-  -------
-  Theano tensor
-      An expression for the element-wise binary hinge loss
-  Notes
-  -----
-  This is an alternative to the binary cross-entropy loss for binary
-  classification problems.
-  Note that it is a drop-in replacement only when giving ``log_odds=False``.
-  Otherwise, it requires log-odds rather than sigmoid outputs. Be aware that
-  depending on the Theano version, ``log_odds=False`` with a sigmoid
-  output layer may be less stable than ``log_odds=True`` with a linear layer.
-  """
-  if log_odds is None:  # pragma: no cover
-    raise FutureWarning(
-        "The `log_odds` argument to `binary_hinge_loss` will change "
-        "its default to `False` in a future version. Explicitly give "
-        "`log_odds=True` to retain current behavior in your code, "
-        "but also check the documentation if this is what you want.")
-    log_odds = True
-  if not log_odds:
-    predictions = tf.log(predictions / (1 - predictions))
-  if binary:
-    targets = 2 * targets - 1
-  predictions, targets = align_targets(predictions, targets)
-  return theano.tensor.nnet.relu(delta - predictions * targets)
-
-
-@return_roles(DifferentialLoss)
-def multiclass_hinge_loss(predictions, targets, delta=1):
-  """Computes the multi-class hinge loss between predictions and targets.
-  .. math:: L_i = \\max_{j \\not = p_i} (0, t_j - t_{p_i} + \\delta)
-  Parameters
-  ----------
-  predictions : Theano 2D tensor
-      Predictions in (0, 1), such as softmax output of a neural network,
-      with data points in rows and class probabilities in columns.
-  targets : Theano 2D tensor or 1D tensor
-      Either a vector of int giving the correct class index per data point
-      or a 2D tensor of one-hot encoding of the correct class in the same
-      layout as predictions (non-binary targets in [0, 1] do not work!)
-  delta : scalar, default 1
-      The hinge loss margin
-  Returns
-  -------
-  Theano 1D tensor
-      An expression for the item-wise multi-class hinge loss
-  Notes
-  -----
-  This is an alternative to the categorical cross-entropy loss for
-  multi-class classification problems
-  """
-  num_cls = predictions.shape[1]
-  if targets.ndim == predictions.ndim - 1:
-    targets = theano.tensor.extra_ops.to_one_hot(targets, num_cls)
-  elif targets.ndim != predictions.ndim:
-    raise TypeError('rank mismatch between targets and predictions')
-  corrects = predictions[targets.nonzero()]
-  rest = theano.tensor.reshape(predictions[(1 - targets).nonzero()],
-                               (-1, num_cls - 1))
-  rest = theano.tensor.max(rest, axis=1)
-  return theano.tensor.nnet.relu(rest - corrects + delta)
-
-
 @return_roles(AccuracyValue)
-def binary_accuracy(y_pred, y_true, threshold=0.5, reduction=tf.reduce_mean,
-                    name="BinaryAccuracy"):
+def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
+                    name=None):
   """ Non-differentiable """
-  with tf.variable_scope(name):
+  with tf.name_scope(name, "binary_accuracy", [y_pred, y_true, threshold]):
     if y_pred.get_shape().ndims > 1:
       y_pred = tf.reshape(y_pred, (-1,))
     if y_true.get_shape().ndims > 1:
@@ -212,10 +233,10 @@ def binary_accuracy(y_pred, y_true, threshold=0.5, reduction=tf.reduce_mean,
 
 
 @return_roles(AccuracyValue)
-def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
-                         name="CategoricalAccuracy"):
+def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
+                         name=None):
   """ Non-differentiable """
-  with tf.variable_scope(name):
+  with tf.name_scope(name, "categorical_accuracy", [y_true, y_pred]):
     if y_true.get_shape().ndims == y_pred.get_shape().ndims:
       y_true = tf.argmax(y_true, axis=-1)
     elif y_true.get_shape().ndims != y_pred.get_shape().ndims - 1:
@@ -233,7 +254,7 @@ def categorical_accuracy(y_pred, y_true, top_k=1, reduction=tf.reduce_mean,
 
 
 def confusion_matrix(y_true, y_pred, labels, normalize=False,
-                     name='ConfusionMatrix'):
+                     name=None):
   """
   Computes the confusion matrix of given vectors containing
   actual observations and predicted observations.
@@ -272,7 +293,7 @@ def confusion_matrix(y_true, y_pred, labels, normalize=False,
       cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
     return cm
   # ====== tensorflow tensor ====== #
-  with tf.variable_scope(name):
+  with tf.name_scope(name, 'confusion_matrix', [y_true, y_pred]):
     from tensorflow.contrib.metrics import confusion_matrix as tf_cm
     if y_true.get_shape().ndims == 2:
       y_true = tf.argmax(y_true, -1)
@@ -299,39 +320,9 @@ def confusion_matrix(y_true, y_pred, labels, normalize=False,
 def detection_matrix(y_true, y_pred):
   pass
 
-
-def to_llr(x, name="LogLikelihoodRatio"):
-  ''' Convert a matrix of probabilities into log-likelihood ratio
-  :math:`LLR = log(\\frac{prob(data|target)}{prob(data|non-target)})`
-  '''
-  if not is_tensor(x):
-    x /= np.sum(x, axis=-1, keepdims=True)
-    x = np.clip(x, 10e-8, 1. - 10e-8)
-    return np.log(x / (np.cast(1., x.dtype) - x))
-  else:
-    with tf.variable_scope(name):
-      x /= tf.reduce_sum(x, axis=-1, keepdims=True)
-      x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
-      return tf.log(x / (tf.cast(1., x.dtype.base_dtype) - x))
-
-
 # ===========================================================================
 # Speech task metrics
 # ===========================================================================
-def to_llh(x):
-  ''' Convert a matrix of probabilities into log-likelihood
-  :math:`LLH = log(prob(data|target))`
-  '''
-  if not is_tensor(x):
-    x /= np.sum(x, axis=-1, keepdims=True)
-    x = np.clip(x, 10e-8, 1. - 10e-8)
-    return np.log(x)
-  else:
-    x /= tf.reduce_sum(x, axis=-1, keepdims=True)
-    x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
-    return tf.log(x)
-
-
 def compute_Cavg(y_llr, y_true, cluster_idx=None,
                  Ptrue=0.5, Cfa=1., Cmiss=1.,
                  probability_input=False):
