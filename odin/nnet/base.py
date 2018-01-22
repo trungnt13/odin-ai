@@ -23,11 +23,17 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
                         flatten_list, get_all_files, is_pickleable,
                         FuncDesc, dummy_formatter, type_path,
-                        get_module_from_path)
+                        get_module_from_path, wprint)
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
 
+
+# ===========================================================================
+# Other helpers
+# ===========================================================================
+def _get_vars_footprint(vars):
+  return ';'.join([v.name for v in vars])
 
 # ===========================================================================
 # Global NNOp manager
@@ -541,8 +547,32 @@ class NNOp(object):
     # any possibility of running tensorflow with multiprocessing
     # => store the _restore_vars_path for later, and restore
     # the variable when the NNOp is actually in used.
-    self._restore_vars_path = None
-    self._delete_vars_folder = False
+    self._set_restore_info(None, False)
+
+  # ==================== variable restoring ==================== #
+  def _set_restore_info(self, vars_path, delete_after):
+    self._restore_vars_path = vars_path
+    self._delete_vars_folder = bool(delete_after)
+    return self
+
+  def _restore_variables(self):
+    """ This method can be called anywhere to make sure
+    the variable related to this NNOp is restored after
+    pickling.
+    """
+    if hasattr(self, '_restore_vars_path') and \
+    self._restore_vars_path is not None:
+      folder_path = os.path.dirname(self._restore_vars_path)
+      if os.path.exists(folder_path):
+        K.restore_variables(self._restore_vars_path)
+        # delte cached folder if necessary
+        if self._delete_vars_folder:
+          shutil.rmtree(folder_path)
+      else:
+        wprint("NNOp: '%s' cannot restore variables from path: '%s'"
+               (self.name, folder_path))
+      # reset info
+      self._set_restore_info(None, False)
 
   # ==================== pickling method ==================== #
   def __getstate__(self):
@@ -574,22 +604,6 @@ class NNOp(object):
   def __getnewargs__(self):
     self._new_args_called = True
     return ('[__name__]' + self.name,)
-
-  def _restore_variables(self):
-    """ This method can be called anywhere to make sure
-    the variable related to this NNOp is restored after
-    pickling.
-    """
-    if hasattr(self, '_restore_vars_path') and \
-    self._restore_vars_path is not None:
-      folder_path = os.path.dirname(self._restore_vars_path)
-      if os.path.exists(folder_path):
-        K.restore_variables(self._restore_vars_path)
-        # delte cached folder if necessary
-        if self._delete_vars_folder:
-          shutil.rmtree(folder_path)
-        self._restore_vars_path = None
-        self._delete_vars_folder = False
 
   # ==================== properties ==================== #
   def get(self, name, nnop=False):
@@ -761,19 +775,6 @@ class NNOp(object):
       self._transpose_ops._transpose_ops = self
     return self._transpose_ops
 
-  def initialize_all_variables(self):
-    """Manually initialize all variables (basically, all Variables
-    within this NNOp scope are initialized when you call
-    `NNOp.variables`.
-
-    This is just another reasonable shortcut.
-
-    Return
-    ------
-    All initialized Variables
-    """
-    return self.variables
-
   @property
   def variables(self):
     """ Get all variables related to this Op, which include:
@@ -781,8 +782,16 @@ class NNOp(object):
      - Variables belong to related NNOp within this Op.
      - Variables belone to related Tensor within this Op.
      - Variables within the scope of this NNOp.
+
+    Note
+    ----
+    initialize all variables (basically, all Variables
+    within this NNOp scope are initialized when you call
+    `NNOp.variables`.
     """
-    self._restore_variables()  # restore variable first
+    # ====== # restore variable first ====== #
+    self._restore_variables()
+    # ====== get all variables ====== #
     global_vars = {v.name: v for v in K.get_all_variables()}
     all_vars = []
     tensors = []
@@ -801,8 +810,9 @@ class NNOp(object):
     # all variables within the scope
     all_vars += K.get_all_variables(scope=self.name)
     all_vars = tuple(sorted(set(all_vars), key=lambda x: x.name))
-    # make sure all variables are initialized
-    vars_footprint = ';'.join([v.name for v in all_vars])
+    # make sure all variables are initialized, reduce
+    # the call to initialization using vars_footprint
+    vars_footprint = _get_vars_footprint(all_vars)
     if vars_footprint != self._is_initialized_all_variables:
       self._is_initialized_all_variables = vars_footprint
       K.initialize_all_variables(all_vars)
@@ -1006,9 +1016,10 @@ class NNOp(object):
     return (desc, data)
 
   def apply(self, *args, **kwargs):
-    # self.name can contain Model varable scope, hence,
-    # remove the scope here
-    self._restore_variables()  # restore variable first
+    # ====== restore variable first ====== #
+    self._restore_variables()
+    # ====== self.name can contain Model varable scope, hence,
+    # remove the scope here  ====== #
     op_name = self.name.split('/')[-1]
     with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
       # ====== special case, Op name mis match variable scope ====== #
@@ -1096,17 +1107,17 @@ class NNOp(object):
       # Recall cached output
       if footprint in self._cache_outputs:
         y = self._cache_outputs[footprint]
-      # First time generate output given footprint
-      else:
+      else: # First time generate output given footprint
         y = self._apply(*op_args, **op_kwargs)
         # record cahced return
         self._cache_outputs[footprint] = y
+      # automatically initialize all variable within this NNOp scope
+      self.variables
       # check if op_data given, then evaluate to get the results.
       if len(op_data) > 0:
         # only need to make sure all variables
         # initialized if we need to evaluate some
         # expressions.
-        self.initialize_all_variables()
         y = K.eval(y, feed_dict=op_data)
     # ====== reset the current information ====== #
     self._current_args = ()
@@ -1236,6 +1247,7 @@ class Lambda(NNOp):
    >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
    >>> f()
   """
+
   def __init__(self, func, funcT=None, var_init={}, **kwargs):
     super(Lambda, self).__init__(**kwargs)
     # check main function

@@ -390,19 +390,21 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0,
                 legend_ncol=3, legend_colspace=0.4,
                 ax=None, fontsize=8):
   '''Plot the amplitude envelope of a waveform.
+
   Parameters
   ----------
-  x: 1D array
-  y: 1D array
-  color: list
+  x: 1D-array (nb_samples,)
+  y: 1D-array (nb_samples,)
+  color: array (nb_samples)
       list of colors for each class, check `generate_random_colors`,
       length of color must be equal to `x` and `y`
-  marker: list
-      different marker for each color
+  marker: array (nb_samples,)
+      different marker for each color, default marker is '.'
   legend: dict
       mapping {[color][marker] -> name, ...}
       for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
       you can control the order of legend by using OrderDict
+
   '''
   from matplotlib import pyplot as plt
   default_color = 'b'

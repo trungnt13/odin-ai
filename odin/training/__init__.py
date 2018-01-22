@@ -503,9 +503,9 @@ class MainLoop(object):
         path to save the obj when the callback return save signal
     obj: object
         any pickle-able object you want to save
-    save_hist: boolean
-        if True, the History callback will be save together at the
-        save path but different file extension: '.hist'
+    variables : {list of tensorflow.Variable}
+        external variables will be saved together with the
+        model
     """
     self._save_path = path
     self._save_obj = obj
@@ -641,13 +641,15 @@ class MainLoop(object):
                   override=True)
 
   def _rollback(self):
-    if not self._allow_rollback: return
+    if not self._allow_rollback:
+      return
     # trigger event for callbacks
     self._callback.event(SIG_TRAIN_ROLLBACK)
     # default rollback procedure
     if self._save_path is not None and os.path.exists(self._save_path):
       add_notification("Rollback from:" + self._save_path)
-      N.deserialize(self._save_path)
+      # restore previous checkpoint immediately
+      N.deserialize(self._save_path, force_restore_vars=True)
 
   def _run(self):
     if self._main_task is None and len(self._evaltask) == 0:

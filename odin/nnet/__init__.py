@@ -54,7 +54,19 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
                      'output mode.')
   path_folder = '/tmp/tmp_%s' % uuid(length=12) \
       if path is None or output_mode == 'file' else path
+  # ====== getting save data and variables ====== #
+  vars = []
+  if save_variables:
+    for op in as_tuple(nnops):
+      if hasattr(op, 'variables'):
+        for v in as_tuple(op.variables):
+          if K.is_variable(v):
+            vars.append(v)
+  vars = list(set(vars + as_list(variables)))
   # ====== checking path ====== #
+  # It is important to remove the `path_folder` AFTER getting all
+  # the variables, since this can remove the path to restored
+  # variables required in `op.variables`
   if os.path.exists(path_folder):
     if os.path.isfile(path_folder):
       raise ValueError("path: '%s' is NOT a folder." % path_folder)
@@ -65,15 +77,6 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
     os.mkdir(path_folder)
   nnops_path = os.path.join(path_folder, 'nnops.ai')
   vars_path = os.path.join(path_folder, 'variables')
-  # ====== getting save data ====== #
-  vars = []
-  if save_variables:
-    for op in as_tuple(nnops):
-      if hasattr(op, 'variables'):
-        for v in as_tuple(op.variables):
-          if K.is_variable(v):
-            vars.append(v)
-  vars = list(set(vars + as_list(variables)))
   # save NNOps
   with open(nnops_path, 'wb') as f:
     cPickle.dump(nnops, f, protocol=cPickle.HIGHEST_PROTOCOL)
@@ -102,11 +105,11 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
   return path
 
 
-def deserialize(path, force_restore_vars=False):
+def deserialize(path, force_restore_vars=True):
   """
   Parameters
   ----------
-  force_restore_vars : bool
+  force_restore_vars : bool (default=True)
       if `False`, this is special tricks, the unpickled NNOp stay useless
       until its variables are restored,
       but if we restore the variables right away, it create a
@@ -125,7 +128,7 @@ def deserialize(path, force_restore_vars=False):
   """
   data = None
   path_folder = '/tmp/tmp_%s' % uuid(12)
-  delete_folder = True
+  delete_after = True
   # ====== check path ====== #
   if is_string(path):
     # path to a file
@@ -135,7 +138,7 @@ def deserialize(path, force_restore_vars=False):
     # path to a folder
     elif os.path.isdir(path):
       path_folder = path
-      delete_folder = False
+      delete_after = False
     else: # pickle string
       data = cPickle.loads(path)
   # given data
@@ -158,9 +161,8 @@ def deserialize(path, force_restore_vars=False):
     if force_restore_vars:
       K.restore_variables(vars_path)
       # delete cached folder
-      if delete_folder:
+      if delete_after:
         shutil.rmtree(path)
     else:
-      nnops._restore_vars_path = vars_path
-      nnops._delete_vars_folder = delete_folder
+      nnops._set_restore_info(vars_path, delete_after)
   return nnops

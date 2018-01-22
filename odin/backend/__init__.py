@@ -18,6 +18,7 @@ from .tensor import *
 from .activations import *
 from . import role
 from . import metrics
+from . import losses
 from . import optimizers
 from . import rand
 from . import rnn_cell
@@ -77,6 +78,14 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[],
 
 
 def initialize_all_variables(vars=None):
+  """ This function will automatically check if the variables
+  are initialized, and only perform initialization for
+  un-initialized variables.
+
+  Note
+  ----
+  Re-initialize an initialized variable will give it random values
+  """
   if vars is None:
     vars = get_all_variables()
   else:
@@ -84,11 +93,12 @@ def initialize_all_variables(vars=None):
             if is_variable(v)]
   # ====== check if variable not initialized ====== #
   init_info = eval([tf.is_variable_initialized(v) for v in vars])
-  vars = [v for v, inited in zip(vars, init_info) if not inited]
+  vars = [v for v, inited in zip(vars, init_info)
+          if not inited]
   # ====== build mapping graph -> list of vars ====== #
   graph = defaultdict(list)
-  for var in get_all_variables():
-    graph[var.graph].append(var)
+  for v in vars:
+    graph[v.graph].append(v)
   # ====== run the initialization ====== #
   for g, v in graph.items():
     get_session(graph=g).run([i.initializer for i in v])
@@ -125,82 +135,6 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
   # ====== Modify add name prefix ====== #
   plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
   return role.add_role(plh, roles)
-
-
-_saver = {}
-
-
-def save_variables(var_list, path, session=None):
-  """ This function only apply for trainable parameters """
-  if session is None:
-    session = get_session()
-  var_list = [v for v in set(as_tuple(var_list)) if is_variable(v)]
-  name = '|'.join(sorted([v.name for v in var_list]))
-  if name in _saver:
-    saver = _saver[name]
-  else:
-    saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
-        allow_empty=False)
-  # ====== save the variables ====== #
-  checkpoint = saver.save(session, path, global_step=None,
-      write_meta_graph=False, write_state=False)
-  # ====== save meta-info for recreate variable ====== #
-  var_meta = []
-  for v in var_list:
-    name = v.name.split(':')[0]
-    dtype = v.dtype.base_dtype.name
-    shape = v.get_shape().as_list()
-    var_meta.append((name, dtype, shape))
-  # ====== save the collections ====== #
-  collections = {var.name: role.get_roles(var, return_string=True)
-                 for var in var_list}
-  with open(path + '.collections', 'wb') as f:
-    cPickle.dump([collections, var_meta], f,
-                 protocol=cPickle.HIGHEST_PROTOCOL)
-  return checkpoint
-
-
-def save_graph(path, graph=None):
-  g = tf.summary.FileWriter(path)
-  if graph is None:
-    graph = get_session().graph
-  elif isinstance(graph, tf.Session):
-    graph = graph.graph
-  g.add_graph(graph)
-  g.flush()
-  g.close()
-
-
-def restore_variables(path, session=None):
-  if session is None:
-    session = get_session()
-  # ====== load and check var meta ====== #
-  with open(path + '.collections', 'rb') as f:
-    collections, var_meta = cPickle.load(f)
-  var_list = []
-  allvars = {v.name.split(':')[0]: v for v in get_all_variables()}
-  for name, dtype, shape in var_meta:
-    if name in allvars: # found predefined variable
-      var_list.append(allvars[name])
-    else: # create new variable
-      if tf.get_variable_scope().name:
-        raise RuntimeError("The current variable scope is: %s, you can "
-            "only restore variables from default scope."
-            % tf.get_variable_scope().name)
-      var_list.append(tf.get_variable(
-          shape=shape, name=name, dtype=dtype))
-  # ====== restore the variables ====== #
-  name = '|'.join(sorted([v.name for v in var_list]))
-  if name in _saver:
-    saver = _saver[name]
-  else:
-    saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
-        allow_empty=False)
-  saver.restore(session, path)
-  # ====== restore the collections ====== #
-  for v in var_list:
-    role.add_role(v, collections[v.name])
-
 
 def eval(x, feed_dict=None, options=None,
          run_metadata=None):
@@ -301,3 +235,77 @@ def eval(x, feed_dict=None, options=None,
                                     run_metadata=run_metadata)
   # ====== exception ====== #
   raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
+
+# ===========================================================================
+# IO helper
+# ===========================================================================
+_saver = {}
+
+def save_variables(var_list, path, session=None):
+  """ This function only apply for trainable parameters """
+  if session is None:
+    session = get_session()
+  var_list = [v for v in set(as_tuple(var_list)) if is_variable(v)]
+  name = '|'.join(sorted([v.name for v in var_list]))
+  if name in _saver:
+    saver = _saver[name]
+  else:
+    saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
+        allow_empty=False)
+  # ====== save the variables ====== #
+  checkpoint = saver.save(session, path, global_step=None,
+      write_meta_graph=False, write_state=False)
+  # ====== save meta-info for recreate variable ====== #
+  var_meta = []
+  for v in var_list:
+    name = v.name.split(':')[0]
+    dtype = v.dtype.base_dtype.name
+    shape = v.get_shape().as_list()
+    var_meta.append((name, dtype, shape))
+  # ====== save the collections ====== #
+  collections = {var.name: role.get_roles(var, return_string=True)
+                 for var in var_list}
+  with open(path + '.collections', 'wb') as f:
+    cPickle.dump([collections, var_meta], f,
+                 protocol=cPickle.HIGHEST_PROTOCOL)
+  return checkpoint
+
+def restore_variables(path, session=None):
+  if session is None:
+    session = get_session()
+  # ====== load and check var meta ====== #
+  with open(path + '.collections', 'rb') as f:
+    collections, var_meta = cPickle.load(f)
+  var_list = []
+  allvars = {v.name.split(':')[0]: v for v in get_all_variables()}
+  for name, dtype, shape in var_meta:
+    if name in allvars: # found predefined variable
+      var_list.append(allvars[name])
+    else: # create new variable
+      if tf.get_variable_scope().name:
+        raise RuntimeError("The current variable scope is: %s, you can "
+            "only restore variables from default scope."
+            % tf.get_variable_scope().name)
+      var_list.append(tf.get_variable(
+          shape=shape, name=name, dtype=dtype))
+  # ====== restore the variables ====== #
+  name = '|'.join(sorted([v.name for v in var_list]))
+  if name in _saver:
+    saver = _saver[name]
+  else:
+    saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
+        allow_empty=False)
+  saver.restore(session, path)
+  # ====== restore the collections ====== #
+  for v in var_list:
+    role.add_role(v, collections[v.name])
+
+def save_graph(path, graph=None):
+  g = tf.summary.FileWriter(path)
+  if graph is None:
+    graph = get_session().graph
+  elif isinstance(graph, tf.Session):
+    graph = graph.graph
+  g.add_graph(graph)
+  g.flush()
+  g.close()

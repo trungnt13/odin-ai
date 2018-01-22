@@ -14,6 +14,7 @@
 from __future__ import print_function, division, absolute_import
 import matplotlib
 matplotlib.use('Agg')
+
 import os
 os.environ['ODIN'] = 'gpu,float32,seed=12082518'
 
@@ -30,6 +31,7 @@ from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
                         Progbar, unique_labels, chain,
                         as_tuple_of_shape, stdio, ctext, ArgController)
+
 args = ArgController(
 ).add('-bs', 'batch size', '64'
 ).parse()
@@ -37,13 +39,13 @@ args = ArgController(
 # Const
 # ===========================================================================
 FEAT = ['mspec', 'sad']
-ds = F.Dataset(get_datasetpath('digit'), read_only=True)
-print(ds)
+PATH = get_datasetpath('digits')
+
+ds = F.Dataset(PATH, read_only=True)
 BATCH_SIZE = int(args.bs)
 MODEL_PATH = get_modelpath('tidigit', override=True)
 LOG_PATH = get_logpath('tidigit.log', override=True)
 stdio(LOG_PATH)
-
 
 # ===========================================================================
 # Helper
@@ -61,10 +63,7 @@ def extract_gender(x):
 
 
 def extract_digit(x):
-  i = x.split('_')[6]
-  if '_jackson_' in x and i == '0':
-    i = 'z'
-  return i
+  return x.split('_')[6]
 
 # ===========================================================================
 # Load and visual the dataset
@@ -128,7 +127,7 @@ recipes = [
 ]
 data = [ds[f] for f in FEAT]
 train = F.Feeder(F.DataDescriptor(data=data, indices=train),
-                 dtype='float32', ncpu=8,
+                 dtype='float32', ncpu=1,
                  buffer_size=len(digits),
                  batch_mode='batch')
 valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
@@ -136,32 +135,13 @@ valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
                  buffer_size=len(digits),
                  batch_mode='batch')
 test = F.Feeder(F.DataDescriptor(data=data, indices=test),
-                dtype='float32', ncpu=8,
+                dtype='float32', ncpu=1,
                 buffer_size=1,
                 batch_mode='file')
 train.set_recipes(recipes)
 valid.set_recipes(recipes)
 test.set_recipes(recipes)
 print(train)
-print(valid)
-print(test)
-# just to evaluate if we correctly estimate the right amount
-# of data in the FeederRecipes
-if True:
-  n = 0
-  for X, sad, y in train:
-    n += X.shape[0]
-  assert n == len(train)
-  #
-  n = 0
-  for name, idx, X, sad, y in test:
-    n += X.shape[0]
-  assert n == len(test)
-  #
-  n = 0
-  for X, sad, y in valid:
-    n += X.shape[0]
-  assert n == len(valid)
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -239,21 +219,28 @@ task.run()
 # ===========================================================================
 # Prediction
 # ===========================================================================
-y_true = []
-y_pred = []
-for outputs in Progbar(test, name="Evaluating",
-                       count_func=lambda x: x[-1].shape[0]):
-  name = str(outputs[0])
-  idx = int(outputs[1])
-  data = outputs[2:]
-  assert idx == 0
-  y_true.append(f_digits(name))
-  y_pred.append(f_pred(*data))
-y_true = np.array(y_true, dtype='int32')
-y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
-# ====== Acc ====== #
-print()
-print("Acc:", accuracy_score(y_true, y_pred))
-print("Confusion matrix:")
-print(print_confusion(confusion_matrix(y_true, y_pred), digits))
+def evaluate_feeder(feeder, title):
+  y_true = []
+  y_pred = []
+  for outputs in Progbar(feeder.set_batch(batch_mode='file'),
+                         name=title,
+                         print_report=True,
+                         print_summary=False,
+                         count_func=lambda x: x[-1].shape[0]):
+    name = str(outputs[0])
+    idx = int(outputs[1])
+    data = outputs[2:]
+    assert idx == 0
+    y_true.append(f_digits(name))
+    y_pred.append(f_pred(*data))
+  y_true = np.array(y_true, dtype='int32')
+  y_pred = np.argmax(np.array(y_pred, dtype='float32'), axis=-1)
+  # ====== Acc ====== #
+  print('============ %s ============' % ctext(name, 'cyan'))
+  print("Acc:", accuracy_score(y_true, y_pred))
+  print("Confusion matrix:")
+  print(print_confusion(confusion_matrix(y_true, y_pred), digits))
+
+evaluate_feeder(valid, title="Validation set")
+evaluate_feeder(test, title="Test set")
 print(LOG_PATH)
