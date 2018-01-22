@@ -267,8 +267,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   seed : int
       random seed for reproducible
   path : {str, None}
-      If given a path, save the model after every EM iteration
-      when fitting.
+      If given a path, save the model after everytime its
+      parameters changed (i.e. `maximization` or `gmm_mixup`
+      are called)
   name : {str, None}
       special name for this `Ivector` instance
 
@@ -1228,8 +1229,8 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   seed : int
       random seed for reproducible
   path : {str, None}
-      If given a path, save the model after every EM iteration
-      when fitting.
+      If given a path, save the model after everytime its
+      parameters changed (i.e. `maximization` is called)
   name : {str, None}
       special name for this `Ivector` instance
 
