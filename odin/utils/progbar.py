@@ -14,6 +14,7 @@ from collections import OrderedDict, defaultdict
 import numpy as np
 
 from odin.visual.bashplot import print_bar, print_confusion
+from .decorators import functionable
 
 try:
   from tqdm import __version__ as tqdm_version
@@ -142,6 +143,7 @@ class Progbar(object):
     self._report = OrderedDict()
     self._last_report = None
     self._last_print_time = None
+    self._epoch_summarizer = {}
     # ====== recording history ====== #
     # dictonary: {epoch_id: {key: [value1, value2, ...]}}
     self._epoch_hist = defaultdict(lambda: defaultdict(list))
@@ -225,6 +227,23 @@ class Progbar(object):
     dictonary: {epoch_id: {key: [value1, value2, ...]}}
     """
     return self._epoch_hist
+
+  def get_report(self, epoch=-1, key=None):
+    if epoch < 0:
+      epoch = self.nb_epoch + epoch - 1
+    return self._epoch_hist[epoch] if key is None else \
+    self._epoch_hist[epoch][key]
+
+  def set_summarizer(self, key, fn):
+    if not hasattr(fn, '__call__'):
+      raise ValueError('`fn` must be call-able.')
+    key = str(key)
+    self._epoch_summarizer[key] = functionable(func=fn)
+    return self
+
+  def set_name(self, name):
+    self._name = str(name)
+    return self
 
   def set_labels(self, labels):
     if labels is not None:
@@ -346,7 +365,9 @@ class Progbar(object):
     # create epoch summary
     for key, values in self._epoch_hist[self._epoch_idx].items():
       values = [v for v in values]
-      if isinstance(values[0], Number):
+      if key in self._epoch_summarizer: # provided summarizer
+        self._epoch_summary[self._epoch_idx][key] = self._epoch_summarizer[key](values)
+      elif isinstance(values[0], Number):
         self._epoch_summary[self._epoch_idx][key] = np.mean(values)
       elif isinstance(values[0], np.ndarray):
         self._epoch_summary[self._epoch_idx][key] = sum(v for v in values)
@@ -383,7 +404,8 @@ class Progbar(object):
       self.__pb.clear()
       self.__pb.moveto(-nlines)
     # ====== reset the last report ====== #
-    # because we already clean everythin, set _last_report=None prevent
+    # because we already clean everything,
+    # set _last_report=None prevent
     # further moveto(-nlines) in add()
     self._last_report = None
     return self

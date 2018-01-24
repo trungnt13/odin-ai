@@ -99,7 +99,7 @@ class _LabelsIndexing(object):
 # ===========================================================================
 # Main
 # ===========================================================================
-def one_hot(y, nb_classes=None):
+def one_hot(y, nb_classes=None, dtype='float32'):
   '''Convert class vector (integers from 0 to nb_classes)
   to binary class matrix, for use with categorical_crossentropy
 
@@ -108,15 +108,13 @@ def one_hot(y, nb_classes=None):
   if any class index in y is smaller than 0, then all of its one-hot
   values is 0.
   '''
-  y = np.asarray(y, dtype='int32')
-  if not nb_classes:
+  if 'int' not in str(y.dtype):
+    y = y.astype('int32')
+  if nb_classes is None:
     nb_classes = np.max(y) + 1
-  Y = np.zeros((len(y), nb_classes), dtype='int32')
-  for i, j in enumerate(y):
-    if j >= 0:
-      Y[i, j] = 1
-  return Y
-
+  else:
+    nb_classes = int(nb_classes)
+  return np.eye(nb_classes, dtype=dtype)[y]
 
 def unique_labels(y, key_func=None, return_labels=False):
   """

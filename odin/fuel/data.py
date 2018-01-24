@@ -46,7 +46,7 @@ def as_data(x):
   if isinstance(x, np.ndarray):
     return NdarrayData(x)
   if isinstance(x, (tuple, list)):
-    return DataIterator(x)
+    x = NdarrayData(np.array(x))
   raise ValueError('Cannot create Data object from given object:{}'.format(x))
 
 
@@ -601,7 +601,7 @@ class Data(object):
 # Array Data
 # ===========================================================================
 class NdarrayData(Data):
-  """docstring for NdarrayData"""
+  """ Simple wrapper for `numpy.ndarray` """
 
   def __init__(self, array):
     if not isinstance(array, np.ndarray):

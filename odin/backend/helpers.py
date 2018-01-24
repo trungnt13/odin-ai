@@ -181,9 +181,9 @@ def set_value(x, value, return_ops=False, name='SetValue'):
       the Op directly
   '''
   if isinstance(value, np.ndarray):
-    value = np.asarray(value, dtype=x.dtype.base_dtype)
+    value = value.astype(x.dtype.as_numpy_dtype)
   elif is_tensor(value):
-    value = tf.cast(value, dtype=x.dtype.base_dtype)
+    value = tf.cast(value, dtype=x.dtype)
   assign_op = tf.assign(x, value, name=name)
   if return_ops:
     return assign_op

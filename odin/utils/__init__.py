@@ -242,7 +242,7 @@ def to_bytes(x, nbytes=None, order='little'):
         type(x).__name__)
 
 
-def batching(n, batch_size):
+def batching(n, batch_size, seed=None):
   """
   Parameters
   ----------
@@ -255,9 +255,16 @@ def batching(n, batch_size):
   ------
   iteration: [(start, end), (start, end), ...]
   """
-  return ((i, min(i + batch_size, n))
-          for i in range(0, n + batch_size, batch_size)
-          if i < n)
+  # ====== no shuffling ====== #
+  if seed is None:
+    return ((i, min(i + batch_size, n))
+            for i in range(0, n + batch_size, batch_size)
+            if i < n)
+  batches = list(range(0, n + batch_size, batch_size))
+  np.random.seed(seed)
+  np.random.shuffle(batches)
+  return (((i, min(i + batch_size, n)))
+          for i in batches if i < n)
 
 
 def read_lines(file_path):
