@@ -100,12 +100,12 @@ FEAT = 'mspec'
 ds = F.Dataset(PATH, read_only=True)
 stdio(LOG_PATH)
 # ====== GMM trainign ====== #
-NMIX = 32
-GMM_NITER = 8
+NMIX = args.nmix
+GMM_NITER = 16
 GMM_DOWNSAMPLE = 4
 GMM_DTYPE = 'float64'
 # ====== IVEC training ====== #
-TV_DIM = 20
+TV_DIM = args.tdim
 TV_NITER = 16
 TV_DTYPE = 'float64'
 
