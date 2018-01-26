@@ -242,30 +242,46 @@ def to_bytes(x, nbytes=None, order='little'):
         type(x).__name__)
 
 
-def batching(n, batch_size, seed=None):
+def batching(batch_size, n=None, start=0, end=None, seed=None):
   """
   Parameters
   ----------
-  n: int
-      number of samples
   batch_size: int
       number of samples for 1 single batch.
+  n: {int, None}
+      number of samples
+  start : int (default: 0)
+      starting point of the iteration (in number of sample)
+  end : {int, None}
+      ending point of the iteration (in number of sample),
+      end = total_amount_of_sample if None
+  seed : {int, None}
+      random seed for shuffling the returned batches,
+      no shuffling performed if seed is None
 
   Return
   ------
   iteration: [(start, end), (start, end), ...]
   """
+  if end is None and n is None:
+    raise ValueError('you must provide either `end` or `n`')
+  if end is None:
+    end = n
+  start = int(start)
+  end = int(end)
+  assert end > start, "`end` must > `start`"
+  batch_size = int(batch_size)
   # ====== no shuffling ====== #
   if seed is None:
-    return ((i, min(i + batch_size, n))
-            for i in range(0, n + batch_size, batch_size)
-            if i < n)
-  batches = list(range(0, n + batch_size, batch_size))
+    return ((i, min(i + batch_size, end))
+            for i in range(start, end + batch_size, batch_size)
+            if i < end)
+  batches = list(range(start, end + batch_size, batch_size))
   np.random.seed(seed)
   np.random.shuffle(batches)
-  return (((i, min(i + batch_size, n)))
-          for i in batches if i < n)
-
+  return (((i, min(i + batch_size, end)))
+          for i in batches
+          if i < end)
 
 def read_lines(file_path):
   if not os.path.exists(file_path):

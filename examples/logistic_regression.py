@@ -1,33 +1,48 @@
 import os
 os.environ['ODIN'] = 'gpu,float32'
+import pickle
 
 import numpy as np
+
 from odin import ml
 from odin import fuel as F
-from odin.utils import get_datasetpath, unique_labels, ctext
+from odin.utils import ctext, ArgController
+from odin import visual as V
 
-# ===========================================================================
-# PATH
-# ===========================================================================
-PATH = get_datasetpath('digits', override=False)
-
+from sklearn.metrics import confusion_matrix, accuracy_score
+args = ArgController(
+).add('--reset', "re-run the fitting of the model", False
+).parse()
 # ===========================================================================
 # Const
 # ===========================================================================
-ds = F.Dataset(PATH, read_only=True)
-fn_label, labels = unique_labels(y=list(ds['indices'].keys()),
-                                 return_labels=True,
-                                 key_func=lambda x: x.split('_')[1])
-X = ds['mspec']
-y = []
-indices = sorted(ds['indices'], key=lambda x: x[1][0])
-for name, (start, end) in indices:
-  y += [fn_label(name)] * (end - start)
-y = np.array(y, dtype='int32')
-assert len(X) == len(y)
-print('#Labels:', ctext(labels, 'yellow'))
+ds = F.MNIST.load()
+print(ds)
+nb_classes = 10
+PATH = '/tmp/lore.ai'
 # ===========================================================================
 # Model
 # ===========================================================================
-f = ml.LogisticRegression(nb_classes=len(labels), tol=1e-2)
-f.fit(X, y)
+if not os.path.exists(PATH) or args.reset:
+  f = ml.LogisticRegression(nb_classes=nb_classes, tol=1e-4,
+                            fit_intercept=True, path=PATH,
+                            dtype='float32')
+  cross_validation = (ds['X_valid'], ds['y_valid'])
+  f.fit(X=ds['X_train'], y=ds['y_train'],
+        cv=cross_validation)
+else:
+  with open(PATH, 'rb') as f:
+    f = pickle.load(f)
+# ===========================================================================
+# Evaluation
+# ===========================================================================
+y_true = ds['y_test'][:]
+y_pred = f.predict(ds['X_test'])
+
+acc = accuracy_score(y_true, y_pred)
+cm = confusion_matrix(y_true, y_pred)
+
+print(ctext("======= Test set ========", 'cyan'))
+print("Accuracy:", acc)
+print("Confusion matrix:")
+print(V.print_confusion(arr=cm))

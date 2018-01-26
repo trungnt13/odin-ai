@@ -304,7 +304,7 @@ class Data(object):
       # custom batch_size
       start = _apply_approx(length, self._start)
       end = _apply_approx(length, self._end)
-      if start > length or end > length:
+      if not (0 <= start < end <= length):
         raise ValueError('`start`={} or `end`={} excess `data_size`={}'
                          ''.format(start, end, length))
       # ====== create batch ====== #

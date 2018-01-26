@@ -3,6 +3,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import inspect
 from collections import Mapping
+from contextlib import contextmanager
 from six.moves import cPickle, builtins
 
 from odin.utils import is_string, is_path, as_tuple
@@ -23,8 +24,16 @@ from . import optimizers
 from . import rand
 from . import rnn_cell
 
+@contextmanager
+def variable_dtype(dtype):
+  """Temporary change the default dtype for creating variable using ODIN"""
+  global floatX
+  _old_floatX = str(floatX)
+  floatX = dtype
+  yield
+  floatX = _old_floatX
 
-def variable(value=None, shape=None, dtype=floatX, name=None, roles=[],
+def variable(value=None, shape=None, dtype=None, name=None, roles=[],
              initialize=False):
   '''Instantiates a tensor, automatically initialize the variable
   in tensorflow
@@ -49,6 +58,8 @@ def variable(value=None, shape=None, dtype=floatX, name=None, roles=[],
   # check name and value
   if value is not None:
     value = np.array(value)
+  if dtype is None:
+    dtype = floatX
   #### Found cached variable, just load new value into it
   if name is not None:
     for v in get_all_variables(scope=tf.get_variable_scope().name,
