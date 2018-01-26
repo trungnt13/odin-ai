@@ -41,8 +41,8 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
 # ===========================================================================
 args = ArgController(
 ).add('-task', '0-gender,1-dialect,2-digit', 0
-).add('-nmix', "Number of GMM mixture", 512
-).add('-tdim', "Dimension of t-matrix", 20
+).add('-nmix', "Number of GMM mixture", 1024
+).add('-tdim', "Dimension of t-matrix", 400
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
 ).add('--tmat', "Force re-run training Tmatrix", False
@@ -141,7 +141,7 @@ print("Labels:", ctext(labels, 'cyan'))
 # ===========================================================================
 # Preparing data
 # ===========================================================================
-train_files = []
+train_files = [] # (name, (start, end)) ...
 test_files = []
 for name, (start, end) in ds['indices']:
   if is_train(name):
@@ -246,21 +246,59 @@ for name in data_name:
 # ===========================================================================
 # Backend
 # ===========================================================================
-from sklearn.linear_model import LogisticRegression
+def filelist_2_feat(feat, flist):
+  X = []
+  y = []
+  for name, (start, end) in flist:
+    x = ds[feat][start:end]
+    x = np.mean(x, axis=0, keepdims=True)
+    X.append(x)
+    y.append(fn_label(name))
+  return np.concatenate(X, axis=0), np.array(y)
 
-if True:
-  model = LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=1.0,
-                             fit_intercept=True, intercept_scaling=1,
-                             class_weight=None, random_state=None,
-                             solver='liblinear', max_iter=100,
-                             multi_class='ovr', verbose=0, warm_start=False,
-                             n_jobs=1)
-  X = ivecs['train'][:]
-  model.fit(X, y_true['train'])
-  y_valid = model.predict(ivecs['valid'][:])
-  cm_valid = confusion_matrix(y_true['valid'], y_valid)
-  print(V.print_confusion(cm_valid, labels=labels))
+def evaluate_features(X_train, y_train,
+                      X_valid, y_valid,
+                      X_test, y_test,
+                      verbose, title):
+  print(ctext("==== Evaluating system: '%s'" % title, 'cyan'))
+  model = ml.LogisticRegression(nb_classes=len(labels), l2=1.0,
+                                max_epoch=120, verbose=verbose)
+  model.fit(X_train, y_train)
+  y_pred_train = model.predict(X_train)
+  y_pred_valid = model.predict(X_valid)
+  y_pred_test = model.predict(X_test)
 
-  y_test = model.predict(ivecs['test'][:])
-  cm_test = confusion_matrix(y_true['test'], y_test)
-  print(V.print_confusion(cm_test, labels=labels))
+  for y_true, y_pred, name in zip((y_train, y_valid, y_test),
+                                  (y_pred_train, y_pred_valid, y_pred_test),
+                                  ("Train", "Valid", "Test")):
+    cm = confusion_matrix(y_true, y_pred)
+    print("*** %s ***" % ctext(name))
+    print(V.print_confusion(cm, labels=labels))
+
+# ====== i-vec ====== #
+evaluate_features(X_train=ivecs['train'], y_train=y_true['train'],
+                  X_valid=ivecs['valid'], y_valid=y_true['valid'],
+                  X_test=ivecs['test'], y_test=y_true['test'],
+                  verbose=False, title="I-vectors")
+# ====== super-vector ====== #
+evaluate_features(X_train=stats['train'][1], y_train=y_true['train'],
+                  X_valid=stats['valid'][1], y_valid=y_true['valid'],
+                  X_test=stats['test'][1], y_test=y_true['test'],
+                  verbose=False, title="Super-vector")
+# ====== zero-th ====== #
+evaluate_features(X_train=stats['train'][0], y_train=y_true['train'],
+                  X_valid=stats['valid'][0], y_valid=y_true['valid'],
+                  X_test=stats['test'][0], y_test=y_true['test'],
+                  verbose=False, title="Zero-th stats")
+# ====== bnf ====== #
+X_train, y_train = filelist_2_feat('bnf', flist=train_files)
+X_valid, y_valid = filelist_2_feat('bnf', flist=valid_files)
+X_test, y_test = filelist_2_feat('bnf', flist=test_files)
+evaluate_features(X_train, y_train, X_valid, y_valid, X_test, y_test,
+                  verbose=False, title="BNF")
+# ====== mspec ====== #
+X_train, y_train = filelist_2_feat('mspec', flist=train_files)
+X_valid, y_valid = filelist_2_feat('mspec', flist=valid_files)
+X_test, y_test = filelist_2_feat('mspec', flist=test_files)
+evaluate_features(X_train, y_train, X_valid, y_valid, X_test, y_test,
+                  verbose=False, title="Mel-spectrogram")

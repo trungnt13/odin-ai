@@ -135,7 +135,7 @@ class LogisticRegression(BaseEstimator):
                batch_size=1024, max_epoch=100, max_iter=None,
                optimizer='adadelta', learning_rate=1.0, class_weight=None,
                dtype='float32', seed=5218,
-               path=None, name=None):
+               verbose=True, path=None, name=None):
     super(LogisticRegression, self).__init__()
     # ====== basic dimensions ====== #
     if isinstance(nb_classes, (tuple, list, np.ndarray)):
@@ -189,6 +189,7 @@ class LogisticRegression(BaseEstimator):
     self._train_history = []
     self._valid_history = []
     self._rand_state = np.random.RandomState(seed=int(seed))
+    self.verbose = bool(verbose)
 
   # ==================== pickling ==================== #
   def __getstate__(self):
@@ -197,7 +198,7 @@ class LogisticRegression(BaseEstimator):
       self.confusion_matrix, self._is_fitted, self._name, self._path,
       self.batch_size, self.max_epoch, self.max_iter,
       self.tol, self.patience, self.rollback,
-      self._train_history, self._valid_history, self._rand_state,
+      self._train_history, self._valid_history, self._rand_state, self.verbose,
       self._optimizer_name, self._optimizer_lr, self.parameters)
 
   def __setstate__(self, states):
@@ -206,7 +207,7 @@ class LogisticRegression(BaseEstimator):
      self.confusion_matrix, self._is_fitted, self._name, self._path,
      self.batch_size, self.max_epoch, self.max_iter,
      self.tol, self.patience, self.rollback,
-     self._train_history, self._valid_history, self._rand_state,
+     self._train_history, self._valid_history, self._rand_state, self.verbose,
      self._optimizer_name, self._optimizer_lr, parameters) = states
     self._optimizer = _optimizer_list[self._optimizer_name](
         lr=float(self._optimizer_lr))
@@ -424,13 +425,14 @@ class LogisticRegression(BaseEstimator):
             (nb_train_samples, nb_iter, duration_valid, results))
         duration += duration_valid
       # ====== print log ====== #
-      print(ctext('#epoch:', 'cyan') + str(curr_nepoch),
-            ctext('#iter:', 'cyan') + str(curr_niter),
-            ctext("Loss:", 'yellow') + '%.5f' % results[0],
-            ctext("Acc:", 'yellow') + '%.3f' % results[1],
-            ctext("%.2f(s)" % duration, 'magenta'))
-      if self.confusion_matrix and (curr_nepoch - 1) % 8 == 0:
-        print(V.print_confusion(results[-1], labels=self.labels))
+      if self.verbose:
+        print(ctext('#epoch:', 'cyan') + str(curr_nepoch),
+              ctext('#iter:', 'cyan') + str(curr_niter),
+              ctext("Loss:", 'yellow') + '%.5f' % results[0],
+              ctext("Acc:", 'yellow') + '%.3f' % results[1],
+              ctext("%.2f(s)" % duration, 'magenta'))
+        if self.confusion_matrix and (curr_nepoch - 1) % 8 == 0:
+          print(V.print_confusion(results[-1], labels=self.labels))
       # ====== early stopping ====== #
       losses = results[0]
       if last_checkpoint is None: # first check point
@@ -440,10 +442,11 @@ class LogisticRegression(BaseEstimator):
         if last_losses - losses <= self.tol:
           curr_patience -= 1
           if self.rollback:
-            wprint('[LogisticRegression] Rollback to the best checkpoint '
-                   'at epoch:%s patience:%s' %
-                   (ctext(best_epoch, 'cyan'),
-                    ctext(curr_patience, 'cyan')))
+            if self.verbose:
+              wprint('[LogisticRegression] Rollback to the best checkpoint '
+                     'at epoch:%s patience:%s' %
+                     (ctext(best_epoch, 'cyan'),
+                      ctext(curr_patience, 'cyan')))
             self.set_parameters(*last_checkpoint)
         # save best checkpoint
         else:
@@ -463,7 +466,7 @@ class LogisticRegression(BaseEstimator):
       curr_nepoch >= self.max_epoch:
         break
     # ====== print summary plot ====== #
-    if True:
+    if self.verbose:
       train_losses = [epoch[-1][0] for epoch in self._train_history]
       print(V.print_bar(train_losses, height=12,
                         bincount=min(20, len(train_losses)),
@@ -477,9 +480,10 @@ class LogisticRegression(BaseEstimator):
         print(ctext("======== Training Confusion Matrix ========", 'cyan'))
         print(V.print_confusion(arr=self._train_history[-1][-1][-1],
                                 labels=self.labels))
-        print(ctext("======== Validation Confusion Matrix ========", 'cyan'))
-        print(V.print_confusion(arr=self._valid_history[-1][-1][-1],
-                                labels=self.labels))
+        if create_it_cv is not None:
+          print(ctext("======== Validation Confusion Matrix ========", 'cyan'))
+          print(V.print_confusion(arr=self._valid_history[-1][-1][-1],
+                                  labels=self.labels))
     # ====== reset to best points ====== #
     self.set_parameters(*last_checkpoint)
     self._is_fitted = True
