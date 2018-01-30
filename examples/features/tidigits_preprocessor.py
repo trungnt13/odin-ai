@@ -57,9 +57,34 @@ Example of original data:
      => "/data/adults/test/woman/pf/1b.wav"
      test material, adult female, speaker code "pf",
      digit sequence "one", "b" is second production.
+------------------
+    City                      Dialect             M    W    B    G
 
+01 Boston, MA            Eastern New England      5    5    0    1
+02 Richmond, VA          Virginia Piedmont        5    5    2    4
+03 Lubbock, TX           Southwest                5    5    0    1
+04 Los Angeles, CA       Southern California      5    5    0    1
+05 Knoxville, TN         South Midland            5    5    0    0
+06 Rochester, NY         Central New York         6    6    0    0
+07 Denver, CO            Rocky Mountains          5    5    0    0
+08 Milwaukee, WS         North Central            5    5    2    0
+09 Philadelphia, PA      Delaware Valley          5    6    0    1
+10 Kansas City, KS       Midland                  5    5    4    1
+11 Chicago, IL           North Central            5    5    1    2
+12 Charleston, SC        South Carolina           5    5    1    0
+13 New Orleans, LA       Gulf South               5    5    2    0
+14 Dayton, OH            South Midland            5    5    0    0
+15 Atlanta, GA           Gulf South               5    5    0    1
+16 Miami, FL             Spanish American         5    5    1    0
+17 Dallas, TX            Southwest                5    5   34   36
+18 New York, NY          New York City            5    5    2    2
+19 Little Rock, AR       South Midland            5    6    0    0
+20 Portland, OR          Pacific Northwest        5    5    0    0
+21 Pittsburgh, PA        Upper Ohio Valley        5    5    0    0
+22                       Black                    5    6    1    1
+
+                         Total Speakers         111  114   50   51    326
 """
-
 
 # ===========================================================================
 # CONST

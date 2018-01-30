@@ -39,9 +39,9 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
 # Input arguments
 # ===========================================================================
 args = ArgController(
-).add('-task', '0-gender,1-dialect,2-digit', 0
-).add('-nmix', "Number of GMM mixture", 128
-).add('-tdim', "Dimension of t-matrix", 64
+).add('-task', '0-gender,1-dialect,2-digit,3-spk', 0
+).add('-nmix', "Number of GMM mixture", 512
+).add('-tdim', "Dimension of t-matrix", 128
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
 ).add('--tmat', "Force re-run training Tmatrix", False
@@ -52,6 +52,8 @@ args.gmm |= args.all
 args.stat |= args.all | args.gmm
 args.tmat |= args.all | args.stat
 args.ivec |= args.all | args.tmat
+if args.task not in (0, 1, 2, 3):
+  raise ValueError("Task must be: 0, 1, 2, 3")
 # ===========================================================================
 # path
 # ===========================================================================
@@ -72,7 +74,7 @@ F_PATH = (
 I_PATH = (
     os.path.join(EXP_DIR, 'I_train'),
     os.path.join(EXP_DIR, 'I_test'))
-LABELS_PATH = (
+L_PATH = ( # labels
     os.path.join(EXP_DIR, 'L_train'),
     os.path.join(EXP_DIR, 'L_test'))
 LOG_PATH = get_logpath('digit_ivec.log', override=True)
@@ -81,6 +83,7 @@ stdio(LOG_PATH)
 # Const
 # ===========================================================================
 FEAT = 'mspec'
+indices = list(ds['indices'].items())
 # ====== GMM trainign ====== #
 NMIX = args.nmix
 GMM_NITER = 10
@@ -115,8 +118,11 @@ elif args.task == 1:
   fn_extract = extract_dialect
 elif args.task == 2:
   fn_extract = extract_digit
-
-fn_label, labels = unique_labels(list(ds['indices'].keys()),
+  indices = [(name, (start, end)) for name, (start, end) in indices
+             if len(extract_digit(name)) == 1]
+elif args.task == 3:
+  fn_extract = extract_spk
+fn_label, labels = unique_labels([i[0] for i in indices],
                                  key_func=fn_extract,
                                  return_labels=True)
 print("Labels:", ctext(labels, 'cyan'))
@@ -125,7 +131,7 @@ print("Labels:", ctext(labels, 'cyan'))
 # ===========================================================================
 train_files = [] # (name, (start, end)) ...
 test_files = []
-for name, (start, end) in ds['indices']:
+for name, (start, end) in indices:
   if is_train(name):
     train_files.append((name, (start, end)))
   else:
@@ -134,7 +140,6 @@ for name, (start, end) in ds['indices']:
 data_name = ['train', 'test']
 print("#Train:", len(train_files))
 print("#Test:", len(test_files))
-exit()
 # ===========================================================================
 # GMM
 # ===========================================================================
@@ -142,8 +147,8 @@ if not os.path.exists(GMM_PATH) or args.gmm:
   gmm = ml.GMM(nmix=NMIX, nmix_start=1,
                niter=GMM_NITER,
                dtype=GMM_DTYPE,
-               allow_rollback=False,
-               exit_on_error=False,
+               allow_rollback=True,
+               exit_on_error=True,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=GMM_DOWNSAMPLE,
                stochastic_downsample=GMM_STOCHASTIC,
@@ -159,39 +164,28 @@ print(gmm)
 # ===========================================================================
 stats = {}
 y_true = {}
-for files, z_path, f_path, l_path, name in zip(
-        (train_files, valid_files, test_files),
-        Z_PATH,
-        F_PATH,
-        LABELS_PATH,
-        data_name):
+for name, files, z_path, f_path, l_path in zip(
+        data_name,
+        (train_files, test_files),
+        Z_PATH, F_PATH, L_PATH):
   # extracting zeroth and first order statistics
   if not all(os.path.exists(i) for i in (z_path, f_path, l_path)) or\
       args.stat:
     print('========= Extracting statistics for: "%s" =========' % name)
-    name_list = gmm.transform_to_disk(X=ds[FEAT], indices=files,
-                                      pathZ=z_path, pathF=f_path,
-                                      name_path=None,
-                                      dtype=GMM_DTYPE,
-                                      device='cpu',
-                                      override=True)
-    # save the labels
-    labels = np.array([fn_label(i) for i in name_list], dtype='int32')
-    np.savetxt(fname=l_path, X=labels, fmt='%d')
+    gmm.transform_to_disk(X=ds[FEAT], indices=files,
+                          pathZ=z_path, pathF=f_path, name_path=l_path,
+                          dtype='float32', device='cpu',
+                          override=True)
   # load the statistics in MmapData
-  y_true[name] = np.genfromtxt(fname=l_path, dtype='int32')
+  y_true[name] = [fn_label(i) for i in np.genfromtxt(fname=l_path, dtype=str)]
   stats[name] = (F.MmapData(path=z_path, read_only=True),
                  F.MmapData(path=f_path, read_only=True))
-# ====== print the stats ====== #
-for name in data_name:
-  print(stats[name])
 # ===========================================================================
 # Training T-matrix
 # ===========================================================================
 if not os.path.exists(TMAT_PATH) or args.tmat:
   tmat = ml.Tmatrix(tv_dim=TV_DIM, gmm=gmm,
-                    niter=TV_NITER,
-                    dtype=TV_DTYPE,
+                    niter=TV_NITER, dtype=TV_DTYPE,
                     batch_size_cpu='auto', batch_size_gpu='auto',
                     device='mix', ncpu=1, gpu_factor=3,
                     path=TMAT_PATH)
@@ -208,17 +202,24 @@ ivecs = {}
 for i_path, name in zip(I_PATH, data_name):
   if not os.path.exists(i_path) or args.ivec:
     print('========= Extracting ivecs for: "%s" =========' % name)
+    z, f = stats[name]
     tmat.transform_to_disk(path=i_path,
-                           Z=stats[name][0],
-                           F=stats[name][1],
+                           Z=z, F=f,
                            name_path=None,
-                           dtype=TV_DTYPE,
+                           dtype='float32',
                            override=True)
   # load extracted ivec
   ivecs[name] = F.MmapData(i_path, read_only=True)
 # ====== print the i-vectors ====== #
 for name in data_name:
-  print(ivecs[name])
+  print(ctext('i-vectors:', 'cyan'))
+  print(ctext(' *', 'yellow'), ivecs[name])
+  print(ctext('z-stats:', 'cyan'))
+  print(ctext(' *', 'yellow'), stats[name][0])
+  print(ctext('f-stats:', 'cyan'))
+  print(ctext(' *', 'yellow'), stats[name][1])
+  print(ctext('labels:', 'cyan'))
+  print(ctext(' *', 'yellow'), len(y_true[name]))
 # ===========================================================================
 # Backend
 # ===========================================================================
@@ -233,48 +234,34 @@ def filelist_2_feat(feat, flist):
   return np.concatenate(X, axis=0), np.array(y)
 
 def evaluate_features(X_train, y_train,
-                      X_valid, y_valid,
                       X_test, y_test,
                       verbose, title):
   print(ctext("==== Evaluating system: '%s'" % title, 'cyan'))
   model = ml.LogisticRegression(nb_classes=len(labels), l2=1.0,
                                 max_epoch=120, verbose=verbose)
   model.fit(X_train, y_train)
-  y_pred_train = model.predict(X_train)
-  y_pred_valid = model.predict(X_valid)
-  y_pred_test = model.predict(X_test)
-
-  for y_true, y_pred, name in zip((y_train, y_valid, y_test),
-                                  (y_pred_train, y_pred_valid, y_pred_test),
-                                  ("Train", "Valid", "Test")):
-    cm = confusion_matrix(y_true, y_pred)
-    print("*** %s ***" % ctext(name))
-    print(V.print_confusion(cm, labels=labels))
-
+  model.evaluate(X_test, y_test)
 # ====== i-vec ====== #
 evaluate_features(X_train=ivecs['train'], y_train=y_true['train'],
-                  X_valid=ivecs['valid'], y_valid=y_true['valid'],
                   X_test=ivecs['test'], y_test=y_true['test'],
                   verbose=False, title="I-vectors")
-# ====== super-vector ====== #
-evaluate_features(X_train=stats['train'][1], y_train=y_true['train'],
-                  X_valid=stats['valid'][1], y_valid=y_true['valid'],
-                  X_test=stats['test'][1], y_test=y_true['test'],
-                  verbose=False, title="Super-vector")
 # ====== zero-th ====== #
 evaluate_features(X_train=stats['train'][0], y_train=y_true['train'],
-                  X_valid=stats['valid'][0], y_valid=y_true['valid'],
                   X_test=stats['test'][0], y_test=y_true['test'],
                   verbose=False, title="Zero-th stats")
+# ====== super-vector ====== #
+evaluate_features(X_train=stats['train'][1], y_train=y_true['train'],
+                  X_test=stats['test'][1], y_test=y_true['test'],
+                  verbose=False, title="Super-vector")
 # ====== bnf ====== #
 X_train, y_train = filelist_2_feat('bnf', flist=train_files)
-X_valid, y_valid = filelist_2_feat('bnf', flist=valid_files)
 X_test, y_test = filelist_2_feat('bnf', flist=test_files)
-evaluate_features(X_train, y_train, X_valid, y_valid, X_test, y_test,
+evaluate_features(X_train, y_train,
+                  X_test, y_test,
                   verbose=False, title="BNF")
 # ====== mspec ====== #
 X_train, y_train = filelist_2_feat('mspec', flist=train_files)
-X_valid, y_valid = filelist_2_feat('mspec', flist=valid_files)
 X_test, y_test = filelist_2_feat('mspec', flist=test_files)
-evaluate_features(X_train, y_train, X_valid, y_valid, X_test, y_test,
+evaluate_features(X_train, y_train,
+                  X_test, y_test,
                   verbose=False, title="Mel-spectrogram")
