@@ -180,7 +180,7 @@ class Dataset(object):
         with open(readme_path, 'r') as readme_file:
           readme = readme_file.readlines()[:MAXIMUM_README_LINE]
           readme = ['  ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
-          readme.append(' * For more information: ' + readme_path)
+          readme.append(' => For more information: ' + readme_path)
           self._readme_info = [ctext('README:', 'yellow'),
                                '------'] + readme
           self._readme_path = readme_path
@@ -843,12 +843,12 @@ class Dataset(object):
       longest_file = max(len(str(path)), longest_file)
       print_info.append([name, dtype, shape, path])
     # ====== return print string ====== #
-    format_str = (padding + 'Name:%-' + str(longest_name) + 's  '
-                  'dtype:%-' + str(longest_dtype) + 's '
-                  'shape:%-' + str(longest_shape) + 's  '
-                  'file:%-' + str(longest_file) + 's')
+    format_str = (padding + '%-' + str(longest_name + 2) + 's  '
+                  '%-' + str(longest_dtype) + 's' + ctext(':', 'yellow') +
+                  '%-' + str(longest_shape) + 's  '
+                  'path:%-' + str(longest_file) + 's')
     for name, dtype, shape, path in print_info:
-      s.append(format_str % (name, dtype, shape, path))
+      s.append(format_str % ('"%s"' % name, dtype, shape, path))
     # ====== add recipes info ====== #
     for name, recipe in self._saved_recipes.items():
       s.append(ctext('(Recipe) ', 'yellow') + '"%s"' % name)

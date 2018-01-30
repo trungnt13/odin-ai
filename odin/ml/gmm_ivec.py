@@ -16,14 +16,14 @@ import numpy as np
 from scipy import linalg
 import tensorflow as tf
 
-from sklearn.base import DensityMixin, BaseEstimator, TransformerMixin
-
 from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid, is_string,
                         wprint, eprint, segment_list, defaultdictkey)
 from odin.config import EPS, get_ngpu
+
+from .base import DensityMixin, BaseEstimator, TransformerMixin
 
 # minimum batch size that will be optimal to transfer
 # the data to GPU for calculation (tested on Titan X)
@@ -870,6 +870,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def _fast_expectation(self, X, zero=True, first=True, second=True,
                         llk=True, on_gpu=False):
+    if isinstance(X, Data):
+      X = X.array
     # ====== run on GPU ====== #
     if on_gpu:
       Z, F, S, L = [self.__expressions_gpu[name]
@@ -1536,6 +1538,10 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
   def _fast_expectation(self, Z, F, on_gpu):
     nframes = np.ceil(Z.sum())
     nfiles = F.shape[0]
+    if isinstance(Z, Data):
+      Z = Z.array
+    if isinstance(F, Data):
+      F = F.array
     # ====== GPU ====== #
     if on_gpu:
       LU, RU, llk = K.eval(self._gpu_e_outputs,
@@ -1581,8 +1587,8 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== single batch ====== #
     if (nfiles <= self.batch_size_cpu and device == 'cpu') or \
     (nfiles <= self.batch_size_gpu and device in ('mix', 'gpu')):
-      results = self._fast_expectation(Z=Z, F=F,
-                                       on_gpu=False if device == 'cpu' else True)
+      return self._fast_expectation(Z=Z, F=F,
+                                    on_gpu=False if device == 'cpu' else True)
     # ====== multiple batches ====== #
     else:
       def _map_expectation(start, end, on_gpu):

@@ -6,13 +6,12 @@ import pickle
 import numpy as np
 import tensorflow as tf
 
-from sklearn.base import BaseEstimator
-
 from odin.utils import (is_number, uuid, batching, as_tuple, Progbar,
                         one_hot, wprint, ctext, is_string)
 from odin import (backend as K, nnet as N, fuel as F, visual as V)
 from odin.backend.role import has_roles, Weight, Bias
 
+from .base import BaseEstimator, Evaluable
 
 # ===========================================================================
 # Helper
@@ -91,7 +90,7 @@ for name in dir(K.optimizers):
 # ===========================================================================
 # Logistic regression
 # ===========================================================================
-class LogisticRegression(BaseEstimator):
+class LogisticRegression(BaseEstimator, Evaluable):
   """ LogisticRegression
 
   Parameters
@@ -575,38 +574,3 @@ class LogisticRegression(BaseEstimator):
         model, where classes are ordered as they are in ``self.classes_``.
     """
     return np.log(self.predict_proba(X))
-
-  def evaluate(self, X, y, labels=None, path=None):
-    from sklearn.metrics import log_loss, accuracy_score, confusion_matrix
-    from odin.visual import print_confusion
-    from odin.backend import to_llr
-    from odin.backend.metrics import (det_curve, compute_EER, roc_curve,
-                                      compute_Cavg, compute_Cnorm,
-                                      compute_minDCF)
-
-    def format_score(s):
-      return ctext('%.4f' % s, 'yellow')
-    if labels is None:
-      labels = self.labels
-    y_pred_prob = self.predict_proba(X)
-    y_pred = np.argmax(y_pred_prob, axis=-1)
-    ll = log_loss(y_true=y, y_pred=y_pred_prob)
-    acc = accuracy_score(y_true=y, y_pred=y_pred)
-    cm = confusion_matrix(y_true=y, y_pred=y_pred)
-    Pfa, Pmiss = det_curve(y_true=y, y_score=to_llr(y_pred_prob))
-    eer = compute_EER(Pfa, Pmiss)
-    minDCF = compute_minDCF(Pfa, Pmiss)[0]
-    cnorm, cnorm_arr = compute_Cnorm(y_true=y,
-                                     y_score=y_pred_prob,
-                                     Ptrue=[1, 0.5],
-                                     probability_input=True)
-    if path is None:
-      print(ctext("---", 'red'))
-      print("Log loss :", format_score(ll))
-      print("Accuracy :", format_score(acc))
-      print("C_avg   :", format_score(np.mean(cnorm)))
-      print("EER      :", format_score(eer))
-      print("minDCF   :", format_score(minDCF))
-      print(print_confusion(arr=cm, labels=labels))
-    else:
-      fpr, tpr = roc_curve(y_true=y, y_score=y_pred_prob)

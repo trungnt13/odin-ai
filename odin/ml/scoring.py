@@ -1,9 +1,21 @@
-import numpy as np
+from __future__ import print_function, division, absolute_import
 
-def compute_class_avg(data, labels, nclasses):
-  ndim = data.shape[0]
-  mu_c = np.zeros((nclasses, ndim))
-  for c in labels:  # numeric labels are assumed
-    idx = np.flatnonzero(labels == c)
-    mu_c[c] = data[:, idx].mean(1)
-  return mu_c
+import numpy as np
+import tensorflow as tf
+
+from .base import BaseEstimator, TransformerMixin
+
+class CosineScoring(BaseEstimator, TransformerMixin):
+  """ CosineScoring """
+
+  def __init__(self, arg):
+    super(CosineScoring, self).__init__()
+    self.arg = arg
+
+
+class PLDA(BaseEstimator, TransformerMixin):
+  """ PLDA """
+
+  def __init__(self, arg):
+    super(PLDA, self).__init__()
+    self.arg = arg

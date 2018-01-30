@@ -162,6 +162,10 @@ def load_glove(ndim=100):
   return MmapDict(embedding, read_only=True)
 
 def load_lre_sad():
+  """
+  key: 'LDC2017E23/data/eval/lre17_lqoyrygc.sph'
+  value: [(1.99, 3.38), (8.78, 16.41)] (in second)
+  """
   link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL2xyZV9zYWQ=\n'
   link = str(base64.decodebytes(link), 'utf-8')
   path = get_file(fname=os.path.basename(link),

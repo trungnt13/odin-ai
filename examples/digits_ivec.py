@@ -48,62 +48,49 @@ args = ArgController(
 ).add('--ivec', "Force re-run extraction of i-vector", False
 ).add('--all', "Run all the system again, just a shortcut", False
 ).parse()
-if args.all:
-  args.gmm = True
-  args.stat = True
-  args.tmat = True
-  args.ivec = True
+args.gmm |= args.all
+args.stat |= args.all | args.gmm
+args.tmat |= args.all | args.stat
+args.ivec |= args.all | args.tmat
 # ===========================================================================
 # path
 # ===========================================================================
 # path to preprocessed dataset
-PATH = get_datasetpath('digits', override=False)
-
-SAVE_PATH = os.path.join(
-    os.path.expanduser('~'),
-    'digit_ivec%d' % args.task
-)
-print("Save path:", ctext(SAVE_PATH, 'cyan'))
-if not os.path.exists(SAVE_PATH):
-  os.mkdir(SAVE_PATH)
-
-GMM_PATH = os.path.join(SAVE_PATH, 'gmm')
-TMAT_PATH = os.path.join(SAVE_PATH, 'tmat')
-
+ds = F.Dataset(get_datasetpath('digits', override=False),
+               read_only=True)
+EXP_DIR = '/home/trung/data/exp_digit'
+if not os.path.exists(EXP_DIR):
+  os.mkdir(EXP_DIR)
+GMM_PATH = os.path.join(EXP_DIR, 'gmm')
+TMAT_PATH = os.path.join(EXP_DIR, 'tmat')
 Z_PATH = (
-    os.path.join(SAVE_PATH, 'Z_train'),
-    os.path.join(SAVE_PATH, 'Z_test')
-)
+    os.path.join(EXP_DIR, 'Z_train'),
+    os.path.join(EXP_DIR, 'Z_test'))
 F_PATH = (
-    os.path.join(SAVE_PATH, 'F_train'),
-    os.path.join(SAVE_PATH, 'F_test')
-)
+    os.path.join(EXP_DIR, 'F_train'),
+    os.path.join(EXP_DIR, 'F_test'))
 I_PATH = (
-    os.path.join(SAVE_PATH, 'I_train'),
-    os.path.join(SAVE_PATH, 'I_test')
-)
+    os.path.join(EXP_DIR, 'I_train'),
+    os.path.join(EXP_DIR, 'I_test'))
 LABELS_PATH = (
-    os.path.join(SAVE_PATH, 'L_train'),
-    os.path.join(SAVE_PATH, 'L_test')
-)
-
+    os.path.join(EXP_DIR, 'L_train'),
+    os.path.join(EXP_DIR, 'L_test'))
 LOG_PATH = get_logpath('digit_ivec.log', override=True)
+stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
 FEAT = 'mspec'
-ds = F.Dataset(PATH, read_only=True)
-stdio(LOG_PATH)
 # ====== GMM trainign ====== #
 NMIX = args.nmix
-GMM_NITER = 12
-GMM_DOWNSAMPLE = 2
+GMM_NITER = 10
+GMM_DOWNSAMPLE = 4
+GMM_STOCHASTIC = True
 GMM_DTYPE = 'float64'
 # ====== IVEC training ====== #
 TV_DIM = args.tdim
-TV_NITER = 16
+TV_NITER = 10
 TV_DTYPE = 'float64'
-
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -123,14 +110,14 @@ def extract_digit(x):
   return x.split('_')[6]
 
 if args.task == 0:
-  extract_fn = extract_gender
+  fn_extract = extract_gender
 elif args.task == 1:
-  extract_fn = extract_dialect
+  fn_extract = extract_dialect
 elif args.task == 2:
-  extract_fn = extract_digit
+  fn_extract = extract_digit
 
 fn_label, labels = unique_labels(list(ds['indices'].keys()),
-                                 key_func=extract_fn,
+                                 key_func=fn_extract,
                                  return_labels=True)
 print("Labels:", ctext(labels, 'cyan'))
 # ===========================================================================
@@ -143,17 +130,11 @@ for name, (start, end) in ds['indices']:
     train_files.append((name, (start, end)))
   else:
     test_files.append((name, (start, end)))
-train_files, valid_files = train_valid_test_split(
-    train_files, train=0.8,
-    cluster_func=lambda x: extract_fn(x[0]),
-    idfunc=lambda x: extract_spk(x[0]),
-    inc_test=False,
-    seed=5218)
 # name for each dataset, useful for later
-data_name = ['train', 'valid', 'test']
+data_name = ['train', 'test']
 print("#Train:", len(train_files))
-print("#Valid:", len(valid_files))
 print("#Test:", len(test_files))
+exit()
 # ===========================================================================
 # GMM
 # ===========================================================================
@@ -165,7 +146,7 @@ if not os.path.exists(GMM_PATH) or args.gmm:
                exit_on_error=False,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=GMM_DOWNSAMPLE,
-               stochastic_downsample=True,
+               stochastic_downsample=GMM_STOCHASTIC,
                device='gpu',
                seed=5218, path=GMM_PATH)
   gmm.fit((ds[FEAT], train_files))

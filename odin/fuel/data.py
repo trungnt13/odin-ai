@@ -46,7 +46,7 @@ def as_data(x):
   if isinstance(x, np.ndarray):
     return NdarrayData(x)
   if isinstance(x, (tuple, list)):
-    x = NdarrayData(np.array(x))
+    return NdarrayData(np.array(x))
   raise ValueError('Cannot create Data object from given object:{}'.format(x))
 
 
@@ -785,7 +785,7 @@ class MmapData(Data):
 
   # ==================== properties ==================== #
   def __str__(self):
-    return '<MMAP dataset "%s": shape %s, type "<%s">' % \
+    return '<MMAP "%s": %s "%s">' % \
     (self.data_info, self.shape, self.dtype)
 
   # ==================== Save ==================== #
