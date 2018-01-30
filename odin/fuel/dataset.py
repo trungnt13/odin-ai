@@ -19,12 +19,18 @@ from .recipe_base import FeederRecipe, RecipeList
 
 __all__ = [
     'Dataset',
-    'copy_dataset2'
+    'copy_dataset2',
+    'h5_to_ds'
 ]
 
 # ===========================================================================
 # Utilities
 # ===========================================================================
+def h5_to_ds(inpath, outpath):
+  """ Convert a folder contains hdf5 files to a Dataset
+  """
+  pass
+
 def copy_dataset2(origin, destination,
                   indices_filter=None, data_filter=None,
                   override=False):

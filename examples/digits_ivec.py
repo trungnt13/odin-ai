@@ -33,16 +33,15 @@ from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
                         Progbar, unique_labels, chain,
-                        as_tuple_of_shape, stdio, ctext, ArgController,
-                        unique_labels)
+                        as_tuple_of_shape, stdio, ctext, ArgController)
 
 # ===========================================================================
 # Input arguments
 # ===========================================================================
 args = ArgController(
 ).add('-task', '0-gender,1-dialect,2-digit', 0
-).add('-nmix', "Number of GMM mixture", 1024
-).add('-tdim', "Dimension of t-matrix", 400
+).add('-nmix', "Number of GMM mixture", 128
+).add('-tdim', "Dimension of t-matrix", 64
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
 ).add('--tmat', "Force re-run training Tmatrix", False
@@ -73,22 +72,18 @@ TMAT_PATH = os.path.join(SAVE_PATH, 'tmat')
 
 Z_PATH = (
     os.path.join(SAVE_PATH, 'Z_train'),
-    os.path.join(SAVE_PATH, 'Z_valid'),
     os.path.join(SAVE_PATH, 'Z_test')
 )
 F_PATH = (
     os.path.join(SAVE_PATH, 'F_train'),
-    os.path.join(SAVE_PATH, 'F_valid'),
     os.path.join(SAVE_PATH, 'F_test')
 )
 I_PATH = (
     os.path.join(SAVE_PATH, 'I_train'),
-    os.path.join(SAVE_PATH, 'I_valid'),
     os.path.join(SAVE_PATH, 'I_test')
 )
 LABELS_PATH = (
     os.path.join(SAVE_PATH, 'L_train'),
-    os.path.join(SAVE_PATH, 'L_valid'),
     os.path.join(SAVE_PATH, 'L_test')
 )
 
@@ -101,8 +96,8 @@ ds = F.Dataset(PATH, read_only=True)
 stdio(LOG_PATH)
 # ====== GMM trainign ====== #
 NMIX = args.nmix
-GMM_NITER = 16
-GMM_DOWNSAMPLE = 4
+GMM_NITER = 12
+GMM_DOWNSAMPLE = 2
 GMM_DTYPE = 'float64'
 # ====== IVEC training ====== #
 TV_DIM = args.tdim
@@ -213,14 +208,14 @@ for name in data_name:
 # Training T-matrix
 # ===========================================================================
 if not os.path.exists(TMAT_PATH) or args.tmat:
-  tmat = ml.Ivector(tv_dim=TV_DIM, gmm=gmm,
+  tmat = ml.Tmatrix(tv_dim=TV_DIM, gmm=gmm,
                     niter=TV_NITER,
                     dtype=TV_DTYPE,
                     batch_size_cpu='auto', batch_size_gpu='auto',
                     device='mix', ncpu=1, gpu_factor=3,
                     path=TMAT_PATH)
-  tmat.fit((stats['train'][0], # Z_train
-            stats['train'][1])) # F_train
+  tmat.fit(X=(stats['train'][0], # Z_train
+              stats['train'][1])) # F_train
 else:
   with open(TMAT_PATH, 'rb') as f:
     tmat = pickle.load(f)

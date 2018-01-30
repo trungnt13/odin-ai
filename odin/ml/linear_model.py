@@ -127,6 +127,15 @@ class LogisticRegression(BaseEstimator):
       learning rate for the optimizer
   class_weight : {float, None, list of scalar}
       weight for each classes during training
+  verbose : {bool, int}
+      `0` or `False`, totally turn off all logging during fitting
+      `1` or `True`, turn on the summary for fitting
+       >= `2`, turn on progress of each iteration and summary
+  path : str
+      checkpoint path for backing the model after every
+      improvement
+  name : str
+      specific name for tensorflow Op
   """
 
   def __init__(self, nb_classes, l1=0., l2=0.,
@@ -135,7 +144,7 @@ class LogisticRegression(BaseEstimator):
                batch_size=1024, max_epoch=100, max_iter=None,
                optimizer='adadelta', learning_rate=1.0, class_weight=None,
                dtype='float32', seed=5218,
-               verbose=True, path=None, name=None):
+               verbose=False, path=None, name=None):
     super(LogisticRegression, self).__init__()
     # ====== basic dimensions ====== #
     if isinstance(nb_classes, (tuple, list, np.ndarray)):
@@ -189,7 +198,7 @@ class LogisticRegression(BaseEstimator):
     self._train_history = []
     self._valid_history = []
     self._rand_state = np.random.RandomState(seed=int(seed))
-    self.verbose = bool(verbose)
+    self.verbose = int(verbose)
 
   # ==================== pickling ==================== #
   def __getstate__(self):
@@ -410,7 +419,7 @@ class LogisticRegression(BaseEstimator):
                                                    fn=self._f_train,
                                                    nb_samples=nb_train_samples,
                                                    nb_classes=self.nb_classes,
-                                                   title='Training')
+                                                   title='Epoch %d' % curr_nepoch)
       curr_niter += nb_iter
       self._train_history.append(
           (nb_train_samples, nb_iter, duration, results))
@@ -425,7 +434,7 @@ class LogisticRegression(BaseEstimator):
             (nb_train_samples, nb_iter, duration_valid, results))
         duration += duration_valid
       # ====== print log ====== #
-      if self.verbose:
+      if self.verbose >= 2:
         print(ctext('#epoch:', 'cyan') + str(curr_nepoch),
               ctext('#iter:', 'cyan') + str(curr_niter),
               ctext("Loss:", 'yellow') + '%.5f' % results[0],
@@ -442,7 +451,7 @@ class LogisticRegression(BaseEstimator):
         if last_losses - losses <= self.tol:
           curr_patience -= 1
           if self.rollback:
-            if self.verbose:
+            if self.verbose >= 2:
               wprint('[LogisticRegression] Rollback to the best checkpoint '
                      'at epoch:%s patience:%s' %
                      (ctext(best_epoch, 'cyan'),
@@ -466,7 +475,7 @@ class LogisticRegression(BaseEstimator):
       curr_nepoch >= self.max_epoch:
         break
     # ====== print summary plot ====== #
-    if self.verbose:
+    if self.verbose >= 1:
       train_losses = [epoch[-1][0] for epoch in self._train_history]
       print(V.print_bar(train_losses, height=12,
                         bincount=min(20, len(train_losses)),
@@ -566,3 +575,38 @@ class LogisticRegression(BaseEstimator):
         model, where classes are ordered as they are in ``self.classes_``.
     """
     return np.log(self.predict_proba(X))
+
+  def evaluate(self, X, y, labels=None, path=None):
+    from sklearn.metrics import log_loss, accuracy_score, confusion_matrix
+    from odin.visual import print_confusion
+    from odin.backend import to_llr
+    from odin.backend.metrics import (det_curve, compute_EER, roc_curve,
+                                      compute_Cavg, compute_Cnorm,
+                                      compute_minDCF)
+
+    def format_score(s):
+      return ctext('%.4f' % s, 'yellow')
+    if labels is None:
+      labels = self.labels
+    y_pred_prob = self.predict_proba(X)
+    y_pred = np.argmax(y_pred_prob, axis=-1)
+    ll = log_loss(y_true=y, y_pred=y_pred_prob)
+    acc = accuracy_score(y_true=y, y_pred=y_pred)
+    cm = confusion_matrix(y_true=y, y_pred=y_pred)
+    Pfa, Pmiss = det_curve(y_true=y, y_score=to_llr(y_pred_prob))
+    eer = compute_EER(Pfa, Pmiss)
+    minDCF = compute_minDCF(Pfa, Pmiss)[0]
+    cnorm, cnorm_arr = compute_Cnorm(y_true=y,
+                                     y_score=y_pred_prob,
+                                     Ptrue=[1, 0.5],
+                                     probability_input=True)
+    if path is None:
+      print(ctext("---", 'red'))
+      print("Log loss :", format_score(ll))
+      print("Accuracy :", format_score(acc))
+      print("C_avg   :", format_score(np.mean(cnorm)))
+      print("EER      :", format_score(eer))
+      print("minDCF   :", format_score(minDCF))
+      print(print_confusion(arr=cm, labels=labels))
+    else:
+      fpr, tpr = roc_curve(y_true=y, y_score=y_pred_prob)

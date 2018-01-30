@@ -390,7 +390,7 @@ class FeatureProcessor(object):
       identity for the Processor
   """
 
-  def __init__(self, jobs, extractor, path,
+  def __init__(self, jobs, path, extractor,
                ncache=0.12, ncpu=1, name=None, override=False):
     super(FeatureProcessor, self).__init__()
     # ====== check outpath ====== #
@@ -408,8 +408,10 @@ class FeatureProcessor(object):
       name = self.path
     self.name = name
     # ====== check jobs ====== #
-    if not isinstance(jobs, (tuple, list)):
-      raise ValueError("Provided `jobs` must be instance of tuple or list.")
+    if not isinstance(jobs, (tuple, list, np.ndarray)):
+      raise ValueError("Provided `jobs` must be instance of tuple, list or ndarray.")
+    if isinstance(jobs, np.ndarray):
+      jobs = jobs.tolist()
     self.jobs = tuple(jobs)
     # ====== check multiprocessing ====== #
     if ncpu is None: # auto select number of CPU

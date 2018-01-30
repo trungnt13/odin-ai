@@ -8,7 +8,7 @@ from odin.config import EPS
 
 from .role import (AccuracyValue, return_roles, DifferentialLoss,
                    ConfusionMatrix, add_role)
-from .tensor import argsort, dimshuffle, to_nonzeros
+from .tensor import argsort, dimshuffle, to_nonzeros, to_llr
 from .helpers import is_tensor
 
 
@@ -212,7 +212,7 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
   # ====== For tensorflow ====== #
   if is_tensor(y_llr) and is_tensor(y_true):
     if probability_input:
-      y_llr = tf.log(y_llr / (1 - y_llr))
+      y_llr = to_llr(y_llr)
     thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
     nb_classes = y_llr.get_shape()[1].value
     if isinstance(y_true, (list, tuple)):
@@ -239,8 +239,7 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
     return Cavg
   # ====== for numpy ====== #
   if probability_input:
-    y_llr = np.clip(y_llr, 10e-8, 1. - 10e-8)
-    y_llr = np.log(y_llr / (1. - y_llr))
+    y_llr = to_llr(y_llr)
   if cluster_idx is None:
     cluster_idx = [list(range(0, y_llr.shape[-1]))]
   # ensure everything is numpy ndarray
@@ -270,20 +269,23 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
 
 
 def compute_Cnorm(y_true, y_score,
-                  Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.):
-  """ Computes normalized minimum detection cost function (DCF) given
-      the costs for false accepts and false rejects as well as a priori
-      probability for target speakers
+                  Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.,
+                  probability_input=False):
+  """ Computes normalized detection cost function (DCF) given
+    the costs for false accepts and false rejects as well as a priori
+    probability for target speakers.
 
-  (By convention, the more positive the score,
-  the more likely is the target hypothesis.)
+    * This is the actual cost, different from the min cost (minDCF)
+
+    (By convention, the more positive the score,
+    the more likely is the target hypothesis.)
 
   Parameter
   ---------
   y_true: {array [n_samples], or list of array}
-      labels of binary or multi-classes detection tasks, each
-      array can be an array of classes indices, or
-      one-hot-encoded matrix.
+      each array is labels of binary or multi-classes
+      detection tasks, each array can be an array of
+      classes indices, or one-hot-encoded matrix.
       If multiple array are given, calculating `equalized cost`
       of all partitions, an example of 2 partitions are:
       VAST and MLSR14 files
@@ -320,15 +322,20 @@ def compute_Cnorm(y_true, y_score,
             for i in y_true]
   nb_classes = y_score[0].shape[1]
   # threshold
-  Ptrue = np.array(as_tuple(Ptrue, t=float))
+  Ptrue = np.asarray(as_tuple(Ptrue), dtype=float)
   nb_threshold = len(Ptrue)
+  # log(beta) is threshold, i.e.
+  # if Ptrue=0.5 => beta=1. => threshold=0.
   beta = (Cfa / Cmiss) * ((1 - Ptrue) / Ptrue)
+  beta = np.clip(beta, a_min=np.finfo(float).eps, a_max=np.inf)
   # ====== Cavg ====== #
   global_cm_array = np.zeros(shape=(nb_threshold, nb_classes, nb_classes))
   # Apply threshold on the scores and compute the confusion matrix
   for scores, labels in zip(y_score, y_true):
     actual_TP_per_class = np.lib.arraysetops.unique(
         ar=labels, return_counts=True)[1]
+    if probability_input: # special case input is probability values
+      scores = to_llr(scores)
     for theta_ix, theta in enumerate(np.log(beta)):
       thresholded_scores = (scores > theta).astype(int)
       # compute confusion matrix, this is different from

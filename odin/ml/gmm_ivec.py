@@ -271,7 +271,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       parameters changed (i.e. `maximization` or `gmm_mixup`
       are called)
   name : {str, None}
-      special name for this `Ivector` instance
+      special name for this `Tmatrix` instance
 
 
   Attributes
@@ -1189,10 +1189,11 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
 
 # ===========================================================================
-# Ivector
+# Tmatrix
 # ===========================================================================
-class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
-  """ Super vector based on total varibility space.
+class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
+  """ Tmatrix training for i-vectors extraction
+  based on total varibility space.
 
   Parameters
   ----------
@@ -1232,7 +1233,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       If given a path, save the model after everytime its
       parameters changed (i.e. `maximization` is called)
   name : {str, None}
-      special name for this `Ivector` instance
+      special name for this `Tmatrix` instance
 
   Attributes
   ----------
@@ -1264,7 +1265,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                device='mix', ncpu=1, gpu_factor=3,
                cache_path='/tmp', seed=5218,
                path=None, name=None):
-    super(Ivector, self).__init__()
+    super(Tmatrix, self).__init__()
     if not (isinstance(gmm, GMM) and gmm.is_initialized and gmm.is_fitted):
       raise ValueError("`gmm` must be instance of odin.ml.gmm.GMM "
                        "both is_initialized and is_fitted.")
@@ -1281,7 +1282,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._llk_hist = []
     if name is None:
       name = uuid(length=8)
-      self._name = 'Ivector_%s' % name
+      self._name = 'Tmatrix_%s' % name
     else:
       self._name = str(name)
     if not os.path.isdir(cache_path):
@@ -1291,13 +1292,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     self._dtype = np.dtype(dtype)
     # CPU batch
     if is_string(batch_size_cpu):
-      batch_size_cpu = int(Ivector.STANDARD_CPU_BATCH_SIZE /
+      batch_size_cpu = int(Tmatrix.STANDARD_CPU_BATCH_SIZE /
        ((self.feat_dim * self.nmix * self.dtype.itemsize) +
         (self.nmix * self.dtype.itemsize)))
     self.batch_size_cpu = batch_size_cpu
     # GPU batch
     if is_string(batch_size_gpu):
-      batch_size_gpu = int(Ivector.STANDARD_GPU_BATCH_SIZE /
+      batch_size_gpu = int(Tmatrix.STANDARD_GPU_BATCH_SIZE /
        ((self.feat_dim * self.nmix * self.dtype.itemsize) +
         (self.nmix * self.dtype.itemsize)))
     self.batch_size_gpu = batch_size_gpu
@@ -1616,7 +1617,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                                        gpu_factor=self.gpu_factor)
       # LU, RU, llk, nframes
       results = _ExpectationResults(nb_samples=nfiles, nb_results=4,
-          name="[Ivector] Tdim:%d nmix:%d feat_dim:%d iter:%d" %
+          name="[Tmatrix] Tdim:%d nmix:%d feat_dim:%d iter:%d" %
                      (self.tv_dim, self.nmix, self.feat_dim,
                       len(self._llk_hist) + 1),
           print_progress=print_progress)
@@ -1646,7 +1647,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     prog = Progbar(target=self.nmix,
                    print_report=True,
                    print_summary=False,
-                   name="[Ivector] Maximization #mix:%d #iter:%d device:%s" %
+                   name="[Tmatrix] Maximization #mix:%d #iter:%d device:%s" %
                         (self.nmix, len(self._llk_hist),
                          'CPU' if self.device == 'cpu' else 'GPU'))
     if self.device == 'cpu':
@@ -1777,6 +1778,10 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     ------
     i-vector : (1, tv_dim)
 
+    Note
+    ----
+    this function return i-vectors in the same order provided
+    by `Z` and `F`
     """
     dtype = self.dtype if dtype is None else np.dtype(dtype)
     # ====== prepare inputs ====== #
@@ -1795,16 +1800,18 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                    print_report=True, print_summary=True,
                    name="Extracting %d-D i-vector" % self.tv_dim)
     # ====== init data files ====== #
-    if os.path.exists(path):
-      if override:
-        os.remove(path)
-    dat = MmapData(path=path, dtype=dtype, shape=(None, self.tv_dim))
+    if os.path.exists(path) and override:
+      os.remove(path)
+    dat = MmapData(path=path, dtype=dtype,
+                   shape=(nb_samples, self.tv_dim),
+                   read_only=False)
 
     # ====== run on CPU ====== #
     def extract_ivec(idx):
       vecs = []
       for i in idx:
-        L = np.zeros((self.tv_dim, self.tv_dim), dtype=self.dtype)
+        L = np.zeros((self.tv_dim, self.tv_dim),
+                     dtype=self.dtype)
         L[self._itril] = np.dot(Z[i:i + 1], self.T_invS_Tt)
         L += np.tril(L, -1).T + self.Im
         # (tv_dim, tv_dim)
@@ -1817,14 +1824,15 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         ivec = Ex.T
         if ivec.dtype != dtype:
           ivec = ivec.astype(dtype)
-        vecs.append(ivec)
-      return np.concatenate(vecs, axis=0)
+        vecs.append((i, ivec))
+      return vecs
     mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
               ncpu=self.ncpu,
               batch=max(12, self.batch_size_cpu))
-    for i in mpi:
-      dat.append(i)
-      prog.add(i.shape[0])
+    for vecs in mpi:
+      for i, v in vecs:
+        dat[i:i + 1] = v
+      prog.add(len(vecs))
     # ====== flush and close ====== #
     dat.flush()
     dat.close()

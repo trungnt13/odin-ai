@@ -15,6 +15,7 @@ from odin.utils import as_tuple, uuid, is_number
 from .helpers import set_shape, is_tensor, is_training
 
 floatX = get_floatX()
+EPS = np.finfo(floatX).eps
 
 # ===========================================================================
 # Helper
@@ -37,13 +38,13 @@ def to_llh(x, name=None):
   # ====== numpy ====== #
   if not is_tensor(x):
     x /= np.sum(x, axis=-1, keepdims=True)
-    x = np.clip(x, 10e-8, 1. - 10e-8)
+    x = np.clip(x, EPS, 1 - EPS)
     return np.log(x)
   # ====== Tensorflow ====== #
   else:
     with tf.name_scope(name, "log_likelihood", [x]):
       x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
-      x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
+      x = tf.clip_by_value(x, EPS, 1 - EPS)
       return tf.log(x)
 
 def to_llr(x, name=None):
@@ -53,13 +54,14 @@ def to_llr(x, name=None):
   # ====== numpy ====== #
   if not is_tensor(x):
     x /= np.sum(x, axis=-1, keepdims=True)
-    x = np.clip(x, 10e-8, 1. - 10e-8)
-    return np.log(x / (np.cast(1., x.dtype) - x))
+
+    x = np.clip(x, EPS, 1 - EPS)
+    return np.log(x / (1 - x))
   # ====== tensorflow ====== #
   else:
     with tf.name_scope(name, "log_likelihood_ratio", [x]):
       x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
-      x = tf.clip_by_value(x, 10e-8, 1. - 10e-8)
+      x = tf.clip_by_value(x, EPS, 1 - EPS)
       return tf.log(x / (tf.cast(1., x.dtype.base_dtype) - x))
 
 def to_nonzeros(x, value):

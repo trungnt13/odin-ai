@@ -794,7 +794,7 @@ class RASTAfilter(Extractor):
       mfcc = np.hstack([
           mfcc,
           shifted_deltas(mfcc, N=mfcc.shape[-1], d=self.sdc,
-                         P=3, k=7)
+                         P=3, k=mfcc.shape[1]) # k = 7
       ])
     # store new feature
     feat[self.feat_name] = mfcc.astype("float32")
