@@ -237,8 +237,7 @@ def evaluate_features(X_train, y_train,
                       X_test, y_test,
                       verbose, title):
   print(ctext("==== Evaluating system: '%s'" % title, 'cyan'))
-  model = ml.LogisticRegression(nb_classes=len(labels), l2=1.0,
-                                max_epoch=120, verbose=verbose)
+  model = ml.LogisticRegression(nb_classes=len(labels))
   model.fit(X_train, y_train)
   model.evaluate(X_test, y_test)
 # ====== i-vec ====== #

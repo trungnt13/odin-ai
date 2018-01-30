@@ -1763,9 +1763,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # (1, tv_dim)
     return Ex.T
 
-  def transform_to_disk(self, path,
-                        X=None, indices=None,
-                        Z=None, F=None,
+  def transform_to_disk(self, path, Z, F,
                         name_path=None,
                         dtype='float32', override=True):
     """ Same as `transform`, however, save the transformed statistics
@@ -1791,9 +1789,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     """
     dtype = self.dtype if dtype is None else np.dtype(dtype)
     # ====== prepare inputs ====== #
-    if indices is not None and X is not None:
-      raise NotImplementedError
-    elif Z is not None and F is not None:
+    if Z is not None and F is not None:
       nb_samples = Z.shape[0]
       if Z.shape[0] != F.shape[0]:
         raise ValueError("Number of samples in `Z` is %d which is different "
