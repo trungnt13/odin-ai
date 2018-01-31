@@ -7,7 +7,7 @@ import tensorflow as tf
 from sklearn.svm import SVC
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
-from .base import BaseEstimator, TransformerMixin
+from .base import BaseEstimator, TransformerMixin, Evaluable
 
 # ===========================================================================
 # Cosine Scoring
@@ -33,7 +33,7 @@ def _wccn(X, y, classes):
   return w
 
 
-class Scorer(BaseEstimator, TransformerMixin):
+class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   """ Scorer """
 
   def __init__(self, wccn=True, lda=True, method='cosine'):
@@ -41,10 +41,11 @@ class Scorer(BaseEstimator, TransformerMixin):
     self._wccn = bool(wccn)
     self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
     self._feat_dim = None
-    self._classes = None
+    self._labels = None
     method = str(method).lower()
-    if method not in ('consine', 'svm'):
-      raise ValueError('`method` must be one of the following: cosine, svm')
+    if method not in ('cosine', 'svm'):
+      raise ValueError('`method` must be one of the following: cosine, svm; '
+                       'but given: "%s"' % method)
     self._method = method
 
   # ==================== properties ==================== #
@@ -57,12 +58,12 @@ class Scorer(BaseEstimator, TransformerMixin):
     return self._feat_dim
 
   @property
-  def classes(self):
-    return self._classes
+  def labels(self):
+    return self._labels
 
   @property
   def nb_classes(self):
-    return len(self._classes)
+    return len(self._labels)
 
   @property
   def is_initialized(self):
@@ -93,7 +94,7 @@ class Scorer(BaseEstimator, TransformerMixin):
     if self.is_initialized:
       return
     self._feat_dim = X.shape[1]
-    self._classes = np.unique(y)
+    self._labels = np.unique(y)
 
   def normalize(self, X):
     if not self.is_fitted:
@@ -106,18 +107,20 @@ class Scorer(BaseEstimator, TransformerMixin):
     return X
 
   def fit(self, X, y):
+    if isinstance(y, (tuple, list)):
+      y = np.asarray(y)
     if y.ndim == 2:
       y = np.argmax(y, axis=-1)
     self._initialize(X, y)
     # ====== compute classes' average ====== #
     enroll = np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
-                             for i in self.classes], axis=0)
-    M = np.mean(X, axis=0, keepdims=True)
+                             for i in self.labels], axis=0)
+    M = X.mean(axis=0).reshape(1, -1)
     self._mean = M
     X = X - M
     # ====== WCCN ====== #
     if self._wccn:
-      w = _wccn(X, y, self.classes) # [feat_dim, feat_dim]
+      w = _wccn(X, y, self.labels) # [feat_dim, feat_dim]
     else:
       w = 1
     self._w = w
@@ -149,6 +152,9 @@ class Scorer(BaseEstimator, TransformerMixin):
                       probability=True, tol=1e-3,
                       cache_size=1e4, class_weight='balanced')
       self._svm.fit(X, y)
+
+  def predict_log_proba(self, X):
+    return self.transform(X)
 
   def transform(self, X):
     if not self.is_fitted:

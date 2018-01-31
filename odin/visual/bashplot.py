@@ -280,6 +280,8 @@ def print_confusion(arr, labels=None, inc_stats=True):
   nb_classes = arr.shape[0]
   if labels is None:
     labels = ['%d' % i for i in range(nb_classes)]
+  else:
+    labels = [str(i) for i in labels]
   max_label_length = max(len(i) for i in labels)
   lab_fmt = '%-' + str(max_label_length) + 's '
   # ====== calculate precision, recall, F1 ====== #

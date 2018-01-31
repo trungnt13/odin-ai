@@ -237,9 +237,19 @@ def evaluate_features(X_train, y_train,
                       X_test, y_test,
                       verbose, title):
   print(ctext("==== Evaluating system: '%s'" % title, 'cyan'))
-  model = ml.LogisticRegression(nb_classes=len(labels))
+  model = ml.LogisticRegression(nb_classes=labels)
   model.fit(X_train, y_train)
   model.evaluate(X_test, y_test)
+# ====== cosine scoring ====== #
+print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
+scorer = ml.Scorer(wccn=True, lda=True, method='cosine')
+scorer.fit(X=ivecs['train'], y=y_true['train'])
+scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+# ====== svm scoring ====== #
+print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
+scorer = ml.Scorer(wccn=True, lda=True, method='svm')
+scorer.fit(X=ivecs['train'], y=y_true['train'])
+scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 # ====== i-vec ====== #
 evaluate_features(X_train=ivecs['train'], y_train=y_true['train'],
                   X_test=ivecs['test'], y_test=y_true['test'],
