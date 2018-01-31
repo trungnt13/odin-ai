@@ -4,6 +4,7 @@ import numpy as np
 from scipy.linalg import eigh, cholesky, inv, svd, solve
 import tensorflow as tf
 
+from sklearn.svm import SVC
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
 from .base import BaseEstimator, TransformerMixin
@@ -32,17 +33,25 @@ def _wccn(X, y, classes):
   return w
 
 
-class CosineScorer(BaseEstimator, TransformerMixin):
-  """ CosineScorer """
+class Scorer(BaseEstimator, TransformerMixin):
+  """ Scorer """
 
-  def __init__(self, wccn=True, lda=True):
-    super(CosineScorer, self).__init__()
+  def __init__(self, wccn=True, lda=True, method='cosine'):
+    super(Scorer, self).__init__()
     self._wccn = bool(wccn)
     self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
     self._feat_dim = None
     self._classes = None
+    method = str(method).lower()
+    if method not in ('consine', 'svm'):
+      raise ValueError('`method` must be one of the following: cosine, svm')
+    self._method = method
 
   # ==================== properties ==================== #
+  @property
+  def method(self):
+    return self._method
+
   @property
   def feat_dim(self):
     return self._feat_dim
@@ -86,6 +95,16 @@ class CosineScorer(BaseEstimator, TransformerMixin):
     self._feat_dim = X.shape[1]
     self._classes = np.unique(y)
 
+  def normalize(self, X):
+    if not self.is_fitted:
+      raise RuntimeError("CosineScorer has not been fitted.")
+    X = X - self._mean
+    X = np.dot(X, self._w)
+    X = _unit_len_norm(X)
+    if self._lda is not None:
+      X = self._lda.transform(X)
+    return X
+
   def fit(self, X, y):
     if y.ndim == 2:
       y = np.argmax(y, axis=-1)
@@ -116,22 +135,37 @@ class CosineScorer(BaseEstimator, TransformerMixin):
     if self._lda is not None:
       enroll = self._lda.transform(enroll) # [nb_classes, nb_classes - 1]
     self._enroll_vecs = _unit_len_norm(enroll)
+    # ====== for SVM method ====== #
+    if self.method == 'svm':
+      if self._lda is not None:
+        X = self._lda.transform(X)
+      # normalize to [0, 1]
+      tMin = X.min(0, keepdims=True)
+      tMax = X.max(0, keepdims=True)
+      self._tMin, self._tMax = tMin, tMax
+      X = 2 * (X - tMin) / (tMax - tMin) - 1
+      self._svm = SVC(C=1, kernel='rbf', gamma='auto', coef0=1,
+                      shrinking=True, random_state=0,
+                      probability=True, tol=1e-3,
+                      cache_size=1e4, class_weight='balanced')
+      self._svm.fit(X, y)
 
   def transform(self, X):
     if not self.is_fitted:
       raise RuntimeError("CosineScorer has not been fitted.")
     # ====== preprocess ====== #
-    X = X - self._mean
-    X = np.dot(X, self._w)
-    X = _unit_len_norm(X)
-    if self._lda is not None:
-      X = self._lda.transform(X)
+    X = self.normalize(X)
     # ====== cosine scoring ====== #
-    # [nb_classes, nb_classes - 1]
-    model_ivectors = self._enroll_vecs
-    # [nb_samples, nb_classes - 1]
-    test_ivectors = _unit_len_norm(X)
-    scores = np.dot(test_ivectors, model_ivectors.T)
+    if self.method == 'cosine':
+      # [nb_classes, nb_classes - 1]
+      model_ivectors = self._enroll_vecs
+      # [nb_samples, nb_classes - 1]
+      test_ivectors = _unit_len_norm(X)
+      scores = np.dot(test_ivectors, model_ivectors.T)
+    # ====== svm ====== #
+    elif self.method == 'svm':
+      X = 2 * (X - self._tMin) / (self._tMax - self._tMin) - 1
+      scores = self._svm.predict_log_proba(X)
     return scores
 
 # ===========================================================================
