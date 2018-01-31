@@ -8,7 +8,8 @@ import numpy as np
 from odin.utils import ctext
 from odin.visual import print_confusion
 
-from sklearn.base import BaseEstimator, TransformerMixin, DensityMixin
+from sklearn.base import (BaseEstimator, TransformerMixin, DensityMixin,
+                          ClassifierMixin, RegressorMixin)
 from sklearn.metrics import log_loss, accuracy_score, confusion_matrix
 
 @add_metaclass(ABCMeta)

@@ -40,7 +40,7 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
 # ===========================================================================
 args = ArgController(
 ).add('-task', '0-gender,1-dialect,2-digit,3-spk', 0
-).add('-nmix', "Number of GMM mixture", 512
+).add('-nmix', "Number of GMM mixture", 256
 ).add('-tdim', "Dimension of t-matrix", 128
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
