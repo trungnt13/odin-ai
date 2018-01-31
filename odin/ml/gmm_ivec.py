@@ -20,7 +20,8 @@ from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid, is_string,
-                        wprint, eprint, segment_list, defaultdictkey)
+                        wprint, eprint, segment_list, defaultdictkey,
+                        array_size)
 from odin.config import EPS, get_ngpu
 
 from .base import DensityMixin, BaseEstimator, TransformerMixin
@@ -1607,6 +1608,18 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
           yield nfiles
           for i, r in enumerate(res):
             tmp[i] += r
+        # LU return size in Gigabytes
+        size = array_size(tmp[0]) / (1024 ** 3)
+        if size > 1:
+          tmp[0] = tmp[0].astype('float32')
+        elif size > 2:
+          tmp[0] = tmp[0].astype('float16')
+        # RU return size in Gigabytes
+        size = array_size(tmp[1]) / (1024 ** 3)
+        if size > 1:
+          tmp[1] = tmp[1].astype('float32')
+        elif size > 2:
+          tmp[1] = tmp[1].astype('float16')
         yield tmp
 
       def _thread_fn(start_end):
@@ -1638,6 +1651,12 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
         t.start()
       # run the mpi
       for r in mpi:
+        if not is_number(r):
+          # r is downsample to prevent overloading multiprocessing Pipe
+          r = [i.astype(self.dtype)
+               if isinstance(i, np.ndarray) and i.dtype != self.dtype
+               else i
+               for i in r]
         results.update(r)
       # finish all threads
       for t in threads:

@@ -44,6 +44,10 @@ from . import math_utils
 from . import decorators
 
 
+def array_size(arr):
+  """ Return size of an numpy.ndarray in bytes """
+  return np.prod(arr.shape) * arr.dtype.itemsize
+
 # ===========================================================================
 # Pretty print
 # ===========================================================================
