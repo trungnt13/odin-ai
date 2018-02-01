@@ -754,6 +754,10 @@ class MmapData(Data):
     return self._path
 
   @property
+  def path(self):
+    return self._path
+
+  @property
   def new_args(self):
     return (self._path,)
 

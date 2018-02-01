@@ -113,9 +113,6 @@ def read(path_or_file, encode=None):
   else:
     raise ValueError("Invalid type of `path_or_file` %s" %
         str(type(path_or_file)))
-  # support encode
-  if encode not in (None, 'ulaw', 'vast'):
-    raise ValueError("No support for encode: %s" % str(encode))
   # ====== read the audio ====== #
   if '.pcm' in path.lower():
     raw, sr = _read_pcm(f, encode=encode)
@@ -368,14 +365,14 @@ class AudioReader(Extractor):
     # mapping of specific data
     elif isinstance(path_or_array, Mapping):
       if 'sr' in path_or_array:
-        sr = path_or_array['sr']
+        sr = int(path_or_array['sr'])
       if 'encode' in path_or_array:
-        encode = path_or_array['encode']
+        encode = str(path_or_array['encode'])
       # get raw or path out of the Dictionary
       if 'raw' in path_or_array:
         raw = path_or_array['raw']
       elif 'path' in path_or_array:
-        path = path_or_array
+        path = str(path_or_array['path'])
         raw, sr = read(path, encode=encode)
       else:
         raise ValueError('`path_or_array` can be a dictionary, contains '

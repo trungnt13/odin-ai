@@ -17,6 +17,13 @@ import numpy as np
 from odin.config import get_rng
 from odin.utils import async, is_string, ctext, as_tuple
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _dump(x):
+  if isinstance(x, np.str_):
+    x = str(x)
+  return marshal.dumps(x)
 
 @add_metaclass(ABCMeta)
 class NoSQL(MutableMapping):
@@ -293,7 +300,7 @@ class MmapDict(NoSQL):
     file.seek(max_position)
     for key, value in self._cache_dict.items():
       try:
-        value = marshal.dumps(value)
+        value = _dump(value)
       except ValueError:
         raise RuntimeError("Cannot marshal.dump %s" % str(value))
       self.indices[key] = (max_position, len(value))
@@ -604,8 +611,8 @@ class SQLiteDict(NoSQL):
       if len(self.current_cache) > 0:
         self.cursor.executemany(
             "INSERT INTO {tb} VALUES (?, ?)".format(tb=tab),
-            [(str(k), marshal.dumps(v.tolist()) if isinstance(v, np.ndarray)
-              else marshal.dumps(v))
+            [(str(k), _dump(v.tolist()) if isinstance(v, np.ndarray)
+              else _dump(v))
              for k, v in self.current_cache.items()])
         self.connection.commit()
         self.current_cache.clear()
@@ -805,7 +812,7 @@ class SQLiteDict(NoSQL):
       if key in self.current_cache:
         self.current_cache[key] = value
       else:
-        db_update.append((marshal.dumps(value), key))
+        db_update.append((_dump(value), key))
     # ====== perform DB update ====== #
     self.cursor.executemany(query.format(tb=self._current_table), db_update)
     self.connection.commit()

@@ -79,6 +79,11 @@ def _equal_inputs_outputs(x, y):
   return True
 
 
+def _preprocess(x):
+  if isinstance(x, np.str_):
+    x = str(x)
+  return x
+
 # ===========================================================================
 # Basic extractors
 # ===========================================================================
@@ -145,7 +150,7 @@ class Extractor(BaseEstimator, TransformerMixin):
             raise RuntimeError("name for features cannot contain "
                                "upper case.")
           if name not in y:
-            y[name] = feat
+            y[name] = _preprocess(feat)
     # maybe someone implement __getstate__ and forget _debug
     if not hasattr(self, '_debug'):
       self._debug = False
