@@ -4,16 +4,21 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = "cpu,float32"
+os.environ['ODIN'] = "gpu=1,cpu=1,float32"
 import shutil
 
 import numpy as np
 
-from odin import fuel as F
+from odin import fuel as F, nnet as N
 from odin import preprocessing as pp
 from odin.utils import (get_all_files, get_all_ext, exec_commands,
-                        MPI, cpu_count, Progbar)
+                        MPI, cpu_count, Progbar, ArgController,
+                        stdio, ctext)
+args = ArgController(
+).add('--wav', "Converting sphere file to wave", False
+).parse()
 
+TOTAL_FILES = 25096
 README = \
 """
 Original sample rate: 20,000 Hz
@@ -89,14 +94,18 @@ Example of original data:
 # ===========================================================================
 # CONST
 # ===========================================================================
+# ====== main path ====== #
 inpath = "/mnt/sdb1/TIDIGITS"
+outpath = '/home/trung/data/tidigits'
+# ====== others ====== #
 wav_path = os.path.join(inpath, "wave")
-wav_ds = os.path.join(inpath, "raw")
 infopath = os.path.join(inpath, 'data/children/doc/spkrinfo.txt')
-
+logpath = os.path.join(inpath, 'log.txt')
 print('Input path:', inpath)
+print("Output path:", outpath)
 print('Convert to WAV at:', wav_path)
-print('WAVE dataset:', wav_ds)
+print("Log path:", logpath)
+stdio(logpath)
 
 exts = get_all_ext(inpath)
 audio_files = get_all_files(inpath,
@@ -138,7 +147,13 @@ def get_name(path):
 # Convert all SPHERE to wav using sph2pipe
 # ===========================================================================
 if os.path.exists(wav_path):
-  shutil.rmtree(wav_path)
+  if args.wav:
+    print("Override wave files at '%s'" % wav_path)
+    shutil.rmtree(wav_path)
+  elif len(os.listdir(wav_path)) != TOTAL_FILES:
+    print("Found only %d files at '%s', delete old wave files" %
+      (len(os.listdir(wav_path)), wav_path))
+    shutil.rmtree(wav_path)
 # ====== convert all compress audio to .wav using sph2pipe ====== #
 if not os.path.exists(wav_path):
   os.mkdir(wav_path)
@@ -148,37 +163,75 @@ if not os.path.exists(wav_path):
   def mpi_fn(cmd):
     exec_commands(cmd, print_progress=False)
     yield len(cmd)
-  mpi = MPI(jobs=cmds, func=mpi_fn,
-            ncpu=cpu_count() - 1, batch=12)
   prog = Progbar(target=len(cmds),
                  print_report=True, print_summary=True,
                  name='Converting .sph to .wav')
+  # run the MPI tasks
+  mpi = MPI(jobs=cmds, func=mpi_fn,
+            ncpu=cpu_count() - 1, batch=12)
   for i in mpi:
     prog.add(i)
 # ===========================================================================
-# store everything in one dataset
+# Extract Acoustic features
 # ===========================================================================
-if os.path.exists(wav_ds):
-  shutil.rmtree(wav_ds)
-# ====== create new segments list ====== #
-segments = get_all_files(wav_path,
-                         filter_func=lambda f: f[-4:] == '.wav')
-if not os.path.exists(wav_ds):
-  wave = pp.FeatureProcessor(segments,
-      extractor=[
-          pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
-                                remove_dc_n_dither=False, preemphasis=None),
-          pp.base.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
-                                keys='path'),
-          pp.base.AsType(type_map={'raw': 'float16'})
-      ],
-      path=wav_ds, ncache=300, ncpu=8, override=True)
-  wave.run()
-  pp.validate_features(wave, '/tmp/tidigits_wave', override=True,
-                       nb_samples=8)
-  with open(os.path.join(wav_ds, 'README'), 'w') as f:
-    f.write(README)
-# ====== validate the data ====== #
-ds = F.Dataset(wav_ds, read_only=True)
+jobs = get_all_files(wav_path,
+                     filter_func=lambda x: '.wav' == x[-4:])
+assert len(jobs) == TOTAL_FILES
+# ====== configuration ====== #
+padding = False
+NFFT = 512
+frame_length = 0.025
+step_length = 0.005
+dtype = 'float16'
+# the feature extraction configuration must match the bnf newwork
+# requirement
+bnf_network = N.models.BNF_2048_MFCC39()
+extractors = pp.make_pipeline(steps=[
+    pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
+                          remove_dc_n_dither=True, preemphasis=0.97),
+    pp.base.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
+                          keys='path'),
+    pp.speech.SpectraExtractor(frame_length=frame_length,
+                               step_length=step_length,
+                               nfft=NFFT, nmels=40, nceps=13,
+                               fmin=100, fmax=4000, padding=padding),
+    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+                           feat_name='energy'),
+    # ====== BNF ====== #
+    pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
+                           feat_name='mfcc'),
+    pp.base.StackFeatures(context=10, feat_name='mfcc'),
+    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network,
+                           pre_mvn=True),
+    # ====== normalization ====== #
+    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
+                           sad_stats=False, sad_name='sad',
+                           ignore_sad_error=True,
+                           feat_name=('spec', 'mspec', 'mfcc', 'bnf',
+                                      'qspec', 'qmfcc', 'qmspec')),
+    # ====== post processing ====== #
+    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
+                                      'qspec', 'qmspec', 'qmfcc',
+                                      'pitch', 'f0', 'sad', 'energy',
+                                      'sap', 'loudness')),
+    pp.base.RunningStatistics(),
+    pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
+                    'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
+                    'pitch': dtype, 'f0': dtype, 'sap': dtype,
+                    'sad': dtype, 'energy': dtype, 'loudness': dtype,
+                    'raw': dtype, 'bnf': dtype}),
+], debug=False)
+processor = pp.FeatureProcessor(jobs=jobs, path=outpath, extractor=extractors,
+                                ncache=0.12, ncpu=None,
+                                override=True)
+processor.run()
+pp.validate_features(processor, path='/tmp/tidigits', nb_samples=12,
+                     override=True)
+with open(os.path.join(outpath, 'README'), 'w') as f:
+  f.write(README)
+pp.calculate_pca(processor, override=True)
+# ====== check the preprocessed dataset ====== #
+ds = F.Dataset(outpath, read_only=True)
 print(ds)
 ds.close()
+print("Log at path:", ctext(logpath, 'cyan'))
