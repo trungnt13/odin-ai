@@ -7,6 +7,20 @@ from collections import defaultdict
 import numpy as np
 
 
+def get_all_properties(obj):
+  """ Return all attributes which are properties of given Object
+  """
+  properties = []
+  clazz = obj if isinstance(obj, type) else obj.__class__
+  for key in dir(clazz):
+    if '__' in key:
+      continue
+    val = getattr(clazz, key)
+    if isinstance(val, property):
+      properties.append(key)
+  return properties if isinstance(obj, type) else \
+  {p: getattr(obj, p) for p in properties}
+
 # ===========================================================================
 # Async file IO
 # ===========================================================================

@@ -35,10 +35,15 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
                         Progbar, unique_labels, chain,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 
+# ====== start logging ====== #
+LOG_PATH = get_logpath('digits_ivec.log',
+                       override=True)
+stdio(LOG_PATH)
 # ===========================================================================
 # Input arguments
 # ===========================================================================
 args = ArgController(
+).add('path', 'path to preprocessed TIDIGITS dataset'
 ).add('-task', '0-gender,1-dialect,2-digit,3-spk', 0
 ).add('-nmix', "Number of GMM mixture", 256
 ).add('-tdim', "Dimension of t-matrix", 128
@@ -58,11 +63,13 @@ if args.task not in (0, 1, 2, 3):
 # path
 # ===========================================================================
 # path to preprocessed dataset
-ds = F.Dataset(get_datasetpath('digits', override=False),
-               read_only=True)
-EXP_DIR = '/home/trung/data/exp_digit'
+ds = F.Dataset(args.path, read_only=True)
+# ====== general path ====== #
+EXP_DIR = '/tmp/exp_digit'
 if not os.path.exists(EXP_DIR):
   os.mkdir(EXP_DIR)
+print("Exp-dir:", ctext(EXP_DIR, 'cyan'))
+# ====== ivec path ====== #
 GMM_PATH = os.path.join(EXP_DIR, 'gmm')
 TMAT_PATH = os.path.join(EXP_DIR, 'tmat')
 Z_PATH = (
@@ -77,8 +84,6 @@ I_PATH = (
 L_PATH = ( # labels
     os.path.join(EXP_DIR, 'L_train'),
     os.path.join(EXP_DIR, 'L_test'))
-LOG_PATH = get_logpath('digit_ivec.log', override=True)
-stdio(LOG_PATH)
 # ===========================================================================
 # Const
 # ===========================================================================
@@ -236,7 +241,7 @@ def filelist_2_feat(feat, flist):
 def evaluate_features(X_train, y_train,
                       X_test, y_test,
                       verbose, title):
-  print(ctext("==== Evaluating system: '%s'" % title, 'cyan'))
+  print(ctext("==== LogisticRegression: '%s'" % title, 'cyan'))
   model = ml.LogisticRegression(nb_classes=labels)
   model.fit(X_train, y_train)
   model.evaluate(X_test, y_test)

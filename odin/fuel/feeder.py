@@ -158,8 +158,21 @@ def _preprocessing_indices(indices):
 
 
 class DataDescriptor(Data):
+  """
+  Parameters
+  ----------
+  data : {Data, list of Data}
+    list of Data will be manipulated by this descriptor
+    NOTE: all Data must have the same length
+  indices : Mapping
+    mapping from `name`->(start, end)
+  concat : bool
+    whether all data in this Descriptor will be concatenated during
+    any operators, the concatenation will be performed on axis=-1
+  """
 
-  def __init__(self, data, indices):
+  def __init__(self, data, indices,
+               concat=False):
     super(DataDescriptor, self).__init__(data=data, read_only=True)
     # ====== states variables ====== #
     self._length = None
@@ -176,6 +189,13 @@ class DataDescriptor(Data):
       raise ValueError('All Data must have the same length '
                        '(i.e. shape[0]), the given data have '
                        'shape: %s' % str([d.shape for d in data]))
+    # ====== others ====== #
+    self._concat = bool(concat)
+    if self._concat:
+      if len(set(d.ndim for d in self.data)) > 1:
+        raise ValueError("`concat` is only applied when all Data has "
+                         "the same number of dimension")
+      self._is_data_list = False
 
   # ==================== Properties ==================== #
   @property
@@ -197,12 +217,14 @@ class DataDescriptor(Data):
   # ==================== pickling ==================== #
   @property
   def data_info(self):
-    return (self.indices_info, self.data,
-            self._length, self._return_name)
+    return (self._indices_info, self._data,
+            self._length, self._return_name,
+            self._concat)
 
   def _restore_data(self, info):
     (self._indices_info, self._data,
-        self._length, self._return_name) = info
+        self._length, self._return_name,
+        self._concat) = info
     # deserialize indices
     ids_type, info = self._indices_info
     if ids_type == 'mapping':
@@ -220,14 +242,19 @@ class DataDescriptor(Data):
     if self._length is None:
       self._length = sum((end - start)
                       for name, (start, end) in self.indices.items())
-    ret_shape = [(self._length,) + dat.shape[1:]
-                 for dat in self.data]
-    return ret_shape[0] if len(ret_shape) == 1 else tuple(ret_shape)
+    if self._concat:
+      ret_shape = [(self._length,) +
+                   self.data[0].shape[1:-1] +
+                   (sum(d.shape[-1] for d in self.data),)]
+    else:
+      ret_shape = [(self._length,) + dat.shape[1:]
+                   for dat in self.data]
+    return tuple(ret_shape) if self.is_data_list else ret_shape[0]
 
   def __str__(self):
     name = ctext('DataDescriptor', 'cyan')
-    s = '<%s: Indices(type:"%s" length:%d)>\n' % \
-        (name, self.indices_info[0], len(self.indices))
+    s = '<%s: Indices(type:"%s" length:%d) concat:%s>\n' % \
+        (name, self.indices_info[0], len(self.indices), self._concat)
     for dat in self.data:
       s += '   (%s)%s: %s %s\n' % \
           (dat.__class__.__name__,
@@ -243,7 +270,11 @@ class DataDescriptor(Data):
   def __getitem__(self, key):
     if is_string(key):
       key = slice(*self.indices[key])
-    x = super(DataDescriptor, self).__getitem__(key)
+    x = tuple([dat.__getitem__(key) for dat in self.data])
+    if self._concat:
+      x = np.concatenate(x, axis=-1)
+    elif not self.is_data_list:
+      x = x[0]
     return x
 
 

@@ -17,7 +17,7 @@ import numpy as np
 from numpy import ndarray
 
 from odin.utils.decorators import autoattr
-from odin.utils import (struct, as_tuple, cache_memory, is_string)
+from odin.utils import (struct, as_tuple, cache_memory, is_string, is_number)
 
 __all__ = [
   'as_data',
@@ -136,6 +136,11 @@ class Data(object):
   # ==================== basic properties ==================== #
   @property
   def is_data_list(self):
+    """ Return whether this Data was created as a list of given Data
+    or just a single Data.
+    This will affects the return result of `shape` (i.e.
+    whether it should be a list of shape tuple, or just single shape)
+    """
     return self._is_data_list
 
   @property
@@ -154,11 +159,11 @@ class Data(object):
   def array(self):
     """Convert any data manipulated by this object to
     numpy.ndarray"""
-    a = [dat[:] for dat in self._data]
+    a = tuple([dat[:] for dat in self._data])
     return a if self.is_data_list else a[0]
 
   def tolist(self):
-    a = [dat.tolist() for dat in self._data]
+    a = tuple([dat.tolist() for dat in self._data])
     return a if self.is_data_list else a[0]
 
   # ==================== For pickling ==================== #
@@ -207,23 +212,24 @@ class Data(object):
 
   @property
   def shape(self):
-    s = [i.shape for i in self._data]
+    s = tuple([i.shape for i in self._data])
     return s if self.is_data_list else s[0]
 
   def __len__(self):
     """ len always return 1 number """
-    if self.is_data_list:
-      return self.shape[0][0]
-    return self.shape[0]
+    shape = self.shape
+    if is_number(shape[0]):
+      return shape[0]
+    return self.shape[0][0]
 
   @property
   def T(self):
-    x = [i.T for i in self._data]
+    x = tuple([i.T for i in self._data])
     return x if self.is_data_list else x[0]
 
   @property
   def dtype(self):
-    x = [np.dtype(i.dtype) for i in self._data]
+    x = tuple([np.dtype(i.dtype) for i in self._data])
     return x if self.is_data_list else x[0]
 
   @contextmanager
@@ -280,8 +286,8 @@ class Data(object):
     return self
 
   # ==================== Slicing methods ==================== #
-  def __getitem__(self, y):
-    x = [dat.__getitem__(y) for dat in self._data]
+  def __getitem__(self, key):
+    x = tuple([dat.__getitem__(key) for dat in self.data])
     return x if self.is_data_list else x[0]
 
   @autoattr(_status=lambda x: x + 1)
@@ -326,11 +332,12 @@ class Data(object):
       yield None
       # ====== start the iteration ====== #
       for start, end in idx:
-        x = [i[start:end] for i in self._data]
-        if self.is_data_list:
-          yield [permutation_func(i) for i in x]
+        # [i[start:end] for i in self._data]
+        x = self.__getitem__(slice(start, end))
+        if isinstance(x, (tuple, list)):
+          yield tuple([permutation_func(i) for i in x])
         else:
-          yield permutation_func(x[0])
+          yield permutation_func(x)
     # ====== create, init, and return the iteration ====== #
     it = create_iteration()
     next(it)
@@ -710,17 +717,17 @@ class MmapData(Data):
                read_only=False):
     # validate path
     path = os.path.abspath(path)
-    # check shape info
+    # ====== check shape info ====== #
     if shape is not None:
       if not isinstance(shape, (tuple, list, np.ndarray)):
         shape = (shape,)
       shape = tuple([0 if i is None or i < 0 else i for i in shape])
-    # read exist file
+    # ====== read exist file ====== #
     if os.path.exists(path):
       dtype, shape, f = MmapData.read_header(path,
                                              read_only=read_only,
                                              return_file=True)
-    # create new file
+    # ====== create new file ====== #
     else:
       if dtype is None or shape is None:
         raise Exception("First created this MmapData, `dtype` and "
