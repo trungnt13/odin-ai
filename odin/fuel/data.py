@@ -17,7 +17,8 @@ import numpy as np
 from numpy import ndarray
 
 from odin.utils.decorators import autoattr
-from odin.utils import (struct, as_tuple, cache_memory, is_string, is_number)
+from odin.utils import (struct, as_tuple, cache_memory, is_string,
+                        is_number, axis_normalize)
 
 __all__ = [
   'as_data',
@@ -26,6 +27,7 @@ __all__ = [
   'get_all_hdf_dataset',
 
   'Data',
+  'DataConcat',
   'NdarrayData',
   'MmapData',
   'Hdf5Data',
@@ -605,8 +607,59 @@ class Data(object):
 
 
 # ===========================================================================
-# Array Data
+# Utils
 # ===========================================================================
+class DataConcat(Data):
+  """ Concatenate two Data while iterating over them
+  """
+
+  def __init__(self, data, axis=-1):
+    data = as_tuple(data)
+    if len(data) < 2:
+      raise ValueError("2 or more Data must be given to `DataConcat`")
+    if axis == 0:
+      raise ValueError("Cannot concatenate axis=0")
+    if len(set(d.ndim for d in data)) > 2:
+      raise ValueError("All Data must have the same number of dimension (i.e. `ndim`)")
+    if len(set(d.shape[0] for d in data)) > 2:
+      raise ValueError("All Data must have the same length (i.e. first dimension)")
+    super(DataConcat, self).__init__(data, read_only=True)
+    self._is_data_list = False
+    self._axis = axis_normalize(int(axis), ndim=data[0].ndim)
+
+  @property
+  def data_info(self):
+    return self._data, self._axis
+
+  def _restore_data(self, info):
+    self._data, self._axis = info
+
+  @property
+  def array(self):
+    """Convert any data manipulated by this object to
+    numpy.ndarray"""
+    return np.concatenate([dat[:] for dat in self._data],
+                          axis=self._axis)
+
+  def tolist(self):
+    return self.array.tolist()
+
+  @property
+  def shape(self):
+    all_shapes = [d.shape for d in self.data]
+    new_shape = [all_shapes[0][0]]
+    ndim = len(all_shapes[0])
+    for i in range(1, ndim):
+      if i == self._axis:
+        new_shape.append(sum(s[i] for s in all_shapes))
+      else:
+        new_shape.append(all_shapes[0][i])
+    return tuple(new_shape)
+
+  def __getitem__(self, key):
+    return np.concatenate([d.__getitem__(key) for d in self.data],
+                          axis=self._axis)
+
 class NdarrayData(Data):
   """ Simple wrapper for `numpy.ndarray` """
 

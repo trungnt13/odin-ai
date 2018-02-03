@@ -31,7 +31,8 @@ from collections import Mapping
 import numpy as np
 
 from odin.utils import (segment_list, one_hot, is_string, Progbar, batching,
-                        as_tuple, ctext, is_number, is_primitives)
+                        as_tuple, ctext, is_number, is_primitives,
+                        defaultdictkey)
 from odin.utils.mpi import MPI, async
 
 from .data import Data, as_data
@@ -171,8 +172,7 @@ class DataDescriptor(Data):
     any operators, the concatenation will be performed on axis=-1
   """
 
-  def __init__(self, data, indices,
-               concat=False):
+  def __init__(self, data, indices):
     super(DataDescriptor, self).__init__(data=data, read_only=True)
     # ====== states variables ====== #
     self._length = None
@@ -189,13 +189,6 @@ class DataDescriptor(Data):
       raise ValueError('All Data must have the same length '
                        '(i.e. shape[0]), the given data have '
                        'shape: %s' % str([d.shape for d in data]))
-    # ====== others ====== #
-    self._concat = bool(concat)
-    if self._concat:
-      if len(set(d.ndim for d in self.data)) > 1:
-        raise ValueError("`concat` is only applied when all Data has "
-                         "the same number of dimension")
-      self._is_data_list = False
 
   # ==================== Properties ==================== #
   @property
@@ -218,13 +211,11 @@ class DataDescriptor(Data):
   @property
   def data_info(self):
     return (self._indices_info, self._data,
-            self._length, self._return_name,
-            self._concat)
+            self._length, self._return_name)
 
   def _restore_data(self, info):
     (self._indices_info, self._data,
-        self._length, self._return_name,
-        self._concat) = info
+        self._length, self._return_name) = info
     # deserialize indices
     ids_type, info = self._indices_info
     if ids_type == 'mapping':
@@ -242,19 +233,14 @@ class DataDescriptor(Data):
     if self._length is None:
       self._length = sum((end - start)
                       for name, (start, end) in self.indices.items())
-    if self._concat:
-      ret_shape = [(self._length,) +
-                   self.data[0].shape[1:-1] +
-                   (sum(d.shape[-1] for d in self.data),)]
-    else:
-      ret_shape = [(self._length,) + dat.shape[1:]
-                   for dat in self.data]
+    ret_shape = [(self._length,) + dat.shape[1:]
+                 for dat in self.data]
     return tuple(ret_shape) if self.is_data_list else ret_shape[0]
 
   def __str__(self):
     name = ctext('DataDescriptor', 'cyan')
-    s = '<%s: Indices(type:"%s" length:%d) concat:%s>\n' % \
-        (name, self.indices_info[0], len(self.indices), self._concat)
+    s = '<%s: Indices(type:"%s" length:%d)>\n' % \
+        (name, self.indices_info[0], len(self.indices))
     for dat in self.data:
       s += '   (%s)%s: %s %s\n' % \
           (dat.__class__.__name__,
@@ -270,12 +256,7 @@ class DataDescriptor(Data):
   def __getitem__(self, key):
     if is_string(key):
       key = slice(*self.indices[key])
-    x = tuple([dat.__getitem__(key) for dat in self.data])
-    if self._concat:
-      x = np.concatenate(x, axis=-1)
-    elif not self.is_data_list:
-      x = x[0]
-    return x
+    return super(DataDescriptor, self).__getitem__(key)
 
 
 # ===========================================================================
