@@ -178,12 +178,13 @@ def load_lre_list():
   """ The header include following column:
   * name: LDC2017E22/data/ara-acm/ar-20031215-034005_0-a.sph
   * lre: {'train17', 'eval15', 'train15', 'dev17', 'eval17'}
-  * language: {'ara-arb', 'eng-sas', 'fre-hat', 'zho-wuu',
-               'eng-gbr', 'ara-ary', 'eng-usg', 'spa-lac',
-               'ara-apc', 'qsl-pol', 'spa-eur', 'fre-waf',
-               'zho-cdo', 'qsl-rus', 'spa-car', 'ara-arz',
-               'zho-cmn', 'por-brz', 'zho-yue', 'zho-nan',
-               'ara-acm'}
+  * language: {'ara-arb', 'ara-ary', 'ara-apc', 'ara-arz', 'ara-acm',
+               'eng-gbr', 'eng-usg', 'eng-sas',
+               'fre-hat', 'fre-waf'
+               'zho-wuu', 'zho-cdo', 'zho-cmn', 'zho-yue', 'zho-nan',
+               'spa-lac', 'spa-eur', 'spa-car',
+               'qsl-pol', 'qsl-rus',
+               'por-brz'}
   * corpus: {'pcm', 'alaw', 'babel', 'ulaw', 'vast', 'mls14'}
   * duration: {'3', '30', '5', '15', '10', '20', '1000', '25'}
 

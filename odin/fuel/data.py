@@ -686,13 +686,11 @@ class NdarrayData(Data):
 # ===========================================================================
 MAX_OPEN_MMAP = 120
 
-
 def _aligned_memmap_offset(dtype):
   header_size = len(MmapData.HEADER) + 8 + MmapData.MAXIMUM_HEADER_SIZE
   type_size = np.dtype(dtype).itemsize
   n = np.ceil(header_size / type_size)
   return int(n * type_size)
-
 
 class MmapData(Data):
 

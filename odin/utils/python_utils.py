@@ -1,4 +1,5 @@
 from __future__ import print_function, division, absolute_import
+from datetime import datetime
 
 import inspect
 from six import string_types, add_metaclass
@@ -6,6 +7,11 @@ from collections import defaultdict
 
 import numpy as np
 
+
+def get_formatted_datetime(only_number=True):
+  if only_number:
+    return "{:%H%M%S%d%m%y}".format(datetime.now())
+  return "{:%H:%M:%S-%b%d%y}".format(datetime.now())
 
 def get_all_properties(obj):
   """ Return all attributes which are properties of given Object
