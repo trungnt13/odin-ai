@@ -1047,8 +1047,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== run multiprocessing ====== #
     # Z, F, S, L, nfr
     results = _ExpectationResults(nb_samples=nb_samples, nb_results=5,
-        name="[GMM] cmix:%d nmix:%d iter:%d" %
-                   (curr_nmix, self.nmix, curr_niter + 1),
+        name="[GMM] cmix:%d nmix:%d ndim:%d iter:%d" %
+                   (curr_nmix, self.nmix, self.feat_dim, curr_niter + 1),
         print_progress=print_progress)
     mpi = []
     if len(jobs_cpu) > 0:
