@@ -1460,8 +1460,11 @@ def spectra(sr, frame_length, y=None, S=None,
 # invert spectrogram
 # ===========================================================================
 def ispec(spec, frame_length, step_length=None, window="hann",
-          nb_iter=48, normalize=True, db=False, padding=False):
-  """ Invert power spectrogram back to raw waveform
+          nb_iter=48, normalize=True,
+          db=False, padding=False,
+          de_preemphasis=0.97):
+  """ Using Griffin-Lim algorithm for Inverting
+  (power) spectrogram back to raw waveform
 
   Parameters
   ----------
@@ -1492,12 +1495,15 @@ def ispec(spec, frame_length, step_length=None, window="hann",
     step_length = frame_length // 4
   else:
     step_length = int(step_length)
+  if frame_length < step_length:
+    raise ValueError('frame_length=%d < step_length=%d' %
+      (frame_length, step_length))
+  nfft = (spec.shape[1] - 1) * 2
   # ====== convert to power spectrogram ====== #
   if db:
     spec = db2power(spec)
   # ====== iterative estmate best phase ====== #
   X_best = copy.deepcopy(spec)
-  nfft = (spec.shape[1] - 1) * 2
   for i in range(nb_iter):
     X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
                 window=window, padding=padding)
@@ -1507,8 +1513,12 @@ def ispec(spec, frame_length, step_length=None, window="hann",
     X_best = spec * phase
   X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
               window=window, padding=padding)
+  # ====== de-preemphasis ====== #
+  if de_preemphasis != 0:
+    X_t = signal.lfilter([1], [1, -de_preemphasis], X_t)
   y = np.real(X_t)
   if normalize:
+    y = y[1000:-1000]
     y = (y - y.mean()) / y.std()
   return y
 

@@ -32,13 +32,9 @@ from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
-                        Progbar, unique_labels, chain,
+                        Progbar, unique_labels, chain, get_formatted_datetime,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 
-# ====== start logging ====== #
-LOG_PATH = get_logpath('digits_ivec.log',
-                       override=True)
-stdio(LOG_PATH)
 # ===========================================================================
 # Input arguments
 # ===========================================================================
@@ -68,7 +64,12 @@ ds = F.Dataset(args.path, read_only=True)
 EXP_DIR = '/tmp/exp_digit'
 if not os.path.exists(EXP_DIR):
   os.mkdir(EXP_DIR)
+# ====== start logging ====== #
+LOG_PATH = os.path.join(EXP_DIR,
+                        'log_%s.txt' % get_formatted_datetime(only_number=True))
+stdio(LOG_PATH)
 print("Exp-dir:", ctext(EXP_DIR, 'cyan'))
+print("Log path:", ctext(LOG_PATH, 'cyan'))
 # ====== ivec path ====== #
 GMM_PATH = os.path.join(EXP_DIR, 'gmm')
 TMAT_PATH = os.path.join(EXP_DIR, 'tmat')

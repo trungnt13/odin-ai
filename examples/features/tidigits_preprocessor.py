@@ -179,16 +179,18 @@ jobs = get_all_files(wav_path,
 assert len(jobs) == TOTAL_FILES
 # ====== configuration ====== #
 padding = False
-NFFT = 512
-frame_length = 0.025
-step_length = 0.005
+NFFT = 2048
+SR_NEW = 16000
+frame_length = 0.05
+step_length = 0.0125
+dither = False
 dtype = 'float16'
 # the feature extraction configuration must match the bnf newwork
 # requirement
 bnf_network = N.models.BNF_2048_MFCC39()
 extractors = pp.make_pipeline(steps=[
-    pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
-                          remove_dc_n_dither=True, preemphasis=0.97),
+    pp.speech.AudioReader(sr=None, sr_new=SR_NEW, best_resample=True,
+                          remove_dc_n_dither=dither, preemphasis=0.97),
     pp.base.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
                           keys='path'),
     pp.speech.SpectraExtractor(frame_length=frame_length,
