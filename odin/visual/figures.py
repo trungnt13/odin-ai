@@ -1124,7 +1124,8 @@ def _ppndf(cum_prob):
 
 
 def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
-                         ax=None, label=None, legend=True):
+                         ax=None, labels=None, legend=True,
+                         linewidth=1.2):
   """
   Parameters
   ----------
@@ -1136,6 +1137,8 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
       det: detection error trade-off
       roc: receiver operating curve
       prc: precision-recall curve
+  labels: {list of str}
+      labels in case ploting multiple curves
 
   Note
   ----
@@ -1154,9 +1157,10 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   if len(x) != len(y):
     raise ValueError("Given %d series for `x`, but only get %d series for `y`."
                      % (len(x), len(y)))
-  if not isinstance(label, (tuple, list)):
-    label = (label,)
-  label = as_tuple(label, N=len(x))
+  if not isinstance(labels, (tuple, list)):
+    labels = (labels,)
+  labels = as_tuple(labels, N=len(x))
+  linewidth = float(linewidth)
   # ====== const ====== #
   eps = np.finfo(x[0].dtype).eps
   xticks, xticklabels = None, None
@@ -1205,8 +1209,8 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
         if name is None else \
         ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
-    label_new = []
-    for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, label)):
+    labels_new = []
+    for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, labels)):
       eer = K.metrics.compute_EER(Pfa=Pfa, Pmiss=Pmiss)
       # DCF point
       dcf, Pfa_opt, Pmiss_opt = K.metrics.compute_minDCF(Pfa=Pfa, Pmiss=Pmiss)
@@ -1219,10 +1223,10 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
       Pmiss = _ppndf(Pmiss)
       name = name_fmt(name, eer, dcf)
       lines.append(((Pfa, Pmiss),
-                    {'lw': 1.3, 'label': name,
+                    {'lw': linewidth, 'label': name,
                      'linestyle': '-' if count % 2 == 0 else '-.'}))
-      label_new.append(name)
-    label = label_new
+      labels_new.append(name)
+    labels = labels_new
   # ====== select ROC curve style ====== #
   elif curve == 'roc':
     xlabel = "False Positive probability"
@@ -1232,15 +1236,15 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     # roc
     name_fmt = lambda name, auc: ('AUC=%.2f' % auc) if name is None else \
         ('%s (AUC=%.2f)' % (name, auc))
-    label_new = []
-    for count, (i, j, name) in enumerate(zip(x, y, label)):
+    labels_new = []
+    for count, (i, j, name) in enumerate(zip(x, y, labels)):
       auc = K.metrics.compute_AUC(i, j)
       name = name_fmt(name, auc)
       lines.append([(i, j),
-                    {'lw': 1.3, 'label': name,
+                    {'lw': linewidth, 'label': name,
                      'linestyle': '-' if count % 2 == 0 else '-.'}])
-      label_new.append(name)
-    label = label_new
+      labels_new.append(name)
+    labels = labels_new
     # diagonal
     lines.append([(xlims, ylims),
                   {'lw': 0.8, 'linestyle': '-.', 'color': 'black'}])
@@ -1272,7 +1276,7 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     ax.set_ylim(ylims)
   ax.grid(color='black', linestyle='--', linewidth=0.4)
   # legend
-  if legend and any(i is not None for i in label):
+  if legend and any(i is not None for i in labels):
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
 

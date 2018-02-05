@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import os
 os.environ['ODIN'] = 'gpu,float32'
 import pickle
@@ -26,7 +29,7 @@ PATH = '/tmp/lore.ai'
 if not os.path.exists(PATH) or args.reset:
   f = ml.LogisticRegression(nb_classes=nb_classes, tol=1e-4,
                             fit_intercept=True, path=PATH,
-                            dtype='float32')
+                            batch_size=256, dtype='float32')
   cross_validation = (ds['X_valid'], ds['y_valid'])
   f.fit(X=ds['X_train'], y=ds['y_train'],
         cv=cross_validation)
@@ -36,13 +39,6 @@ else:
 # ===========================================================================
 # Evaluation
 # ===========================================================================
-y_true = ds['y_test'][:]
-y_pred = f.predict(ds['X_test'])
-
-acc = accuracy_score(y_true, y_pred)
-cm = confusion_matrix(y_true, y_pred)
-
-print(ctext("======= Test set ========", 'cyan'))
-print("Accuracy:", acc)
-print("Confusion matrix:")
-print(V.print_confusion(arr=cm))
+f.evaluate(ds['X_test'], ds['y_test'], path='/tmp/tmp.pdf',
+           title="MNIST Test Set",
+           xlims=(0, 0.9), ylims=(0, 0.9))

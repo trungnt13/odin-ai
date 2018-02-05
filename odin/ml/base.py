@@ -5,8 +5,10 @@ from six import add_metaclass
 
 import numpy as np
 
-from odin.utils import ctext, is_number
-from odin.visual import print_confusion
+from odin.utils import ctext, is_number, one_hot
+from odin.fuel import Data
+from odin.visual import (print_confusion, plot_detection_curve,
+                         plot_confusion_matrix, plot_save, figure)
 
 from sklearn.base import (BaseEstimator, TransformerMixin, DensityMixin,
                           ClassifierMixin, RegressorMixin)
@@ -20,7 +22,8 @@ class Evaluable(object):
   def labels(self):
     raise NotImplementedError
 
-  def evaluate(self, X, y, labels=None, title='', path=None):
+  def evaluate(self, X, y, labels=None, title='', path=None,
+               xlims=None, ylims=None):
     from odin.backend import to_llr
     from odin.backend.metrics import (det_curve, compute_EER, roc_curve,
                                       compute_Cavg, compute_Cnorm,
@@ -31,8 +34,13 @@ class Evaluable(object):
     # ====== check inputs ====== #
     if labels is None:
       labels = self.labels
+    nb_classes = len(labels)
+    if isinstance(y, Data):
+      y = y.array
     if isinstance(y, (tuple, list)):
       y = np.array(y)
+    if y.ndim == 2: # convert one-hot to labels
+      y = np.argmax(y, axis=-1)
     # ====== prediction ====== #
     if hasattr(self, 'predict_proba'):
       y_pred_prob = self.predict_proba(X)
@@ -68,4 +76,31 @@ class Evaluable(object):
       print("minDCF   :", format_score(minDCF))
       print(print_confusion(arr=cm, labels=labels))
     else:
-      fpr, tpr = roc_curve(y_true=y, y_score=y_pred_prob)
+      if y_pred_prob is None:
+        y_pred_prob = y_pred_log_prob
+      from matplotlib import pyplot as plt
+      plt.figure(figsize=(nb_classes, nb_classes + 1))
+      plot_confusion_matrix(cm, labels)
+      # det curve
+      plt.figure()
+      plot_detection_curve(Pfa, Pmiss, curve='det',
+                           xlims=xlims, ylims=ylims,
+                           linewidth=1.2)
+      # binary classification
+      if nb_classes == 2 and \
+      (y_pred_prob.ndim == 1 or (y_pred_prob.ndim == 2 and
+                                 y_pred_prob.shape[1] == 1)):
+        fpr, tpr = roc_curve(y_true=y, y_score=y_pred_prob.ravel())
+        plt.figure()
+        plot_detection_curve(fpr, tpr, curve='roc')
+      # multiclasses
+      else:
+        fpr, tpr = [], []
+        for i, yi in enumerate(one_hot(y, nb_classes=nb_classes).T):
+          curve = roc_curve(y_true=yi, y_score=y_pred_prob[:, i])
+          fpr.append(curve[0])
+          tpr.append(curve[1])
+        plt.figure()
+        plot_detection_curve(fpr, tpr, curve='roc', labels=labels,
+                             linewidth=0.8)
+      plot_save(path)
