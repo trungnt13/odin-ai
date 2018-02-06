@@ -41,4 +41,4 @@ else:
 # ===========================================================================
 f.evaluate(ds['X_test'], ds['y_test'], path='/tmp/tmp.pdf',
            title="MNIST Test Set",
-           xlims=(0, 0.9), ylims=(0, 0.9))
+           xlims=(0., 0.88), ylims=(0., 0.88))

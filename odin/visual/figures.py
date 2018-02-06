@@ -779,6 +779,49 @@ def plot_images_old(x, fig=None, titles=None, show=False):
     return fig
 
 
+def plot_Cnorm(cnorm, labels, Ptrue=[1, 0.5], axis=None, title=None,
+               fontsize=12):
+  from matplotlib import pyplot as plt
+  cmap = plt.cm.Blues
+  cnorm = cnorm.astype('float32')
+  if not isinstance(Ptrue, (tuple, list, np.ndarray)):
+    Ptrue = (Ptrue,)
+  Ptrue = [float(i) for i in Ptrue]
+  if len(Ptrue) != cnorm.shape[0]:
+    raise ValueError("`Cnorm` was calculated for %d Ptrue values, but given only "
+                     "%d values for `Ptrue`: %s" %
+                     (cnorm.shape[0], len(Ptrue), str(Ptrue)))
+  if axis is None:
+    axis = plt.gca()
+  axis.imshow(cnorm, interpolation='nearest', cmap=cmap)
+  # axis.get_figure().colorbar(im)
+  axis.set_xticks(np.arange(len(labels)))
+  axis.set_yticks(np.arange(len(Ptrue)))
+  axis.set_xticklabels(labels, rotation=-57,
+                       fontsize=fontsize)
+  axis.set_yticklabels([str(i) for i in Ptrue], fontsize=fontsize)
+  axis.set_ylabel('Ptrue', fontsize=fontsize)
+  axis.set_xlabel('Predicted label', fontsize=fontsize)
+  # center text for value of each grid
+  for i, j in itertools.product(range(len(Ptrue)),
+                                range(len(labels))):
+    color = 'red'
+    weight = 'normal'
+    fs = fontsize
+    text = '%.2f' % cnorm[i, j]
+    plt.text(j, i, text,
+             weight=weight, color=color, fontsize=fs,
+             verticalalignment="center",
+             horizontalalignment="center")
+  # Turns off grid on the left Axis.
+  axis.grid(False)
+  title = "Cavg: %.3f" % np.mean(cnorm) if title is None else \
+  "%s (Cavg: %.3f)" % (str(title), np.mean(cnorm))
+  axis.set_title(title, fontsize=fontsize + 2,
+                 weight='semibold')
+  # axis.tight_layout()
+  return axis
+
 def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
                           title=None):
   from matplotlib import pyplot as plt
@@ -1125,7 +1168,7 @@ def _ppndf(cum_prob):
 
 def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
                          ax=None, labels=None, legend=True,
-                         linewidth=1.2):
+                         title=None, linewidth=1.2):
   """
   Parameters
   ----------
@@ -1137,6 +1180,10 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
       det: detection error trade-off
       roc: receiver operating curve
       prc: precision-recall curve
+  xlims : (xmin, xmax) in float
+      for DET, `xlims` should be in [0, 1]
+  ylims : (ymin, ymax) in float
+      for DET, `ylims` should be in [0, 1]
   labels: {list of str}
       labels in case ploting multiple curves
 
@@ -1166,7 +1213,6 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   xticks, xticklabels = None, None
   yticks, yticklabels = None, None
   xlabel, ylabel = None, None
-  xlims, ylims = None, None
   lines = []
   points = []
   # ====== check input arguments ====== #
@@ -1193,13 +1239,13 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     if xlims is None:
       xlims = (max(min(np.min(i) for i in x), xticks[0]),
                min(max(np.max(i) for i in x), xticks[-1]))
-    xlims = ([i for i in xticks if i <= xlims[0]][-1] + eps,
-             [i for i in xticks if i >= xlims[1]][0] - eps)
+    xlims = ([val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] + eps,
+             [val for i, val in enumerate(xticks) if val >= xlims[1] or i == len(xticks) - 1][0] - eps)
     if ylims is None:
       ylims = (max(min(np.min(i) for i in y), xticks[0]),
                min(max(np.max(i) for i in y), xticks[-1]))
-    ylims = ([i for i in xticks if i <= ylims[0]][-1] + eps,
-             [i for i in xticks if i >= ylims[1]][0] - eps)
+    ylims = ([val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] + eps,
+             [val for i, val in enumerate(xticks) if val >= ylims[1] or i == len(xticks) - 1][0] - eps)
     # convert to log scale
     xticks = _ppndf(xticks)
     yticks, yticklabels = xticks, xticklabels
@@ -1275,6 +1321,8 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   if ylims is not None:
     ax.set_ylim(ylims)
   ax.grid(color='black', linestyle='--', linewidth=0.4)
+  if title is not None:
+    ax.set_title(title, fontsize=fontsize + 2)
   # legend
   if legend and any(i is not None for i in labels):
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)

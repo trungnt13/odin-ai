@@ -8,7 +8,8 @@ import numpy as np
 from odin.utils import ctext, is_number, one_hot
 from odin.fuel import Data
 from odin.visual import (print_confusion, plot_detection_curve,
-                         plot_confusion_matrix, plot_save, figure)
+                         plot_confusion_matrix, plot_save, figure,
+                         plot_Cnorm)
 
 from sklearn.base import (BaseEstimator, TransformerMixin, DensityMixin,
                           ClassifierMixin, RegressorMixin)
@@ -81,26 +82,50 @@ class Evaluable(object):
       from matplotlib import pyplot as plt
       plt.figure(figsize=(nb_classes, nb_classes + 1))
       plot_confusion_matrix(cm, labels)
-      # det curve
+      # Cavg
       plt.figure()
-      plot_detection_curve(Pfa, Pmiss, curve='det',
-                           xlims=xlims, ylims=ylims,
-                           linewidth=1.2)
+      plot_Cnorm(cnorm=cnorm_arr, labels=labels, Ptrue=[1, 0.5])
       # binary classification
       if nb_classes == 2 and \
       (y_pred_prob.ndim == 1 or (y_pred_prob.ndim == 2 and
                                  y_pred_prob.shape[1] == 1)):
         fpr, tpr = roc_curve(y_true=y, y_score=y_pred_prob.ravel())
+        # det curve
+        plt.figure()
+        plot_detection_curve(Pfa, Pmiss, curve='det',
+                             xlims=xlims, ylims=ylims, linewidth=1.2)
+        # roc curve
         plt.figure()
         plot_detection_curve(fpr, tpr, curve='roc')
       # multiclasses
       else:
+        y = one_hot(y, nb_classes=nb_classes)
+        fpr_micro, tpr_micro, _ = roc_curve(y_true=y.ravel(),
+                                            y_score=y_pred_prob.ravel())
+        Pfa_micro, Pmiss_micro = Pfa, Pmiss
         fpr, tpr = [], []
-        for i, yi in enumerate(one_hot(y, nb_classes=nb_classes).T):
+        Pfa, Pmiss = [], []
+        for i, yi in enumerate(y.T):
           curve = roc_curve(y_true=yi, y_score=y_pred_prob[:, i])
           fpr.append(curve[0])
           tpr.append(curve[1])
+          curve = det_curve(y_true=yi, y_score=y_pred_log_prob[:, i])
+          Pfa.append(curve[0])
+          Pmiss.append(curve[1])
         plt.figure()
-        plot_detection_curve(fpr, tpr, curve='roc', labels=labels,
-                             linewidth=0.8)
+        plot_detection_curve(fpr_micro, tpr_micro, curve='roc',
+                             linewidth=1.2, title="ROC Micro")
+        plt.figure()
+        plot_detection_curve(fpr, tpr, curve='roc',
+                             labels=labels, linewidth=1.0,
+                             title="ROC for each classes")
+        plt.figure()
+        plot_detection_curve(Pfa_micro, Pmiss_micro, curve='det',
+                             xlims=xlims, ylims=ylims, linewidth=1.2,
+                             title="DET Micro")
+        plt.figure()
+        plot_detection_curve(Pfa, Pmiss, curve='det',
+                             xlims=xlims, ylims=ylims,
+                             labels=labels, linewidth=1.0,
+                             title="DET for each classes")
       plot_save(path)
