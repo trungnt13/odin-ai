@@ -69,32 +69,34 @@ def _preprocessing_losses(losses, y_true, y_pred, is_differentiable):
 # ===========================================================================
 # Main methods
 # ===========================================================================
-def train(X, y_true, y_pred,
-          train_data, valid_data=None, valid_freq=1.,
+def train(X, y_true, y_pred, train_data,
+          valid_data=None, valid_freq=1.,
+          patience=3, threshold=5, rollback=True,
           objectives=[], metrics=[], parameters=[],
           batch_size=256, epochs=6, shuffle=True,
           optimizer='rmsprop', lr=0.001,
           decay_steps=None, decay_rate=0.96, staircase=True,
           clipnorm=None, clipvalue=None,
-          path=None, seed=5218, verbose=1):
+          labels=None, seed=5218, verbose=1):
   """
   Parameters
   ----------
+  rollback : bool (default: True)
+    if True, allow rollback to the best checkpoint during training
   objectives : {callable, tensorflow.Tensor}
     if `callable`, the function must take `y_true`, and `y_pred`
     The objectives must be differentiable and used for training.
   metrics : {callable, tensorflow.Tensor}
     if `callable`, the function must take `y_true`, and `y_pred`
     The `metrics` is for monitoring the training process.
-  path : {str, None}
-    if `path` is given, checkpoint will be saved to given `path`,
-    otherwise, checkpoint will be saved to a temporary directory
+  labels : {None, list of string}
+    Given labels for classification task
   seed : int
     specific random seed for reproducible
   verbose : int
-    0, abc
-    1, abc
-    2, abc
+    0 - Turn off all log
+    1 - Only show important log and summary
+    2 - Show progress and summary
 
   """
   from odin import backend as K
@@ -112,6 +114,9 @@ def train(X, y_true, y_pred,
                                      is_differentiable=True)
   if metrics is None or len(metrics) == 0:
     metrics = [K.metrics.categorical_accuracy]
+    get_value = lambda x: 1 - np.mean(x)
+  else:
+    get_value = lambda x: np.mean(x)
   metrics = _preprocessing_losses(metrics, y_true, y_pred,
                                   is_differentiable=False)
   # ====== preprocess optimizer ====== #
@@ -126,6 +131,8 @@ def train(X, y_true, y_pred,
   # ====== parameters ====== #
   if parameters is None or len(parameters) == 0:
     parameters = K.ComputationGraph(objectives).parameters
+  else:
+    parameters = as_tuple(parameters, t=K.is_variable)
   updates = optimizer.get_updates(objectives, parameters)
   # ====== build function ====== #
   inputs = list(X)
@@ -140,22 +147,28 @@ def train(X, y_true, y_pred,
   # ====== preprocessing data ====== #
   train_data, valid_data = _preprocessing_data(train_data, valid_data)
   # ====== create trainer ====== #
+  callback_log = True if verbose > 0 else False
   trainer = MainLoop(batch_size=batch_size,
                      seed=seed if shuffle else None,
                      shuffle_level=2 if shuffle else 0,
-                     allow_rollback=True, verbose=verbose)
-  # trainer.set_checkpoint(path, model)
-  # trainer.set_callbacks([
-  #     NaNDetector(),
-  #     EarlyStopGeneralizationLoss('valid', ce,
-  #                                 threshold=5, patience=3)
-  # ])
+                     allow_rollback=True,
+                     verbose=verbose, labels=labels)
+  trainer.set_checkpoint(path=None, obj=None, variables=parameters)
+  trainer._rollback()
+  trainer.set_callbacks([
+      NaNDetector(patience=patience, log=callback_log),
+      EarlyStopGeneralizationLoss('valid', metrics[0],
+                                  threshold=threshold, patience=patience,
+                                  log=callback_log, get_value=get_value)
+  ])
   trainer.set_train_task(func=f_train, data=train_data,
                          epoch=epochs, name='train')
   if valid_data is not None:
     trainer.set_valid_task(func=f_test, data=valid_data,
                            freq=Timer(percentage=valid_freq),
                            name='valid')
+  if rollback:
+    trainer._rollback()
   trainer.run()
 
 def train_network():

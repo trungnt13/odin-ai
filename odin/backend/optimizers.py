@@ -151,7 +151,7 @@ class Optimizer(object):
     grads_vars = self.get_gradients(loss_or_grads, params)
     with tf.variable_scope(self.name):
       updates = self.algorithm.apply_gradients(grads_vars,
-          global_step=self._step)
+                                               global_step=self._step)
     # ====== initialize ====== #
     init = tf.global_variables_initializer()
     get_session().run(init)

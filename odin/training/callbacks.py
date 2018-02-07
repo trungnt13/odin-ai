@@ -242,7 +242,19 @@ class CallbackList(Callback):
 # NaN value detection
 # ===========================================================================
 class NaNDetector(Callback):
-  """docstring for NaNDetector"""
+  """ NaNDetector
+
+  Parameters
+  ----------
+  task_name : {str, None}
+    name of specific Task will be applied, otherwise, all
+    Tasks are considered
+  patience : {int}
+    the Task will be stopped if `patience` < 0, `patience` will
+    abstract by 1 everytime NaN is detected
+  log : {}
+    pass
+  """
 
   def __init__(self, task_name=None, patience=-1, log=True):
     super(NaNDetector, self).__init__(log)

@@ -29,6 +29,7 @@ __all__ = [
   'Data',
   'DataConcat',
   'DataGroup',
+  'DataCopy',
   'NdarrayData',
   'MmapData',
   'Hdf5Data',
@@ -42,10 +43,19 @@ MAX_BUFFER_SIZE = 100 * 1024 * 1024 # 100 MB
 # ===========================================================================
 # Helper function
 # ===========================================================================
-def as_data(x):
-  """ make sure x is Data """
+def as_data(x, copy=False):
+  """ make sure x is instance Data
+  Parameters
+  ----------
+  copy : bool
+    if True, copy the Data object to a separated instance
+    to prevent further unexpected change to the configuration
+  """
   if isinstance(x, Data):
-    return x
+    if copy:
+      return DataCopy(x)
+    else:
+      return x
   if isinstance(x, np.ndarray):
     return NdarrayData(x)
   if isinstance(x, (tuple, list)):
@@ -219,6 +229,13 @@ class Data(object):
   def shape(self):
     s = tuple([i.shape for i in self._data])
     return s if self.is_data_list else s[0]
+
+  @property
+  def iter_len(self):
+    length = self.__len__()
+    start = _apply_approx(length, self._start)
+    end = _apply_approx(length, self._end)
+    return end - start
 
   def __len__(self):
     """ len always return 1 number """
@@ -666,6 +683,8 @@ class DataConcat(Data):
 class DataGroup(Data):
   """ Group serveral Data together and return each Data
   separately during iteration
+
+  This class is always considered as list of Data
   """
 
   def __init__(self, data):
@@ -679,6 +698,34 @@ class DataGroup(Data):
       raise ValueError("All data in given data list must have the same length, "
                        "but given: %s" % str([len(d) for d in data]))
     super(DataGroup, self).__init__(data, read_only=True)
+
+  @property
+  def data_info(self):
+    return self._data
+
+  def _restore_data(self, info):
+    self._data = info
+
+class DataCopy(Data):
+  """ Simple copy that contain original version of Data
+  """
+
+  def __init__(self, data):
+    if not isinstance(data, Data):
+      raise ValueError("`data` must be instance of odin.fuel.data.Data but "
+                       "given type: %s" % str(type(data)))
+    # ====== special case DataGroup ====== #
+    if isinstance(data, DataGroup):
+      super(DataCopy, self).__init__(data._data, read_only=True)
+    else:
+      super(DataCopy, self).__init__(data, read_only=True)
+    # ====== copy information ====== #
+    self._is_data_list = data._is_data_list
+    self._batch_size = data._batch_size
+    self._start = data._start
+    self._end = data._end
+    self._seed = data._seed
+    self._shuffle_level = data._shuffle_level
 
   @property
   def data_info(self):
