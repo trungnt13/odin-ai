@@ -68,23 +68,24 @@ class Evaluable(object):
                                      y_score=y_pred_log_prob,
                                      Ptrue=[1, 0.5],
                                      probability_input=False)
-    if path is None:
-      print(ctext("--------", 'red'), ctext(title, 'cyan'))
-      print("Log loss :", format_score(ll))
-      print("Accuracy :", format_score(acc))
-      print("C_avg   :", format_score(np.mean(cnorm)))
-      print("EER      :", format_score(eer))
-      print("minDCF   :", format_score(minDCF))
-      print(print_confusion(arr=cm, labels=labels))
-    else:
+    print(ctext("--------", 'red'), ctext(title, 'cyan'))
+    print("Log loss :", format_score(ll))
+    print("Accuracy :", format_score(acc))
+    print("C_avg   :", format_score(np.mean(cnorm)))
+    print("EER      :", format_score(eer))
+    print("minDCF   :", format_score(minDCF))
+    print(print_confusion(arr=cm, labels=labels))
+    # ====== save report to PDF files if necessary ====== #
+    if path is not None:
       if y_pred_prob is None:
         y_pred_prob = y_pred_log_prob
       from matplotlib import pyplot as plt
       plt.figure(figsize=(nb_classes, nb_classes + 1))
       plot_confusion_matrix(cm, labels)
       # Cavg
-      plt.figure()
-      plot_Cnorm(cnorm=cnorm_arr, labels=labels, Ptrue=[1, 0.5])
+      plt.figure(figsize=(nb_classes + 1, 3))
+      plot_Cnorm(cnorm=cnorm_arr, labels=labels, Ptrue=[1, 0.5],
+                 fontsize=14)
       # binary classification
       if nb_classes == 2 and \
       (y_pred_prob.ndim == 1 or (y_pred_prob.ndim == 2 and
@@ -129,3 +130,4 @@ class Evaluable(object):
                              labels=labels, linewidth=1.0,
                              title="DET for each classes")
       plot_save(path)
+    return self

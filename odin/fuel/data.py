@@ -18,7 +18,7 @@ from numpy import ndarray
 
 from odin.utils.decorators import autoattr
 from odin.utils import (struct, as_tuple, cache_memory, is_string,
-                        is_number, axis_normalize)
+                        is_number, is_primitives, axis_normalize)
 
 __all__ = [
   'as_data',
@@ -28,6 +28,7 @@ __all__ = [
 
   'Data',
   'DataConcat',
+  'DataGroup',
   'NdarrayData',
   'MmapData',
   'Hdf5Data',
@@ -48,7 +49,9 @@ def as_data(x):
   if isinstance(x, np.ndarray):
     return NdarrayData(x)
   if isinstance(x, (tuple, list)):
-    return NdarrayData(np.array(x))
+    if is_primitives(x[0], inc_ndarray=False): # given value for array
+      return NdarrayData(np.asarray(x))
+    return DataGroup(data=x)
   raise ValueError('Cannot create Data object from given object:{}'.format(x))
 
 
@@ -659,6 +662,30 @@ class DataConcat(Data):
   def __getitem__(self, key):
     return np.concatenate([d.__getitem__(key) for d in self.data],
                           axis=self._axis)
+
+class DataGroup(Data):
+  """ Group serveral Data together and return each Data
+  separately during iteration
+  """
+
+  def __init__(self, data):
+    for d in as_tuple(data):
+      if not isinstance(d, (np.ndarray, Data)):
+        raise ValueError('`data` can only be instance of numpy.ndarray or '
+                         'odin.fuel.data.Data, but given type: %s' % str(type(d)))
+    data = [NdarrayData(d) if isinstance(d, np.ndarray) else d
+            for d in as_tuple(data)]
+    if len(set(len(d) for d in data)) > 1:
+      raise ValueError("All data in given data list must have the same length, "
+                       "but given: %s" % str([len(d) for d in data]))
+    super(DataGroup, self).__init__(data, read_only=True)
+
+  @property
+  def data_info(self):
+    return self._data
+
+  def _restore_data(self, info):
+    self._data = info
 
 class NdarrayData(Data):
   """ Simple wrapper for `numpy.ndarray` """

@@ -36,12 +36,12 @@ def _wccn(X, y, classes):
 class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   """ Scorer """
 
-  def __init__(self, wccn=True, lda=True, method='cosine'):
+  def __init__(self, wccn=True, lda=True, method='cosine', labels=None):
     super(Scorer, self).__init__()
     self._wccn = bool(wccn)
     self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
     self._feat_dim = None
-    self._labels = None
+    self._labels = labels
     method = str(method).lower()
     if method not in ('cosine', 'svm'):
       raise ValueError('`method` must be one of the following: cosine, svm; '
@@ -94,7 +94,13 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
     if self.is_initialized:
       return
     self._feat_dim = X.shape[1]
-    self._labels = np.unique(y)
+    y_uni = np.unique(y)
+    if self._labels is None:
+      self._labels = y_uni
+    elif len(self._labels) != len(y_uni):
+      raise ValueError("Given %d labels but found %d labels in `y`" %
+        (len(self._labels), len(y_uni)))
+    return y_uni
 
   def normalize(self, X):
     if not self.is_fitted:
@@ -111,16 +117,16 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
       y = np.asarray(y)
     if y.ndim == 2:
       y = np.argmax(y, axis=-1)
-    self._initialize(X, y)
+    y_uni = self._initialize(X, y)
     # ====== compute classes' average ====== #
     enroll = np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
-                             for i in self.labels], axis=0)
+                             for i in y_uni], axis=0)
     M = X.mean(axis=0).reshape(1, -1)
     self._mean = M
     X = X - M
     # ====== WCCN ====== #
     if self._wccn:
-      w = _wccn(X, y, self.labels) # [feat_dim, feat_dim]
+      w = _wccn(X, y, y_uni) # [feat_dim, feat_dim]
     else:
       w = 1
     self._w = w

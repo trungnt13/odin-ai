@@ -720,10 +720,10 @@ def as_tuple(x, N=None, t=None):
 
   Parameters
   ----------
-  x : value or iterable
-  N : integer
+  x : {value, iterable}
+  N : {integer}
       length of the desired tuple
-  t : type, optional
+  t : {type, call-able, optional}
       required type for all elements
 
   Returns
@@ -761,7 +761,15 @@ def as_tuple(x, N=None, t=None):
       raise ValueError('x has length=%d, but required length N=%d' %
                        (len(x), N))
   # ====== check type ====== #
-  if (t is not None) and not all(isinstance(v, t) for v in x):
+  if t is None:
+    filter_func = lambda o: True
+  elif isinstance(t, type) or isinstance(t, (tuple, list)):
+    filter_func = lambda o: isinstance(o, t)
+  elif hasattr(t, '__call__'):
+    filter_func = t
+  else:
+    raise ValueError("Invalid value for `t`: %s" % str(t))
+  if not all(filter_func(v) for v in x):
     raise TypeError("expected a single value or an iterable "
                     "of {0}, got {1} instead".format(t.__name__, x))
   return x

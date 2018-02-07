@@ -836,6 +836,7 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
   recall = TP / (TP + FN)
   F1 = 2 / (1 / precision + 1 / recall)
   F1[np.isnan(F1)] = 0.
+  F1_mean = np.mean(F1)
   # column normalize
   nb_classes = cm.shape[0]
   cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
@@ -843,8 +844,6 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
     axis = plt.gca()
 
   im = axis.imshow(cm, interpolation='nearest', cmap=cmap)
-  if title is not None:
-    axis.set_title(title)
   # axis.get_figure().colorbar(im)
   tick_marks = np.arange(len(labels))
   axis.set_xticks(tick_marks)
@@ -879,14 +878,18 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
              horizontalalignment="center")
   # Turns off grid on the left Axis.
   axis.grid(False)
-
+  # ====== colorbar ====== #
   if colorbar == 'all':
     fig = axis.get_figure()
     axes = fig.get_axes()
     fig.colorbar(im, ax=axes)
   elif colorbar:
     plt.colorbar(im, ax=axis)
-
+  # ====== set title ====== #
+  if title is None:
+    title = ''
+  title += ' (F1: %.3f)' % F1_mean
+  axis.set_title(title, fontsize=fontsize + 2, weight='semibold')
   # axis.tight_layout()
   return axis
 
@@ -1168,7 +1171,7 @@ def _ppndf(cum_prob):
 
 def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
                          ax=None, labels=None, legend=True,
-                         title=None, linewidth=1.2):
+                         title=None, linewidth=1.2, pointsize=8.0):
   """
   Parameters
   ----------
@@ -1263,7 +1266,7 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
       Pfa_opt = _ppndf((Pfa_opt,))
       Pmiss_opt = _ppndf((Pmiss_opt,))
       points.append(((Pfa_opt, Pmiss_opt),
-                     {}))
+                     {'s': pointsize}))
       # det curve
       Pfa = _ppndf(Pfa)
       Pmiss = _ppndf(Pmiss)
