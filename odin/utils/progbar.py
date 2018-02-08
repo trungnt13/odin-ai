@@ -52,18 +52,15 @@ _NUMBERS_CH = {
     ord('9'): 9,
 }
 
-
 # ===========================================================================
 # Helper
 # ===========================================================================
 _LAST_UPDATED_PROG = [None]
 
-
 def add_notification(msg):
   msg = _CYAN + "\n[%s]Notification:" % \
       datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + '\n'
   _tqdm.write(msg)
-
 
 # ===========================================================================
 # Progressbar
@@ -333,7 +330,8 @@ class Progbar(object):
 
   @property
   def summary(self):
-    s = _MAGENTA + "Report \"%s\"    #Epoch: %d\n" % (self.name, self.nb_epoch) + _RESET
+    s = _MAGENTA + "Report \"%s\"    #Epoch: %d\n" % \
+    (self.name, self.nb_epoch) + _RESET
     # ====== create summary for each epoch ====== #
     s += '\n'.join([self._generate_epoch_summary(i)
                     for i in range(self.nb_epoch)])
@@ -348,9 +346,13 @@ class Progbar(object):
     return self
 
   def _new_epoch(self):
-    if self.__pb is None or self._last_report is None:
+    if self.__pb is None:
       return
-    nlines = len(self._last_report.split('\n'))
+    # calculate number of offset lines from last report
+    if self._last_report is None:
+      nlines = 0
+    else:
+      nlines = len(self._last_report.split('\n'))
     # ====== reset progress bar (tqdm) ====== #
     if self.__keep: # keep the last progress on screen
       self.__pb.moveto(nlines)
