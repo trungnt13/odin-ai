@@ -247,7 +247,7 @@ class Conv(NNOp):
     # ====== apply convolution ====== #
     conved = self.convolve(X)
     # ====== apply bias ====== #
-    if hasattr(self, 'b'):
+    if 'b' in self.variable_info:
       if self.untie_biases:
         conved += tf.expand_dims(self.get('b'), axis=0)
       else:

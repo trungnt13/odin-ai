@@ -80,7 +80,7 @@ def train(X, y_true, y_pred, train_data,
           objectives=[tf.losses.softmax_cross_entropy],
           metrics=[tf.metrics.accuracy],
           training_metrics=[], parameters=[],
-          batch_size=256, epochs=6, shuffle=True,
+          batch_size=256, epochs=8, shuffle=True,
           optimizer='rmsprop', lr=0.001,
           decay_steps=None, decay_rate=0.96, staircase=True,
           clipnorm=None, clipvalue=None,
@@ -111,8 +111,9 @@ def train(X, y_true, y_pred, train_data,
     specific random seed for reproducible
   verbose : int
     0 - Turn off all log
-    1 - Only show important log and summary
-    2 - Show progress and summary
+    1 - only show notification
+    2 - show notification, important log and summary
+    3 - Show progress and summary (everything)
 
   """
   from odin import backend as K
@@ -199,8 +200,6 @@ def train(X, y_true, y_pred, train_data,
                            name='valid')
   # running
   trainer.run()
-  if rollback:
-    trainer._rollback()
 
 def train_network():
   pass

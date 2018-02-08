@@ -843,6 +843,10 @@ class NNOp(object):
     return self._is_initialized
 
   @property
+  def variable_info(self):
+    return dict(self._variable_info)
+
+  @property
   def nnops(self):
     """ Return all NNOp belong to the initialization of this Op
     or within the scope of this Op.

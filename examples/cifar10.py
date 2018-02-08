@@ -55,6 +55,7 @@ cm = K.metrics.confusion_matrix(y_pred=outputs['prob'],
 # ====== create optimizer ====== #
 optz = K.optimizers.Adam(lr=LEARNING_RATE)
 parameters = model.parameters
+print("#Parameters:", len(parameters))
 updates = optz(ce, parameters)
 print('Building training functions ...')
 f_train = K.function(inputs, [ce, optz.norm, cm], updates=updates, training=True)

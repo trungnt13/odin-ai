@@ -58,8 +58,8 @@ _NUMBERS_CH = {
 _LAST_UPDATED_PROG = [None]
 
 def add_notification(msg):
-  msg = _CYAN + "\n[%s]Notification:" % \
-      datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + '\n'
+  msg = _CYAN + "[%s]Notification:" % \
+      datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + ''
   _tqdm.write(msg)
 
 # ===========================================================================
@@ -280,11 +280,13 @@ class Progbar(object):
   def progress_bar(self):
     if self.__pb is None:
       it = range(self.target)
-      self.__pb = _tqdm(iterable=it, desc="Epoch %d" % self.epoch_idx,
-                        leave=self.__keep,
-                        total=self.target, file=Progbar.FP, unit='obj',
-                        mininterval=self.__interval, maxinterval=10,
-                        miniters=0, position=0)
+      self.__pb = _tqdm(iterable=it,
+                    desc="%s|Epoch%s" % (_RED + self.name[:8] + _RESET,
+                                         _YELLOW + str(self.epoch_idx) + _RESET),
+                    leave=self.__keep, total=self.target,
+                    file=Progbar.FP, unit='obj',
+                    mininterval=self.__interval, maxinterval=10,
+                    miniters=0, position=0)
       self.__pb.clear()
       self._epoch_start_time = time.time()
     return self.__pb
