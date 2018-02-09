@@ -65,6 +65,10 @@ def cond_training(train_fn, infer_fn,
     return tf.cond(__IS_TRAINING, fn1=_train_fn, fn2=_infer_fn)
 
 
+def is_operation(op):
+  return isinstance(op, tf.Operation)
+
+
 def is_placeholder(variable):
   """Check if variable is a user-provided graph input.
 

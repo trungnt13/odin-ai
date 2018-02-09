@@ -42,9 +42,8 @@ ops = N.Sequence([
 ], debug=True)
 y_pred = ops(X)
 y_onehot = tf.one_hot(y, depth=10)
-cost_ce = tf.identity(tf.losses.softmax_cross_entropy(y_onehot, y_pred),
-                      name='CE')
-cost_acc = K.metrics.categorical_accuracy(y_pred, y, name="Acc")
+cost_ce = tf.losses.softmax_cross_entropy(y_onehot, y_pred)
+cost_acc = K.metrics.categorical_accuracy(y, y_pred, name="Acc")
 cost_cm = K.metrics.confusion_matrix(y_pred=y_pred, y_true=y,
                                      labels=10)
 

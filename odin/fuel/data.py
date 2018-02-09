@@ -341,25 +341,20 @@ class Data(object):
         idx.append(end)
       idx = list(zip(idx, idx[1:]))
       # ====== shuffling the batch ====== #
-      if seed is None:
-        permutation_func = lambda x: x
-      else:
+      if seed is not None:
         rand = np.random.RandomState(seed=seed)
         rand.shuffle(idx)
-        if shuffle_level > 0: # shuffle with higher level
-          permutation_func = lambda x: x[rand.permutation(x.shape[0])]
-        else: # no need for higher level shuffling
-          permutation_func = lambda x: x
       # this dummy return to make everything initialized
       yield None
       # ====== start the iteration ====== #
       for start, end in idx:
         # [i[start:end] for i in self._data]
         x = self.__getitem__(slice(start, end))
-        if isinstance(x, (tuple, list)):
-          yield tuple([permutation_func(i) for i in x])
-        else:
-          yield permutation_func(x)
+        if shuffle_level > 0: # shuffle with higher level
+          permu = rand.permutation(end - start)
+          x = (tuple([i[permu] for i in x])
+               if isinstance(x, (tuple, list)) else x[permu])
+        yield x
     # ====== create, init, and return the iteration ====== #
     it = create_iteration()
     next(it)

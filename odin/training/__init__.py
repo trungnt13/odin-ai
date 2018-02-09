@@ -5,7 +5,8 @@ import tensorflow as tf
 
 from .trainer import Task, Timer, MainLoop
 from .callbacks import *
-from odin.utils import as_tuple, is_string, is_number
+from odin.utils import (as_tuple, is_string, is_number,
+                        wprint, one_hot, ctext)
 
 
 # ===========================================================================
@@ -67,6 +68,12 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None):
       obj = fn
     elif hasattr(fn, '__call__'):
       obj = fn(yt, yp, **kwargs)
+      if isinstance(obj, (tuple, list)):
+        wprint("function: '%s' return %d outputs (%s), only pick the first one"
+               % (fn.__name__,
+                  len(obj),
+                  '; '.join([str(i) for i in obj])))
+        obj = obj[0]
     cost.append((weight, obj))
   # ====== reduce ====== #
   return [c if w == 1 else w * c for w, c in cost]
@@ -78,13 +85,11 @@ def train(X, y_true, y_pred, train_data,
           valid_data=None, valid_freq=1.,
           patience=3, threshold=5, rollback=True,
           objectives=[tf.losses.softmax_cross_entropy],
-          metrics=[tf.metrics.accuracy],
+          metrics=[tf.losses.softmax_cross_entropy],
           training_metrics=[], parameters=[],
           batch_size=256, epochs=8, shuffle=True,
-          optimizer='rmsprop', lr=0.001,
-          decay_steps=None, decay_rate=0.96, staircase=True,
-          clipnorm=None, clipvalue=None,
-          labels=None, seed=5218, verbose=1):
+          optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
+          labels=None, seed=5218, verbose=2):
   """
   Parameters
   ----------
@@ -113,7 +118,8 @@ def train(X, y_true, y_pred, train_data,
     0 - Turn off all log
     1 - only show notification
     2 - show notification, important log and summary
-    3 - Show progress and summary (everything)
+    3 - Show progress, summary, notification and logging
+    4 - Show debug information and everything
 
   """
   from odin import backend as K
@@ -127,59 +133,123 @@ def train(X, y_true, y_pred, train_data,
   # ====== parsing objectives and metrics ====== #
   # for training
   objectives = _preprocessing_losses(as_tuple(objectives), y_true, y_pred)
-  if len(objectives) == 0:
-    raise RuntimeError("You must specify at least one `objectives`")
   # metrics for monitoring
+  metrics = as_tuple(metrics)
   get_value = lambda x: np.mean(x)
   if len(metrics) > 0 and \
   (metrics[0] == tf.metrics.accuracy or
    metrics[0] == K.metrics.categorical_accuracy):
     get_value = lambda x: 1 - np.mean(x)
-  metrics = _preprocessing_losses(as_tuple(metrics), y_true, y_pred,
+  metrics = _preprocessing_losses(metrics, y_true, y_pred,
                                   inherit_losses=objectives)
   # training_metrics
   training_metrics = _preprocessing_losses(as_tuple(training_metrics),
                                            y_true, y_pred,
                                            inherit_losses=metrics)
   # sum the objectives for differentiable
-  objectives = sum(objectives) if len(objectives) > 1 else objectives[0]
-  # ====== preprocess optimizer ====== #
-  if is_string(optimizer):
-    optimizer = _parse_optimizer(optimizer)
-    optimizer = optimizer(lr=lr, decay_rate=decay_rate, decay_steps=decay_steps,
-                          staircase=staircase,
-                          clipnorm=clipnorm, clipvalue=clipvalue)
-  elif not isinstance(optimizer, K.optimizers.Optimizer):
-    raise ValueError("`optimizer` must be string - name of algorithm or instance "
-                     "of odin.backend.optimizers.Optimizer")
-  # ====== parameters ====== #
-  if parameters is None or len(parameters) == 0:
-    parameters = K.ComputationGraph(objectives).parameters
+  if len(objectives) > 0:
+    objectives = [sum(objectives) if len(objectives) > 1 else objectives[0]]
+  # ====== preprocess optimizer and get updates====== #
+  if updates is None: # not given updates
+    if is_string(optimizer):
+      optimizer = _parse_optimizer(optimizer)
+      optimizer = optimizer(**optz_kwargs)
+    elif not isinstance(optimizer, K.optimizers.Optimizer):
+      raise ValueError("`optimizer` must be string - name of algorithm or instance "
+                       "of odin.backend.optimizers.Optimizer")
+    parameters = K.ComputationGraph(objectives).parameters\
+    if len(parameters) == 0 else as_tuple(parameters, t=K.is_variable)
+    # check objectives
+    if len(objectives) == 0:
+      raise RuntimeError("`objectives` must be given due to `updates=None`")
+    updates = optimizer.get_updates(objectives, parameters)
+    # adding global norm
+    training_metrics.append(optimizer.norm)
+  elif K.is_operation(updates): # given updates
+    optimizer = None
   else:
-    parameters = as_tuple(parameters, t=K.is_variable)
-  updates = optimizer.get_updates(objectives, parameters)
-  # ====== build function ====== #
-  inputs = list(X)
-  for i in y_true: # no duplicated inputs (e.g. autoencoder X == y)
-    if i not in inputs:
+    raise ValueError("`updates` can be None or tensorflow Operation, but given "
+      "type: %s" % str(type(updates)))
+  # ====== placeholders ====== #
+  inputs = []
+  for plh in X:
+    for i in (K.ComputationGraph(plh).placeholders
+              if not K.is_placeholder(plh)
+              else as_tuple(plh)):
       inputs.append(i)
+  for plh in y_true: # no duplicated inputs (e.g. autoencoder X == y)
+    if not K.is_placeholder(plh):
+      plh = K.ComputationGraph(plh).placeholders
+    for i in as_tuple(plh):
+      if i not in inputs:
+        inputs.append(i)
+  # ====== initialize variables ====== #
+  not_inited_vars = []
+  for v in K.ComputationGraph(objectives + metrics + training_metrics).variables:
+    if not K.is_variable_initialized(v):
+      not_inited_vars.append(v)
+  if len(not_inited_vars) > 0:
+    if verbose > 0:
+      wprint("Found %d not-intialized variables: %s" %
+             (len(not_inited_vars), '; '.join([i.name for i in not_inited_vars])))
+    K.initialize_all_variables(vars=not_inited_vars)
+  # ====== creating function ====== #
   # training function
   f_train = K.function(inputs=inputs,
-                       outputs=[objectives] + training_metrics,
+                       outputs=objectives + training_metrics,
                        updates=updates, training=True)
   # scoring function
   f_score = None
   if len(metrics) > 0:
     f_score = K.function(inputs=inputs, outputs=metrics,
-                        training=False)
+                         training=False)
   # ====== preprocessing data ====== #
   train_data, valid_data = _preprocessing_data(train_data, valid_data)
+  # print some debug information if necessary
+  if verbose >= 4:
+    print("%s %s %s" % (
+        ctext("============", 'cyan'),
+        ctext("Prepare for Training", 'red'),
+        ctext("============", 'cyan')))
+    print(ctext("Inputs:", 'yellow'))
+    for i in inputs:
+      print(" * ", str(i))
+    print(ctext("Parameters:", 'yellow'))
+    for p in parameters:
+      print(" * ", p.name, '-', p.shape, ';', p.dtype.name)
+    print(ctext("Optimizer:", 'yellow'), str(optimizer))
+    print(" * Optimizer kwargs:", optz_kwargs)
+    print(ctext("Training:", 'yellow'))
+    print(" * Valid freq:", valid_freq)
+    print(" * Patience:", patience)
+    print(" * Threshold:", threshold)
+    print(" * Rollback:", rollback)
+    print(" * Batch size:", batch_size)
+    print(" * Epoch:", epochs)
+    print(" * Shuffle:", shuffle)
+    print(" * Seed:", seed)
+    print(ctext("Objectives:", 'yellow'))
+    for o in objectives:
+      print(" * ", str(o))
+    print(ctext("Metrics:", 'yellow'))
+    for m in metrics:
+      print(" * ", str(m))
+    print(ctext("Training metrics:", 'yellow'))
+    for t in training_metrics:
+      print(" * ", str(t))
+    print(ctext("Training Data:", 'yellow'), str(train_data))
+    print(ctext("Validating Data:", 'yellow'), str(valid_data))
+    print(ctext("Labels:", 'yellow'), labels)
+  for i in range(epochs):
+    print("Train:", np.mean([f_train(x, y) for x, y in train_data.set_batch(512, shuffle_level=2, seed=seed)]))
+    print("Valid:", np.mean([f_score(x, y) for x, y in valid_data.set_batch(512, shuffle_level=2, seed=seed)]))
+  exit()
   # ====== create trainer ====== #
   callback_log = True if verbose > 0 else False
   trainer = MainLoop(batch_size=batch_size,
                      seed=seed if shuffle else None,
                      shuffle_level=2 if shuffle else 0,
-                     allow_rollback=True,
+                     allow_rollback=rollback,
                      verbose=verbose, labels=labels)
   trainer.set_checkpoint(path=None, obj=None,
                          variables=parameters)
