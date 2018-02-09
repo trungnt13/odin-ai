@@ -162,7 +162,7 @@ def train(X, y_true, y_pred, train_data,
     # check objectives
     if len(objectives) == 0:
       raise RuntimeError("`objectives` must be given due to `updates=None`")
-    updates = optimizer.get_updates(objectives, parameters)
+    updates = optimizer.get_updates(objectives[0], parameters)
     # adding global norm
     training_metrics.append(optimizer.norm)
   elif K.is_operation(updates): # given updates
@@ -185,7 +185,8 @@ def train(X, y_true, y_pred, train_data,
         inputs.append(i)
   # ====== initialize variables ====== #
   not_inited_vars = []
-  for v in K.ComputationGraph(objectives + metrics + training_metrics).variables:
+  for v in K.ComputationGraph(
+      objectives + metrics + training_metrics).variables:
     if not K.is_variable_initialized(v):
       not_inited_vars.append(v)
   if len(not_inited_vars) > 0:
@@ -217,7 +218,8 @@ def train(X, y_true, y_pred, train_data,
     print(ctext("Parameters:", 'yellow'))
     for p in parameters:
       print(" * ", p.name, '-', p.shape, ';', p.dtype.name)
-    print(ctext("Optimizer:", 'yellow'), str(optimizer))
+    print(ctext("Optimizer:", 'yellow'))
+    print(" * ", str(optimizer))
     print(" * Optimizer kwargs:", optz_kwargs)
     print(ctext("Training:", 'yellow'))
     print(" * Valid freq:", valid_freq)
@@ -240,10 +242,6 @@ def train(X, y_true, y_pred, train_data,
     print(ctext("Training Data:", 'yellow'), str(train_data))
     print(ctext("Validating Data:", 'yellow'), str(valid_data))
     print(ctext("Labels:", 'yellow'), labels)
-  for i in range(epochs):
-    print("Train:", np.mean([f_train(x, y) for x, y in train_data.set_batch(512, shuffle_level=2, seed=seed)]))
-    print("Valid:", np.mean([f_score(x, y) for x, y in valid_data.set_batch(512, shuffle_level=2, seed=seed)]))
-  exit()
   # ====== create trainer ====== #
   callback_log = True if verbose > 0 else False
   trainer = MainLoop(batch_size=batch_size,

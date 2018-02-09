@@ -572,8 +572,12 @@ class ComputationGraph(object):
     return outputs
 
   def __init__(self, outputs=None, trace_up=False):
-    outputs = flatten_list(as_list(outputs), level=None)
-    self.outputs = [o for o in outputs if o is not None]
+    # it is important to don't have duplicated outputs
+    # otherwise, it can go into infinite loop
+    outputs = list(set([o for o in flatten_list(as_list(outputs),
+                                           level=None)
+                        if o is not None]))
+    self.outputs = outputs
     self._trace_up = trace_up
     self._get_variables()
 
