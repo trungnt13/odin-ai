@@ -91,6 +91,7 @@ def train(X, y_true, y_pred, train_data,
           optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
           labels=None, seed=5218, verbose=2):
   """
+
   Parameters
   ----------
   rollback : bool (default: True)
@@ -121,6 +122,9 @@ def train(X, y_true, y_pred, train_data,
     3 - Show progress, summary, notification and logging
     4 - Show debug information and everything
 
+  Return
+  ------
+  Function used for prediction
   """
   from odin import backend as K
   # ====== preprocess inputs ====== #
@@ -171,18 +175,20 @@ def train(X, y_true, y_pred, train_data,
     raise ValueError("`updates` can be None or tensorflow Operation, but given "
       "type: %s" % str(type(updates)))
   # ====== placeholders ====== #
-  inputs = []
+  inputs_plh = []
   for plh in X:
     for i in (K.ComputationGraph(plh).placeholders
               if not K.is_placeholder(plh)
               else as_tuple(plh)):
-      inputs.append(i)
+      inputs_plh.append(i)
+  outputs_plh = []
   for plh in y_true: # no duplicated inputs (e.g. autoencoder X == y)
     if not K.is_placeholder(plh):
       plh = K.ComputationGraph(plh).placeholders
     for i in as_tuple(plh):
-      if i not in inputs:
-        inputs.append(i)
+      if i not in inputs_plh:
+        outputs_plh.append(i)
+  inputs = inputs_plh + outputs_plh
   # ====== initialize variables ====== #
   not_inited_vars = []
   for v in K.ComputationGraph(
@@ -204,6 +210,10 @@ def train(X, y_true, y_pred, train_data,
   if len(metrics) > 0:
     f_score = K.function(inputs=inputs, outputs=metrics,
                          training=False)
+  # prediction function
+  f_pred = K.function(inputs=inputs_plh,
+                      outputs=y_pred[0] if len(y_pred) == 1 else y_pred,
+                      training=False)
   # ====== preprocessing data ====== #
   train_data, valid_data = _preprocessing_data(train_data, valid_data)
   # print some debug information if necessary
@@ -212,8 +222,11 @@ def train(X, y_true, y_pred, train_data,
         ctext("============", 'cyan'),
         ctext("Prepare for Training", 'red'),
         ctext("============", 'cyan')))
-    print(ctext("Inputs:", 'yellow'))
-    for i in inputs:
+    print(ctext("Input placeholders:", 'yellow'))
+    for i in inputs_plh:
+      print(" * ", str(i))
+    print(ctext("Output placeholders:", 'yellow'))
+    for i in outputs_plh:
       print(" * ", str(i))
     print(ctext("Parameters:", 'yellow'))
     for p in parameters:
@@ -268,6 +281,4 @@ def train(X, y_true, y_pred, train_data,
                            name='valid')
   # running
   trainer.run()
-
-def train_network():
-  pass
+  return f_pred
