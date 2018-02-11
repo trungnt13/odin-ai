@@ -7,9 +7,55 @@ from collections import defaultdict, Iterator, OrderedDict, Mapping
 
 import numpy as np
 
-from odin.utils import as_tuple, flatten_list, ctext
 from odin.config import get_rng
+from odin.utils.math_utils import interp
+from odin.utils import as_tuple, flatten_list, ctext
 
+def prior2weights(prior, exponential=False,
+                  min_value=0.1, max_value=None,
+                  norm=False):
+  """
+  Parameters
+  ----------
+  prior: numpy.ndarray [nb_classes,]
+      probabilty values of each classes prior,
+      sum of all prior must be equal to 1.
+  exponential: bool
+  min_value: bool
+      minimum value for the class with highest prior
+  max_value: bool
+      maximum value for the class with smalles prior
+  norm: bool
+      if True, normalize output weights to sum up to 1.
+  """
+  # idea is the one with highest prior equal to 1.
+  # and all other classes is the ratio to this prior
+  prior = np.array(prior).ravel()
+  # make sure everything sum to 1 (probability values)
+  prior = prior / np.sum(prior)
+  zero_ids = [i for i, j in enumerate(prior) if j == 0]
+  nonzero_prior = np.array([j for i, j in enumerate(prior) if j != 0])
+  prior = 1. / nonzero_prior * np.max(nonzero_prior)
+  if exponential:
+    prior = sorted([(i, p) for i, p in enumerate(prior)],
+                   key=lambda x: x[-1], reverse=False)
+    alpha = interp.expIn(n=len(prior), power=10)
+    prior = {i: a * p for a, (i, p) in zip(alpha, prior)}
+    prior = np.array([prior[i] for i in range(len(prior))]) + 1
+  # ====== rescale everything within max_value ====== #
+  if min_value is not None and max_value is not None:
+    min_value = float(min_value)
+    max_value = float(max_value)
+    prior = (max_value - min_value) * (prior - np.min(prior)) \
+        / (np.max(prior) - np.min(prior)) + min_value
+  # ====== normaize by ====== #
+  if norm:
+    prior = prior / np.sum(prior)
+  # ====== set zero indices ====== #
+  prior = prior.tolist()
+  for i in zero_ids:
+    prior.insert(i, 0)
+  return np.array(prior)
 
 def classification_report(y_pred, y_true, labels):
   """

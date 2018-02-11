@@ -71,6 +71,24 @@ def to_nonzeros(x, value):
     x[x == 0] = value
   return x
 
+def to_sample_weights(indices, weights, name=None):
+  """ Convert indices or one-hot matrix and
+  give weights to sample weights for training """
+  with tf.name_scope(name, "to_sample_weights", [indices]):
+    # ====== preprocess indices ====== #
+    ndim = len(indices.get_shape())
+    if ndim <= 1: # indices vector
+      indices = tf.cast(indices, dtype=tf.int64)
+    else:
+      indices = tf.argmax(indices, axis=-1)
+    # ====== prior weights ====== #
+    if isinstance(weights, (tuple, list, np.ndarray)):
+      prior_weights = tf.constant(weights, dtype=floatX,
+                            name="prior_weights")
+    # ====== sample weights ====== #
+    weights = tf.gather(prior_weights, indices)
+  return weights
+
 # ===========================================================================
 # Allocation
 # ===========================================================================

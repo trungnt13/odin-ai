@@ -167,8 +167,9 @@ def train(X, y_true, y_pred, train_data,
     if len(objectives) == 0:
       raise RuntimeError("`objectives` must be given due to `updates=None`")
     updates = optimizer.get_updates(objectives[0], parameters)
-    # adding global norm
+    # adding global norm and learning rate
     training_metrics.append(optimizer.norm)
+    training_metrics.append(optimizer.lr)
   elif K.is_operation(updates): # given updates
     optimizer = None
   else:

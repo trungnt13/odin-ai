@@ -53,6 +53,8 @@ def as_data(x, copy=False):
   """
   if isinstance(x, Data):
     if copy:
+      if 'odin.fuel.feeder.Feeder' in str(type(x)):
+        raise ValueError("Cannot copy `Feeder` data type.")
       return DataCopy(x)
     else:
       return x
