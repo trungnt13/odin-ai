@@ -1,5 +1,7 @@
 from collections import Mapping
 
+import inspect
+
 import numpy as np
 import tensorflow as tf
 
@@ -7,7 +9,6 @@ from .trainer import Task, Timer, MainLoop
 from .callbacks import *
 from odin.utils import (as_tuple, is_string, is_number,
                         wprint, one_hot, ctext)
-
 
 # ===========================================================================
 # Helper
@@ -37,7 +38,8 @@ def _preprocessing_data(train, valid):
     valid = F.as_data(valid)
   return train, valid
 
-def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None):
+def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None,
+                          sample_weights=None):
   """ Can be used for both objectives and metrics """
   from odin import backend as K
   # ====== special cases, only one inputs outputs, and multiple loss ====== #
@@ -67,7 +69,14 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None):
     elif K.is_tensor(fn):
       obj = fn
     elif hasattr(fn, '__call__'):
-      obj = fn(yt, yp, **kwargs)
+      try:
+        argspec = inspect.getargspec(fn)
+        if 'weights' in argspec.args and sample_weights is not None:
+          kwargs['weights'] = sample_weights
+      except ValueError:
+        pass
+      finally:
+        obj = fn(yt, yp, **kwargs)
       if isinstance(obj, (tuple, list)):
         wprint("function: '%s' return %d outputs (%s), only pick the first one"
                % (fn.__name__,
@@ -78,6 +87,22 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None):
   # ====== reduce ====== #
   return [c if w == 1 else w * c for w, c in cost]
 
+def _preprocess_prior_weights(y_true, prior_weights):
+  if prior_weights is None:
+    return None
+  from odin import backend as K
+  # ====== everything must be list ====== #
+  if not isinstance(prior_weights, (tuple, list)):
+    prior_weights = (prior_weights,)
+  elif is_number(prior_weights[0]):
+    prior_weights = (prior_weights,)
+  # ====== matching indices and prior_weights ====== #
+  pw = 0
+  for yt, w in zip(y_true, prior_weights):
+    if w is not None:
+      pw += K.to_sample_weights(indices=yt, weights=w)
+  return pw
+
 # ===========================================================================
 # Main methods
 # ===========================================================================
@@ -87,6 +112,7 @@ def train(X, y_true, y_pred, train_data,
           objectives=[tf.losses.softmax_cross_entropy],
           metrics=[tf.losses.softmax_cross_entropy],
           training_metrics=[], parameters=[],
+          prior_weights=None, sample_weights=None,
           batch_size=256, epochs=8, shuffle=True,
           optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
           labels=None, seed=5218, verbose=2):
@@ -136,7 +162,15 @@ def train(X, y_true, y_pred, train_data,
                      % (len(y_true), len(y_pred)))
   # ====== parsing objectives and metrics ====== #
   # for training
-  objectives = _preprocessing_losses(as_tuple(objectives), y_true, y_pred)
+  prior_weights = _preprocess_prior_weights(y_true=y_true,
+                                            prior_weights=prior_weights)
+  if prior_weights is not None:
+    if sample_weights is not None:
+      sample_weights = sample_weights + prior_weights
+    else:
+      sample_weights = prior_weights
+  objectives = _preprocessing_losses(as_tuple(objectives), y_true, y_pred,
+                                     sample_weights=sample_weights)
   # metrics for monitoring
   metrics = as_tuple(metrics)
   get_value = lambda x: np.mean(x)
@@ -247,6 +281,9 @@ def train(X, y_true, y_pred, train_data,
     print(ctext("Objectives:", 'yellow'))
     for o in objectives:
       print(" * ", str(o))
+    print(ctext("Weights:", 'yellow'))
+    print(" * Prior:", str(prior_weights))
+    print(" * Sample:", str(sample_weights))
     print(ctext("Metrics:", 'yellow'))
     for m in metrics:
       print(" * ", str(m))

@@ -1,9 +1,11 @@
 from __future__ import print_function, division, absolute_import
-from datetime import datetime
 
+import os
 import inspect
-from six import string_types, add_metaclass
+
+from datetime import datetime
 from collections import defaultdict
+from six import string_types, add_metaclass
 
 import numpy as np
 
@@ -46,3 +48,23 @@ class abstractclassmethod(classmethod):
   def __init__(self, method):
     method.__isabstractmethod__ = True
     super(abstractclassmethod, self).__init__(method)
+
+# ===========================================================================
+# Path utils
+# ===========================================================================
+def select_path(*paths):
+  all_paths = []
+  for p in paths:
+    if isinstance(p, (tuple, list)):
+      all_paths += p
+    elif isinstance(p, string_types):
+      all_paths.append(p)
+    else:
+      raise ValueError("Given `path` has type: '%s', which must be string or "
+                       "list of string")
+  # ====== return the first found exists path ====== #
+  for p in all_paths:
+    if os.path.exists(p):
+      return p
+  raise RuntimeError("Cannot find any exists path from list: %s" %
+    '; '.join(all_paths))
