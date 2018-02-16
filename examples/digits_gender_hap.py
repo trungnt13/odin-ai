@@ -24,7 +24,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K, nnet as N, fuel as F
-from odin.stats import train_valid_test_split, freqcount
+from odin.stats import train_valid_test_split, freqcount, prior2weights
 from odin import training
 from odin.visual import print_dist, print_confusion, print_hist
 from odin.utils import (get_logpath, Progbar, get_modelpath, unique_labels,
@@ -49,14 +49,27 @@ indices = list(ds['indices'].items())
 K.get_rng().shuffle(indices)
 print("#Files:", ctext(len(indices), 'cyan'))
 # ====== genders ====== #
-fn_gender, label_gen = unique_labels([i[0] for i in indices],
-                                     lambda x: x.split('_')[1], True)
+fn_gen, label_gen = unique_labels([i[0] for i in indices],
+                                  lambda x: x.split('_')[1], True)
 gen_old = {'m': 'old', 'w': 'old',
            'b': 'young', 'g': 'young'}
 fn_old, label_old = unique_labels([i[0] for i in indices],
                                  lambda x: gen_old[x.split('_')[1]], True)
 print("Label Gender:", ctext(label_gen, 'cyan'))
 print("Label Old:", ctext(label_old, 'cyan'))
+weight_gen = list(freqcount([fn_gen(name)
+                             for name, (s, e) in indices]).values())
+weight_gen = prior2weights(prior=weight_gen, exponential=False,
+                           min_value=0.1, max_value=8.0,
+                           norm=False)
+weight_old = list(freqcount([fn_old(name)
+                             for name, (s, e) in indices]).values())
+weight_old = prior2weights(prior=weight_old, exponential=False,
+                           min_value=None, max_value=None,
+                           norm=True)
+print("Weight Gender:", ctext(weight_gen, 'cyan'))
+print("Weight Old:", ctext(weight_old, 'cyan'))
+# ====== split train, test ====== #
 train = []
 test = []
 for name, (start, end) in indices:
@@ -78,7 +91,7 @@ print("Longest utterances:", ctext(LONGEST_UTT, 'cyan'))
 # Create feeder
 # ===========================================================================
 recipes = [
-    F.recipes.Name2Trans(converter_func=fn_gender),
+    F.recipes.Name2Trans(converter_func=fn_gen),
     F.recipes.Name2Trans(converter_func=fn_old),
     F.recipes.Sequencing(frame_length=LONGEST_UTT, step_length=1,
                          end='pad', pad_mode='post', pad_value=0,
@@ -122,8 +135,6 @@ with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
         N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
         N.Pool(pool_size=(3, 2), strides=2),
         N.Flatten(outdim=2),
-        N.Dense(1024), N.BatchNorm(),
-        N.Dense(128), # bottleneck
         N.Dense(512), N.BatchNorm(),
         N.Dense(len(label_old))
     ], debug=True)
@@ -133,15 +144,15 @@ f_pred = training.train(X=X, y_true=y_old, y_pred=y_logit,
                train_data=train, valid_data=valid,
                valid_freq=0.8, patience=3, threshold=5, rollback=True,
                metrics=[0, K.metrics.categorical_accuracy, K.metrics.confusion_matrix],
-               training_metrics=[1, 2],
-               batch_size=128, epochs=8, shuffle=True,
+               training_metrics=[1, 2], prior_weights=weight_old,
+               batch_size=256, epochs=8, shuffle=True,
                optimizer='rmsprop', optz_kwargs={'lr': 0.0001},
                labels=label_old, verbose=4)
-exit()
 # ===========================================================================
 # Prediction
 # ===========================================================================
-y_true = []
+y_true_gen = []
+y_true_old = []
 y_pred = []
 for outputs in Progbar(test, name="Evaluating",
                        count_func=lambda x: x[-1].shape[0]):
@@ -150,14 +161,24 @@ for outputs in Progbar(test, name="Evaluating",
   data = outputs[2:]
   if idx >= 1:
     raise ValueError("NOPE")
-  y_true.append(fn_gender(name))
+  y_true_gen.append(fn_gen(name))
+  y_true_old.append(fn_old(name))
   y_pred.append(f_pred(*data))
-y_true = np.array(y_true, dtype='int32')
-y_pred = np.argmax(np.array(y_pred, dtype='float32'), -1)
+y_true_gen = np.array(y_true_gen, dtype='int32')
+y_true_old = np.array(y_true_old, dtype='int32')
+y_pred = np.array(y_pred, dtype='float32')
+nb_classes = y_pred.shape[1]
+y_pred = np.argmax(y_pred, axis=-1)
 
 from sklearn.metrics import confusion_matrix, accuracy_score
+if nb_classes == len(label_gen):
+  y_true = y_true_gen
+  labels = label_gen
+else:
+  y_true = y_true_old
+  labels = label_old
 print()
 print("Acc:", accuracy_score(y_true, y_pred))
 print("Confusion matrix:")
-print(print_confusion(confusion_matrix(y_true, y_pred), label_gen))
+print(print_confusion(confusion_matrix(y_true, y_pred), labels))
 print(LOG_PATH)
