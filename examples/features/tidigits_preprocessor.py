@@ -15,6 +15,7 @@ from odin.utils import (get_all_files, get_all_ext, exec_commands,
                         MPI, cpu_count, Progbar, ArgController,
                         stdio, ctext)
 args = ArgController(
+).add('path', "path to TIDIGITS dataset"
 ).add('--wav', "Converting sphere file to wave", False
 ).parse()
 
@@ -95,7 +96,8 @@ Example of original data:
 # CONST
 # ===========================================================================
 # ====== main path ====== #
-inpath = "/mnt/sdb1/TIDIGITS"
+# inpath = "/mnt/sdb1/TIDIGITS"
+inpath = args.path
 outpath = '/home/trung/data/tidigits'
 # ====== others ====== #
 wav_path = os.path.join(inpath, "wave")
@@ -224,7 +226,7 @@ extractors = pp.make_pipeline(steps=[
                     'raw': dtype, 'bnf': dtype}),
 ], debug=False)
 processor = pp.FeatureProcessor(jobs=jobs, path=outpath, extractor=extractors,
-                                ncache=0.12, ncpu=None,
+                                ncache=0.08, ncpu=None,
                                 override=True)
 processor.run()
 pp.validate_features(processor, path='/tmp/tidigits', nb_samples=12,

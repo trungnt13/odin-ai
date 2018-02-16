@@ -100,7 +100,6 @@ def _batch_grouping(batch, batch_size, rng, batch_filter):
         if _ is not None:
           yield _ if isinstance(_, (tuple, list)) else (ret,)
 
-
 def _file_grouping(batch, batch_size, rng, batch_filter):
   """ Return: [(name, index, data1, data2, ...), ...]
       NOTE: each element in batch is one file
@@ -112,10 +111,9 @@ def _file_grouping(batch, batch_size, rng, batch_filter):
   for name, X in batch:
     n = X[0].shape[0]
     ret = list(X)
-    for i, (start, end) in enumerate(batching(n, batch_size)):
+    for i, (start, end) in enumerate(batching(n=n, batch_size=batch_size)):
       r = [name, i] + [j[start:end] for j in ret]
       yield tuple(batch_filter(r))
-
 
 def _weird_grouping(batch):
   pass
@@ -438,6 +436,7 @@ class Feeder(Data):
   def set_recipes(self, *recipes):
     self._recipes_changed = True
     self._recipes.set_recipes(recipes)
+    self.shape # re-calculate cached shape
     return self
 
   # ==================== override from Data ==================== #
@@ -494,6 +493,9 @@ class Feeder(Data):
       self._cache_shape = tuple(shapes)
       self._recipes_changed = False
     # ====== get the cached shape ====== #
+    if any(s[0] == 0 for s in self._cache_shape):
+      raise RuntimeError("Feeder has `length=0` change the recipes to retain "
+                         "minimum of `length>=1`, shape: %s" % str(self._cache_shape))
     return self._cache_shape
 
   def __str__(self):
