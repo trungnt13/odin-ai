@@ -107,6 +107,7 @@ inputs = [K.placeholder(shape=(None,) + shape[1:], dtype='float32', name='input%
 print("Inputs:")
 for x in inputs:
   print(' * ', x)
+X = inputs[0]
 y_gen = inputs[-2]
 y_old = inputs[-1]
 with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
@@ -124,47 +125,19 @@ with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
         N.Dense(1024), N.BatchNorm(),
         N.Dense(128), # bottleneck
         N.Dense(512), N.BatchNorm(),
-        N.Dense(len(label_gen))
+        N.Dense(len(label_old))
     ], debug=True)
-y_logit = f(inputs[0])
+y_logit = f(X)
 y_prob = tf.nn.softmax(y_logit)
-
-# ====== create loss ====== #
-ce = tf.losses.softmax_cross_entropy(y_gen, logits=y_logit)
-acc = K.metrics.categorical_accuracy(y_prob, y_gen)
-cm = K.metrics.confusion_matrix(y_pred=y_prob, y_true=y_gen,
-                                labels=len(label_gen))
-# ====== params and optimizing ====== #
-params = [p for p in f.parameters
-         if K.role.has_roles(p, K.role.Parameter)]
-print("Parameters:", params)
-optz = K.optimizers.RMSProp(lr=0.0001)
-updates = optz.get_updates(ce, params)
-# ====== Functions ====== #
-print('Building training functions ...')
-f_train = K.function(inputs, [ce, acc, optz.norm, cm], updates=updates,
-                     training=True)
-print('Building testing functions ...')
-f_test = K.function(inputs, [ce, acc, cm],
-                    training=False)
-print('Building predicting functions ...')
-f_pred = K.function(inputs, y_prob, training=False)
-# ===========================================================================
-# Training
-# ===========================================================================
-print('Start training ...')
-task = training.MainLoop(batch_size=8, seed=120825, shuffle_level=2,
-                         allow_rollback=True)
-task.set_checkpoint(MODEL_PATH, f)
-task.set_callbacks([
-    training.NaNDetector(),
-    training.EarlyStopGeneralizationLoss('valid', ce,
-                                         threshold=5, patience=5)
-])
-task.set_train_task(f_train, train, epoch=25, name='train')
-task.set_valid_task(f_test, valid,
-                    freq=training.Timer(percentage=0.5), name='valid')
-task.run()
+f_pred = training.train(X=X, y_true=y_old, y_pred=y_logit,
+               train_data=train, valid_data=valid,
+               valid_freq=0.8, patience=3, threshold=5, rollback=True,
+               metrics=[0, K.metrics.categorical_accuracy, K.metrics.confusion_matrix],
+               training_metrics=[1, 2],
+               batch_size=128, epochs=8, shuffle=True,
+               optimizer='rmsprop', optz_kwargs={'lr': 0.0001},
+               labels=label_old, verbose=4)
+exit()
 # ===========================================================================
 # Prediction
 # ===========================================================================

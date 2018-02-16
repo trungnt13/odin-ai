@@ -110,7 +110,7 @@ def train(X, y_true, y_pred, train_data,
           valid_data=None, valid_freq=1.,
           patience=3, threshold=5, rollback=True,
           objectives=[tf.losses.softmax_cross_entropy],
-          metrics=[tf.losses.softmax_cross_entropy],
+          metrics=[0],
           training_metrics=[], parameters=[],
           prior_weights=None, sample_weights=None,
           batch_size=256, epochs=8, shuffle=True,
@@ -125,14 +125,14 @@ def train(X, y_true, y_pred, train_data,
   objectives : {callable, tensorflow.Tensor}
     if `callable`, the function must take `y_true`, and `y_pred`
     The objectives must be differentiable and used for training.
-  metrics : {callable, tensorflow.Tensor}
+  metrics : {callable, tensorflow.Tensor, int}
     if `callable`, the function must take `y_true`, and `y_pred`
     The `metrics` is for monitoring the training process.
+    if `int`, it is the index of the loss in `objectives`
     NOTE: the first metrics in the list will be used for
     early-stopping (smaller is better).
-  training_metrics : {list of int}
-    list of index in the `metrics` list, will be used for
-    monitoring the training
+  training_metrics : {callable, tensorflow.Tensor, int}
+    if `int`, it is the index of the loss in `metrics`
   parameters : {list or tensorflow.Variables}
     All the parameters will be updated by the `optimizer`, if None
     or empty list is given, use ComputationalGraph to get

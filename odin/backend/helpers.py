@@ -415,11 +415,16 @@ class Function(object):
       function.
       if `training=False`, disable training mode only when execute this
       function.
+  strict : bool (default: True)
+      if False, remove shape mis-matched inputs when `__call__`
+      this `Function`.
+      if True, raise RuntimeError.
   """
 
   def __init__(self, inputs, outputs, updates=[], defaults={},
-               training=None):
+               training=None, strict=False):
     self.training = training
+    self._strict = bool(strict)
     # ====== validate input ====== #
     if isinstance(inputs, Mapping):
       self.inputs_name = inputs.keys()
@@ -438,7 +443,7 @@ class Function(object):
       outputs = (outputs,)
       return_list = False
     self.outputs = flatten_list(list(outputs), level=None)
-    self.return_list = return_list
+    self._return_list = return_list
     # ====== validate updates ====== #
     if isinstance(updates, Mapping):
       updates = updates.items()
@@ -455,11 +460,45 @@ class Function(object):
         self.updates_ops = tf.group(*updates_ops)
       else: # already an tensorflow Ops
         self.updates_ops = updates
+    # ====== cached shape ====== #
+    self._input_shape = [tuple(i.get_shape().as_list()) for i in self.inputs]
+    self._output_shape = [tuple(i.get_shape().as_list()) for i in self.outputs]
+
+  @property
+  def input_shape(self):
+    return self._input_shape
+
+  @property
+  def output_shape(self):
+    return self._output_shape if self._return_list else self._output_shape[0]
 
   def __call__(self, *inputs, **kwargs):
     # dictionary as inputs
     if len(kwargs) == len(self.inputs_name):
       inputs = [kwargs[i] for i in self.inputs_name]
+    # ====== delete un-matchede inputs ====== #
+    inputs_new = []
+    tmp = list(inputs)
+    shapes = list(self._input_shape)
+    # this process iteratively remove inputs with mismatch shape
+    # to current given input
+    for s in shapes:
+      for i in tuple(tmp):
+        if len(i.shape) != len(s) or \
+        any(a is not None and a > 0 and a != b
+                for a, b in zip(s, i.shape)): # different ndim, or shape
+          tmp.remove(i)
+        else:
+          inputs_new.append(i)
+          tmp.remove(i)
+          break
+    if len(inputs_new) != len(self.inputs):
+      raise ValueError("Given inputs have shape: %s, cannot match the shape of "
+                       "defined inputs: %s" %
+                       ('; '.join([str(i.shape) for i in inputs]),
+                        '; '.join([str(i) for i in self.input_shape])))
+    if not self._strict:
+      inputs = inputs_new
     # ====== create feed_dict ====== #
     feed_dict = {}
     inputs = flatten_list(inputs, level=None)
@@ -479,7 +518,7 @@ class Function(object):
                           feed_dict=feed_dict)
     # ====== get the results ====== #
     outputs = updated[:len(self.outputs)]
-    if not self.return_list:
+    if not self._return_list:
       outputs = outputs[0]
     return outputs
 

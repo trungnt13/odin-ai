@@ -105,7 +105,7 @@ def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
     return reduction(match_values)
 
 
-def confusion_matrix(y_true, y_pred, labels, normalize=False,
+def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
                      name=None):
   """
   Computes the confusion matrix of given vectors containing
@@ -134,11 +134,19 @@ def confusion_matrix(y_true, y_pred, labels, normalize=False,
   # ====== numpy ndarray ====== #
   if isinstance(y_true, np.ndarray) or isinstance(y_pred, np.ndarray):
     from sklearn.metrics import confusion_matrix as sk_cm
+    nb_classes = None
     if y_true.ndim > 1:
+      nb_classes = y_true.shape[1]
       y_true = np.argmax(y_true, axis=-1)
     if y_pred.ndim > 1:
+      nb_classes = y_pred.shape[1]
       y_pred = np.argmax(y_pred, axis=-1)
-    if is_number(labels):
+    # get number of classes
+    if labels is None:
+      if nb_classes is None:
+        raise RuntimeError("Cannot infer the number of classes for confusion matrix")
+      labels = int(nb_classes)
+    elif is_number(labels):
       labels = list(range(labels))
     cm = sk_cm(y_true=y_true, y_pred=y_pred, labels=labels)
     if normalize:
@@ -147,16 +155,23 @@ def confusion_matrix(y_true, y_pred, labels, normalize=False,
   # ====== tensorflow tensor ====== #
   with tf.name_scope(name, 'confusion_matrix', [y_true, y_pred]):
     from tensorflow.contrib.metrics import confusion_matrix as tf_cm
+    nb_classes = None
     if y_true.get_shape().ndims == 2:
+      nb_classes = y_true.get_shape().as_list()[-1]
       y_true = tf.argmax(y_true, -1)
     elif y_true.get_shape().ndims != 1:
       raise ValueError('actual must be 1-d or 2-d tensor variable')
     if y_pred.get_shape().ndims == 2:
+      nb_classes = y_pred.get_shape().as_list()[-1]
       y_pred = tf.argmax(y_pred, -1)
     elif y_pred.get_shape().ndims != 1:
       raise ValueError('pred must be 1-d or 2-d tensor variable')
     # check valid labels
-    if is_number(labels):
+    if labels is None:
+      if nb_classes is None:
+        raise RuntimeError("Cannot infer the number of classes for confusion matrix")
+      labels = int(nb_classes)
+    elif is_number(labels):
       labels = int(labels)
     elif hasattr(labels, '__len__'):
       labels = len(labels)
