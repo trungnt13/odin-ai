@@ -43,12 +43,18 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None,
   """ Can be used for both objectives and metrics """
   from odin import backend as K
   # ====== special cases, only one inputs outputs, and multiple loss ====== #
-  if len(y_true) == 1 and len(y_pred) == 1:
-    y_true = y_true * len(losses)
-    y_pred = y_pred * len(losses)
+  nb_losses = len(losses)
+  if len(y_true) == 0:
+    y_true = [None] * nb_losses
+  elif len(y_true) == 1:
+    y_true = y_true * nb_losses
+  if len(y_pred) == 0:
+    y_pred = [None] * nb_losses
+  elif len(y_pred) == 1:
+    y_pred = y_pred * nb_losses
   # ====== applying ====== #
   cost = []
-  for fn, yt, yp in zip(as_tuple(losses), y_true, y_pred):
+  for idx, fn in enumerate(as_tuple(losses)):
     weight = 1
     kwargs = {}
     # preprocess
@@ -76,7 +82,7 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None,
       except ValueError:
         pass
       finally:
-        obj = fn(yt, yp, **kwargs)
+        obj = fn(y_true[idx], y_pred[idx], **kwargs)
       if isinstance(obj, (tuple, list)):
         wprint("function: '%s' return %d outputs (%s), only pick the first one"
                % (fn.__name__,
@@ -110,8 +116,8 @@ def train(X, y_true, y_pred, train_data,
           valid_data=None, valid_freq=1.,
           patience=3, threshold=5, rollback=True,
           objectives=[tf.losses.softmax_cross_entropy],
-          metrics=[0],
-          training_metrics=[], parameters=[],
+          metrics=[0], training_metrics=[],
+          l1_regu=0., l2_regu=0., parameters=[],
           prior_weights=None, sample_weights=None,
           batch_size=256, epochs=8, shuffle=True,
           optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
@@ -157,9 +163,6 @@ def train(X, y_true, y_pred, train_data,
   X = as_tuple(X, t=K.is_tensor)
   y_true = as_tuple(y_true, t=K.is_tensor)
   y_pred = as_tuple(y_pred, t=K.is_tensor)
-  if len(y_true) != len(y_pred):
-    raise ValueError("There are %d `y_true` variables but %d `y_pred` variables"
-                     % (len(y_true), len(y_pred)))
   # ====== parsing objectives and metrics ====== #
   # for training
   prior_weights = _preprocess_prior_weights(y_true=y_true,
@@ -200,6 +203,16 @@ def train(X, y_true, y_pred, train_data,
     # check objectives
     if len(objectives) == 0:
       raise RuntimeError("`objectives` must be given due to `updates=None`")
+    weights = [p for p in parameters if K.role.has_roles(p, roles=K.role.Weight)]
+    # l1 regularization
+    if l1_regu > 0.:
+      l1_norm = sum(tf.norm(w, ord=1) for w in weights)
+      objectives[0] += l1_norm
+    # l2 regularization
+    if l2_regu > 0.:
+      l2_norm = sum(tf.norm(w, ord=2) for w in weights)
+      objectives[0] += l2_norm
+    # update rules
     updates = optimizer.get_updates(objectives[0], parameters)
     # adding global norm and learning rate
     training_metrics.append(optimizer.norm)
@@ -269,6 +282,8 @@ def train(X, y_true, y_pred, train_data,
     print(ctext("Optimizer:", 'yellow'))
     print(" * ", str(optimizer))
     print(" * Optimizer kwargs:", optz_kwargs)
+    print(" * L1:", l1_regu)
+    print(" * L2:", l2_regu)
     print(ctext("Training:", 'yellow'))
     print(" * Valid freq:", valid_freq)
     print(" * Patience:", patience)

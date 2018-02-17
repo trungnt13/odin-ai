@@ -685,7 +685,8 @@ class ComputationGraph(object):
     tensors = []
     placeholders = []
     # ====== travese each node of graph ====== #
-    # first get all variables
+    # first get all available variables
+    # (even not related to outputs)
     global_vars = {}
     if len(outputs) > 0:
       for o in outputs:

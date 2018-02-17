@@ -60,7 +60,6 @@ def get_all_nnops(scope=None, op_type=None):
                   reverse=False)
   return allops
 
-
 def _assign_new_nnop(nnop):
   if not isinstance(nnop, NNOp):
     raise ValueError("The new assigned NNOp must be instance of odin.nnet.NNOp "
@@ -84,16 +83,13 @@ __ARGS_SCOPE_STACK = [defaultdict(dict)]
 # each element is a list [scope_name, prefix_name, current_id]
 _NNOP_SCOPE_STACK = []
 
-
 def get_nnop_scope():
   if len(_NNOP_SCOPE_STACK) == 0:
     return ['', '', uuid()]
   return _NNOP_SCOPE_STACK[-1]
 
-
 def get_args_scope():
   return __ARGS_SCOPE_STACK[-1].copy()
-
 
 @contextmanager
 def args_scope(ops, **kwargs):
@@ -138,7 +134,6 @@ def args_scope(ops, **kwargs):
   yield None
   # ====== reset everything ====== #
   __ARGS_SCOPE_STACK.pop()
-
 
 @contextmanager
 def nnop_scope(scope, prefix='', reuse=None):

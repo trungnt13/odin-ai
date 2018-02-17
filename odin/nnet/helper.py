@@ -28,33 +28,6 @@ def _shrink_kwargs(op, kwargs):
   return keywords
 
 
-class Merge(NNOp):
-  """
-  Parameters
-  ----------
-  ops: list of NNOp
-      list of inputs operator, we expect one input for each NNOp,
-      however, if only one 1 input is given, we apply all NNOp on the
-      same input.
-  merge_function: call-able
-      function that convert a list of variables into 1 variable
-  """
-
-  def __init__(self, ops, merge_function=None, **kwargs):
-    super(Merge, self).__init__(ops, **kwargs)
-    self.merge_function = merge_function
-
-  def _apply(self, X, **kwargs):
-    X = as_tuple(X, N=len(self.ops))
-    # ====== iteratively appply all ops ====== #
-    results = [op(x, **_shrink_kwargs(op, kwargs))
-               for x, op in zip(X, self.ops)]
-    if hasattr(self.merge_function, '__call__'):
-      return self.merge_function(results)
-    else:
-      return results
-
-
 class Residual(NNOp):
 
   def __init__(self, ops, **kwargs):
@@ -67,10 +40,8 @@ class Residual(NNOp):
   def _apply(self, X, **kwargs):
     pass
 
-
 class StochasticDepth(NNOp):
   pass
-
 
 class Sequence(NNOp):
 
@@ -102,14 +73,13 @@ class Sequence(NNOp):
   def __init__(self, ops, all_layers=False,
                strict_transpose=False, debug=False, **kwargs):
     super(Sequence, self).__init__(**kwargs)
-    self._ops = as_tuple(ops, t=NNOp)
+    ops = as_tuple(ops, t=NNOp)
+    for o in ops:
+      name = o.name.split('/')[-1]
+      self.get_variable(name=name, initializer=o)
     self.all_layers = bool(all_layers)
     self.strict_transpose = bool(strict_transpose)
     self.debug = int(debug)
-
-  @property
-  def ops(self):
-    return self._ops
 
   def _apply(self, *args, **kwargs):
     all_outputs = []
@@ -120,10 +90,10 @@ class Sequence(NNOp):
       print('**************** Start: %s ****************' %
           ctext(self.name, 'cyan'))
       print("First input:", ctext(str(last_output_shape), 'yellow'))
-      type_format = '%-' + str(max(len(type(o).__name__) for o in self.ops)) + 's'
-      name_format = '%-' + str(max(len(o.name) for o in self.ops)) + 's'
+      type_format = '%-' + str(max(len(type(o).__name__) for o in self.nnops)) + 's'
+      name_format = '%-' + str(max(len(o.name) for o in self.nnops)) + 's'
     # ====== start apply each NNOp ====== #
-    for i, op in enumerate(self.ops):
+    for i, op in enumerate(self.nnops):
       if i == 0:
         x = op(*args, **kwargs)
       else:
@@ -144,7 +114,7 @@ class Sequence(NNOp):
 
   def _transpose(self):
     transpose_ops = []
-    for i in self.ops:
+    for i in self.nnops:
       if hasattr(i, 'T'):
         transpose_ops.append(i.T)
       elif not self.strict_transpose:
