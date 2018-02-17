@@ -3,6 +3,7 @@ from __future__ import division, absolute_import, print_function
 import os
 import re
 import sys
+import time
 import shutil
 import inspect
 import numbers
@@ -41,10 +42,12 @@ def _get_vars_footprint(vars):
 def get_all_nnops(scope=None, op_type=None):
   """ Return a dictionary of (name, nnops) for all created NNOp """
   allops = list(NNOp._ALL_NNOPS.values())
+  # ====== matching the name scope ====== #
   if scope is not None:
     if not is_string(scope):
       scope = scope.name
     allops = [o for o in allops if o.name[:len(scope)] == scope]
+  # ====== matching the NNOp type ====== #
   if op_type is not None:
     op_type = [i for i in as_tuple(op_type)
                if is_string(op_type) or issubclass(op_type, NNOp)]
@@ -52,6 +55,9 @@ def get_all_nnops(scope=None, op_type=None):
               if any(o.__class__.__name__ == t if is_string(t)
                      else isinstance(o, t)
                      for t in op_type)]
+  # ====== sorted by created time (earlier first) ====== #
+  allops = sorted(allops, key=lambda x: x.timestamp,
+                  reverse=False)
   return allops
 
 
@@ -511,14 +517,17 @@ class NNOp(object):
             "the new NNOp has type: %s" % (old_clazz, clazz))
       return NNOp._ALL_NNOPS[name]
     # ====== allocate new Op ====== #
+    created_time = time.time()
     new_op = super(NNOp, clazz).__new__(clazz)
     new_op._name = name
+    new_op._timestamp = created_time
     # this store spontanious args and kwargs feeded to apply()
     new_op._current_args = ()
     new_op._current_kwargs = {}
     new_op._device = None
     # all save-able attributes of NNOp store here
-    new_op._save_states = {'_name': name}
+    new_op._save_states = {'_name': name,
+                           '_timestamp': created_time}
     return new_op
 
   def __init__(self, **kwargs):
@@ -757,6 +766,10 @@ class NNOp(object):
     return self._name
 
   @property
+  def timestamp(self):
+    return self._timestamp
+
+  @property
   def T(self):
     """ Return new ops which is transpose of this ops """
     if not self.is_initialized:
@@ -848,8 +861,9 @@ class NNOp(object):
 
   @property
   def nnops(self):
-    """ Return all NNOp belong to the initialization of this Op
-    or within the scope of this Op.
+    """ Return all NNOp belong to
+      * the initialization of this Op
+      * or within the scope of this Op.
     """
     ops = []
     for name, (var, vtype) in self._variable_info.items():
@@ -866,8 +880,12 @@ class NNOp(object):
     #         o._restore_vars_path is None:
     #             o._restore_vars_path = self._restore_vars_path
     #             o._delete_vars_folder = self._delete_vars_folder
-    return sorted([o for o in ops if o is not self],
-                  key=lambda x: x.name)
+    # ====== remove duplicate NNOp ====== #
+    final_ops = []
+    for o in ops:
+      if o is not self and o not in final_ops:
+        final_ops.append(o)
+    return final_ops
 
   @property
   def placeholders(self):

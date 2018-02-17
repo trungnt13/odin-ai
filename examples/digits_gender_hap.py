@@ -45,6 +45,9 @@ stdio(LOG_PATH)
 if not os.path.isdir(args.path):
   raise ValueError("`path` at '%s' must be a folder" % args.path)
 ds = F.Dataset(args.path, read_only=True)
+if FEAT not in ds:
+  print(ds)
+  raise RuntimeError("Cannot find feature with name: %s" % FEAT)
 indices = list(ds['indices'].items())
 K.get_rng().shuffle(indices)
 print("#Files:", ctext(len(indices), 'cyan'))
