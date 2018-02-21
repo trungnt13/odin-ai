@@ -32,6 +32,97 @@ def _wccn(X, y, classes):
   w = cholesky(inv(Sw), lower=True)
   return w
 
+class VectorNormalization(BaseEstimator, TransformerMixin):
+
+  def __init__(self, wccn=True, lda=True):
+    super(VectorNormalization, self).__init__()
+    self._wccn = bool(wccn)
+    self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
+    self._feat_dim = None
+
+  # ==================== properties ==================== #
+  @property
+  def feat_dim(self):
+    return self._feat_dim
+
+  @property
+  def is_initialized(self):
+    return self._feat_dim is not None
+
+  @property
+  def is_fitted(self):
+    return hasattr(self, '_w')
+
+  @property
+  def enroll_vecs(self):
+    return self._enroll_vecs
+
+  @property
+  def mean(self):
+    """ global mean vector """
+    return self._mean
+
+  @property
+  def w(self):
+    return self._w
+
+  @property
+  def lda(self):
+    return self._lda
+
+  # ==================== sklearn ==================== #
+  def _initialize(self, X, y):
+    if not self.is_initialized:
+      self._feat_dim = X.shape[1]
+    assert self._feat_dim == X.shape[1]
+    if isinstance(y, (tuple, list)):
+      y = np.asarray(y)
+    if y.ndim == 2:
+      y = np.argmax(y, axis=-1)
+    return y, np.unique(y)
+
+  def normalize(self, X):
+    if not self.is_fitted:
+      raise RuntimeError("VectorNormalization has not been fitted.")
+    X = X - self._mean
+    X = np.dot(X, self._w)
+    X = _unit_len_norm(X)
+    if self._lda is not None:
+      X = self._lda.transform(X)
+    return X
+
+  def fit(self, X, y):
+    y, y_uni = self._initialize(X, y)
+    # ====== compute classes' average ====== #
+    enroll = np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
+                             for i in y_uni], axis=0)
+    M = X.mean(axis=0).reshape(1, -1)
+    self._mean = M
+    X = X - M
+    # ====== WCCN ====== #
+    if self._wccn:
+      w = _wccn(X, y, y_uni) # [feat_dim, feat_dim]
+    else:
+      w = 1
+    self._w = w
+    # ====== preprocess ====== #
+    # whitening the data
+    X = np.dot(X, w)
+    # length normalization
+    X = _unit_len_norm(X)
+    if self._lda is not None:
+      self._lda.fit(X, y)
+    # ====== enroll vecs ====== #
+    enroll = enroll - M
+    enroll = np.dot(enroll, w)
+    enroll = _unit_len_norm(enroll) # [nb_classes, feat_dim]
+    if self._lda is not None:
+      enroll = self._lda.transform(enroll) # [nb_classes, nb_classes - 1]
+    self._enroll_vecs = _unit_len_norm(enroll)
+    return self
+
+  def transform(self, X):
+    return self.normalize(X)
 
 class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   """ Scorer """
