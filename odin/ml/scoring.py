@@ -33,12 +33,31 @@ def _wccn(X, y, classes):
   return w
 
 class VectorNormalization(BaseEstimator, TransformerMixin):
+  """
 
-  def __init__(self, wccn=True, lda=True):
+  Parameters
+  ----------
+  wccn : bool (default: True)
+    within class covariance normalization
+  lda : bool (default: True)
+    Linear Discriminant Analysis
+  concat : bool (default: False)
+    concatenate original vector to the transformed
+
+  Return
+  ------
+  [nb_samples, feat_dim] if `lda=False`
+  [nb_samples, nb_classes - 1] if `lda=True` and `concat=False`
+  [nb_samples, feat_dim + nb_classes - 1] if `lda=True` and `concat=True`
+
+  """
+
+  def __init__(self, wccn=True, lda=True, concat=False):
     super(VectorNormalization, self).__init__()
     self._wccn = bool(wccn)
     self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
     self._feat_dim = None
+    self._concat = bool(concat)
 
   # ==================== properties ==================== #
   @property
@@ -92,11 +111,18 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
   def normalize(self, X):
     if not self.is_fitted:
       raise RuntimeError("VectorNormalization has not been fitted.")
+    X_org = X[:] if not isinstance(X, np.ndarray) else X
     X = X - self._mean
     X = np.dot(X, self._w)
     X = _unit_len_norm(X)
+    # ====== LDA ====== #
     if self._lda is not None:
-      X = self._lda.transform(X)
+      X_lda = self._lda.transform(X)
+      # concat if necessary
+      if self._concat:
+        X = np.concatenate((X_lda, X_org), axis=-1)
+      else:
+        X = X_lda
     return X
 
   def fit(self, X, y):
@@ -141,9 +167,11 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
 class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   """ Scorer """
 
-  def __init__(self, wccn=True, lda=True, method='cosine', labels=None):
+  def __init__(self, wccn=True, lda=True, concat=False,
+               method='cosine', labels=None):
     super(Scorer, self).__init__()
-    self._normalizer = VectorNormalization(wccn=wccn, lda=lda)
+    self._normalizer = VectorNormalization(wccn=wccn, lda=lda,
+                                           concat=concat)
     self._labels = labels
     method = str(method).lower()
     if method not in ('cosine', 'svm'):
@@ -208,7 +236,13 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
                       probability=True, tol=1e-3,
                       cache_size=1e4, class_weight='balanced')
       self._svm.fit(X, y)
+      self.predict_proba = self._predict_proba
     return self
+
+  def _predict_proba(self, X):
+    if self.method != 'svm':
+      raise RuntimeError("`predict_proba` only for 'svm' method")
+    return self._svm.predict_proba(self.normalizer.transform(X))
 
   def predict_log_proba(self, X):
     return self.transform(X)

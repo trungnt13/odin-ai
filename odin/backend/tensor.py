@@ -31,6 +31,24 @@ def _normalize_axis(axis, ndim):
 # ===========================================================================
 # Conversion
 # ===========================================================================
+def logsumexp(x, axis=-1, name=None):
+  """
+  `x` : [nb_sample, feat_dim]
+  `axis` should be features dimension
+  """
+  # ====== tensorflow ====== #
+  if is_tensor(x):
+    with tf.name_scope(name, 'logsumexp', [x]):
+      xmax = tf.reduce_max(x, axis=axis, keep_dims=True)
+      y = xmax + tf.log(tf.reduce_sum(tf.exp(x - xmax), axis=axis, keep_dims=True))
+  # ====== numpy ====== #
+  elif isinstance(x, np.ndarray):
+    xmax = np.max(x, axis=axis, keepdims=True)
+    y = xmax + np.log(np.sum(np.exp(x - xmax), axis=axis, keepdims=True))
+  else:
+    raise ValueError("`x` must be tensorflow.Tensor or numpy.ndarray")
+  return y
+
 def to_llh(x, name=None):
   ''' Convert a matrix of probabilities into log-likelihood
   :math:`LLH = log(prob(data|target))`
@@ -53,16 +71,24 @@ def to_llr(x, name=None):
   '''
   # ====== numpy ====== #
   if not is_tensor(x):
-    x /= np.sum(x, axis=-1, keepdims=True)
-
-    x = np.clip(x, EPS, 1 - EPS)
-    return np.log(x / (1 - x))
+    new_arr = np.empty_like(x)
+    nb_classes = x.shape[1]
+    columns = np.arange(nb_classes)
+    for j in range(nb_classes):
+      scores_copy = x[:, np.delete(columns, j)] - x[:, j][:, None]
+      new_arr[:, j] = -logsumexp(scores_copy, 1).T
+    return new_arr + np.log(13)
   # ====== tensorflow ====== #
   else:
     with tf.name_scope(name, "log_likelihood_ratio", [x]):
-      x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
-      x = tf.clip_by_value(x, EPS, 1 - EPS)
-      return tf.log(x / (tf.cast(1., x.dtype.base_dtype) - x))
+      nb_classes = x.get_shape().as_list()[-1]
+      new_arr = []
+      for j in range(nb_classes):
+        scores_copy = tf.transpose(tf.gather(tf.transpose(x),
+                                   [i for i in range(nb_classes) if i != j]))
+        scores_copy -= tf.expand_dims(x[:, j], axis=-1)
+        new_arr.append(-logsumexp(scores_copy, 1))
+      return tf.concat(new_arr, axis=-1) + np.log(13)
 
 def to_nonzeros(x, value):
   if is_tensor(x):

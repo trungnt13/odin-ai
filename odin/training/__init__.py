@@ -121,7 +121,7 @@ def train(X, y_true, y_pred, train_data,
           prior_weights=None, sample_weights=None,
           batch_size=256, epochs=8, shuffle=True,
           optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
-          labels=None, seed=5218, verbose=2):
+          init_vars=True, labels=None, seed=5218, verbose=2):
   """
 
   Parameters
@@ -143,6 +143,8 @@ def train(X, y_true, y_pred, train_data,
     All the parameters will be updated by the `optimizer`, if None
     or empty list is given, use ComputationalGraph to get
     all variables with Parameters roles related to the objectives
+  init_vars : bool (default: True)
+    automatically initialize all variables
   labels : {None, list of string}
     Given labels for classification task
   seed : int
@@ -238,16 +240,8 @@ def train(X, y_true, y_pred, train_data,
         outputs_plh.append(i)
   inputs = inputs_plh + outputs_plh
   # ====== initialize variables ====== #
-  not_inited_vars = []
-  for v in K.ComputationGraph(
-      objectives + metrics + training_metrics).variables:
-    if not K.is_variable_initialized(v):
-      not_inited_vars.append(v)
-  if len(not_inited_vars) > 0:
-    if verbose > 0:
-      wprint("Found %d not-intialized variables: %s" %
-             (len(not_inited_vars), '; '.join([i.name for i in not_inited_vars])))
-    K.initialize_all_variables(vars=not_inited_vars)
+  if bool(init_vars):
+    K.initialize_all_variables()
   # ====== creating function ====== #
   # training function
   f_train = K.function(inputs=inputs,

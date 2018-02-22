@@ -430,8 +430,7 @@ def compute_EER(Pfa, Pmiss):
 
   @Author: "Timothee Kheyrkhah, Omid Sadjadi"
   """
-  fpr = Pfa
-  fnr = Pmiss
+  fpr, fnr = Pfa, Pmiss
   diff_pm_fa = fnr - fpr
   x1 = np.flatnonzero(diff_pm_fa >= 0)[0]
   x2 = np.flatnonzero(diff_pm_fa < 0)[-1]
@@ -678,7 +677,7 @@ def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
   if nb_classes > 2:
     total_samples = nb_classes * len(y_true)
     indices = np.arange(0, total_samples, nb_classes) + y_true
-    y_true = np.zeros(total_samples, dtype=np.int32)
+    y_true = np.zeros(total_samples, dtype=np.int)
     y_true[indices] = 1
   # ====== check weights ====== #
   if sample_weight is not None:
@@ -689,15 +688,13 @@ def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
   else:
     sample_weight = np.ones(shape=(len(y_score),), dtype=y_score.dtype)
   # ====== processing ====== #
-  if pos_label is None:
-    pos_label = 1
-  y_true = (y_true == pos_label).astype(np.int32)
+  if pos_label is not None:
+    y_true = (y_true == pos_label).astype(np.int)
   # ====== start ====== #
   sorted_ndx = np.argsort(y_score)
   y_true = y_true[sorted_ndx]
   # sort the weights also, dont forget this
   sample_weight = sample_weight[sorted_ndx]
-
   tgt_weights = sample_weight * y_true
   imp_weights = sample_weight * (1 - y_true)
   # FNR

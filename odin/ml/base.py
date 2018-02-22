@@ -27,17 +27,15 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
     return ctext('%.4f' % s if is_number(s) else s, 'yellow')
   nb_classes = None
   # ====== check y_pred ====== #
-  if y_pred_proba is not None:
-    nb_classes = y_pred_proba.shape[1]
-    y_pred_log_proba = to_llr(y_pred_proba)
-    y_pred = np.argmax(y_pred_proba, axis=-1)
-  elif y_pred_log_proba is not None:
-    nb_classes = y_pred_log_proba.shape[1]
-    y_pred_proba = None
-    y_pred = np.argmax(y_pred_log_proba, axis=-1)
-  else:
+  if y_pred_proba is None and y_pred_log_proba is None:
     raise ValueError("At least one of `y_pred_proba` or `y_pred_log_proba` "
                      "must not be None")
+  if y_pred_log_proba is None:
+    y_pred_log_proba = to_llr(y_pred_proba)
+  else:
+    y_pred_log_proba = to_llr(y_pred_log_proba)
+  nb_classes = y_pred_log_proba.shape[1]
+  y_pred = np.argmax(y_pred_log_proba, axis=-1)
   # ====== check y_true ====== #
   if isinstance(y_true, Data):
     y_true = y_true.array
@@ -56,7 +54,7 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   acc = accuracy_score(y_true=y_true, y_pred=y_pred)
   cm = confusion_matrix(y_true=y_true, y_pred=y_pred)
   Pfa, Pmiss = det_curve(y_true=y_true, y_score=y_pred_log_proba)
-  eer = compute_EER(Pfa, Pmiss)
+  eer = compute_EER(Pfa=Pfa, Pmiss=Pmiss)
   minDCF = compute_minDCF(Pfa, Pmiss)[0]
   cnorm, cnorm_arr = compute_Cnorm(y_true=y_true,
                                    y_score=y_pred_log_proba,
@@ -145,13 +143,16 @@ class Evaluable(object):
       y = np.array(y)
     if y.ndim == 2: # convert one-hot to labels
       y = np.argmax(y, axis=-1)
-    # ====== prediction ====== #
+    # ====== proba ====== #
     if hasattr(self, 'predict_proba'):
       y_pred_prob = self.predict_proba(X)
-      y_pred_log_prob = to_llr(y_pred_prob)
-    elif hasattr(self, 'predict_log_proba'):
+    else:
       y_pred_prob = None
+    # ====== log proba ====== #
+    if hasattr(self, 'predict_log_proba'):
       y_pred_log_prob = self.predict_log_proba(X)
+    elif y_pred_prob is not None:
+      y_pred_log_prob = to_llr(y_pred_prob)
     else:
       raise ValueError('Class "%s" must has: `predict_proba` or `predict_log_proba`'
                        ' method.' % self.__class__.__name__)
