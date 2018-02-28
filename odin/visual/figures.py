@@ -57,7 +57,7 @@ marker_styles = [
 ]
 
 
-def generate_random_colors(n, seed=5218):
+def generate_random_colors(n, seed=5218, return_hex=True):
   if seed is not None:
     np.random.seed(seed)
   colors = []
@@ -66,7 +66,10 @@ def generate_random_colors(n, seed=5218):
     lightness = 0.4 + np.random.rand(1)[0] / 3  # lightness
     saturation = 0.5 + np.random.rand(1)[0] / 10 # saturation
     rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    colors.append(rgb)
+    hex = "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
+                                       int(rgb[1] * 255),
+                                       int(rgb[2] * 255))
+    colors.append(rgb if not return_hex else hex)
   return colors
 
 
@@ -388,7 +391,7 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
 def plot_scatter(x, y, color=None, marker=None, size=4.0,
                 legend=None, legend_loc='upper center',
                 legend_ncol=3, legend_colspace=0.4,
-                ax=None, fontsize=8):
+                ticks_off=True, ax=None, fontsize=8):
   '''Plot the amplitude envelope of a waveform.
 
   Parameters
@@ -433,11 +436,11 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0,
     legend = {(i, default_marker): j for i, j in legend.items()}
   elif is_color_none:
     legend = {(default_color, i): j for i, j in legend.items()}
-  if not all((c, m) in legend for c in set(color) for m in set(marker)):
-    raise ValueError("Legend must contains following keys: %s, but the given "
-                    "legend only contains: %s"
-                     % (str([c + m for c in set(color) for m in set(marker)]),
-                        str(legend.keys())))
+  # if not all((c, m) in legend for c in set(color) for m in set(marker)):
+  #   raise ValueError("Legend must contains following keys: %s, but the given "
+  #                   "legend only contains: %s"
+  #                    % (str([(c, m) for c in set(color) for m in set(marker)]),
+  #                       str(list(legend.keys()))))
   # ====== plotting ====== #
   ax = ax if ax is not None else plt.gca()
   if is_marker_none and is_color_none:
@@ -458,6 +461,9 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0,
       loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=legend_ncol,
       columnspacing=legend_colspace, labelspacing=0.,
       fontsize=fontsize, handletextpad=0.1)
+  if ticks_off:
+    ax.set_xticks(())
+    ax.set_yticks(())
   return ax
 
 
@@ -815,8 +821,8 @@ def plot_Cnorm(cnorm, labels, Ptrue=[1, 0.5], axis=None, title=None,
              horizontalalignment="center")
   # Turns off grid on the left Axis.
   axis.grid(False)
-  title = "Cavg: %.3f" % np.mean(cnorm) if title is None else \
-  "%s (Cavg: %.3f)" % (str(title), np.mean(cnorm))
+  title = "Cavg: %.6f" % np.mean(cnorm) if title is None else \
+  "%s (Cavg: %.6f)" % (str(title), np.mean(cnorm))
   axis.set_title(title, fontsize=fontsize + 2,
                  weight='semibold')
   # axis.tight_layout()
