@@ -30,10 +30,8 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   if y_pred_proba is None and y_pred_log_proba is None:
     raise ValueError("At least one of `y_pred_proba` or `y_pred_log_proba` "
                      "must not be None")
-  if y_pred_log_proba is None:
-    y_pred_log_proba = to_llr(y_pred_proba)
-  else:
-    y_pred_log_proba = to_llr(y_pred_log_proba)
+  y_pred_llr = to_llr(y_pred_proba) if y_pred_log_proba is None \
+      else to_llr(y_pred_log_proba)
   nb_classes = y_pred_log_proba.shape[1]
   y_pred = np.argmax(y_pred_log_proba, axis=-1)
   # ====== check y_true ====== #
@@ -53,13 +51,22 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
     ll = log_loss(y_true=y_true, y_pred=y_pred_proba)
   acc = accuracy_score(y_true=y_true, y_pred=y_pred)
   cm = confusion_matrix(y_true=y_true, y_pred=y_pred)
-  Pfa, Pmiss = det_curve(y_true=y_true, y_score=y_pred_log_proba)
-  eer = compute_EER(Pfa=Pfa, Pmiss=Pmiss)
-  minDCF = compute_minDCF(Pfa, Pmiss)[0]
+  # C_norm
   cnorm, cnorm_arr = compute_Cnorm(y_true=y_true,
-                                   y_score=y_pred_log_proba,
+                                   y_score=y_pred_llr,
                                    Ptrue=[1, 0.5],
                                    probability_input=False)
+  if y_pred_log_proba is not None:
+    cnorm_, cnorm_arr_ = compute_Cnorm(y_true=y_true,
+                                       y_score=y_pred_log_proba,
+                                       Ptrue=[1, 0.5],
+                                       probability_input=False)
+    if np.mean(cnorm) > np.mean(cnorm_): # smaller is better
+      cnorm, cnorm_arr = cnorm_, cnorm_arr_
+  # DET
+  Pfa, Pmiss = det_curve(y_true=y_true, y_score=y_pred_llr)
+  eer = compute_EER(Pfa=Pfa, Pmiss=Pmiss)
+  minDCF = compute_minDCF(Pfa, Pmiss)[0]
   print(ctext("--------", 'red'), ctext(title, 'cyan'))
   print("Log loss :", format_score(ll))
   print("Accuracy :", format_score(acc))
@@ -70,7 +77,7 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   # ====== save report to PDF files if necessary ====== #
   if path is not None:
     if y_pred_proba is None:
-      y_pred_proba = y_pred_log_proba
+      y_pred_proba = y_pred_llr
     from matplotlib import pyplot as plt
     plt.figure(figsize=(nb_classes, nb_classes + 1))
     plot_confusion_matrix(cm, labels)
@@ -102,7 +109,7 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
         curve = roc_curve(y_true=yi, y_score=y_pred_proba[:, i])
         fpr.append(curve[0])
         tpr.append(curve[1])
-        curve = det_curve(y_true=yi, y_score=y_pred_log_proba[:, i])
+        curve = det_curve(y_true=yi, y_score=y_pred_llr[:, i])
         Pfa.append(curve[0])
         Pmiss.append(curve[1])
       plt.figure()
