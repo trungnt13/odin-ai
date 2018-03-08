@@ -17,17 +17,82 @@ def _unit_len_norm(x):
   x_norm[x_norm == 0] = 1.
   return x / x_norm
 
-def _wccn(X, y, classes):
-  """
+def compute_class_avg(X, y, classes, sorting=True):
+  """ compute average vector for each class
+
+  Parameters
+  ----------
   X: [nb_samples, feat_dim]
   y: [nb_samples]
-  classes: [0, 1, 2, ...]
+  classes: [nb_classes]
+    assumed numerical classes
+  sorting: bool
+    if True, sort the `classes` by numerical order (from small to large)
+
+  Return
+  ------
+  [nb_classes, feat_dim]
+
+  Note
+  ----
+  The given order of each class in `classes` will determine
+  the row order of returned matrix
   """
-  class_avg = np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
-                              for i in classes],
-                             axis=0)
+  if sorting:
+    classes = sorted(classes, reverse=False)
+  return np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
+                         for i in classes],
+                        axis=0)
+
+def compute_within_cov(X, y, classes=None, class_avg=None):
+  """ Compute the within-classes covariance matrix
+
+  Parameters
+  ----------
+  X : [nb_samples, feat_dim]
+  y : [nb_samples]
+  classes : [nb_classes]
+    assumed numerical classes
+  class_avg : [nb_classes, feat_dim]
+    concatenated average vector of each class
+
+  Return
+  ------
+  [feat_dim, feat_dim]
+
+  Note
+  ----
+  The given order of each class in `classes` will determine
+  the row order of returned matrix
+  """
+  if classes is None and class_avg is None:
+    raise ValueError("`classes` and `class_avg` cannot be None together")
+  if classes is not None:
+    class_avg = compute_class_avg(X, y, classes, sorting=True)
   X_mu = X - class_avg[y]
   Sw = np.cov(X_mu.T)
+  return Sw
+
+def compute_wccn(X, y, classes=None, class_avg=None):
+  """ Within class covariance normalization
+
+  Parameters
+  ----------
+  X : [nb_samples, feat_dim]
+  y : [nb_samples]
+  classes : [nb_classes]
+    assumed numerical classes
+  class_avg : [nb_classes, feat_dim]
+    concatenated average vector of each class
+
+  Return
+  ------
+  w: [feat_dim, feat_dim]
+    where X_norm = dot(X, w)
+  """
+  if classes is None and class_avg is None:
+    raise ValueError("`classes` and `class_avg` cannot be None together")
+  Sw = compute_within_cov(X, y, classes, class_avg)
   Sw = Sw + 1e-6 * np.eye(Sw.shape[0])
   w = cholesky(inv(Sw), lower=True)
   return w
@@ -126,16 +191,15 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
     return X
 
   def fit(self, X, y):
-    y, y_uni = self._initialize(X, y)
+    y, classes = self._initialize(X, y)
     # ====== compute classes' average ====== #
-    enroll = np.concatenate([np.mean(X[y == i], axis=0, keepdims=True)
-                             for i in y_uni], axis=0)
+    enroll = compute_class_avg(X, y, classes, sorting=True)
     M = X.mean(axis=0).reshape(1, -1)
     self._mean = M
     X = X - M
     # ====== WCCN ====== #
     if self._wccn:
-      w = _wccn(X, y, y_uni) # [feat_dim, feat_dim]
+      w = compute_wccn(X, y, classes=None, class_avg=enroll) # [feat_dim, feat_dim]
     else:
       w = 1
     self._w = w
@@ -214,6 +278,12 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
 
   # ==================== sklearn ==================== #
   def fit(self, X, y):
+    # ====== preprocessing ====== #
+    if isinstance(X, (tuple, list)):
+      X = np.asarray(X)
+    if isinstance(y, (tuple, list)):
+      y = np.asarray(y)
+    # ====== vector normalizer ====== #
     self._normalizer.fit(X, y)
     if self._labels is None:
       if y.ndim >= 2:
@@ -262,13 +332,3 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
           (self.normalizer.vmax - self.normalizer.vmin) - 1
       scores = self._svm.predict_log_proba(X)
     return scores
-
-# ===========================================================================
-# PLDA
-# ===========================================================================
-class PLDA(BaseEstimator, TransformerMixin):
-  """ PLDA """
-
-  def __init__(self, arg):
-    super(PLDA, self).__init__()
-    self.arg = arg

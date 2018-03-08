@@ -119,14 +119,18 @@ def extract_digit(x):
   return x.split('_')[6]
 
 if args.task == 0:
+  print("Task:", ctext("gender", 'cyan'))
   fn_extract = extract_gender
 elif args.task == 1:
+  print("Task:", ctext("dialect", 'cyan'))
   fn_extract = extract_dialect
 elif args.task == 2:
+  print("Task:", ctext("single digit", 'cyan'))
   fn_extract = extract_digit
   indices = [(name, (start, end)) for name, (start, end) in indices
              if len(extract_digit(name)) == 1]
 elif args.task == 3:
+  print("Task:", ctext("speaker", 'cyan'))
   fn_extract = extract_spk
 fn_label, labels = unique_labels([i[0] for i in indices],
                                  key_func=fn_extract,

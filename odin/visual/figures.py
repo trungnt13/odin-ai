@@ -32,10 +32,14 @@ line_styles = ['-', '--', '-.', ':']
 
 marker_styles = [
     ".",
-    ",",
-    "o",
-    "v",
     "^",
+    "s",
+    "p",
+    "|",
+    "d",
+    # ",",
+    # "o",
+    "v",
     "<",
     ">",
     "1",
@@ -43,16 +47,12 @@ marker_styles = [
     "3",
     "4",
     "8",
-    "s",
-    "p",
     "*",
     "h",
     "H",
     "+",
     "x",
     "D",
-    "d",
-    "|",
     "_",
 ]
 
@@ -72,6 +72,11 @@ def generate_random_colors(n, seed=5218, return_hex=True):
     colors.append(rgb if not return_hex else hex)
   return colors
 
+def generate_random_marker(n, seed=5218):
+  if n > len(marker_styles):
+    raise ValueError("There are %d different marker styles, but need %d" %
+      (len(marker_styles), n))
+  return np.random.choice(marker_styles, size=n, replace=False)
 
 # ===========================================================================
 # Helper for spectrogram
