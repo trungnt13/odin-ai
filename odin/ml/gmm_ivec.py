@@ -1746,10 +1746,10 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    X : {tuple, list; or numpy.ndarray}
+    X : {tuple, list, numpy.ndarray, odin.fuel.data.MmapData}
       if tuple or list is given, the inputs include:
-      Z-(1, nmix); F-(1, nmix*feat_dim)
-      if numpy.ndarray is given, shape must be (n, feat_dim)
+      Z-[1, nmix]; F-[1, nmix*feat_dim]
+      if numpy.ndarray is given, shape must be [nb_samples, feat_dim]
 
     Return
     ------
@@ -1791,8 +1791,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     Parameters
     ----------
     path : str
-    X : {None, numpy.ndarray, odin.fuel.data.MmapData}
-    indices : {None, list, dict}
+      saving path for extracted i-vector
     Z : {None, numpy.ndarray, odin.fuel.data.MmapData}
     F : {None, numpy.ndarray, odin.fuel.data.MmapData}
     name_path : {None, str}
