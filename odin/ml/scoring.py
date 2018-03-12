@@ -7,16 +7,12 @@ import tensorflow as tf
 from sklearn.svm import SVC
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
+from odin.backend import length_norm, calc_white_mat
 from .base import BaseEstimator, TransformerMixin, Evaluable
 
 # ===========================================================================
 # Cosine Scoring
 # ===========================================================================
-def _unit_len_norm(x):
-  x_norm = np.sqrt(np.sum(x ** 2, axis=-1, keepdims=True))
-  x_norm[x_norm == 0] = 1.
-  return x / x_norm
-
 def compute_class_avg(X, y, classes, sorting=True):
   """ compute average vector for each class
 
@@ -94,11 +90,14 @@ def compute_wccn(X, y, classes=None, class_avg=None):
     raise ValueError("`classes` and `class_avg` cannot be None together")
   Sw = compute_within_cov(X, y, classes, class_avg)
   Sw = Sw + 1e-6 * np.eye(Sw.shape[0])
-  w = cholesky(inv(Sw), lower=True)
-  return w
+  return calc_white_mat(Sw)
 
-class VectorNormalization(BaseEstimator, TransformerMixin):
-  """
+class VectorNormalizer(BaseEstimator, TransformerMixin):
+  """ Perform of sequence of normalization as following
+    * Centering: Substract sample mean
+    * Whitening: using within-class-covariance-normalization
+    * Applying LDA
+    * Length normalization
 
   Parameters
   ----------
@@ -117,8 +116,11 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
 
   """
 
-  def __init__(self, wccn=True, lda=True, concat=False):
-    super(VectorNormalization, self).__init__()
+  def __init__(self, centering=True, wccn=False, unit_length=True,
+               lda=False, concat=False):
+    super(VectorNormalizer, self).__init__()
+    self._centering = bool(centering)
+    self._unit_length = bool(unit_length)
     self._wccn = bool(wccn)
     self._lda = LinearDiscriminantAnalysis() if bool(lda) else None
     self._feat_dim = None
@@ -135,7 +137,7 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
 
   @property
   def is_fitted(self):
-    return hasattr(self, '_w')
+    return hasattr(self, '_W')
 
   @property
   def enroll_vecs(self):
@@ -155,8 +157,8 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
     return self._vmax
 
   @property
-  def w(self):
-    return self._w
+  def W(self):
+    return self._W
 
   @property
   def lda(self):
@@ -173,21 +175,39 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
       y = np.argmax(y, axis=-1)
     return y, np.unique(y)
 
-  def normalize(self, X):
+  def normalize(self, X, concat=None):
+    """
+    Parameters
+    ----------
+    X : array [nb_samples, feat_dim]
+    concat : {None, True, False}
+      if not None, override the default `concat` attribute of
+      this `VectorNormalizer`
+    """
     if not self.is_fitted:
-      raise RuntimeError("VectorNormalization has not been fitted.")
-    X_org = X[:] if not isinstance(X, np.ndarray) else X
-    X = X - self._mean
-    X = np.dot(X, self._w)
-    X = _unit_len_norm(X)
+      raise RuntimeError("VectorNormalizer has not been fitted.")
+    if concat is None:
+      concat = self._concat
+    if concat:
+      X_org = X[:] if not isinstance(X, np.ndarray) else X
+    else:
+      X_org = None
+    # ====== normalizing ====== #
+    if self._centering:
+      X = X - self._mean
+    if self._wccn:
+      X = np.dot(X, self.W)
     # ====== LDA ====== #
     if self._lda is not None:
-      X_lda = self._lda.transform(X)
+      X_lda = self._lda.transform(X) # [nb_classes, nb_classes - 1]
       # concat if necessary
-      if self._concat:
+      if concat:
         X = np.concatenate((X_lda, X_org), axis=-1)
       else:
         X = X_lda
+    # ====== unit length normalization ====== #
+    if self._unit_length:
+      X = length_norm(X, axis=-1, ord=2)
     return X
 
   def fit(self, X, y):
@@ -196,30 +216,30 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
     enroll = compute_class_avg(X, y, classes, sorting=True)
     M = X.mean(axis=0).reshape(1, -1)
     self._mean = M
-    X = X - M
+    if self._centering:
+      X = X - M
     # ====== WCCN ====== #
     if self._wccn:
-      w = compute_wccn(X, y, classes=None, class_avg=enroll) # [feat_dim, feat_dim]
+      W = compute_wccn(X, y, classes=None, class_avg=enroll) # [feat_dim, feat_dim]
     else:
-      w = 1
-    self._w = w
+      W = 1
+    self._W = W
     # ====== preprocess ====== #
     # whitening the data
-    X = np.dot(X, w)
+    if self._wccn:
+      X = np.dot(X, W)
     # length normalization
-    X = _unit_len_norm(X)
+    if self._unit_length:
+      X = length_norm(X, axis=-1)
+    # linear discriminant analysis
     if self._lda is not None:
-      self._lda.fit(X, y)
+      self._lda.fit(X, y) # [nb_classes, nb_classes - 1]
     # ====== enroll vecs ====== #
-    enroll = enroll - M
-    enroll = np.dot(enroll, w)
-    enroll = _unit_len_norm(enroll) # [nb_classes, feat_dim]
-    if self._lda is not None:
-      enroll = self._lda.transform(enroll) # [nb_classes, nb_classes - 1]
-    self._enroll_vecs = _unit_len_norm(enroll)
+    self._enroll_vecs = self.normalize(enroll, concat=False)
     # ====== max min ====== #
     if self._lda is not None:
       X = self._lda.transform(X)
+      X = length_norm(X, axis=-1, ord=2)
     vmin = X.min(0, keepdims=True)
     vmax = X.max(0, keepdims=True)
     self._vmin, self._vmax = vmin, vmax
@@ -231,11 +251,11 @@ class VectorNormalization(BaseEstimator, TransformerMixin):
 class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   """ Scorer """
 
-  def __init__(self, wccn=True, lda=True, concat=False,
+  def __init__(self, centering=True, wccn=True, lda=True, concat=False,
                method='cosine', labels=None):
     super(Scorer, self).__init__()
-    self._normalizer = VectorNormalization(wccn=wccn, lda=lda,
-                                           concat=concat)
+    self._normalizer = VectorNormalizer(
+        centering=centering, wccn=wccn, lda=lda, concat=concat)
     self._labels = labels
     method = str(method).lower()
     if method not in ('cosine', 'svm'):
@@ -291,13 +311,7 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
       self._labels = np.unique(y)
     # ====== for SVM method ====== #
     if self.method == 'svm':
-      X = X - self.normalizer.mean
-      # whitening the data
-      X = np.dot(X, self.normalizer.w)
-      # length normalization
-      X = _unit_len_norm(X)
-      if self.lda is not None:
-        X = self.lda.transform(X)
+      X = self.normalizer.transform(X)
       # normalize to [0, 1]
       X = 2 * (X - self.normalizer.vmin) /\
           (self.normalizer.vmax - self.normalizer.vmin) - 1
@@ -318,13 +332,13 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
     return self.transform(X)
 
   def transform(self, X):
+    # [nb_samples, nb_classes - 1] (if LDA applied)
     X = self.normalizer.transform(X)
     # ====== cosine scoring ====== #
     if self.method == 'cosine':
       # [nb_classes, nb_classes - 1]
       model_ivectors = self.normalizer.enroll_vecs
-      # [nb_samples, nb_classes - 1]
-      test_ivectors = _unit_len_norm(X)
+      test_ivectors = X
       scores = np.dot(test_ivectors, model_ivectors.T)
     # ====== svm ====== #
     elif self.method == 'svm':

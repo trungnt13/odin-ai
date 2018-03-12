@@ -260,6 +260,29 @@ print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='svm')
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+exit()
+# ====== plda scoring ====== #
+n_iter = 16
+n_phi = 100
+X = ivecs['train'][:].astype('float64')
+class_avg = ml.compute_class_avg(X=X,
+                                 y=np.asarray(y_true['train']),
+                                 classes=np.arange(len(labels)))
+print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
+scorer = ml.PLDA(nb_phi=n_phi, niter=n_iter,
+                 centering=True, unit_length=True, whiten=False)
+scorer.fit(X=X, y=y_true['train'])
+scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+out = scorer.predict_log_proba(ivecs['test'][:].astype('float64')).T
+
+# scorer1 = ml.GPLDA(128, n_phi, n_iter)
+# scorer1.train_em(data=X.T,
+#                  spk_labs=np.asarray(y_true['train']))
+# out1 = scorer1.score_trials(model_iv=class_avg.astype('float64').T,
+#                             test_iv=ivecs['test'][:].astype('float64').T)
+# assert np.allclose(scorer.Sb, scorer1.Sb, rtol=1e-8, atol=1e-10)
+# assert np.allclose(scorer.St, scorer1.St, rtol=1e-8, atol=1e-10)
+# assert np.allclose(out, out1, rtol=1e-8, atol=1e-8)
 # # ====== i-vec ====== #
 # evaluate_features(X_train=ivecs['train'], y_train=y_true['train'],
 #                   X_test=ivecs['test'], y_test=y_true['test'],

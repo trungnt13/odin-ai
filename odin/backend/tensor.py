@@ -8,6 +8,7 @@ from six.moves import builtins
 from collections import defaultdict
 
 import numpy as np
+import scipy as sp
 
 import tensorflow as tf
 from odin.config import get_session, get_ngpu, get_floatX
@@ -27,6 +28,51 @@ def _normalize_axis(axis, ndim):
     return tuple([a % ndim if a is not None else a
             for a in axis])
   return axis % ndim
+
+# ===========================================================================
+# Normalization
+# ===========================================================================
+def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
+  """ L2-normalization (or vector unit length normalization)
+
+  Parameters
+  ----------
+  x : array
+  axis : int
+  ord : int
+    order of norm (1 for L1-norm, 2 for Frobenius or Euclidean)
+  """
+  ord = int(ord)
+  if ord not in (1, 2):
+    raise ValueError("only support `ord`: 1 for L1-norm; 2 for Frobenius or Euclidean")
+  # ====== tensorflow ====== #
+  if is_tensor(x):
+    if ord == 2:
+      x_norm = tf.sqrt(tf.maximum(tf.reduce_sum(x ** 2, axis=axis, keep_dims=True),
+                                  epsilon))
+    else:
+      x_norm = tf.maximum(tf.reduce_sum(tf.abs(x), axis=axis, keep_dims=True),
+                          epsilon)
+  # ====== numpy ====== #
+  else:
+    if ord == 2:
+      x_norm = np.sqrt(np.maximum(np.sum(x ** 2, axis=axis, keepdims=True),
+                                  epsilon))
+    else:
+      x_norm = np.maximum(np.sum(np.abs(x), axis=axis, keepdims=True),
+                          epsilon)
+  return x / x_norm
+
+def calc_white_mat(X):
+  """ calculates the whitening transformation for cov matrix X
+  """
+  # ====== tensorflow ====== #
+  if is_tensor(X):
+    W = tf.linalg.cholesky(tf.linalg.inv(X))
+  # ====== numpy ====== #
+  else:
+    W = sp.linalg.cholesky(sp.linalg.inv(X), lower=True)
+  return W
 
 # ===========================================================================
 # Conversion
