@@ -32,8 +32,8 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
                      "must not be None")
   y_pred_llr = to_llr(y_pred_proba) if y_pred_log_proba is None \
       else to_llr(y_pred_log_proba)
-  nb_classes = y_pred_log_proba.shape[1]
-  y_pred = np.argmax(y_pred_log_proba, axis=-1)
+  nb_classes = y_pred_llr.shape[1]
+  y_pred = np.argmax(y_pred_llr, axis=-1)
   # ====== check y_true ====== #
   if isinstance(y_true, Data):
     y_true = y_true.array
