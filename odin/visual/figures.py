@@ -826,8 +826,8 @@ def plot_Cnorm(cnorm, labels, Ptrue=[1, 0.5], axis=None, title=None,
              horizontalalignment="center")
   # Turns off grid on the left Axis.
   axis.grid(False)
-  title = "Cavg: %.6f" % np.mean(cnorm) if title is None else \
-  "%s (Cavg: %.6f)" % (str(title), np.mean(cnorm))
+  title = "Cnorm: %.6f" % np.mean(cnorm) if title is None else \
+  "%s (Cnorm: %.6f)" % (str(title), np.mean(cnorm))
   axis.set_title(title, fontsize=fontsize + 2,
                  weight='semibold')
   # axis.tight_layout()

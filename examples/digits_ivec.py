@@ -265,6 +265,15 @@ print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='cosine')
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+# ====== GMM scoring ====== #
+print(ctext("==== '%s'" % "Ivec GMM-scoring", 'cyan'))
+scorer = ml.GMMclassifier(strategy="ova",
+                          n_components=3, covariance_type='full',
+                          centering=True, wccn=True, unit_length=True,
+                          lda=False, concat=False)
+scorer.fit(X=ivecs['train'], y=y_true['train'])
+scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+exit()
 # ====== plda scoring ====== #
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(nb_phi=100, niter=12,

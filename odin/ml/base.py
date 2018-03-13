@@ -70,7 +70,7 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   print(ctext("--------", 'red'), ctext(title, 'cyan'))
   print("Log loss :", format_score(ll))
   print("Accuracy :", format_score(acc))
-  print("C_avg   :", format_score(np.mean(cnorm)))
+  print("C_norm   :", format_score(np.mean(cnorm)))
   print("EER      :", format_score(eer))
   print("minDCF   :", format_score(minDCF))
   print(print_confusion(arr=cm, labels=labels))
