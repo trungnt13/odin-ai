@@ -30,6 +30,17 @@ def get_all_properties(obj):
   {p: getattr(obj, p) for p in properties}
 
 # ===========================================================================
+# List utils
+# ===========================================================================
+def unique(seq, keep_order=False):
+  if keep_order:
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if x not in seen and not seen_add(x)]
+  else:
+    return list(set(seq))
+
+# ===========================================================================
 # Async file IO
 # ===========================================================================
 class defaultdictkey(defaultdict):
