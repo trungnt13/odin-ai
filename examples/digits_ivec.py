@@ -231,6 +231,16 @@ for name in data_name:
   print(ctext('labels:', 'cyan'))
   print(ctext(' *', 'yellow'), len(y_true[name]))
 # ===========================================================================
+# Save score to matlab
+# ===========================================================================
+from scipy.io import savemat
+X_train = ivecs['train'][:]
+y_train = np.array(y_true['train'])
+X_test = ivecs['test'][:]
+y_test = np.array(y_true['test'])
+savemat('/tmp/data.mat', mdict={'X_train': X_train.T, 'y_train': y_train[:, None],
+                                'X_test': X_test.T, 'y_test': y_test[:, None]})
+# ===========================================================================
 # Backend
 # ===========================================================================
 def filelist_2_feat(feat, flist):
@@ -262,9 +272,6 @@ scorer = ml.PLDA(nb_phi=100, niter=12,
                  show_llk=False, seed=5218)
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
-scorer = pickle.loads(pickle.dumps(scorer))
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
-exit()
 # ====== svm scoring ====== #
 print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='svm')
