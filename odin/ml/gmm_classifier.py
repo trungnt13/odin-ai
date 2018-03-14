@@ -41,7 +41,7 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
   def __init__(self, strategy="ova", covariance_type='full',
                max_iter=100, n_init=1,
                init_params='kmeans', n_components=1,
-               centering=True, wccn=True, unit_length=True,
+               centering=False, wccn=False, unit_length=False,
                lda=False, concat=False, labels=None):
     super(GMMclassifier, self).__init__()
     self._strategy = str(strategy)
@@ -58,11 +58,27 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
         centering=centering, wccn=wccn, unit_length=unit_length,
         lda=lda, concat=concat)
 
-    # self._gmm = GaussianMixture(n_components=1, covariance_type='full',
-    #   tol=0.001, reg_covar=1e-06, max_iter=100, n_init=1, init_params='kmeans',
-    #   weights_init=None, means_init=None, precisions_init=None,
-    #   random_state=None, warm_start=False, verbose=0, verbose_interval=10)
+  # ==================== Pickling ==================== #
+  def __getstate__(self):
+    if not self.is_fitted:
+      raise RuntimeError("The GMMclassifier have not been fitted, "
+                         "nothing to pickle!")
+    return (self._strategy, self._n_components, self._covariance_type,
+            self._max_iter, self._n_init, self._init_params,
+            self._labels, self._feat_dim, self._gmm,
+            self._normalizer)
+
+  def __setstate__(self, states):
+    (self._strategy, self._n_components, self._covariance_type,
+     self._max_iter, self._n_init, self._init_params,
+     self._labels, self._feat_dim, self._gmm,
+     self._normalizer) = states
+
   # ==================== Properties ==================== #
+  @property
+  def is_fitted(self):
+    return self._gmm is not None
+
   @property
   def feat_dim(self):
     return self._feat_dim
@@ -102,6 +118,10 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
     if self.nb_classes != len(classes):
       raise ValueError("Initialized with `nb_classes`=%d, given data with %d "
                        "classes" % (self.nb_classes, len(classes)))
+    # ====== normalizing ====== #
+    if not self._normalizer.is_fitted:
+      self._normalizer.fit(X, y)
+    X = self._normalizer.transform(X)
     # ====== initialize GMMs ====== #
     if self._gmm is None:
       if self._strategy == 'ova':
@@ -112,13 +132,14 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
             n_init=self._n_init, init_params=self._init_params)
           self._gmm.append(gmm)
       elif self._strategy == 'all':
-        self._gmm = 1
+        gmm = GaussianMixture(n_components=self.nb_classes,
+            covariance_type=self._covariance_type, max_iter=self._max_iter,
+            n_init=self._n_init, init_params=self._init_params,
+            means_init=np.array([X[y == clz].mean(axis=0) for clz in np.unique(y)]))
+        self._gmm = gmm
       else:
         raise ValueError("No support for `strategy`=%s" % self._strategy)
     # ====== return ====== #
-    if not self._normalizer.is_fitted:
-      self._normalizer.fit(X, y)
-    X = self._normalizer.transform(X)
     if y is None:
       return X
     return X, y
@@ -132,16 +153,17 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
         X_cls = X[y == clz]
         gmm.fit(X_cls)
     elif self._strategy == 'all':
-      pass
+      self._gmm.fit(X)
 
   def score_samples(self, X):
     X = self.initialize(X)
     if self._strategy == 'ova':
-      return np.concatenate([gmm.score_samples(X)[:, None]
-                             for k, gmm in enumerate(self._gmm)],
-                            axis=-1)
+      scores = np.concatenate([gmm.score_samples(X)[:, None]
+                               for k, gmm in enumerate(self._gmm)],
+                              axis=-1)
     elif self._strategy == 'all':
-      pass
+      scores = self._gmm.predict_proba(X)
+    return scores
 
   def predict(self, X):
     return np.argmax(self.score_samples(X), axis=-1)
@@ -153,7 +175,12 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
       smax = np.max(scores, axis=-1, keepdims=True)
       scores = (scores - smin) / (smax - smin)
       proba = softmax(scores)
+    elif self._strategy == 'all':
+      proba = self.score_samples(X)
     return proba
 
   def predict_log_proba(self, X):
-    return self.score_samples(X)
+    if self._strategy == 'ova':
+      return self.score_samples(X)
+    elif self._strategy == 'all':
+      return np.log(self.predict_proba(X))

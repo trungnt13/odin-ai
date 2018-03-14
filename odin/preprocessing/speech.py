@@ -161,7 +161,6 @@ def save(file_or_path, s, sr, subtype=None):
   from soundfile import write
   return write(file_or_path, s, sr, subtype=subtype)
 
-
 # ===========================================================================
 # Helper function
 # ===========================================================================
@@ -175,7 +174,6 @@ def _extract_s_sr(s_sr):
                      "of raw signal (ndarray) and sample rate (int).")
   s, sr = s_sr
   return s, int(sr)
-
 
 def _extract_frame_step_length(sr, frame_length, step_length):
   # ====== check frame length ====== #
@@ -192,7 +190,6 @@ def _extract_frame_step_length(sr, frame_length, step_length):
     step_length = int(step_length)
   return frame_length, step_length
 
-
 @cache_memory
 def _num_two_factors(x):
   """return number of times x is divideable for 2"""
@@ -204,12 +201,10 @@ def _num_two_factors(x):
     x //= 2
   return num_twos
 
-
 @cache_memory
 def _max_fft_bins(sr, n_fft, fmax):
   return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
                                       endpoint=True)) if j >= fmax][0]
-
 
 def audio_segmenter(files, outpath, max_duration,
                     sr=None, sr_new=None, best_resample=True,
@@ -286,7 +281,6 @@ def audio_segmenter(files, outpath, max_duration,
              fmt='%s', delimiter=' ', header=header, comments='')
   print("Segment info saved at:", ctext(info_path, 'cyan'))
   return info_path
-
 
 class AudioReader(Extractor):
 
@@ -459,7 +453,6 @@ class AudioReader(Extractor):
       ret['name'] = name
     return ret
 
-
 class SpectraExtractor(Extractor):
   """AcousticExtractor
 
@@ -523,7 +516,6 @@ class SpectraExtractor(Extractor):
                    top_db=80., power=self.power, log=self.log,
                    padding=self.padding)
     return feat
-
 
 class CQTExtractor(Extractor):
   """ Constant-Q transform
@@ -788,10 +780,11 @@ class RASTAfilter(Extractor):
       mfcc = rastafilt(mfcc)
     # apply SDC if required
     if self.sdc >= 1:
+      nb_ceps = mfcc.shape[-1]
       mfcc = np.hstack([
           mfcc,
-          shifted_deltas(mfcc, N=mfcc.shape[-1], d=self.sdc,
-                         P=3, k=mfcc.shape[1]) # k = 7
+          shifted_deltas(mfcc, N=nb_ceps, d=self.sdc,
+                         P=3, k=nb_ceps) # k = 7
       ])
     # store new feature
     feat[self.feat_name] = mfcc.astype("float32")
