@@ -710,7 +710,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         f_dat.append(F)
 
     def _batched_transform(x, on_gpu):
+      reduction = np.floor(np.power(2, self._curr_nmix / 1024))
       batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
+      batch_size = int(batch_size / reduction)
       if x.shape[0] <= batch_size:
         res = [self._fast_expectation(x,
                                      zero=z_dat is not None or f_dat is not None,
@@ -982,10 +984,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     curr_nmix = self._curr_nmix
 
     def map_expectation(start_end_gpu):
+      reduction = np.floor(np.power(2, curr_nmix / 1024))
+      get_batch_size = lambda on_gpu: int((self.batch_size_gpu if on_gpu
+                                           else self.batch_size_cpu) / reduction)
       if indices is None:
         (start, end), on_gpu = start_end_gpu
         batch_iterator = _create_batch(X, start, end,
-                batch_size=self.batch_size_gpu if on_gpu else self.batch_size_cpu,
+                batch_size=get_batch_size(on_gpu),
                 downsample=self.downsample,
                 stochastic=self.stochastic_downsample,
                 seed=self._seed,
@@ -994,7 +999,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       else:
         jobs, on_gpu = start_end_gpu
         batch_iterator = _create_batch_indices(X, jobs,
-                batch_size=self.batch_size_gpu if on_gpu else self.batch_size_cpu,
+                batch_size=get_batch_size(on_gpu),
                 downsample=self.downsample,
                 stochastic=self.stochastic_downsample,
                 seed=self._seed,
