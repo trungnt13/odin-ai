@@ -1333,6 +1333,91 @@ def istft(stft_matrix, frame_length, step_length=None,
                 time_axis=0, freq_axis=-1)[-1]
 
 
+def power_spectrogram(S, power=2.0):
+  """ Extracting power spectrum from a complex-STFT array
+
+  Parameters
+  ----------
+  S : array [nb_samples, nfft]
+    complex type or real type
+  power : float
+    factor for converting spectrogram to power spectrum
+
+  Note
+  ----
+  To convert power spectrum to Decibel (db)
+  >>> signal.power2db(power_spectrogram(S, power=2.0), top_db=80.0)
+
+  """
+  power = int(power)
+  # ====== extract the basic spectrogram ====== #
+  if 'complex' in str(S.dtype): # get magnitude from STFT
+    spec = np.abs(S)
+  if power > 1:
+    spec = np.power(spec, power)
+  return spec
+
+def mels_spectrogram(spec, sr, nmels,
+                     fmin=64, fmax=None, top_db=80.0):
+  """ Extracting mel-filter bands from power spectrum
+  (i.e. the output from function
+  `odin.preprocessing.signal.power_spectrogram`)
+
+  Parameters
+  ----------
+  spec : array [nb_samples, nfft]
+    power spectrum array
+  sr : int
+    sample rate
+  fmin: int
+      min frequency for mel-filter bands
+  fmax: int, or None
+      maximum frequency for mel-filter bands.
+      If None, usng `sr / 2` as fmax
+  top_db: int
+      maximum deciben
+
+  """
+  # ====== check arguments ====== #
+  nfft = int(2 * (spec.shape[1] - 1))
+  # check fmax
+  if sr is None and fmax is None:
+    fmax = 4000
+  else:
+    fmax = sr // 2 if fmax is None else int(fmax)
+  # check fmin
+  fmin = int(fmin)
+  if fmin >= fmax:
+    raise ValueError("fmin must < fmax, but fmin=%d and fmax=%d" %
+                     (fmin, fmax))
+  # ====== mel transform ====== #
+  mel_basis = mel_filters(sr,
+      nfft=nfft, nmels=24 if nmels is None else int(nmels),
+      fmin=fmin, fmax=fmax)
+  # transpose to (nb_samples; nb_mels)
+  mel_spec = np.dot(mel_basis, spec.T)
+  mel_spec = mel_spec.T
+  mel_spec = power2db(mel_spec, top_db=top_db)
+  return mel_spec
+
+def ceps_spectrogram(mspec, nceps):
+  """ Compute the MFCCs coefficients (cepstrum analysis)
+  from extracted mel-filter bands spectrogram
+  (i.e. output from `odin.preprocessing.signal.mels_spectrogram`)
+
+  Parameters
+  ----------
+  mspec : array [nb_samples, nfft]
+    mels-spectrogram array
+  nceps : int
+    number of ceptrum for cepstral analysis
+
+  """
+  nceps = int(nceps) + 1
+  dct_basis = dct_filters(nceps, mspec.shape[1])
+  mfcc = np.dot(dct_basis, mspec.T)[1:, :].T
+  return mfcc
+
 def spectra(sr, frame_length, y=None, S=None,
             step_length=None, nfft=512, window='hann',
             nmels=None, nceps=None,
@@ -1431,19 +1516,11 @@ def spectra(sr, frame_length, y=None, S=None,
     spec = np.power(spec, power)
   # ====== extrct mel-filter-bands features ====== #
   if nmels is not None or nceps is not None:
-    mel_basis = mel_filters(sr,
-        nfft=nfft, nmels=24 if nmels is None else int(nmels),
-        fmin=fmin, fmax=fmax)
-    # transpose to (nb_samples; nb_mels)
-    mel_spec = np.dot(mel_basis, spec.T)
-    mel_spec = mel_spec.T
-    mel_spec = power2db(mel_spec, top_db=top_db)
+    mel_spec = mels_spectrogram(spec, sr, nmels)
   # ====== extract cepstrum features ====== #
   # extract MFCC
   if nceps is not None:
-    nceps = int(nceps) + 1
-    dct_basis = dct_filters(nceps, mel_spec.shape[1])
-    mfcc = np.dot(dct_basis, mel_spec.T)[1:, :].T
+    mfcc = ceps_spectrogram(mel_spec, nceps)
   # applying log to convert to db
   if log:
     spec = power2db(spec, top_db=top_db)

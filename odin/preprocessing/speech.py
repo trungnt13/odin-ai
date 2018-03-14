@@ -103,6 +103,14 @@ def _read_pcm(path, encode):
 
 
 def read(path_or_file, encode=None):
+  """
+  Returns
+  -------
+  audio_array : [nb_samples, nb_channels]
+    the audio array
+  sr : {int, None}
+    sample rate
+  """
   # ====== check input ====== #
   if is_fileobj(path_or_file):
     f = path_or_file
