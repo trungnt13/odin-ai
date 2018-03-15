@@ -59,10 +59,10 @@ from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
                      shifted_deltas, stack_frames, stft,
-                     power_spectrogram, mels_spectrogram, ceps_spectrogram)
+                     power_spectrogram, mels_spectrogram, ceps_spectrogram,
+                     power2db)
 # import all OpenSMILE extractor
 from ._opensmile import *
-
 
 # ===========================================================================
 # Predefined variables of speech datasets
@@ -510,6 +510,19 @@ class STFTExtractor(Extractor):
       return {self.output_name: s}
 
 class PowerSpecExtractor(Extractor):
+  """
+  Example
+  -------
+  >>> pipeline = make_pipeline(steps=[
+  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
+  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
+  ...     speech.PowerSpecExtractor(),
+  ...     speech.MelsSpecExtractor(nmels=40),
+  ...     speech.MFCCsExtractor(nceps=13),
+  ...     speech.Power2Db(input_name='spec'),
+  ...     base.RemoveFeatures(feat_name='stft')
+  >>> ], debug=True)
+  """
 
   def __init__(self, power=2.0, input_name='stft', output_name='spec'):
     super(PowerSpecExtractor, self).__init__()
@@ -524,6 +537,19 @@ class PowerSpecExtractor(Extractor):
                                                 power=self.power)}
 
 class MelsSpecExtractor(Extractor):
+  """
+  Example
+  -------
+  >>> pipeline = make_pipeline(steps=[
+  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
+  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
+  ...     speech.PowerSpecExtractor(),
+  ...     speech.MelsSpecExtractor(nmels=40),
+  ...     speech.MFCCsExtractor(nceps=13),
+  ...     speech.Power2Db(input_name='spec'),
+  ...     base.RemoveFeatures(feat_name='stft')
+  >>> ], debug=True)
+  """
 
   def __init__(self, nmels, fmin=64, fmax=None, top_db=80.0,
                input_name='spec', output_name='mspec'):
@@ -543,6 +569,19 @@ class MelsSpecExtractor(Extractor):
         fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)}
 
 class MFCCsExtractor(Extractor):
+  """
+  Example
+  -------
+  >>> pipeline = make_pipeline(steps=[
+  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
+  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
+  ...     speech.PowerSpecExtractor(),
+  ...     speech.MelsSpecExtractor(nmels=40),
+  ...     speech.MFCCsExtractor(nceps=13),
+  ...     speech.Power2Db(input_name='spec'),
+  ...     base.RemoveFeatures(feat_name='stft')
+  >>> ], debug=True)
+  """
 
   def __init__(self, nceps, input_name='mspec', output_name='mfcc'):
     super(MFCCsExtractor, self).__init__()
@@ -555,6 +594,23 @@ class MFCCsExtractor(Extractor):
       raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
     return {self.output_name: ceps_spectrogram(
         mspec=X[self.input_name], nceps=self.nceps)}
+
+class Power2Db(Extractor):
+  """ Convert power spectrogram to Decibel spectrogram
+
+  """
+
+  def __init__(self, input_name, output_name=None, top_db=80.0):
+    super(Power2Db, self).__init__()
+    self.input_name = str(input_name)
+    self.output_name = self.input_name if output_name is None \
+        else str(self.output_name)
+    self.top_db = float(top_db)
+
+  def _transform(self, X):
+    if self.input_name not in X:
+      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+    return {self.output_name: power2db(S=X[self.input_name], top_db=self.top_db)}
 
 class SpectraExtractor(Extractor):
   """AcousticExtractor
