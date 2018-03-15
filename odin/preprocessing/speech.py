@@ -58,7 +58,8 @@ from odin.utils.decorators import functionable
 from .base import Extractor
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
-                     shifted_deltas, stack_frames)
+                     shifted_deltas, stack_frames, stft,
+                     power_spectrogram, mels_spectrogram, ceps_spectrogram)
 # import all OpenSMILE extractor
 from ._opensmile import *
 
@@ -461,17 +462,112 @@ class AudioReader(Extractor):
       ret['name'] = name
     return ret
 
+# ===========================================================================
+# Spectrogram
+# ===========================================================================
+class STFTExtractor(Extractor):
+  """ Short time Fourier transform
+
+  Parameters
+  ----------
+  frame_length: {int, float}
+      number of samples point for 1 frame, or length of frame in millisecond
+  step_length: {int, float}
+      number of samples point for 1 step (when shifting the frames),
+      or length of step in millisecond
+      If unspecified, defaults `win_length / 4`.
+  nfft: int > 0 [scalar]
+      FFT window size
+      If not provided, uses the smallest power of 2 enclosing `frame_length`.
+
+  """
+
+  def __init__(self, frame_length, step_length=None, nfft=512,
+               window='hann', padding=False, energy=False,
+               output_name='stft', output_energy='energy'):
+    super(STFTExtractor, self).__init__()
+    self.frame_length = frame_length
+    self.step_length = step_length
+    self.nfft = nfft
+    self.window = window
+    self.padding = bool(padding)
+    self.energy = bool(energy)
+    self.output_name = str(output_name)
+    self.output_energy = str(output_energy)
+
+  def _transform(self, s_sr):
+    y, sr = _extract_s_sr(s_sr)
+    frame_length, step_length = _extract_frame_step_length(
+        sr, self.frame_length, self.step_length)
+    results = stft(y, frame_length=frame_length, step_length=step_length,
+                   nfft=self.nfft, window=self.window, padding=self.padding,
+                   energy=self.energy)
+    if self.energy:
+      s, e = results
+      return {self.output_name: s, self.output_energy: e}
+    else:
+      s, e = results, None
+      return {self.output_name: s}
+
+class PowerSpecExtractor(Extractor):
+
+  def __init__(self, power=2.0, input_name='stft', output_name='spec'):
+    super(PowerSpecExtractor, self).__init__()
+    self.power = float(power)
+    self.input_name = input_name
+    self.output_name = output_name
+
+  def _transform(self, X):
+    if self.input_name not in X:
+      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+    return {self.output_name: power_spectrogram(S=X[self.input_name],
+                                                power=self.power)}
+
+class MelsSpecExtractor(Extractor):
+
+  def __init__(self, nmels, fmin=64, fmax=None, top_db=80.0,
+               input_name='spec', output_name='mspec'):
+    super(MelsSpecExtractor, self).__init__()
+    self.nmels = int(nmels)
+    self.fmin = fmin
+    self.fmax = fmax
+    self.top_db = top_db
+    self.input_name = str(input_name)
+    self.output_name = str(output_name)
+
+  def _transform(self, X):
+    if self.input_name not in X:
+      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+    return {self.output_name: mels_spectrogram(
+        spec=X[self.input_name], sr=X['sr'], nmels=self.nmels,
+        fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)}
+
+class MFCCsExtractor(Extractor):
+
+  def __init__(self, nceps, input_name='mspec', output_name='mfcc'):
+    super(MFCCsExtractor, self).__init__()
+    self.nceps = int(nceps)
+    self.input_name = str(input_name)
+    self.output_name = str(output_name)
+
+  def _transform(self, X):
+    if self.input_name not in X:
+      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+    return {self.output_name: ceps_spectrogram(
+        mspec=X[self.input_name], nceps=self.nceps)}
+
 class SpectraExtractor(Extractor):
   """AcousticExtractor
 
   Parameters
   ----------
-  frame_length: int
-      number of samples point for 1 frame
-  step_length: int
-      number of samples point for 1 step (when shifting the frames)
+  frame_length: {int, float}
+      number of samples point for 1 frame, or length of frame in millisecond
+  step_length: {int, float}
+      number of samples point for 1 step (when shifting the frames),
+      or length of step in millisecond
       If unspecified, defaults `win_length / 4`.
-  nb_fft: int > 0 [scalar]
+  nfft: int > 0 [scalar]
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
   window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
@@ -574,7 +670,9 @@ class CQTExtractor(Extractor):
     feat = {'q' + name: X for name, X in feat.items()}
     return feat
 
-
+# ===========================================================================
+# More features
+# ===========================================================================
 class BNFExtractor(Extractor):
   """ Deep bottleneck feature extractor
   The following order of preprocessing features for BNF are suggested:
@@ -744,7 +842,9 @@ class SADextractor(Extractor):
     vad = vad.astype('uint8')
     return {'sad': vad, 'sad_threshold': float(vad_threshold)}
 
-
+# ===========================================================================
+# Normalization
+# ===========================================================================
 class RASTAfilter(Extractor):
   """ RASTAfilter
 

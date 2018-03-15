@@ -1486,6 +1486,8 @@ def spectra(sr, frame_length, y=None, S=None,
   Note
   ----
   `log` and `power` don't work for `sptk` backend
+  This method is optimized for speed and memory when extracting
+  a sequence of speech features at once.
 
   """
   mel_spec = None
