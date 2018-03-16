@@ -281,8 +281,7 @@ class Progbar(object):
     if self.__pb is None:
       it = range(self.target)
       self.__pb = _tqdm(iterable=it,
-                    desc="%s|Epoch%s" % (_RED + self.name[:8] + _RESET,
-                                         _YELLOW + str(self.epoch_idx) + _RESET),
+                    desc="%s|Epoch%s" % (self.name[:8], str(self.epoch_idx)),
                     leave=self.__keep, total=self.target,
                     file=Progbar.FP, unit='obj',
                     mininterval=self.__interval, maxinterval=10,
