@@ -532,7 +532,7 @@ class PowerSpecExtractor(Extractor):
 
   def _transform(self, X):
     if self.input_name not in X:
-      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
     return {self.output_name: power_spectrogram(S=X[self.input_name],
                                                 power=self.power)}
 
@@ -563,7 +563,7 @@ class MelsSpecExtractor(Extractor):
 
   def _transform(self, X):
     if self.input_name not in X:
-      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
     return {self.output_name: mels_spectrogram(
         spec=X[self.input_name], sr=X['sr'], nmels=self.nmels,
         fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)}
@@ -591,7 +591,7 @@ class MFCCsExtractor(Extractor):
 
   def _transform(self, X):
     if self.input_name not in X:
-      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
     return {self.output_name: ceps_spectrogram(
         mspec=X[self.input_name], nceps=self.nceps)}
 
@@ -609,7 +609,7 @@ class Power2Db(Extractor):
 
   def _transform(self, X):
     if self.input_name not in X:
-      raise RuntimeError("Cannot find input with name: '%s'" % self.input_name)
+      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
     return {self.output_name: power2db(S=X[self.input_name], top_db=self.top_db)}
 
 class SpectraExtractor(Extractor):

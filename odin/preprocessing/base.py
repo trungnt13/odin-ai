@@ -15,8 +15,6 @@ from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter)
 from .signal import delta, mvn, stack_frames
-
-
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -478,7 +476,8 @@ class RemoveFeatures(Extractor):
   def transform(self, X):
     if isinstance(X, Mapping):
       for f in self.feat_name:
-        del X[f]
+        if f in X: # only remove if it exist
+          del X[f]
     return super(RemoveFeatures, self).transform(X)
 
 
