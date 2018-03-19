@@ -32,7 +32,6 @@ except ImportError:
 
 import numpy as np
 
-
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -48,17 +47,14 @@ def _ctext(s, color='red'):
     pass
   return s
 
-
 def _warning(text):
   print(_ctext('[WARNING]', 'red'), text)
-
 
 def _check_package_available(name):
   for i in pip.get_installed_distributions():
     if name.lower() == i.key.lower():
       return True
   return False
-
 
 def _query_gpu_info():
   """ This function query GPU information:
@@ -108,7 +104,6 @@ def _query_gpu_info():
   shutil.rmtree(temp_dir)
   return dev
 
-
 class AttributeDict(dict):
   __getattr__ = dict.__getitem__
   __setattr__ = dict.__setitem__
@@ -128,11 +123,9 @@ EPS = None
 _SESSION = {}
 _RNG_GENERATOR = None
 
-
 def set_session(session):
   global _SESSION
   _SESSION = session
-
 
 def get_session_config():
   import tensorflow as tf
@@ -173,7 +166,6 @@ def get_session(graph=None):
     _SESSION[graph] = tf.Session(config=tf.ConfigProto(**session_args),
                                  graph=graph)
   return _SESSION[graph]
-
 
 def auto_config(config=None):
   ''' Auto-configure ODIN using os.environ['ODIN'].
@@ -333,14 +325,12 @@ def auto_config(config=None):
   os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
   return CONFIG
 
-
 # ===========================================================================
 # Getter
 # ===========================================================================
 def __validate_config():
   if CONFIG is None:
     raise Exception("auto_config has not been called.")
-
 
 def get_rng():
   """return the numpy random state as a Randomness Generator"""
@@ -349,30 +339,25 @@ def get_rng():
     _RNG_GENERATOR = np.random.RandomState(seed=120825)
   return _RNG_GENERATOR
 
-
 def randint(low=0, high=10e8, size=None, dtype='int32'):
   """Randomly generate and integer seed for any stochastic function."""
   return _RNG_GENERATOR.randint(low=low, high=high, size=size,
     dtype=dtype)
-
 
 def get_ncpu():
   """ Return number of inter_op_parallelism_threads """
   __validate_config()
   return CONFIG['ncpu']
 
-
 def get_ngpu():
   """ Return number of GPU """
   __validate_config()
   return CONFIG['ngpu']
 
-
 def get_nthread():
   """ Return number of intra_op_parallelism_threads """
   __validate_config()
   return CONFIG['nthread']
-
 
 def get_nb_processors():
   """ In case using CPU, return number of cores
@@ -380,7 +365,6 @@ def get_nb_processors():
   """
   __validate_config()
   return CONFIG['device_info']['n']
-
 
 def get_device_info():
   """ Device info contains:
@@ -393,26 +377,21 @@ def get_device_info():
   __validate_config()
   return CONFIG['device_info']
 
-
 def get_floatX():
   __validate_config()
   return CONFIG['floatX']
-
 
 def get_optimizer():
   __validate_config()
   return CONFIG['optimizer']
 
-
 def get_cnmem():
   __validate_config()
   return CONFIG['cnmem']
 
-
 def get_backend():
   __validate_config()
   return CONFIG['backend']
-
 
 def get_seed():
   __validate_config()

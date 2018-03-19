@@ -14,8 +14,7 @@ from tensorflow.contrib.rnn import (RNNCell, MultiRNNCell,
     LayerNormBasicLSTMCell, HighwayWrapper,
     AttentionCellWrapper, BidirectionalGridLSTMCell,
     TimeFreqLSTMCell, CoupledInputForgetGateLSTMCell)
-from tensorflow.python.ops.rnn_cell_impl import (_linear,
-    GRUCell, LSTMCell, BasicLSTMCell)
+from tensorflow.python.ops.rnn_cell_impl import (GRUCell, LSTMCell, BasicLSTMCell)
 from tensorflow.python.util import nest
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
@@ -57,6 +56,7 @@ class BasicRNNCell(RNNCell):
 
   def call(self, inputs, state):
     """Most basic RNN: output = new_state = act(W * input + U * state + B)."""
+    from tensorflow.python.ops.rnn_cell_impl import _linear
     output = self._activation(
         _linear([inputs, state], output_size=self._num_units,
         bias=False if self._bias_initializer is None else True,

@@ -9,7 +9,7 @@ args = ArgController(
 ).parse()
 
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=12082518'
+os.environ['ODIN'] = 'float32,gpu,seed=12082518,log'
 
 import numpy as np
 import tensorflow as tf
@@ -21,7 +21,6 @@ MODEL_NAME = args.model
 MODEL_PATH = utils.get_modelpath(name='cifar10_%s' % MODEL_NAME, override=True)
 LOG_PATH = utils.get_logpath(name='cifar10_%s.log' % MODEL_NAME, override=True)
 stdio(LOG_PATH)
-
 # ===========================================================================
 # Some handmade constants
 # ===========================================================================

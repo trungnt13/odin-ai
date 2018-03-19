@@ -1400,7 +1400,7 @@ def mels_spectrogram(spec, sr, nmels,
   mel_spec = power2db(mel_spec, top_db=top_db)
   return mel_spec
 
-def ceps_spectrogram(mspec, nceps):
+def ceps_spectrogram(mspec, nceps, remove_first_coef=True):
   """ Compute the MFCCs coefficients (cepstrum analysis)
   from extracted mel-filter bands spectrogram
   (i.e. output from `odin.preprocessing.signal.mels_spectrogram`)
@@ -1411,11 +1411,18 @@ def ceps_spectrogram(mspec, nceps):
     mels-spectrogram array
   nceps : int
     number of ceptrum for cepstral analysis
+  remove_first_coef : bool
+    if True remove the first coefficient of the extracted MFCCs
 
   """
-  nceps = int(nceps) + 1
-  dct_basis = dct_filters(nceps, mspec.shape[1])
-  mfcc = np.dot(dct_basis, mspec.T)[1:, :].T
+  if remove_first_coef:
+    nceps = int(nceps) + 1
+    dct_basis = dct_filters(nceps, mspec.shape[1])
+    mfcc = np.dot(dct_basis, mspec.T)[1:, :].T
+  else:
+    nceps = int(nceps)
+    dct_basis = dct_filters(nceps, mspec.shape[1])
+    mfcc = np.dot(dct_basis, mspec.T).T
   return mfcc
 
 def spectra(sr, frame_length, y=None, S=None,

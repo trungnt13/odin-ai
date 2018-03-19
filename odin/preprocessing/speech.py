@@ -583,9 +583,11 @@ class MFCCsExtractor(Extractor):
   >>> ], debug=True)
   """
 
-  def __init__(self, nceps, input_name='mspec', output_name='mfcc'):
+  def __init__(self, nceps, remove_first_coef=True,
+               input_name='mspec', output_name='mfcc'):
     super(MFCCsExtractor, self).__init__()
     self.nceps = int(nceps)
+    self.remove_first_coef = bool(remove_first_coef)
     self.input_name = str(input_name)
     self.output_name = str(output_name)
 
@@ -593,7 +595,8 @@ class MFCCsExtractor(Extractor):
     if self.input_name not in X:
       raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
     return {self.output_name: ceps_spectrogram(
-        mspec=X[self.input_name], nceps=self.nceps)}
+        mspec=X[self.input_name], nceps=self.nceps,
+        remove_first_coef=self.remove_first_coef)}
 
 class Power2Db(Extractor):
   """ Convert power spectrogram to Decibel spectrogram
@@ -744,50 +747,47 @@ class BNFExtractor(Extractor):
     name of input feature
   network : odin.nnet.base.NNOp
     instance pre-trained NNOp
+  pre_mvn : bool (default: False)
+    perform mean-variance normalization before stacking,
+    then, feeding data to network.
+  sad_name : {str, None}
+    if None, or `sad_name` not found, don't applying SAD to
+    the input feature before BNF
+  dtype : (str, numpy.dtype, None)
+    cast input to specific dtype before BNF, if None,
+    keep original dtype
   batch_size : int
     batch size when feeding data to the network, suggest
     to have as much data as possible.
-  pre_mvn : bool (default: False)
-    perform mean-variance normalization before feeding
-    data to network.
-  post_mvn : bool (default: False)
-    perform mean-variance normalization after the
-    transformation.
 
   Note
   ----
-  There are 2 way to prepare features for BNF:
-
-  First:
+  Order of preprocessing for BNF:
    - delta and delta delta extraction (optional)
    - mean_var_norm based on SAD frames statistics.
    - Stacking the left and right context frames.
    - Applying SAD indices.
    - Mean-variance normalization
    => BNFExtractor
-
-  Second:
-   - delta and delta delta extraction (optional)
-   - Stacking the left and right context frames.
-   - mean_var_norm based on SAD frames statistics.
-   - Mean-variance normalization
-   => BNFExtractor
-   - Applying SAD indices.
 
   """
 
   def __init__(self, input_feat, network,
-               batch_size=2048,
-               pre_mvn=False, post_mvn=False):
+               stack_context=10, pre_mvn=True, sad_name='sad',
+               dtype=None, batch_size=2048):
     super(BNFExtractor, self).__init__()
     from odin.nnet import NNOp
     self.input_feat = str(input_feat)
     if not isinstance(network, NNOp):
       raise ValueError("`network` must be instance of odin.nnet.NNOp")
     self.network = network
-    self.batch_size = int(batch_size)
+    if stack_context is None:
+      stack_context = 0
+    self.stack_context = int(stack_context)
     self.pre_mvn = bool(pre_mvn)
-    self.post_mvn = bool(post_mvn)
+    self.sad_name = str(sad_name)
+    self.dtype = dtype
+    self.batch_size = int(batch_size)
 
   def __getstate__(self):
     from odin import nnet as N
@@ -808,17 +808,31 @@ class BNFExtractor(Extractor):
                          ", which is not found." % self.input_feat)
     X = feat[self.input_feat]
     # ====== pre-normalization ====== #
+    sad = None
+    if self.sad_name in feat and len(feat[self.sad_name]) == len(X):
+      sad = feat[self.sad_name]
+      X_tmp = X[sad]
+    else:
+      X_tmp = X
     if self.pre_mvn:
-      X = mvn(X, varnorm=True)
+      X = (X - X_tmp.mean(0, keepdims=True)) /  \
+          (X_tmp.std(0, keepdims=True) + 1e-18)
+    # ====== stacking context and applying SAD ====== #
+    if self.stack_context > 0:
+      X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
+                       step_length=1, keepdims=True,
+                       make_contigous=True)
+    if sad is not None:
+      X = X[sad]
+    if self.dtype is not None:
+      X = X.astype(dtype=self.dtype)
     # ====== transform ====== #
     y = []
     # make prediciton
     for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
       y.append(self.network(X[s:e]))
     y = np.concatenate(y, axis=0)
-    # ====== post-normalization ====== #
-    if self.post_mvn:
-      y = mvn(y, varnorm=True)
+    # ====== post-preocessing and return ====== #
     feat['bnf'] = y
     return feat
 
@@ -1164,7 +1178,6 @@ class ApplyingSAD(Extractor):
 
   def __init__(self, sad_name='sad', threshold=None,
                smooth_win=None, keep_unvoiced=False,
-               stack_context={},
                feat_name=('spec', 'mspec', 'mfcc',
                           'qspec', 'qmspec', 'qmfcc',
                           'pitch', 'f0', 'energy')):
@@ -1174,9 +1187,6 @@ class ApplyingSAD(Extractor):
     self.sad_name = str(sad_name)
     self.keep_unvoiced = bool(keep_unvoiced)
     self.feat_name = as_tuple(feat_name, t=str)
-    self.stack_context = {str(name): int(ctx)
-                          for name, ctx in stack_context.items()
-                          if ctx > 0 and str(name) in feat_name}
 
   def _transform(self, X):
     if self.sad_name in X:
@@ -1201,15 +1211,6 @@ class ApplyingSAD(Extractor):
               "Length of sad labels is: %d, but number of sample is: %s"\
               % (len(sad), max(X_feat.shape))
           X_sad = X_feat[sad]
-          # applying SAD and stacking features at the same time
-          if feat_name in self.stack_context:
-            X_feat = ((X_feat - X_sad.mean(axis=0, keepdims=True)) /
-                      (X_sad.std(axis=0, keepdims=True) + config.EPS))
-            X_feat = stack_frames(X_feat,
-                                  frame_length=self.stack_context[feat_name] * 2 + 1,
-                                  step_length=1, keepdims=True,
-                                  make_contigous=True)
-            X_sad = X_feat[sad]
           # update feature
           X_new[feat_name] = X_sad
     return X_new

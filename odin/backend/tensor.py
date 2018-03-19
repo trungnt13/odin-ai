@@ -48,10 +48,10 @@ def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
   # ====== tensorflow ====== #
   if is_tensor(x):
     if ord == 2:
-      x_norm = tf.sqrt(tf.maximum(tf.reduce_sum(x ** 2, axis=axis, keep_dims=True),
+      x_norm = tf.sqrt(tf.maximum(tf.reduce_sum(x ** 2, axis=axis, keepdims=True),
                                   epsilon))
     else:
-      x_norm = tf.maximum(tf.reduce_sum(tf.abs(x), axis=axis, keep_dims=True),
+      x_norm = tf.maximum(tf.reduce_sum(tf.abs(x), axis=axis, keepdims=True),
                           epsilon)
   # ====== numpy ====== #
   else:
@@ -85,8 +85,8 @@ def logsumexp(x, axis=-1, name=None):
   # ====== tensorflow ====== #
   if is_tensor(x):
     with tf.name_scope(name, 'logsumexp', [x]):
-      xmax = tf.reduce_max(x, axis=axis, keep_dims=True)
-      y = xmax + tf.log(tf.reduce_sum(tf.exp(x - xmax), axis=axis, keep_dims=True))
+      xmax = tf.reduce_max(x, axis=axis, keepdims=True)
+      y = xmax + tf.log(tf.reduce_sum(tf.exp(x - xmax), axis=axis, keepdims=True))
   # ====== numpy ====== #
   elif isinstance(x, np.ndarray):
     xmax = np.max(x, axis=axis, keepdims=True)
@@ -107,7 +107,7 @@ def to_llh(x, name=None):
   # ====== Tensorflow ====== #
   else:
     with tf.name_scope(name, "log_likelihood", [x]):
-      x /= tf.reduce_sum(x, axis=-1, keep_dims=True)
+      x /= tf.reduce_sum(x, axis=-1, keepdims=True)
       x = tf.clip_by_value(x, EPS, 1 - EPS)
       return tf.log(x)
 
@@ -541,9 +541,9 @@ def var(x, axes=None, keepdims=False, name="Variance"):
   with tf.variable_scope(name):
     axes = _normalize_axis(axes, x.get_shape().ndims)
     x = tf.cast(x, floatX)
-    m = tf.reduce_mean(x, axis=axes, keep_dims=True)
+    m = tf.reduce_mean(x, axis=axes, keepdims=True)
     devs_squared = tf.square(x - m)
-    return tf.reduce_mean(devs_squared, axis=axes, keep_dims=keepdims)
+    return tf.reduce_mean(devs_squared, axis=axes, keepdims=keepdims)
 
 
 def std(x, axes=None, keepdims=False, name="Std"):
@@ -561,7 +561,7 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
   """
   with tf.variable_scope(name):
     D = tf.sqrt(tf.cast(tf.shape(X)[axis], X.dtype.base_dtype))
-    l2norm = tf.sqrt(tf.reduce_sum(X ** 2, axis=axis, keep_dims=True))
+    l2norm = tf.sqrt(tf.reduce_sum(X ** 2, axis=axis, keepdims=True))
     X_rms = l2norm / D
     X_rms = tf.where(tf.equal(X_rms, 0.),
                      x=tf.ones_like(X_rms, dtype=X_rms.dtype.base_dtype),

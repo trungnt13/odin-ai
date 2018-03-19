@@ -1,21 +1,17 @@
 #!/usr/bin/env python
 from __future__ import print_function, division, absolute_import
+import os
+os.environ['ODIN'] = 'float32,gpu,seed=12,log'
 
 import numpy as np
+import tensorflow as tf
 
 from odin.utils import get_modelpath, ArgController, stdio, get_logpath
 stdio(get_logpath('mnist.log', override=True))
-
-import os
-os.environ['ODIN'] = 'float32,gpu,seed=12'
-
-import tensorflow as tf
-
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel as F, training
 from six.moves import cPickle
-
 # ===========================================================================
 # Load data
 # ===========================================================================

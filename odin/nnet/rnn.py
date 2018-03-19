@@ -11,15 +11,14 @@ from tensorflow.python.ops import rnn
 
 from odin import backend as K
 from odin.backend.role import (InitialState, Weight, Bias, Parameter,
-                        has_roles, BatchNormShiftParameter,
-                        BatchNormScaleParameter,
-                        BatchNormPopulationMean,
-                        BatchNormPopulationInvStd)
+                               has_roles, BatchNormShiftParameter,
+                               BatchNormScaleParameter,
+                               BatchNormPopulationMean,
+                               BatchNormPopulationInvStd)
 from odin.utils import as_tuple, is_string, is_number
 
 from .base import NNOp
 from .normalization import BatchNorm
-
 
 # ===========================================================================
 # Helper
@@ -102,7 +101,6 @@ def _infer_variable_role(variables):
     else:
       raise ValueError("Unknown role for variable with name: " + name)
 
-
 def get_cell_info(cell):
   from tensorflow.contrib.rnn.python.ops import rnn_cell
   found_cell = None
@@ -118,7 +116,6 @@ def get_cell_info(cell):
   if _.defaults is not None:
     kwargs = {i: j for i, j in zip(args[::-1], _.defaults[::-1])}
   return found_cell, args, kwargs
-
 
 class RNN(NNOp):
   """
