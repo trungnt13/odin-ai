@@ -774,7 +774,7 @@ class BNFExtractor(Extractor):
 
   def __init__(self, input_feat, network,
                stack_context=10, pre_mvn=True, sad_name='sad',
-               dtype=None, batch_size=2048):
+               output_name='bnf', dtype=None, batch_size=2048):
     super(BNFExtractor, self).__init__()
     from odin.nnet import NNOp
     self.input_feat = str(input_feat)
@@ -786,6 +786,7 @@ class BNFExtractor(Extractor):
     self.stack_context = int(stack_context)
     self.pre_mvn = bool(pre_mvn)
     self.sad_name = str(sad_name)
+    self.output_name = str(output_name)
     self.dtype = dtype
     self.batch_size = int(batch_size)
 
@@ -810,7 +811,7 @@ class BNFExtractor(Extractor):
     # ====== pre-normalization ====== #
     sad = None
     if self.sad_name in feat and len(feat[self.sad_name]) == len(X):
-      sad = feat[self.sad_name]
+      sad = feat[self.sad_name].astype('bool')
       X_tmp = X[sad]
     else:
       X_tmp = X
@@ -833,7 +834,7 @@ class BNFExtractor(Extractor):
       y.append(self.network(X[s:e]))
     y = np.concatenate(y, axis=0)
     # ====== post-preocessing and return ====== #
-    feat['bnf'] = y
+    feat[self.output_name] = y
     return feat
 
 
