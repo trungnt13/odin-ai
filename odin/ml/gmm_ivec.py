@@ -44,7 +44,7 @@ def zeroStat(post):
   """
   # ====== tensorflow tensor or variable ====== #
   if K.is_tensor(post, inc_distribution=True, inc_variable=True):
-    y = tf.reduce_sum(post, axis=0, keep_dims=True,
+    y = tf.reduce_sum(post, axis=0, keepdims=True,
                       name="zero_stat")
   # ====== numpy array ====== #
   else:
@@ -84,12 +84,12 @@ def logsumexp(X, axis):
   """
   # ====== tensorflow tensor or variable ====== #
   if K.is_tensor(X, inc_distribution=True, inc_variable=True):
-    xmax = tf.reduce_max(X, axis=axis, keep_dims=True)
+    xmax = tf.reduce_max(X, axis=axis, keepdims=True)
     y = tf.add_n(inputs=[
         xmax,
         tf.log(tf.reduce_sum(input_tensor=tf.exp(X - xmax),
                              axis=axis,
-                             keep_dims=True))],
+                             keepdims=True))],
         name='llk')
   # ====== numpy array ====== #
   else:
@@ -491,9 +491,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       # (feat_dim, nmix)
       precision = 1 / (sigma + EPS)
       C = tf.reduce_sum((mu ** 2) * precision,
-                        axis=0, keep_dims=True) + \
+                        axis=0, keepdims=True) + \
           tf.reduce_sum(tf.log(sigma + EPS),
-                        axis=0, keep_dims=True) - \
+                        axis=0, keepdims=True) - \
           2 * tf.log(w)
       D = tf.matmul(self.X_ ** 2, precision) - \
           2 * tf.matmul(self.X_, mu * precision) + \

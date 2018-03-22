@@ -17,7 +17,7 @@ from sklearn.metrics import log_loss, accuracy_score, confusion_matrix
 
 def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
              labels=None, title='', path=None,
-             xlims=None, ylims=None):
+             xlims=None, ylims=None, print_log=True):
   from odin.backend import to_llr
   from odin.backend.metrics import (det_curve, compute_EER, roc_curve,
                                     compute_Cavg, compute_Cnorm,
@@ -54,12 +54,12 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   # C_norm
   cnorm, cnorm_arr = compute_Cnorm(y_true=y_true,
                                    y_score=y_pred_llr,
-                                   Ptrue=[1, 0.5],
+                                   Ptrue=[0.1, 0.5],
                                    probability_input=False)
   if y_pred_log_proba is not None:
     cnorm_, cnorm_arr_ = compute_Cnorm(y_true=y_true,
                                        y_score=y_pred_log_proba,
-                                       Ptrue=[1, 0.5],
+                                       Ptrue=[0.1, 0.5],
                                        probability_input=False)
     if np.mean(cnorm) > np.mean(cnorm_): # smaller is better
       cnorm, cnorm_arr = cnorm_, cnorm_arr_
@@ -67,13 +67,15 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   Pfa, Pmiss = det_curve(y_true=y_true, y_score=y_pred_llr)
   eer = compute_EER(Pfa=Pfa, Pmiss=Pmiss)
   minDCF = compute_minDCF(Pfa, Pmiss)[0]
-  print(ctext("--------", 'red'), ctext(title, 'cyan'))
-  print("Log loss :", format_score(ll))
-  print("Accuracy :", format_score(acc))
-  print("C_norm   :", format_score(np.mean(cnorm)))
-  print("EER      :", format_score(eer))
-  print("minDCF   :", format_score(minDCF))
-  print(print_confusion(arr=cm, labels=labels))
+  # PRINT LOG
+  if print_log:
+    print(ctext("--------", 'red'), ctext(title, 'cyan'))
+    print("Log loss :", format_score(ll))
+    print("Accuracy :", format_score(acc))
+    print("C_norm   :", format_score(np.mean(cnorm)))
+    print("EER      :", format_score(eer))
+    print("minDCF   :", format_score(minDCF))
+    print(print_confusion(arr=cm, labels=labels))
   # ====== save report to PDF files if necessary ====== #
   if path is not None:
     if y_pred_proba is None:
@@ -83,7 +85,7 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
     plot_confusion_matrix(cm, labels)
     # Cavg
     plt.figure(figsize=(nb_classes + 1, 3))
-    plot_Cnorm(cnorm=cnorm_arr, labels=labels, Ptrue=[1, 0.5],
+    plot_Cnorm(cnorm=cnorm_arr, labels=labels, Ptrue=[0.1, 0.5],
                fontsize=14)
     # binary classification
     if nb_classes == 2 and \
@@ -139,7 +141,7 @@ class Evaluable(object):
     raise NotImplementedError
 
   def evaluate(self, X, y, labels=None, title='', path=None,
-               xlims=None, ylims=None):
+               xlims=None, ylims=None, print_log=True):
     from odin.backend import to_llr
     # ====== check inputs ====== #
     if labels is None:
@@ -164,5 +166,6 @@ class Evaluable(object):
       raise ValueError('Class "%s" must has: `predict_proba` or `predict_log_proba`'
                        ' method.' % self.__class__.__name__)
     evaluate(y_true=y, y_pred_proba=y_pred_prob, y_pred_log_proba=y_pred_log_prob,
-             labels=labels, title=title, path=path, xlims=xlims, ylims=ylims)
+             labels=labels, title=title, path=path, xlims=xlims, ylims=ylims,
+             print_log=print_log)
     return self

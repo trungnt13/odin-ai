@@ -790,7 +790,7 @@ def plot_images_old(x, fig=None, titles=None, show=False):
     return fig
 
 
-def plot_Cnorm(cnorm, labels, Ptrue=[1, 0.5], axis=None, title=None,
+def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], axis=None, title=None,
                fontsize=12):
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
