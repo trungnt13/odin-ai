@@ -262,7 +262,7 @@ def evaluate_features(X_train, y_train,
   model.evaluate(X_test, y_test)
 # ====== cosine scoring ====== #
 print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
-scorer = ml.Scorer(wccn=True, lda=True, method='cosine')
+scorer = ml.Scorer(centering=True, wccn=True, lda=True, method='cosine')
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 # ====== GMM scoring ====== #
@@ -280,7 +280,6 @@ scorer = ml.GMMclassifier(strategy="all", covariance_type='full',
                           lda=False, concat=False)
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
-exit()
 # ====== plda scoring ====== #
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(nb_phi=100, niter=12,

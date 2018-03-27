@@ -10,3 +10,9 @@ def get_script_path():
   path = os.path.dirname(sys.argv[0])
   path = os.path.join('.', path)
   return path
+
+def get_script_name():
+  """Return the name of the running scipt file without extension"""
+  name = os.path.basename(sys.argv[0])
+  name = os.path.splitext(name)[0]
+  return name

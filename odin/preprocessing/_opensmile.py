@@ -386,7 +386,8 @@ class openSMILEsad(_openSMILEbase):
   """
 
   def __init__(self, frame_length, step_length=None,
-               window='ham', threshold=None, sr=None):
+               window='ham', threshold=None, sr=None,
+               output_name='sad'):
     super(openSMILEsad, self).__init__(sr=sr)
     # ====== verifying ====== #
     from odin.fuel import openSMILEsad as SADmodel
@@ -401,6 +402,7 @@ class openSMILEsad(_openSMILEbase):
     self.window = str(window)
     self.threshold = None if threshold is None \
         else np.clip(threshold, -1., 1.)
+    self.output_name = str(output_name)
 
   @property
   def config(self):
@@ -413,4 +415,4 @@ class openSMILEsad(_openSMILEbase):
     X = X[:, -1] # remove timestamp
     if is_number(self.threshold):
       X = (X >= self.threshold).astype("bool")
-    return {"sad": X}
+    return {self.output_name: X}

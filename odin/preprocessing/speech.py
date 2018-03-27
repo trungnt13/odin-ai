@@ -943,17 +943,19 @@ class RASTAfilter(Extractor):
 
   """
 
-  def __init__(self, rasta=True, sdc=1, feat_name='mfcc'):
+  def __init__(self, rasta=True, sdc=1,
+               input_name='mfcc', output_name='mfcc'):
     super(RASTAfilter, self).__init__()
     self.rasta = bool(rasta)
     self.sdc = int(sdc)
-    self.feat_name = str(feat_name)
+    self.input_name = str(input_name)
+    self.output_name = str(output_name)
 
   def _transform(self, feat):
-    if self.feat_name not in feat:
+    if self.input_name not in feat:
       raise RuntimeError("Cannot find feature with name: '%s' in "
                          "processed feature list." % self.feat_name)
-    mfcc = feat[self.feat_name]
+    mfcc = feat[self.input_name]
     # apply RASTA
     if self.rasta:
       mfcc = rastafilt(mfcc)
@@ -966,7 +968,7 @@ class RASTAfilter(Extractor):
                          P=3, k=nb_ceps) # k = 7
       ])
     # store new feature
-    feat[self.feat_name] = mfcc.astype("float32")
+    feat[self.output_name] = mfcc.astype("float32")
     return feat
 
 
