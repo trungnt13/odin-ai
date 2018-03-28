@@ -378,6 +378,72 @@ def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
   ax.axvline(x=x, ymin=ymin, ymax=ymax, color=color, linewidth=1, alpha=0.6)
   return ax
 
+def plot_comparison_track(Xs, legends, tick_labels,
+                          line_colors=None, line_styles=None, linewidth=1.,
+                          marker_size=33, marker_styles=None,
+                          fontsize=10, draw_label=True, title=None):
+  """ Plot multiple series for comparison
+  Parameters
+  ----------
+  Xs : list (tuple) of series
+    the list that contain list of data points
+  legends : list of string
+    name for each series
+  tick_labels : list of string
+    name for each data points
+  draw_label : bool
+    if True, drawing text of actual value of each point on top of it
+  """
+  if len(Xs) != len(legends):
+    raise ValueError("Number of series (len(Xs)) is: %d different from "
+                     "number of legends: %d" % (len(Xs), len(legends)))
+  nb_series = len(Xs)
+  if len(Xs[0]) != len(tick_labels):
+    raise ValueError("Number of points for each series is: %d different from "
+                     "number of xticks' labels: %d" % (len(Xs[0], len(tick_labels))))
+  nb_points = len(Xs[0])
+  from matplotlib import pyplot as plt
+  # ====== some default styles ====== #
+  default_marker_styles = ['o', '^', 's', '*', '+', 'X', '|', 'D', 'H', '8']
+  if marker_styles is None and nb_series <= len(default_marker_styles):
+    marker_styles = default_marker_styles[:nb_series]
+  # ====== init ====== #
+  point_colors = []
+  inited = False
+  handlers = []
+  # ====== plotting ====== #
+  for idx, X in enumerate(Xs):
+    kwargs = {}
+    if line_colors is not None:
+      kwargs['color'] = line_colors[idx]
+    if line_styles is not None:
+      kwargs['linestyle'] = line_styles[idx]
+    else:
+      kwargs['linestyle'] = '--'
+    # lines
+    handlers.append(
+        plt.plot(X, linewidth=linewidth, **kwargs)[0])
+    # points
+    ax = plt.gca()
+    for i, j in enumerate(X):
+      style = 'o' if marker_styles is None else marker_styles[idx]
+      if not inited:
+        p = plt.scatter(i, j, s=marker_size, marker=style)
+        point_colors.append(p.get_facecolor()[0])
+      else:
+        p = plt.scatter(i, j, s=marker_size, marker=style, color=point_colors[i])
+      if draw_label:
+        ax.text(i, 1.01 * j, s=str(j), ha='center', va='bottom',
+                fontsize=fontsize)
+    inited = True
+  # ====== legends and tick labels ====== #
+  plt.gca().set_xticks(np.arange(len(tick_labels)))
+  plt.gca().set_xticklabels(tick_labels, rotation=-60, fontsize=fontsize)
+  plt.legend(handlers, legends,
+             bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.,
+             fontsize=fontsize)
+  if title is not None:
+    plt.suptitle(title)
 
 def plot_histogram(x, bins=12, ax=None, normalize=False):
   """
