@@ -4,6 +4,7 @@ from . import base
 from . import speech
 from . import textgrid
 from . import signal
+from . import sequence
 # from . import image
 # from . import video
 # from . import text
