@@ -13,7 +13,7 @@ import numpy as np
 def get_formatted_datetime(only_number=True):
   if only_number:
     return "{:%H%M%S%d%m%y}".format(datetime.now())
-  return "{:%H:%M:%S-%b%d%y}".format(datetime.now())
+  return "{:%H:%M:%S-%d%b%y}".format(datetime.now())
 
 def get_all_properties(obj):
   """ Return all attributes which are properties of given Object
@@ -63,7 +63,16 @@ class abstractclassmethod(classmethod):
 # ===========================================================================
 # Path utils
 # ===========================================================================
-def select_path(*paths):
+def select_path(*paths, create_new=False):
+  """
+  Parameters
+  ----------
+  paths : str
+    multiple path are given
+  create_new : bool (default: False)
+    if no path is found, create new folder based on the
+    first path found to be `creat-able`
+  """
   all_paths = []
   for p in paths:
     if isinstance(p, (tuple, list)):
@@ -77,5 +86,15 @@ def select_path(*paths):
   for p in all_paths:
     if os.path.exists(p):
       return p
+  # ====== check if create_new ====== #
+  if create_new:
+    for p in paths:
+      base_dir = os.path.dirname(p)
+      if os.path.exists(base_dir):
+        os.mkdir(p)
+        print("Created new folder at path:", str(p))
+        return p
+    raise ValueError("Cannot create new folder from list: %s" % str(paths))
+  # ====== raise exception ====== #
   raise RuntimeError("Cannot find any exists path from list: %s" %
     '; '.join(all_paths))

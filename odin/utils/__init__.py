@@ -329,10 +329,40 @@ class _LogWrapper():
     except Exception:
       pass
 
-
 def get_stdio_path():
   return _CURRENT_STDIO
 
+def auto_logging(log_dir=None, prefix='', num_max=None):
+  """
+  Parameters
+  ----------
+  log_dir : str
+    path to directory stored all the logs
+  prefix : str
+    prefix to all saved log (using script name by default)
+  num_max : {None, int}
+    maximum number of log will be stored
+  """
+  if log_dir is None:
+    log_dir = get_script_path()
+  if not os.path.isdir(log_dir):
+    raise ValueError("'%s' is not a directory" % str(log_dir))
+  prefix = get_script_name() if prefix is None or len(prefix) == 0 else str(prefix)
+  date_time = get_formatted_datetime(only_number=False)
+  path = os.path.join(log_dir, prefix + '[%s]' % date_time + '.txt')
+  # ====== check maximum number of log ====== #
+  if num_max is not None:
+    from stat import ST_CTIME
+    num_max = int(num_max)
+    past_logs = [i for i in os.listdir(log_dir) if prefix in i]
+    past_logs = sorted(past_logs,
+                       key=lambda x: os.stat(os.path.join(log_dir, x))[ST_CTIME],
+                       reverse=True)
+    # remove previous logs
+    for i, name in enumerate(past_logs):
+      if i >= num_max - 1:
+        os.remove(os.path.join(log_dir, name))
+  return stdio(path=path, suppress=False, stderr=True)
 
 def stdio(path=None, suppress=False, stderr=True):
   """

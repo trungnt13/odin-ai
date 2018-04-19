@@ -70,19 +70,31 @@ def _remove_long_seq(maxlen, seq, label):
  #     or `skip_top` limit will be replaced with this character.
  # index_from: index actual words with this index and higher.
 
+DATASET_DIR = '/home/trung/data/IMDB_org'
 OUTPUT_DIR = '/home/trung/data/IMDB'
+if os.path.isdir(OUTPUT_DIR):
+  shutil.rmtree(OUTPUT_DIR)
+os.mkdir(OUTPUT_DIR)
 # ====== test dataset ====== #
-ds = F.Dataset(path=OUTPUT_DIR, read_only=True)
+ds = F.Dataset(path=DATASET_DIR, read_only=True)
 print(ds)
-x_train, labels_train = ds['X_train'], ds['y_train']
-x_test, labels_test = ds['X_test'], ds['y_test']
 
+x_train, labels_train = np.array(ds['X_train']), np.array(ds['y_train'])
+x_test, labels_test = np.array(ds['X_test']), np.array(ds['y_test'])
+
+num_words = None
 skip_top = 0
 maxlen = None
 seed = 113
 start_char = 1
 oov_char = 2
 index_from = 3
+
+np.random.seed(seed)
+indices = np.arange(len(x_train))
+np.random.shuffle(indices)
+x_train = x_train[indices]
+labels_train = labels_train[indices]
 
 indices = np.arange(len(x_test))
 np.random.shuffle(indices)
@@ -117,8 +129,15 @@ else:
 idx = len(x_train)
 x_train, y_train = np.array(xs[:idx]), np.array(labels[:idx])
 x_test, y_test = np.array(xs[idx:]), np.array(labels[idx:])
+
 ds.close()
 
+with open(os.path.join(OUTPUT_DIR, 'README'), 'wb') as f:
+  f.write(
+"""Preprocessed IMDB dataset
+The dataset have been
+"""
+)
 exit()
 # ===========================================================================
 # Load dataset

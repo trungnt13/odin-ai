@@ -1417,7 +1417,8 @@ def plot_close():
   plt.close('all')
 
 
-def plot_save(path, figs=None, dpi=180, tight_plot=False, clear_all=True, log=True):
+def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
+              tight_plot=False, clear_all=True, log=True):
   """
   Parameters
   ----------

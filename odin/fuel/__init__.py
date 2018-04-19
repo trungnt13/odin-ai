@@ -109,15 +109,73 @@ class CIFAR100(DataLoader):
 # ===========================================================================
 # AUdio dataset
 # ===========================================================================
-class WDIGITS(DataLoader):
-  """ 700 MB of data from multiple speaker for digit recognition
-  from audio
-  """
-  pass
+class FSDD(object):
+  """ Free Spoken Digit Dataset
+  A simple audio/speech dataset consisting of recordings of
+  spoken digits in wav files at 8kHz. The recordings are
+  trimmed so that they have near minimal silence at the
+  beginnings and ends.
 
-class DIGITS(DataLoader):
-  """ 501 short file for single digits recognition from audio """
-  pass
+  Link: https://github.com/Jakobovski/free-spoken-digit-dataset
+  """
+  LINK = 'https://github.com/Jakobovski/free-spoken-digit-dataset/archive/v1.0.7.zip'
+
+  @classmethod
+  def load(clazz):
+    """ Return
+    records: list of all path to recorded audio files
+    metadata: numpy.ndarray
+    """
+    dat_path = get_datasetpath(name='FSDD', override=False)
+    tmp_path = dat_path + '_tmp'
+    zip_path = dat_path + '.zip'
+    # ====== download zip dataset ====== #
+    if not os.path.exists(dat_path) or \
+    len(os.listdir(dat_path)) != 1501:
+      if not os.path.exists(zip_path):
+        get_file(fname='FSDD.zip', origin=FSDD.LINK, outdir=get_datasetpath())
+      if os.path.exists(tmp_path):
+        shutil.rmtree(tmp_path)
+      unzip_folder(zip_path=zip_path, out_path=tmp_path, remove_zip=True)
+      tmp_path = os.path.join(tmp_path, os.listdir(tmp_path)[0])
+      # ====== get all records ====== #
+      record_path = os.path.join(tmp_path, 'recordings')
+      all_records = [os.path.join(record_path, i)
+                     for i in os.listdir(record_path)]
+      for f in all_records:
+        name = os.path.basename(f)
+        shutil.copy2(src=f, dst=os.path.join(dat_path, name))
+      # ====== copy the metadata ====== #
+      meta_path = os.path.join(tmp_path, 'metadata.py')
+      import imp
+      meta = imp.load_source('metadata', meta_path).metadata
+      assert len(set(len(i) for i in meta.values())) == 1, "Invalid metadata"
+      rows = []
+      for name, info in meta.items():
+        info = sorted(info.items(), key=lambda x: x[0])
+        header = ['name'] + [i[0] for i in info]
+        rows.append([name] + [i[1] for i in info])
+      with open(os.path.join(dat_path, 'metadata.csv'), 'w') as f:
+        for r in [header] + rows:
+          f.write(','.join(r) + '\n')
+    # ====== clean ====== #
+    if os.path.exists(tmp_path):
+      shutil.rmtree(tmp_path)
+    # ====== return dataset ====== #
+    all_files = [os.path.join(dat_path, i)
+                 for i in os.listdir(dat_path)
+                 if '.wav' in i]
+    meta = np.genfromtxt(os.path.join(dat_path, 'metadata.csv'),
+                         dtype=str, delimiter=',')
+    return all_files, meta
+
+  @classmethod
+  def get_dataset(clazz):
+    """ Return
+    records: list of all path to recorded audio files
+    metadata: numpy.ndarray
+    """
+    return clazz.load()
 
 # ===========================================================================
 # More experimental dataset
