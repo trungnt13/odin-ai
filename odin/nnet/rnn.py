@@ -463,12 +463,11 @@ class CudnnRNN(NNOp):
     else:
       parameters = self.get('params')
     # ====== return CuDNN RNN ====== #
-    results = K.rnn_dnn(X, hidden_size=self.num_units, rnn_mode=self.rnn_mode,
-                       num_layers=self.num_layers, parameters=parameters,
-                       h0=h0, c0=c0, input_mode=input_mode,
-                       direction_mode='bidirectional' if self.bidirectional
-                        else 'unidirectional',
-                       dropout=self.dropout, name=self.name)
+    results = K.cudnn_rnn(X, num_units=self.num_units, rnn_mode=self.rnn_mode,
+                          num_layers=self.num_layers, parameters=parameters,
+                          h0=h0, c0=c0, input_mode=input_mode,
+                          is_bidirectional=self.bidirectional,
+                          dropout=self.dropout, name=None)
     if not self.return_states:
       results = results[0] # only get the output
     return results

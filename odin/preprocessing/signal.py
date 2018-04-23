@@ -905,6 +905,22 @@ def pad_center(data, size, axis=-1, **kwargs):
                       'at least input size ({:d})').format(size, n))
   return np.pad(data, lengths, **kwargs)
 
+def one_hot(y, nb_classes=None, dtype='float32'):
+  '''Convert class vector (integers from 0 to nb_classes)
+  to binary class matrix, for use with categorical_crossentropy
+
+  Note
+  ----
+  if any class index in y is smaller than 0, then all of its one-hot
+  values is 0.
+  '''
+  if 'int' not in str(y.dtype):
+    y = y.astype('int32')
+  if nb_classes is None:
+    nb_classes = np.max(y) + 1
+  else:
+    nb_classes = int(nb_classes)
+  return np.eye(nb_classes, dtype=dtype)[y]
 
 def pad_sequences(sequences, maxlen=None, dtype='int32',
                   padding='pre', truncating='pre', value=0.,

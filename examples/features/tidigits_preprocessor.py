@@ -194,7 +194,7 @@ extractors = pp.make_pipeline(steps=[
     pp.speech.AudioReader(sr=None, sr_new=SR_NEW, best_resample=True,
                           remove_dc_n_dither=dither, preemphasis=0.97),
     pp.base.NameConverter(converter=lambda x: os.path.basename(x).split('.')[0],
-                          keys='path'),
+                          input_name='path'),
     pp.speech.SpectraExtractor(frame_length=frame_length,
                                step_length=step_length,
                                nfft=NFFT, nmels=40, nceps=13,
@@ -209,7 +209,7 @@ extractors = pp.make_pipeline(steps=[
                            pre_mvn=True),
     # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           sad_stats=False, sad_name='sad',
+                           use_sad=False, sad_name='sad',
                            ignore_sad_error=True,
                            feat_name=('spec', 'mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),

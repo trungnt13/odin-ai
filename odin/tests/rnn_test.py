@@ -215,7 +215,7 @@ class RNNTest(unittest.TestCase):
                             X = X_skip
                             x = np.random.rand(batch_size, 8, 12)
                         start = timeit.default_timer()
-                        y = K.rnn_dnn(X, hidden_size=hidden_size,
+                        y = K.cudnn_rnn(X, num_units=hidden_size,
                                       rnn_mode=rnn_mode,
                                       input_mode=input_mode,
                                       num_layers=nb_layers,

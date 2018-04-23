@@ -45,7 +45,7 @@ def _ctext(s, color='red'):
     return color + str(s) + Fore.RESET
   except ImportError:
     pass
-  return s
+  return str(s)
 
 def _warning(text):
   print(_ctext('[WARNING]', 'red'), text)
@@ -333,11 +333,17 @@ def __validate_config():
     raise Exception("auto_config has not been called.")
 
 def get_rng():
-  """return the numpy random state as a Randomness Generator"""
+  """
+    Return
+    ------
+    the numpy RandomState as a "Randomness Generator"
+  """
   global _RNG_GENERATOR
   if _RNG_GENERATOR is None:
     _RNG_GENERATOR = np.random.RandomState(seed=120825)
   return _RNG_GENERATOR
+
+get_random_state = get_rng
 
 def randint(low=0, high=10e8, size=None, dtype='int32'):
   """Randomly generate and integer seed for any stochastic function."""

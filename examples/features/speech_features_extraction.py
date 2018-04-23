@@ -91,7 +91,7 @@ extractors = pp.make_pipeline(steps=[
                            pre_mvn=True),
     # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           sad_stats=False, sad_name='sad',
+                           use_sad=False, sad_name='sad',
                            ignore_sad_error=True,
                            feat_name=('spec', 'mspec', 'mfcc', 'bnf',
                                       'qspec', 'qmfcc', 'qmspec')),
@@ -108,7 +108,7 @@ extractors = pp.make_pipeline(steps=[
                     'raw': dtype, 'bnf': dtype}),
 ], debug=False)
 # tmp = extractors.transform(all_files[0])
-# V.plot_features(tmp)
+# V.plot_multiple_features(tmp)
 # V.plot_save('/tmp/tmp.pdf')
 # exit()
 # ===========================================================================

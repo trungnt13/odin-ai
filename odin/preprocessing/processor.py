@@ -165,7 +165,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
           ctext("✓", text_color) if check else ctext("✗", text_color))
   import matplotlib
   matplotlib.use('Agg')
-  from odin.visual import plot_save, plot_features
+  from odin.visual import plot_save, plot_multiple_features
   # ====== check path to dataset ====== #
   should_close_ds = True
   if isinstance(ds_or_processor, FeatureProcessor):
@@ -345,7 +345,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       except Exception as e:
         logger("Special case error: %s" % str(e),
                file_name + ':' + feat_name, False)
-    plot_features(X, title=file_name, fig_width=fig_width)
+    plot_multiple_features(X, title=file_name, fig_width=fig_width)
     figure_path = os.path.join(path, '%s.pdf' % _escape_file_name(file_name))
     plot_save(figure_path, log=False, clear_all=True)
     logger("Sample figure saved at: ", figure_path, True)
@@ -356,7 +356,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
          for name in stat_name
          if ds[name].ndim >= 1}
     if len(X) > 0:
-      plot_features(X, title=feat_name, fig_width=fig_width)
+      plot_multiple_features(X, title=feat_name, fig_width=fig_width)
   plot_save(figure_path, log=False, clear_all=True)
   logger("Stats figure save at: ", figure_path, True)
   logger("All reports at folder: ", os.path.abspath(path), True)

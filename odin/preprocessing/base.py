@@ -197,13 +197,13 @@ class NameConverter(Extractor):
   ----------
   converter: Mapping, function
       convert `inputs['name'] = converter(inputs[keys])`
-  keys: str, or list of str
+  input_name: str, or list of str
       the order in the list is priority of each key, searching
       through the inputs for given key and convert it to
       new `name`
   """
 
-  def __init__(self, converter, keys=None):
+  def __init__(self, converter, input_name=None):
     super(NameConverter, self).__init__()
     # ====== check converter ====== #
     from odin.utils.decorators import functionable
@@ -216,12 +216,12 @@ class NameConverter(Extractor):
     else:
       self.converter = converter
     # ====== check keys ====== #
-    self.keys = ('name', 'path') if keys is None else \
-        as_tuple(keys, t=str)
+    self.input_name = ('name', 'path') if input_name is None else \
+        as_tuple(input_name, t=str)
 
   def _transform(self, X):
     if isinstance(X, Mapping):
-      for key in self.keys:
+      for key in self.input_name:
         name = X.get(key, None)
         if is_string(name):
           break

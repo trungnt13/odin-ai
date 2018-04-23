@@ -45,24 +45,50 @@ def set_training(is_training, graph=None, return_ops=False):
 
 def cond_training(train_fn, infer_fn,
                   train_dependencies=None, infer_dependencies=None,
-                  name="ConditionalTraining"):
+                  strict=False, graph=None,
+                  name=None):
+  """ Create a conditional output that depends of training variable
+
+  Parameters
+  ----------
+  train_fn: callable
+    this function will be called when `training=True`
+  infer_fn: callable
+    this function will be called when `training=False`
+  train_dependencies: Tensorflow expression
+    all of given expression will be executed before running
+    the function
+  infer_dependencies: Tensorflow expression
+    all of given expression will be executed before running
+    the function
+  strict: bool (default: False)
+    if False, automatically group all outputs into single tensorflow
+    Tensor, this behaviour is disabled with `strict=True`
+  name: str
+    specific name for the Operation
+
+  """
   if not hasattr(train_fn, '__call__') or \
   not hasattr(infer_fn, '__call__'):
     raise ValueError("`train_fn` and `infer_fn` must be call-able.")
-  with tf.variable_scope(name):
+  with tf.name_scope(name, "TrainingCondition"):
+    # ====== training ====== #
     if train_dependencies is not None:
       def _train_fn():
         with tf.control_dependencies(as_tuple(train_dependencies)):
           return train_fn()
     else:
       _train_fn = train_fn
+    # ====== inference ====== #
     if infer_dependencies is not None:
       def _infer_fn():
         with tf.control_dependencies(as_tuple(infer_dependencies)):
           return infer_fn()
     else:
       _infer_fn = infer_fn
-    return tf.cond(__IS_TRAINING, fn1=_train_fn, fn2=_infer_fn)
+    return tf.cond(pred=is_training(graph=graph),
+                   true_fn=_train_fn, false_fn=_infer_fn,
+                   strict=strict)
 
 
 def is_operation(op):

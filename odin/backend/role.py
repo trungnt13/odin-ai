@@ -10,9 +10,8 @@ import tensorflow as tf
 
 from odin.utils import as_tuple, flatten_list
 
-
 # ===========================================================================
-# Variable ROles
+# Variable roles
 # ===========================================================================
 class Role(object):
   """Base class for all roles."""
@@ -21,143 +20,113 @@ class Role(object):
     raise RuntimeError("This is class is only for annotation, you cannot "
                        "create instance from this class.")
 
-
 class Randomization(Role):
   """Base class for all variable roles."""
   pass
 
-
 class Variable(Role):
   """Base class for all variable roles."""
   pass
-
 
 # ==================== Role for Cost and Objective ==================== #
 class Auxiliary(Variable):
   """ Variables added to the graph as annotations """
   pass
 
-
 # DifferentialLoss
 class DifferentialLoss(Auxiliary):
   pass
 
-
 class RegularizeLoss(DifferentialLoss):
   pass
-
 
 # DifferentialLoss
 class MonitoringLoss(Auxiliary):
   pass
 
-
 class GradientsNorm(MonitoringLoss):
   pass
-
 
 class AccuracyValue(MonitoringLoss):
   pass
 
-
 class ConfusionMatrix(MonitoringLoss):
   pass
 
-
 class EarlyStop(MonitoringLoss):
   pass
-
 
 # ==================== Variational ==================== #
 class Variational(Variable):
   """ All role related to variational inference """
   pass
 
-
 class VariationalMean(Variational):
   pass
 
-
 class VariationalLogsigma(Variational):
   pass
-
 
 # ==================== Role for Trainable Variable ==================== #
 class Parameter(Variable):
   pass
 
-
 class ActivationParameter(Parameter):
   pass
-
 
 class Weight(Parameter):
   pass
 
-
 class Bias(Parameter):
   pass
-
 
 class InitialState(Parameter):
   """ Initial state of a recurrent network """
   pass
 
-
 class ConvKernel(Weight):
   """ The filters (kernels) of a convolution operation """
   pass
 
-
 class Dropout(Variable):
   """ Inputs with applied dropout """
   pass
-
 
 # ==================== Optimizer Algorithm roles ==================== #
 class OptimizerHyperParameter(Variable):
   """ Shared variables used in algorithms updates """
   pass
 
-
 class LearningRate(OptimizerHyperParameter):
   pass
-
 
 class LearningRateDecay(OptimizerHyperParameter):
   pass
 
-
 class GraidentsClipping(OptimizerHyperParameter):
   pass
-
 
 # ==================== Embedding ==================== #
 class EmbeddingWeight(Weight):
   """ weights for embedding operator """
   pass
 
-
 # ==================== Batch normalization roles ==================== #
 class BatchNorm(Variable):
   """ base role for batch normalization population statistics """
   pass
 
-
 class BatchNormPopulationMean(BatchNorm):
   """ mean activations accumulated over the dataset """
   pass
-
 
 class BatchNormPopulationInvStd(BatchNorm):
   """ standard deviations of activations accumulated over the dataset """
   pass
 
-
 class BatchNormScaleParameter(Parameter, BatchNorm):
   """ role given to the scale parameter, referred to as "scale" (or "gamma") in the """
   pass
-
 
 class BatchNormShiftParameter(Bias, BatchNorm):
   """ role given to the shift parameter, referred to as "beta" in the
@@ -168,7 +137,6 @@ class BatchNormShiftParameter(Bias, BatchNorm):
   """
   pass
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
@@ -177,10 +145,8 @@ for name, obj in inspect.getmembers(sys.modules[__name__]):
   if inspect.isclass(obj) and issubclass(obj, Role):
     _all_roles_name[name] = obj
 
-
 def name_to_roles(name):
   return _all_roles_name.get(name, name)
-
 
 # ===========================================================================
 # Basic Role helper
@@ -188,7 +154,6 @@ def name_to_roles(name):
 def _add_to_collection_no_duplication(name, var):
   if var not in tf.get_collection(str(name)):
     tf.add_to_collection(name, var)
-
 
 def add_role(variables, roles):
   r"""Add a role to a given variable.
@@ -238,7 +203,6 @@ def add_role(variables, roles):
       _add_to_collection_no_duplication(r.__name__, var)
   return variables
 
-
 def _cmp_role(r1, r2, exact):
   """ check if r1 is subclass of r2, or
   if r1 or r2 is string, r1 is equal r2
@@ -250,7 +214,6 @@ def _cmp_role(r1, r2, exact):
     return r1 == r2
   # subclass of Role
   return r1 == r2 if exact else issubclass(r1, r2)
-
 
 def has_roles(var, roles, match_all=False, exact=False):
   r"""Test if a variable has given roles taking subroles into account.
@@ -280,7 +243,6 @@ def has_roles(var, roles, match_all=False, exact=False):
              for match_role in roles]
   return all(matches) if match_all else any(matches)
 
-
 def get_roles(var, return_string=True):
   """
   Parameters
@@ -301,16 +263,13 @@ def get_roles(var, return_string=True):
   return as_tuple(sorted(roles,
       key=lambda x: x if isinstance(x, string_types) else x.__name__))
 
-
 # ===========================================================================
 # Role context manager
 # ===========================================================================
 __ROLE_STACK = [[]]
 
-
 def get_current_role_scope():
   return tuple(__ROLE_STACK[-1])
-
 
 def return_roles(roles=None):
   """ A decorators to assign specific role to all outputs of a function.
@@ -345,7 +304,6 @@ def return_roles(roles=None):
     roles = [r for r in as_tuple(roles)
              if isinstance(r, type) and issubclass(r, Role)]
   return add_role_to_outputs
-
 
 @contextmanager
 def role_scope(*roles):

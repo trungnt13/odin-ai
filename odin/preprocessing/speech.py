@@ -981,22 +981,21 @@ class AcousticNorm(Extractor):
   windowed_mean_var_norm : bool (default: False)
     perform standardization on small windows, very computaiton
     intensive.
-  sad_stats : bool
+  use_sad : bool
     if True, using statistics from SAD indexed frames for
     normalization
   sad_name : str
-    feature name of SAD indices, only used if `sad_stats=True`
+    feature name of SAD indices, only used if `use_sad=True`
   ignore_sad_error : bool
     if True, when length of SAD and feature mismatch, still perform
     normalization, otherwise raise `RuntimeError`.
 
   """
 
-  def __init__(self, mean_var_norm=True,
-               windowed_mean_var_norm=False,
+  def __init__(self, mean_var_norm=True, windowed_mean_var_norm=False,
                win_length=301, var_norm=True,
-               sad_stats=False, sad_name='sad', ignore_sad_error=True,
-               feat_name=('mspec', 'spec', 'mfcc', 'bnf',
+               use_sad=False, sad_name='sad', ignore_sad_error=True,
+               feat_name=('mspec', 'spec', 'mfcc', 'bnf', 'sdc',
                           'qspec', 'qmfcc', 'qmspec')):
     super(AcousticNorm, self).__init__()
     self.mean_var_norm = bool(mean_var_norm)
@@ -1012,14 +1011,14 @@ class AcousticNorm(Extractor):
     # ====== check which features will be normalized ====== #
     self.feat_name = as_tuple(feat_name, t=str)
     # ====== SAD ====== #
-    self.sad_stats = bool(sad_stats)
+    self.use_sad = bool(use_sad)
     self.sad_name = str(sad_name)
     self.ignore_sad_error = bool(ignore_sad_error)
 
   def _transform(self, feat):
     # ====== check SAD indices ====== #
     sad = None
-    if self.sad_stats:
+    if self.use_sad:
       if self.sad_name not in feat:
         raise RuntimeError("Cannot find SAD with name: '%s'" % self.sad_name)
       sad = feat[self.sad_name]

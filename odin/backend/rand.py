@@ -294,7 +294,7 @@ def orthogonal(shape, gain=1.0):
 # ===========================================================================
 # Fast initialization
 # ===========================================================================
-def rnn(input_dim, hidden_dim,
+def init_rnn(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
         bidirectional=False, one_vector=False,
         return_variable=True, name=None):
@@ -344,7 +344,7 @@ def rnn(input_dim, hidden_dim,
   return params if len(params) > 1 else params[0]
 
 
-def lstm(input_dim, hidden_dim,
+def init_lstm(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
         bidirectional=False, one_vector=False,
         return_variable=True, name=None):
@@ -411,7 +411,7 @@ def lstm(input_dim, hidden_dim,
   return params if len(params) > 1 else params[0]
 
 
-def gru(input_dim, hidden_dim,
+def init_gru(input_dim, hidden_dim,
         W_init=glorot_uniform, b_init=constant(0.),
         bidirectional=False, one_vector=False,
         return_variable=True, name=None):

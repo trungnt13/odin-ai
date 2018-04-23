@@ -11,9 +11,9 @@ import numpy as np
 import scipy as sp
 
 import tensorflow as tf
-from odin.config import get_session, get_ngpu, get_floatX
+from odin.config import get_session, get_ngpu, get_floatX, get_random_state
 from odin.utils import as_tuple, uuid, is_number
-from .helpers import set_shape, is_tensor, is_training
+from .helpers import set_shape, is_tensor, is_training, cond_training
 
 floatX = get_floatX()
 EPS = np.finfo(floatX).eps
@@ -864,12 +864,12 @@ def rnn_decorator(*args, **kwargs):
     return recurrent_wrapper
 
 
-def rnn_dnn(X, hidden_size, rnn_mode,
+def cudnn_rnn(X, num_units, rnn_mode,
             num_layers=1,
             parameters=None,
             h0=None, c0=None,
             input_mode='linear',
-            direction_mode='unidirectional',
+            is_bidirectional=False,
             dropout=0., name=None):
   """CuDNN v5 RNN implementation.
 
@@ -894,13 +894,13 @@ def rnn_dnn(X, hidden_size, rnn_mode,
   input_mode : {'linear', 'skip'}
       linear: input will be multiplied by a biased matrix
       skip: No operation is performed on the input.  The size must
-      match the hidden size.
+      match the hidden size (`num_units`).
       (CuDNN docs: cudnnRNNInputMode_t)
-  direction_mode : {'unidirectional', 'bidirectional'}
-      unidirectional: The network operates recurrently from the
-                      first input to the last.
-      bidirectional: The network operates from first to last then from last
-                     to first and concatenates the results at each layer.
+  is_bidirectional : {'unidirectional', 'bidirectional'}
+      if True, bidirectional: The network operates from first to last then from last
+      to first and concatenates the results at each layer.
+      otherwise, unidirectional: The network operates recurrently from the
+      first input to the last.
   dropout: float (0.0-1.0)
       whether to enable dropout. With it is 0, dropout is disabled.
 
@@ -920,18 +920,19 @@ def rnn_dnn(X, hidden_size, rnn_mode,
   """
   if get_ngpu() == 0:
     raise Exception('This opt is not supported with CPU.')
-  if name is None: name = uuid()
   # ====== Check arguments ====== #
   if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
     raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
                      % rnn_mode)
+
   if input_mode not in ('linear', 'skip'):
     raise ValueError("input_mode=%s must be: 'linear', 'skip'" % input_mode)
   input_mode = 'linear_input' if input_mode == 'linear' else 'skip_input'
-  if direction_mode not in ('unidirectional', 'bidirectional'):
-    raise ValueError("direction_mode=%s must be: 'unidirectional', 'bidirectional'"
-                     % direction_mode)
-  is_bidirectional = direction_mode == 'bidirectional'
+
+  if is_bidirectional:
+    direction_mode = 'bidirectional'
+  else:
+    direction_mode = 'unidirectional'
 
   # ====== helper function ====== #
   def check_init_states(s0, nb_layers, batch_size):
@@ -945,82 +946,83 @@ def rnn_dnn(X, hidden_size, rnn_mode,
       s0 = repeat(s0, n=batch_size, axes=1)
     return s0
   # ====== create RNNBlock ====== #
-  from tensorflow.contrib import cudnn_rnn
+  from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
   input_shape = X.get_shape().as_list()
   if X.get_shape().ndims != 3:
     raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
-  if input_shape[-1] != hidden_size and 'skip' in input_mode:
+  if input_shape[-1] != num_units and 'skip' in input_mode:
     raise ValueError('In skip_input mode, input size must be equal to hidden size'
                      ', but input_size=%d != hidden_size=%d' %
-                     (input_shape[-1], hidden_size))
+                     (input_shape[-1], num_units))
   # IF we dimshuffle here, a lot of error concern GPUarray,
   # and cudnn will happen
   batch_size = tf.shape(X)[0] # native shape
-  if rnn_mode == 'lstm':
-    rnn = cudnn_rnn.CudnnLSTM(num_layers=num_layers,
-                              num_units=hidden_size,
-                              input_size=input_shape[-1],
-                              input_mode=input_mode,
-                              direction=direction_mode,
-                              dropout=dropout,
-                              seed=0)
-  else:
-    if rnn_mode == 'gru':
-      rnn_class = cudnn_rnn.CudnnGRU
-    elif rnn_mode == 'rnn_relu':
-      rnn_class = cudnn_rnn.CudnnRNNRelu
-    elif rnn_mode == 'rnn_tanh':
-      rnn_class = cudnn_rnn.CudnnRNNTanh
-    rnn = rnn_class(num_layers=num_layers,
-                    num_units=hidden_size,
-                    input_size=input_shape[-1],
-                    input_mode=input_mode,
-                    direction=direction_mode,
-                    dropout=dropout,
-                    seed=0)
+  input_size = input_shape[-1]
+  with tf.device('/cpu:0'):
+    num_params = cudnn_rnn_ops.cudnn_rnn_opaque_params_size(
+        rnn_mode=rnn_mode, num_layers=num_layers, num_units=num_units,
+        input_size=input_size, input_mode=input_mode, direction=direction_mode)
+    num_params = num_params.eval(session=get_session())
   # layer info (note in case of bidirectional, output from previous
   # layers are concatenated).
-  layer_info = [input_shape[-1], hidden_size] + \
-               [hidden_size * (2 if is_bidirectional else 1),
-                hidden_size] * (num_layers - 1)
-  with tf.device('/cpu:0'):
-    nb_params = rnn.params_size().eval(session=get_session())
-  # ====== create parameters ====== #
-  # check parameters
-  if parameters is None:
+  layer_info = [input_size, num_units] + \
+               [num_units * (2 if is_bidirectional else 1), num_units] * (num_layers - 1)
+  with tf.name_scope(name, "CudnnRNN"):
+    # ====== create parameters ====== #
+    # check parameters
+    if parameters is None:
+      if rnn_mode == 'lstm':
+        from odin.backend.rand import init_lstm as init_func
+      elif rnn_mode == 'gru':
+        from odin.backend.rand import init_gru as init_func
+      else:
+        from odin.backend.rand import init_rnn as init_func
+      parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
+                                   one_vector=True, return_variable=False,
+                                   bidirectional=True if is_bidirectional else False)
+                                   for i in range(num_layers)]).astype(floatX)
+      parameters = tf.Variable(parameters, name=name)
+    assert num_params == parameters.get_shape().as_list()[0], \
+        "Require %d parameters but only %d provided" % \
+        (num_params, parameters.get_shape()[0])
+    # check initial states
+    num_layers = num_layers * 2 if is_bidirectional else num_layers
+    h0 = tf.zeros(shape=(num_layers, batch_size, num_units), dtype=floatX, name='h0') \
+        if h0 is None else h0
+    h0 = check_init_states(h0, num_layers, batch_size)
+    args = {'input_h': h0}
+    # check initial memory
     if rnn_mode == 'lstm':
-      from odin.backend.init import lstm as init_func
-    elif rnn_mode == 'gru':
-      from odin.backend.init import gru as init_func
+      c0 = (tf.zeros(shape=(num_layers, batch_size, num_units), dtype=floatX, name='c0')
+            if rnn_mode == 'lstm' and c0 is None else c0)
+      c0 = check_init_states(c0, num_layers, batch_size)
+      args['input_c'] = c0
     else:
-      from odin.backend.init import rnn as init_func
-    parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                 one_vector=True, return_variable=False,
-                                 bidirectional=True if is_bidirectional else False)
-                                 for i in range(num_layers)]).astype(floatX)
-    parameters = tf.Variable(parameters, name=name)
-  assert nb_params == parameters.get_shape().as_list()[0], \
-      "Require %d parameters but only %d provided" % \
-      (nb_params, parameters.get_shape()[0])
-  # check initial states
-  num_layers = num_layers * 2 if is_bidirectional else num_layers
-  h0 = tf.zeros(shape=(num_layers, batch_size, hidden_size), dtype=floatX, name='h0') \
-      if h0 is None else h0
-  h0 = check_init_states(h0, num_layers, batch_size)
-  c0 = (tf.zeros(shape=(num_layers, batch_size, hidden_size), dtype=floatX, name='c0')
-        if rnn_mode == 'lstm' and c0 is None else c0)
-  c0 = check_init_states(c0, num_layers, batch_size)
-  # preprocess arguments
-  args = {'input_h': h0}
-  if rnn_mode == 'lstm':
-    args['input_c'] = c0
-  # ====== get output ====== #
-  output = rnn(input_data=tf.transpose(X, (1, 0, 2)),
-               params=parameters, is_training=bool(is_training()),
-               **args)
-  output = [tf.transpose(output[0], (1, 0, 2))] + list(output[1:])
-  set_shape(output[0], (input_shape[0], input_shape[1],
-                        hidden_size * (2 if is_bidirectional else 1)))
-  for o in output[1:]:
-    set_shape(o, (num_layers, input_shape[0], hidden_size))
-  return output
+      c0 = tf.constant([], dtype=floatX)
+    # ====== get output ====== #
+    kwargs = {
+        'inputs': tf.transpose(X, (1, 0, 2)), # [?, batch_size, input_size]
+        'input_h': h0, # [num_layers, batch_size, num_units]
+        'input_c': c0, # same shape as input_h
+        'params': parameters,
+        'rnn_mode': rnn_mode,
+        'input_mode': input_mode,
+        'direction': direction_mode,
+        'dropout': dropout,
+        'seed': get_random_state().randint(low=0, high=5218, dtype='int32'),
+        'name': name
+    }
+    (output, output_h, output_c) = cond_training(
+        train_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=True, **kwargs),
+        infer_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=False, **kwargs))
+    # ====== post processing ====== #
+    output = set_shape(tf.transpose(output, (1, 0, 2)),
+                       (input_shape[0], input_shape[1], num_units * (2 if is_bidirectional else 1)))
+    output_h = set_shape(output_h,
+                         (num_layers, input_shape[0], num_units))
+    rets = [output, output_h]
+    if rnn_mode == 'lstm':
+      output_c = set_shape(output_c,
+                           (num_layers, input_shape[0], num_units))
+      rets.append(output_c)
+  return tuple(rets)
