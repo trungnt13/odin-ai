@@ -288,14 +288,25 @@ def get_all_operations(otype=None, device=None, sort=False, scope=None,
         _ops_ID[op] = ID
   # filter out some op
   if otype is not None:
-    ops = [o for o in ops if _filter_string(otype, o.type)]
+    ops = [o for o in ops
+           if _filter_string(otype, o.type)]
   if device is not None:
-    ops = [o for o in ops if _filter_string(device, o.device)]
+    ops = [o for o in ops
+           if _filter_string(device, o.device)]
+  # ====== filter by scope ====== #
   if scope is not None:
-    scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
-    ops = [o for o in ops if len(scope_name_pattern.findall(o.name))]
+    scope = str(scope)
+    if len(scope) == 0:
+      ops = [o for o in ops
+             if '/' not in o.name]
+    else:
+      scope_name_pattern = re.compile('%s_?\d*\/' % scope)
+      ops = [o for o in ops
+             if len(scope_name_pattern.findall(o.name))]
+  # ====== filter by unique footprint ====== #
   if footprint is not None:
-    ops = [o for o in ops if get_operation_footprint(o) == footprint]
+    ops = [o for o in ops
+           if get_operation_footprint(o) == footprint]
   # sorted by OpID
   if sort and len(ops) > 1:
     ops = sorted(ops, key=lambda x: _ops_ID[x])
@@ -336,7 +347,7 @@ def get_operation_footprint(op):
   placeholder = []
   const = []
   ops = [op.type]
-  inputs = list(op._inputs)
+  inputs = list(op.inputs)
   while len(inputs) > 0:
     i = inputs.pop()
     o = i.op
@@ -347,7 +358,7 @@ def get_operation_footprint(op):
       placeholder.append(i)
     elif o.type == "Const":
       const.append(i)
-    inputs = list(o._inputs) + inputs
+    inputs = list(o.inputs) + inputs
   return ':'.join([get_normalized_name(v) for v in var]) + '|' +\
          ':'.join([get_normalized_name(p) for p in placeholder]) + '|' +\
          ':'.join([get_normalized_name(c) for c in const]) + '|' +\
@@ -362,6 +373,8 @@ def get_all_variables(scope=None, name=None, full_name=None,
   """
   Parameters
   ----------
+  scope: {str, None}
+      scope name which the Variables have been created
   name: str
       name of tensor (without variable scope)
   full_name: str
@@ -370,17 +383,27 @@ def get_all_variables(scope=None, name=None, full_name=None,
   var = []
   # ====== first get all available variable ====== #
   for k in graph_keys:
-    var += [i for i in tf.get_collection(k) if isinstance(i, tf.Variable)]
+    var += [i for i in tf.get_collection(k)
+            if isinstance(i, tf.Variable)]
   var = list(set(var))
-  # ====== start filtering ====== #
+  # filtering: start from general to detail
+  # ====== filter by scope ====== #
   if scope is not None:
-    scope_name_pattern = re.compile('%s_?\d*\/' % str(scope))
-    var = [v for v in var if len(scope_name_pattern.findall(v.name))]
+    scope = str(scope)
+    if len(scope) == 0:
+      var = [v for v in var
+             if '/' not in v.name]
+    else:
+      scope_name_pattern = re.compile('%s_?\d*\/')
+      var = [v for v in var
+             if len(scope_name_pattern.findall(v.name))]
+  # ====== filter by name ====== #
   if name is not None:
     name = as_tuple(name, t=string_types)
     var = [v for v in var
            if any((v.name.split('/')[-1] == n or
                    v.name.split('/')[-1] == n + ':0') for n in name)]
+  # ====== filter by fullname ====== #
   if full_name is not None:
     full_name = as_tuple(full_name, t=string_types)
     var = [v for v in var
@@ -389,21 +412,26 @@ def get_all_variables(scope=None, name=None, full_name=None,
   return var
 
 
-def get_all_tensors(name=None, full_name=None, device=None, scope=None):
+def get_all_tensors(scope=None, name=None, full_name=None, device=None):
   """
   Parameters
   ----------
+  scope: {str, None}
+      scope name which the Variables have been created
   name: str
       name of tensor (without variable scope)
   full_name: str
       name of tensor WITH variable scope.
+  device : {str, None}
+      name of the device to which this op has been assigned
+      (e.g. /cpu:0, or /gpu:0)
   """
   ops = get_all_operations(device=device, scope=scope, sort=False)
   alltensors = []
   for o in ops:
-    alltensors += list(o._inputs) + list(o._outputs)
-    for i in o._control_inputs:
-      alltensors += list(i._inputs) + list(i._outputs)
+    alltensors += list(o.inputs) + list(o._outputs)
+    for i in o.control_inputs:
+      alltensors += list(i.inputs) + list(i._outputs)
   alltensors = list(set(alltensors))
   # ====== filter out unsupport types ====== #
   if name is not None:
@@ -418,6 +446,12 @@ def get_all_tensors(name=None, full_name=None, device=None, scope=None):
                           n + ':0' == t.name) for n in full_name)]
   return alltensors
 
+
+def get_all_variables_or_tensors(scope=None, name=None, full_name=None):
+  var = get_all_variables(scope=scope, name=name, full_name=full_name)
+  if len(var) == 0:
+    var = get_all_tensors(scope=scope, name=name, full_name=full_name)
+  return var
 
 # ===========================================================================
 # ComputationGraph
@@ -665,7 +699,7 @@ class ComputationGraph(object):
       else:
         _travelled_down.append(op)
       # ====== get all variable ====== #
-      inputs = list(op._inputs)
+      inputs = list(op.inputs)
       tensors += inputs
       for i in inputs:
         tensors += get_all_tensor_trace_down(i)
@@ -681,7 +715,7 @@ class ComputationGraph(object):
         else:
           _travelled_up.append(op)
         # ====== get all variable ====== #
-        inputs = [i for i in op._inputs if i != x]
+        inputs = [i for i in op.inputs if i != x]
         outputs = list(op._outputs)
         tensors += inputs + outputs
         for o in outputs:
@@ -703,7 +737,7 @@ class ComputationGraph(object):
         for o in outputs:
           with o.graph.as_default():
             for op in get_all_operations(sort=False):
-              for t in list(op._inputs) + list(op._outputs):
+              for t in list(op.inputs) + list(op._outputs):
                 yield t
     # store all the updates embedded into the Tensor Variables
     variables = [o for o in self.outputs if is_variable(o)]

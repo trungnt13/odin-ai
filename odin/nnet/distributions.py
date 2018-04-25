@@ -1,11 +1,14 @@
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
+import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from six import add_metaclass
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from odin import backend as K
+from odin.config import randint
 from odin.utils.cache_utils import cache_memory
 from odin.backend.role import (add_role, VariationalMean, VariationalLogsigma,
                         WEIGHT, BIAS)
@@ -30,8 +33,8 @@ class Normal(object):
 class VariationalDense(NNOp):
 
   def __init__(self, num_units,
-               W_init=K.rand.symmetric_uniform,
-               b_init=K.rand.constant(0),
+               W_init=init_ops.random_uniform_initializer(seed=randint()),
+               b_init=init_ops.constant_initializer(0),
                activation=K.linear,
                seed=None, **kwargs):
     super(VariationalDense, self).__init__(**kwargs)
@@ -57,7 +60,7 @@ class VariationalDense(NNOp):
 
   def sampling(self, x):
     mean, logsigma = self.get_mean_logsigma(x)
-    epsilon = K.random_normal(shape=K.get_shape(mean), mean=0.0, std=1.0,
+    epsilon = tf.random_normal(shape=K.get_shape(mean), mean=0.0, stddev=1.0,
                               dtype=mean.dtype)
     z = mean + K.exp(logsigma) * epsilon
     return z

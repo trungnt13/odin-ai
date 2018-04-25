@@ -19,6 +19,7 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
+from odin.config import randint
 from odin.utils.decorators import functionable
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
@@ -28,7 +29,7 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
 from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
-
+from tensorflow.python.ops import init_ops
 
 # ===========================================================================
 # Other helpers
@@ -1230,7 +1231,7 @@ class NNOp(object):
 
 _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
-                    K.rand.constant, NNOp, VariableDesc, type)
+                    init_ops.Initializer, NNOp, VariableDesc, type)
 
 
 # ===========================================================================
@@ -1344,8 +1345,8 @@ class NNSliceOp(NNOp):
 class Dense(NNOp):
 
   def __init__(self, num_units,
-               W_init=K.rand.glorot_uniform,
-               b_init=K.rand.constant(0),
+               W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+               b_init=init_ops.constant_initializer(0),
                activation=K.linear,
                **kwargs):
     super(Dense, self).__init__(**kwargs)
@@ -1380,78 +1381,3 @@ class Dense(NNOp):
       activation = activation + self.get('b')
     # Nonlinearity might change the shape of activation
     return self.activation(activation)
-
-
-class ParametricRectifier(NNOp):
-  """ This class is adpated from Lasagne:
-  Original work Copyright (c) 2014-2015 lasagne contributors
-  All rights reserved.
-  LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-  A layer that applies parametric rectify activation to its input
-  following [1]_ (http://arxiv.org/abs/1502.01852)
-  Equation for the parametric rectifier linear unit:
-  :math:`\\varphi(x) = \\max(x,0) + \\alpha \\min(x,0)`
-  Parameters
-  ----------
-  incoming : a :class:`Layer` instance or a tuple
-      The layer feeding into this layer, or the expected input shape
-  alpha : shared variable, expression, numpy array or call-able
-      Initial value, expression or initializer for the alpha values. The
-      shape must match the incoming shape, skipping those axes the alpha
-      values are shared over (see the example below).
-      See :func:`lasagne.utils.create_params` for more information.
-  shared_axes : 'auto', 'all', int or tuple of int
-      The axes along which the parameters of the rectifier units are
-      going to be shared. If ``'auto'`` (the default), share over all axes
-      except for the second - this will share the parameter over the
-      minibatch dimension for dense layers, and additionally over all
-      spatial dimensions for convolutional layers. If ``'all'``, share over
-      all axes, which corresponds to a single scalar parameter.
-  **kwargs
-      Any additional keyword arguments are passed to the `Layer` superclass.
-   References
-  ----------
-  .. [1] K He, X Zhang et al. (2015):
-     Delving Deep into Rectifiers: Surpassing Human-Level Performance on
-     ImageNet Classification,
-     http://link.springer.com/chapter/10.1007/3-540-49430-8_2
-  Notes
-  -----
-  The alpha parameter dimensionality is the input dimensionality minus the
-  number of axes it is shared over, which matches the same convention as
-  the :class:`BiasLayer`.
-  >>> layer = ParametricRectifierLayer((20, 3, 28, 28), shared_axes=(0, 3))
-  >>> layer.alpha.get_value().shape
-  (3, 28)
-  """
-
-  def __init__(self, alpha_init=K.rand.constant(0.25),
-               shared_axes='auto', **kwargs):
-    super(ParametricRectifier, self).__init__(**kwargs)
-    self.alpha_init = alpha_init
-    self.shared_axes = shared_axes
-
-  # ==================== abstract methods ==================== #
-  def _initialize(self):
-    if self.shared_axes == 'auto':
-      self.shared_axes = (0,) + tuple(range(2, len(self.input_shape)))
-    elif self.shared_axes == 'all':
-      self.shared_axes = tuple(range(len(self.input_shape)))
-    elif isinstance(self.shared_axes, int):
-      self.shared_axes = (self.shared_axes,)
-
-    shape = [size for axis, size in enumerate(self.input_shape)
-             if axis not in self.shared_axes]
-    if any(size is None for size in shape):
-      raise ValueError("ParametricRectifierLayer needs input sizes for "
-                       "all axes that alpha's are not shared over.")
-    self.alpha = self.get_variable(initializer=self.alpha_init,
-        shape=shape, name="alpha", roles=Parameter)
-
-  def _apply(self, X):
-    axes = iter(range(K.ndim(self.alpha)))
-    pattern = ['x' if input_axis in self.shared_axes
-               else next(axes)
-               for input_axis in range(K.ndim(x))]
-    alpha = K.dimshuffle(self.alpha, pattern)
-    return K.relu(x, alpha)

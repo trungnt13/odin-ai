@@ -11,12 +11,125 @@ import numpy as np
 import scipy as sp
 
 import tensorflow as tf
+from tensorflow.python.ops import init_ops
+
 from odin.config import get_session, get_ngpu, get_floatX, get_random_state
-from odin.utils import as_tuple, uuid, is_number
-from .helpers import set_shape, is_tensor, is_training, cond_training
+from odin.utils import as_tuple, uuid, is_number, is_string, is_same_shape
+
+from . import role
+from .helpers import (set_shape, is_tensor, is_training, cond_training,
+                      get_all_variables, get_all_variables_or_tensors,
+                      get_all_tensors, is_variable, set_value)
 
 floatX = get_floatX()
 EPS = np.finfo(floatX).eps
+
+def variable(value=None, shape=None, dtype=None, name=None, roles=[],
+             initialize=False):
+  '''Instantiates a tensor, automatically initialize the variable
+  in tensorflow
+
+  Parameters
+  ----------
+  value: numpy array
+      initial value of the tensor.
+      * string: interpreted as variable (or tensor) name,
+        searching for variable (or tensor) with given name,
+        then copy it value to new variable
+      * callable: a function with input arguments include: shape and dtype
+      * number:
+      * numpy.ndarray:
+      * Variable:
+      * Tensor:
+  dtype: dtype
+      tensor type.
+  name: str
+      optional name string for the tensor.
+  roles: {Role, list of Role}
+      given Role for initialized Variable from `odin.backend.role`
+  initialize : bool
+      if True, call Session run to initialize the variable.
+
+  Returns
+  -------
+      Tensor variable instance.
+  '''
+  if dtype is None:
+    dtype = floatX
+  #### Check if valid value or shape is given
+  if value is not None or shape is not None:
+    # 1. initializing function.
+    if is_string(value):
+      value = get_all_variables_or_tensors(name=value)
+      if len(value) == 0:
+        raise ValueError("Cannot find any variable or tensor with name: "
+            "'%s' for the initializer." % value)
+      value = value[0]
+    # 2. initializing funciton
+    elif hasattr(value, '__call__'):
+      value = value(shape=shape)
+      if dtype is not None:
+        value = tf.cast(value, dtype=dtype)
+    # 3. is a scalar value
+    elif is_number(value):
+      value = tf.constant(value=value, dtype=dtype, shape=shape)
+    # 4. Numpy ndarray.
+    elif isinstance(value, np.ndarray):
+      pass
+    # 5. Shared variable, just check the shape.
+    elif is_variable(value):
+      _shape = value.get_shape().as_list()
+      if shape is not None and tuple(shape) != tuple(_shape):
+        raise Exception('Require variable with shape=%s, but was given different '
+                        'shape=%s' % (str(shape), str(_shape)))
+    # 6. expression, we can only check number of dimension.
+    elif is_tensor(value):
+      if shape is not None and not is_same_shape(value.shape, shape):
+        raise Exception("Expected shape: %s, given Tensor with shape: %s"
+                        % (shape, value.shape))
+    elif value is not None:
+      raise ValueError("Unsupport for given set of arguments: value=%s; shape=%s" %
+                       (type(value), type(shape)))
+  #### matching the shape of `value` and given `shape`
+  if value is not None:
+    v_shape = value.shape
+    if hasattr(v_shape, 'as_list'):
+      v_shape = as_tuple(v_shape.as_list())
+    if shape is not None:
+      if not is_same_shape(v_shape, shape):
+        raise ValueError("Given `value` with shape=%s, but require shape=%s" %
+                        (v_shape, shape))
+    else:
+      shape = v_shape
+  #### Try to find cached variable
+  variable = None
+  if name is not None:
+    for v in get_all_variables(scope=tf.get_variable_scope().name,
+                               name=name):
+      if shape is not None and not is_same_shape(v.shape, shape):
+        continue
+      variable = v
+      break
+  if variable is None:
+    #### try one more time getting the Variable
+    if value is None:
+      variable = tf.get_variable(name=name, shape=shape, dtype=dtype)
+      if variable is None:
+        raise RuntimeError("Cannot find or create Variable given following "
+          "information: value=%s; shape=%s; dtype=%s; name=%s; roles=%s"
+          % (str(value), str(shape), str(dtype), str(name), str(roles)))
+    #### create totally new variable
+    else:
+      variable = tf.Variable(initial_value=value, dtype=dtype,
+                             expected_shape=shape, name=name)
+      # initialize variable
+      if initialize:
+        get_session(graph=variable.graph).run(variable.initializer)
+  #### found exist Variable, set new value for it
+  elif value is not None:
+    set_value(x=variable, value=value)
+  #### add roles and return
+  return role.add_role(variable, roles)
 
 # ===========================================================================
 # Helper
@@ -865,13 +978,12 @@ def rnn_decorator(*args, **kwargs):
 
 
 def cudnn_rnn(X, num_units, rnn_mode,
-            num_layers=1,
-            parameters=None,
-            h0=None, c0=None,
-            input_mode='linear',
-            is_bidirectional=False,
-            dropout=0., name=None):
-  """CuDNN v5 RNN implementation.
+              num_layers=1, parameters=None,
+              h0=None, c0=None,
+              input_mode='linear',
+              is_bidirectional=False,
+              dropout=0., name=None):
+  """CuDNN v7 RNN implementation.
 
   Parameters
   ----------
@@ -977,13 +1089,16 @@ def cudnn_rnn(X, num_units, rnn_mode,
         from odin.backend.rand import init_gru as init_func
       else:
         from odin.backend.rand import init_rnn as init_func
-      parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                   one_vector=True, return_variable=False,
+      parameters = np.concatenate([init_func(
+                                   input_dim=layer_info[i * 2],
+                                   hidden_dim=layer_info[i * 2 + 1],
+                                   one_vector=True,
+                                   skip_input=True if 'skip' in input_mode else False,
                                    bidirectional=True if is_bidirectional else False)
                                    for i in range(num_layers)]).astype(floatX)
       parameters = tf.Variable(parameters, name=name)
     assert num_params == parameters.get_shape().as_list()[0], \
-        "Require %d parameters but only %d provided" % \
+        "Require %d parameters but %d provided" % \
         (num_params, parameters.get_shape()[0])
     # check initial states
     num_layers = num_layers * 2 if is_bidirectional else num_layers

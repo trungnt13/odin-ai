@@ -134,6 +134,38 @@ def UnitTimer(factor=1, name=None):
 # ===========================================================================
 # Basics
 # ===========================================================================
+def is_same_shape(shape1, shape2):
+  """
+  Return
+  ------
+  True if two objects is the same shape tuple,
+  otherwise, False
+  """
+  # if is string, evaluate to python object
+  if is_string(shape1):
+    shape1 = eval(shape1)
+  if is_string(shape2):
+    shape2 = eval(shape2)
+  # tensorflow TensorShape
+  if hasattr(shape1, 'as_list'):
+    shape1 = shape1.as_list()
+  if hasattr(shape2, 'as_list'):
+    shape2 = shape2.as_list()
+  # if is number, convert to shape tuple
+  if is_number(shape1) or shape1 is None:
+    shape1 = (shape1,)
+  shape1 = as_tuple(shape1)
+  if is_number(shape2) or shape2 is None:
+    shape2 = (shape2,)
+  shape2 = as_tuple(shape2)
+  # check the number of dimension
+  if len(shape1) != len(shape2):
+    return False
+  for s1, s2 in zip(shape1, shape2):
+    if s1 is not None and s2 is not None and s1 != s2:
+      return False
+  return True
+
 def is_fileobj(f):
   """ Check if an object `f` is intance of FileIO object created
   by `open()`"""
@@ -147,7 +179,6 @@ def is_callable(x):
 
 def is_string(s):
   return isinstance(s, string_types)
-
 
 def is_path(path):
   if is_string(path):
@@ -804,7 +835,6 @@ def as_tuple(x, N=None, t=None):
                     "of {0}, got {1} instead".format(t.__name__, x))
   return x
 
-
 def as_tuple_of_shape(x):
   if not isinstance(x, (tuple, list)):
     x = (x,)
@@ -812,10 +842,8 @@ def as_tuple_of_shape(x):
     x = (x,)
   return x
 
-
 def as_list(x, N=None, t=None):
   return list(as_tuple(x, N, t))
-
 
 def axis_normalize(axis, ndim,
                    return_tuple=False):

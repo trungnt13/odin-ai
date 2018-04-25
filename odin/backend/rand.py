@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from odin.utils import uuid, as_tuple
 from odin.config import get_rng, CONFIG, randint
@@ -18,7 +19,6 @@ def random_binomial(shape, p, dtype=floatX, seed=None, name="RandomBinomal"):
         tf.random_uniform(shape, minval=0., maxval=1., dtype=dtype, seed=seed) <= p,
         tf.ones(shape, dtype=dtype),
         tf.zeros(shape, dtype=dtype))
-
 
 # ===========================================================================
 # Noise
@@ -152,157 +152,35 @@ def apply_noise(x, level=0.075, noise_dims=None, noise_type='gaussian',
   with tf.variable_scope(name):
     return tf.cond(is_training(), training_fn, inference_fn)
 
-
-# ===========================================================================
-# Special random algorithm for weights initialization
-# ===========================================================================
-def normal(shape, mean=0., std=1.):
-  return np.cast[floatX](
-      get_rng().normal(mean, std, size=shape))
-
-
-def uniform(shape, range=0.05):
-  if isinstance(range, (int, float)):
-    range = (-abs(range), abs(range))
-  return np.cast[floatX](
-      get_rng().uniform(low=range[0], high=range[1], size=shape))
-
-
-class constant(object):
-
-  def __init__(self, val):
-    super(constant, self).__init__()
-    self.__name__ = 'constant'
-    self.val = val
-
-  def __call__(self, shape):
-    return np.cast[floatX](np.zeros(shape) + self.val)
-
-
-def symmetric_uniform(shape, range=0.01, std=None, mean=0.0):
-  if std is not None:
-    a = mean - np.sqrt(3) * std
-    b = mean + np.sqrt(3) * std
-  else:
-    try:
-      a, b = range  # range is a tuple
-    except TypeError:
-      a, b = -range, range  # range is a number
-  return np.cast[floatX](
-      get_rng().uniform(low=a, high=b, size=shape))
-
-
-def glorot_uniform(shape, gain=1.0, c01b=False):
-  orig_shape = shape
-  if c01b:
-    if len(shape) != 4:
-      raise RuntimeError(
-          "If c01b is True, only shapes of length 4 are accepted")
-    n1, n2 = shape[0], shape[3]
-    receptive_field_size = shape[1] * shape[2]
-  else:
-    if len(shape) < 2:
-      shape = (1,) + tuple(shape)
-    n1, n2 = shape[:2]
-    receptive_field_size = np.prod(shape[2:])
-
-  std = gain * np.sqrt(2.0 / ((n1 + n2) * receptive_field_size))
-  a = 0.0 - np.sqrt(3) * std
-  b = 0.0 + np.sqrt(3) * std
-  return np.cast[floatX](
-      get_rng().uniform(low=a, high=b, size=orig_shape))
-
-
-def glorot_normal(shape, gain=1.0, c01b=False):
-  orig_shape = shape
-  if c01b:
-    if len(shape) != 4:
-      raise RuntimeError(
-          "If c01b is True, only shapes of length 4 are accepted")
-    n1, n2 = shape[0], shape[3]
-    receptive_field_size = shape[1] * shape[2]
-  else:
-    if len(shape) < 2:
-      shape = (1,) + tuple(shape)
-    n1, n2 = shape[:2]
-    receptive_field_size = np.prod(shape[2:])
-
-  std = gain * np.sqrt(2.0 / ((n1 + n2) * receptive_field_size))
-  return np.cast[floatX](
-      get_rng().normal(0.0, std, size=orig_shape))
-
-
-def he_normal(shape, gain=1.0, c01b=False):
-  if gain == 'relu':
-    gain = np.sqrt(2)
-
-  if c01b:
-    if len(shape) != 4:
-      raise RuntimeError(
-          "If c01b is True, only shapes of length 4 are accepted")
-    fan_in = np.prod(shape[:3])
-  else:
-    if len(shape) <= 2:
-      fan_in = shape[0]
-    elif len(shape) > 2:
-      fan_in = np.prod(shape[1:])
-
-  std = gain * np.sqrt(1.0 / fan_in)
-  return np.cast[floatX](
-      get_rng().normal(0.0, std, size=shape))
-
-
-def he_uniform(shape, gain=1.0, c01b=False):
-  if gain == 'relu':
-    gain = np.sqrt(2)
-
-  if c01b:
-    if len(shape) != 4:
-      raise RuntimeError(
-          "If c01b is True, only shapes of length 4 are accepted")
-    fan_in = np.prod(shape[:3])
-  else:
-    if len(shape) <= 2:
-      fan_in = shape[0]
-    elif len(shape) > 2:
-      fan_in = np.prod(shape[1:])
-
-  std = gain * np.sqrt(1.0 / fan_in)
-  a = 0.0 - np.sqrt(3) * std
-  b = 0.0 + np.sqrt(3) * std
-  return np.cast[floatX](
-      get_rng().uniform(low=a, high=b, size=shape))
-
-
-def orthogonal(shape, gain=1.0):
-  if gain == 'relu':
-    gain = np.sqrt(2)
-
-  if len(shape) < 2:
-    raise RuntimeError("Only shapes of length 2 or more are supported, but "
-                       "given shape:%s" % str(shape))
-
-  flat_shape = (shape[0], np.prod(shape[1:]))
-  a = get_rng().normal(0.0, 1.0, flat_shape)
-  u, _, v = np.linalg.svd(a, full_matrices=False)
-  # pick the one with the correct shape
-  q = u if u.shape == flat_shape else v
-  q = q.reshape(shape)
-  return np.cast[floatX](gain * q)
-
-
 # ===========================================================================
 # Fast initialization
 # ===========================================================================
-def init_rnn(input_dim, hidden_dim,
-        W_init=glorot_uniform, b_init=constant(0.),
-        bidirectional=False, one_vector=False,
-        return_variable=True, name=None):
+# CUDNN_LSTM_PARAMS_PER_LAYER = 8
+# CUDNN_GRU_PARAMS_PER_LAYER = 6
+# CUDNN_RNN_TANH_PARAMS_PER_LAYER = 2
+# CUDNN_RNN_RELU_PARAMS_PER_LAYER = 2
+
+def _validate_number_of_params(params, N, name):
+  try:
+    if not isinstance(params, (tuple, list)):
+      params = (params,)
+    params = as_tuple(params, N=N)
+  except Exception:
+    raise RuntimeError("Parameter name: '%s'. Expected: %d, but given: %d"
+      % (str(name), int(N), len(params)))
+  return params
+
+def init_rnn(input_dim, hidden_dim, num_layers=1,
+             W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+             b_init=init_ops.constant_initializer(value=0),
+             W_i=None, b_wi=None, R_h=None, b_wh=None,
+             skip_input=False, bidirectional=False,
+             cudnn_vector=False, name=None):
   """ Fast initalize all Standard RNN weights
 
   Parameters
   ----------
-  one_vector: bool
+  cudnn_vector: bool
       if True, all the weights are flatten and concatenated into 1 big vector
   return_variable: bool
       if False, only return the numpy array
@@ -314,15 +192,13 @@ def init_rnn(input_dim, hidden_dim,
   [W_i, b_wi, R_h, b_wh]
 
   """
-  if name is None: name = uuid()
+  num_dirs = 2 if bidirectional else 1
+  num_layers = num_dirs * num_layers
+  W_i = _validate_number_of_params(W_i, N=num_layers, name='W_i')
+  b_wi = _validate_number_of_params(b_wi, N=num_layers, name='b_wi')
+  R_h = _validate_number_of_params(R_h, N=num_layers, name='R_h')
+  b_wh = _validate_number_of_params(b_wh, N=num_layers, name='b_wh')
 
-  def init():
-    W_i = W_init((input_dim, hidden_dim))
-    b_wi = b_init((hidden_dim))
-    R_h = W_init((hidden_dim, hidden_dim))
-    b_wh = b_init((hidden_dim))
-    return [W_i, b_wi, R_h, b_wh]
-  params = init() + init() if bidirectional else init()
   roles = [Weight, Bias]
   if one_vector:
     params = [np.concatenate([p.flatten() for p in params])]
@@ -345,9 +221,14 @@ def init_rnn(input_dim, hidden_dim,
 
 
 def init_lstm(input_dim, hidden_dim,
-        W_init=glorot_uniform, b_init=constant(0.),
-        bidirectional=False, one_vector=False,
-        return_variable=True, name=None):
+              W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+              b_init=init_ops.constant_initializer(value=0),
+              W_i=None, b_wi=None, R_i=None, b_ri=None,
+              W_f=None, b_wf=None, R_f=None, b_rf=None,
+              W_c=None, b_wc=None, R_c=None, b_rc=None,
+              W_o=None, b_wo=None, R_o=None, b_ro=None,
+              skip_input=False, bidirectional=False,
+              one_vector=False, name=None):
   """ Fast initalize all Standard LSTM weights (without peephole connection)
 
   Parameters
@@ -410,11 +291,14 @@ def init_lstm(input_dim, hidden_dim,
       add_role(p, roles[i % 2])
   return params if len(params) > 1 else params[0]
 
-
 def init_gru(input_dim, hidden_dim,
-        W_init=glorot_uniform, b_init=constant(0.),
-        bidirectional=False, one_vector=False,
-        return_variable=True, name=None):
+             W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+             b_init=init_ops.constant_initializer(value=0),
+             W_r=None, b_wr=None, R_r=None, b_rr=None,
+             W_i=None, b_wi=None, R_i=None, b_ru=None,
+             W_h=None, b_wh=None, R_h=None, b_rh=None,
+             skip_input=False, bidirectional=False,
+             one_vector=False, name=None):
   """ Fast initalize all Standard GRU weights
 
   Parameters
@@ -432,8 +316,6 @@ def init_gru(input_dim, hidden_dim,
    W_h, b_wh, R_r, b_rr,
    R_i, b_ru, R_h, b_rh]
   """
-  if name is None: name = uuid()
-
   def init():
     W_r = W_init((input_dim, hidden_dim))
     b_wr = b_init((hidden_dim))

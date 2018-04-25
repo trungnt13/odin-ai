@@ -33,61 +33,6 @@ def variable_dtype(dtype):
   yield
   floatX = _old_floatX
 
-def variable(value=None, shape=None, dtype=None, name=None, roles=[],
-             initialize=False):
-  '''Instantiates a tensor, automatically initialize the variable
-  in tensorflow
-
-  Parameters
-  ----------
-  value: numpy array
-      initial value of the tensor.
-  dtype: dtype
-      tensor type.
-  name: str
-      optional name string for the tensor.
-  roles: {Role, list of Role}
-      given Role for initialized Variable from `odin.backend.role`
-  initialize : bool
-      if True, call Session run to initialize the variable.
-
-  Returns
-  -------
-      Tensor variable instance.
-  '''
-  # check name and value
-  if value is not None:
-    value = np.array(value)
-  if dtype is None:
-    dtype = floatX
-  #### Found cached variable, just load new value into it
-  if name is not None:
-    for v in get_all_variables(scope=tf.get_variable_scope().name,
-                               name=name):
-      v_shape = tuple(v.get_shape().as_list())
-      # set new value for variable
-      if (value is not None and v_shape != value.shape) or \
-      (shape is not None and v_shape != as_tuple(shape)):
-        raise ValueError("Pre-defined variable with name: %s and"
-            " shape: %s, which is different from given shape: %s"
-            % (name, v_shape,
-                value.shape if value is not None else shape))
-      # just get the variable
-      return role.add_role(v, roles)
-  #### create totally new variable
-  if value is None:
-    variable = tf.get_variable(name=name, shape=shape)
-  else:
-    if shape is not None and value.shape != tuple(shape):
-      raise ValueError("Given value has shape:%s, but the given shape is"
-                       ":%s." % (value.shape, shape))
-    variable = tf.Variable(value, dtype=dtype, name=name)
-  # initialize variable
-  if initialize:
-    get_session(graph=variable.graph).run(variable.initializer)
-  return role.add_role(variable, roles)
-
-
 def initialize_all_variables(vars=None):
   """ This function will automatically check if the variables
   are initialized, and only perform initialization for

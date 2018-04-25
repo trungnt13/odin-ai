@@ -9,13 +9,12 @@ import timeit
 from six.moves import zip, range, cPickle
 
 import numpy as np
+import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from odin import backend as K
 from odin import nnet as N
 from odin.config import get_ngpu, get_floatX, get_backend
-
-import lasagne
-
 
 np.random.seed(12082518)
 
@@ -248,7 +247,7 @@ class RNNTest(unittest.TestCase):
                 for rnn_mode in ['gru', 'lstm', 'rnn_relu', 'rnn_tanh']:
                     for init_state, init_state_name in zip([
                         None, # None init
-                        K.rand.uniform, # function init
+                        init_ops.random_uniform_initializer(), # function init
                         K.variable(np.random.rand(real_layers, 1, hidden_size)), # variable
                         K.variable(np.random.rand(real_layers, batch_size, hidden_size)), # variable
                         K.zeros(shape=(real_layers, 1, hidden_size)),

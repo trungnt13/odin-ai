@@ -1,8 +1,10 @@
 from __future__ import print_function, division, absolute_import
 
 import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from odin import backend as K
+from odin.config import randint
 from .base import NNOp
 
 
@@ -23,7 +25,7 @@ class Embedding(NNOp):
   """
 
   def __init__(self, input_size, output_size,
-               W_init=K.rand.uniform, **kwargs):
+               W_init=init_ops.random_uniform_initializer(seed=randint()), **kwargs):
     super(Embedding, self).__init__(**kwargs)
     self.input_size = input_size
     self.output_size = output_size

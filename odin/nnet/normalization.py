@@ -3,11 +3,13 @@ from __future__ import print_function, division, absolute_import
 from .base import NNOp
 
 from odin import backend as K
+from odin.config import randint
 from odin.utils import as_tuple
 from odin.backend.role import (BatchNormPopulationMean, BatchNormScaleParameter,
                         BatchNormPopulationInvStd, BatchNormShiftParameter)
-import tensorflow as tf
 
+import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 class BatchNorm(NNOp):
   """ This class is adpated from Lasagne:
@@ -132,8 +134,10 @@ class BatchNorm(NNOp):
   """
 
   def __init__(self, axes='auto', epsilon=1e-4, alpha=0.1,
-               beta_init=K.rand.constant(0), gamma_init=K.rand.constant(1),
-               mean_init=K.rand.constant(0), var_init=K.rand.constant(1),
+               beta_init=init_ops.constant_initializer(0),
+               gamma_init=init_ops.constant_initializer(1),
+               mean_init=init_ops.constant_initializer(0),
+               var_init=init_ops.constant_initializer(1),
                noise_level=None, noise_dims='auto',
                activation=K.linear, **kwargs):
     super(BatchNorm, self).__init__(**kwargs)

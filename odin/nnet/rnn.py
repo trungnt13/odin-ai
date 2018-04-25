@@ -8,8 +8,10 @@ from itertools import chain
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import rnn
+from tensorflow.python.ops import init_ops
 
 from odin import backend as K
+from odin.config import randint
 from odin.backend.role import (InitialState, Weight, Bias, Parameter,
                                has_roles, BatchNormShiftParameter,
                                BatchNormScaleParameter,
@@ -39,13 +41,13 @@ def _init_input2hidden(ops, rnn_mode, input_mode, W_init, input_dims, hidden_dim
     ops.get_variable(initializer=W_init, shape=(input_dims, hidden_dims * N),
                      name='W_in', roles=Weight)
     if input_mode == 'norm':
-      ops.get_variable(initializer=K.rand.constant(0.), shape=(hidden_dims * N,),
+      ops.get_variable(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
                        name='beta', roles=BatchNormShiftParameter)
-      ops.get_variable(initializer=K.rand.constant(1.), shape=(hidden_dims * N,),
+      ops.get_variable(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
                        name='gamma', roles=BatchNormScaleParameter)
-      ops.get_variable(initializer=K.rand.constant(0.), shape=(hidden_dims * N,),
+      ops.get_variable(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
                        name='mean', roles=BatchNormPopulationMean)
-      ops.get_variable(initializer=K.rand.constant(1.), shape=(hidden_dims * N,),
+      ops.get_variable(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
                        name='inv_std', roles=BatchNormPopulationInvStd)
   # skip input mode
   elif input_dims != hidden_dims and \
@@ -71,9 +73,9 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
       s0 = nnops.config.create_params(
           s0, shape=_, name=name, roles=InitialState)
     # ====== check s0 shape ====== #
-    init_shape = s0.get_shape()
-    if s0.get_shape().ndims == 2:
-      if K.get_shape(s0)[-1] != hidden_size:
+    init_shape = s0.shape
+    if s0.shape.ndims == 2:
+      if s0.shape[-1].value != hidden_size:
         raise ValueError('init state has %d dimension, but the hidden_size=%d' %
                         (init_shape[-1], hidden_size))
     elif init_shape[::2] != (nb_layers, hidden_size):
@@ -358,8 +360,8 @@ class CudnnRNN(NNOp):
   """
 
   def __init__(self, num_units,
-          W_init=K.rand.glorot_uniform,
-          b_init=K.rand.constant(0.),
+          W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+          b_init=init_ops.constant_initializer(0.),
           rnn_mode='lstm', num_layers=1,
           input_mode='linear',
           bidirectional=False,
@@ -401,11 +403,11 @@ class CudnnRNN(NNOp):
                  [self.num_units * (2 if self.bidirectional else 1),
                   self.num_units] * (self.num_layers - 1)
     if self.rnn_mode == 'lstm':
-      from odin.backend.rand import lstm as init_func
+      from odin.backend.rand import init_lstm as init_func
     elif self.rnn_mode == 'gru':
-      from odin.backend.rand import gru as init_func
+      from odin.backend.rand import init_gru as init_func
     else:
-      from odin.backend.rand import rnn as init_func
+      from odin.backend.rand import init_rnn as init_func
     # initialize each parameter in params_split=True
     if self.params_split:
       with tf.variable_scope(self.name):
@@ -417,7 +419,7 @@ class CudnnRNN(NNOp):
                       for i in range(self.num_layers)]
       # print([(j.name, j.tag.roles) for i in parameters for j in i]); exit()
       for p in chain(*parameters):
-        self.get_variable(initializer=p, shape=p.get_shape(),
+        self.get_variable(initializer=p, shape=p.shape,
                           name=p.name.split(':')[0].split('/')[1],
                           roles=Parameter)
     # else initialize all in 1 big vector

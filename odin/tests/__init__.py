@@ -4,23 +4,23 @@ import unittest
 
 
 def run(device='gpu'):
-    tests = [
-        # 'utils_test',
-        # 'signal_test',
-        # 'fuel_test',
-        # 'backend_test',
-        # 'save_test',
-        'nnet_test',
-        # 'rnn_test',
-        # 'compare_test',
-        # 'model_test'
-    ]
-    print('*NOTE*: some of the tests probably failed on float32 because of '
-          'numerical instable, however, they worked on float64.')
-    import os
-    os.environ['ODIN'] = '%s,float32' % (device)
-    for t in tests:
-        print('\n************ Running: %s ************' % t)
-        exec('from . import %s' % t)
-        tests = unittest.TestLoader().loadTestsFromModule(globals()[t])
-        unittest.TextTestRunner(verbosity=2).run(tests)
+  tests = [
+      # 'utils_test',
+      # 'signal_test',
+      # 'fuel_test',
+      'backend_test',
+      # 'save_test',
+      # 'nnet_test',
+      # 'rnn_test',
+      # 'compare_test',
+      # 'model_test'
+  ]
+  print('*NOTE*: some of the tests probably failed on float32 because of '
+        'numerical instable, however, they worked on float64.')
+  import os
+  os.environ['ODIN'] = '%s,float32' % (device)
+  for t in tests:
+    print('\n************ Running: %s ************' % t)
+    exec('from . import %s' % t)
+    tests = unittest.TestLoader().loadTestsFromModule(globals()[t])
+    unittest.TextTestRunner(verbosity=2).run(tests)

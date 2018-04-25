@@ -2,8 +2,10 @@ from __future__ import division, absolute_import
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from odin import backend as K
+from odin.config import randint
 from odin.utils import as_tuple, is_string
 from odin.backend.role import ConvKernel, Bias
 from .base import NNOp
@@ -178,7 +180,8 @@ class Conv(NNOp):
   """
 
   def __init__(self, num_filters, filter_size, strides=1, pad='valid',
-               W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
+               W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+               b_init=init_ops.constant_initializer(0),
                untie_biases=False, activation=K.linear,
                dilation=1, **kwargs):
     super(Conv, self).__init__(**kwargs)
@@ -278,7 +281,8 @@ class Conv(NNOp):
 class TransposeConv(Conv):
 
   def __init__(self, num_filters, filter_size, strides=1, pad='valid',
-               W_init=K.rand.glorot_uniform, b_init=K.rand.constant(0),
+               W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+               b_init=init_ops.constant_initializer(0),
                untie_biases=False, activation=K.linear,
                dilation=1, output_shape=None, **kwargs):
     super(TransposeConv, self).__init__(num_filters=num_filters,

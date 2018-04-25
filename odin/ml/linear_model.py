@@ -5,6 +5,7 @@ import pickle
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
 from odin.utils import (is_number, uuid, batching, as_tuple, Progbar,
                         one_hot, wprint, ctext, is_string)
@@ -321,9 +322,9 @@ class LogisticRegression(BaseEstimator, Evaluable):
       # create the model and initialize
       with K.variable_dtype(dtype=self.dtype):
         self._model = N.Dense(num_units=self.nb_classes,
-                              W_init=K.rand.glorot_uniform,
-                              b_init=b_init,
-                              activation=K.linear)
+                          W_init=init_ops.glorot_uniform_initializer(seed=self._rand_state.randint()),
+                          b_init=b_init,
+                          activation=K.linear)
         y_logits = self._model(self._X)
       y_prob = fn_activation(y_logits)
       # applying class weights
