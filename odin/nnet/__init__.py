@@ -18,7 +18,7 @@ from odin.utils import uuid, bin2folder, folder2bin
 # Helper method for serialize NNOp
 # ===========================================================================
 def serialize(nnops, path=None, save_variables=True, variables=[],
-              output_mode='folder', override=False):
+              binary_output=False, override=False):
   """ Serialize NNOp or list of NNOp and all necessary variables
   to a folder.
 
@@ -31,12 +31,14 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
       if True, save all variables related to all given NNOps
   variables: list of tensorflow Variables
       additional list of variables to be saved with this model
-  output_mode: {'file', 'folder', 'bin'}
-      if 'folder' (by default), original way tensorflow serialize
-      all variables.
-      if 'bin' (or 'binary'), conver all files in the folder to binary
-      and save to a dictionary with its relative path.
-      if 'file', use pickle to save all binary data to a file
+  binary_output: bool (default: False)
+      if `False` (by default), original way tensorflow serialize
+      all variables, save all variables and nnop info to separated
+      files within a folder `path`
+      if `True`, convert all files in the folder to binary
+      and save to a dictionary with its relative path, if
+      `path` is not None, use pickle to save all binary data
+      to a file
   override: bool
       if True, remove existed folder to override everythin.
 
@@ -46,14 +48,11 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
       path to the folder that store NNOps and variables
   """
   # ====== check output_mode ====== #
-  output_mode = str(output_mode).lower()
-  if output_mode not in ('folder', 'file', 'bin'):
-    raise ValueError('`output_mode` can be: folder, file, or bin.')
-  if output_mode in ('folder', 'file') and path is None:
-    raise ValueError('`path` cannot be None in "folder" or "file" '
-                     'output mode.')
-  path_folder = '/tmp/tmp_%s' % uuid(length=12) \
-      if path is None or output_mode == 'file' else path
+  if path is None:
+    if not binary_output:
+      raise ValueError('`path` cannot be None if `binary_output=False`')
+    path = '/tmp/tmp' # default path
+  path_folder = path + uuid(length=25) if binary_output else path
   # ====== getting save data and variables ====== #
   vars = []
   if save_variables:
@@ -84,9 +83,11 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
   if len(vars) > 0:
     K.save_variables(vars, vars_path)
   # ====== convert folder to file or binary ====== #
-  if output_mode != 'folder':
+  if binary_output:
     data = folder2bin(path_folder)
-    if output_mode == 'bin':
+    # only return binary data
+    if path is None:
+      shutil.rmtree(path_folder)
       return data
     # check if override
     if os.path.exists(path):
@@ -96,8 +97,7 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
         else:
           shutil.rmtree(path)
       else:
-        raise RuntimeError("File at path: %s exists, cannot override."
-                           % path)
+        raise RuntimeError("File at path: %s exists, cannot override." % path)
     # write file
     with open(path, 'wb') as f:
       cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)

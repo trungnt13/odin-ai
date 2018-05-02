@@ -22,26 +22,24 @@ from .role import (has_roles, Auxiliary, Parameter)
 # ===========================================================================
 # Basic query
 # ===========================================================================
-def __init_training_var():
-  x = tf.Variable(initial_value=False, dtype=tf.bool, name='IsTraining',
-                  trainable=False)
-  get_session().run(x.initializer)
-  return x
-__IS_TRAINING = defaultdict(__init_training_var)
-
-
 def is_training(graph=None):
   if graph is None:
     graph = get_session().graph
-  return __IS_TRAINING[graph]
-
+  training_var = get_all_variables(scope=None, name='IsTraining__',
+                                   graph=graph)
+  if len(training_var) == 0:
+    raise RuntimeError("Cannot find variable with name='IsTraining' scope='' "
+                       "within graph=%s" % str(graph))
+  elif len(training_var) > 1:
+    raise RuntimeError("Found multiple 'IsTraining__' flag: %s" %
+      str(training_var))
+  return training_var[0]
 
 def set_training(is_training, graph=None, return_ops=False):
   if graph is None:
     graph = get_session().graph
-  return set_value(__IS_TRAINING[graph], bool(is_training),
+  return set_value(is_training(graph), bool(is_training),
                    return_ops=return_ops)
-
 
 def cond_training(train_fn, infer_fn,
                   train_dependencies=None, infer_dependencies=None,
@@ -90,10 +88,8 @@ def cond_training(train_fn, infer_fn,
                    true_fn=_train_fn, false_fn=_infer_fn,
                    strict=strict)
 
-
 def is_operation(op):
   return isinstance(op, tf.Operation)
-
 
 def is_placeholder(variable):
   """Check if variable is a user-provided graph input.
@@ -114,7 +110,6 @@ def is_placeholder(variable):
   return isinstance(variable, tf.Tensor) and \
       variable.op.node_def.op == "Placeholder"
 
-
 def is_variable(variable):
   """Check if a variable is a shared variable.
 
@@ -129,10 +124,8 @@ def is_variable(variable):
     return True
   return False
 
-
 def is_distribution(x):
   return isinstance(x, _Distribution)
-
 
 def is_tensor(variable, inc_distribution=True, inc_variable=True):
   """ a variable is any tensor variable in (e.g. placeholder,
@@ -148,7 +141,6 @@ def is_tensor(variable, inc_distribution=True, inc_variable=True):
   if inc_distribution:
     _ |= is_distribution(variable)
   return _
-
 
 def set_shape(tensor, shape):
   """ This function will filling the missing shape information
@@ -188,7 +180,6 @@ def set_shape(tensor, shape):
   tensor.set_shape(new_shape)
   return tensor
 
-
 # ===========================================================================
 # VALUE MANIPULATION
 # ===========================================================================
@@ -196,7 +187,6 @@ def get_value(x):
   if isinstance(x, (tuple, list)):
     return get_session().run(x)
   return x.eval(session=get_session())
-
 
 def set_value(x, value, return_ops=False, name='SetValue'):
   '''Sets the value of a tensor variable,
@@ -220,7 +210,6 @@ def set_value(x, value, return_ops=False, name='SetValue'):
   get_session().run(assign_op)
   return x
 
-
 # ===========================================================================
 # Session helper
 # ===========================================================================
@@ -233,14 +222,8 @@ def _filter_string(criterion, x):
     return True
   raise ValueError("Unknown criterion for filtering.")
 
-
-def get_graph():
-  return get_session().graph
-
-
 _ops_ID = {}
 _name_pattern = re.compile('.*_\d+')
-
 
 def get_normalized_name(x):
   """Get normalized name of `Tensor`, `Variable` or `Op` in tensorflow
@@ -257,9 +240,8 @@ def get_normalized_name(x):
                 for i in x.split('/')])
   return x
 
-
 def get_all_operations(otype=None, device=None, sort=False, scope=None,
-                       footprint=None):
+                       footprint=None, graph=None):
   """ Return list of all operations in default graph
   The follow attributes can be access within the operation:
    * name : string
@@ -280,10 +262,12 @@ def get_all_operations(otype=None, device=None, sort=False, scope=None,
    * "Const"
    * "Assign"
   """
-  ops = get_graph().get_operations()
+  if graph is None:
+    graph = get_session().graph
+  ops = graph.get_operations()
   # update OpID
   if len(_ops_ID) != len(ops):
-    for ID, op in get_graph()._nodes_by_id.items():
+    for ID, op in graph._nodes_by_id.items():
       if op not in _ops_ID:
         _ops_ID[op] = ID
   # filter out some op
@@ -312,18 +296,18 @@ def get_all_operations(otype=None, device=None, sort=False, scope=None,
     ops = sorted(ops, key=lambda x: _ops_ID[x])
   return ops
 
-
-def get_operationID(op):
+def get_operationID(op, graph=None):
   """operation ID is unique ID of Op, the ID represent the order
   of created Op."""
-  ops = get_graph().get_operations()
+  if graph is None:
+    graph = get_session().graph
+  ops = graph.get_operations()
   # update OpID
   if len(_ops_ID) != len(ops):
-    for ID, op in get_graph()._nodes_by_id.items():
+    for ID, op in graph._nodes_by_id.items():
       if op not in _ops_ID:
         _ops_ID[op] = ID
   return _ops_ID[op]
-
 
 @cache_memory
 def get_operation_footprint(op):
@@ -364,27 +348,31 @@ def get_operation_footprint(op):
          ':'.join([get_normalized_name(c) for c in const]) + '|' +\
          ':'.join([j.split(':')[0] for j in ops])
 
-
 def get_all_variables(scope=None, name=None, full_name=None,
                       graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,
                                   tf.GraphKeys.LOCAL_VARIABLES,
                                   tf.GraphKeys.MODEL_VARIABLES,
-                                  tf.GraphKeys.TRAINABLE_VARIABLES]):
+                                  tf.GraphKeys.TRAINABLE_VARIABLES],
+                      graph=None):
   """
   Parameters
   ----------
   scope: {str, None}
       scope name which the Variables have been created
   name: str
-      name of tensor (without variable scope)
+      name of tensor (WITHOUT variable scope)
   full_name: str
       name of tensor WITH variable scope.
   """
   var = []
   # ====== first get all available variable ====== #
   for k in graph_keys:
-    var += [i for i in tf.get_collection(k)
-            if isinstance(i, tf.Variable)]
+    if graph is None:
+      var += [i for i in tf.get_collection(k)
+              if isinstance(i, tf.Variable)]
+    else:
+      var += [i for i in graph.get_collection(k)
+              if isinstance(i, tf.Variable)]
   var = list(set(var))
   # filtering: start from general to detail
   # ====== filter by scope ====== #
@@ -394,7 +382,7 @@ def get_all_variables(scope=None, name=None, full_name=None,
       var = [v for v in var
              if '/' not in v.name]
     else:
-      scope_name_pattern = re.compile('%s_?\d*\/')
+      scope_name_pattern = re.compile('%s_?\d*\/' % scope)
       var = [v for v in var
              if len(scope_name_pattern.findall(v.name))]
   # ====== filter by name ====== #
@@ -410,7 +398,6 @@ def get_all_variables(scope=None, name=None, full_name=None,
            if any((n == v.name or
                    n + ':0' == v.name) for n in full_name)]
   return var
-
 
 def get_all_tensors(scope=None, name=None, full_name=None, device=None):
   """

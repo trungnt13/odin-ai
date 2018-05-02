@@ -795,7 +795,7 @@ class BNFExtractor(Extractor):
     if not self.network.is_initialized:
       self.network()
     return (self.input_feat, self.batch_size,
-            N.serialize(self.network, output_mode='bin'))
+            N.serialize(self.network, binary_output=True))
 
   def __setstate__(self, states):
     from odin import nnet as N

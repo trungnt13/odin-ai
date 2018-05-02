@@ -13,7 +13,8 @@ import scipy as sp
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin.config import get_session, get_ngpu, get_floatX, get_random_state
+from odin.config import (get_session, get_ngpu, get_floatX, get_random_state,
+                         randint)
 from odin.utils import as_tuple, uuid, is_number, is_string, is_same_shape
 
 from . import role
@@ -976,12 +977,213 @@ def rnn_decorator(*args, **kwargs):
   else:
     return recurrent_wrapper
 
+# ===========================================================================
+# CudnnRNN
+# ===========================================================================
+def params_to_cudnn(weights, biases, name=None):
+  assert len(weights) == len(biases), \
+  "number of weights is different from number of biases"
+  with tf.name_scope(name, "ParamsToCUDNN", values=weights + biases):
+    weights = list([tf.reshape(w, shape=(-1,)) for w in weights]) + list(biases)
+    return tf.concat(values=weights, axis=0, name="OpaqueParams")
+
+def sort_cudnn_params(weights, biases, rnn_mode):
+  """ Sort the order of weights and biases according to
+  `init_rnn` to be group into CudnnRNN params vector
+  """
+  def fn_key(v):
+    name = v.name.split('/')[-1].split(':')[0]
+    wtype = name.split('_')[0]
+    gate = name.split('_')[1]
+    layer = int(name.split('_')[-1]) * 1000
+    # ====== weight type ====== #
+    if 'W' == wtype or 'bw' == wtype:
+      n1 = 100
+    elif 'R' == wtype or 'br' == wtype:
+      n1 = 200
+    # ====== gate type ====== #
+    if 'lstm' == rnn_mode:
+      if gate == 'i':
+        n2 = 10
+      elif gate == 'f':
+        n2 = 20
+      elif gate == 'c':
+        n2 = 30
+      elif gate == 'o':
+        n2 = 40
+    elif 'gru' == rnn_mode:
+      if gate == 'r':
+        n2 = 10
+      elif gate == 'i':
+        n2 = 20
+      elif gate == 'h':
+        n2 = 30
+    elif 'rnn_' in rnn_mode:
+      n2 = 10
+    else:
+      n2 = int(gate[1:])
+    return layer + n1 + n2
+  weights = sorted(weights, key=fn_key)
+  biases = sorted(biases, key=fn_key)
+  return weights, biases
+
+def _validate_number_of_params(params, shapes, initializer, N,
+                               name, gate_name, roles):
+  # params: [layer1_params_forward, layer1_params_backward,
+  #          layer2_params_forward, ...]
+  # layer1_params: [W_i, W_f, W_c, W_h, ...]
+  num_gates = len(gate_name)
+  try:
+    if not isinstance(params, (tuple, list)):
+      params = (params,)
+    params = as_tuple(params, N=N)
+    params = [as_tuple(layer, N=num_gates)
+              for layer in params]
+  except Exception:
+    raise RuntimeError("Parameter name: '%s'. Expected: %d, but given: %d"
+      % (str(name), int(N), len(params)))
+  # exchange None for default initializer
+  params = [[initializer if p is None else p
+             for p in layer]
+            for layer in params]
+  # create the variable
+  params = [[variable(value=p, shape=s, name=name + '%s_%d' % (n, i), roles=roles)
+             for n, p in zip(gate_name, layer)]
+            for i, (layer, s) in enumerate(zip(params, shapes))]
+  return params
+
+def _input_connection_shape(input_dim, hidden_dim, num_layers,
+                            bidirectional, skip_input):
+  shapes = []
+  for i, l in enumerate(range(num_layers)):
+    if i == 0: # first layers
+      s = (hidden_dim, input_dim) if not skip_input else (0, 0)
+    else: # other layers
+      s = (hidden_dim, hidden_dim * 2) if bidirectional else (hidden_dim, hidden_dim)
+    if bidirectional:
+      shapes.append(s)
+    shapes.append(s)
+  return shapes
+
+def init_rnn(input_dim, hidden_dim, num_layers=1, num_gates=1,
+             W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+             b_init=init_ops.constant_initializer(value=0),
+             W=None, b_w=None, R=None, b_r=None,
+             skip_input=False, is_bidirectional=False,
+             cudnn_vector=False, name=None):
+  """ Fast initalize all Standard RNN weights
+
+  Parameters
+  ----------
+  W_init:
+    pass
+  b_init:
+    pass
+  W:
+    pass
+  b_w:
+    pass
+  R:
+    pass
+  b_r:
+    pass
+  num_gates: {int, 'lstm', 'rnn_tanh', 'rnn_relu', 'gru'}
+      'rnn_*': only has one gate
+      'lstm': has four gates input, forget, cell, output
+      'gru': has three gates reset, input, hidden
+      if integer is given, custom number of gates is used
+  cudnn_vector: bool
+      if True, all the weights are flatten and concatenated into 1 big vector
+  bidirectional: bool
+      if True, return parameters for both forward and backward RNN
+
+  Return
+  ------
+  [W_i, b_wi, R_h, b_wh]
+
+  Note
+  ----
+  CudnnRNN parameters vector is ordered by
+  weights: [W_gate1_forward, W_gate2_forward, ..., R_gate1_forward, R_gate2_forward, ..., # layer1
+            W_gate1_backward, W_gate2_backward, ..., R_gate1_backward, R_gate2_backward, ...,
+            ...] # layer2
+  biases: [b_Wgate1_forward, b_Wgate2_forward, ..., b_Rgate1_forward, b_Rgate2_forward, ..., # layer1
+           b_Wgate1_backward, b_Wgate2_backward, ..., b_Rgate1_backward, b_Rgate2_backward, ...,
+           ...] # layer2
+  """
+  # ====== estimate number of weights and biases ====== #
+  num_dirs = 2 if is_bidirectional else 1
+  total_num_layers = num_dirs * num_layers
+  if is_number(num_gates):
+    assert num_gates > 0
+    gate_name = ['g%d' % (i + 1) for i in range(num_gates)]
+    default_name = 'RNN%d' % num_gates
+  elif num_gates == 'rnn_relu' or num_gates == 'rnn_tanh':
+    gate_name = ['i']
+    default_name = 'RNNrelu' if num_gates == 'rnn_relu' else 'RNNtanh'
+  elif num_gates == 'lstm':
+    gate_name = ['i', 'f', 'c', 'o']
+    default_name = 'LSTM'
+  elif num_gates == 'gru':
+    gate_name = ['r', 'i', 'h']
+    default_name = 'GRU'
+  else:
+    raise ValueError("No support for `num_gates`=%s" % str(num_gates))
+  num_gates = len(gate_name)
+  num_weights = total_num_layers * num_gates * 2
+  num_biases = total_num_layers * num_gates * 2
+  weights = W_init if isinstance(W_init, (tuple, list)) else []
+  biases = b_init if isinstance(b_init, (tuple, list)) else []
+  # ====== initialize the Variables ====== #
+  with tf.name_scope(name, "Initialize%s" % default_name):
+    # initialize weights
+    if len(weights) == 0:
+      W = _validate_number_of_params(W,
+          shapes=_input_connection_shape(input_dim, hidden_dim, num_layers,
+                                         is_bidirectional, skip_input),
+          initializer=W_init, N=total_num_layers,
+          name='W_', gate_name=gate_name, roles=role.Weight)
+      R = _validate_number_of_params(R,
+          shapes=[(hidden_dim, hidden_dim) for i in range(total_num_layers)],
+          initializer=W_init, N=total_num_layers,
+          name='R_', gate_name=gate_name, roles=role.Weight)
+      for w, r in zip(W, R):
+        weights += w
+        weights += r
+    else:
+      if len(weights) != num_weights:
+        raise ValueError("Expected %d weights, given %d" %
+          (num_weights, len(weights)))
+      assert all(is_variable(w) for w in weights), "All weights must be Variables"
+    # initialize biases
+    if len(biases) == 0:
+      b_w = _validate_number_of_params(b_w,
+          shapes=[(hidden_dim,) for i in range(total_num_layers)],
+          initializer=b_init, N=total_num_layers,
+          name='bw_', gate_name=gate_name, roles=role.Bias)
+      b_r = _validate_number_of_params(b_r,
+          shapes=[(hidden_dim,) for i in range(total_num_layers)],
+          initializer=b_init, N=total_num_layers,
+          name='br_', gate_name=gate_name, roles=role.Bias)
+      for bw, br in zip(b_w, b_r):
+        biases += bw
+        biases += br
+    else:
+      if len(biases) != num_biases:
+        raise ValueError("Expected %d biases, given %d" %
+          (num_biases, len(biases)))
+      assert all(is_variable(b) for b in biases), "All biases must be Variables"
+    # ====== organize into single list ====== #
+    assert len(weights) == num_weights
+    assert len(biases) == num_biases
+    if cudnn_vector:
+      return params_to_cudnn(weights, biases)
+    return weights, biases
 
 def cudnn_rnn(X, num_units, rnn_mode,
               num_layers=1, parameters=None,
               h0=None, c0=None,
-              input_mode='linear',
-              is_bidirectional=False,
+              skip_input=False, is_bidirectional=False,
               dropout=0., name=None):
   """CuDNN v7 RNN implementation.
 
@@ -989,7 +1191,7 @@ def cudnn_rnn(X, num_units, rnn_mode,
   ----------
   X : input varialbe or placeholder
       shape=(batch_size, timesteps, input_dims)
-  hidden_size : int
+  num_units : int
       the number of units within the RNN model.
   rnn_mode : {'rnn_relu', 'rnn_tanh', 'lstm', 'gru'}
       See cudnn documentation for ``cudnnRNNMode_t``.
@@ -1003,10 +1205,10 @@ def cudnn_rnn(X, num_units, rnn_mode,
       vector contain all flatten weights and bias
       check `backend.init.lstm`, `backend.init.gru`, and `backend.init.rnn`
       for more information
-  input_mode : {'linear', 'skip'}
-      linear: input will be multiplied by a biased matrix
-      skip: No operation is performed on the input.  The size must
-      match the hidden size (`num_units`).
+  skip_input : bool (default: False)
+      if False, `linear_input`: input will be multiplied by a bias matrix
+      if True, `skip_input`: No operation is performed on the input.
+      The size must match the hidden size (`num_units`).
       (CuDNN docs: cudnnRNNInputMode_t)
   is_bidirectional : {'unidirectional', 'bidirectional'}
       if True, bidirectional: The network operates from first to last then from last
@@ -1033,18 +1235,12 @@ def cudnn_rnn(X, num_units, rnn_mode,
   if get_ngpu() == 0:
     raise Exception('This opt is not supported with CPU.')
   # ====== Check arguments ====== #
+  rnn_mode = str(rnn_mode)
   if rnn_mode not in ('rnn_relu', 'rnn_tanh', 'lstm', 'gru'):
     raise ValueError("rnn_mode=%s must be: 'rnn_relu', 'rnn_tanh', 'lstm', 'gru'"
                      % rnn_mode)
-
-  if input_mode not in ('linear', 'skip'):
-    raise ValueError("input_mode=%s must be: 'linear', 'skip'" % input_mode)
-  input_mode = 'linear_input' if input_mode == 'linear' else 'skip_input'
-
-  if is_bidirectional:
-    direction_mode = 'bidirectional'
-  else:
-    direction_mode = 'unidirectional'
+  input_mode = 'skip_input' if skip_input else 'linear_input'
+  direction = 'bidirectional' if is_bidirectional else 'unidirectional'
 
   # ====== helper function ====== #
   def check_init_states(s0, nb_layers, batch_size):
@@ -1062,7 +1258,7 @@ def cudnn_rnn(X, num_units, rnn_mode,
   input_shape = X.get_shape().as_list()
   if X.get_shape().ndims != 3:
     raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
-  if input_shape[-1] != num_units and 'skip' in input_mode:
+  if input_shape[-1] != num_units and skip_input:
     raise ValueError('In skip_input mode, input size must be equal to hidden size'
                      ', but input_size=%d != hidden_size=%d' %
                      (input_shape[-1], num_units))
@@ -1073,44 +1269,35 @@ def cudnn_rnn(X, num_units, rnn_mode,
   with tf.device('/cpu:0'):
     num_params = cudnn_rnn_ops.cudnn_rnn_opaque_params_size(
         rnn_mode=rnn_mode, num_layers=num_layers, num_units=num_units,
-        input_size=input_size, input_mode=input_mode, direction=direction_mode)
+        input_size=input_size, input_mode=input_mode, direction=direction)
     num_params = num_params.eval(session=get_session())
   # layer info (note in case of bidirectional, output from previous
   # layers are concatenated).
-  layer_info = [input_size, num_units] + \
-               [num_units * (2 if is_bidirectional else 1), num_units] * (num_layers - 1)
   with tf.name_scope(name, "CudnnRNN"):
     # ====== create parameters ====== #
     # check parameters
     if parameters is None:
-      if rnn_mode == 'lstm':
-        from odin.backend.rand import init_lstm as init_func
-      elif rnn_mode == 'gru':
-        from odin.backend.rand import init_gru as init_func
-      else:
-        from odin.backend.rand import init_rnn as init_func
-      parameters = np.concatenate([init_func(
-                                   input_dim=layer_info[i * 2],
-                                   hidden_dim=layer_info[i * 2 + 1],
-                                   one_vector=True,
-                                   skip_input=True if 'skip' in input_mode else False,
-                                   bidirectional=True if is_bidirectional else False)
-                                   for i in range(num_layers)]).astype(floatX)
-      parameters = tf.Variable(parameters, name=name)
+      weights, biases = init_rnn(input_dim=input_size, hidden_dim=num_units,
+                                 num_layers=num_layers, num_gates=rnn_mode,
+                                 skip_input=skip_input,
+                                 is_bidirectional=is_bidirectional,
+                                 cudnn_vector=False)
+      parameters = params_to_cudnn(weights, biases)
     assert num_params == parameters.get_shape().as_list()[0], \
         "Require %d parameters but %d provided" % \
         (num_params, parameters.get_shape()[0])
     # check initial states
-    num_layers = num_layers * 2 if is_bidirectional else num_layers
-    h0 = tf.zeros(shape=(num_layers, batch_size, num_units), dtype=floatX, name='h0') \
-        if h0 is None else h0
-    h0 = check_init_states(h0, num_layers, batch_size)
+    total_num_layers = num_layers * 2 if is_bidirectional else num_layers
+    h0 = tf.zeros(shape=(total_num_layers, batch_size, num_units),
+                  dtype=floatX, name='h0') if h0 is None else h0
+    h0 = check_init_states(h0, total_num_layers, batch_size)
     args = {'input_h': h0}
     # check initial memory
     if rnn_mode == 'lstm':
-      c0 = (tf.zeros(shape=(num_layers, batch_size, num_units), dtype=floatX, name='c0')
+      c0 = (tf.zeros(shape=(total_num_layers, batch_size, num_units),
+                     dtype=floatX, name='c0')
             if rnn_mode == 'lstm' and c0 is None else c0)
-      c0 = check_init_states(c0, num_layers, batch_size)
+      c0 = check_init_states(c0, total_num_layers, batch_size)
       args['input_c'] = c0
     else:
       c0 = tf.constant([], dtype=floatX)
@@ -1122,7 +1309,7 @@ def cudnn_rnn(X, num_units, rnn_mode,
         'params': parameters,
         'rnn_mode': rnn_mode,
         'input_mode': input_mode,
-        'direction': direction_mode,
+        'direction': direction,
         'dropout': dropout,
         'seed': get_random_state().randint(low=0, high=5218, dtype='int32'),
         'name': name
@@ -1132,12 +1319,12 @@ def cudnn_rnn(X, num_units, rnn_mode,
         infer_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=False, **kwargs))
     # ====== post processing ====== #
     output = set_shape(tf.transpose(output, (1, 0, 2)),
-                       (input_shape[0], input_shape[1], num_units * (2 if is_bidirectional else 1)))
+      shape=(input_shape[0], input_shape[1], num_units * (2 if is_bidirectional else 1)))
     output_h = set_shape(output_h,
-                         (num_layers, input_shape[0], num_units))
+      shape=(total_num_layers, input_shape[0], num_units))
     rets = [output, output_h]
     if rnn_mode == 'lstm':
       output_c = set_shape(output_c,
-                           (num_layers, input_shape[0], num_units))
+        shape=(total_num_layers, input_shape[0], num_units))
       rets.append(output_c)
   return tuple(rets)

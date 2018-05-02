@@ -163,8 +163,11 @@ def get_session(graph=None):
   if graph not in _SESSION:
     import tensorflow as tf
     session_args = get_session_config()
-    _SESSION[graph] = tf.Session(config=tf.ConfigProto(**session_args),
-                                 graph=graph)
+    sess = tf.Session(config=tf.ConfigProto(**session_args), graph=graph)
+    _SESSION[graph] = sess
+    with sess.graph.as_default():
+      tf.Variable(initial_value=False, dtype=tf.bool, name='IsTraining__',
+                  trainable=False)
   return _SESSION[graph]
 
 def auto_config(config=None):

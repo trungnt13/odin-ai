@@ -363,27 +363,19 @@ class CudnnRNN(NNOp):
           W_init=init_ops.glorot_uniform_initializer(seed=randint()),
           b_init=init_ops.constant_initializer(0.),
           rnn_mode='lstm', num_layers=1,
-          input_mode='linear',
-          bidirectional=False,
-          params_split=False,
-          return_states=False,
-          dropout=0., **kwargs):
+          skip_input=False, is_bidirectional=False,
+          return_states=False, dropout=0., **kwargs):
     super(CudnnRNN, self).__init__(**kwargs)
     # ====== defaults recurrent control ====== #
     self.num_units = int(num_units)
     self.num_layers = int(num_layers)
-    self.rnn_mode = rnn_mode
-    self.input_mode = input_mode
-    self.bidirectional = bidirectional
-    self.params_split = params_split
-    self.return_states = return_states
+    self.rnn_mode = str(rnn_mode)
+    self.skip_input = bool(skip_input)
+    self.is_bidirectional = bool(is_bidirectional)
+    self.return_states = bool(return_states)
     self.dropout = dropout
 
-    if not hasattr(W_init, '__call__'):
-      raise ValueError('W_init must be call-able with input is variable shape')
     self.W_init = W_init
-    if not hasattr(b_init, '__call__'):
-      raise ValueError('b_init must be call-able with input is variable shape')
     self.b_init = b_init
 
   # ==================== abstract methods ==================== #
@@ -393,83 +385,31 @@ class CudnnRNN(NNOp):
 
   def _initialize(self):
     input_shape = self.input_shape
-    # ====== check input ====== #
-    if self.input_mode == 'norm':
-      _init_input2hidden(self, rnn_mode=self.rnn_mode, input_mode=self.input_mode,
-                         W_init=self.W_init, input_dims=input_shape[-1],
-                         hidden_dims=self.num_units)
-    # ====== create params ====== #
-    layer_info = [input_shape[-1], self.num_units] + \
-                 [self.num_units * (2 if self.bidirectional else 1),
-                  self.num_units] * (self.num_layers - 1)
-    if self.rnn_mode == 'lstm':
-      from odin.backend.rand import init_lstm as init_func
-    elif self.rnn_mode == 'gru':
-      from odin.backend.rand import init_gru as init_func
-    else:
-      from odin.backend.rand import init_rnn as init_func
-    # initialize each parameter in params_split=True
-    if self.params_split:
-      with tf.variable_scope(self.name):
-        parameters = [init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                W_init=self.W_init, b_init=self.b_init,
-                                one_vector=False, return_variable=True,
-                                bidirectional=self.bidirectional,
-                                name='layer%d' % i)
-                      for i in range(self.num_layers)]
-      # print([(j.name, j.tag.roles) for i in parameters for j in i]); exit()
-      for p in chain(*parameters):
-        self.get_variable(initializer=p, shape=p.shape,
-                          name=p.name.split(':')[0].split('/')[1],
-                          roles=Parameter)
-    # else initialize all in 1 big vector
-    else:
-      parameters = np.concatenate([init_func(layer_info[i * 2], layer_info[i * 2 + 1],
-                                   one_vector=True, return_variable=False,
-                                   bidirectional=self.bidirectional)
-                                   for i in range(self.num_layers)])
-      self.get_variable(initializer=parameters, shape=parameters.shape,
-                        name='params', roles=Parameter)
+    weights, biases = K.init_rnn(
+        input_dim=int(input_shape[-1]), hidden_dim=int(self.num_units),
+        W_init=self.W_init, b_init=self.b_init,
+        num_layers=self.num_layers, num_gates=self.rnn_mode,
+        skip_input=self.skip_input,
+        is_bidirectional=self.is_bidirectional,
+        cudnn_vector=False)
+    self._weights_name = [w.name for w in weights]
+    self._biases_name = [b.name for b in biases]
+    for i in weights + biases:
+      self.get_variable(name=i.name.split('/')[-1].split(':')[0],
+                        shape=i.shape.as_list(), initializer=i)
 
   def _apply(self, X, h0=None, c0=None, mask=None):
-    batch_size = X.get_shape()[0]
-    input_mode = ('skip' if self.input_mode == 'skip' or self.input_mode == 'norm'
-                  else 'linear')
-    # ====== precompute input ====== #
-    # linear or norm input mode
-    if self.input_mode == 'norm':
-      X = K.dot(X, self.W_in)
-      # normalize all axes except the time dimension
-      bn = BatchNorm(axes=(0, 1), activation=K.linear,
-                     gamma_init=self.gamma, beta_init=self.beta,
-                     mean_init=self.mean, inv_std_init=self.inv_std)
-      X = bn(X)
-      # cudnnRNN doesnt' support multiple inputs
-      shapeX = X.get_shape()
-      ndims = shapeX.ndims
-      if 'rnn' in self.rnn_mode: N = 1
-      elif self.rnn_mode == 'gru': N = 3
-      elif self.rnn_mode == 'lstm': N = 4
-      newshape = [shapeX[i].value for i in range(ndims - 1)] + [self.num_units, N]
-      X = tf.reduce_mean(K.reshape(X, newshape), axis=-1)
-    # ====== hidden state ====== #
-    num_layers = self.num_layers * 2 if self.bidirectional else self.num_layers
-    require_shape = (num_layers, batch_size, self.num_units)
-    h0 = _check_cudnn_hidden_init(h0, require_shape, self, 'h0')
-    c0 = _check_cudnn_hidden_init(c0, require_shape, self, 'c0')
-    # ====== parameters ====== #
-    if self.params_split:
-      parameters = tf.concat([K.flatten(i, outdim=1)
-                              for i in self.parameters
-                              if not has_roles(i, InitialState)])
-    else:
-      parameters = self.get('params')
-    # ====== return CuDNN RNN ====== #
-    results = K.cudnn_rnn(X, num_units=self.num_units, rnn_mode=self.rnn_mode,
-                          num_layers=self.num_layers, parameters=parameters,
-                          h0=h0, c0=c0, input_mode=input_mode,
-                          is_bidirectional=self.bidirectional,
-                          dropout=self.dropout, name=None)
+    if not hasattr(self, '_opaque_params'):
+      weights = [K.get_all_variables(full_name=w)[0] for w in self._weights_name]
+      biases = [K.get_all_variables(full_name=b)[0] for b in self._biases_name]
+      self._opaque_params = K.params_to_cudnn(weights, biases)
+    params = self._opaque_params
+    outputs = K.cudnn_rnn(X=X, h0=h0, c0=c0,
+                          num_units=self.num_units, rnn_mode=self.rnn_mode,
+                          num_layers=self.num_layers, parameters=params,
+                          skip_input=self.skip_input,
+                          is_bidirectional=self.is_bidirectional,
+                          dropout=self.dropout)
     if not self.return_states:
-      results = results[0] # only get the output
-    return results
+      return outputs[0]
+    return outputs

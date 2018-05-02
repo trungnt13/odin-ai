@@ -611,6 +611,18 @@ class NNOp(object):
     return ('[__name__]' + self.name,)
 
   # ==================== properties ==================== #
+  @property
+  def save_states(self):
+    """ Save state is dictionary of attribute name -> object
+    those will be saved during pickling
+
+    Note
+    ----
+    This property return a copy of the dictionary, any
+    modification won't take effect on NNOp
+    """
+    return dict(self._save_states)
+
   def get(self, name, nnop=False):
     """"Simple shortcut for getting defined Variable, or NNOp
     within the scope of this `NNOp`
@@ -825,8 +837,9 @@ class NNOp(object):
     if vars_footprint != self._is_initialized_all_variables:
       self._is_initialized_all_variables = vars_footprint
       K.initialize_all_variables(all_vars)
-    # return
-    return all_vars
+    # exception ignore variable with name IsTraining__
+    return [v for v in all_vars
+            if 'IsTraining__:0' not in v.name]
 
   @property
   def nb_variables(self):

@@ -693,7 +693,7 @@ class MainLoop(object):
         raise ValueError("Save path for the model must be a folder.")
       N.serialize(nnops=self._save_obj, path=self._save_path,
                   save_variables=True, variables=self._save_variables,
-                  override=True)
+                  binary_output=False, override=True)
     # otherwise, store variables directly in RAM
     elif len(self._save_variables) > 0:
       from odin import backend as K
