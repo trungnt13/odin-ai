@@ -1402,10 +1402,41 @@ def get_resultpath(tag, name=None, override=False, prompt=False,
     os.mkdir(path)
   return path
 
-
 # ===========================================================================
 # Misc
 # ===========================================================================
+def run_script(s, wait=True, path='/tmp'):
+  """
+  Return
+  ------
+  status: of executed command, if `wait`=True else return Popen object
+  out: stdout message
+  err: stderr, message
+  """
+  # ====== path preprocessing ====== #
+  if path is None:
+    path = '/tmp'
+  if os.path.isdir(path):
+    path = os.path.join(path, 'tmp_%s' % uuid(length=25) + '.py')
+  path = os.path.abspath(path)
+  # ====== script preprocessing ====== #
+  s = str(s).strip()
+  # ====== run the script ====== #
+  try:
+    with open(path, 'w') as f:
+      f.write(s)
+    cmd = subprocess.Popen("python %s" % path, shell=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    (out, err) = cmd.communicate()
+    if wait:
+      status = cmd.wait()
+    else:
+      status = cmd
+  finally:
+    if os.path.exists(path):
+      os.remove(path)
+  return status, str(out, encoding='utf-8'), str(err, encoding='utf-8')
+
 def exec_commands(cmds, print_progress=True):
   ''' Execute a command or list of commands in parallel with multiple process
   (as much as we have CPU)

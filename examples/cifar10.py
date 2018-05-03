@@ -136,6 +136,4 @@ cm = confusion_matrix(y_true=np.argmax(y_test, axis=-1),
                       y_pred=np.argmax(y_pred, axis=-1))
 print(print_confusion(cm))
 """.format(MODEL_PATH)
-with open('/tmp/cifar10_tmp.py', 'w') as f:
-  f.write(script)
-os.system('python /tmp/cifar10_tmp.py')
+utils.run_script(script)
