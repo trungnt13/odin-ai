@@ -225,19 +225,25 @@ def _filter_string(criterion, x):
 _ops_ID = {}
 _name_pattern = re.compile('.*_\d+')
 
-def get_normalized_name(x):
+def get_normalized_name(var, shape=True, dtype=True):
   """Get normalized name of `Tensor`, `Variable` or `Op` in tensorflow
   The normalized name remove:
    * '_%d' suffix of scope and name.
    * ':%d' indices of name.
+
+  shape: if True, append string of shape to name
+  dtype: if True, append string of dtype to name
   """
-  if hasattr(x, 'name'):
-    x = x.name
+  x = var.name
   # remove the index
   x = x.split(':')[0]
   # remove the _%d
   x = '/'.join(['_'.join(i.split('_')[:-1]) if _name_pattern.match(i) else i
                 for i in x.split('/')])
+  if shape:
+    x += str(tuple(var.shape.as_list())).replace(' ', '')
+  if dtype:
+    x += np.dtype(var.dtype.as_numpy_dtype).name
   return x
 
 def get_all_operations(otype=None, device=None, sort=False, scope=None,
@@ -324,9 +330,11 @@ def get_operation_footprint(op):
   ----
   This is just a fair attempt to create short identification of a
   tenorflow Op
+  still have chance for duplication op footprint
   """
   if not isinstance(op, tf.Operation) and hasattr(op, 'op'):
     op = op.op
+  op_id = str(op.name) + str(op.type)
   var = []
   placeholder = []
   const = []
@@ -343,10 +351,11 @@ def get_operation_footprint(op):
     elif o.type == "Const":
       const.append(i)
     inputs = list(o.inputs) + inputs
-  return ':'.join([get_normalized_name(v) for v in var]) + '|' +\
-         ':'.join([get_normalized_name(p) for p in placeholder]) + '|' +\
-         ':'.join([get_normalized_name(c) for c in const]) + '|' +\
-         ':'.join([j.split(':')[0] for j in ops])
+  return op_id + '|' +\
+  ':'.join([get_normalized_name(v) for v in var]) + '|' +\
+  ':'.join([get_normalized_name(p) for p in placeholder]) + '|' +\
+  ':'.join([get_normalized_name(c) for c in const]) + '|' +\
+  ':'.join([j.split(':')[0] for j in ops])
 
 def get_all_variables(scope=None, name=None, full_name=None,
                       graph_keys=[tf.GraphKeys.GLOBAL_VARIABLES,

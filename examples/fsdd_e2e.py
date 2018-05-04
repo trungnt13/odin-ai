@@ -7,8 +7,10 @@ import os
 os.environ['ODIN'] = 'float32,gpu,seed=5218'
 
 import numpy as np
+import tensorflow as tf
+from tensorflow.python.ops import init_ops
 
-from odin.utils import ctext, Progbar, mpi
+from odin.utils import ctext, Progbar, mpi, cache_disk
 from odin import fuel as F, nnet as N, backend as K
 from odin import preprocessing as pp
 from odin.visual import plot_multiple_features, plot_save, plot_spectrogram
@@ -63,45 +65,54 @@ print('#TestUtt:', ctext(len(test_utt), 'cyan'))
 # ===========================================================================
 # Speech processing
 # ===========================================================================
-pipeline = pp.make_pipeline(steps=[
-    pp.speech.AudioReader(sr=SR, sr_new=None, remove_dc_n_dither=False,
-                          preemphasis=None),
-    pp.base.NameConverter(converter=file2name, input_name='path'),
-    pp.speech.STFTExtractor(frame_length=FRAME_LENGTH, step_length=STEP_LENGTH,
-                            window='hamm', nfft=NFFT, energy=True),
-    pp.speech.SADextractor(nb_mixture=3, smooth_window=3),
-    # ====== spectrogram ====== #
-    pp.speech.PowerSpecExtractor(power=2.0),
-    pp.speech.MelsSpecExtractor(nmels=NMELS, fmin=FMIN, fmax=FMAX, top_db=80.0),
-    pp.speech.MFCCsExtractor(nceps=NCEPS, output_name='mfcc',
-                             remove_first_coef=False),
-    # ====== SDC features ====== #
-    pp.speech.MFCCsExtractor(nceps=7, output_name='sdc',
-                             remove_first_coef=True),
-    pp.speech.RASTAfilter(rasta=True, sdc=1,
-                          input_name='sdc', output_name='sdc'),
-    # ====== post processing ====== #
-    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           win_length=301,
-                           feat_name=('spec', 'mspec', 'mfcc', 'sdc')),
-    pp.base.RemoveFeatures(feat_name=('stft')),
+@cache_disk
+def extract_acoustic_features(SR=SR, NFFT=NFFT, NMELS=NMELS,
+                              NCEPS=NCEPS, FRAME_LENGTH=FRAME_LENGTH,
+                              STEP_LENGTH=STEP_LENGTH,
+                              FMIN=FMIN, FMAX=FMAX, WINDOW=WINDOW):
+  pipeline = pp.make_pipeline(steps=[
+      pp.speech.AudioReader(sr=SR, sr_new=None, remove_dc_n_dither=False,
+                            preemphasis=None),
+      pp.base.NameConverter(converter=file2name, input_name='path'),
+      pp.speech.STFTExtractor(frame_length=FRAME_LENGTH, step_length=STEP_LENGTH,
+                              window='hamm', nfft=NFFT, energy=True),
+      pp.speech.SADextractor(nb_mixture=3, smooth_window=3),
+      # ====== spectrogram ====== #
+      pp.speech.PowerSpecExtractor(power=2.0),
+      pp.speech.MelsSpecExtractor(nmels=NMELS, fmin=FMIN, fmax=FMAX, top_db=80.0),
+      pp.speech.MFCCsExtractor(nceps=NCEPS, output_name='mfcc',
+                               remove_first_coef=False),
+      # ====== SDC features ====== #
+      pp.speech.MFCCsExtractor(nceps=7, output_name='sdc',
+                               remove_first_coef=True),
+      pp.speech.RASTAfilter(rasta=True, sdc=1,
+                            input_name='sdc', output_name='sdc'),
+      # ====== post processing ====== #
+      pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
+                             win_length=301,
+                             feat_name=('spec', 'mspec', 'mfcc', 'sdc')),
+      pp.base.RemoveFeatures(feat_name=('stft')),
 
-], debug=False)
-features = {}
-prog = Progbar(target=len(files), print_report=True, print_summary=True,
-               name="Extracting acoustic features")
-for X in mpi.MPI(jobs=files, func=pipeline.transform,
-                 ncpu=4, batch=1):
-  prog['name'] = X['name']
-  prog.add(1)
-  features[X['name']] = X
+  ], debug=False)
+  features = {}
+  prog = Progbar(target=len(files), print_report=True, print_summary=True,
+                 name="Extracting acoustic features")
+  for X in mpi.MPI(jobs=files, func=pipeline.transform,
+                   ncpu=4, batch=1):
+    prog['name'] = X['name']
+    prog.add(1)
+    features[X['name']] = X
+  return features
 # ====== find the longest utterances ====== #
-LONGEST_UTT = max(len(i['energy']) for i in features.values())
+features = extract_acoustic_features()
+LONGEST_UTT = max(len(i['energy'])
+                  for i in features.values())
 print("Longest utterance:", ctext(LONGEST_UTT, 'cyan'))
 # ===========================================================================
 # Train test spliting the dataset
 # ===========================================================================
-def generate_data(flist):
+@cache_disk
+def generate_data(flist, LONGEST_UTT=LONGEST_UTT, PAD_MODE=PAD_MODE):
   flist = np.array(flist)
   np.random.shuffle(flist)
   X = []
@@ -133,19 +144,24 @@ INPUT_SHAPE = (None, X_train.shape[1], X_train.shape[2])
 X = K.placeholder(shape=INPUT_SHAPE, name='X')
 y = K.placeholder(shape=(None, len(all_numbers)), name='y')
 
+Z = K.placeholder(shape=(25, 8), name='Z')
+W = init_ops.constant_initializer()(shape=(8, 12))
+w = N.Dense(num_units=12, W_init=W)(Z)
+exit()
+
 f_network = N.Sequence(ops=[
     N.Dimshuffle(pattern=(0, 1, 2, 'x')),
     N.Conv(num_filters=32, filter_size=(7, 9), strides=2,
            pad='valid', activation=K.linear),
-    N.BatchNorm(activation=K.relu),
+    # N.BatchNorm(activation=K.relu),
 
-    N.Conv(num_filters=64, filter_size=(5, 7), strides=2,
-           pad='valid', activation=K.linear),
-    N.BatchNorm(activation=K.relu),
+    # N.Conv(num_filters=64, filter_size=(5, 7), strides=2,
+    #        pad='valid', activation=K.linear),
+    # N.BatchNorm(activation=K.relu),
 
-    N.Flatten(outdim=3),
-    N.CudnnRNN(num_units=128, rnn_mode='lstm', num_layers=1,
-               bidirectional=True),
-    N.Pool(pool_size=2)
+    # N.Flatten(outdim=3),
+    # N.CudnnRNN(num_units=128, rnn_mode='lstm', num_layers=1,
+    #            bidirectional=True),
+    # N.Pool(pool_size=2)
 ], debug=True, name="ClassificationNetwork")
-f_network(X)
+y_pred_logits = f_network(X)

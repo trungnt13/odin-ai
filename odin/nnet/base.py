@@ -643,7 +643,7 @@ class NNOp(object):
         raise ValueError("`name` must be string.")
       if name not in self._variable_info:
         raise ValueError("Variable with name: '%s' hasn't been created." % name)
-      return self.get_variable(name)
+      return self.get_variable(name=name)
     # ====== nnop ====== #
     for op in self.nnops:
       if name == op.name:
@@ -705,6 +705,7 @@ class NNOp(object):
       return add_role(var, roles)
     #####################################
     # 2. initializing function.
+    create_new_var = False
     if is_string(initializer):
       var = K.get_all_variables(name=initializer)
       if len(var) == 0:
@@ -713,19 +714,25 @@ class NNOp(object):
         raise ValueError("Cannot find any variable or tensor with name: "
             "'%s' for the initializer." % initializer)
       var = var[0]
+    # is instance of NNOp
     elif isinstance(initializer, NNOp):
       var = initializer
+    # is a callable
     elif hasattr(initializer, '__call__'):
       var = initializer(shape)
+      if isinstance(var, np.ndarray) or\
+      isinstance(initializer, init_ops.Initializer):
+        create_new_var = True
     # is a scalar
     elif is_number(initializer):
       var = np.full(shape=shape, fill_value=initializer, dtype='float32')
+      create_new_var = True
     # else actual tensor
     else:
       var = initializer
     #####################################
     # 3. Numpy ndarray.
-    if isinstance(var, np.ndarray):
+    if create_new_var:
       var = K.variable(var, shape=shape, name=name)
       self._variable_info[name] = (var.name, 'variable')
     #####################################
@@ -1350,7 +1357,6 @@ class NNSliceOp(NNOp):
     ops_format = '<ops: %s, name: %s, init: %s, slice: %s>'
     return ops_format % (self._ops.__class__.__name__, self._ops.name,
                          self._ops.is_initialized, str(self.slice))
-
 
 # ===========================================================================
 # Simple ops
