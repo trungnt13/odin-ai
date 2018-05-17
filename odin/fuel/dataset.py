@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import shutil
+import pickle
 from collections import OrderedDict, Mapping
 from six.moves import zip, range, cPickle
 
@@ -73,13 +74,19 @@ def _parse_data_descriptor(path, read_only):
       pass
   # ====== try to load pickle file if possible ====== #
   name = os.path.basename(path)
-  try:
+  try: # try with unpickling
     with open(path, 'rb') as f:
       data = cPickle.load(f)
       return [(name,
       (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
-  except Exception as e:
-    pass
+  except cPickle.UnpicklingError as e:
+    try: # try again with numpy load
+      with open(path, 'rb') as f:
+        data = np.load(f)
+        return [(name,
+        (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
+    except Exception as e:
+      pass
   # ====== load memmap dict ====== #
   try:
     data = MmapDict(path, read_only=read_only)

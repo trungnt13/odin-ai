@@ -100,6 +100,9 @@ class DataLoader(object):
 class MNIST(DataLoader):
   pass
 
+class FMNIST(DataLoader):
+  pass
+
 class CIFAR10(DataLoader):
   pass
 

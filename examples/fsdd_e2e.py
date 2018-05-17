@@ -147,13 +147,12 @@ y = K.placeholder(shape=(None, len(all_numbers)), name='y')
 Z = K.placeholder(shape=(25, 8), name='Z')
 W = init_ops.constant_initializer()(shape=(8, 12))
 w = N.Dense(num_units=12, W_init=W)(Z)
-exit()
 
 f_network = N.Sequence(ops=[
     N.Dimshuffle(pattern=(0, 1, 2, 'x')),
     N.Conv(num_filters=32, filter_size=(7, 9), strides=2,
            pad='valid', activation=K.linear),
-    # N.BatchNorm(activation=K.relu),
+    N.BatchNorm(activation=K.relu),
 
     # N.Conv(num_filters=64, filter_size=(5, 7), strides=2,
     #        pad='valid', activation=K.linear),
