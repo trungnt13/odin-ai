@@ -164,9 +164,6 @@ class Optimizer(object):
     # ====== get the updates ====== #
     updates = self.algorithm.minimize(loss=loss, global_step=self._step,
                                       var_list=trainable)
-    # ====== initialize ====== #
-    init = tf.global_variables_initializer()
-    get_session().run(init)
     return updates
 
   @cache_memory
@@ -176,8 +173,8 @@ class Optimizer(object):
       updates = self.algorithm.apply_gradients(grads_vars,
                                                global_step=self._step)
     # ====== initialize ====== #
-    init = tf.global_variables_initializer()
-    get_session().run(init)
+    # init = tf.global_variables_initializer()
+    # get_session().run(init)
     return updates
 
   def __call__(self, loss_or_grads, params):

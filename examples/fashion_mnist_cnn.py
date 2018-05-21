@@ -107,14 +107,15 @@ cm2 = K.metrics.confusion_matrix(y, y2_pred, labels=labels)
 # optimizer
 train_op1 = K.optimizers.Adam(lr=learning_rate).minimize(loss1)
 train_op2 = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss2)
+K.initialize_all_variables()
 # ====== create function ====== #
 f_pred1 = K.function(inputs=X, outputs=y1_probs, training=False)
 f_pred2 = K.function(inputs=X, outputs=y2_probs, training=False)
 # ===========================================================================
 # Training in ODIN
 # ===========================================================================
-trainer = training.MainLoop(batch_size=batch_size, shuffle_level=2, seed=5218,
-                            allow_rollback=True, labels=labels, verbose=2)
+trainer = training.MainLoop(batch_size=batch_size, shuffle_level=0, seed=None,
+                            allow_rollback=False, labels=labels, verbose=2)
 trainer.set_train_task(func=K.function(inputs=[X, y], outputs=[loss1, acc1],
                                        updates=train_op1, training=True),
                        data=(X_train, y_train),
@@ -124,7 +125,6 @@ trainer.run()
 # Training in Tensorflow
 # ===========================================================================
 sess = K.get_session()
-sess.run(tf.global_variables_initializer())
 #Divide input training set into mini batches of size batch_size.
 #If the total number of training examles is not exactly divisible by batch_size,
 #the last batch will have less number of examples than batch_size.
@@ -174,26 +174,12 @@ for e in range(epoch):
 # ===========================================================================
 # Evaluation
 # ===========================================================================
-#Cross validation loss and accuracy
-cv_loss1, cv_accuracy1 = sess.run([loss1, acc1],
-        {X: X_valid,
-         y: y_valid,
-         K.is_training(): False})
-cv_loss2, cv_accuracy2 = sess.run([loss2, acc2],
-        {X: X_valid,
-         y: y_valid,
-         K.is_training(): False})
-print("[ODIN]Validation loss: {} accuracy: {}".format(np.squeeze(cv_loss1), cv_accuracy1))
-print("[TF]  Validation loss: {} accuracy: {}".format(np.squeeze(cv_loss2), cv_accuracy2))
+y1_valid = f_pred1(X_valid)
+y1_test = f_pred1(X_test)
+evaluate(y_true=y_valid, y_pred_proba=y1_valid, labels=labels, title='ODIN-Valid')
+evaluate(y_true=y_test, y_pred_proba=y1_test, labels=labels, title='ODIN-Test')
 
-#Cross validation loss and accuracy
-test_loss1, test_accuracy1 = sess.run([loss1, acc1],
-        {X: X_test,
-         y: y_test,
-         K.is_training(): False})
-test_loss2, test_accuracy2 = sess.run([loss2, acc2],
-        {X: X_test,
-         y: y_test,
-         K.is_training(): False})
-print("[ODIN]Test loss: {} accuracy: {}".format(np.squeeze(test_loss1), test_accuracy1))
-print("[TF]  Test loss: {} accuracy: {}".format(np.squeeze(test_loss2), test_accuracy2))
+y2_valid = f_pred2(X_valid)
+y2_test = f_pred2(X_test)
+evaluate(y_true=y_valid, y_pred_proba=y2_valid, labels=labels, title='TF-Valid')
+evaluate(y_true=y_test, y_pred_proba=y2_test, labels=labels, title='TF-Test')

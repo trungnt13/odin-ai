@@ -583,7 +583,7 @@ class MainLoop(object):
     """
     if batch_size is not None:
       self._batch_size = batch_size
-    if seed >= 0 or seed is None:
+    if seed is None or seed >= 0:
       if seed is not None:
         self._rng = np.random.RandomState(seed)
       else:
