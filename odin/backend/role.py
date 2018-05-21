@@ -71,13 +71,16 @@ class VariationalLogsigma(Variational):
 class Parameter(Variable):
   pass
 
+class TrainableParameter(Parameter):
+  pass
+
 class ActivationParameter(Parameter):
   pass
 
-class Weight(Parameter):
+class Weight(TrainableParameter):
   pass
 
-class Bias(Parameter):
+class Bias(TrainableParameter):
   pass
 
 class InitialState(Parameter):
@@ -124,7 +127,7 @@ class BatchNormPopulationInvStd(BatchNorm):
   """ standard deviations of activations accumulated over the dataset """
   pass
 
-class BatchNormScaleParameter(Parameter, BatchNorm):
+class BatchNormScaleParameter(Weight, BatchNorm):
   """ role given to the scale parameter, referred to as "scale" (or "gamma") in the """
   pass
 
@@ -155,7 +158,7 @@ def _add_to_collection_no_duplication(name, var):
   if var not in tf.get_collection(str(name)):
     tf.add_to_collection(name, var)
 
-def add_role(variables, roles):
+def add_roles(variables, roles):
   r"""Add a role to a given variable.
 
   Parameters
@@ -285,25 +288,25 @@ def return_roles(roles=None):
   ... # [<class 'odin.basic.Weight'>, <class 'odin.basic.Variational'>]
   """
   @decorator
-  def add_role_to_outputs(func, *args, **kwargs):
+  def addrole_to_outputs(func, *args, **kwargs):
     outputs = func(*args, **kwargs)
     if isinstance(outputs, (tuple, list)):
       for o in outputs:
-        add_role(o, roles)
+        add_roles(o, roles)
     else:
-      add_role(outputs, roles)
+      add_roles(outputs, roles)
     return outputs
 
   # roles are not specified, given function directly
   if inspect.isfunction(roles) or inspect.ismethod(roles):
     func = roles
     roles = []
-    return add_role_to_outputs(func)
+    return addrole_to_outputs(func)
   # roles are specified
   else:
     roles = [r for r in as_tuple(roles)
              if isinstance(r, type) and issubclass(r, Role)]
-  return add_role_to_outputs
+  return addrole_to_outputs
 
 @contextmanager
 def role_scope(*roles):
@@ -312,7 +315,7 @@ def role_scope(*roles):
   -------
   >>> X = K.variable(np.random.rand(12, 8))
   >>> with role_scope(Weight, Variational, VariationalMean):
-  ...     add_role(X)
+  ...     add_roles(X)
   >>> print(X.tag.roles)
   ... # [<class 'odin.basic.Weight'>, <class 'odin.basic.VariationalMean'>]
   """

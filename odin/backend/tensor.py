@@ -130,7 +130,7 @@ def variable(value=None, shape=None, dtype=None, name=None, roles=[],
   elif value is not None:
     set_value(x=variable, value=value)
   #### add roles and return
-  return role.add_role(variable, roles)
+  return role.add_roles(variable, roles)
 
 # ===========================================================================
 # Helper

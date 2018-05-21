@@ -10,11 +10,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin.backend.role import add_auxiliary_variable, add_role, Auxiliary
+from odin.backend.role import add_auxiliary_variable, add_roles, Auxiliary
 from odin import backend as K
 from odin import nnet as N
 from odin.utils import segment_list
-
 
 class BackendTest(unittest.TestCase):
 
@@ -295,7 +294,7 @@ class BackendTest(unittest.TestCase):
     Y = K.variable(np.random.rand(12, 8), name='Y')
     Z = K.placeholder(shape=(8, 8), name='Z')
     a = K.dot(X, Y)
-    add_role(a, Auxiliary)
+    add_roles(a, Auxiliary)
     a = a + Z
     g1 = K.ComputationGraph(a)
 

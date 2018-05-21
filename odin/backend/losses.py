@@ -4,7 +4,7 @@ import tensorflow as tf
 from odin.config import EPS
 from odin.utils import is_number
 
-from .role import (return_roles, DifferentialLoss, add_role)
+from .role import (return_roles, DifferentialLoss, add_roles)
 from .tensor import is_tensor, to_nonzeros, dimshuffle
 
 # ===========================================================================

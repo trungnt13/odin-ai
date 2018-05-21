@@ -10,11 +10,10 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from odin import backend as K
 from odin.config import randint
 from odin.utils.cache_utils import cache_memory
-from odin.backend.role import (add_role, VariationalMean, VariationalLogsigma,
+from odin.backend.role import (add_roles, VariationalMean, VariationalLogsigma,
                         WEIGHT, BIAS)
 
 from .base import NNOp
-
 
 class Distribution(NNOp):
   """ Class for distribution within NN architectures """
@@ -54,8 +53,8 @@ class VariationalDense(NNOp):
     logsigma = self.activation(K.dot(x, self.W_logsigma) + b_logsigma)
     mean.name = 'variational_mean'
     logsigma.name = 'variational_logsigma'
-    add_role(mean, VARIATIONAL_MEAN)
-    add_role(logsigma, VARIATIONAL_LOGSIGMA)
+    add_roles(mean, VARIATIONAL_MEAN)
+    add_roles(logsigma, VARIATIONAL_LOGSIGMA)
     return mean, logsigma
 
   def sampling(self, x):

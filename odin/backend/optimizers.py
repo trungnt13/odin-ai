@@ -17,9 +17,10 @@ from odin.config import CONFIG, get_session
 from odin.utils import as_tuple, is_number, uuid
 from odin.utils.cache_utils import cache_memory
 
-from .role import (add_role, Auxiliary, LearningRate, OptimizerHyperParameter,
-                   GradientsNorm, GraidentsClipping)
-from .helpers import is_tensor, get_value
+from .role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
+                   GradientsNorm, GraidentsClipping, has_roles, get_roles,
+                   Role, Parameter, Weight, Bias, TrainableParameter)
+from .helpers import is_tensor, get_value, ComputationGraph, is_variable
 
 floatX = CONFIG.floatX
 
@@ -47,7 +48,7 @@ def _as_variable(x, name, roles=None):
   if not is_tensor(x):
     x = tf.Variable(x, dtype=floatX, name=name)
     get_session().run(x.initializer)
-  return add_role(x, roles)
+  return add_roles(x, roles)
 
 
 # ===========================================================================
@@ -146,6 +147,28 @@ class Optimizer(object):
     """Return L2-norm value of all gradients """
     return self._norm
 
+  def minimize(self, loss, var_list=None,
+               roles=[TrainableParameter], ignore_roles=[]):
+    # ====== get all relevant variables ====== #
+    if var_list is not None:
+      all_variables = as_tuple(var_list, t=is_variable)
+    else:
+      all_variables = ComputationGraph(loss).variables
+    # ====== filtering ====== #
+    trainable = [v for v in all_variables
+                 if has_roles(v, roles=roles)]
+    if ignore_roles is not None and \
+    (isinstance(ignore_roles, Role) or len(ignore_roles) > 0):
+      trainable = [v for v in all_variables
+                   if not has_roles(v, roles=roles)]
+    # ====== get the updates ====== #
+    updates = self.algorithm.minimize(loss=loss, global_step=self._step,
+                                      var_list=trainable)
+    # ====== initialize ====== #
+    init = tf.global_variables_initializer()
+    get_session().run(init)
+    return updates
+
   @cache_memory
   def get_updates(self, loss_or_grads, params):
     grads_vars = self.get_gradients(loss_or_grads, params)
@@ -195,7 +218,7 @@ class Optimizer(object):
         grads = [tf.clip_by_value(g, -self.clipvalue, self.clipvalue)
                  for g in grads]
       # ====== get final norm value ====== #
-      self._norm = add_role(tf.global_norm(grads, name="GradientNorm"),
+      self._norm = add_roles(tf.global_norm(grads, name="GradientNorm"),
                             GradientsNorm)
       return [(g, p) for g, p in zip(grads, params)]
 

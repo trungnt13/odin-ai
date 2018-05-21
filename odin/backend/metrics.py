@@ -7,7 +7,7 @@ from odin.utils import is_number, as_tuple
 from odin.config import EPS
 
 from .role import (AccuracyValue, return_roles, DifferentialLoss,
-                   ConfusionMatrix, add_role)
+                   ConfusionMatrix, add_roles)
 from .tensor import argsort, dimshuffle, to_nonzeros, to_llr
 from .helpers import is_tensor
 
@@ -181,7 +181,7 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
     if normalize:
       cm = tf.cast(cm, dtype='float32')
       cm = cm / tf.reduce_sum(cm, axis=1, keep_dims=True)
-    return add_role(cm, ConfusionMatrix)
+    return add_roles(cm, ConfusionMatrix)
 
 
 def detection_matrix(y_true, y_pred):

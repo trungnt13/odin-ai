@@ -7,7 +7,6 @@ import tensorflow as tf
 from odin.config import randint
 from .helpers import *
 
-
 def relu(x, alpha=0., name='ReLu'):
   if alpha == 0.:
     return tf.nn.relu(x, name=name)
@@ -22,7 +21,6 @@ def relu(x, alpha=0., name='ReLu'):
       f2 = 0.5 * (1 - alpha)
       return f1 * x + f2 * tf.abs(x)
 
-
 def elu(x, alpha=1., name="ELu"):
   with tf.variable_scope(name):
     res = tf.nn.elu(x)
@@ -32,7 +30,6 @@ def elu(x, alpha=1., name="ELu"):
       res = tf.where(x > 0, res, alpha * res)
     return res
 
-
 def hard_sigmoid(x, name='HardSigmoid'):
   with tf.variable_scope(name):
     slope = tf.constant(0.2, dtype=x.dtype.base_dtype)
@@ -40,7 +37,6 @@ def hard_sigmoid(x, name='HardSigmoid'):
     x = (x * slope) + shift
     x = tf.clip_by_value(x, 0., 1.)
     return x
-
 
 def antirectify(x, name="AntiRectify"):
   """
@@ -119,9 +115,9 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto', name="RandRectify")
   ndims = x.get_shape().ndims
   # ====== check lower and upper ====== #
   if is_variable(lower):
-    add_role(lower, ActivationParameter)
+    add_roles(lower, ActivationParameter)
   if is_variable(upper):
-    add_role(upper, ActivationParameter)
+    add_roles(upper, ActivationParameter)
   if not is_tensor(lower > upper) and lower > upper:
     raise ValueError("Upper bound for Randomized Rectifier needs "
                      "to be higher than lower bound.")

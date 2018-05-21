@@ -80,17 +80,17 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
         # set new value for variable
         if shape is not None:
           if v_shape == shape:
-            return role.add_role(v, roles)
+            return role.add_roles(v, roles)
           else:
             raise ValueError("Pre-defined placeholder with name: %s and"
                 " shape: %s, which is different from given shape: %s"
                 % (name, v_shape, shape))
         # just get the variable
         else:
-          return role.add_role(v, roles)
+          return role.add_roles(v, roles)
   # ====== Modify add name prefix ====== #
   plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
-  return role.add_role(plh, roles)
+  return role.add_roles(plh, roles)
 
 def eval(x, feed_dict=None, options=None,
          run_metadata=None):
@@ -254,7 +254,7 @@ def restore_variables(path, session=None):
   saver.restore(session, path)
   # ====== restore the collections ====== #
   for v in var_list:
-    role.add_role(v, collections[v.name])
+    role.add_roles(v, collections[v.name])
 
 def save_graph(path, graph=None):
   g = tf.summary.FileWriter(path)

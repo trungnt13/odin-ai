@@ -26,7 +26,7 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         flatten_list, get_all_files, is_pickleable,
                         FuncDesc, dummy_formatter, type_path,
                         get_module_from_path, wprint)
-from odin.backend.role import (add_role, has_roles, Parameter, Weight, Bias)
+from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias)
 
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
@@ -702,7 +702,7 @@ class NNOp(object):
       elif t == 'nnop':
         var = var_name(*self._current_args, **self._current_kwargs)
       # only care about the first variable
-      return add_role(var, roles)
+      return add_roles(var, roles)
     #####################################
     # 2. initializing function.
     create_new_var = False
@@ -769,7 +769,7 @@ class NNOp(object):
                          type(initializer).__name__)
     # ====== assign annotations ====== #
     if K.is_tensor(var):
-      return add_role(var, roles)
+      return add_roles(var, roles)
     elif isinstance(var, NNOp):
       return var
     else:

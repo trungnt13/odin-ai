@@ -9,7 +9,7 @@ from odin.config import get_rng, CONFIG, randint
 
 from .helpers import is_training
 from .tensor import variable
-from .role import add_role, Weight, Bias, Parameter
+from .role import add_roles, Weight, Bias, Parameter
 
 floatX = CONFIG.floatX
 

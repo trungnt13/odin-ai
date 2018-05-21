@@ -93,13 +93,13 @@ def _infer_variable_role(variables):
   for v in variables:
     name = v.name.split(':')[0].split("/")[-1]
     if 'kernel' in name:
-      K.role.add_role(v, K.role.Weight)
+      K.role.add_roles(v, K.role.Weight)
     elif 'bias' in name:
-      K.role.add_role(v, K.role.Bias)
+      K.role.add_roles(v, K.role.Bias)
     elif '_w' in name:
-      K.role.add_role(v, K.role.Weight)
+      K.role.add_roles(v, K.role.Weight)
     elif '_v' in name:
-      K.role.add_role(v, K.role.Weight)
+      K.role.add_roles(v, K.role.Weight)
     else:
       raise ValueError("Unknown role for variable with name: " + name)
 

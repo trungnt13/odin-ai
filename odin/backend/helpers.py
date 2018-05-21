@@ -15,10 +15,7 @@ from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
                         decorators)
-
 from .role import (has_roles, Auxiliary, Parameter)
-
-
 # ===========================================================================
 # Basic query
 # ===========================================================================
@@ -441,7 +438,6 @@ def get_all_tensors(scope=None, name=None, full_name=None, device=None):
                   if any((n == t.name or
                           n + ':0' == t.name) for n in full_name)]
   return alltensors
-
 
 def get_all_variables_or_tensors(scope=None, name=None, full_name=None):
   var = get_all_variables(scope=scope, name=name, full_name=full_name)
