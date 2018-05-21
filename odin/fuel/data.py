@@ -346,16 +346,19 @@ class Data(object):
       if seed is not None:
         rand = np.random.RandomState(seed=seed)
         rand.shuffle(idx)
+      else:
+        rand = None
       # this dummy return to make everything initialized
       yield None
       # ====== start the iteration ====== #
       for start, end in idx:
         # [i[start:end] for i in self._data]
         x = self.__getitem__(slice(start, end))
-        if shuffle_level > 0: # shuffle with higher level
+        # shuffle with higher level
+        if shuffle_level > 0 and rand is not None:
           permu = rand.permutation(end - start)
-          x = (tuple([i[permu] for i in x])
-               if isinstance(x, (tuple, list)) else x[permu])
+          x = tuple([i[permu] for i in x]) \
+              if isinstance(x, (tuple, list)) else x[permu]
         yield x
     # ====== create, init, and return the iteration ====== #
     it = create_iteration()
@@ -621,7 +624,6 @@ class Data(object):
       raise RuntimeError("This Data is set in read-only mode")
     for i in self._data:
       i.__ipow__(y)
-
 
 # ===========================================================================
 # Utils

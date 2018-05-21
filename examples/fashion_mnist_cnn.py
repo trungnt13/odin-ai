@@ -2,20 +2,24 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'gpu,float32,seed=5218'
+import timeit
 
 import numpy as np
 import tensorflow as tf
 
 from odin import fuel as F, nnet as N, backend as K
-from odin.utils import ctext
+from odin import training
+from odin.utils import ctext, get_modelpath
 from odin.config import get_rng
-
+from odin.ml import evaluate
 # ===========================================================================
 # CONST
 # ===========================================================================
 learning_rate = 0.01
 epoch = 15
 batch_size = 128
+MODEL_PATH_ODIN = get_modelpath(name='fmnist_odin')
+MODEL_PATH_TF = get_modelpath(name='fmnist_tf')
 
 # ===========================================================================
 # Load dataset
@@ -103,3 +107,93 @@ cm2 = K.metrics.confusion_matrix(y, y2_pred, labels=labels)
 # optimizer
 train_op1 = K.optimizers.Adam(lr=learning_rate).minimize(loss1)
 train_op2 = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss2)
+# ====== create function ====== #
+f_pred1 = K.function(inputs=X, outputs=y1_probs, training=False)
+f_pred2 = K.function(inputs=X, outputs=y2_probs, training=False)
+# ===========================================================================
+# Training in ODIN
+# ===========================================================================
+trainer = training.MainLoop(batch_size=batch_size, shuffle_level=2, seed=5218,
+                            allow_rollback=True, labels=labels, verbose=2)
+trainer.set_train_task(func=K.function(inputs=[X, y], outputs=[loss1, acc1],
+                                       updates=train_op1, training=True),
+                       data=(X_train, y_train),
+                       epoch=epoch, name='train')
+trainer.run()
+# ===========================================================================
+# Training in Tensorflow
+# ===========================================================================
+sess = K.get_session()
+sess.run(tf.global_variables_initializer())
+#Divide input training set into mini batches of size batch_size.
+#If the total number of training examles is not exactly divisible by batch_size,
+#the last batch will have less number of examples than batch_size.
+total_size = X_train.shape[0]
+number_of_batches = int(total_size / batch_size)
+print("Training:Start")
+for e in range(epoch):
+  start_time = timeit.default_timer()
+  epoch_cost = 0
+  epoch_accuracy = 0
+  for i in range(number_of_batches):
+    mini_x = X_train[i * batch_size:(i + 1) * batch_size, :, :]
+    mini_y = y_train[i * batch_size:(i + 1) * batch_size]
+    _, cost = sess.run([train_op2, loss2],
+        feed_dict={X: mini_x,
+                   y: mini_y,
+                   K.is_training(): True})
+    train_accuracy = sess.run(acc2,
+        feed_dict={X: mini_x,
+                   y: mini_y,
+                   K.is_training(): False})
+    epoch_cost += cost
+    epoch_accuracy += train_accuracy
+  #If the total number of training examles is not exactly divisible by batch_size,
+  #we have one more batch of size (total_size - number_of_batches*batch_size)
+  if total_size % batch_size != 0:
+    mini_x = X_train[number_of_batches * batch_size:total_size, :, :]
+    mini_y = y_train[number_of_batches * batch_size:total_size]
+    _, cost = sess.run([train_op2, loss2],
+        feed_dict={X: mini_x,
+                   y: mini_y,
+                   K.is_training(): True})
+    train_accuracy = sess.run(acc2,
+        feed_dict={X: mini_x,
+                   y: mini_y,
+                   K.is_training(): False})
+    epoch_cost += cost
+    epoch_accuracy += train_accuracy
+  epoch_cost /= number_of_batches
+  if total_size % batch_size != 0:
+    epoch_accuracy /= (number_of_batches + 1)
+  else:
+    epoch_accuracy /= number_of_batches
+  print("Epoch: {} Cost: {} accuracy: {} time: {}(s)".format(
+      e + 1, np.squeeze(epoch_cost), epoch_accuracy,
+      timeit.default_timer() - start_time))
+# ===========================================================================
+# Evaluation
+# ===========================================================================
+#Cross validation loss and accuracy
+cv_loss1, cv_accuracy1 = sess.run([loss1, acc1],
+        {X: X_valid,
+         y: y_valid,
+         K.is_training(): False})
+cv_loss2, cv_accuracy2 = sess.run([loss2, acc2],
+        {X: X_valid,
+         y: y_valid,
+         K.is_training(): False})
+print("[ODIN]Validation loss: {} accuracy: {}".format(np.squeeze(cv_loss1), cv_accuracy1))
+print("[TF]  Validation loss: {} accuracy: {}".format(np.squeeze(cv_loss2), cv_accuracy2))
+
+#Cross validation loss and accuracy
+test_loss1, test_accuracy1 = sess.run([loss1, acc1],
+        {X: X_test,
+         y: y_test,
+         K.is_training(): False})
+test_loss2, test_accuracy2 = sess.run([loss2, acc2],
+        {X: X_test,
+         y: y_test,
+         K.is_training(): False})
+print("[ODIN]Test loss: {} accuracy: {}".format(np.squeeze(test_loss1), test_accuracy1))
+print("[TF]  Test loss: {} accuracy: {}".format(np.squeeze(test_loss2), test_accuracy2))

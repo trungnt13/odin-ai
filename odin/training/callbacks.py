@@ -420,7 +420,7 @@ class EarlyStopGeneralizationLoss(EarlyStop):
   value for evaluation.
   """
 
-  def __init__(self, task_name, output_name, threshold, patience=1,
+  def __init__(self, task_name, output_name, threshold=5, patience=1,
                get_value=lambda x: np.mean(x), log=True):
     super(EarlyStopGeneralizationLoss, self).__init__(
         task_name, output_name, threshold, patience,
