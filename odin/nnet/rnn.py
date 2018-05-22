@@ -325,23 +325,13 @@ class CudnnRNN(NNOp):
       See cudnn documentation for ``cudnnRNNMode_t``.
   num_layers : int
       the number of layers for the RNN model.
-  input_mode : {'linear', 'skip', 'norm'}
-      linear: input will be multiplied by a biased matrix.
-      norm: same as linear, but batch norm will be added for input connection
-      skip: No operation is performed on the input.  The size must
-      match the hidden size. (CuDNN docs: cudnnRNNInputMode_t)
-      norm: applying batch normalization on input-to-hidden connection, this
-      approach require the `input_dims` equal to `num_units`.
-  bidirectional : bool (default: False)
+  is_bidirectional : bool (default: False)
       unidirectional: The network operates recurrently from the
                       first input to the last.
       bidirectional: The network operates from first to last then from last
                      to first and concatenates the results at each layer.
-  params_split: boolean (defaults: False)
-      if True, separately initialized each parameter of RNN, then flatten and
-      concatenate all of them into one big vector for Cudnn, this results
-      more flexible control over parameters but significantly reduce the
-      speed.
+  is_training : {None, boolean}
+      if None, is_training is conditioned on `odin.backend.is_training()`
   return_states: boolean (defaults: False)
       if True, this Ops returns the [output, hidden_staes, cell_states (lstm)]
       otherwise only return the output
@@ -398,7 +388,7 @@ class CudnnRNN(NNOp):
       self.get_variable(name=i.name.split('/')[-1].split(':')[0],
                         shape=i.shape.as_list(), initializer=i)
 
-  def _apply(self, X, h0=None, c0=None, mask=None):
+  def _apply(self, X, h0=None, c0=None, mask=None, training=None):
     if not hasattr(self, '_opaque_params'):
       weights = [K.get_all_variables(full_name=w)[0] for w in self._weights_name]
       biases = [K.get_all_variables(full_name=b)[0] for b in self._biases_name]
@@ -409,7 +399,8 @@ class CudnnRNN(NNOp):
                           num_layers=self.num_layers, parameters=params,
                           skip_input=self.skip_input,
                           is_bidirectional=self.is_bidirectional,
-                          dropout=self.dropout)
+                          dropout=self.dropout,
+                          is_training=training)
     if not self.return_states:
       return outputs[0]
     return outputs

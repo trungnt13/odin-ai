@@ -26,7 +26,8 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         flatten_list, get_all_files, is_pickleable,
                         FuncDesc, dummy_formatter, type_path,
                         get_module_from_path, wprint)
-from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias)
+from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias,
+                               TrainableParameter)
 
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
@@ -861,6 +862,11 @@ class NNOp(object):
     return [i for i in self.variables if has_roles(i, Parameter)]
 
   @property
+  def trainable_parameters(self):
+    """ return all TensorVariables which have the TrainableParameter role"""
+    return [i for i in self.variables if has_roles(i, TrainableParameter)]
+
+  @property
   def nb_parameters(self):
     n = 0
     for p in self.parameters:
@@ -1054,6 +1060,7 @@ class NNOp(object):
     return (desc, data)
 
   def apply(self, *args, **kwargs):
+    print(args, kwargs)
     # ====== restore variable first ====== #
     self._restore_variables()
     # ====== self.name can contain Model varable scope, hence,

@@ -32,6 +32,7 @@ rand = get_random_state()
 # ====== for training ====== #
 FEATURE = 'mspec'
 PAD_MODE = 'pre'
+LEARNING_RATE = 0.01
 # ====== helpers ====== #
 file2name = lambda f: os.path.basename(f).replace('.wav', '')
 # ===========================================================================
@@ -40,6 +41,7 @@ file2name = lambda f: os.path.basename(f).replace('.wav', '')
 files, meta = F.FSDD.load()
 all_speakers = [i[0] for i in meta[1:]]
 all_numbers = sorted(set([int(os.path.basename(f)[0]) for f in files]))
+nb_classes = len(all_numbers)
 print("#Files:", ctext(len(files), 'cyan'))
 print("#Speakers:", ctext(all_speakers, 'cyan'))
 print("Labels:", ctext(all_numbers, 'cyan'))
@@ -92,7 +94,6 @@ def extract_acoustic_features(SR=SR, NFFT=NFFT, NMELS=NMELS,
                              win_length=301,
                              feat_name=('spec', 'mspec', 'mfcc', 'sdc')),
       pp.base.RemoveFeatures(feat_name=('stft')),
-
   ], debug=False)
   features = {}
   prog = Progbar(target=len(files), print_report=True, print_summary=True,
@@ -144,23 +145,60 @@ INPUT_SHAPE = (None, X_train.shape[1], X_train.shape[2])
 X = K.placeholder(shape=INPUT_SHAPE, name='X')
 y = K.placeholder(shape=(None, len(all_numbers)), name='y')
 
-Z = K.placeholder(shape=(25, 8), name='Z')
-W = init_ops.constant_initializer()(shape=(8, 12))
-w = N.Dense(num_units=12, W_init=W)(Z)
-
-f_network = N.Sequence(ops=[
+# ====== all functions ====== #
+f_encoder = N.Sequence(ops=[
     N.Dimshuffle(pattern=(0, 1, 2, 'x')),
-    N.Conv(num_filters=32, filter_size=(7, 9), strides=2,
-           pad='valid', activation=K.linear),
+    N.Conv(num_filters=32, filter_size=(7, 9), strides=1,
+           pad='same', activation=K.linear),
     N.BatchNorm(activation=K.relu),
 
-    # N.Conv(num_filters=64, filter_size=(5, 7), strides=2,
-    #        pad='valid', activation=K.linear),
-    # N.BatchNorm(activation=K.relu),
+    N.Conv(num_filters=64, filter_size=(5, 7), strides=1,
+           pad='same', activation=K.linear),
+    N.BatchNorm(activation=K.relu),
 
-    # N.Flatten(outdim=3),
-    # N.CudnnRNN(num_units=128, rnn_mode='lstm', num_layers=1,
-    #            bidirectional=True),
-    # N.Pool(pool_size=2)
-], debug=True, name="ClassificationNetwork")
-y_pred_logits = f_network(X)
+    N.Flatten(outdim=3),
+], debug=True, name="Encoder")
+
+f_attn = N.Sequence(ops=[
+    N.Dimshuffle(pattern=(0, 2, 1)),
+    N.Dense(num_units=X_train.shape[1], activation=tf.nn.softmax),
+    N.Reduce(fn=tf.reduce_mean, axis=1, keep_dims=True),
+    N.Dimshuffle(pattern=(0, 2, 1))
+], debug=True, name="Attention")
+
+f_decoder = N.Sequence(ops=[
+    N.CudnnRNN(num_units=64, rnn_mode='gru', num_layers=1,
+               is_bidirectional=True),
+
+    N.Flatten(outdim=2),
+    N.Dense(num_units=1024, activation=K.linear),
+    N.BatchNorm(axes=0, activation=K.relu),
+
+    N.Dense(num_units=nb_classes, activation=K.linear),
+], debug=True, name="Decoder")
+# ====== attention ====== #
+Z = f_encoder(X)
+A = f_attn(Z)
+y_pred_logits_train = f_decoder(Z * A, training=True)
+y_pred_logits_pred = f_decoder(Z * A, training=False)
+# ====== prediction ====== #
+y_pred_probas = f_decoder(y_pred_logits_pred)
+y_pred = tf.argmax(y_pred_probas, axis=-1)
+# ===========================================================================
+# Create objectives
+# ===========================================================================
+#loss
+loss = tf.losses.softmax_cross_entropy(y, y_pred_logits_train)
+acc = K.metrics.categorical_accuracy(y, y_pred_probas)
+cm = K.metrics.confusion_matrix(y, y_pred_probas, labels=all_numbers)
+train_op = K.optimizers.Adam(lr=LEARNING_RATE).minimize(loss)
+K.initialize_all_variables()
+# ====== create function ====== #
+f_train = K.function(inputs=[X, y], outputs=[loss, acc, cm],
+                     updates=train_op, training=True)
+f_score = K.function(inputs=[X, y], outputs=[loss, acc, cm],
+                     training=False)
+f_pred = K.function(inputs=X, outputs=y_pred_probas, training=False)
+# ===========================================================================
+# Create trainer
+# ===========================================================================

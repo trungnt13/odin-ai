@@ -347,7 +347,7 @@ class _LogWrapper():
 
   def write(self, message):
     # no backtrack for writing to file
-    self.stream.write(message.replace("\b", ''))
+    self.stream.write(message.replace(u"\b", ''))
     sys.__stdout__.write(message)
 
   def flush(self):

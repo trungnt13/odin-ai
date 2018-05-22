@@ -628,10 +628,17 @@ def flatten(x, outdim=1, name='Flatten'):
 
 
 def repeat(x, n, axes=None, name="Repeat"):
-  """Repeat a N-D tensor.
+  """ Repeat a N-D tensor.
 
   If x has shape (s1, s2, s3) and axes=(1, -1), the output
   will have shape (s1, s2 * n[0], s3 * n[1]).
+
+  Parameters
+  ----------
+  n : {int, list of int}
+    each number of repeatation according to the axes
+  axes : {int, list or int}
+    all axes for repeating
   """
   if axes is not None:
     ndim = x.get_shape().ndims
@@ -1184,7 +1191,8 @@ def cudnn_rnn(X, num_units, rnn_mode,
               num_layers=1, parameters=None,
               h0=None, c0=None,
               skip_input=False, is_bidirectional=False,
-              dropout=0., name=None):
+              dropout=0., is_training=None,
+              name=None):
   """CuDNN v7 RNN implementation.
 
   Parameters
@@ -1217,6 +1225,8 @@ def cudnn_rnn(X, num_units, rnn_mode,
       first input to the last.
   dropout: float (0.0-1.0)
       whether to enable dropout. With it is 0, dropout is disabled.
+  is_training : {None, boolean}
+      if None, is_training is conditioned on `odin.backend.is_training()`
 
   Returns
   -------
@@ -1314,9 +1324,13 @@ def cudnn_rnn(X, num_units, rnn_mode,
         'seed': get_random_state().randint(low=0, high=5218, dtype='int32'),
         'name': name
     }
-    (output, output_h, output_c) = cond_training(
-        train_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=True, **kwargs),
-        infer_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=False, **kwargs))
+    if is_training is None:
+      (output, output_h, output_c) = cond_training(
+          train_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=True, **kwargs),
+          infer_fn=lambda: cudnn_rnn_ops._cudnn_rnn(is_training=False, **kwargs))
+    else:
+      (output, output_h, output_c) = cudnn_rnn_ops._cudnn_rnn(
+          is_training=bool(is_training), **kwargs)
     # ====== post processing ====== #
     output = set_shape(tf.transpose(output, (1, 0, 2)),
       shape=(input_shape[0], input_shape[1], num_units * (2 if is_bidirectional else 1)))

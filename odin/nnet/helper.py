@@ -82,6 +82,8 @@ class Sequence(NNOp):
     self.debug = int(debug)
 
   def _apply(self, *args, **kwargs):
+    print(args, kwargs)
+    exit()
     all_outputs = []
     last_output_shape = [tuple(x.get_shape().as_list())
     for x in self._current_args + list(self._current_kwargs.values())]
