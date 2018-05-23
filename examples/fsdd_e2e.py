@@ -162,7 +162,7 @@ f_encoder = N.Sequence(ops=[
 f_attn = N.Sequence(ops=[
     N.Dimshuffle(pattern=(0, 2, 1)),
     N.Dense(num_units=X_train.shape[1], activation=tf.nn.softmax),
-    N.Reduce(fn=tf.reduce_mean, axis=1, keep_dims=True),
+    N.Reduce(fn=tf.reduce_mean, axis=1, keepdims=True),
     N.Dimshuffle(pattern=(0, 2, 1))
 ], debug=True, name="Attention")
 
@@ -179,10 +179,11 @@ f_decoder = N.Sequence(ops=[
 # ====== attention ====== #
 Z = f_encoder(X)
 A = f_attn(Z)
-y_pred_logits_train = f_decoder(Z * A, training=True)
-y_pred_logits_pred = f_decoder(Z * A, training=False)
+Z_ = Z * A
+y_pred_logits_train = f_decoder(Z_, training=True)
+y_pred_logits_pred = f_decoder(Z_, training=False)
 # ====== prediction ====== #
-y_pred_probas = f_decoder(y_pred_logits_pred)
+y_pred_probas = tf.nn.softmax(y_pred_logits_pred)
 y_pred = tf.argmax(y_pred_probas, axis=-1)
 # ===========================================================================
 # Create objectives

@@ -23,7 +23,7 @@ _SUPPORT_REDUCE_FUNCTION = [
 class Reduce(NNOp):
   """ support all Reduce function in tensorflow"""
 
-  def __init__(self, fn, axis=None, keep_dims=False, **kwargs):
+  def __init__(self, fn, axis=None, keepdims=False, **kwargs):
     super(Reduce, self).__init__(**kwargs)
     if not is_callable(fn):
       raise ValueError("`fn` must be callable")
@@ -32,13 +32,13 @@ class Reduce(NNOp):
         (str(fn), ', '.join([i.__name__ for i in _SUPPORT_REDUCE_FUNCTION])))
     self.fn = fn
     self.axis = axis
-    self.keep_dims = bool(keep_dims)
+    self.keepdims = bool(keepdims)
 
   def _transpose(self):
     raise NotImplementedError
 
   def _apply(self, X):
-    return self.fn(X, axis=self.axis, keep_dims=self.keep_dims)
+    return self.fn(X, axis=self.axis, keepdims=self.keepdims)
 
 class Repeat(NNOp):
   """ Repeat a dimension of a tensor
