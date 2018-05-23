@@ -10,10 +10,9 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin.utils import ctext, Progbar, mpi, cache_disk
-from odin import fuel as F, nnet as N, backend as K
+from odin.utils import ctext, Progbar, mpi, cache_disk, get_modelpath
+from odin import fuel as F, nnet as N, backend as K, training as T, visual as V
 from odin import preprocessing as pp
-from odin.visual import plot_multiple_features, plot_save, plot_spectrogram
 from odin.config import get_random_state
 from odin.preprocessing.signal import segment_axis, one_hot
 # ===========================================================================
@@ -33,6 +32,9 @@ rand = get_random_state()
 FEATURE = 'mspec'
 PAD_MODE = 'pre'
 LEARNING_RATE = 0.01
+BATCH_SIZE = 32
+NB_EPOCH = 12
+NB_VISUAL_SAMPLES = 2
 # ====== helpers ====== #
 file2name = lambda f: os.path.basename(f).replace('.wav', '')
 # ===========================================================================
@@ -137,6 +139,18 @@ input_ndim = X_train.shape[-1]
 print('train:', X_train.shape, y_train.shape)
 print('valid:', X_valid.shape, y_valid.shape)
 print('test:', X_test.shape, y_test.shape)
+# ====== select some sample for visualization ====== #
+idx = np.random.choice(a=range(X_train.shape[0]),
+                       size=NB_VISUAL_SAMPLES,
+                       replace=False)
+X_train_visual = X_train[idx]
+y_train_visual = y_train[idx]
+
+idx = np.random.choice(a=range(X_test.shape[0]),
+                       size=NB_VISUAL_SAMPLES,
+                       replace=False)
+X_test_visual = X_test[idx]
+y_test_visual = y_test[idx]
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -159,13 +173,22 @@ f_encoder = N.Sequence(ops=[
     N.Flatten(outdim=3),
 ], debug=True, name="Encoder")
 
+# ====== different attention approach ====== #
+# f_attn = N.Sequence(ops=[
+#     N.Dimshuffle(pattern=(0, 2, 1)),
+#     N.Dense(num_units=X_train.shape[1], activation=tf.nn.softmax),
+#     N.Reduce(fn=tf.reduce_max, axis=1, keepdims=True),
+#     N.Dimshuffle(pattern=(0, 2, 1))
+# ], debug=True, name="Attention")
+
 f_attn = N.Sequence(ops=[
-    N.Dimshuffle(pattern=(0, 2, 1)),
-    N.Dense(num_units=X_train.shape[1], activation=tf.nn.softmax),
-    N.Reduce(fn=tf.reduce_mean, axis=1, keepdims=True),
-    N.Dimshuffle(pattern=(0, 2, 1))
+    N.Dense(num_units=1, activation=tf.nn.relu),
+    N.Flatten(outdim=2),
+    N.Activate(fn=tf.nn.softmax),
+    N.Dimshuffle(pattern=(0, 1, 'x'))
 ], debug=True, name="Attention")
 
+# ====== the decoder (discriminator) ====== #
 f_decoder = N.Sequence(ops=[
     N.CudnnRNN(num_units=64, rnn_mode='gru', num_layers=1,
                is_bidirectional=True),
@@ -199,7 +222,45 @@ f_train = K.function(inputs=[X, y], outputs=[loss, acc, cm],
                      updates=train_op, training=True)
 f_score = K.function(inputs=[X, y], outputs=[loss, acc, cm],
                      training=False)
-f_pred = K.function(inputs=X, outputs=y_pred_probas, training=False)
+f_pred = K.function(inputs=X, outputs=[y_pred_probas, A], training=False)
 # ===========================================================================
-# Create trainer
+# Training the network
 # ===========================================================================
+trainer = T.MainLoop(batch_size=BATCH_SIZE, seed=5218, shuffle_level=2,
+                     allow_rollback=True, verbose=3)
+trainer.set_checkpoint(get_modelpath(name='fsdd_ai', override=True),
+                       obj=[f_encoder, f_attn, f_decoder])
+trainer.set_callbacks([
+    T.NaNDetector(),
+    T.EarlyStopGeneralizationLoss('valid', loss, threshold=5, patience=3)
+])
+trainer.set_train_task(func=f_train,
+                       data=(X_train, y_train),
+                       epoch=NB_EPOCH,
+                       name='train')
+trainer.set_valid_task(func=f_score,
+                    data=(X_valid, y_valid),
+                    freq=T.Timer(percentage=0.8),
+                    name='valid')
+trainer.set_eval_task(func=f_score,
+                   data=(X_test, y_test),
+                   name='eval')
+trainer.run()
+# ===========================================================================
+# Visualization
+# ===========================================================================
+def fast_plot(x, y, train_set):
+  y = np.argmax(y)
+  y_, a = f_pred(x[None, :, :])
+  y_ = np.argmax(y_)
+  a = a.ravel()
+  assert a.shape[0] == x.shape[0]
+  V.plot_multiple_features(
+      features={'spec': x,
+                'attention': a},
+      title='[%s] %d and %d' % ('Train' if train_set else 'Test', y, y_))
+for x, y in zip(X_train_visual, y_train_visual):
+  fast_plot(x, y, train_set=True)
+for x, y in zip(X_test_visual, y_test_visual):
+  fast_plot(x, y, train_set=False)
+V.plot_save('/tmp/tmp.pdf')

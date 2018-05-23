@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
-from odin.utils import is_callable
+from odin.utils import is_callable, is_pickleable
 
 from .base import NNOp
 
@@ -64,3 +64,22 @@ class Repeat(NNOp):
 
   def _apply(self, X):
     return K.repeat(X, n=self.n, axes=self.axes)
+
+class Activate(NNOp):
+  """ Custom activation function
+  """
+
+  def __init__(self, fn, keywords={}, **kwargs):
+    super(Activate, self).__init__(**kwargs)
+    if not is_callable(fn):
+      raise ValueError("`fn` must be callable")
+    if not is_pickleable(fn):
+      raise ValueError("`fn` must be pickle-able")
+    self.fn = fn
+    self.keywords = keywords
+
+  def _transpose(self):
+    return Activate(self.fn, keywords=self.keywords)
+
+  def _apply(self, X):
+    return self.fn(X, **self.keywords)
