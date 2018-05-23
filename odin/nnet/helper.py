@@ -82,16 +82,17 @@ class Sequence(NNOp):
     self.debug = int(debug)
 
   def _apply(self, *args, **kwargs):
-    print(args, kwargs)
-    exit()
     all_outputs = []
-    last_output_shape = [tuple(x.get_shape().as_list())
-    for x in self._current_args + list(self._current_kwargs.values())]
+    args_desc = [tuple(x.get_shape().as_list()) if hasattr(x, 'get_shape') else str(x)
+                 for x in self._current_args]
+    kwargs_desc = {
+        k: tuple(v.get_shape().as_list()) if hasattr(v, 'get_shape') else str(v)
+        for k, v in self._current_kwargs.items()}
     # ====== print debug ====== #
     if self.debug > 0:
       print('**************** Start: %s ****************' %
           ctext(self.name, 'cyan'))
-      print("First input:", ctext(str(last_output_shape), 'yellow'))
+      print("First input:", ctext(str(args_desc) + ' ' + str(kwargs_desc), 'yellow'))
       type_format = '%-' + str(max(len(type(o).__name__) for o in self.nnops)) + 's'
       name_format = '%-' + str(max(len(o.name) for o in self.nnops)) + 's'
     # ====== start apply each NNOp ====== #
@@ -99,7 +100,7 @@ class Sequence(NNOp):
       if i == 0:
         x = op(*args, **kwargs)
       else:
-        x = op(x)
+        x = op(x, **kwargs)
       all_outputs.append(x)
       # print after finnish the op
       if self.debug == 1:

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 import os
 import io
@@ -347,7 +348,7 @@ class _LogWrapper():
 
   def write(self, message):
     # no backtrack for writing to file
-    self.stream.write(message.replace(u"\b", ''))
+    self.stream.write(message.replace("\b", ''))
     sys.__stdout__.write(message)
 
   def flush(self):

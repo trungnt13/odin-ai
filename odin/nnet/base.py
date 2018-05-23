@@ -528,8 +528,6 @@ class NNOp(object):
     return new_op
 
   def __init__(self, **kwargs):
-    # list of positional VariableDesc, or Primitives
-    self._args_desc = []
     # mapping: name -> VariableDesc, or Primitives
     self._kwargs_desc = OrderedDict()
     # mapping: ','.join(id(tensor)) -> output
@@ -913,15 +911,11 @@ class NNOp(object):
   def placeholders(self):
     """ Create list of placeholder to represent inputs of this NNOp
     """
-    x = [i.placeholder for i in self._args_desc
-         if isinstance(i, VariableDesc)]
-    x += [i.placeholder for i in self._kwargs_desc.values()
+    x = [i.placeholder for i in self._kwargs_desc.values()
          if isinstance(i, VariableDesc)]
     return x[0] if len(x) == 1 else x
 
   def set_placeholder(self, name, plh):
-    if is_number(name):
-      return self._args_desc[name].set_placeholder(plh)
     return self._kwargs_desc[name].set_placeholder(plh)
 
   @property
@@ -1001,16 +995,10 @@ class NNOp(object):
     if K.is_tensor(x) or isinstance(x, VariableDesc):
       desc = x if isinstance(x, VariableDesc) else\
           VariableDesc(shape=x, name=x.name.split(':')[0])
-      # positional argument
-      if is_number(name):
-        if len(self._args_desc) <= name:
-          self._args_desc.append(desc)
-        curr_desc = self._args_desc[int(name)]
       # keywords argument
-      else:
-        if name not in self._kwargs_desc:
-          self._kwargs_desc[name] = desc
-        curr_desc = self._kwargs_desc[name]
+      if name not in self._kwargs_desc:
+        self._kwargs_desc[name] = desc
+      curr_desc = self._kwargs_desc[name]
       # validating
       if not curr_desc.is_equal(desc):
         raise ValueError("Found variable with description: '%s', given "
@@ -1018,19 +1006,12 @@ class NNOp(object):
             (str(curr_desc), str(desc)))
     # ====== if given data, use saved tensor with new data ====== #
     elif isinstance(x, np.ndarray):
-      # positional
-      if is_number(name):
-        if len(self._args_desc) <= name:
-          self._args_desc.append(VariableDesc(
-              shape=x.shape, dtype=x.dtype,
-              name='Inp%d' % name))
-        desc = self._args_desc[int(name)]
       # keywords
-      else:
-        if name not in self._kwargs_desc:
-          self._kwargs_desc[name] = VariableDesc(
-              shape=x.shape, dtype=x.dtype, name=name)
-        desc = self._kwargs_desc[name]
+      if name not in self._kwargs_desc:
+        self._kwargs_desc[name] = VariableDesc(
+            shape=x.shape, dtype=x.dtype,
+            name='VarArg%d' % int(name[1:]) if '.' == name[0] else name)
+      desc = self._kwargs_desc[name]
       # validating
       if desc.shape[1:] != x.shape[1:] or \
       np.dtype(desc.dtype) != np.dtype(x.dtype):
@@ -1041,15 +1022,7 @@ class NNOp(object):
       data = x
     # ====== primitive, keep it simple ====== #
     elif is_primitives(x, inc_ndarray=False):
-      # positional
-      if is_number(name):
-        if len(self._args_desc) <= name:
-          self._args_desc.append(x)
-        else:
-          self._args_desc[name] = x
-      # keywords
-      else:
-        self._kwargs_desc[name] = x
+      self._kwargs_desc[name] = x
       desc = x
     # ====== Uknown input, ERROR ====== #
     else:
@@ -1060,7 +1033,6 @@ class NNOp(object):
     return (desc, data)
 
   def apply(self, *args, **kwargs):
-    print(args, kwargs)
     # ====== restore variable first ====== #
     self._restore_variables()
     # ====== self.name can contain Model varable scope, hence,
@@ -1074,73 +1046,79 @@ class NNOp(object):
         self._name = tf.get_variable_scope().name
       # ====== processing argument information ====== #
       spec = inspect.getargspec(self._apply)
+      if spec.defaults is not None:
+        default_kwargs = {name: val
+                          for name, val in zip(spec.args[::-1], spec.defaults)}
+      else:
+        default_kwargs = {}
       # adding kwargs_new in Order
       kwargs_new = OrderedDict()
-      # if except name outside of spec.args
-      extra_name = [] if spec.keywords is None else \
+      # spec.args (ignore `self`)
+      arg_name = spec.args[1:]
+      # varargs arguments is named with '.' at the beginning
+      varg_name = [] if spec.varargs is None else \
+          ['.%d' % i for i in range(len(args) - len(spec.args[1:]))]
+      # kwargs name
+      kw_name = [] if spec.keywords is None else \
           [name for name in kwargs.keys() if name not in spec.args]
       # get all positional arguments
-      for idx, name in enumerate(spec.args[1:] + extra_name):
+      for idx, name in enumerate(arg_name + varg_name + kw_name):
         if idx < len(args):
           x = args[idx]
         elif name in kwargs:
           x = kwargs[name]
+        elif name in default_kwargs:
+          x = default_kwargs[name]
         else:
+          wprint('Cannot find argument at index: %d, name: %s' % (idx, name))
           continue
         # validate and record name to self._kwargs_desc
         kwargs_new[name] = self._check_input_arg(x=x, name=name)
       # kwargs now contains: arg_name -> (VariableDesc, ndarray(or None))
       kwargs = kwargs_new
-      # check if _apply have vargs or keywords
-      if spec.varargs is None:
-        args = ()
-      else:
-        args = [self._check_input_arg(a, name=i)
-                for i, a in enumerate(args[len(spec.args[1:]):])]
-        # add missing positional, using self._args_desc as substitute
-        for i, var in enumerate(self._args_desc):
-          if i >= len(args):
-            args.append((var, None))
       # add missing slot from _kwargs_desc
       for name, var in self._kwargs_desc.items():
         if name not in kwargs:
           kwargs[name] = (var, None)
-      # ====== get op inputs and data ====== #
-      op_args = []
-      op_kwargs = OrderedDict()
-      op_data = {}
-      footprint = ''
+      # ====== create footprint for unique arguments identification ====== #
       # footprint created by concat argument name and its
       # object python ID (primitive arugment using str)
+      footprint = ''
       # positional argument
-      for i, (desc, dat) in enumerate(args):
-        footprint += 'Inp%d:' % i
-        if isinstance(desc, VariableDesc):
-          desc = desc.placeholder
-          footprint += type_path(desc) + '_' + str(id(desc))
-          if dat is not None:
-            op_data[desc] = dat
-        else:
-          footprint += type_path(desc) + '_'
-          footprint += str(desc)
-        footprint += '|'
-        op_args.append(desc)
-      # kwargs
       for name, (desc, dat) in sorted(kwargs.items(),
-                                      key=lambda x: x[0]):
+                                   key=lambda x: x[0]):
         footprint += name + ':'
-        if isinstance(desc, VariableDesc):
+        if isinstance(desc, VariableDesc): # Tensor types
           desc = desc.placeholder
           footprint += type_path(desc) + '_' + str(id(desc))
-          if dat is not None:
-            op_data[desc] = dat
         else: # primitive types
           footprint += type_path(desc) + '_' + str(desc)
         footprint += '|'
-        op_kwargs[name] = desc
+      # ====== convert all information to new op args and kwargs ====== #
       # store current arguments
-      self._current_args = op_args
-      self._current_kwargs = op_kwargs
+      self._current_args = []
+      included_names = []
+      # positional args
+      for name in spec.args[1:]:
+        desc, dat = kwargs[name]
+        self._current_args.append(desc if is_primitives(desc, inc_ndarray=False) else
+                                  desc.placeholder)
+        included_names.append(name)
+      # varargs
+      for name in sorted([i for i in kwargs.keys() if '.' == i[0]],
+                         key=lambda x: int(x[1:])):
+        desc, dat = kwargs[name]
+        self._current_args.append(desc if is_primitives(desc, inc_ndarray=False) else
+                                  desc.placeholder)
+        included_names.append(name)
+      # kwargs
+      self._current_kwargs = {
+          name: desc if is_primitives(desc, inc_ndarray=False) else desc.placeholder
+          for name, (desc, dat) in kwargs.items()
+          if name not in included_names}
+      given_data = {desc.placeholder: dat
+                    for name, (desc, dat) in kwargs.items()
+                    if isinstance(desc, VariableDesc) and dat is not None}
       # ====== initialize first ====== #
       if not self._is_initialized:
         # call NNOp initialize
@@ -1153,17 +1131,17 @@ class NNOp(object):
       if footprint in self._cache_outputs:
         y = self._cache_outputs[footprint]
       else: # First time generate output given footprint
-        y = self._apply(*op_args, **op_kwargs)
+        y = self._apply(*self._current_args, **self._current_kwargs)
         # record cahced return
         self._cache_outputs[footprint] = y
       # automatically initialize all variable within this NNOp scope
       self.variables
       # check if op_data given, then evaluate to get the results.
-      if len(op_data) > 0:
+      if len(given_data) > 0:
         # only need to make sure all variables
         # initialized if we need to evaluate some
         # expressions.
-        y = K.eval(y, feed_dict=op_data)
+        y = K.eval(y, feed_dict=given_data)
     # ====== reset the current information ====== #
     self._current_args = ()
     self._current_kwargs = {}
@@ -1233,14 +1211,6 @@ class NNOp(object):
               ctext(otype, 'yellow'),
               ctext(op.input_shape, 'yellow'))
     # ====== Input info ====== #
-    for i, arg in enumerate(self._args_desc):
-      if isinstance(arg, VariableDesc):
-        arg = str(arg)
-      else:
-        arg = '%s - value:%s' % (ctext(type_path(arg), 'cyan'),
-                                 dummy_formatter(arg))
-      name = ctext('[%d]' % i, 'yellow')
-      ops_format += padding + name + arg + '\n'
     for key, arg in self._kwargs_desc.items():
       if isinstance(arg, VariableDesc):
         arg = str(arg)

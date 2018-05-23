@@ -2,6 +2,8 @@ from __future__ import print_function, division, absolute_import
 
 from collections import Mapping
 
+import tensorflow as tf
+
 from odin.utils import (as_tuple, is_string, is_number,
                         wprint, one_hot, ctext)
 

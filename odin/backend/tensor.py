@@ -1255,6 +1255,9 @@ def cudnn_rnn(X, num_units, rnn_mode,
   # ====== helper function ====== #
   def check_init_states(s0, nb_layers, batch_size):
     if s0 is None: return None
+    if is_number(s0):
+      s0 = tf.cast(tf.fill(dims=(nb_layers, batch_size, num_units), value=s0),
+                   X.dtype)
     if s0.get_shape().ndims < 3:
       s0 = tf.expand_dims(s0, dim=0)
     s0shape = s0.get_shape().as_list()

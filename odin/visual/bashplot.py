@@ -309,7 +309,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
   # print title
   if inc_stats:
     fig = " " * ((3 + 1) * nb_classes + max_label_length + 2)
-    fig += ctext('|'.join(['Pre', 'Rec', ' F1', ' FA', 'Σ']), 'red') + '\n'
+    fig += ctext('|'.join(['Pre', 'Rec', ' F1', ' FA', 'Sum']), 'red') + '\n'
     longest_line = len(fig) - 1
   else:
     fig = ""
@@ -354,7 +354,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
   # Add the average values
   if inc_stats:
     n = 0
-    for i, name in enumerate(['Pre', 'Rec', ' F1', ' FA', '  Σ']):
+    for i, name in enumerate(['Pre', 'Rec', ' F1', ' FA', '  Sum']):
       avr = np.mean([stats[i] for stats in info.values()])
       avr = ctext('%s:' % name, 'red') + '%.4f' % avr
       if n + len(avr) >= longest_line: # new line
