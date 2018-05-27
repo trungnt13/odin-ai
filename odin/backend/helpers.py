@@ -467,6 +467,9 @@ class Function(object):
       function.
       if `training=False`, disable training mode only when execute this
       function.
+  batch_size : {int, None} (default: None)
+      if `batch_size` is not None, auto-split all array into minibatch,
+      and return a list of outputs (all array must have equal `shape[0]`)
   strict : bool (default: True)
       if False, remove shape mis-matched inputs when `__call__`
       this `Function`.
@@ -474,8 +477,9 @@ class Function(object):
   """
 
   def __init__(self, inputs, outputs, updates=[], defaults={},
-               training=None, strict=False):
+               training=None, batch_size=None, strict=False):
     self.training = training
+    self.batch_size = batch_size
     self._strict = bool(strict)
     # ====== validate input ====== #
     if isinstance(inputs, Mapping):
@@ -565,6 +569,7 @@ class Function(object):
     else:
       feed_dict.update({is_training(): False})
     # ====== run the output ====== #
+    # TODO: split feed_dict into minibatches
     session = get_session()
     updated = session.run(self.outputs + [self.updates_ops],
                           feed_dict=feed_dict)
@@ -575,7 +580,8 @@ class Function(object):
     return outputs
 
 
-def function(inputs, outputs, updates=[], defaults={}, training=None):
+def function(inputs, outputs, updates=[], defaults={},
+             training=None, batch_size=None):
   """
   Parameters
   ----------
@@ -600,7 +606,7 @@ def function(inputs, outputs, updates=[], defaults={}, training=None):
           "outputs, graph inputs: %s" % ', '.join([str(i) for i in inputs]))
   return Function(inputs=inputs, outputs=outputs,
                   updates=updates, defaults=defaults,
-                  training=training)
+                  training=training, batch_size=batch_size)
 
 
 # ===========================================================================

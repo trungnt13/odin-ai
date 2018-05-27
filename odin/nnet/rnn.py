@@ -17,7 +17,7 @@ from odin.backend.role import (InitialState, Weight, Bias, Parameter,
                                BatchNormScaleParameter,
                                BatchNormPopulationMean,
                                BatchNormPopulationInvStd)
-from odin.utils import as_tuple, is_string, is_number
+from odin.utils import (as_tuple, is_string, is_number, wprint)
 
 from .base import NNOp
 from .normalization import BatchNorm
@@ -338,6 +338,22 @@ class CudnnRNN(NNOp):
   dropout: float (0.0-1.0)
       whether to enable dropout. With it is 0, dropout is disabled.
 
+  Arguments
+  ---------
+  X : Tensor
+    (batch_size, time_dim, feature_dim)
+  h0 : {None, number, Tensor} (default: None)
+    if None, all-zeros initial states are used
+    (num_layers * num_direction, batch_size, num_units)
+  c0 : {None, number, Tensor} (default: None)
+    if None, all-zeros initial cell memory are used
+    (num_layers * num_direction, batch_size, num_units)
+  mask : {None, Tensor}
+    pass
+  training : bool (default: None)
+    if None, use O.D.I.N training flag,
+    otherwise, use given value
+
   Returns
   -------
   [output, hidden_states, cell_states] for lstm
@@ -367,14 +383,20 @@ class CudnnRNN(NNOp):
 
     self.W_init = W_init
     self.b_init = b_init
+    if skip_input:
+      wprint("`skip_input` is not supported in Tensorflow.")
 
   # ==================== abstract methods ==================== #
+  @property
+  def state_shape(self):
+    return [self.num_layers * 2 if self.is_bidirectional else 1, None, self.num_units]
+
   def _transpose(self):
     # flip the input and hidden
     raise NotImplementedError
 
   def _initialize(self):
-    input_shape = self.input_shape
+    input_shape = self.input_shape_map['X']
     weights, biases = K.init_rnn(
         input_dim=int(input_shape[-1]), hidden_dim=int(self.num_units),
         W_init=self.W_init, b_init=self.b_init,

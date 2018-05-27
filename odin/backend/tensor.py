@@ -1256,8 +1256,7 @@ def cudnn_rnn(X, num_units, rnn_mode,
   def check_init_states(s0, nb_layers, batch_size):
     if s0 is None: return None
     if is_number(s0):
-      s0 = tf.cast(tf.fill(dims=(nb_layers, batch_size, num_units), value=s0),
-                   X.dtype)
+      s0 = tf.fill(dims=(nb_layers, batch_size, num_units), value=s0)
     if s0.get_shape().ndims < 3:
       s0 = tf.expand_dims(s0, dim=0)
     s0shape = s0.get_shape().as_list()
@@ -1265,6 +1264,8 @@ def cudnn_rnn(X, num_units, rnn_mode,
       s0 = repeat(s0, n=nb_layers, axes=0)
     if s0shape[1] == 1:
       s0 = repeat(s0, n=batch_size, axes=1)
+    if s0.dtype != X.dtype:
+      s0 = tf.cast(s0, X.dtype)
     return s0
   # ====== create RNNBlock ====== #
   from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops

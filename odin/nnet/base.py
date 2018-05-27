@@ -936,6 +936,12 @@ class NNOp(object):
     return x[0] if len(x) == 1 else x
 
   @property
+  def input_shape_map(self):
+    return {k: tuple(v.placeholder.get_shape().as_list())
+            for k, v in self._kwargs_desc.items()
+            if isinstance(v, VariableDesc)}
+
+  @property
   def output_shape(self):
     """NOTE: this input shape is only inferred from last inputs to
     this NNOp,
@@ -1000,10 +1006,13 @@ class NNOp(object):
         self._kwargs_desc[name] = desc
       curr_desc = self._kwargs_desc[name]
       # validating
-      if not curr_desc.is_equal(desc):
+      if isinstance(curr_desc, VariableDesc) and not curr_desc.is_equal(desc):
         raise ValueError("Found variable with description: '%s', given "
             "variable with description: '%s'" %
             (str(curr_desc), str(desc)))
+      # overriding primitive
+      else:
+        self._kwargs_desc[name] = desc
     # ====== if given data, use saved tensor with new data ====== #
     elif isinstance(x, np.ndarray):
       # keywords
