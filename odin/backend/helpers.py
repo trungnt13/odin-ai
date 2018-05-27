@@ -14,7 +14,7 @@ from tensorflow.contrib.distributions import Distribution as _Distribution
 from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
-                        decorators)
+                        decorators, batching)
 from .role import (has_roles, Auxiliary, Parameter)
 # ===========================================================================
 # Basic query
@@ -470,6 +470,9 @@ class Function(object):
   batch_size : {int, None} (default: None)
       if `batch_size` is not None, auto-split all array into minibatch,
       and return a list of outputs (all array must have equal `shape[0]`)
+  batch_vars : {Tensor, list of Tensor}
+      if `len(batch_vars) == 0`, split mini-batches for all Tensor inputs,
+      otherwise, only applying for a selected set of inputs.
   strict : bool (default: True)
       if False, remove shape mis-matched inputs when `__call__`
       this `Function`.
@@ -477,9 +480,11 @@ class Function(object):
   """
 
   def __init__(self, inputs, outputs, updates=[], defaults={},
-               training=None, batch_size=None, strict=False):
+               training=None, batch_size=None, batch_vars=[],
+               strict=False):
     self.training = training
     self.batch_size = batch_size
+    self.batch_vars = list(batch_vars)
     self._strict = bool(strict)
     # ====== validate input ====== #
     if isinstance(inputs, Mapping):
@@ -569,19 +574,35 @@ class Function(object):
     else:
       feed_dict.update({is_training(): False})
     # ====== run the output ====== #
-    # TODO: split feed_dict into minibatches
     session = get_session()
-    updated = session.run(self.outputs + [self.updates_ops],
-                          feed_dict=feed_dict)
-    # ====== get the results ====== #
-    outputs = updated[:len(self.outputs)]
-    if not self._return_list:
-      outputs = outputs[0]
+    if self.batch_size is not None:
+      batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
+                    if len(self.batch_vars) == 0 else self.batch_vars)
+      num_samples = list(set(feed_dict[i].shape[0] for i in batch_vars
+                            if i in feed_dict))
+      assert len(num_samples) == 1, "Data have multiple batching dimension: %s" % str(num_samples)
+      num_samples = num_samples[0]
+      outputs = []
+      for s, e in batching(batch_size=self.batch_size, n=num_samples):
+        feed_dict_minibatch = OrderedDict([(k, v[s:e]) if k in batch_vars else (k, v)
+                                           for k, v in feed_dict.items()])
+        updated = session.run(self.outputs + [self.updates_ops],
+                              feed_dict=feed_dict_minibatch)
+        updated = updated[:len(self.outputs)]
+        if not self._return_list:
+          updated = updated[0]
+        outputs.append(updated)
+    else:
+      updated = session.run(self.outputs + [self.updates_ops],
+                            feed_dict=feed_dict)
+      outputs = updated[:len(self.outputs)]
+      if not self._return_list:
+        outputs = outputs[0]
     return outputs
 
 
 def function(inputs, outputs, updates=[], defaults={},
-             training=None, batch_size=None):
+             training=None, batch_size=None, batch_vars=[]):
   """
   Parameters
   ----------
@@ -598,6 +619,12 @@ def function(inputs, outputs, updates=[], defaults={},
       function.
       if `training=False`, disable training mode only when execute this
       function.
+  batch_size : {int, None} (default: None)
+      if `batch_size` is not None, auto-split all array into minibatch,
+      and return a list of outputs (all array must have equal `shape[0]`)
+  batch_vars : {Tensor, list of Tensor}
+      if `len(batch_vars) == 0`, split mini-batches for all Tensor inputs,
+      otherwise, only applying for a selected set of inputs.
   """
   # ====== check inputs ====== #
   if inputs is None or len(as_tuple(inputs)) == 0:
