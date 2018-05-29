@@ -573,8 +573,8 @@ class Function(object):
       feed_dict.update({is_training(): True})
     else:
       feed_dict.update({is_training(): False})
-    # ====== run the output ====== #
     session = get_session()
+    # ====== mini-batches ====== #
     if self.batch_size is not None:
       batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
                     if len(self.batch_vars) == 0 else self.batch_vars)
@@ -592,6 +592,7 @@ class Function(object):
         if not self._return_list:
           updated = updated[0]
         outputs.append(updated)
+    # ====== single batch ====== #
     else:
       updated = session.run(self.outputs + [self.updates_ops],
                             feed_dict=feed_dict)
@@ -599,7 +600,6 @@ class Function(object):
       if not self._return_list:
         outputs = outputs[0]
     return outputs
-
 
 def function(inputs, outputs, updates=[], defaults={},
              training=None, batch_size=None, batch_vars=[]):
@@ -634,7 +634,6 @@ def function(inputs, outputs, updates=[], defaults={},
   return Function(inputs=inputs, outputs=outputs,
                   updates=updates, defaults=defaults,
                   training=training, batch_size=batch_size)
-
 
 # ===========================================================================
 # Computational graph

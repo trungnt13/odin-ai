@@ -348,8 +348,6 @@ class CudnnRNN(NNOp):
   c0 : {None, number, Tensor} (default: None)
     if None, all-zeros initial cell memory are used
     (num_layers * num_direction, batch_size, num_units)
-  mask : {None, Tensor}
-    pass
   training : bool (default: None)
     if None, use O.D.I.N training flag,
     otherwise, use given value
@@ -410,7 +408,7 @@ class CudnnRNN(NNOp):
       self.get_variable(name=i.name.split('/')[-1].split(':')[0],
                         shape=i.shape.as_list(), initializer=i)
 
-  def _apply(self, X, h0=None, c0=None, mask=None, training=None):
+  def _apply(self, X, h0=None, c0=None, training=None):
     if not hasattr(self, '_opaque_params'):
       weights = [K.get_all_variables(full_name=w)[0] for w in self._weights_name]
       biases = [K.get_all_variables(full_name=b)[0] for b in self._biases_name]

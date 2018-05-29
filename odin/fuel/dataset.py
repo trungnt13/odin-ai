@@ -15,6 +15,7 @@ from .utils import MmapDict, SQLiteDict, NoSQL
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
                         is_callable, flatten_list)
+from odin.utils.crypto import md5_checksum
 from .recipe_base import FeederRecipe, RecipeList
 
 
@@ -301,6 +302,14 @@ class Dataset(object):
     """
     name = os.path.basename(self._path)
     return os.path.join(self._path, '..', name + '.zip')
+
+  @property
+  def md5(self):
+    md5_text = ''
+    for name, (dtype, shape, data, path) in sorted(self._data_map.items(),
+                                                   key=lambda x: x[0]):
+      md5_text += md5_checksum(path)
+    return md5_text
 
   @property
   def size(self):

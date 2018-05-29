@@ -43,7 +43,7 @@ from . import mpi
 from . import shape_calculation
 from . import math_utils
 from . import decorators
-
+from . import crypto
 
 def array_size(arr):
   """ Return size of an numpy.ndarray in bytes """

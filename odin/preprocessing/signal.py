@@ -1139,19 +1139,22 @@ def segment_axis(a, frame_length=2048, step_length=512, axis=0,
       s[-1] = roundup
       b = np.empty(s, dtype=a.dtype)
       # pre-padding
-      if pad_mode == 'pre':
+      if pad_mode == 'post':
         b[..., :length] = a
         if end == 'pad':
           b[..., length:] = pad_value
         elif end == 'wrap':
           b[..., length:] = a[..., :roundup - length]
       # post-padding
-      elif pad_mode == 'post':
+      elif pad_mode == 'pre':
         b[..., -length:] = a
         if end == 'pad':
           b[..., :(roundup - length)] = pad_value
         elif end == 'wrap':
           b[..., :(roundup - length)] = a[..., :roundup - length]
+      # error
+      else:
+        raise RuntimeError("No support for pad mode: %s" % pad_mode)
       a = b
     a = a.swapaxes(-1, axis)
     length = a.shape[0] # update length
