@@ -944,12 +944,12 @@ class RASTAfilter(Extractor):
   """
 
   def __init__(self, rasta=True, sdc=1,
-               input_name='mfcc', output_name='mfcc'):
+               input_name='mfcc', output_name=None):
     super(RASTAfilter, self).__init__()
     self.rasta = bool(rasta)
     self.sdc = int(sdc)
     self.input_name = str(input_name)
-    self.output_name = str(output_name)
+    self.output_name = self.input_name if output_name is None else str(output_name)
 
   def _transform(self, feat):
     if self.input_name not in feat:

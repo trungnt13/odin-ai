@@ -14,6 +14,7 @@ from . import recipes
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from odin.utils import get_file, get_script_path, ctext, get_datasetpath
+from odin.utils.crypto import unzip_aes
 
 # ===========================================================================
 # Helper
@@ -42,6 +43,10 @@ class DataLoader(object):
 
   def __init__(self):
     super(DataLoader, self).__init__()
+
+  @classmethod
+  def md5(clazz, ext=''):
+    return None
 
   @classmethod
   def get_name(clazz, ext=''):
@@ -92,7 +97,11 @@ class DataLoader(object):
       get_file(name, path, DataLoader.BASE_DIR)
     # ====== upzip dataset ====== #
     unzip_folder(zip_path, out_path, remove_zip=True)
-    return Dataset(out_path, read_only=True)
+    ds = Dataset(out_path, read_only=True)
+    md5_checksum = clazz.md5(ext=ext)
+    if md5_checksum is not None:
+      assert ds.md5 == md5_checksum, "MD5 checksum mismatch for dataset: %s" % ds.path
+    return ds
 
 # ===========================================================================
 # Images dataset
@@ -112,6 +121,50 @@ class CIFAR100(DataLoader):
 # ===========================================================================
 # AUdio dataset
 # ===========================================================================
+class DIGITS(DataLoader):
+  """ Audio digits dataset
+  Encrytpted and required password
+
+  """
+  @classmethod
+  def md5(clazz, ext=''):
+    return '9d67ff310626afe27dcc6507862886d037a95791ee182559200683c6cda5ea036821430c78' + \
+    'd1be49fd32342b1dc83a795ab1dea4e69f084d16dc4c4157832f03e215427d46000403d7f3' + \
+    '11b2c6f51db6483295388189cab9cd4d44cce4983c6db4c3c11e985fccd032d29516f3584a' + \
+    '19c5ec616af96970f60c65a2b720f374f5'
+
+  @classmethod
+  def get_dataset(clazz, ext='', override=False):
+    # ====== all path ====== #
+    name = clazz.get_name(ext) + '.zip'
+    path = base64.decodestring(DataLoader.ORIGIN).decode() + name
+    zip_path = clazz.get_zip_path(ext)
+    out_path = clazz.get_ds_path(ext)
+    # ====== check out_path ====== #
+    if os.path.isfile(out_path):
+      raise RuntimeError("Found a file at path: %s, we need a folder "
+                         "to unzip downloaded files." % out_path)
+    elif os.path.isdir(out_path):
+      if override or len(os.listdir(out_path)) == 0:
+        shutil.rmtree(out_path)
+      else:
+        return Dataset(out_path, read_only=True)
+    # ====== download the file ====== #
+    if os.path.exists(zip_path) and override:
+      os.remove(zip_path)
+    if not os.path.exists(zip_path):
+      get_file(name, path, DataLoader.BASE_DIR)
+    # ====== upzip dataset ====== #
+    unzip_aes(in_path=zip_path, out_path=out_path)
+    ds = Dataset(out_path, read_only=True)
+    if ds.md5 != clazz.md5():
+      ds.close()
+      shutil.rmtree(out_path)
+      raise RuntimeError("Incorrect password for loading DIGITS dataset")
+    else:
+      os.remove(zip_path)
+    return ds
+
 class FSDD(object):
   """ Free Spoken Digit Dataset
   A simple audio/speech dataset consisting of recordings of

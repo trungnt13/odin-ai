@@ -1353,6 +1353,10 @@ def get_datasetpath(name=None, override=False, is_folder=True, root='~'):
                            is_folder=is_folder, root=root)
 
 
+def get_figpath(name=None, override=False, root='~'):
+  return _get_managed_path('figs', name, override,
+                           is_folder=True, root=root)
+
 def get_modelpath(name=None, override=False, root='~'):
   """ Default model path for saving O.D.I.N networks """
   return _get_managed_path('models', name, override,

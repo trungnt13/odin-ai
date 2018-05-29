@@ -57,7 +57,11 @@ def make_pipeline(steps, debug=False):
     for name, extractor in steps:
       extractor.set_debug(True)
   # ====== return pipeline ====== #
-  return Pipeline(steps=steps)
+  ret = Pipeline(steps=steps)
+  # a hack to be able change debug value later
+  ret.set_debug = lambda b: [extractor.set_debug(b)
+                             for name, extractor in steps]
+  return ret
 
 
 def set_extractor_debug(debug, *extractors):
@@ -426,25 +430,35 @@ class AsType(Extractor):
 
   Parameters
   ----------
-  type_map: Mapping, or list, tuple of (name, dtype)
+  type_map: {Mapping, or list, tuple of (name, dtype)}
       mapping from feature name -> desire numpy dtype of the features.
       This is only applied for features which is `numpy.ndarray`
   """
 
   def __init__(self, type_map={}):
     super(AsType, self).__init__()
-    if isinstance(type_map, Mapping):
-      type_map = type_map.items()
-    self.type_map = {str(feat_name): np.dtype(dtype)
-                     for feat_name, dtype in type_map}
+    if is_string(type_map) or isinstance(type_map, np.dtype):
+      self.type_map = np.dtype(type_map)
+    else:
+      if isinstance(type_map, Mapping):
+        type_map = type_map.items()
+      self.type_map = {str(feat_name): np.dtype(dtype)
+                       for feat_name, dtype in type_map}
 
   def _transform(self, X):
     if isinstance(X, Mapping):
-      for feat_name, dtype in self.type_map.items():
-        if feat_name in X:
-          feat = X[feat_name]
-          if isinstance(feat, np.ndarray) and dtype != feat.dtype:
-            X[feat_name] = feat.astype(dtype)
+      # ====== given specific type_map ====== #
+      if isinstance(self.type_map, dict):
+        for feat_name, dtype in self.type_map.items():
+          if feat_name in X:
+            feat = X[feat_name]
+            if isinstance(feat, np.ndarray) and dtype != feat.dtype:
+              X[feat_name] = feat.astype(dtype)
+      # ====== given a single dtype ====== #
+      else:
+        X = {
+            name: data.astype(self.type_map) if hasattr(data, 'astype') else data
+            for name, data in X.items()}
     return X
 
 

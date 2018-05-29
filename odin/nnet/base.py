@@ -726,7 +726,11 @@ class NNOp(object):
     elif is_number(initializer):
       var = np.full(shape=shape, fill_value=initializer, dtype='float32')
       create_new_var = True
-    # else actual tensor
+    # numpy array
+    elif isinstance(initializer, np.ndarray):
+      var = initializer
+      create_new_var = True
+    # actual tensor
     else:
       var = initializer
     #####################################
@@ -762,10 +766,13 @@ class NNOp(object):
     #####################################
     # 6. Exception.
     else:
-      raise RuntimeError("cannot initialize parameters: 'spec' is not "
-                         "a numpy array, a Tensor expression, a call-able "
-                         ", or variable name as string (given type: %s)" %
-                         type(initializer).__name__)
+      print(initializer)
+      raise RuntimeError("cannot initialize parameters "
+                         "(name:%s - shape:%s - roles: %s): "
+                         "the `initializer` is not a numpy array, "
+                         "a Tensor expression, a call-able, "
+                         "or variable name as string (given type: %s)" %
+                         (name, shape, roles, str(type(initializer))))
     # ====== assign annotations ====== #
     if K.is_tensor(var):
       return add_roles(var, roles)

@@ -1,7 +1,3 @@
-# CH510760486DE
-# Generative network generated noised audio, discriminator classify audio.
-# Audio tagging Google Cars (from youtube video)
-# Convolution recurrent neural network for polyphornic sound recognition
 # ===========================================================================
 # Without PCA:
 #   ncpu=1:  16s
@@ -26,52 +22,49 @@ from odin import visual as V, nnet as N
 from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
 
-args = utils.ArgController(
-).add('path', 'path to RAW dataset'
-).parse()
-
-# ===========================================================================
-# set LOG path
 # ===========================================================================
 LOG_PATH = utils.get_logpath('speech_features_extraction.log',
                              override=True)
 utils.stdio(LOG_PATH)
 # ===========================================================================
-# Const
+# Dataset
+# Saved WAV file format:
+#     * [train|test]
+#     * [m|w|b|g] (alias for man, women, boy, girl)
+#     * [age]
+#     * [dialectID]
+#     * [speakerID]
+#     * [production]
+#     * [digit_sequence]
+#     => "train_g_08_17_as_a_4291815"
 # ===========================================================================
-audio = F.Dataset(args.path, read_only=True)
-print(audio)
-
-filter_func = lambda x: len(x.split('_')[-1]) == 1
-key_func = lambda x: x.split('_')[-1]
-
+audio = F.DIGITS.load()
 all_files = sorted(list(audio['indices'].keys()))
-labels_fn, labels = unique_labels(y=[f for f in all_files if filter_func(f)],
-                                  key_func=key_func,
-                                  return_labels=True)
-print("Found %d (.wav) files" % len(all_files))
-output_path = utils.get_datasetpath(name='digits')
-figpath = '/tmp/digits'
+output_path = utils.get_datasetpath(name='DIGITS_feats', override=True)
+fig_path = utils.get_figpath(name='DIGITS', override=True)
 # ===========================================================================
 # Extractor
 # ===========================================================================
+# ====== configuration ====== #
 padding = False
 frame_length = 0.025
-step_length = 0.005
+step_length = 0.010
 dtype = 'float16'
-bnf_network = N.models.BNF_2048_MFCC39()
+bnf_network = N.models.BNF_2048_MFCC40()
+bnf_sad = False
+# ====== extractor ====== #
 extractors = pp.make_pipeline(steps=[
-    pp.speech.AudioReader(sr_new=8000, best_resample=True,
-                          remove_dc_n_dither=False, preemphasis=0.97,
+    pp.speech.AudioReader(sr=8000, remove_dc_n_dither=False, preemphasis=0.97,
                           dataset=audio),
-    pp.speech.SpectraExtractor(frame_length=frame_length,
-                               step_length=step_length,
-                               nfft=512, nmels=40, nceps=13,
-                               fmin=100, fmax=4000, padding=padding),
-    # pp.speech.CQTExtractor(frame_length=frame_length,
-    #                        step_length=step_length,
-    #                        nbins=96, nmels=40, nceps=20,
-    #                        fmin=64, fmax=4000, padding=padding),
+    pp.speech.STFTExtractor(frame_length=frame_length, step_length=step_length,
+                            nfft=512, window='hamm', energy=True),
+    pp.speech.PowerSpecExtractor(power=2.0),
+    pp.speech.MelsSpecExtractor(nmels=40, fmin=100, fmax=4000, top_db=80.0),
+    pp.speech.MFCCsExtractor(nceps=40, output_name='mfcc', remove_first_coef=False),
+    pp.speech.Power2Db(input_name='spec', top_db=80.0),
+    # ====== sdc ====== #
+    pp.speech.MFCCsExtractor(nceps=7, output_name='sdc', remove_first_coef=True),
+    pp.speech.RASTAfilter(rasta=True, input_name='sdc', output_name='sdc'),
     # ====== pitch ====== #
     # pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
     #                          fmin=32, fmax=620, voicingCutoff_pitch=0.7,
@@ -79,42 +72,37 @@ extractors = pp.make_pipeline(steps=[
     #                          method='shs', f0=True, voiceProb=True, loudness=False),
     # pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
     #                             nmel=40, fmin=20, fmax=None, to_intensity=False),
+    # ====== sad ====== #
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            feat_name='energy'),
     # ====== BNF ====== #
-    pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
-                           feat_name='mfcc'),
-    pp.base.StackFeatures(context=10, feat_name='mfcc'),
-    # pp.speech.ApplyingSAD(stack_context={'mfcc': 10}, smooth_win=8,
-    #                       keep_unvoiced=True, feat_name='mfcc'),
-    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network,
-                           pre_mvn=True),
+    pp.speech.BNFExtractor(input_feat='mfcc', stack_context=10, pre_mvn=True,
+                           sad_name='sad' if bnf_sad else None, dtype='float32',
+                           network=bnf_network, batch_size=5218),
     # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           use_sad=False, sad_name='sad',
-                           ignore_sad_error=True,
-                           feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-                                      'qspec', 'qmfcc', 'qmspec')),
+                           use_sad=False, sad_name='sad', ignore_sad_error=True,
+                           feat_name=('spec', 'mspec', 'mfcc', 'bnf', 'sdc')),
     # ====== post processing ====== #
-    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-                                      'qspec', 'qmspec', 'qmfcc',
+    pp.base.RemoveFeatures(feat_name=['stft', 'raw']),
+    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf', 'sdc',
                                       'pitch', 'f0', 'sad', 'energy',
                                       'sap', 'loudness')),
     pp.base.RunningStatistics(),
-    pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
-                    'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
-                    'pitch': dtype, 'f0': dtype, 'sap': dtype,
-                    'sad': dtype, 'energy': dtype, 'loudness': dtype,
-                    'raw': dtype, 'bnf': dtype}),
+    pp.base.AsType(dtype),
 ], debug=False)
-# tmp = extractors.transform(all_files[0])
-# V.plot_multiple_features(tmp)
-# V.plot_save('/tmp/tmp.pdf')
-# exit()
+for i, name in enumerate(all_files[:8]):
+  if i == 0:
+    extractors.set_debug(True)
+  tmp = extractors.transform(name)
+  V.plot_multiple_features(tmp, title=name)
+  extractors.set_debug(False)
+V.plot_save(os.path.join(fig_path, 'debug.pdf'))
 # ===========================================================================
 # Processor
 # ===========================================================================
-processor = pp.FeatureProcessor(all_files, extractors, output_path,
+processor = pp.FeatureProcessor(jobs=all_files, path=output_path,
+                                extractor=extractors,
                                 ncache=0.12, ncpu=None, override=True)
 with utils.UnitTimer():
   processor.run()
@@ -125,7 +113,7 @@ shutil.copy(readme_path,
 pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
 ds = F.Dataset(output_path, read_only=True)
-pp.validate_features(ds, path=figpath, nb_samples=8, override=True)
+pp.validate_features(ds, path='/tmp/tmp.pdf', nb_samples=8, override=True)
 print(ds)
 # ====== print all indices ====== #
 print("All indices:")
@@ -164,6 +152,9 @@ if 'pitch' in ds:
     if not np.any(pitch):
       print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
+labels = list(set(filter(lambda x: len(x) == 1,
+                         [i.split('_')[-1] for i in all_files])))
+print("Labels:", ctext(labels, 'cyan'))
 for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
   if feat not in ds:
     continue
@@ -177,11 +168,11 @@ for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
                  print_summary=True, print_report=True,
                  name="PCA transform: %s" % feat)
   for f, (start, end) in indices:
-    if filter_func(f):
+    if len(f.split('_')[-1]) == 1:
       X.append(np.mean(
           feat_pca.transform(ds[feat][start:end]),
           axis=0, keepdims=True))
-      y.append(labels_fn(f))
+      y.append(f.split('_')[-1])
     prog.add(1)
   X_pca = np.concatenate(X, axis=0)
   y = np.asarray(y)
@@ -195,8 +186,7 @@ for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
   with V.figure(ncol=1, nrow=5, title='TSNE: %s' % feat):
     V.plot_scatter(X_tsne[:, 0], X_tsne[:, 1], color=y, legend=legend)
 # ====== save all the figure ====== #
-V.plot_save(os.path.join(figpath, 'pca_tsne.pdf'),
+V.plot_save(os.path.join(fig_path, 'pca_tsne.pdf'),
             tight_plot=True)
 # ====== print log ====== #
 print('Output path:', ctext(output_path, 'cyan'))
-print('Figure path:', ctext(figpath, 'cyan'))

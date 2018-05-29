@@ -113,7 +113,7 @@ class BNF_2048_MFCC40(_BNFbase):
        - sample_rate = 8000
        - filter_lo_edge = 100
        - filter_hi_edge = 4000
-       - num_cepstral_coefs = 13
+       - num_cepstral_coefs = 40
        - frame_length = 0.025
        - frame_shift = 0.010
        - preemphasis_coef = 0.97

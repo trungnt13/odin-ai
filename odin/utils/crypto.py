@@ -219,7 +219,7 @@ def zip_aes(in_path, out_path, password=None, verbose=False):
   f.writestr('_MD5_CHECKSUM_', pickle.dumps(md5_map))
   f.close()
 
-def unzip_aes(in_path, out_path, password=None, verbose=True):
+def unzip_aes(in_path, out_path, password=None, verbose=False):
   if password is None:
     password = input("Your password:")
   password = str(password)
