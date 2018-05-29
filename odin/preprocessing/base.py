@@ -14,6 +14,7 @@ from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter)
+from odin.utils.decorators import functionable
 from .signal import delta, mvn, stack_frames
 # ===========================================================================
 # Helper
@@ -58,9 +59,6 @@ def make_pipeline(steps, debug=False):
       extractor.set_debug(True)
   # ====== return pipeline ====== #
   ret = Pipeline(steps=steps)
-  # a hack to be able change debug value later
-  ret.set_debug = lambda b: [extractor.set_debug(b)
-                             for name, extractor in steps]
   return ret
 
 

@@ -41,7 +41,7 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
       `path` is not None, use pickle to save all binary data
       to a file
   override: bool
-      if True, remove existed folder to override everythin.
+      if True, remove existed folder to override everything.
 
   Return
   ------
@@ -49,9 +49,10 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
       path to the folder that store NNOps and variables
   """
   # ====== check output_mode ====== #
+  if path is None and not binary_output:
+    raise ValueError('`path` cannot be None if `binary_output=False`')
+  is_path_given = False if path is None else True
   if path is None:
-    if not binary_output:
-      raise ValueError('`path` cannot be None if `binary_output=False`')
     path = '/tmp/tmp' # default path
   path_folder = path + uuid(length=25) if binary_output else path
   # ====== getting save data and variables ====== #
@@ -87,9 +88,10 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
   if binary_output:
     data = folder2bin(path_folder)
     # only return binary data
-    if path is None:
+    if not is_path_given:
       shutil.rmtree(path_folder)
       return data
+    # given path, save binary to path
     # check if override
     if os.path.exists(path):
       if override:

@@ -574,8 +574,10 @@ class FeatureProcessor(object):
       N = dataset[name.split('_')[0]].shape[0]
       mean = sum1 / N
       std = np.sqrt(sum2 / N - np.power(mean, 2))
-      assert not np.any(np.isnan(mean)), 'Mean contains NaN, name: %s' % name
-      assert not np.any(np.isnan(std)), 'Std contains NaN, name: %s' % name
+      if np.any(np.isnan(mean)):
+        wprint('Mean contains NaN, name: %s' % name)
+      if np.any(np.isnan(std)):
+        wprint('Std contains NaN, name: %s' % name)
       dataset[name + 'sum1'] = sum1
       dataset[name + 'sum2'] = sum2
       dataset[name + 'mean'] = mean

@@ -46,6 +46,7 @@ fig_path = utils.get_figpath(name='DIGITS', override=True)
 # Extractor
 # ===========================================================================
 # ====== configuration ====== #
+debug = False
 padding = False
 frame_length = 0.025
 step_length = 0.010
@@ -59,6 +60,8 @@ extractors = pp.make_pipeline(steps=[
     pp.speech.STFTExtractor(frame_length=frame_length, step_length=step_length,
                             nfft=512, window='hamm', energy=True),
     pp.speech.PowerSpecExtractor(power=2.0),
+    pp.base.RemoveFeatures(feat_name=['stft', 'raw']),
+    # ====== spectrum ====== #
     pp.speech.MelsSpecExtractor(nmels=40, fmin=100, fmax=4000, top_db=80.0),
     pp.speech.MFCCsExtractor(nceps=40, output_name='mfcc', remove_first_coef=False),
     pp.speech.Power2Db(input_name='spec', top_db=80.0),
@@ -78,32 +81,32 @@ extractors = pp.make_pipeline(steps=[
     # ====== BNF ====== #
     pp.speech.BNFExtractor(input_feat='mfcc', stack_context=10, pre_mvn=True,
                            sad_name='sad' if bnf_sad else None, dtype='float32',
-                           network=bnf_network, batch_size=5218),
+                           network=bnf_network, batch_size=32),
     # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                            use_sad=False, sad_name='sad', ignore_sad_error=True,
                            feat_name=('spec', 'mspec', 'mfcc', 'bnf', 'sdc')),
+    # pp.base.RunningStatistics(),
     # ====== post processing ====== #
-    pp.base.RemoveFeatures(feat_name=['stft', 'raw']),
     pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf', 'sdc',
                                       'pitch', 'f0', 'sad', 'energy',
                                       'sap', 'loudness')),
-    pp.base.RunningStatistics(),
     pp.base.AsType(dtype),
-], debug=False)
-for i, name in enumerate(all_files[:8]):
-  if i == 0:
-    extractors.set_debug(True)
-  tmp = extractors.transform(name)
-  V.plot_multiple_features(tmp, title=name)
-  extractors.set_debug(False)
-V.plot_save(os.path.join(fig_path, 'debug.pdf'))
+], debug=debug)
+# If debug is ran, tensorflow session created,
+# multi-processing will be stopped during execution of tensorflow BNF
+if debug:
+  for i, name in enumerate(all_files[:8]):
+    tmp = extractors.transform(name)
+    V.plot_multiple_features(tmp, title=name)
+  V.plot_save(os.path.join(fig_path, 'debug.pdf'))
+  exit()
 # ===========================================================================
 # Processor
 # ===========================================================================
 processor = pp.FeatureProcessor(jobs=all_files, path=output_path,
                                 extractor=extractors,
-                                ncache=0.12, ncpu=None, override=True)
+                                ncache=0.12, ncpu=20, override=True)
 with utils.UnitTimer():
   processor.run()
 readme_path = os.path.join(audio.path, [i for i in os.listdir(audio.path)
@@ -113,7 +116,8 @@ shutil.copy(readme_path,
 pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
 ds = F.Dataset(output_path, read_only=True)
-pp.validate_features(ds, path='/tmp/tmp.pdf', nb_samples=8, override=True)
+pp.validate_features(ds, path=os.path.join(fig_path, 'validate_features.pdf'),
+                     nb_samples=8, override=True)
 print(ds)
 # ====== print all indices ====== #
 print("All indices:")
