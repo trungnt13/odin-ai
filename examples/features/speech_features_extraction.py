@@ -23,9 +23,9 @@ from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
 
 # ===========================================================================
-LOG_PATH = utils.get_logpath('speech_features_extraction.log',
+log_path = utils.get_logpath('speech_features_extraction.log',
                              override=True)
-utils.stdio(LOG_PATH)
+utils.stdio(log_path)
 # ===========================================================================
 # Dataset
 # Saved WAV file format:
@@ -40,6 +40,7 @@ utils.stdio(LOG_PATH)
 # ===========================================================================
 audio = F.DIGITS.load()
 all_files = sorted(list(audio['indices'].keys()))
+# all_files = all_files[:12] # for testing
 output_path = utils.get_datasetpath(name='DIGITS_feats', override=True)
 fig_path = utils.get_figpath(name='DIGITS', override=True)
 # ===========================================================================
@@ -116,7 +117,7 @@ shutil.copy(readme_path,
 pp.calculate_pca(processor, override=True)
 # ====== check the preprocessed dataset ====== #
 ds = F.Dataset(output_path, read_only=True)
-pp.validate_features(ds, path=os.path.join(fig_path, 'validate_features.pdf'),
+pp.validate_features(ds, path=os.path.join(fig_path, 'validate_features'),
                      nb_samples=8, override=True)
 print(ds)
 # ====== print all indices ====== #
@@ -125,15 +126,7 @@ for k in ds.keys():
   if 'indices' in k:
     print(' - ', ctext(k, 'yellow'))
 # ====== print pipeline ====== #
-padding = '  '
-print(ctext("* Pipeline:", 'red'))
-for _, extractor in ds['pipeline'].steps:
-  for line in str(extractor).split('\n'):
-    print(padding, line)
-# ====== print config ====== #
-print(ctext("* Configurations:", 'red'))
-for i, j in ds['config'].items():
-  print(padding, i, ':', j)
+print(processor)
 # ====== check PCA components ====== #
 for n in ds.keys():
   if '_pca' in n:
@@ -183,7 +176,8 @@ for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
   with UnitTimer(name="TSNE: feat='%s' N=%d" % (feat, X_pca.shape[0])):
     X_tsne = TSNE(n_components=2).fit_transform(X_pca)
   colors = V.generate_random_colors(len(labels), seed=12082518)
-  y = [colors[i] for i in y]
+  # conver y to appropriate color
+  y = [colors[labels.index(i)] for i in y]
   legend = {c: str(i) for i, c in enumerate(colors)}
   with V.figure(ncol=1, nrow=5, title='PCA: %s' % feat):
     V.plot_scatter(X_pca[:, 0], X_pca[:, 1], color=y, legend=legend)
@@ -194,3 +188,5 @@ V.plot_save(os.path.join(fig_path, 'pca_tsne.pdf'),
             tight_plot=True)
 # ====== print log ====== #
 print('Output path:', ctext(output_path, 'cyan'))
+print('Figure path:', ctext(fig_path, 'cyan'))
+print('Log path:', ctext(log_path, 'cyan'))

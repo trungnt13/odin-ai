@@ -1085,8 +1085,8 @@ class NNOp(object):
           x = kwargs[name]
         elif name in default_kwargs:
           x = default_kwargs[name]
-        else:
-          wprint('Cannot find argument at index: %d, name: %s' % (idx, name))
+        else: # not specified, use saved arguments
+          # wprint('Cannot find argument at index: %d, name: %s' % (idx, name))
           continue
         # validate and record name to self._kwargs_desc
         kwargs_new[name] = self._check_input_arg(x=x, name=name)

@@ -137,17 +137,19 @@ def _special_cases(X, feat_name, file_name, ds, path):
     save(os.path.join(path, _escape_file_name(file_name)),
          X.astype('float32'), sr=sr)
   elif feat_name == 'spec':
-    from .speech import SpectraExtractor, _extract_frame_step_length, save
+    from .speech import (SpectraExtractor, STFTExtractor, Power2Db,
+                         _extract_frame_step_length, save)
     from .signal import ispec
     sr = ds['sr'][file_name]
     extractor = [i for _, i in ds['pipeline'].steps
-                 if isinstance(i, SpectraExtractor)][0]
+                 if isinstance(i, SpectraExtractor) or isinstance(i, STFTExtractor)][0]
     frame_length, step_length = _extract_frame_step_length(sr,
         extractor.frame_length, extractor.step_length)
     raw = ispec(X,
                 frame_length=frame_length, step_length=step_length,
                 window=extractor.window, padding=extractor.padding,
-                db=extractor.log)
+                db=extractor.log if hasattr(extractor, 'log') else
+                any(isinstance(i, Power2Db) for i in ds['pipeline'].steps))
     file_name += '-ispec.wav'
     save(os.path.join(path, _escape_file_name(file_name)),
          raw.astype('float32'), sr=sr)
@@ -365,7 +367,6 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   if should_close_ds:
     ds.close()
 
-
 # ===========================================================================
 # Features Processor
 # ===========================================================================
@@ -436,6 +437,30 @@ class FeatureProcessor(object):
       extractor = Pipeline(
           steps=[(extractor.__class__.__name__, extractor)])
     self.extractor = extractor
+    self.config = {}
+
+  # ==================== debugging ==================== #
+  def __str__(self):
+    s = ctext('============= FeatureProcessor: %s =============' % self.path, 'red') + '\n'
+    padding = '  '
+    # ====== basic info ====== #
+    s += '- Jobs: ' + ctext(len(self.jobs), 'cyan') + '\n'
+    s += '- Name: ' + ctext(self.name, 'cyan') + '\n'
+    s += '- #CPU: ' + ctext(self.ncpu, 'cyan') + '\n'
+    s += '- #Cache: ' + ctext(self.ncache, 'cyan') + '\n'
+    # ====== print pipeline ====== #
+    s += ctext("* Pipeline:", 'red') + '\n'
+    for _, extractor in self.extractor.steps:
+      for line in str(extractor).split('\n'):
+        s += padding + ' ' + line + '\n'
+    # ====== print config ====== #
+    s += ctext("* Configurations:", 'red') + '\n'
+    for i, j in self.config.items():
+      s += padding + str(i) + ' : ' + str(j) + '\n'
+    return s
+
+  def __repr__(self):
+    return self.__str__()
 
   # ==================== Abstract properties ==================== #
   def run(self):
@@ -610,6 +635,7 @@ class FeatureProcessor(object):
       if isinstance(j, (Number, string_types, bool)):
         config[i] = j
     config.flush(save_all=True)
+    self.config = {i: j for i, j in config}
     config.close()
     prog.add_notification("Saved configuration at: %s" %
                           ctext(config_path, 'yellow'))
