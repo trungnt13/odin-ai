@@ -9,6 +9,7 @@ import zipfile
 from io import BytesIO, StringIO
 from six import string_types
 from Crypto.Cipher import AES
+import numpy as np
 
 # ===========================================================================
 # Helper
@@ -41,16 +42,35 @@ def _data_to_io(file_or_data):
     own_file = False
   # error input data
   else:
-    raise ValueError("No support for input type: %s" % str(file_or_data))
+    raise ValueError("No support for MD5 of input type: %s" % str(file_or_data))
   return infile, filesize, own_file
 
 # ===========================================================================
 # Hashing
 # ===========================================================================
 def md5_checksum(file_or_path, chunksize=512 * 1024):
+  """ MD5 checksum for:
+   * File object
+   * File path
+   * Bytes array
+   * Numpy array
+   * List or iterator of numpy array
+  """
   hash_md5 = hashlib.md5()
   own_file = False
-  if isinstance(file_or_path, string_types):
+  # numpy array or list of numpy array
+  if isinstance(file_or_path, np.ndarray) or \
+  (isinstance(file_or_path, (tuple, list)) and
+   all(isinstance(i, np.ndarray) for i in file_or_path)):
+    if not isinstance(file_or_path, (tuple, list)):
+      file_or_path = (file_or_path,)
+    f = BytesIO()
+    for arr in file_or_path:
+      np.save(file=f, arr=arr, allow_pickle=False)
+    f.seek(0)
+    own_file = True
+  # path to files
+  elif isinstance(file_or_path, string_types):
     if os.path.exists(file_or_path):
       f = open(file_or_path, 'rb')
       own_file = True
@@ -61,6 +81,7 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
   elif isinstance(file_or_path, bytes):
     hash_md5.update(file_or_path)
     return hash_md5.hexdigest()
+  # file object or buffer object
   elif hasattr(file_or_path, 'read'):
     f = file_or_path
   else:

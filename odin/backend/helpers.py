@@ -578,9 +578,11 @@ class Function(object):
     if self.batch_size is not None:
       batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
                     if len(self.batch_vars) == 0 else self.batch_vars)
-      num_samples = list(set(feed_dict[i].shape[0] for i in batch_vars
-                            if i in feed_dict))
-      assert len(num_samples) == 1, "Data have multiple batching dimension: %s" % str(num_samples)
+      batch_vars = [i for i in batch_vars
+                    if i in feed_dict and hasattr(feed_dict[i], 'shape')]
+      num_samples = list(set(feed_dict[i].shape[0] for i in batch_vars))
+      assert len(num_samples) == 1, \
+      "Data have multiple batching dimension: %s" % str(num_samples)
       num_samples = num_samples[0]
       outputs = []
       for s, e in batching(batch_size=self.batch_size, n=num_samples):

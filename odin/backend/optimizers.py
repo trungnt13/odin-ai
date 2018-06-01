@@ -83,8 +83,7 @@ class Optimizer(object):
   """
 
   def __init__(self, lr, decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None,
-               clip_alg='total_norm'):
+               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
     self._name = self.__class__.__name__ + '_' + str(uuid(length=3))
     self.staircase = bool(staircase)
     with tf.variable_scope(self._name):

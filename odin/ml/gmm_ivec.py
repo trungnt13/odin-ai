@@ -1501,9 +1501,11 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
       RU = tf.matmul(tf.transpose(Ex), F)
       LU = tf.matmul(tf.transpose(Z), Exx)
       llk = tf.reduce_sum(llk)
-      # ====== assign inputs outputs ====== #
+      # ====== assign inputs outputs for expectation step ====== #
       self._gpu_e_inputs = [Z, F, Tm, T_invS_Tt]
       self._gpu_e_outputs = [LU, RU, llk]
+      # ====== assign inputs outputs for transforming ====== #
+      self._gpu_t_outputs = [Ex] # use _gpu_e_inputs
       # ==================== GPU maximization ==================== #
       # ML re-estimation of the total subspace matrix or the factor loading
       # matrix
@@ -1787,9 +1789,8 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # (1, tv_dim)
     return Ex.T
 
-  def transform_to_disk(self, path, Z, F,
-                        name_path=None,
-                        dtype='float32', override=True):
+  def transform_to_disk(self, path, Z, F, name_path=None,
+                        dtype='float32', device=None, override=True):
     """ Same as `transform`, however, save the transformed statistics
     to file using `odin.fuel.MmapData`
 
@@ -1810,6 +1811,9 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     this function return i-vectors in the same order provided
     by `Z` and `F`
     """
+    # TODO: add GPU implementation
+    if device is None:
+      device = self._device
     dtype = self.dtype if dtype is None else np.dtype(dtype)
     # ====== prepare inputs ====== #
     if Z is not None and F is not None:
@@ -1831,33 +1835,38 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
                    shape=(nb_samples, self.tv_dim),
                    read_only=False)
 
+    # ====== run on GPU ====== #
+    if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
+      pass
+      exit()
     # ====== run on CPU ====== #
-    def extract_ivec(idx):
-      vecs = []
-      for i in idx:
-        L = np.zeros((self.tv_dim, self.tv_dim),
-                     dtype=self.dtype)
-        L[self._itril] = np.dot(Z[i:i + 1], self.T_invS_Tt)
-        L += np.tril(L, -1).T + self.Im
-        # (tv_dim, tv_dim)
-        Cxx = linalg.inv(L)
-        # (tv_dim, 1)
-        B = np.dot(self.T_invS, F[i:i + 1].T)
-        # (tv_dim, 1)
-        Ex = np.dot(Cxx, B)
-        # (1, tv_dim)
-        ivec = Ex.T
-        if ivec.dtype != dtype:
-          ivec = ivec.astype(dtype)
-        vecs.append((i, ivec))
-      return vecs
-    mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
-              ncpu=self.ncpu,
-              batch=max(12, self.batch_size_cpu))
-    for vecs in mpi:
-      for i, v in vecs:
-        dat[i:i + 1] = v
-      prog.add(len(vecs))
+    else:
+      def extract_ivec(idx):
+        vecs = []
+        for i in idx:
+          L = np.zeros((self.tv_dim, self.tv_dim),
+                       dtype=self.dtype)
+          L[self._itril] = np.dot(Z[i:i + 1], self.T_invS_Tt)
+          L += np.tril(L, -1).T + self.Im
+          # (tv_dim, tv_dim)
+          Cxx = linalg.inv(L)
+          # (tv_dim, 1)
+          B = np.dot(self.T_invS, F[i:i + 1].T)
+          # (tv_dim, 1)
+          Ex = np.dot(Cxx, B)
+          # (1, tv_dim)
+          ivec = Ex.T
+          if ivec.dtype != dtype:
+            ivec = ivec.astype(dtype)
+          vecs.append((i, ivec))
+        return vecs
+      mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
+                ncpu=self.ncpu,
+                batch=max(12, self.batch_size_cpu))
+      for vecs in mpi:
+        for i, v in vecs:
+          dat[i:i + 1] = v
+        prog.add(len(vecs))
     # ====== flush and close ====== #
     dat.flush()
     dat.close()

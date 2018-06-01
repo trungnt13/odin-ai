@@ -1324,10 +1324,10 @@ def get_tempdir():
   return tempfile.mkdtemp()
 
 
-def _get_managed_path(folder, name, override, is_folder=False, root='~'):
+def _get_managed_path(folder, name, override, is_folder=False, root='~', odin=True):
   if root == '~':
     root = os.path.expanduser('~')
-  datadir_base = os.path.join(root, '.odin')
+  datadir_base = os.path.join(root, '.odin') if odin else root
   if not os.path.exists(datadir_base):
     os.mkdir(datadir_base)
   elif not os.access(datadir_base, os.W_OK):
@@ -1368,9 +1368,10 @@ def get_logpath(name=None, override=False, root='~'):
                            is_folder=False, root=root)
 
 
-def get_resultpath(tag, name=None, override=False, prompt=False,
-                   root='~'):
-  """
+def get_exppath(tag, name=None, override=False, prompt=False,
+                root='~'):
+  """ Specific path for experiments results
+
   Parameters
   ----------
   tag: string
@@ -1386,8 +1387,8 @@ def get_resultpath(tag, name=None, override=False, prompt=False,
   root: string
       root path for the results (default: "~/.odin")
   """
-  path = _get_managed_path('results', tag, False,
-                           is_folder=True, root=root)
+  path = _get_managed_path('exp', tag, False,
+                           is_folder=True, root=root, odin=False)
   # only return the main folder
   if name is None:
     return path

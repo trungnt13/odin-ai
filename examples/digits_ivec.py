@@ -31,7 +31,7 @@ from odin import ml
 from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
-from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
+from odin.utils import (get_logpath, get_modelpath, get_datasetpath, get_exppath,
                         Progbar, unique_labels, chain, get_formatted_datetime,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 
@@ -39,10 +39,9 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
 # Input arguments
 # ===========================================================================
 args = ArgController(
-).add('path', 'path to preprocessed TIDIGITS dataset'
-).add('-task', '0-gender,1-dialect,2-digit,3-spk', 0
 ).add('-nmix', "Number of GMM mixture", 256
 ).add('-tdim', "Dimension of t-matrix", 128
+).add('-feat', "Acoustic feature: spec, mspec, mfcc, bnf, sdc", 'mspec'
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
 ).add('--tmat', "Force re-run training Tmatrix", False
@@ -53,15 +52,33 @@ args.gmm |= args.all
 args.stat |= args.all | args.gmm
 args.tmat |= args.all | args.stat
 args.ivec |= args.all | args.tmat
-if args.task not in (0, 1, 2, 3):
-  raise ValueError("Task must be: 0, 1, 2, 3")
+FEAT = args.feat
 # ===========================================================================
-# path
+# Const
+# ===========================================================================
+# ====== GMM trainign ====== #
+NMIX = args.nmix
+GMM_NITER = 10
+GMM_DOWNSAMPLE = 4
+GMM_STOCHASTIC = True
+GMM_DTYPE = 'float64'
+# ====== IVEC training ====== #
+TV_DIM = args.tdim
+TV_NITER = 10
+TV_DTYPE = 'float64'
+# ===========================================================================
+# path and dataset
 # ===========================================================================
 # path to preprocessed dataset
-ds = F.Dataset(args.path, read_only=True)
+path = get_datasetpath(name='DIGITS_feats', override=False)
+assert os.path.isdir(path), \
+    "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features.py'" % path
+ds = F.Dataset(path, read_only=True)
+assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
+indices = list(ds['indices'].items())
 # ====== general path ====== #
-EXP_DIR = '/tmp/exp_digit'
+EXP_DIR = get_exppath(tag='DIGITS_ivec',
+                      name='%s_%d_%d' % (FEAT, args.nmix, args.tdim))
 if not os.path.exists(EXP_DIR):
   os.mkdir(EXP_DIR)
 # ====== start logging ====== #
@@ -86,21 +103,6 @@ L_PATH = ( # labels
     os.path.join(EXP_DIR, 'L_train'),
     os.path.join(EXP_DIR, 'L_test'))
 # ===========================================================================
-# Const
-# ===========================================================================
-FEAT = 'mspec'
-indices = list(ds['indices'].items())
-# ====== GMM trainign ====== #
-NMIX = args.nmix
-GMM_NITER = 10
-GMM_DOWNSAMPLE = 4
-GMM_STOCHASTIC = True
-GMM_DTYPE = 'float64'
-# ====== IVEC training ====== #
-TV_DIM = args.tdim
-TV_NITER = 10
-TV_DTYPE = 'float64'
-# ===========================================================================
 # Helper
 # ===========================================================================
 def is_train(x):
@@ -118,20 +120,8 @@ def extract_spk(x):
 def extract_digit(x):
   return x.split('_')[6]
 
-if args.task == 0:
-  print("Task:", ctext("gender", 'cyan'))
-  fn_extract = extract_gender
-elif args.task == 1:
-  print("Task:", ctext("dialect", 'cyan'))
-  fn_extract = extract_dialect
-elif args.task == 2:
-  print("Task:", ctext("single digit", 'cyan'))
-  fn_extract = extract_digit
-  indices = [(name, (start, end)) for name, (start, end) in indices
-             if len(extract_digit(name)) == 1]
-elif args.task == 3:
-  print("Task:", ctext("speaker", 'cyan'))
-  fn_extract = extract_spk
+print("Task:", ctext("gender", 'cyan'))
+fn_extract = extract_gender
 fn_label, labels = unique_labels([i[0] for i in indices],
                                  key_func=fn_extract,
                                  return_labels=True)
@@ -190,6 +180,8 @@ for name, files, z_path, f_path, l_path in zip(
   y_true[name] = [fn_label(i) for i in np.genfromtxt(fname=l_path, dtype=str)]
   stats[name] = (F.MmapData(path=z_path, read_only=True),
                  F.MmapData(path=f_path, read_only=True))
+for name, x in stats.items():
+  print(ctext(name + ':', 'cyan'), x)
 # ===========================================================================
 # Training T-matrix
 # ===========================================================================
@@ -197,7 +189,7 @@ if not os.path.exists(TMAT_PATH) or args.tmat:
   tmat = ml.Tmatrix(tv_dim=TV_DIM, gmm=gmm,
                     niter=TV_NITER, dtype=TV_DTYPE,
                     batch_size_cpu='auto', batch_size_gpu='auto',
-                    device='mix', ncpu=1, gpu_factor=3,
+                    device='gpu', ncpu=1, gpu_factor=3,
                     path=TMAT_PATH)
   tmat.fit(X=(stats['train'][0], # Z_train
               stats['train'][1])) # F_train
@@ -214,10 +206,8 @@ for i_path, name in zip(I_PATH, data_name):
     print('========= Extracting ivecs for: "%s" =========' % name)
     z, f = stats[name]
     tmat.transform_to_disk(path=i_path,
-                           Z=z, F=f,
-                           name_path=None,
-                           dtype='float32',
-                           override=True)
+                           Z=z, F=f, name_path=None,
+                           dtype='float32', device='gpu', override=True)
   # load extracted ivec
   ivecs[name] = F.MmapData(i_path, read_only=True)
 # ====== print the i-vectors ====== #
