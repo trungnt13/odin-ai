@@ -174,7 +174,7 @@ for name, files, z_path, f_path, l_path in zip(
     print('========= Extracting statistics for: "%s" =========' % name)
     gmm.transform_to_disk(X=ds[FEAT], indices=files,
                           pathZ=z_path, pathF=f_path, name_path=l_path,
-                          dtype='float32', device='cpu',
+                          dtype='float32', device='cpu', ncpu=None,
                           override=True)
   # load the statistics in MmapData
   y_true[name] = [fn_label(i) for i in np.genfromtxt(fname=l_path, dtype=str)]
@@ -207,7 +207,8 @@ for i_path, name in zip(I_PATH, data_name):
     z, f = stats[name]
     tmat.transform_to_disk(path=i_path,
                            Z=z, F=f, name_path=None,
-                           dtype='float32', device='gpu', override=True)
+                           dtype='float32', device='gpu', ncpu=1,
+                           override=True)
   # load extracted ivec
   ivecs[name] = F.MmapData(i_path, read_only=True)
 # ====== print the i-vectors ====== #

@@ -658,7 +658,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def transform_to_disk(self, X, indices,
                         pathZ=None, pathF=None, name_path=None,
-                        dtype='float32', device='cpu', override=True):
+                        dtype='float32', device='cpu', ncpu=None,
+                        override=True):
     """ Same as `transform`, however, save the transformed statistics
     to file using `odin.fuel.MmapData`
 
@@ -765,7 +766,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       mpi = MPI(jobs=list(indices.items()) if isinstance(indices, Mapping)
                 else indices,
                 func=map_func,
-                ncpu=self.ncpu,
+                ncpu=self.ncpu if ncpu is None else int(ncpu),
                 batch=max(2, self.batch_size_cpu // (self.ncpu * 2)),
                 hwm=2**25)
       for results in mpi:
@@ -1505,6 +1506,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
       self._gpu_e_inputs = [Z, F, Tm, T_invS_Tt]
       self._gpu_e_outputs = [LU, RU, llk]
       # ====== assign inputs outputs for transforming ====== #
+      self._gpu_t_inputs = self._gpu_e_inputs
       self._gpu_t_outputs = [Ex] # use _gpu_e_inputs
       # ==================== GPU maximization ==================== #
       # ML re-estimation of the total subspace matrix or the factor loading
@@ -1790,7 +1792,8 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     return Ex.T
 
   def transform_to_disk(self, path, Z, F, name_path=None,
-                        dtype='float32', device=None, override=True):
+                        dtype='float32', device='gpu', ncpu=None,
+                        override=True):
     """ Same as `transform`, however, save the transformed statistics
     to file using `odin.fuel.MmapData`
 
@@ -1810,8 +1813,10 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     ----
     this function return i-vectors in the same order provided
     by `Z` and `F`
+    Calculation on `gpu` is approximated to the results from
+    `cpu` that satisfied `np.allclose(gpu, cpu, rtol=1.e-5, atol=1.e-4)`,
+    the final performance using cosine scoring, GMM and PLDA is identical.
     """
-    # TODO: add GPU implementation
     if device is None:
       device = self._device
     dtype = self.dtype if dtype is None else np.dtype(dtype)
@@ -1837,8 +1842,15 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
 
     # ====== run on GPU ====== #
     if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
-      pass
-      exit()
+      for s, e in batching(batch_size=self.batch_size_gpu, n=nb_samples):
+        z_minibatch = Z[s:e]
+        f_minibatch = F[s:e]
+        Ex = K.eval(self._gpu_t_outputs,
+          feed_dict={i: j for i, j in zip(self._gpu_t_inputs,
+                                          (z_minibatch, f_minibatch, self.Tm, self.T_invS_Tt))}
+        )
+        prog.add(Ex[0].shape[0])
+        dat[s:e] = Ex[0]
     # ====== run on CPU ====== #
     else:
       def extract_ivec(idx):
@@ -1861,7 +1873,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
           vecs.append((i, ivec))
         return vecs
       mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
-                ncpu=self.ncpu,
+                ncpu=self.ncpu if ncpu is None else int(ncpu),
                 batch=max(12, self.batch_size_cpu))
       for vecs in mpi:
         for i, v in vecs:

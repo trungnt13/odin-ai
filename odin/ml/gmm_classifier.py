@@ -1,3 +1,5 @@
+from numbers import Number
+
 import numpy as np
 import scipy as sp
 
@@ -42,7 +44,7 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
                max_iter=100, n_init=1,
                init_params='kmeans', n_components=1,
                centering=False, wccn=False, unit_length=False,
-               lda=False, concat=False, labels=None):
+               lda=False, concat=False, labels=None, seed=5218):
     super(GMMclassifier, self).__init__()
     self._strategy = str(strategy)
     self._n_components = int(n_components)
@@ -50,6 +52,7 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
     self._max_iter = int(max_iter)
     self._n_init = int(n_init)
     self._init_params = str(init_params)
+    self._seed = 5218 if not isinstance(seed, Number) else int(seed)
     # ====== default attribute ====== #
     self._labels = labels
     self._feat_dim = None
@@ -126,16 +129,19 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
     if self._gmm is None:
       if self._strategy == 'ova':
         self._gmm = []
+        rand = np.random.RandomState(seed=self._seed)
         for n_components in as_tuple(self._n_components, t=int, N=self.nb_classes):
           gmm = GaussianMixture(n_components=n_components,
             covariance_type=self._covariance_type, max_iter=self._max_iter,
-            n_init=self._n_init, init_params=self._init_params)
+            n_init=self._n_init, init_params=self._init_params,
+            random_state=rand.randint(0, 10e8))
           self._gmm.append(gmm)
       elif self._strategy == 'all':
         gmm = GaussianMixture(n_components=self.nb_classes,
             covariance_type=self._covariance_type, max_iter=self._max_iter,
             n_init=self._n_init, init_params=self._init_params,
-            means_init=np.array([X[y == clz].mean(axis=0) for clz in np.unique(y)]))
+            means_init=np.array([X[y == clz].mean(axis=0) for clz in np.unique(y)]),
+            random_state=self._seed)
         self._gmm = gmm
       else:
         raise ValueError("No support for `strategy`=%s" % self._strategy)

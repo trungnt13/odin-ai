@@ -55,6 +55,7 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
    * Bytes array
    * Numpy array
    * List or iterator of numpy array
+
   """
   hash_md5 = hashlib.md5()
   own_file = False

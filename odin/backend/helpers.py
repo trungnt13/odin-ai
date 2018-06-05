@@ -576,6 +576,8 @@ class Function(object):
     session = get_session()
     # ====== mini-batches ====== #
     if self.batch_size is not None:
+      # TODO: check if mini batch return the right order and same values
+      # as full batch.
       batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
                     if len(self.batch_vars) == 0 else self.batch_vars)
       batch_vars = [i for i in batch_vars
