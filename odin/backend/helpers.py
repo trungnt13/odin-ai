@@ -396,13 +396,15 @@ def get_all_variables(scope=None, name=None, full_name=None,
     name = as_tuple(name, t=string_types)
     var = [v for v in var
            if any((v.name.split('/')[-1] == n or
-                   v.name.split('/')[-1] == n + ':0') for n in name)]
+                   v.name.split('/')[-1].split(':')[0] == n.split(':')[0])
+                  for n in name)]
   # ====== filter by fullname ====== #
   if full_name is not None:
     full_name = as_tuple(full_name, t=string_types)
     var = [v for v in var
            if any((n == v.name or
-                   n + ':0' == v.name) for n in full_name)]
+                   n.split(':')[0] == v.name.split(':')[0])
+                  for n in full_name)]
   return var
 
 def get_all_tensors(scope=None, name=None, full_name=None, device=None):
@@ -430,13 +432,15 @@ def get_all_tensors(scope=None, name=None, full_name=None, device=None):
   if name is not None:
     name = as_tuple(name, t=string_types)
     alltensors = [t for t in alltensors
-    if any((n == t.name.split('/')[-1] or
-            n + ':0' == t.name.split('/')[-1]) for n in name)]
+                  if any((n == t.name.split('/')[-1] or
+                          n.split(':')[0] == t.name.split('/')[-1].split(':')[0])
+                         for n in name)]
   if full_name is not None:
     full_name = as_tuple(full_name, t=string_types)
     alltensors = [t for t in alltensors
                   if any((n == t.name or
-                          n + ':0' == t.name) for n in full_name)]
+                          n.split(':')[0] == t.name.split(':')[0])
+                        for n in full_name)]
   return alltensors
 
 def get_all_variables_or_tensors(scope=None, name=None, full_name=None):
@@ -912,26 +916,38 @@ class ComputationGraph(object):
       outputs_new.append(o_new)
     return outputs_new
 
-  @contextmanager
-  def with_roles(self, roles, match_all=False, exact=False):
-    vars = [v for v in self.variables
-            if has_roles(v, roles, match_all=match_all, exact=exact)]
-    # tracking if new variables have been created
-    all_graph = list(set([v.graph for v in self.variables]))
-    old_max_ops = {g: g._nodes_by_id.keys()[-1] for g in all_graph}
-    yield vars
-    new_max_ops = {g: g._nodes_by_id.keys()[-1] for g in all_graph}
-    # ====== check if new Ops is performed in this context ====== #
-    for g in all_graph:
-      if old_max_ops[g] < new_max_ops[g]:
-        for i in range(old_max_ops[g], new_max_ops[g] + 1):
-          op = g._nodes_by_id[i]
-          # TODO: think about what to do with new Ops here
-
-  def get_roles(self, roles, match_all=False, exact=False):
+  def get(self, scope=None, name=None, full_name=None,
+          roles=None, match_all=False, exact=False):
     """ Return all variables and tensor with given roles """
-    return [v for v in self.tensors + self.variables
-            if has_roles(v, roles, match_all=match_all, exact=exact)]
+    alltensors = self.tensors + self.variables
+    # ====== by role ====== #
+    if roles is not None:
+      alltensors = [t for t in alltensors
+                    if has_roles(t, roles=roles,
+                                 match_all=match_all, exact=exact)]
+    # ====== from general to detail ====== #
+    if scope is not None:
+      scope = str(scope)
+      if len(scope) == 0:
+        alltensors = [t for t in alltensors
+                      if '/' not in t.name]
+      else:
+        scope_name_pattern = re.compile('%s_?\d*\/' % scope)
+        alltensors = [t for t in alltensors
+                      if len(scope_name_pattern.findall(t.name))]
+    if name is not None:
+      name = as_tuple(name, t=string_types)
+      alltensors = [t for t in alltensors
+                    if any((n == t.name.split('/')[-1] or
+                            n.split(':')[0] == t.name.split('/')[-1].split(':')[0])
+                           for n in name)]
+    if full_name is not None:
+      full_name = as_tuple(full_name, t=string_types)
+      alltensors = [t for t in alltensors
+                    if any((n == t.name or
+                            n.split(':')[0] == t.name.split(':')[0])
+                           for n in full_name)]
+    return alltensors
 
   # ==================== others ==================== #
   def __len__(self):

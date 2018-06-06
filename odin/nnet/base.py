@@ -27,7 +27,7 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         FuncDesc, dummy_formatter, type_path,
                         get_module_from_path, wprint)
 from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias,
-                               TrainableParameter)
+                               TrainableParameter, NNOpOutput)
 
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
@@ -412,7 +412,7 @@ class _NNOp_Meta(ABCMeta):
 
 
 @add_metaclass(_NNOp_Meta)
-class NNOp(object):
+class NNOp(NNOpOutput):
   """ Basics of all Neural Network operators
 
   Properties
@@ -1042,7 +1042,7 @@ class NNOp(object):
       desc = x
     # ====== Uknown input, ERROR ====== #
     else:
-      raise ValueError("The input argument for Model can be: "
+      raise ValueError("The input argument for NNOp can be: "
           "`Tensor`, `odin.nnet.VariableDesc`, and primitive types"
           " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
           " But the given type is: %s" % type(x))
@@ -1148,6 +1148,8 @@ class NNOp(object):
         y = self._cache_outputs[footprint]
       else: # First time generate output given footprint
         y = self._apply(*self._current_args, **self._current_kwargs)
+        # all roles to all outputs
+        y = add_roles(variables=y, roles=self.__class__)
         # record cahced return
         self._cache_outputs[footprint] = y
       # automatically initialize all variable within this NNOp scope

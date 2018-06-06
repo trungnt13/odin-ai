@@ -20,12 +20,17 @@ class Role(object):
     raise RuntimeError("This is class is only for annotation, you cannot "
                        "create instance from this class.")
 
+# ==================== basic role tyupes ==================== #
 class Randomization(Role):
-  """Base class for all variable roles."""
+  """Base class for all Randomizaton roles."""
   pass
 
 class Variable(Role):
   """Base class for all variable roles."""
+  pass
+
+class NNOpOutput(Role):
+  """Base class for all Output of NNOp."""
   pass
 
 # ==================== Role for Cost and Objective ==================== #

@@ -28,24 +28,33 @@ from odin.stats import train_valid_test_split, freqcount
 from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
-from odin.utils import (get_logpath, get_modelpath, get_datasetpath,
+from odin.utils import (get_logpath, get_modelpath, get_datasetpath, get_figpath,
                         Progbar, unique_labels, chain,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 
-args = ArgController(
-).add('-bs', 'batch size', '64'
-).parse()
 # ===========================================================================
 # Const
 # ===========================================================================
 FEAT = ['mspec', 'sad']
-PATH = get_datasetpath('digits')
-
-ds = F.Dataset(PATH, read_only=True)
-BATCH_SIZE = int(args.bs)
-MODEL_PATH = get_modelpath('tidigit', override=True)
-LOG_PATH = get_logpath('tidigit.log', override=True)
+MODEL_PATH = get_modelpath(name='DIGITS', override=True)
+LOG_PATH = get_logpath(name='digits.log', override=True)
+FIG_PATH = get_figpath(name='DIGITS', override=True)
 stdio(LOG_PATH)
+
+DEBUG = False
+# ====== trainign ====== #
+BATCH_SIZE = 32
+NB_EPOCH = 12
+# ===========================================================================
+# Load dataset
+# ===========================================================================
+path = get_datasetpath(name='DIGITS_feats', override=False)
+assert os.path.isdir(path), \
+    "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features.py'" % path
+ds = F.Dataset(path, read_only=True)
+assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
+indices = list(ds['indices'].items())
+K.get_rng().shuffle(indices)
 
 # ===========================================================================
 # Helper
