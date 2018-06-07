@@ -462,7 +462,8 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
 def plot_scatter(x, y, color=None, marker=None, size=4.0,
                 legend=None, legend_loc='upper center',
                 legend_ncol=3, legend_colspace=0.4,
-                ticks_off=True, ax=None, fontsize=8):
+                ticks_off=True, ax=None, fontsize=8,
+                title=None):
   '''Plot the amplitude envelope of a waveform.
 
   Parameters
@@ -535,8 +536,16 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0,
   if ticks_off:
     ax.set_xticks(())
     ax.set_yticks(())
+  if title is not None:
+    ax.set_title(str(title))
   return ax
 
+def plot_scatter3D(x, y, z, color=None, marker=None, size=4.0,
+                   legend=None, legend_loc='upper center',
+                   legend_ncol=3, legend_colspace=0.4,
+                   ticks_off=True, ax=None, fontsize=8,
+                   title=None):
+  pass
 
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
