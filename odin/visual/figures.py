@@ -12,11 +12,12 @@ import sys
 import copy
 import warnings
 import colorsys
-from six import string_types
 import itertools
-from collections import Mapping, OrderedDict
+from numbers import Number
+from six import string_types
 from six.moves import zip, range
 from contextlib import contextmanager
+from collections import Mapping, OrderedDict
 
 import numpy as np
 
@@ -349,6 +350,10 @@ def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
   if show:
     plot_show(block=True, tight_layout=tight_layout)
 
+def plot_figure(nrow=8, ncol=8, dpi=180):
+  from matplotlib import pyplot as plt
+  fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
+  return fig
 
 def subplot(*arg, **kwargs):
   from matplotlib import pyplot as plt
@@ -458,48 +463,28 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
   ax.hist(x, bins=bins, alpha=0.8, weights=weights)
   return ax
 
-
-def plot_scatter(x, y, color=None, marker=None, size=4.0,
-                legend=None, legend_loc='upper center',
-                legend_ncol=3, legend_colspace=0.4,
-                ticks_off=True, ax=None, fontsize=8,
-                title=None):
-  '''Plot the amplitude envelope of a waveform.
-
-  Parameters
-  ----------
-  x: 1D-array (nb_samples,)
-  y: 1D-array (nb_samples,)
-  color: array (nb_samples)
-      list of colors for each class, check `generate_random_colors`,
-      length of color must be equal to `x` and `y`
-  marker: array (nb_samples,)
-      different marker for each color, default marker is '.'
-  legend: dict
-      mapping {[color][marker] -> name, ...}
-      for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
-      you can control the order of legend by using OrderDict
-
-  '''
-  from matplotlib import pyplot as plt
+# ===========================================================================
+# Scatter plot
+# ===========================================================================
+def _validate_color_marker_legends(num_samples, color, marker, legend):
   default_color = 'b'
   default_marker = '.'
   is_marker_none = False
   is_color_none = False
-  # color is given create legend and different marker
+  # ====== color is given create legend and different marker ====== #
   if color is None:
-    color = [default_color] * len(x)
+    color = [default_color] * num_samples
     is_color_none = True
-  if len(color) != len(x):
+  if len(color) != num_samples:
     raise ValueError("There are %d colors, but %d data points" %
-                     len(color), len(x))
+                     len(color), num_samples)
   # ====== check marker ====== #
   if marker is None:
-    marker = [default_marker] * len(x)
+    marker = [default_marker] * num_samples
     is_marker_none = True
-  elif len(marker) != len(x):
+  elif len(marker) != num_samples:
     raise ValueError("There are %d markers, but %d data points" %
-                     len(marker), len(x))
+                     len(marker), num_samples)
   # ====== check legend ====== #
   if legend is None:
     legend = {(c, m): "%s_%s" % (c, m)
@@ -508,44 +493,128 @@ def plot_scatter(x, y, color=None, marker=None, size=4.0,
     legend = {(i, default_marker): j for i, j in legend.items()}
   elif is_color_none:
     legend = {(default_color, i): j for i, j in legend.items()}
-  # if not all((c, m) in legend for c in set(color) for m in set(marker)):
-  #   raise ValueError("Legend must contains following keys: %s, but the given "
-  #                   "legend only contains: %s"
-  #                    % (str([(c, m) for c in set(color) for m in set(marker)]),
-  #                       str(list(legend.keys()))))
-  # ====== plotting ====== #
-  ax = ax if ax is not None else plt.gca()
-  if is_marker_none and is_color_none:
-    ax.scatter(x, y, s=size, marker=marker)
+  return None if is_marker_none and is_color_none else color, marker, legend
+
+def plot_scatter(x, y, z=None,
+                 ax=None, color=None, marker=None, size=4.0,
+                 elev3D=None, azim3D=None,
+                 ticks_off=True, grid=True,
+                 legend=None, legend_loc='upper center',
+                 legend_ncol=3, legend_colspace=0.4,
+                 fontsize=8, title=None):
+  ''' Plot the amplitude envelope of a waveform.
+
+  Parameters
+  ----------
+  x : 1D-array (num_samples,)
+  y : 1D-array (num_samples,)
+  z : 1D-array or None (num_samples,)
+    if provided, plot in 3D
+  ax : {None, int, tuple of int, Axes object) (default: None)
+    if int, `ax` is the location of the subplot (e.g. `111`)
+    if tuple, `ax` is tuple of location (e.g. `(1, 1, 1)`)
+    if Axes object, `ax` must be `mpl_toolkits.mplot3d.Axes3D` in case `z`
+    is given
+  color: array (nb_samples)
+      list of colors for each class, check `generate_random_colors`,
+      length of color must be equal to `x` and `y`
+  marker: array (nb_samples,)
+      different marker for each color, default marker is '.'
+  legend : dict
+      mapping {[color][marker] -> name, ...}
+      for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
+      you can control the order of legend by using OrderDict
+  legend_ncol : int (default: 3)
+    number of columns for displaying legends
+  legend_colspace : float (default: 0.4)
+    space between columns in the legend
+  legend_loc : {str, int}
+    ‘best’  0
+    ‘upper right’ 1
+    ‘upper left’  2
+    ‘lower left’  3
+    ‘lower right’ 4
+    ‘right’ 5
+    ‘center left’ 6
+    ‘center right’  7
+    ‘lower center’  8
+    ‘upper center’  9
+    ‘center’  10
+  elev3D : {None, Number} (default: None)
+    stores the elevation angle in the z plane, with `elev3D=90` is
+    looking from top down.
+    This can be used to rotate the axes programatically.
+  azim3D : {None, Number} (default: None)
+    stores the azimuth angle in the x,y plane
+    This can be used to rotate the axes programatically.
+  title : {None, string} (default: None)
+    specific title for the subplot
+  '''
+  # TODO: add animation of 3D scatter plot
+  assert len(x) == len(y)
+  if z is not None:
+    assert len(y) == len(z)
+  is_3D_mode = False if z is None else True
+  # ====== prepare ====== #
+  from matplotlib import pyplot as plt
+  color, marker, legend = _validate_color_marker_legends(
+      len(x), color, marker, legend)
+  # 3D plot
+  if is_3D_mode:
+    from mpl_toolkits.mplot3d import Axes3D
+    if ax is not None:
+      assert isinstance(ax, (Axes3D, Number, tuple, list)), \
+      'Axes3D must be used for 3D plot (z is given)'
+      if isinstance(ax, Number):
+        ax = plt.gcf().add_subplot(ax, projection='3d')
+      elif isinstance(ax, (tuple, list)):
+        ax = plt.gcf().add_subplot(*ax, projection='3d')
+    else:
+      ax = Axes3D(fig=plt.gcf())
+  # 2D plot
   else:
+    if isinstance(ax, Number):
+      ax = plt.gcf().add_subplot(ax)
+    elif isinstance(ax, (tuple, list)):
+      ax = plt.gcf().add_subplot(*ax)
+    elif ax is None:
+      ax = plt.gca()
+  # ====== plotting ====== #
+  if color is None:
+    if is_3D_mode:
+      ax.scatter(x, y, z, s=size, marker=marker)
+    else:
+      ax.scatter(x, y, s=size, marker=marker)
+  else:
+    # group into color-marker then plot each set
     axes = []
     legend_ = []
     for code, name in sorted(legend.items(), key=lambda x: x[-1]):
       c, m = list(code)
       x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
       y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
-      legend_.append(name)
-      _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+      if is_3D_mode:
+        z_ = [i for i, j, k in zip(z, color, marker) if j == c and k == m]
+        _ = ax.scatter(x_, y_, z_, color=c, s=size, marker=m)
+      else:
+        _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
       axes.append(_)
+      legend_.append(name)
     # add all the legend
     legend = ax.legend(axes, legend_, markerscale=1.5,
       scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
-      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=legend_ncol,
-      columnspacing=legend_colspace, labelspacing=0.,
+      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
+      columnspacing=float(legend_colspace), labelspacing=0.,
       fontsize=fontsize, handletextpad=0.1)
   if ticks_off:
-    ax.set_xticks(())
-    ax.set_yticks(())
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    if is_3D_mode:
+      ax.set_zticklabels([])
+  ax.grid(grid)
   if title is not None:
     ax.set_title(str(title))
   return ax
-
-def plot_scatter3D(x, y, z, color=None, marker=None, size=4.0,
-                   legend=None, legend_loc='upper center',
-                   legend_ncol=3, legend_colspace=0.4,
-                   ticks_off=True, ax=None, fontsize=8,
-                   title=None):
-  pass
 
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
