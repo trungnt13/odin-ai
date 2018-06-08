@@ -9,6 +9,7 @@
 
 from __future__ import print_function, absolute_import, division
 
+import re
 import math
 import warnings
 from collections import Mapping
@@ -16,6 +17,8 @@ from collections import Mapping
 import numpy as np
 
 __all__ = [
+    'remove_text_color',
+    'merge_text_graph',
     'print_dist',
     'print_confusion',
     'print_hist',
@@ -83,6 +86,36 @@ def ctext(s, color='red'):
     pass
   return s
 
+def remove_text_color(s):
+  s = re.sub(pattern='\\033\[\d\dm', repl='', string=s)
+  return s
+
+def merge_text_graph(*graphs, padding=' '):
+  """ To merge multiple graph together, this function
+  will remove all the color coded text to properly align
+  all the graph text.
+  """
+  padding = str(padding)
+  assert len(graphs) >= 1
+  if len(graphs) == 1:
+    return graphs[0]
+
+  def normalizing_lines(text):
+    lines = [remove_text_color(l) for l in text.split('\n')]
+    maxlen = max([len(l) for l in lines])
+    lines = [l + ' ' * (maxlen - len(l))
+             if len(l) < maxlen else l
+             for l in lines]
+    return lines
+  graphs = [normalizing_lines(g) for g in graphs]
+  maxlen = max(len(i) for i in graphs)
+  final_text = ''
+  for l in range(maxlen):
+    for i, g in enumerate(graphs):
+      if l < len(g):
+        final_text += (padding if i > 0 else '') + g[l]
+    final_text += '\n'
+  return final_text
 
 def drange(start, stop, step=1.0, include_stop=False):
   """

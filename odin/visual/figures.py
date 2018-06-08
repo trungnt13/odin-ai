@@ -469,37 +469,32 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
 def _validate_color_marker_legends(num_samples, color, marker, legend):
   default_color = 'b'
   default_marker = '.'
-  is_marker_none = False
-  is_color_none = False
   # ====== color is given create legend and different marker ====== #
   if color is None:
     color = [default_color] * num_samples
-    is_color_none = True
+  elif isinstance(color, string_types):
+    color = [color] * num_samples
   if len(color) != num_samples:
     raise ValueError("There are %d colors, but %d data points" %
                      len(color), num_samples)
   # ====== check marker ====== #
   if marker is None:
     marker = [default_marker] * num_samples
-    is_marker_none = True
+  elif isinstance(marker, string_types):
+    marker = [marker] * num_samples
   elif len(marker) != num_samples:
     raise ValueError("There are %d markers, but %d data points" %
                      len(marker), num_samples)
   # ====== check legend ====== #
-  if legend is None:
-    legend = OrderedDict([((c, m), "%s_%s" % (c, m))
-                          for c in set(color) for m in set(marker)])
-  elif is_marker_none:
-    legend = OrderedDict([((i, default_marker), j)
-                          for i, j in legend.items()])
-  elif is_color_none:
-    legend = OrderedDict([((default_color, i), j)
-                          for i, j in legend.items()])
-  return None if is_marker_none and is_color_none else color, marker, legend
+  if legend is not None:
+    assert isinstance(legend, dict)
+    assert all(isinstance(j, string_types) and isinstance(i, (tuple, list)) and len(i) == 2
+               for i, j in legend.items())
+  return color, marker, legend
 
 def plot_scatter(x, y, z=None,
                  ax=None, color=None, marker=None, size=4.0,
-                 elev3D=None, azim3D=None,
+                 elev=None, azim=None,
                  ticks_off=True, grid=True,
                  legend=None, legend_loc='upper center',
                  legend_ncol=3, legend_colspace=0.4,
@@ -618,9 +613,9 @@ def plot_scatter(x, y, z=None,
   ax.grid(grid)
   if title is not None:
     ax.set_title(str(title))
-  if is_3D_mode and (elev3D is not None or azim3D is not None):
-    ax.view_init(elev=ax.elev if elev3D is None else elev3D,
-                 azim=ax.azim if azim3D is None else azim3D)
+  if is_3D_mode and (elev is not None or azim is not None):
+    ax.view_init(elev=ax.elev if elev is None else elev,
+                 azim=ax.azim if azim is None else azim)
   return ax
 
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
