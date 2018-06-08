@@ -487,12 +487,14 @@ def _validate_color_marker_legends(num_samples, color, marker, legend):
                      len(marker), num_samples)
   # ====== check legend ====== #
   if legend is None:
-    legend = {(c, m): "%s_%s" % (c, m)
-              for c in set(color) for m in set(marker)}
+    legend = OrderedDict([((c, m), "%s_%s" % (c, m))
+                          for c in set(color) for m in set(marker)])
   elif is_marker_none:
-    legend = {(i, default_marker): j for i, j in legend.items()}
+    legend = OrderedDict([((i, default_marker), j)
+                          for i, j in legend.items()])
   elif is_color_none:
-    legend = {(default_color, i): j for i, j in legend.items()}
+    legend = OrderedDict([((default_color, i), j)
+                          for i, j in legend.items()])
   return None if is_marker_none and is_color_none else color, marker, legend
 
 def plot_scatter(x, y, z=None,
@@ -540,12 +542,12 @@ def plot_scatter(x, y, z=None,
     ‘lower center’  8
     ‘upper center’  9
     ‘center’  10
-  elev3D : {None, Number} (default: None)
-    stores the elevation angle in the z plane, with `elev3D=90` is
-    looking from top down.
+  elev : {None, Number} (default: None)
+    stores the elevation angle in the z plane, with `elev=90` is
+    looking from top down. Default value is 30 degree
     This can be used to rotate the axes programatically.
-  azim3D : {None, Number} (default: None)
-    stores the azimuth angle in the x,y plane
+  azim : {None, Number} (default: None)
+    stores the azimuth angle in the x,y plane. Default value is -60 degree
     This can be used to rotate the axes programatically.
   title : {None, string} (default: None)
     specific title for the subplot
@@ -589,7 +591,9 @@ def plot_scatter(x, y, z=None,
     # group into color-marker then plot each set
     axes = []
     legend_ = []
-    for code, name in sorted(legend.items(), key=lambda x: x[-1]):
+    legend_iter = legend.items() if isinstance(legend, OrderedDict) else\
+    sorted(legend.items(), key=lambda x: x[-1])
+    for code, name in legend_iter:
       c, m = list(code)
       x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
       y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
@@ -614,6 +618,9 @@ def plot_scatter(x, y, z=None,
   ax.grid(grid)
   if title is not None:
     ax.set_title(str(title))
+  if is_3D_mode and (elev3D is not None or azim3D is not None):
+    ax.view_init(elev=ax.elev if elev3D is None else elev3D,
+                 azim=ax.azim if azim3D is None else azim3D)
   return ax
 
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
