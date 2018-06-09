@@ -8,3 +8,4 @@ from .scoring import (VectorNormalizer, Scorer,
                       compute_wccn, compute_class_avg, compute_within_cov)
 from .plda import PLDA
 from .gmm_classifier import GMMclassifier
+from .fast_tsne import fast_tsne

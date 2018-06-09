@@ -486,10 +486,24 @@ def _validate_color_marker_legends(num_samples, color, marker, legend):
     raise ValueError("There are %d markers, but %d data points" %
                      len(marker), num_samples)
   # ====== check legend ====== #
-  if legend is not None:
-    assert isinstance(legend, dict)
+  if isinstance(legend, dict):
     assert all(isinstance(j, string_types) and isinstance(i, (tuple, list)) and len(i) == 2
                for i, j in legend.items())
+  else:
+    n = max(len(set(color)), len(set(marker)))
+    all_colors = list(set(color))
+    if len(all_colors) == 1:
+      all_colors = all_colors * n
+    all_markers = list(set(marker))
+    if len(all_markers) == 1:
+      all_markers = all_markers * n
+    # different option for legend
+    if legend is None:
+      legend = [''] * n
+    elif isinstance(legend, string_types):
+      pass
+    assert len(all_colors) == len(all_markers) == len(legend)
+    legend = {(c, m): name for c, m, name in zip(all_colors, all_markers, legend)}
   return color, marker, legend
 
 def plot_scatter(x, y, z=None,
@@ -547,7 +561,6 @@ def plot_scatter(x, y, z=None,
   title : {None, string} (default: None)
     specific title for the subplot
   '''
-  # TODO: add animation of 3D scatter plot
   assert len(x) == len(y)
   if z is not None:
     assert len(y) == len(z)
@@ -577,34 +590,33 @@ def plot_scatter(x, y, z=None,
     elif ax is None:
       ax = plt.gca()
   # ====== plotting ====== #
-  if color is None:
+  # group into color-marker then plot each set
+  axes = []
+  legend_ = []
+  # prepare legend
+  legend_iter = legend.items() if isinstance(legend, OrderedDict) else\
+  sorted(legend.items(), key=lambda x: x[-1])
+  # plotting
+  for code, name in legend_iter:
+    c, m = list(code)
+    x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
+    y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
     if is_3D_mode:
-      ax.scatter(x, y, z, s=size, marker=marker)
+      z_ = [i for i, j, k in zip(z, color, marker) if j == c and k == m]
+      _ = ax.scatter(x_, y_, z_, color=c, s=size, marker=m)
     else:
-      ax.scatter(x, y, s=size, marker=marker)
-  else:
-    # group into color-marker then plot each set
-    axes = []
-    legend_ = []
-    legend_iter = legend.items() if isinstance(legend, OrderedDict) else\
-    sorted(legend.items(), key=lambda x: x[-1])
-    for code, name in legend_iter:
-      c, m = list(code)
-      x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
-      y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
-      if is_3D_mode:
-        z_ = [i for i, j, k in zip(z, color, marker) if j == c and k == m]
-        _ = ax.scatter(x_, y_, z_, color=c, s=size, marker=m)
-      else:
-        _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
-      axes.append(_)
+      _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+    axes.append(_)
+    if len(name) > 0:
       legend_.append(name)
-    # add all the legend
+  # ====== plot the legend ====== #
+  if len(legend_) > 0:
     legend = ax.legend(axes, legend_, markerscale=1.5,
       scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
       loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
       columnspacing=float(legend_colspace), labelspacing=0.,
       fontsize=fontsize, handletextpad=0.1)
+  # ====== some configuration ====== #
   if ticks_off:
     ax.set_xticklabels([])
     ax.set_yticklabels([])
