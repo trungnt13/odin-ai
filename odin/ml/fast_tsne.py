@@ -13,7 +13,6 @@ def _create_key(kwargs, md5):
   key['md5'] = md5
   return str(list(sorted(key.items(), key=lambda x: x[0])))
 
-
 def fast_tsne(*X, n_components=2, perplexity=30.0,
               early_exaggeration=12.0, learning_rate=200.0, n_iter=1000,
               n_iter_without_progress=300, min_grad_norm=1e-7,

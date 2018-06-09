@@ -79,6 +79,33 @@ def generate_random_marker(n, seed=5218):
       (len(marker_styles), n))
   return np.random.choice(marker_styles, size=n, replace=False)
 
+def to_axis(ax, is_3D=False):
+  """ Convert: int, tuple, None, Axes object
+  to proper matplotlib Axes (2D and 3D)
+  """
+  from matplotlib import pyplot as plt
+  # 3D plot
+  if is_3D:
+    from mpl_toolkits.mplot3d import Axes3D
+    if ax is not None:
+      assert isinstance(ax, (Axes3D, Number, tuple, list)), \
+      'Axes3D must be used for 3D plot (z is given)'
+      if isinstance(ax, Number):
+        ax = plt.gcf().add_subplot(ax, projection='3d')
+      elif isinstance(ax, (tuple, list)):
+        ax = plt.gcf().add_subplot(*ax, projection='3d')
+    else:
+      ax = Axes3D(fig=plt.gcf())
+  # 2D plot
+  else:
+    if isinstance(ax, Number):
+      ax = plt.gcf().add_subplot(ax)
+    elif isinstance(ax, (tuple, list)):
+      ax = plt.gcf().add_subplot(*ax)
+    elif ax is None:
+      ax = plt.gca()
+  return ax
+
 # ===========================================================================
 # Helper for spectrogram
 # ===========================================================================
@@ -566,29 +593,10 @@ def plot_scatter(x, y, z=None,
     assert len(y) == len(z)
   is_3D_mode = False if z is None else True
   # ====== prepare ====== #
-  from matplotlib import pyplot as plt
   color, marker, legend = _validate_color_marker_legends(
       len(x), color, marker, legend)
   # 3D plot
-  if is_3D_mode:
-    from mpl_toolkits.mplot3d import Axes3D
-    if ax is not None:
-      assert isinstance(ax, (Axes3D, Number, tuple, list)), \
-      'Axes3D must be used for 3D plot (z is given)'
-      if isinstance(ax, Number):
-        ax = plt.gcf().add_subplot(ax, projection='3d')
-      elif isinstance(ax, (tuple, list)):
-        ax = plt.gcf().add_subplot(*ax, projection='3d')
-    else:
-      ax = Axes3D(fig=plt.gcf())
-  # 2D plot
-  else:
-    if isinstance(ax, Number):
-      ax = plt.gcf().add_subplot(ax)
-    elif isinstance(ax, (tuple, list)):
-      ax = plt.gcf().add_subplot(*ax)
-    elif ax is None:
-      ax = plt.gca()
+  ax = to_axis(ax, is_3D_mode)
   # ====== plotting ====== #
   # group into color-marker then plot each set
   axes = []
@@ -992,10 +1000,11 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], axis=None, title=None,
   # axis.tight_layout()
   return axis
 
-def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
+def plot_confusion_matrix(cm, labels, axis=None, fontsize=12, colorbar=False,
                           title=None):
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
+  axis = to_axis(axis, is_3D=False)
   # calculate F1
   N_row = np.sum(cm, axis=-1)
   N_col = np.sum(cm, axis=0)
@@ -1010,9 +1019,6 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=13, colorbar=False,
   # column normalize
   nb_classes = cm.shape[0]
   cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
-  if axis is None:
-    axis = plt.gca()
-
   im = axis.imshow(cm, interpolation='nearest', cmap=cmap)
   # axis.get_figure().colorbar(im)
   tick_marks = np.arange(len(labels))
