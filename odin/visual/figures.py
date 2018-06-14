@@ -32,14 +32,14 @@ import numpy as np
 line_styles = ['-', '--', '-.', ':']
 
 marker_styles = [
-    ".",
+    "o",
     "^",
     "s",
     "p",
     "|",
     "d",
     # ",",
-    # "o",
+    # ".",
     "v",
     "<",
     ">",
@@ -77,7 +77,8 @@ def generate_random_marker(n, seed=5218):
   if n > len(marker_styles):
     raise ValueError("There are %d different marker styles, but need %d" %
       (len(marker_styles), n))
-  return np.random.choice(marker_styles, size=n, replace=False)
+  return marker_styles[:n]
+  # return np.random.choice(marker_styles, size=n, replace=False)
 
 def to_axis(ax, is_3D=False):
   """ Convert: int, tuple, None, Axes object
@@ -513,24 +514,26 @@ def _validate_color_marker_legends(num_samples, color, marker, legend):
     raise ValueError("There are %d markers, but %d data points" %
                      len(marker), num_samples)
   # ====== check legend ====== #
-  if isinstance(legend, dict):
-    assert all(isinstance(j, string_types) and isinstance(i, (tuple, list)) and len(i) == 2
+  color_marker = set([(i, j) for i, j in zip(color, marker)])
+  if legend is None:
+    legend = {x: '' for x in color_marker}
+  elif isinstance(legend, dict):
+    assert all(isinstance(j, string_types) and
+               isinstance(i, (tuple, list)) and len(i) == 2
                for i, j in legend.items())
+    if isinstance(legend, OrderedDict):
+      legend = OrderedDict([(i, j)
+                            for i, j in legend.items()
+                            if i in color_marker])
+    else:
+      legend = {x: legend[x] for x in color_marker}
+  elif isinstance(legend, string_types):
+    legend = {x: legend for x in color_marker}
+  elif isinstance(legend, (tuple, list, np.ndarray)):
+    assert len(legend) >= len(color_marker)
+    legend = OrderedDict([(i, str(j)) for i, j in zip(color_marker, legend)])
   else:
-    n = max(len(set(color)), len(set(marker)))
-    all_colors = list(set(color))
-    if len(all_colors) == 1:
-      all_colors = all_colors * n
-    all_markers = list(set(marker))
-    if len(all_markers) == 1:
-      all_markers = all_markers * n
-    # different option for legend
-    if legend is None:
-      legend = [''] * n
-    elif isinstance(legend, string_types):
-      pass
-    assert len(all_colors) == len(all_markers) == len(legend)
-    legend = {(c, m): name for c, m, name in zip(all_colors, all_markers, legend)}
+    raise ValueError("No support for legend value: %s" % str(legend))
   return color, marker, legend
 
 def plot_scatter(x, y, z=None,
@@ -578,12 +581,12 @@ def plot_scatter(x, y, z=None,
     ‘lower center’  8
     ‘upper center’  9
     ‘center’  10
-  elev : {None, Number} (default: None)
+  elev : {None, Number} (default: None or 30 degree)
     stores the elevation angle in the z plane, with `elev=90` is
-    looking from top down. Default value is 30 degree
+    looking from top down.
     This can be used to rotate the axes programatically.
-  azim : {None, Number} (default: None)
-    stores the azimuth angle in the x,y plane. Default value is -60 degree
+  azim : {None, Number} (default: None or -60 degree)
+    stores the azimuth angle in the x,y plane.
     This can be used to rotate the axes programatically.
   title : {None, string} (default: None)
     specific title for the subplot
@@ -849,7 +852,7 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
     # normalize vad
     vad = np.cast[np.bool](vad)
 
-  ax = ax if ax is not None else plt.gca()
+  ax = to_axis(ax, is_3D=False)
   ax.set_aspect('equal', 'box')
   # ax.tick_params(axis='both', which='major', labelsize=6)
   ax.set_xticks([])
@@ -1040,7 +1043,8 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=12, colorbar=False,
     fs = fontsize
     text = '%.2f' % cm[i, j]
     if i == j: # diagonal
-      color = "darkgreen" if cm[i, j] <= 0.8 else 'forestgreen'
+      color = 'magenta'
+      # color = "darkgreen" if cm[i, j] <= 0.8 else 'forestgreen'
       weight = 'bold'
       fs = fontsize
       text = '%.2f\nF1:%.2f' % (cm[i, j], F1[i])

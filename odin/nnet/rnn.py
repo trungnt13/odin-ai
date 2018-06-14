@@ -361,6 +361,9 @@ class CudnnRNN(NNOp):
   hidden_shape: (num_layers, batch_size, num_units)
   cell_shape: (num_layers, batch_size,   num_units)
 
+  Note
+  ----
+  `__call__(training=True)` if you want to get gradient from this NNOp
   """
 
   def __init__(self, num_units,

@@ -19,7 +19,7 @@ def fast_tsne(*X, n_components=2, perplexity=30.0,
               metric="euclidean", init="random", verbose=0,
               random_state=5218, method='barnes_hut', angle=0.5,
               n_jobs=4):
-  assert len(X) > 0
+  assert len(X) > 0, "No input is given!"
   if isinstance(X[0], (tuple, list)):
     X = X[0]
   if not all(isinstance(x, np.ndarray) for x in X):
