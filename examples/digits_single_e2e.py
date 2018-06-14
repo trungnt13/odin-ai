@@ -32,6 +32,7 @@ from odin import preprocessing as pp
 from odin.ml import evaluate, fast_tsne
 from odin.visual import (print_dist, print_confusion, print_hist,
                          plot_scatter, plot_figure, plot_spectrogram, plot_save,
+                         plot_confusion_matrix,
                          generate_random_colors, generate_random_marker)
 from odin.utils import (get_logpath, get_modelpath, get_datasetpath, get_figpath,
                         Progbar, unique_labels, chain,
@@ -123,7 +124,7 @@ split_genID = lambda x: x[0].split('_')[1]
 split_ageID = lambda x: x[0].split('_')[2]
 # stratified sampling for each digit, splited based on speaker ID
 train, valid = train_valid_test_split(x=train, train=0.6, inc_test=False,
-    idfunc=split_genID,
+    idfunc=split_spkID,
     seed=K.get_rng().randint(0, 10e8))
 # make sure both train and valid set have all the numbers
 assert set(i[0].split('_')[-1] for i in train) == set(digits)
@@ -269,9 +270,9 @@ def evaluate_latent(fn, feeder, title):
     spec = Z[sample.astype('int32')]
     y = [y_true[int(i)] for i in sample]
     plot_figure(nrow=6, ncol=6)
-    for i, (s, title) in enumerate(zip(spec, y)):
+    for i, (s, tit) in enumerate(zip(spec, y)):
       s = s.reshape(len(s), -1)
-      plot_spectrogram(s.T, ax=(1, 3, i + 1), title=title)
+      plot_spectrogram(s.T, ax=(1, 3, i + 1), title=tit)
   # ====== visualize each point ====== #
   # flattent to 2D
   Z = np.reshape(Z, newshape=(len(Z), -1))
@@ -303,7 +304,8 @@ evaluate_latent(f_d, test, title="test_decoder")
 # Prediction
 # ===========================================================================
 def evaluate_feeder(feeder, title):
-  y_true = []
+  y_true_digit = []
+  y_true_gender = []
   y_pred = []
   for outputs in Progbar(feeder.set_batch(batch_mode='file'),
                          name=title,
@@ -314,12 +316,29 @@ def evaluate_feeder(feeder, title):
     idx = int(outputs[1])
     data = outputs[2:]
     assert idx == 0
-    y_true.append(f_digits(name))
+    y_true_digit.append(f_digits(name))
+    y_true_gender.append(f_genders(name))
     y_pred.append(f_pred(*data))
-  y_true = np.array(y_true, dtype='int32')
+  # ====== post processing ====== #
+  y_true_digit = np.array(y_true_digit, dtype='int32')
+  y_true_gender = np.array(y_true_gender, dtype='int32')
   y_pred_proba = np.concatenate(y_pred, axis=0)
-  evaluate(y_true=y_true, y_pred_proba=y_pred_proba, title=title,
-           labels=digits, path=os.path.join(FIG_PATH, '%s.pdf' % title))
+  y_pred_all = np.argmax(y_pred_proba, axis=-1).astype('int32')
+  # ====== plotting for each gender ====== #
+  plot_figure(nrow=6, ncol=25)
+  for gen in range(len(genders)):
+    y_true, y_pred = [], []
+    for i, g in enumerate(y_true_gender):
+      if g == gen:
+        y_true.append(y_true_digit[i])
+        y_pred.append(y_pred_all[i])
+    if len(y_true) == 0:
+      continue
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(digits)))
+    plot_confusion_matrix(cm, labels=digits, fontsize=8,
+                          axis=(1, 4, gen + 1),
+                          title='[%s]%s' % (genders[gen], title))
+  plot_save(os.path.join(FIG_PATH, '%s.pdf' % title))
 evaluate_feeder(valid, title="valid")
 evaluate_feeder(test, title="test")
 # ===========================================================================
