@@ -114,6 +114,50 @@ def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
       (sum(len(r) for r in rets), len(x))
   return rets
 
+def classification_diagnose(X, y_true, y_pred,
+                            num_samples=8, return_list=False, top_n=None,
+                            seed=5218):
+  """
+  Return
+  ------
+  OrderedDict: (true_class, pred_class) -> [list of samples from `X`]
+  sorted by most frequence to less frequence
+  """
+  # Mapping from classesID -> [Sample ID]
+  # ====== check argument ====== #
+  if y_true.ndim == 2:
+    y_true = np.argmax(y_true, axis=-1)
+  elif y_true.ndim != 1:
+    raise ValueError("Only support 1-D or 2-D one-hot `y_true`, "
+                     "given `y_true` with shape: %s" % str(y_true.shape))
+  if y_pred.ndim == 2:
+    y_pred = np.argmax(y_pred, axis=-1)
+  elif y_pred.ndim != 1:
+    raise ValueError("Only support 1-D or 2-D one-hot `y_pred`, "
+                     "given `y_pred` with shape: %s" % str(y_pred.shape))
+  assert len(y_true) == len(y_pred) == len(X), "Inconsistent number of samples"
+  # ====== initialize ====== #
+  rand = np.random.RandomState(seed)
+  miss = defaultdict(list)
+  # ====== sampling ====== #
+  for idx, (true, pred) in enumerate(zip(y_true, y_pred)):
+    if true != pred:
+      miss[(true, pred)].append(idx)
+  # sort by the most freq mistake classes
+  outputs = OrderedDict()
+  for (true, pred), samples in sorted(miss.items(),
+                                      key=lambda x: len(x[-1]),
+                                      reverse=True):
+    rand.shuffle(samples)
+    outputs[(true, pred)] = (X[samples[:num_samples]]
+                             if isinstance(X, np.ndarray) else
+                             [X[i] for i in samples])
+  # select top frequence
+  if top_n is not None and isinstance(top_n, Number):
+    top_n = int(top_n)
+    assert top_n >= 1
+    outputs = OrderedDict(list(outputs.items())[:top_n])
+  return list(outputs.items()) if return_list else outputs
 
 def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
                            inc_test=True, seed=None):

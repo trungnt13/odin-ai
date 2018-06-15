@@ -336,7 +336,7 @@ def evaluate_feeder(feeder, title):
       continue
     cm = confusion_matrix(y_true, y_pred, labels=range(len(digits)))
     plot_confusion_matrix(cm, labels=digits, fontsize=8,
-                          axis=(1, 4, gen + 1),
+                          ax=(1, 4, gen + 1),
                           title='[%s]%s' % (genders[gen], title))
   plot_save(os.path.join(FIG_PATH, '%s.pdf' % title))
 evaluate_feeder(valid, title="valid")

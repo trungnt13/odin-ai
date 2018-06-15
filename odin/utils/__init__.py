@@ -1391,13 +1391,14 @@ def get_exppath(tag, name=None, override=False, prompt=False,
                            is_folder=True, root=root, odin=False)
   # only return the main folder
   if name is None:
-    return path
+    pass
   # return the sub-folder
-  name = str(name).split('/')
-  for i in name:
-    path = os.path.join(path, i)
-    if not os.path.exists(path):
-      os.mkdir(path)
+  else:
+    name = str(name).split('/')
+    for i in name:
+      path = os.path.join(path, i)
+      if not os.path.exists(path):
+        os.mkdir(path)
   # ====== check if override ====== #
   if override and len(os.listdir(path)) > 0:
     if prompt:

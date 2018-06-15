@@ -692,7 +692,7 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
 
 
 def plot_multiple_features(features, order=None, title=None, fig_width=4,
-                  sharex=False):
+                           sharex=False):
   """ Plot a series of 1D and 2D in the same scale for comparison
 
   Parameters
@@ -960,7 +960,7 @@ def plot_images_old(x, fig=None, titles=None, show=False):
     return fig
 
 
-def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], axis=None, title=None,
+def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
                fontsize=12):
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
@@ -972,17 +972,15 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], axis=None, title=None,
     raise ValueError("`Cnorm` was calculated for %d Ptrue values, but given only "
                      "%d values for `Ptrue`: %s" %
                      (cnorm.shape[0], len(Ptrue), str(Ptrue)))
-  if axis is None:
-    axis = plt.gca()
-  axis.imshow(cnorm, interpolation='nearest', cmap=cmap)
+  ax = to_axis(ax, is_3D=False)
+  ax.imshow(cnorm, interpolation='nearest', cmap=cmap)
   # axis.get_figure().colorbar(im)
-  axis.set_xticks(np.arange(len(labels)))
-  axis.set_yticks(np.arange(len(Ptrue)))
-  axis.set_xticklabels(labels, rotation=-57,
-                       fontsize=fontsize)
-  axis.set_yticklabels([str(i) for i in Ptrue], fontsize=fontsize)
-  axis.set_ylabel('Ptrue', fontsize=fontsize)
-  axis.set_xlabel('Predicted label', fontsize=fontsize)
+  ax.set_xticks(np.arange(len(labels)))
+  ax.set_yticks(np.arange(len(Ptrue)))
+  ax.set_xticklabels(labels, rotation=-57, fontsize=fontsize)
+  ax.set_yticklabels([str(i) for i in Ptrue], fontsize=fontsize)
+  ax.set_ylabel('Ptrue', fontsize=fontsize)
+  ax.set_xlabel('Predicted label', fontsize=fontsize)
   # center text for value of each grid
   for i, j in itertools.product(range(len(Ptrue)),
                                 range(len(labels))):
@@ -995,19 +993,18 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], axis=None, title=None,
              verticalalignment="center",
              horizontalalignment="center")
   # Turns off grid on the left Axis.
-  axis.grid(False)
+  ax.grid(False)
   title = "Cnorm: %.6f" % np.mean(cnorm) if title is None else \
   "%s (Cnorm: %.6f)" % (str(title), np.mean(cnorm))
-  axis.set_title(title, fontsize=fontsize + 2,
-                 weight='semibold')
+  ax.set_title(title, fontsize=fontsize + 2, weight='semibold')
   # axis.tight_layout()
-  return axis
+  return ax
 
-def plot_confusion_matrix(cm, labels, axis=None, fontsize=12, colorbar=False,
+def plot_confusion_matrix(cm, labels, ax=None, fontsize=12, colorbar=False,
                           title=None):
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
-  axis = to_axis(axis, is_3D=False)
+  ax = to_axis(ax, is_3D=False)
   # calculate F1
   N_row = np.sum(cm, axis=-1)
   N_col = np.sum(cm, axis=0)
@@ -1022,16 +1019,15 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=12, colorbar=False,
   # column normalize
   nb_classes = cm.shape[0]
   cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
-  im = axis.imshow(cm, interpolation='nearest', cmap=cmap)
+  im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
   # axis.get_figure().colorbar(im)
   tick_marks = np.arange(len(labels))
-  axis.set_xticks(tick_marks)
-  axis.set_yticks(tick_marks)
-  axis.set_xticklabels(labels, rotation=-57,
-                       fontsize=fontsize)
-  axis.set_yticklabels(labels, fontsize=fontsize)
-  axis.set_ylabel('True label', fontsize=fontsize)
-  axis.set_xlabel('Predicted label', fontsize=fontsize)
+  ax.set_xticks(tick_marks)
+  ax.set_yticks(tick_marks)
+  ax.set_xticklabels(labels, rotation=-57, fontsize=fontsize)
+  ax.set_yticklabels(labels, fontsize=fontsize)
+  ax.set_ylabel('True label', fontsize=fontsize)
+  ax.set_xlabel('Predicted label', fontsize=fontsize)
   # center text for value of each grid
   worst_index = {i: np.argmax([val if j != i else -1
                                for j, val in enumerate(row)])
@@ -1057,21 +1053,21 @@ def plot_confusion_matrix(cm, labels, axis=None, fontsize=12, colorbar=False,
              verticalalignment="center",
              horizontalalignment="center")
   # Turns off grid on the left Axis.
-  axis.grid(False)
+  ax.grid(False)
   # ====== colorbar ====== #
   if colorbar == 'all':
-    fig = axis.get_figure()
+    fig = ax.get_figure()
     axes = fig.get_axes()
     fig.colorbar(im, ax=axes)
   elif colorbar:
-    plt.colorbar(im, ax=axis)
+    plt.colorbar(im, ax=ax)
   # ====== set title ====== #
   if title is None:
     title = ''
   title += ' (F1: %.3f)' % F1_mean
-  axis.set_title(title, fontsize=fontsize + 2, weight='semibold')
+  ax.set_title(title, fontsize=fontsize + 2, weight='semibold')
   # axis.tight_layout()
-  return axis
+  return ax
 
 
 def plot_weights(x, ax=None, colormap = "Greys", colorbar=False, keep_aspect=True):
