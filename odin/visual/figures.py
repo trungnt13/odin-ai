@@ -536,6 +536,238 @@ def _validate_color_marker_legends(num_samples, color, marker, legend):
     raise ValueError("No support for legend value: %s" % str(legend))
   return color, marker, legend
 
+def plot_density():
+  from matplotlib import pyplot as plt
+  from scipy.stats import kde
+
+  nbins = 300
+  def fit_kde(X):
+    x = X[:, 0]
+    y = X[:, 1]
+    k = kde.gaussian_kde([x, y])
+    xi, yi = np.mgrid[x.min():x.max():nbins * 1j, y.min():y.max():nbins * 1j]
+    zi = k(np.vstack([xi.flatten(), yi.flatten()]))
+    zi = zi.reshape(xi.shape)
+    return xi, yi, zi
+  plt.pcolormesh(*fit_kde(X0), cmap=plt.cm.Reds)
+  plt.pcolormesh(*fit_kde(X1), cmap=plt.cm.Greens)
+  plt.pcolormesh(*fit_kde(X2), cmap=plt.cm.Blues)
+
+def plot_scatter_layers(x_y_val, ax=None,
+                        layer_name=None, layer_color=None, layer_marker=None,
+                        size=4.0, z_ratio=4, elev=None, azim=88,
+                        ticks_off=True, grid=True, surface=True,
+                        wireframe=False, wireframe_resolution=10,
+                        colorbar=False, colorbar_horizontal=False,
+                        legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
+                        fontsize=8, title=None):
+  """
+  Parameter
+  ---------
+  z_ratio: float (default: 4)
+    the amount of compression that layer in z_axis will be closer
+    to each others compared to (x, y) axes
+  """
+  from matplotlib import pyplot as plt
+  assert len(x_y_val) > 1, "Use `plot_scatter_heatmap` to plot only 1 layer"
+  max_z = -np.inf
+  min_z = np.inf
+  for x, y, val in x_y_val:
+    assert len(x) == len(y) == len(val)
+    max_z = max(max_z, np.max(x), np.max(y))
+    min_z = min(min_z, np.min(x), np.min(y))
+  ax = to_axis(ax, is_3D=True)
+  num_classes = len(x_y_val)
+  # ====== preparing ====== #
+  # name
+  if layer_name is None:
+    layer_name = [''] * num_classes
+  else:
+    assert len(layer_name) == num_classes
+  layer_name = [str(i) for i in layer_name]
+  # colormap
+  if layer_color is None:
+    layer_color = ['Blues'] * num_classes
+  else:
+    assert len(layer_color) == num_classes
+  layer_color = [plt.get_cmap(str(i)) for i in layer_color]
+  # class marker
+  if layer_marker is None:
+    layer_marker = ['o'] * num_classes
+  else:
+    assert len(layer_marker) == num_classes
+  layer_marker = [str(i) for i in layer_marker]
+  # size
+  if isinstance(size, Number):
+    size = [float(size)] * num_classes
+  elif size is None:
+    size = [4.0] * num_classes
+  else:
+    assert len(size) == num_classes
+  size = [float(i) for i in size]
+  # ====== plotting each class ====== #
+  legends = []
+  for idx, (alpha, z) in enumerate(zip(np.linspace(0.05, 0.4, num_classes),
+                                     np.linspace(min_z / 4, max_z / 4, num_classes))):
+    x, y, val = x_y_val[idx]
+    num_samples = len(x)
+    z = np.full(shape=(num_samples,), fill_value=z)
+    _ = ax.scatter(x, y, z, c=val, s=size[idx], marker=layer_marker[idx],
+                   cmap=layer_color[idx])
+    # ploting surface and wireframe
+    if surface or wireframe:
+      x, y = np.meshgrid(np.linspace(min(x), max(x), wireframe_resolution),
+                         np.linspace(min(y), max(y), wireframe_resolution))
+      z = np.full_like(x, fill_value=z[0])
+      if surface:
+        ax.plot_surface(X=x, Y=y, Z=z,
+                        color=layer_color[idx](0.5), edgecolor='none',
+                        alpha=alpha)
+      if wireframe:
+        ax.plot_wireframe(X=x, Y=y, Z=z, linewidth=0.8,
+                          color=layer_color[idx](0.8), alpha=alpha + 0.1)
+    # legend
+    name = layer_name[idx]
+    if len(name) > 0:
+      legends.append((name, _))
+    # colorbar
+    if colorbar:
+      cba = plt.colorbar(_, shrink=0.5, pad=0.01,
+        orientation='horizontal' if colorbar_horizontal else 'vertical')
+      if len(name) > 0:
+        cba.set_label(name, fontsize=fontsize)
+  # ====== plot the legend ====== #
+  if len(legends) > 0:
+    legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
+      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
+      columnspacing=float(legend_colspace), labelspacing=0.,
+      fontsize=fontsize, handletextpad=0.1)
+    for i, c in enumerate(layer_color):
+      legends.legendHandles[i].set_color(c(.8))
+  # ====== some configuration ====== #
+  if ticks_off:
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_zticklabels([])
+  ax.grid(grid)
+  if title is not None:
+    ax.set_title(str(title))
+  if (elev is not None or azim is not None):
+    ax.view_init(elev=ax.elev if elev is None else elev,
+                 azim=ax.azim if azim is None else azim)
+  return ax
+
+
+def plot_scatter_heatmap(x, y, val, z=None, ax=None,
+                         cls_indicator=None, cls_name=None,
+                         cls_color=None, cls_marker=None,
+                         size=4.0, elev=None, azim=None,
+                         ticks_off=True, grid=True,
+                         colorbar=False, colorbar_horizontal=False,
+                         legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
+                         fontsize=8, title=None):
+  """
+  Parameters
+  ----------
+  x : 1D-array (num_samples,)
+  y : 1D-array (num_samples,)
+  z : 1D-array or None (num_samples,)
+    if provided, plot in 3D
+
+  """
+  from matplotlib import pyplot as plt
+  assert len(x) == len(y) == len(val)
+  if z is not None:
+    assert len(y) == len(z)
+  is_3D_mode = False if z is None else True
+  ax = to_axis(ax, is_3D=is_3D_mode)
+  num_samples = len(x)
+  # ====== prepare classes information ====== #
+  if cls_indicator is None:
+    cls_indicator = [0] * num_samples
+  else:
+    assert len(cls_indicator) == num_samples
+    assert all(isinstance(i, Number) for i in cls_indicator), "`cls_indicator` must be integer."
+  cls_indicator = [int(i) for i in cls_indicator]
+  num_classes = len(set(cls_indicator))
+  # class name
+  if cls_name is None:
+    cls_name = [''] * num_classes
+  else:
+    assert len(cls_name) == num_classes
+  cls_name = [str(i) for i in cls_name]
+  # class colormap
+  if cls_color is None:
+    cls_color = ['Blues'] * num_classes
+  else:
+    assert len(cls_color) == num_classes
+  cls_color = [plt.get_cmap(str(i)) for i in cls_color]
+  # class marker
+  if cls_marker is None:
+    cls_marker = ['o'] * num_classes
+  else:
+    assert len(cls_marker) == num_classes
+  cls_marker = [str(i) for i in cls_marker]
+  # point size for each class scatter
+  if isinstance(size, Number):
+    size = [float(size)] * num_classes
+  elif size is None:
+    size = [4.0] * num_classes
+  else:
+    assert len(size) == num_classes
+  size = [float(i) for i in size]
+  # ====== plotting each class ====== #
+  legends = []
+  for idx, clz in enumerate(set(cls_indicator)):
+    x_, y_, z_, val_ = [], [], [], []
+    for i, c in enumerate(cls_indicator):
+      if c == clz:
+        x_.append(x[i])
+        y_.append(y[i])
+        val_.append(val[i])
+        if is_3D_mode:
+          z_.append(z[i])
+    kwargs = {'c':val_, 's':size[idx], 'marker':cls_marker[idx],
+              'cmap': cls_color[idx]}
+    # plot
+    if is_3D_mode:
+      _ = ax.scatter(x_, y_, z_, **kwargs)
+    else:
+      _ = ax.scatter(x_, y_, **kwargs)
+    # legend
+    name = cls_name[idx]
+    if len(name) > 0:
+      legends.append((name, _))
+    # colorbar
+    if colorbar:
+      cba = plt.colorbar(_, shrink=0.5, pad=0.01,
+        orientation='horizontal' if colorbar_horizontal else 'vertical')
+      if len(name) > 0:
+        cba.set_label(name, fontsize=fontsize)
+  # ====== plot the legend ====== #
+  if len(legends) > 0:
+    legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
+      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
+      columnspacing=float(legend_colspace), labelspacing=0.,
+      fontsize=fontsize, handletextpad=0.1)
+    for i, c in enumerate(cls_color):
+      legends.legendHandles[i].set_color(c(.8))
+  # ====== some configuration ====== #
+  if ticks_off:
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    if is_3D_mode:
+      ax.set_zticklabels([])
+  ax.grid(grid)
+  if title is not None:
+    ax.set_title(str(title))
+  if is_3D_mode and (elev is not None or azim is not None):
+    ax.view_init(elev=ax.elev if elev is None else elev,
+                 azim=ax.azim if azim is None else azim)
+  return ax
+
 def plot_scatter(x, y, z=None,
                  ax=None, color=None, marker=None, size=4.0,
                  elev=None, azim=None,

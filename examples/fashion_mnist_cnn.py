@@ -186,7 +186,7 @@ if TRAINING_TF:
 # Evaluation
 # ===========================================================================
 def plot_diagonose(x, yt, yp, name):
-  N = 12
+  N = 25
   plot_figure(nrow=N, ncol=N)
   for i, ((true, pred), samples) in enumerate(classification_diagnose(
       X=x, y_true=yt, y_pred=yp, return_list=True, top_n=N, num_samples=N)):
