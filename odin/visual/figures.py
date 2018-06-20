@@ -107,6 +107,17 @@ def to_axis(ax, is_3D=False):
       ax = plt.gca()
   return ax
 
+def _check_arg_length(dat, n, dtype, default, converter):
+  """ Shortcut for validating sequence of uniform data type """
+  if dat is None:
+    dat = [default] * n
+  elif isinstance(dat, dtype):
+    dat = [dat] * n
+  else:
+    assert len(dat) == n
+  dat = [converter(d) for d in dat]
+  return dat
+
 # ===========================================================================
 # Helper for spectrogram
 # ===========================================================================
@@ -483,12 +494,60 @@ def plot_histogram(x, bins=12, ax=None, normalize=False):
   x: histogram
   """
   from matplotlib import pyplot as plt
-  ax = ax if ax is not None else plt.gca()
+  ax = to_axis(ax, is_3D=False)
   if normalize:
     weights = np.ones_like(x, dtype=float) / len(x)
   else:
     weights = None
   ax.hist(x, bins=bins, alpha=0.8, weights=weights)
+  return ax
+
+def plot_histogram_layers(Xs, bins=50, ax=None, normalize=False,
+                          layer_name=None, layer_color=None,
+                          grid=True,
+                          legend_loc='upper center', legend_ncol=5, legend_colspace=0.4,
+                          fontsize=12, title=None):
+  if isinstance(Xs, np.ndarray):
+    assert Xs.ndim == 2
+    Xs = [Xs[:, i] for i in range(Xs.shape[1])]
+  num_classes = len(Xs)
+  ax = to_axis(ax, is_3D=True)
+  # ====== validate input argument ====== #
+  layer_name = _check_arg_length(layer_name, n=num_classes,
+                                 dtype=string_types, default='',
+                                 converter=lambda x:str(x))
+  layer_color = _check_arg_length(layer_color, n=num_classes,
+                                  dtype=string_types, default='blue',
+                                  converter=lambda x:str(x))
+  legends = []
+  for name, a, c, z, x in zip(layer_name,
+                              np.linspace(0.6, 0.9, num_classes)[::-1],
+                              layer_color,
+                              np.linspace(0, 100, num_classes),
+                              Xs):
+    hist, bins = np.histogram(x, bins=bins, normed=normalize)
+    width = (bins[1] - bins[0]) / 1.36
+    _ = ax.bar(left=(bins[:-1] + bins[1:]) / 2 - width / 2, height=hist, width=width,
+               zs=z, zdir='y', color=c, ec=c, alpha=a)
+    # legend
+    if len(name) > 0:
+      legends.append((name, _))
+  # ====== legend ====== #
+  if len(legends) > 0:
+    legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
+      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
+      columnspacing=float(legend_colspace), labelspacing=0.,
+      fontsize=fontsize, handletextpad=0.1)
+    for i, c in enumerate(layer_color):
+      legends.legendHandles[i].set_color(c)
+  # ====== config ====== #
+  ax.set_xlabel('Value')
+  ax.set_zlabel('Hist', rotation=-90)
+  ax.set_yticklabels([])
+  ax.grid(grid)
+  if title is not None:
+    ax.set_title(str(title))
   return ax
 
 # ===========================================================================
@@ -580,31 +639,21 @@ def plot_scatter_layers(x_y_val, ax=None,
   num_classes = len(x_y_val)
   # ====== preparing ====== #
   # name
-  if layer_name is None:
-    layer_name = [''] * num_classes
-  else:
-    assert len(layer_name) == num_classes
-  layer_name = [str(i) for i in layer_name]
+  layer_name = _check_arg_length(dat=layer_name, n=num_classes,
+                                 dtype=string_types, default='',
+                                 converter=lambda x: str(x))
   # colormap
-  if layer_color is None:
-    layer_color = ['Blues'] * num_classes
-  else:
-    assert len(layer_color) == num_classes
-  layer_color = [plt.get_cmap(str(i)) for i in layer_color]
+  layer_color = _check_arg_length(dat=layer_color, n=num_classes,
+                                  dtype=string_types, default='Blues',
+                                  converter=lambda x: plt.get_cmap(str(x)))
   # class marker
-  if layer_marker is None:
-    layer_marker = ['o'] * num_classes
-  else:
-    assert len(layer_marker) == num_classes
-  layer_marker = [str(i) for i in layer_marker]
+  layer_marker = _check_arg_length(dat=layer_marker, n=num_classes,
+                                   dtype=string_types, default='o',
+                                   converter=lambda x: str(x))
   # size
-  if isinstance(size, Number):
-    size = [float(size)] * num_classes
-  elif size is None:
-    size = [4.0] * num_classes
-  else:
-    assert len(size) == num_classes
-  size = [float(i) for i in size]
+  size = _check_arg_length(dat=size, n=num_classes,
+                           dtype=Number, default=4.0,
+                           converter=lambda x: float(x))
   # ====== plotting each class ====== #
   legends = []
   for idx, (alpha, z) in enumerate(zip(np.linspace(0.05, 0.4, num_classes),
@@ -692,31 +741,21 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
   cls_indicator = [int(i) for i in cls_indicator]
   num_classes = len(set(cls_indicator))
   # class name
-  if cls_name is None:
-    cls_name = [''] * num_classes
-  else:
-    assert len(cls_name) == num_classes
-  cls_name = [str(i) for i in cls_name]
-  # class colormap
-  if cls_color is None:
-    cls_color = ['Blues'] * num_classes
-  else:
-    assert len(cls_color) == num_classes
-  cls_color = [plt.get_cmap(str(i)) for i in cls_color]
+  cls_name = _check_arg_length(dat=cls_name, n=num_samples,
+                               dtype=string_types, default='',
+                               converter=lambda x:str(x))
+  # colormap
+  cls_color = _check_arg_length(dat=cls_color, n=num_classes,
+                                dtype=string_types, default='Blues',
+                                converter=lambda x: plt.get_cmap(str(x)))
   # class marker
-  if cls_marker is None:
-    cls_marker = ['o'] * num_classes
-  else:
-    assert len(cls_marker) == num_classes
-  cls_marker = [str(i) for i in cls_marker]
-  # point size for each class scatter
-  if isinstance(size, Number):
-    size = [float(size)] * num_classes
-  elif size is None:
-    size = [4.0] * num_classes
-  else:
-    assert len(size) == num_classes
-  size = [float(i) for i in size]
+  cls_marker = _check_arg_length(dat=cls_marker, n=num_classes,
+                                 dtype=string_types, default='o',
+                                 converter=lambda x: str(x))
+  # size
+  size = _check_arg_length(dat=size, n=num_classes,
+                           dtype=Number, default=4.0,
+                           converter=lambda x: float(x))
   # ====== plotting each class ====== #
   legends = []
   for idx, clz in enumerate(set(cls_indicator)):
@@ -1234,6 +1273,7 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
 
 def plot_confusion_matrix(cm, labels, ax=None, fontsize=12, colorbar=False,
                           title=None):
+  # TODO: new style for confusion matrix (using small and big dot)
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
   ax = to_axis(ax, is_3D=False)
