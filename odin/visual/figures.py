@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from collections import Mapping, OrderedDict
 
 import numpy as np
+from scipy import stats
 
 # try:
 #     import seaborn # import seaborn for pretty plot
@@ -489,24 +490,68 @@ def plot_comparison_track(Xs, legends, tick_labels,
   if title is not None:
     plt.suptitle(title)
 
-def plot_histogram(x, bins=12, ax=None, normalize=False):
+def plot_histogram(x, bins=80, ax=None,
+                   normalize=False, range_0_1=False, kde=False, covariance_factor=None,
+                   color='blue', color_kde='red', alpha=0.6, centerlize=True,
+                   linewidth=1.2, fontsize=12, title=None):
   """
   x: histogram
   """
-  from matplotlib import pyplot as plt
+  # ====== prepare ====== #
+  # only 1-D
+  x = x.ravel()
   ax = to_axis(ax, is_3D=False)
-  if normalize:
-    weights = np.ones_like(x, dtype=float) / len(x)
-  else:
-    weights = None
-  ax.hist(x, bins=bins, alpha=0.8, weights=weights)
+  # ====== get the bins ====== #
+  if range_0_1:
+    x = (x - np.min(x, axis=0, keepdims=True)) /\
+        (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
+  hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
+  width = (hist_bins[1] - hist_bins[0]) / 1.36
+  ax.bar((hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2, hist,
+         width=width, color=color, alpha=alpha)
+  # ====== centerlize the data ====== #
+  min_val = np.min(hist_bins)
+  max_val = np.max(hist_bins)
+  if centerlize:
+    ax.set_xlim((min_val - np.abs(max_val) / 2,
+                 max_val + np.abs(max_val) / 2))
+  # ====== kde ====== #
+  if kde:
+    if not normalize:
+      raise ValueError("KDE plot only applicable for normalized-to-1 histogram.")
+    density = stats.gaussian_kde(x)
+    if isinstance(covariance_factor, Number):
+      density.covariance_factor = lambda: float(covariance_factor)
+      density._compute_covariance()
+    if centerlize:
+      xx = np.linspace(np.min(x) - np.abs(max_val) / 2,
+                       np.max(x) + np.abs(max_val) / 2, 100)
+    else:
+      xx = np.linspace(np.min(x), np.max(x), 100)
+    yy = density(xx)
+    ax.plot(xx, yy,
+            color=color_kde, alpha=min(1., alpha + 0.2),
+            linewidth=linewidth, linestyle='-.')
+  # ====== post processing ====== #
+  ax.tick_params(axis='both', labelsize=fontsize)
+  if title is not None:
+    ax.set_title(str(title), fontsize=fontsize)
   return ax
 
-def plot_histogram_layers(Xs, bins=50, ax=None, normalize=False,
+def plot_histogram_layers(Xs, bins=50, ax=None,
+                          normalize=False, range_0_1=False, kde=False, covariance_factor=None,
                           layer_name=None, layer_color=None,
-                          grid=True,
                           legend_loc='upper center', legend_ncol=5, legend_colspace=0.4,
-                          fontsize=12, title=None):
+                          grid=True, fontsize=12, title=None):
+  """
+  normalize : bool (default: False)
+    pass
+  range_0_1 : bool (default: False)
+    if True, normalize each array in `Xs` so it min value is 0,
+    and max value is 1
+  covariance_factor : None or float
+    if float is given, smaller mean more detail
+  """
   if isinstance(Xs, np.ndarray):
     assert Xs.ndim == 2
     Xs = [Xs[:, i] for i in range(Xs.shape[1])]
@@ -525,10 +570,26 @@ def plot_histogram_layers(Xs, bins=50, ax=None, normalize=False,
                               layer_color,
                               np.linspace(0, 100, num_classes),
                               Xs):
-    hist, bins = np.histogram(x, bins=bins, normed=normalize)
-    width = (bins[1] - bins[0]) / 1.36
-    _ = ax.bar(left=(bins[:-1] + bins[1:]) / 2 - width / 2, height=hist, width=width,
+    if range_0_1:
+      x = (x - np.min(x, axis=0, keepdims=True)) /\
+          (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
+    hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
+    width = (hist_bins[1] - hist_bins[0]) / 1.36
+    _ = ax.bar(left=(hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2,
+               height=hist, width=width,
                zs=z, zdir='y', color=c, ec=c, alpha=a)
+    if kde:
+      if not normalize:
+        raise ValueError("KDE plot only applicable for normalized-to-1 histogram.")
+      density = stats.gaussian_kde(x)
+      if isinstance(covariance_factor, Number):
+        density.covariance_factor = lambda: float(covariance_factor)
+        density._compute_covariance()
+      xx = np.linspace(np.min(x), np.max(x), 1000)
+      yy = density(xx)
+      zz = np.full_like(xx, fill_value=z)
+      ax.plot(xs=xx, ys=zz, zs=yy,
+              color=c, alpha=a, linewidth=1.2, linestyle='-.')
     # legend
     if len(name) > 0:
       legends.append((name, _))
@@ -543,7 +604,7 @@ def plot_histogram_layers(Xs, bins=50, ax=None, normalize=False,
       legends.legendHandles[i].set_color(c)
   # ====== config ====== #
   ax.set_xlabel('Value')
-  ax.set_zlabel('Hist', rotation=-90)
+  ax.set_zlabel('Frequency', rotation=-90)
   ax.set_yticklabels([])
   ax.grid(grid)
   if title is not None:

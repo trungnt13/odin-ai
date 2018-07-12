@@ -205,8 +205,7 @@ for i_path, name in zip(I_PATH, data_name):
   if not os.path.exists(i_path) or args.ivec:
     print('========= Extracting ivecs for: "%s" =========' % name)
     z, f = stats[name]
-    tmat.transform_to_disk(path=i_path,
-                           Z=z, F=f, name_path=None,
+    tmat.transform_to_disk(path=i_path, Z=z, F=f,
                            dtype='float32', device='gpu', ncpu=1,
                            override=True)
   # load extracted ivec

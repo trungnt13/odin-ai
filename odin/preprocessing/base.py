@@ -527,7 +527,7 @@ class StackFeatures(Extractor):
         # stacking the context frames
         if self.context > 0:
           y = stack_frames(y, frame_length=self.context * 2 + 1,
-                           step_length=1, keepdims=True,
+                           step_length=1, keep_length=True,
                            make_contigous=True)
         X[name] = y
     return X

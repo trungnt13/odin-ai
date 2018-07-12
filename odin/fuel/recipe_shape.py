@@ -353,7 +353,7 @@ class Stacking(FeederRecipe):
   shift: int, None
       if None, shift = right_context
       else amount of frames will be shifted
-  keepdims: bool
+  keep_length: bool
       if True, padding zeros to begin and end of `X` to
       make the output array has the same length as original
       array.
@@ -375,7 +375,7 @@ class Stacking(FeederRecipe):
   """
 
   def __init__(self, left_context=10, right_context=10,
-               shift=1, keepdims=False,
+               shift=1, keep_length=False,
                data_idx=None, label_mode='middle', label_idx=()):
     super(Stacking, self).__init__()
     self.left_context = int(left_context)
@@ -384,7 +384,7 @@ class Stacking(FeederRecipe):
     self.data_idx = data_idx
     self.label_mode = _check_label_mode(label_mode)
     self.label_idx = label_idx
-    self.keepdims = bool(keepdims)
+    self.keep_length = bool(keep_length)
 
   @property
   def frame_length(self):
@@ -404,9 +404,9 @@ class Stacking(FeederRecipe):
           x = np.expand_dims(x, axis=-1)
         x = stack_frames(x, frame_length=self.frame_length,
                          step_length=self.shift,
-                         keepdims=self.keepdims)
+                         keep_length=self.keep_length)
       elif idx in label_idx:
-        if not self.keepdims:
+        if not self.keep_length:
           x = segment_axis(x, frame_length=self.frame_length,
                            step_length=self.shift, axis=0,
                            end='cut')

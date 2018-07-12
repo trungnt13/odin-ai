@@ -1791,7 +1791,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # (1, tv_dim)
     return Ex.T
 
-  def transform_to_disk(self, path, Z, F, name_path=None,
+  def transform_to_disk(self, path, Z, F,
                         dtype='float32', device='gpu', ncpu=None,
                         override=True):
     """ Same as `transform`, however, save the transformed statistics
@@ -1803,7 +1803,6 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
       saving path for extracted i-vector
     Z : {None, numpy.ndarray, odin.fuel.data.MmapData}
     F : {None, numpy.ndarray, odin.fuel.data.MmapData}
-    name_path : {None, str}
 
     Return
     ------
@@ -1839,7 +1838,6 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     dat = MmapData(path=path, dtype=dtype,
                    shape=(nb_samples, self.tv_dim),
                    read_only=False)
-
     # ====== run on GPU ====== #
     if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
       for s, e in batching(batch_size=self.batch_size_gpu, n=nb_samples):

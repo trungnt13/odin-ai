@@ -992,7 +992,7 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
 
 
 def stack_frames(X, frame_length, step_length=None,
-                 keepdims=False, make_contigous=False):
+                 keep_length=False, make_contigous=False):
   """
 
   Parameters
@@ -1004,7 +1004,7 @@ def stack_frames(X, frame_length, step_length=None,
   step_length: {int, None}
       number of shift frame, if None, its value equal to
       `frame_length // 2`
-  keepdims: bool
+  keep_length: bool
       if True, padding zeros to begin and end of `X` to
       make the output array has the same length as original
       array.
@@ -1031,7 +1031,7 @@ def stack_frames(X, frame_length, step_length=None,
   ...  [ 4  5  6  7  8  9 10 11 12 13]
   ...  [ 8  9 10 11 12 13 14 15 16 17]]
   """
-  if keepdims:
+  if keep_length:
     if step_length != 1:
       raise ValueError("`keepdims` is only supported when `step_length` = 1.")
     add_frames = (int(np.ceil(frame_length / 2)) - 1) * 2 + \
@@ -1369,9 +1369,12 @@ def power_spectrogram(S, power=2.0):
 
   """
   power = int(power)
-  # ====== extract the basic spectrogram ====== #
+  # ====== extract the magnitude spectrogram ====== #
   if 'complex' in str(S.dtype): # get magnitude from STFT
     spec = np.abs(S)
+  else:
+    spec = S
+  # ====== power ====== #
   if power > 1:
     spec = np.power(spec, power)
   return spec
@@ -1619,14 +1622,13 @@ def ispec(spec, frame_length, step_length=None, window="hann",
   X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
               window=window, padding=padding)
   # ====== de-preemphasis ====== #
-  if de_preemphasis != 0:
+  if isinstance(de_preemphasis, Number) and 0. < de_preemphasis < 1.:
     X_t = signal.lfilter([1], [1, -de_preemphasis], X_t)
   y = np.real(X_t)
   if normalize:
     y = y[1000:-1000]
     y = (y - y.mean()) / y.std()
   return y
-
 
 # ===========================================================================
 # F0 analysis
