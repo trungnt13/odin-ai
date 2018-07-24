@@ -92,9 +92,10 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
   plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
   return role.add_roles(plh, roles)
 
-def eval(x, feed_dict=None, options=None,
-         run_metadata=None):
-  '''Evaluates the value of a tensor.
+def eval(x, feed_dict=None, updates=None,
+         options=None, run_metadata=None):
+  ''' Generalized version of code evaluation, it
+  could evaluate python and tensorflow expression.
 
   Parameters
   ----------
@@ -102,6 +103,9 @@ def eval(x, feed_dict=None, options=None,
       tensorfow `Tensor` for evaluation
   feed_dict : dict
       Input dictionary, mapping placeholder -> values
+  updates: {None, list, or dict}
+      mapping from `Tensor` to its new value which is `Tensor` or
+      real value.
   options: tensorflow.RunOptions
       thhe options allow controlling the behavior of
       this particular step (e.g. turning tracing on).
@@ -130,6 +134,22 @@ def eval(x, feed_dict=None, options=None,
   adding RunOptions, try adding "/usr/local/cuda/extras/CUPTI/lib64/"
   to your LD_LIBRARY_PATH
   '''
+  # ====== validate updates ====== #
+  if isinstance(updates, Mapping):
+    updates = updates.items()
+  with tf.control_dependencies(self.outputs):
+    # create updates ops
+    if not isinstance(updates, tf.Operation):
+      updates_ops = []
+      for update in updates:
+        if isinstance(update, (tuple, list)):
+          p, new_p = update
+          updates_ops.append(tf.assign(p, new_p))
+        else: # assumed already an assign op
+          updates_ops.append(update)
+      self.updates_ops = tf.group(*updates_ops)
+    else: # already an tensorflow Ops
+      self.updates_ops = updates
   # ====== list of Tensor or string ====== #
   if isinstance(x, (tuple, list)):
     string_eval = []

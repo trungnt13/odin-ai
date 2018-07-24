@@ -9,8 +9,15 @@ from collections import OrderedDict, defaultdict, Mapping
 import numpy as np
 
 import tensorflow as tf
-from tensorflow.contrib.distributions import Distribution as _Distribution
-
+# ====== probability package ====== #
+from tensorflow.contrib import distributions as tfd
+_tf_distribution_types = [tfd.Distribution]
+try:
+  from tensorflow_probability import distributions as _tfd
+  _tf_distribution_types.append(_tfd.Distribution)
+except ImportError:
+  pass
+# ====== O.D.I.N stuffs ====== #
 from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
@@ -122,7 +129,7 @@ def is_variable(variable):
   return False
 
 def is_distribution(x):
-  return isinstance(x, _Distribution)
+  return isinstance(x, _tf_distribution_types)
 
 def is_tensor(variable, inc_distribution=True, inc_variable=True):
   """ a variable is any tensor variable in (e.g. placeholder,

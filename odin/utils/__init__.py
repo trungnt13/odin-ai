@@ -587,16 +587,17 @@ class FuncDesc(object):
     elif inspect.isfunction(func) or inspect.ismethod(func) or \
     isinstance(func, decorators.functionable):
       if isinstance(func, decorators.functionable):
-        spec = inspect.getargspec(func.function)
+        sign = inspect.signature(func.function)
       else:
-        spec = inspect.getargspec(func)
-      self._args = tuple(spec.args)
-      self._inc_args = spec.varargs is not None
-      self._inc_kwargs = spec.keywords is not None
-      self._defaults = {}
-      if spec.defaults is not None:
-        for name, val in zip(self._args[::-1], spec.defaults[::-1]):
-          self._defaults[name] = val
+        sign = inspect.signature(func)
+      self._args = tuple(sign.parameters.keys())
+      self._inc_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
+                           for i in sign.parameters.values())
+      self._inc_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
+                             for i in sign.parameters.values())
+      self._defaults = {n: p.default
+                        for n, p in sign.parameters.items()
+                        if p.default != inspect.Parameter.empty}
       self._func = func
     else:
       raise ValueError("`func` must be function, method, or FuncDesc.")

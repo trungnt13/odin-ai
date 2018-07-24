@@ -379,15 +379,11 @@ class _NNOp_Meta(ABCMeta):
     return super().__new__(mcs, name, bases, class_dict)
 
   def __call__(clazz, *args, **kwargs):
-    NO_ARGUMENT = '[__no_argument__]'
     # getting the default arguments to check user intentionally override
     # default argument.
-    spec = inspect.getargspec(clazz.__init__)
+    sign = inspect.signature(clazz.__init__)
     # ignore the self argument
-    default_args = OrderedDict([(i, NO_ARGUMENT) for i in spec.args[1:]])
-    if spec.defaults is not None:
-      for name, value in zip(spec.args[::-1], spec.defaults[::-1]):
-        default_args[name] = value
+    default_args = OrderedDict([(n, p.default) for n, p in sign.parameters])
     # ====== upate the current argument scope ====== #
     # get current scope
     key_name = [clazz, str(clazz), clazz.__name__]
@@ -409,7 +405,6 @@ class _NNOp_Meta(ABCMeta):
     if op.name not in NNOp._ALL_NNOPS:
       clazz.__init__(op, *[], **new_kwargs)
     return op
-
 
 @add_metaclass(_NNOp_Meta)
 class NNOp(NNOpOutput):
@@ -1061,24 +1056,27 @@ class NNOp(NNOpOutput):
         # check Op name match variable scope
         self._name = tf.get_variable_scope().name
       # ====== processing argument information ====== #
-      spec = inspect.getargspec(self._apply)
-      if spec.defaults is not None:
-        default_kwargs = {name: val
-                          for name, val in zip(spec.args[::-1], spec.defaults)}
-      else:
-        default_kwargs = {}
+      sign = inspect.signature(self._apply)
+      default_kwargs = {n: p.default
+                        for n, p in sign.parameters.items()
+                        if p.default != inspect.Parameter.empty}
+      num_args = len(sign.parameters) - 1 # without `self`
+      inc_var_pos = any(i.kind == inspect.Parameter.VAR_POSITIONAL
+                        for i in sign.parameters.values())
+      inc_var_key = any(i.kind == inspect.Parameter.VAR_KEYWORD
+                        for i in sign.parameters.values())
       # adding kwargs_new in Order
       kwargs_new = OrderedDict()
       # spec.args (ignore `self`)
-      arg_name = spec.args[1:]
+      arg_name = list(sign.parameters.keys())[1:]
       # varargs arguments is named with '.' at the beginning
-      varg_name = [] if spec.varargs is None else \
-          ['.%d' % i for i in range(len(args) - len(spec.args[1:]))]
+      pos_name = ['.%d' % i for i in range(len(args) - num_args)] \
+      if inc_var_pos else []
       # kwargs name
-      kw_name = [] if spec.keywords is None else \
-          [name for name in kwargs.keys() if name not in spec.args]
+      key_name = [name for name in kwargs.keys() if name not in arg_name] \
+      if inc_var_key else []
       # get all positional arguments
-      for idx, name in enumerate(arg_name + varg_name + kw_name):
+      for idx, name in enumerate(arg_name + pos_name + key_name):
         if idx < len(args):
           x = args[idx]
         elif name in kwargs:
@@ -1115,7 +1113,7 @@ class NNOp(NNOpOutput):
       self._current_args = []
       included_names = []
       # positional args
-      for name in spec.args[1:]:
+      for name in arg_name:
         desc, dat = kwargs[name]
         self._current_args.append(desc if is_primitives(desc, inc_ndarray=False) else
                                   desc.placeholder)

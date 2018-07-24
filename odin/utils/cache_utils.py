@@ -142,15 +142,13 @@ def cache_memory(func, *attrs):
 
   def wrap_function(func):
     # ====== fetch arguments in order ====== #
-    _ = inspect.getargspec(func)
-    args_name = _.args
-    # reversed 2 time so everything in the right order
-    if _.defaults is not None:
-      args_defaults = OrderedDict(reversed(
-          [(i, j) for i, j in zip(reversed(_.args), reversed(_.defaults))]
-      ))
-    else:
-      args_defaults = OrderedDict()
+    sign = inspect.signature(func)
+    args_name = []
+    args_defaults = OrderedDict()
+    for n, p in sign.parameters.items():
+      args_name.append(n)
+      if p.default != inspect.Parameter.empty:
+        args_defaults[n] = p.default
 
     # ====== wraps the function ====== #
     @wraps(func)

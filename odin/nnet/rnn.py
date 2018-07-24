@@ -112,11 +112,14 @@ def get_cell_info(cell):
       or cell == val:
         found_cell = val; break
   # ====== get cell init info ====== #
-  _ = inspect.getargspec(found_cell.__init__)
-  args = _.args[1:]
+  sign = inspect.signature(found_cell.__init__)
+  args = []
+  # _.args[1:]
   kwargs = {}
-  if _.defaults is not None:
-    kwargs = {i: j for i, j in zip(args[::-1], _.defaults[::-1])}
+  for n, p in list(sign.parameters.items())[1:]:
+    args.append(n)
+    if p.default != inspect.Parameter.empty:
+      kwargs[n] = p.default
   return found_cell, args, kwargs
 
 class RNN(NNOp):

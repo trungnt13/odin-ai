@@ -496,6 +496,8 @@ def plot_histogram(x, bins=80, ax=None,
                    linewidth=1.2, fontsize=12, title=None):
   """
   x: histogram
+  covariance_factor : None or float
+      if float is given, smaller mean more detail
   """
   # ====== prepare ====== #
   # only 1-D
@@ -536,7 +538,7 @@ def plot_histogram(x, bins=80, ax=None,
   ax.tick_params(axis='both', labelsize=fontsize)
   if title is not None:
     ax.set_title(str(title), fontsize=fontsize)
-  return ax
+  return hist, hist_bins
 
 def plot_histogram_layers(Xs, bins=50, ax=None,
                           normalize=False, range_0_1=False, kde=False, covariance_factor=None,
@@ -1210,10 +1212,17 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
   return ax
 
 
-def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
+def plot_images(X, tile_shape=None, tile_spacing=None,
+                fig=None, title=None):
   '''
+  Parameters
+  ----------
   x : 2D-gray or 3D-color images, or list of (2D, 3D images)
       for color image the color channel is second dimension
+  tile_shape : tuple
+      resized shape of images
+  tile_spacing : tuple
+      space betwen rows and columns of images
   '''
   from matplotlib import pyplot as plt
   if not isinstance(X, (tuple, list)):

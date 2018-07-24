@@ -22,11 +22,13 @@ def _shrink_kwargs(op, kwargs):
     op = op.function
   elif not isinstance(op, types.FunctionType): # call-able object
     op = op.__call__
-  spec = inspect.getargspec(op)
-  keywords = {i: j for i, j in kwargs.items()
-              if spec.keywords is not None or i in spec.args}
-  return keywords
-
+  sign = inspect.signature(op)
+  if any(i.kind == inspect.Parameter.VAR_KEYWORD
+         for i in sign.parameters.values()):
+    return kwargs
+  return {n: kwargs[n] if n in kwargs else p.default
+          for n, p in sign.parameters.items()
+          if n in kwargs or p.default != inspect.Parameter.empty}
 
 class Residual(NNOp):
 

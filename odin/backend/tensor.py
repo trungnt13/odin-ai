@@ -845,16 +845,14 @@ def rnn_decorator(*args, **kwargs):
   #####################################
   # 2. Create wrapper.
   def recurrent_wrapper(step_function):
-    arg_spec = inspect.getargspec(step_function)
-    arg_names = arg_spec.args
+    arg_spec = inspect.signature(step_function)
+    arg_names = []
+    defaults_args = {}
     # all defaults arguments
-    if arg_spec.defaults is not None:
-      defaults_args = dict(zip(
-          reversed(arg_spec.args),
-          reversed(arg_spec.defaults)
-      ))
-    else:
-      defaults_args = dict()
+    for n, p in arg_spec.parameters:
+      arg_names.append(n)
+      if p.default != inspect.Parameter.empty:
+        defaults_args[n] = p.default
     nb_required_args = len(arg_names) - len(defaults_args)
 
     @wraps(step_function)

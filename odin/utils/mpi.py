@@ -82,12 +82,10 @@ class _async_task(object):
 
   def __callback(self, result):
     self._result = result
-    callback_spec = inspect.getargspec(self._callback)
-    if len(callback_spec.args) == 1 or callback_spec.varargs is not None:
+    sign = inspect.signature(self._callback)
+    if len(sign.parameters) == 1 or any(i.kind == inspect.Parameter.VAR_POSITIONAL
+                                        for i in sign.parameters.values()):
       self._callback(result)
-    elif len(callback_spec.args) - (0 if callback_spec.defaults is None
-                                    else len(callback_spec.defaults)) > 1:
-      raise RuntimeError("callback must has 1 input argument or no input argument.")
     else:
       self._callback()
 

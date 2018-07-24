@@ -25,7 +25,6 @@ from odin import SIG_TERMINATE_ITERATOR
 __all__ = [
   'typecheck',
   'autoattr',
-  'autoinit',
   'abstractstatic',
   'functionable',
   'terminatable_iterator',
@@ -123,14 +122,13 @@ def typecheck(inputs=None, outputs=None, debug=2):
 
   def wrap_function(func):
     # ====== fetch arguments order ====== #
-    _ = inspect.getargspec(func)
-    args_name = _.args
-    # reversed 2 time so everything in the right order
-    if _.defaults is not None:
-      args_defaults = OrderedDict(reversed([(i, j)
-          for i, j in zip(reversed(_.args), reversed(_.defaults))]))
-    else:
-      args_defaults = OrderedDict()
+    sign = inspect.signature(func)
+    args_name = []
+    args_defaults = OrderedDict()
+    for n, p in sign.parameters.items():
+      args_name.append(n)
+      if p.default != inspect.Parameter.empty:
+        args_defaults[n] = p.default
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -227,57 +225,6 @@ def autoattr(*args, **kwargs):
     return wrapper
 
   return wrap_function
-
-
-# ===========================================================================
-# Auto store all arguments when init class
-# ===========================================================================
-def autoinit(func):
-  """ For checking what arguments have been assigned to the object:
-  `_arguments` (dictionary)
-  """
-  if not inspect.isfunction(func):
-    raise ValueError("Only accept function as input argument "
-                     "(autoinit without any parameters")
-  attrs, varargs, varkw, defaults = inspect.getargspec(func)
-
-  @wraps(func)
-  def wrapper(self, *args, **kwargs):
-    assigned_arguments = []
-    # handle default values
-    if defaults is not None:
-      for attr, val in zip(reversed(attrs), reversed(defaults)):
-        setattr(self, attr, val)
-        assigned_arguments.append(attr)
-    # handle positional arguments (excluded self)
-    positional_attrs = attrs[1:]
-    for attr, val in zip(positional_attrs, args):
-      setattr(self, attr, val)
-      assigned_arguments.append(attr)
-    # handle varargs
-    if varargs:
-      remaining_args = args[len(positional_attrs):]
-      setattr(self, varargs, remaining_args)
-      assigned_arguments.append(varargs)
-    # handle varkw
-    if kwargs:
-      for attr, val in kwargs.items():
-        try:
-          setattr(self, attr, val)
-          assigned_arguments.append(attr)
-        except: # ignore already predifined attr
-          pass
-    # call the init
-    _ = func(self, *args, **kwargs)
-    # just the right moments
-    assigned_arguments = {i: getattr(self, i) for i in assigned_arguments}
-    if hasattr(self, '_arguments'):
-      self._arguments.update(assigned_arguments)
-    else:
-      setattr(self, '_arguments', assigned_arguments)
-    return _
-  return wrapper
-
 
 # ===========================================================================
 # Abstract static
@@ -510,17 +457,17 @@ class functionable(object):
     except Exception:
       self._sandbox = _serialize_function_sandbox(func, self._source)
     # ====== store argsmap ====== #
-    argspec = inspect.getargspec(func)
-    argsmap = OrderedDict([(i, _ArgPlaceHolder_()) for i in argspec.args])
-    # store defaults
-    if argspec.defaults is not None:
-      for name, arg in zip(argspec.args[::-1], argspec.defaults[::-1]):
-        argsmap[name] = arg
-    # update positional arguments
-    for name, arg in zip(argspec.args, args):
-      argsmap[name] = arg
-    # update kw arguments
-    argsmap.update(kwargs)
+    sign = inspect.signature(func)
+    argsmap = OrderedDict()
+    for i, (n, p) in enumerate(sign.parameters.items()):
+      if i < len(args):
+        argsmap[n] = args[i]
+      elif n in kwargs:
+        argsmap[n] = kwargs[n]
+      elif p.default != inspect.Parameter.empty:
+        argsmap[n] = p.default
+      else:
+        argsmap[n] = _ArgPlaceHolder_()
     self._argsmap = argsmap
 
   # ==================== Pickling methods ==================== #
@@ -699,7 +646,7 @@ def terminatable_iterator(func=None, finish_callback=None):
   """
   if finish_callback is not None and \
   (not hasattr(finish_callback, '__call__') or
-   len(inspect.getargspec(finish_callback).args) == 0):
+   len(inspect.signature(finish_callback).parameters) == 0):
     raise ValueError('finish_callback must be call-able and accept at least '
                      '1 argument, which indicate iterator was forced to '
                      'be terminated or not.')

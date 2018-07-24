@@ -76,8 +76,8 @@ def _preprocessing_losses(losses, y_true, y_pred, inherit_losses=None,
       obj = fn
     elif hasattr(fn, '__call__'):
       try:
-        argspec = inspect.getargspec(fn)
-        if 'weights' in argspec.args and sample_weights is not None:
+        sign = inspect.signature(fn)
+        if 'weights' in sign.parameters and sample_weights is not None:
           kwargs['weights'] = sample_weights
       except ValueError:
         pass
