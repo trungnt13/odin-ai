@@ -17,6 +17,7 @@ try:
   _tf_distribution_types.append(_tfd.Distribution)
 except ImportError:
   pass
+_tf_distribution_types = tuple(_tf_distribution_types)
 # ====== O.D.I.N stuffs ====== #
 from odin.config import get_session
 from odin.utils.cache_utils import cache_memory

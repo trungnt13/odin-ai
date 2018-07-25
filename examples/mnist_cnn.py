@@ -38,14 +38,17 @@ ops = N.Sequence([
 ], debug=True)
 y_pred = ops(X)
 y_onehot = tf.one_hot(y, depth=10)
+# ====== objectives ====== #
 cost_ce = tf.losses.softmax_cross_entropy(y_onehot, y_pred)
 cost_acc = K.metrics.categorical_accuracy(y, y_pred, name="Acc")
-cost_cm = K.metrics.confusion_matrix(y_pred=y_pred, y_true=y,
-                                     labels=10)
-
+cost_cm = K.metrics.confusion_matrix(y_pred=y_pred, y_true=y, labels=10)
+# ====== optimizer ====== #
 parameters = ops.parameters
 optimizer = K.optimizers.SGD(lr=0.05)
 updates = optimizer(cost_ce, parameters)
+# ====== initialize all variable ====== #
+K.initialize_all_variables()
+# ====== fucntions ====== #
 print('Building training functions ...')
 f_train = K.function([X, y], [cost_ce, optimizer.norm, cost_cm],
                      updates=updates, training=True)

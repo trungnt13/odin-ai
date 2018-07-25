@@ -77,7 +77,6 @@ def _assign_new_nnop(nnop):
                        (type(NNOp._ALL_NNOPS[name]), name))
   NNOp._ALL_NNOPS[name] = nnop
 
-
 # ===========================================================================
 # Context manager
 # ===========================================================================
@@ -384,9 +383,10 @@ class _NNOp_Meta(ABCMeta):
     sign = inspect.signature(clazz.__init__)
     # ignore the self argument
     default_args = OrderedDict([(n, p.default)
-                                for n, p in sign.parameters.items()
-                                if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                                                  inspect.Parameter.VAR_KEYWORD)])
+                                for i, (n, p) in enumerate(sign.parameters.items())
+                                if i > 0 and
+                                p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                               inspect.Parameter.VAR_KEYWORD)])
     # ====== upate the current argument scope ====== #
     # get current scope
     key_name = [clazz, str(clazz), clazz.__name__]
@@ -533,12 +533,6 @@ class NNOp(NNOpOutput):
     self._last_input_footprint = ''
     self._transpose_ops = None
     self._is_initialized = False
-    # this store the sorted, concatenated name of
-    # all initialized variables belong to this NNOp
-    # if there is change in list of Variables, the
-    # the NNOp will automatically initialize all the
-    # variable again.
-    self._is_initialized_all_variables = ''
     # mapping: variable_name -> (tensorflow_name, 'tensor' or 'variable')
     self._variable_info = OrderedDict()
     # special flags to detect if cPickle called with protocol >= 2
@@ -842,15 +836,9 @@ class NNOp(NNOpOutput):
     # all variables within the scope
     all_vars += K.get_all_variables(scope=self.name)
     all_vars = tuple(sorted(set(all_vars), key=lambda x: x.name))
-    # make sure all variables are initialized, reduce
-    # the call to initialization using vars_footprint
-    vars_footprint = _get_vars_footprint(all_vars)
-    if vars_footprint != self._is_initialized_all_variables:
-      self._is_initialized_all_variables = vars_footprint
-      K.initialize_all_variables(all_vars)
     # exception ignore variable with name IsTraining__
-    return [v for v in all_vars
-            if 'IsTraining__:0' not in v.name]
+    all_vars = [v for v in all_vars if 'IsTraining__' not in v.name]
+    return all_vars
 
   @property
   def nb_variables(self):
@@ -1059,28 +1047,28 @@ class NNOp(NNOpOutput):
         # check Op name match variable scope
         self._name = tf.get_variable_scope().name
       # ====== processing argument information ====== #
+      # auto ommit `self` argument
       sign = inspect.signature(self._apply)
-      default_kwargs = {n: p.default
-                        for n, p in sign.parameters.items()
-                        if p.default != inspect.Parameter.empty}
-      inc_var_pos = any(i.kind == inspect.Parameter.VAR_POSITIONAL
-                        for i in sign.parameters.values())
-      inc_var_key = any(i.kind == inspect.Parameter.VAR_KEYWORD
-                        for i in sign.parameters.values())
-      num_args = (len(sign.parameters) - 1 - # without `self`
-                  int(inc_var_key) - int(inc_var_pos))
+      arg_name = []
+      default_kwargs = {}
+      inc_var_pos = False
+      inc_var_key = False
+      for n, p in sign.parameters.items():
+        if p.kind == inspect.Parameter.VAR_POSITIONAL:
+          inc_var_pos = True
+        elif p.kind == inspect.Parameter.VAR_KEYWORD:
+          inc_var_key = True
+        else:
+          arg_name.append(n)
+          if p.default != inspect.Parameter.empty:
+            default_kwargs[n] = p.default
+      num_args = len(arg_name)
       # adding kwargs_new in Order
       kwargs_new = OrderedDict()
-      # spec.args (ignore `self`)
-      arg_name = [n for n, p in sign.parameters.items()
-                  if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                                    inspect.Parameter.VAR_KEYWORD)][1:]
       # varargs arguments is named with '.' at the beginning
-      pos_name = ['.%d' % i for i in range(len(args) - num_args)] \
-      if inc_var_pos else []
+      pos_name = ['.%d' % i for i in range(len(args) - num_args)] if inc_var_pos else []
       # kwargs name
-      key_name = [name for name in kwargs.keys() if name not in arg_name] \
-      if inc_var_key else []
+      key_name = [name for name in kwargs.keys() if name not in arg_name] if inc_var_key else []
       # get all positional arguments
       for idx, name in enumerate(arg_name + pos_name + key_name):
         if idx < len(args):
@@ -1147,6 +1135,8 @@ class NNOp(NNOpOutput):
         # only assign new NNOp if it is initialized
         _assign_new_nnop(self)
       # ====== calculate and return outputs ====== #
+      # automatically restore all variable within this NNOp scope
+      self._restore_variables()
       # Recall cached output
       if footprint in self._cache_outputs:
         y = self._cache_outputs[footprint]
@@ -1156,13 +1146,11 @@ class NNOp(NNOpOutput):
         y = add_roles(variables=y, roles=self.__class__)
         # record cahced return
         self._cache_outputs[footprint] = y
-      # automatically initialize all variable within this NNOp scope
-      self.variables
       # check if op_data given, then evaluate to get the results.
       if len(given_data) > 0:
-        # only need to make sure all variables
-        # initialized if we need to evaluate some
-        # expressions.
+        # only need to make sure all variables initialized
+        # if we need to evaluate some expressions.
+        K.initialize_all_variables()
         y = K.eval(y, feed_dict=given_data)
     # ====== reset the current information ====== #
     self._current_args = ()

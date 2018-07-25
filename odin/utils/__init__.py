@@ -44,6 +44,7 @@ from . import shape_calculation
 from . import math_utils
 from . import decorators
 from . import crypto
+from .crypto import md5_checksum
 
 def array_size(arr):
   """ Return size of an numpy.ndarray in bytes """

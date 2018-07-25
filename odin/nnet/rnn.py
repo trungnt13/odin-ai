@@ -114,11 +114,11 @@ def get_cell_info(cell):
   # ====== get cell init info ====== #
   sign = inspect.signature(found_cell.__init__)
   args = []
-  # _.args[1:]
   kwargs = {}
-  for n, p in list(sign.parameters.items())[1:]:
+  for n, p in sign.parameters.items():
     if p.kind in (inspect.Parameter.VAR_POSITIONAL,
-                  inspect.Parameter.VAR_KEYWORD):
+                  inspect.Parameter.VAR_KEYWORD) and\
+       n != 'self':
       continue
     args.append(n)
     if p.default != inspect.Parameter.empty:
