@@ -383,7 +383,10 @@ class _NNOp_Meta(ABCMeta):
     # default argument.
     sign = inspect.signature(clazz.__init__)
     # ignore the self argument
-    default_args = OrderedDict([(n, p.default) for n, p in sign.parameters])
+    default_args = OrderedDict([(n, p.default)
+                                for n, p in sign.parameters.items()
+                                if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                                  inspect.Parameter.VAR_KEYWORD)])
     # ====== upate the current argument scope ====== #
     # get current scope
     key_name = [clazz, str(clazz), clazz.__name__]
@@ -1060,15 +1063,18 @@ class NNOp(NNOpOutput):
       default_kwargs = {n: p.default
                         for n, p in sign.parameters.items()
                         if p.default != inspect.Parameter.empty}
-      num_args = len(sign.parameters) - 1 # without `self`
       inc_var_pos = any(i.kind == inspect.Parameter.VAR_POSITIONAL
                         for i in sign.parameters.values())
       inc_var_key = any(i.kind == inspect.Parameter.VAR_KEYWORD
                         for i in sign.parameters.values())
+      num_args = (len(sign.parameters) - 1 - # without `self`
+                  int(inc_var_key) - int(inc_var_pos))
       # adding kwargs_new in Order
       kwargs_new = OrderedDict()
       # spec.args (ignore `self`)
-      arg_name = list(sign.parameters.keys())[1:]
+      arg_name = [n for n, p in sign.parameters.items()
+                  if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                    inspect.Parameter.VAR_KEYWORD)][1:]
       # varargs arguments is named with '.' at the beginning
       pos_name = ['.%d' % i for i in range(len(args) - num_args)] \
       if inc_var_pos else []

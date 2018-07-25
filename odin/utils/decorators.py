@@ -126,6 +126,9 @@ def typecheck(inputs=None, outputs=None, debug=2):
     args_name = []
     args_defaults = OrderedDict()
     for n, p in sign.parameters.items():
+      if p.kind in (inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD):
+        continue
       args_name.append(n)
       if p.default != inspect.Parameter.empty:
         args_defaults[n] = p.default
@@ -460,6 +463,9 @@ class functionable(object):
     sign = inspect.signature(func)
     argsmap = OrderedDict()
     for i, (n, p) in enumerate(sign.parameters.items()):
+      if p.kind in (inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD):
+        continue
       if i < len(args):
         argsmap[n] = args[i]
       elif n in kwargs:

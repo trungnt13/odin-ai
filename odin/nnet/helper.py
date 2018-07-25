@@ -28,7 +28,9 @@ def _shrink_kwargs(op, kwargs):
     return kwargs
   return {n: kwargs[n] if n in kwargs else p.default
           for n, p in sign.parameters.items()
-          if n in kwargs or p.default != inspect.Parameter.empty}
+          if (n in kwargs or p.default != inspect.Parameter.empty) and
+             (p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                             inspect.Parameter.VAR_KEYWORD))}
 
 class Residual(NNOp):
 

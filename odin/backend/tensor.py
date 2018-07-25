@@ -850,6 +850,9 @@ def rnn_decorator(*args, **kwargs):
     defaults_args = {}
     # all defaults arguments
     for n, p in arg_spec.parameters:
+      if p.kind in (inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD):
+        continue
       arg_names.append(n)
       if p.default != inspect.Parameter.empty:
         defaults_args[n] = p.default

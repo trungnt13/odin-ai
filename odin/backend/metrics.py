@@ -11,7 +11,6 @@ from .role import (AccuracyValue, return_roles, DifferentialLoss,
 from .tensor import argsort, dimshuffle, to_nonzeros, to_llr
 from .helpers import is_tensor
 
-
 # ===========================================================================
 # Distance measurement
 # ===========================================================================

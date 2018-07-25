@@ -117,6 +117,9 @@ def get_cell_info(cell):
   # _.args[1:]
   kwargs = {}
   for n, p in list(sign.parameters.items())[1:]:
+    if p.kind in (inspect.Parameter.VAR_POSITIONAL,
+                  inspect.Parameter.VAR_KEYWORD):
+      continue
     args.append(n)
     if p.default != inspect.Parameter.empty:
       kwargs[n] = p.default

@@ -590,7 +590,9 @@ class FuncDesc(object):
         sign = inspect.signature(func.function)
       else:
         sign = inspect.signature(func)
-      self._args = tuple(sign.parameters.keys())
+      self._args = [n for n, p in sign.parameters.items()
+                    if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                      inspect.Parameter.VAR_KEYWORD)]
       self._inc_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
                            for i in sign.parameters.values())
       self._inc_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
