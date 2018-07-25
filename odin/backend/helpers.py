@@ -644,7 +644,7 @@ def function(inputs, outputs, updates=[], defaults={},
   """
   # ====== check inputs ====== #
   if inputs is None or len(as_tuple(inputs)) == 0:
-    inputs = ComputationGraph(outputs).inputs
+    inputs = ComputationGraph(outputs).placeholders
     print("[WARNING] inputs haven't specified, auto-inferred from Graph of "
           "outputs, graph inputs: %s" % ', '.join([str(i) for i in inputs]))
   return Function(inputs=inputs, outputs=outputs,

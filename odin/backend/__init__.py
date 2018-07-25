@@ -92,7 +92,8 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
   plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
   return role.add_roles(plh, roles)
 
-def eval(x, feed_dict=None, updates=None,
+def eval(x, feed_dict=None,
+         updates=None, update_after=True,
          options=None, run_metadata=None):
   ''' Generalized version of code evaluation, it
   could evaluate python and tensorflow expression.
@@ -106,6 +107,9 @@ def eval(x, feed_dict=None, updates=None,
   updates: {None, list, or dict}
       mapping from `Tensor` to its new value which is `Tensor` or
       real value.
+  update_after: bool (default: True)
+      if True, run the `updates` after evaluate `x`,
+      otherwise, running update before.
   options: tensorflow.RunOptions
       thhe options allow controlling the behavior of
       this particular step (e.g. turning tracing on).
@@ -134,22 +138,27 @@ def eval(x, feed_dict=None, updates=None,
   adding RunOptions, try adding "/usr/local/cuda/extras/CUPTI/lib64/"
   to your LD_LIBRARY_PATH
   '''
+  results = ()
   # ====== validate updates ====== #
-  # if isinstance(updates, Mapping):
-  #   updates = updates.items()
-  # with tf.control_dependencies(self.outputs):
-  #   # create updates ops
-  #   if not isinstance(updates, tf.Operation):
-  #     updates_ops = []
-  #     for update in updates:
-  #       if isinstance(update, (tuple, list)):
-  #         p, new_p = update
-  #         updates_ops.append(tf.assign(p, new_p))
-  #       else: # assumed already an assign op
-  #         updates_ops.append(update)
-  #     self.updates_ops = tf.group(*updates_ops)
-  #   else: # already an tensorflow Ops
-  #     self.updates_ops = updates
+  update_after = bool(update_after)
+  if updates is not None:
+    if isinstance(updates, Mapping):
+      updates = updates.items()
+    # create updates ops
+    if not isinstance(updates, tf.Operation):
+      updates_ops = []
+      for u in updates:
+        if isinstance(u, (tuple, list)):
+          p, new_p = u
+          updates_ops.append(tf.assign(p, new_p))
+        elif is_operation(u): # assumed already an assign op
+          updates_ops.append(u)
+      updates = tf.group(*updates_ops)
+  # ====== run updates before ====== #
+  if updates is not None and not update_after:
+    get_session(updates.graph).run(updates, feed_dict=feed_dict,
+                                   options=options,
+                                   run_metadata=run_metadata)
   # ====== list of Tensor or string ====== #
   if isinstance(x, (tuple, list)):
     string_eval = []
@@ -172,9 +181,8 @@ def eval(x, feed_dict=None, updates=None,
                                               feed_dict=feed_dict,
                                               options=options,
                                               run_metadata=run_metadata)
-    return tuple([tensor_eval.pop(0) if i in tensor_idx else
-                  string_eval.pop(0)
-                  for i in range(len(x))])
+    results = tuple([tensor_eval.pop(0) if i in tensor_idx else string_eval.pop(0)
+                     for i in range(len(x))])
   # ====== mapping ====== #
   elif isinstance(x, Mapping):
     results = {}
@@ -199,18 +207,24 @@ def eval(x, feed_dict=None, updates=None,
     # update results
     for k, v in zip(tensor_eval_key, tensor_eval_value):
       results[k] = v
-    return results
   # ====== just a string ====== #
   elif is_string(x):
-    return builtins.eval(x)
+    results = builtins.eval(x)
   # ====== just a Tensorflow object ====== #
   elif isinstance(x, tf.Operation) or \
   is_tensor(x, inc_distribution=True, inc_variable=True):
-    return get_session(x.graph).run(x, feed_dict=feed_dict,
-                                    options=options,
-                                    run_metadata=run_metadata)
+    results = get_session(x.graph).run(x, feed_dict=feed_dict,
+                                       options=options,
+                                       run_metadata=run_metadata)
   # ====== exception ====== #
-  raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
+  else:
+    raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
+  # ====== run updates after ====== #
+  if updates is not None and update_after:
+    get_session(updates.graph).run(updates, feed_dict=feed_dict,
+                                   options=options,
+                                   run_metadata=run_metadata)
+  return results
 
 # ===========================================================================
 # IO helper
