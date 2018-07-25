@@ -1,23 +1,27 @@
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 import os
 os.environ['ODIN'] = 'gpu,float32,seed=5218'
 
+import numpy as np
+import tensorflow as tf
+from tensorflow_probability import distributions as tfd
+from sklearn.decomposition import PCA
+
 from odin import fuel as F, backend as K
 from odin.utils import batching
 from odin import visual as V
-
-import numpy as np
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from tensorflow_probability import distributions as tfd
+from odin.ml import fast_tsne
 # ===========================================================================
 # CONFIG
 # ===========================================================================
 CODE_SIZE = 12
 NUM_SAMPLES = 16
-NUM_EPOCH = 8
+NUM_EPOCH = 20
+NUM_ITER = 20000
+USE_TSNE = True
 # Whether or not to use the analytic version of the KL. When set to
 # False the E_{Z~q(Z|X)}[log p(Z)p(X|Z) - log q(Z|X)] form of the ELBO
 # will be used. Otherwise the -KL(q(Z|X) || p(Z)) +
@@ -129,40 +133,65 @@ else:
 avg_rate = tf.reduce_mean(rate) # for monitoring
 # ELBO
 elbo_local = -(rate + distortion)
-elbo = tf.reduce_mean(elbo_local)
-loss = -elbo
+elbo = tf.reduce_mean(elbo_local) # maximize evidence-lower-bound
+loss = -elbo # minimize loss
 # IWAE
 importance_weighted_elbo = tf.reduce_mean(
     tf.reduce_logsumexp(elbo_local, axis=0) -
     tf.log(tf.to_float(NUM_SAMPLES)))
 # sample images: Decode samples from the prior
 # for visualization.
-latent_prior_sample = latent_prior.sample(16)
-random_image = make_decoder(latent_prior_sample)
-random_image_sample = tf.squeeze(random_image.sample(), axis=1)
-random_image_mean = tf.squeeze(random_image.mean(), axis=1)
+latent_prior_sample = latent_prior.sample(16) # [16, 1, num_code]
+random_image = make_decoder(latent_prior_sample) # [16, 1, 28, 28]
+random_image_sample = tf.squeeze(random_image.sample(), axis=1) # [16, 28, 28]
+random_image_mean = tf.squeeze(random_image.mean(), axis=1) # [16, 28, 28]
 # ===========================================================================
 # Optimizing and training
 # ===========================================================================
-global_step = tf.train.get_or_create_global_step()
-learning_rate = tf.train.cosine_decay(0.001, global_step, 5001)
-optimizer = tf.train.AdamOptimizer(learning_rate)
-train_op = optimizer.minimize(loss, global_step=global_step)
-
+update_op = tf.train.AdamOptimizer(0.001).minimize(-elbo)
 K.initialize_all_variables()
 
-for epoch in range(20):
+V.plot_figure(nrow=NUM_EPOCH + 1, ncol=8)
+num_iter = 0
+for epoch in range(NUM_EPOCH):
+  # ====== evaluating ====== #
   scores = K.eval([elbo, avg_rate, avg_distortion,
-                   random_image_sample, random_image_mean],
+                   random_image_sample, random_image_mean,
+                   approx_posterior_sample],
                   feed_dict={X: X_test})
-  print('Epoch:', epoch,
+  print('#Epoch:', epoch, "#Iter:", num_iter,
         ' elbo:', scores[0], ' rate:', scores[1], ' distortion:', scores[2])
-  exit()
-  # ax[epoch, 0].set_ylabel('Epoch {}'.format(epoch))
-  # plot_codes(ax[epoch, 0], test_codes, y_test)
-  # plot_samples(ax[epoch, 1:], test_samples)
-  for s, e in batching(batch_size=128, n=X_train.shape[0],
+  img_sample = scores[-3]
+  img_mean = scores[-2]
+  code_sample = scores[-1].mean(axis=0)
+  if USE_TSNE:
+    code_ = fast_tsne(code_sample)
+  else:
+    code_ = PCA(n_components=2).fit_transform(code_sample)
+  # ====== plotting ====== #
+  num_row = epoch * 4
+  ax = plt.subplot(NUM_EPOCH, 4, num_row + 1)
+  ax.scatter(code_sample[:, 0], code_sample[:, 1], s=2, c=y_test, alpha=0.1)
+  ax.axis('off')
+
+  ax = plt.subplot(NUM_EPOCH, 4, num_row + 2)
+  ax.scatter(code_[:, 0], code_[:, 1], s=2, c=y_test, alpha=0.1)
+  ax.axis('off')
+
+  ax = plt.subplot(NUM_EPOCH, 4, num_row + 3)
+  ax.imshow(V.tile_raster_images(img_sample), cmap=plt.cm.Greys_r)
+  ax.axis('off')
+
+  ax = plt.subplot(NUM_EPOCH, 4, num_row + 4)
+  ax.imshow(V.tile_raster_images(img_mean), cmap=plt.cm.Greys_r)
+  ax.axis('off')
+  # ====== training ====== #
+  for s, e in batching(batch_size=BATCH_SIZE, n=X_train.shape[0],
                        seed=5218 + epoch):
     feed = {X: X_train[s:e]}
-    K.eval(train_op, feed_dict=feed)
-# plt.savefig('/tmp/tmp.pdf', dpi=300, transparent=True, bbox_inches='tight')
+    K.eval(update_op, feed_dict=feed)
+    num_iter += 1
+  # ====== upper bound for #iter ====== #
+  if NUM_ITER is not None and num_iter >= NUM_ITER:
+    break
+V.plot_save('/tmp/tmp.pdf', tight_plot=False)
