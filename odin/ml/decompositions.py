@@ -130,8 +130,9 @@ class PPCA(BaseEstimator, TransformerMixin):
     varianceM = np.sum(centeredM**2) / (num_samples * feat_dim)
     # ====== training ====== #
     if self.verbose_:
-      print('[PPCA] n_components: %d   feat_dim: %d   n_iter: %d   threshold: %f   solver: %s' %
-            (n_components, feat_dim, -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
+      print('[PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s' %
+            (n_components, num_samples, feat_dim,
+             -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
       B = (V * 1 / sigma).T # [feat_dim, n_components]
@@ -196,6 +197,8 @@ class SupervisedPPCA(PPCA):
     if None, keep the same dimensions as input features
   bias : {vector, 'auto'} [feat_dim,]
     if 'auto' take mean of training data
+  beta : scalar (default: 1)
+    a weight parameter (use beta = 1 as default)
   n_iter : {integer, 'auto'}
     if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
     compared to the `improve_threshold`
@@ -292,8 +295,9 @@ class SupervisedPPCA(PPCA):
     varianceY = np.sum(centeredY**2) / (num_samples * feat_dim)
     # ====== training ====== #
     if self.verbose_:
-      print('[S-PPCA] n_components: %d   feat_dim: %d   n_iter: %d   threshold: %f   solver: %s' %
-            (n_components, feat_dim, -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
+      print('[S-PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s' %
+            (n_components, num_samples, feat_dim,
+             -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
       B = (V * 1 / sigma).T # [feat_dim, n_components]
