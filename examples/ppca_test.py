@@ -41,24 +41,25 @@ y_fmnist = y_fmnist[ids][:1000]
 # ===========================================================================
 # Main comparison
 # ===========================================================================
-def compare_methods(X, y, dim, title, verbose=0):
+def compare_methods(X, y, dim, title, n_iter='auto', verbose=0):
   print(title, ':', dim)
+
   pca = PCA(n_components=dim, random_state=random_state)
   pca.fit(X)
   X_pca = pca.transform(X)
   #
   ppca = ml.PPCA(n_components=dim, verbose=verbose,
-                 random_state=random_state)
+                 n_iter=n_iter, random_state=random_state)
   ppca.fit(X)
   X_ppca = ppca.transform(X)
   #
   sppca1 = ml.SupervisedPPCA(n_components=dim, verbose=verbose, extractor='supervised',
-                             random_state=random_state)
+                             n_iter=n_iter, random_state=random_state)
   sppca1.fit(X, y)
   X_sppca1 = sppca1.transform(X)
   #
   sppca2 = ml.SupervisedPPCA(n_components=dim, verbose=verbose, extractor='unsupervised',
-                             random_state=random_state)
+                             n_iter=n_iter, random_state=random_state)
   sppca2.fit(X, y)
   X_sppca2 = sppca2.transform(X)
   # T-SNE if necessary
@@ -103,7 +104,7 @@ compare_methods(X=X_iris, y=y_iris, dim=3, title='IRIS')
 compare_methods(X=X_mnist, y=y_mnist, dim=3, title='MNIST')
 compare_methods(X=X_fmnist, y=y_fmnist, dim=3, title='Fashion-MNIST')
 
-compare_methods(X=X_mnist, y=y_mnist, dim=128, title='MNIST', verbose=1)
-compare_methods(X=X_fmnist, y=y_fmnist, dim=128, title='Fashion-MNIST', verbose=1)
+compare_methods(X=X_mnist, y=y_mnist, dim=256, title='MNIST', verbose=1)
+compare_methods(X=X_fmnist, y=y_fmnist, dim=256, title='Fashion-MNIST', verbose=1)
 
 V.plot_save(path)

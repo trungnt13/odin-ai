@@ -156,7 +156,7 @@ class PPCA(BaseEstimator, TransformerMixin):
       if isinstance(self.n_iter_, Number):
         if curr_n_iter >= self.n_iter_:
           break
-      elif improvement < self.improve_threshold_:
+      elif curr_n_iter > 1 and improvement < self.improve_threshold_:
         break
     # ====== save the model ====== #
     # record new dimensions
@@ -329,7 +329,8 @@ class SupervisedPPCA(PPCA):
       if isinstance(self.n_iter_, Number):
         if curr_n_iter >= self.n_iter_:
           break
-      elif improvement_sigma < self.improve_threshold_ and \
+      elif curr_n_iter > 1 and \
+      improvement_sigma < self.improve_threshold_ and \
       improvement_rho < self.improve_threshold_:
         break
     # ====== save the model ====== #
