@@ -35,14 +35,27 @@ class PPCA(BaseEstimator, TransformerMixin):
 
   Parameters
   ----------
+  n_components : {int, None}
+    if None, keep the same dimensions as input features
+  bias : {vector, 'auto'} [feat_dim,]
+    if 'auto' take mean of training data
+  n_iter : {integer, 'auto'}
+    if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
+    compared to the `improve_threshold`
+  solver : {'traditional', 'simple'}
   improve_threshold : scalar
     Only used in case `n_iter='auto'`
+  verbose: {0, 1}
+    showing logging information during fitting
+  random_state : {None, integer, numpy.random.RandomState}
 
   Attributes
   ----------
-  V_: [feat_dim, n_components]
+  V_ : [feat_dim, n_components]
     total variability matrix
-  sigma: scalar
+  bias_ : [feat_dim]
+    bias vector
+  sigma_ : scalar
     variance of error term
 
   References
@@ -53,9 +66,8 @@ class PPCA(BaseEstimator, TransformerMixin):
 
   """
 
-  def __init__(self, n_components=None, bias='auto', whiten=False,
-               n_iter='auto', solver='traditional',
-               improve_threshold=1e-3,
+  def __init__(self, n_components=None, bias='auto',
+               n_iter='auto', improve_threshold=1e-3, solver='traditional',
                verbose=0, random_state=None):
     super(PPCA, self).__init__()
     if isinstance(n_components, Number):
@@ -117,6 +129,9 @@ class PPCA(BaseEstimator, TransformerMixin):
     centeredM = X - bias[np.newaxis, :]
     varianceM = np.sum(centeredM**2) / (num_samples * feat_dim)
     # ====== training ====== #
+    if self.verbose_:
+      print('[PPCA] n_components: %d   feat_dim: %d   n_iter: %d   threshold: %f   solver: %s' %
+            (n_components, feat_dim, -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
       B = (V * 1 / sigma).T # [feat_dim, n_components]
@@ -177,17 +192,45 @@ class SupervisedPPCA(PPCA):
 
   Parameters
   ----------
+  n_components : {int, None}
+    if None, keep the same dimensions as input features
+  bias : {vector, 'auto'} [feat_dim,]
+    if 'auto' take mean of training data
+  n_iter : {integer, 'auto'}
+    if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
+    compared to the `improve_threshold`
+  improve_threshold : scalar
+    Only used in case `n_iter='auto'`
+  solver : {'traditional', 'simple'}
   extractor : {'supervised', 'unsupervised'}
     'supervised' is the probabilistic partial least squares extractor using
     both unsupervised and supervised information
+  verbose: {0, 1}
+    showing logging information during fitting
+  random_state : {None, integer, numpy.random.RandomState}
+
+  Attributes
+  ----------
+  V_ : [feat_dim, n_components]
+    total variability matrix
+  Q_ : [feat_dim, n_components]
+    matrix for mapping speaker-dependent supervectors to i-vectors
+  sigma_ : scalar
+    variance of error term
+  rho_ : scalar
+    variance of error term in speaker-dependent supervector model
+  bias_ : [feat_dim,]
+    bias vector
+  classBias_ : [feat_dim,]
+    mean of speaker-dependent supervectors
 
   """
 
-  def __init__(self, n_components=None, bias='auto', beta=1, whiten=False,
-               n_iter='auto', solver='traditional', extractor='supervised',
-               improve_threshold=1e-3,
+  def __init__(self, n_components=None, bias='auto', beta=1,
+               n_iter='auto', improve_threshold=1e-3,
+               solver='traditional', extractor='supervised',
                verbose=0, random_state=None):
-    super(SupervisedPPCA, self).__init__(n_components=n_components, bias=bias, whiten=whiten,
+    super(SupervisedPPCA, self).__init__(n_components=n_components, bias=bias,
                n_iter=n_iter, solver=solver, improve_threshold=improve_threshold,
                verbose=verbose, random_state=random_state)
     self.beta_ = float(beta)
@@ -248,6 +291,9 @@ class SupervisedPPCA(PPCA):
     centeredY = centeredY - classBias[np.newaxis, :]
     varianceY = np.sum(centeredY**2) / (num_samples * feat_dim)
     # ====== training ====== #
+    if self.verbose_:
+      print('[S-PPCA] n_components: %d   feat_dim: %d   n_iter: %d   threshold: %f   solver: %s' %
+            (n_components, feat_dim, -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
       B = (V * 1 / sigma).T # [feat_dim, n_components]
