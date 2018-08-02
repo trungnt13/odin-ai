@@ -67,7 +67,7 @@ class DataLoader(object):
   @classmethod
   def get_link(clazz, ext=''):
     name = clazz.get_name(ext) + '.zip'
-    path = base64.decodestring(DataLoader.ORIGIN).decode() + name
+    path = base64.decodebytes(DataLoader.ORIGIN).decode() + name
     return path
 
   @classmethod
@@ -78,7 +78,7 @@ class DataLoader(object):
   def get_dataset(clazz, ext='', override=False):
     # ====== all path ====== #
     name = clazz.get_name(ext) + '.zip'
-    path = base64.decodestring(DataLoader.ORIGIN).decode() + name
+    path = base64.decodebytes(DataLoader.ORIGIN).decode() + name
     zip_path = clazz.get_zip_path(ext)
     out_path = clazz.get_ds_path(ext)
     # ====== check out_path ====== #
@@ -137,7 +137,7 @@ class DIGITS(DataLoader):
   def get_dataset(clazz, ext='', override=False):
     # ====== all path ====== #
     name = clazz.get_name(ext) + '.zip'
-    path = base64.decodestring(DataLoader.ORIGIN).decode() + name
+    path = base64.decodebytes(DataLoader.ORIGIN).decode() + name
     zip_path = clazz.get_zip_path(ext)
     out_path = clazz.get_ds_path(ext)
     # ====== check out_path ====== #

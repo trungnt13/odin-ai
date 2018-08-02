@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
+from numbers import Number
+from six import string_types
 
 import numpy as np
 from scipy import linalg
@@ -14,10 +16,311 @@ from odin.utils.mpi import MPI
 from odin.utils import batching, ctext
 from odin.fuel import Data
 
-__all__ = [
-    "MiniBatchPCA"
-]
+from .base import TransformerMixin, BaseEstimator
 
+__all__ = [
+    "MiniBatchPCA",
+    "PPCA",
+    "SupervisedPPCA",
+]
+# ===========================================================================
+# helper
+# ===========================================================================
+class PPCA(BaseEstimator, TransformerMixin):
+  """ Probabilistic Principal Components Analysis
+
+  (C) Copyright University of Eastern Finland (UEF).
+  Ville Vestman, ville.vestman@uef.fi,
+  Tomi Kinnunen, tkinnu@cs.uef.fi.
+
+  Parameters
+  ----------
+  improve_threshold : scalar
+    Only used in case `n_iter='auto'`
+
+  Attributes
+  ----------
+  V_: [feat_dim, n_components]
+    total variability matrix
+  sigma: scalar
+    variance of error term
+
+  References
+  ----------
+  [1] Ville Vestman and Tomi Kinnunen, "Supervector Compression
+  Strategies to Speed up i-vector System Development",
+  submitted to Speaker Odyssey 2018.
+
+  """
+
+  def __init__(self, n_components=None, bias='auto', whiten=False,
+               n_iter='auto', solver='traditional',
+               improve_threshold=1e-3,
+               verbose=0, random_state=None):
+    super(PPCA, self).__init__()
+    if isinstance(n_components, Number):
+      assert n_components > 0, \
+      "`n_components` must be greater than 0, but given: %d" % n_components
+      n_components = int(n_components)
+    elif n_components is not None:
+      raise ValueError("`n_components` can be None or integer")
+    self.n_components_ = n_components
+    # ====== checking bias ====== #
+    if isinstance(bias, string_types):
+      bias = bias.strip().lower()
+      assert bias == 'auto', 'Invalid value for `bias`: %s' % bias
+    elif not isinstance(bias, (np.ndarray, Number)):
+      raise ValueError("`bias` can be 'auto', numpy.ndarray or a number")
+    self.bias_ = bias
+    # ====== checking solver ====== #
+    if solver not in ('traditional', 'simple'):
+      raise ValueError("`solver` must be: 'traditional', or 'simple'")
+    self.solver_ = solver
+    # ====== checking n_iter ====== #
+    if isinstance(n_iter, string_types):
+      n_iter = n_iter.lower()
+      assert n_iter == 'auto', 'Invalid `n_iter` value: %s' % n_iter
+    elif isinstance(n_iter, Number):
+      assert n_iter > 0, "`n_iter` must greater than 0, but given: %d" % n_iter
+    self.n_iter_ = n_iter
+    # ====== checking random_state ====== #
+    if random_state is None:
+      rand = np.random.RandomState(seed=None)
+    elif isinstance(random_state, Number):
+      rand = np.random.RandomState(seed=None)
+    elif isinstance(random_state, np.random.RandomState):
+      rand = random_state
+    else:
+      raise ValueError("No suppport for `random_state` value: %s" % str(random_state))
+    self.random_state_ = rand
+    # ====== other dimension ====== #
+    self.improve_threshold_ = float(improve_threshold)
+    self.feat_dim_ = None
+    self.verbose_ = int(verbose)
+
+  def fit(self, X, y=None):
+    # ====== initialize ====== #
+    num_samples, feat_dim = X.shape
+    n_components = feat_dim if self.n_components_ is None else self.n_components_
+    if self.bias_ == 'auto':
+      bias = np.mean(X, 0)
+    elif isinstance(self.bias_, Number):
+      bias = np.full(shape=(feat_dim,), fill_value=self.bias_)
+    else:
+      bias = self.bias_
+      assert bias.shape == (feat_dim,), \
+      "Invialid `bias` given shape: %s, require shape: %s" % (str(bias.shape), str((feat_dim,)))
+    # ====== initialize parameters ====== #
+    V = self.random_state_.rand(feat_dim, n_components)
+    last_sigma = None
+    sigma = 1
+    centeredM = X - bias[np.newaxis, :]
+    varianceM = np.sum(centeredM**2) / (num_samples * feat_dim)
+    # ====== training ====== #
+    curr_n_iter = 0
+    while True:
+      B = (V * 1 / sigma).T # [feat_dim, n_components]
+      Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V)) # [n_components, n_components]
+      my = np.dot(np.dot(Sigma, B), centeredM.T) # [n_components, num_samples]
+
+      if self.solver_ == 'traditional':
+        sumEmm = num_samples * Sigma + np.dot(my, my.T)
+      elif self.solver_ == 'simple':
+        sumEmm = np.dot(my, my.T)
+      sumEmmInv = np.linalg.inv(sumEmm) # [n_components, n_components]
+      # updating V and sigma for next iteration
+      V = np.dot(np.dot(centeredM.T, my.T), sumEmmInv) # [feat_dim, n_components]
+      last_sigma = sigma
+      sigma = varianceM - np.sum(sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
+      improvement = last_sigma - sigma
+      # log
+      if self.verbose_ > 0:
+        print("Iteration: %d   sigma: %.3f   improvement: %.3f" % (curr_n_iter, sigma, improvement))
+      # check iteration escape
+      curr_n_iter += 1
+      if isinstance(self.n_iter_, Number):
+        if curr_n_iter >= self.n_iter_:
+          break
+      elif improvement < self.improve_threshold_:
+        break
+    # ====== save the model ====== #
+    # record new dimensions
+    self.feat_dim_ = feat_dim
+    self.n_components_ = n_components
+    # trained vectors and matrices
+    self.V_ = V
+    self.bias_ = bias
+    self.sigma_ = sigma
+    # pre-calculate matrix for transform
+    B = (V * 1 / sigma).T
+    Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V))
+    self.extractorMatrix_ = np.dot(Sigma, B) # [n_components, feat_dim]
+
+  def transform(self, X):
+    """
+    Parameters
+    ----------
+    X : matrix [num_samples, feat_dim]
+    """
+    assert hasattr(self, 'extractorMatrix_'), "The model hasn't `fit` on data"
+    assert X.shape[1] == self.feat_dim_, \
+    "Expect input matrix with shape: [?, %d], but give: %s" % (self.feat_dim_, str(X.shape))
+    ivec = np.dot(self.extractorMatrix_, (X - self.bias_[np.newaxis, :]).T)
+    return ivec.T
+
+class SupervisedPPCA(PPCA):
+  """ Supervised Probabilistic Principal Components Analysis
+
+  (C) Copyright University of Eastern Finland (UEF).
+  Ville Vestman, ville.vestman@uef.fi,
+  Tomi Kinnunen, tkinnu@cs.uef.fi.
+
+  Parameters
+  ----------
+  extractor : {'supervised', 'unsupervised'}
+    'supervised' is the probabilistic partial least squares extractor using
+    both unsupervised and supervised information
+
+  """
+
+  def __init__(self, n_components=None, bias='auto', beta=1, whiten=False,
+               n_iter='auto', solver='traditional', extractor='supervised',
+               improve_threshold=1e-3,
+               verbose=0, random_state=None):
+    super(SupervisedPPCA, self).__init__(n_components=n_components, bias=bias, whiten=whiten,
+               n_iter=n_iter, solver=solver, improve_threshold=improve_threshold,
+               verbose=verbose, random_state=random_state)
+    self.beta_ = float(beta)
+    # ====== check extractor ====== #
+    extractor = str(extractor).lower()
+    if extractor not in ('supervised', 'unsupervised'):
+      raise ValueError("`extractor` can only be: 'unsupervised' or 'supervised'")
+    self.extractor_ = extractor
+
+  def fit(self, X, y, z=None):
+    """
+    Parameters
+    ----------
+    X : matrix [num_samples, feat_dim]
+    y : vector (int) [num_samples,]
+    z : matrix [num_classes, feat_dim]
+      class-dependent feature vectors for each class from 0 to `num_classes - 1`
+      (in this order).
+    """
+    # ====== initialize ====== #
+    num_samples, feat_dim = X.shape
+    num_classes = z.shape[0] if z is not None else len(np.unique(y))
+    n_components = feat_dim if self.n_components_ is None else self.n_components_
+    if self.bias_ == 'auto':
+      bias = np.mean(X, 0)
+    elif isinstance(self.bias_, Number):
+      bias = np.full(shape=(feat_dim,), fill_value=self.bias_)
+    else:
+      bias = self.bias_
+      assert bias.shape == (feat_dim,), \
+      "Invialid `bias` given shape: %s, require shape: %s" % (str(bias.shape), str((feat_dim,)))
+    # checking `y`
+    y = y.ravel().astype('int32')
+    assert y.shape[0] == num_samples, \
+    "Number of samples incosistent in `X`(%s) and `y`(%s)" % (str(X.shape), str(y.shape))
+    # checking `z`
+    if z is None:
+      z = np.empty(shape=(max(np.max(y) + 1, num_classes), feat_dim),
+                   dtype=X.dtype)
+      for i in np.unique(y):
+        z[i, :] = np.mean(X[y == i], axis=0, keepdims=True)
+    else:
+      assert z.shape[0] == num_classes
+      assert z.shape[1] == feat_dim
+    # ====== initialize parameters ====== #
+    V = self.random_state_.rand(feat_dim, n_components)
+    Q = self.random_state_.rand(feat_dim, n_components)
+    last_sigma = None
+    sigma = 1
+    last_rho = None
+    rho = 1
+
+    centeredM = X - bias[np.newaxis, :]
+    varianceM = np.sum(centeredM**2) / (num_samples * feat_dim)
+
+    centeredY = z[y]
+    classBias = np.mean(centeredY, 0)
+    centeredY = centeredY - classBias[np.newaxis, :]
+    varianceY = np.sum(centeredY**2) / (num_samples * feat_dim)
+    # ====== training ====== #
+    curr_n_iter = 0
+    while True:
+      B = (V * 1 / sigma).T # [feat_dim, n_components]
+      C = (Q * self.beta_ * 1 / rho).T # [feat_dim, n_components]
+      Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V) + np.dot(C, Q)) # [n_components, n_components]
+      # [n_components, num_samples]
+      my = np.dot(Sigma, np.dot(B, centeredM.T) + np.dot(C, centeredY.T))
+
+      if self.solver_ == 'traditional':
+        sumEmm = num_samples * Sigma + np.dot(my, my.T)
+      elif self.solver_ == 'simple':
+        sumEmm = np.dot(my, my.T)
+      sumEmmInv = np.linalg.inv(sumEmm) # [n_components, n_components]
+
+      # updating V and sigma for next iteration
+      V = np.dot(np.dot(centeredM.T, my.T), sumEmmInv) # [feat_dim, n_components]
+      Q = np.dot(np.dot(centeredY.T, my.T), sumEmmInv) # [feat_dim, n_components]
+
+      last_sigma = sigma
+      sigma = varianceM - np.sum(sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
+      improvement_sigma = last_sigma - sigma
+
+      last_rho = rho
+      rho = varianceY - np.sum(sumEmm * np.dot(Q.T, Q)) / (feat_dim * num_samples)
+      improvement_rho = last_rho - rho
+
+      # log
+      if self.verbose_ > 0:
+        print("Iteration: %d   sigma: %.3f   rho: %.3f    improvement: %.3f:%.3f" %
+          (curr_n_iter, sigma, rho, improvement_sigma, improvement_rho))
+      # check iteration escape
+      curr_n_iter += 1
+      if isinstance(self.n_iter_, Number):
+        if curr_n_iter >= self.n_iter_:
+          break
+      elif improvement_sigma < self.improve_threshold_ and \
+      improvement_rho < self.improve_threshold_:
+        break
+    # ====== save the model ====== #
+    # record new dimensions
+    self.feat_dim_ = feat_dim
+    self.n_components_ = n_components
+    self.num_classes_ = num_classes
+    # trained vectors and matrices
+    self.V_ = V
+    self.Q_ = Q
+    self.bias_ = bias
+    self.classBias_ = classBias
+    self.sigma_ = sigma
+    self.rho_ = rho
+    # pre-calculate matrix for PPCA transform
+    B = (V * 1 / sigma).T
+    Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V))
+    self.extractorMatrix_ = np.dot(Sigma, B) # [n_components, feat_dim]
+    # pre-calculate matrix for PPLS transform
+    A = np.concatenate([V, Q], axis=0) # [2 * feat_dim, n_components]
+    B = np.concatenate([(V * 1 / sigma).T, (Q * 1 / rho).T], axis=-1) # [n_components, 2 * feat_dim]
+    sigmaW = np.linalg.inv(np.eye(n_components) + np.dot(B, A)) # [n_components, n_components]
+    self.extractorMatrixPPLS_ = np.dot(sigmaW, B) # [n_components, 2 * feat_dim]
+
+    C = np.dot(V.T, V) + sigma * np.eye(n_components) # [n_components, n_components]
+    self.labelMatrix_ = np.dot(Q, np.linalg.solve(C, V.T)) # [feat_dim, feat_dim]
+
+  def transform(self, X):
+    if self.extractor_ == 'unsupervised':
+      return super(SupervisedPPCA, self).transform(X)
+    else:
+      centeredM = X - self.bias_[np.newaxis, :]
+      labels = np.dot(self.labelMatrix_, centeredM.T) + self.classBias_[:, np.newaxis]
+      ivec = np.dot(self.extractorMatrixPPLS_,
+                    np.concatenate([X.T, labels], axis=0) -
+                    np.concatenate([self.bias_, self.classBias_])[:, np.newaxis])
+      return ivec.T
 
 class MiniBatchPCA(IncrementalPCA):
   """ A modified version of IncrementalPCA to effectively

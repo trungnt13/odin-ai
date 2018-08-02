@@ -272,7 +272,7 @@ def str_to_func(s, sandbox=None):
       code, closure, defaults = cPickle.loads(s)
   else:
     raise ValueError("Unsupport str_to_func for type:%s" % type(s))
-  code = marshal.loads(cPickle.loads(code).tostring())
+  code = marshal.loads(cPickle.loads(code).tobytes())
   func = types.FunctionType(code=code, name=code.co_name,
               globals=sandbox if isinstance(sandbox, Mapping) else globals(),
               closure=closure, argdefs=defaults)

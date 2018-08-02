@@ -95,7 +95,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     return self._labels
 
   @property
-  def nb_classes(self):
+  def num_classes(self):
     return len(self._labels)
 
   @property
@@ -125,7 +125,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
   # ==================== helpers ==================== #
   def initialize(self, X, labels):
     feat_dim = X.shape[1]
-    if self.feat_dim is None or self._nb_classes is None:
+    if self.feat_dim is None or self._num_classes is None:
       self._feat_dim = int(feat_dim)
       if self._labels is None:
         self._labels = labels
@@ -157,9 +157,9 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     if self.feat_dim != feat_dim:
       raise ValueError("Mismatch the input feature dimension, %d != %d" %
         (self.feat_dim, feat_dim))
-    if self.nb_classes != len(labels):
+    if self.num_classes != len(labels):
       raise ValueError("Mismatch the number of output classes, %d != %d" %
-        (self.nb_classes, len(labels)))
+        (self.num_classes, len(labels)))
 
   # ==================== sklearn ==================== #
   def _update_caches(self):
@@ -199,8 +199,8 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     """
     Parameters
     ----------
-    X : [nb_samples, feat_dim]
-    y : [nb_samples]
+    X : [num_samples, feat_dim]
+    y : [num_samples]
     """
     # ====== preprocessing ====== #
     if isinstance(X, (tuple, list)):
@@ -218,7 +218,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     X = self.normalizer.fit(X, y).transform(X)
     self.initialize(X, labels=classes)
     # ====== Initializing ====== #
-    F = np.zeros((self.nb_classes, self.feat_dim))
+    F = np.zeros((self.num_classes, self.feat_dim))
     for clz in np.unique(y):
       # Speaker indices
       F[clz, :] = X[y == clz, :].sum(axis=0)
@@ -257,13 +257,13 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     """
     Parameters
     ----------
-    F : [nb_classes, feat_dim]
-    cls_count : [nb_classes]
+    F : [num_classes, feat_dim]
+    cls_count : [num_classes]
     """
     # computes the posterior mean and covariance of the factors
-    nb_classes = F.shape[0]
+    num_classes = F.shape[0]
     Eyy = np.zeros(shape=(self.num_phi, self.num_phi))
-    Ey_clz = np.zeros(shape=(nb_classes, self.num_phi))
+    Ey_clz = np.zeros(shape=(num_classes, self.num_phi))
     # initialize common terms to save computations
     uniqFreqs = unique(cls_counts, keep_order=True)
     n_uniq = len(uniqFreqs)
@@ -276,13 +276,13 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       nPhiT_invS_Phi = uniqFreqs[ix] * PhiT_invS_Phi
       invTerms[ix] = inv(I + nPhiT_invS_Phi)
 
-    for clz in range(nb_classes):
-      nb_samples = cls_counts[clz]
+    for clz in range(num_classes):
+      num_samples = cls_counts[clz]
       PhiT_invS_y = np.dot(PhiT_invS, F[clz, :])
-      idx = np.flatnonzero(uniqFreqs == nb_samples)[0]
+      idx = np.flatnonzero(uniqFreqs == num_samples)[0]
       Cyy = invTerms[idx]
       Ey_clz[clz, :] = np.dot(Cyy, PhiT_invS_y)
-      Eyy += nb_samples * Cyy
+      Eyy += num_samples * Cyy
 
     Eyy += np.dot((Ey_clz * cls_counts[:, None]).T, Ey_clz)
     return Ey_clz, Eyy
@@ -293,10 +293,10 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     ----------
     X : [num_samples, feat_dim]
     """
-    nb_samples = X.shape[0]
+    num_samples = X.shape[0]
     S = np.dot(self.Phi, self.Phi.T) + self.Sigma # [feat_dim, feat_dim]
-    llk = -0.5 * (self.feat_dim * nb_samples * np.log(2 * np.pi) +
-                  nb_samples * logdet(S) +
+    llk = -0.5 * (self.feat_dim * num_samples * np.log(2 * np.pi) +
+                  num_samples * logdet(S) +
                   np.sum(X * solve(S, X.T).T))
     return llk
 
@@ -307,24 +307,28 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
 
     Paremters
     ---------
-    X : [nb_samples, feat_dim]
+    X : [num_samples, feat_dim]
     X_cov : [feat_dim, feat_dim]
-    F : [nb_classes, feat_dim]
-    Ey : [nb_classes, num_phi]
+    F : [num_classes, feat_dim]
+    Ey : [num_classes, num_phi]
     Eyy : [num_phi, num_phi]
     """
-    nb_samples = X.shape[0]
+    num_samples = X.shape[0]
     Ey_FT = np.dot(Ey.T, F) # [num_phi, feat_dim]
     self.Phi = solve(Eyy.T, Ey_FT).T # [feat_dim, num_phi]
-    self.Sigma = 1. / nb_samples * (X_sqr - np.dot(self.Phi, Ey_FT))
+    self.Sigma = 1. / num_samples * (X_sqr - np.dot(self.Phi, Ey_FT))
 
   def predict_log_proba(self, X, X_model=None):
     """
     Parameters
     ----------
-    X : [nb_samples, feat_dim]
-    X_model : [nb_classes, feat_dim]
+    X : [num_samples, feat_dim]
+    X_model : [num_classes, feat_dim]
       if None, use class average extracted based on fitted data
+
+    Return
+    ------
+    log-probabilities matrix [num_samples, num_classes]
     """
     if not self.is_fitted:
       raise RuntimeError("This model hasn't been fitted!")
@@ -332,25 +336,25 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     if X_model is None:
       X_model = self.X_model
     else:
-      # [nb_classes, num_phi]
+      # [num_classes, num_phi]
       X_model = np.dot(self.normalizer.transform(X_model), self.Uk)
-    if X_model.shape[0] != self.nb_classes:
+    if X_model.shape[0] != self.num_classes:
       raise ValueError("The model matrix contains %d classes, but the "
                        "fitted number of classes is %d" %
-                       (X_model.shape[0], self.nb_classes))
+                       (X_model.shape[0], self.num_classes))
     # ====== check X ====== #
     if isinstance(X, (tuple, list)):
       X = np.asarray(X)
     elif "odin.fuel" in str(type(X)):
       X = X[:]
     # ====== transform the input matrices ====== #
-    X = np.dot(self.normalizer.transform(X), self.Uk) # [nb_samples, num_phi]
-    # [nb_classes, 1]
+    X = np.dot(self.normalizer.transform(X), self.Uk) # [num_samples, num_phi]
+    # [num_classes, 1]
     score_h1 = np.sum(np.dot(X_model, self.Q_hat) * X_model, axis=1, keepdims=True)
-    # [nb_samples, 1]
+    # [num_samples, 1]
     score_h2 = np.sum(np.dot(X, self.Q_hat) * X, axis=1, keepdims=True)
-    # [nb_samples, nb_classes]
+    # [num_samples, num_classes]
     score_h1h2 = 2 * np.dot(X, np.dot(X_model, self.Lambda).T)
-    # [nb_samples, nb_classes]
+    # [num_samples, num_classes]
     scores = score_h1h2 + score_h1.T + score_h2
     return scores

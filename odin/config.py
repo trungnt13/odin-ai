@@ -294,6 +294,7 @@ def auto_config(config=None):
     s += _ctext(value, 'cyan') + '\n'
     sys.stderr.write(s)
   print_log('#CPU', 'auto' if dev['ncpu'] == 0 else dev['ncpu'])
+  print_log('#CPU-native', str(cpu_count()))
   print_log('#Thread/core',
       'auto' if dev['nthread'] == 0 else dev['nthread'],
       nested=True)
@@ -357,6 +358,9 @@ def get_ncpu():
   """ Return number of inter_op_parallelism_threads """
   __validate_config()
   return CONFIG['ncpu']
+
+def get_ncpu_native():
+  return cpu_count()
 
 def get_ngpu():
   """ Return number of GPU """

@@ -17,11 +17,10 @@ from odin.ml import fast_tsne
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-CODE_SIZE = 12
+CODE_SIZE = 2
 NUM_SAMPLES = 16
 NUM_EPOCH = 20
-NUM_ITER = 20000
-USE_TSNE = True
+NUM_ITER = None
 # Whether or not to use the analytic version of the KL. When set to
 # False the E_{Z~q(Z|X)}[log p(Z)p(X|Z) - log q(Z|X)] form of the ELBO
 # will be used. Otherwise the -KL(q(Z|X) || p(Z)) +
@@ -118,12 +117,13 @@ make_decoder = tf.make_template('decoder', make_decoder)
 # ====== Define the model ====== #
 approx_posterior = make_encoder(X, code_size=CODE_SIZE) # [num_batch, num_code]
 approx_posterior_sample = approx_posterior.sample(NUM_SAMPLES) # [num_sample, num_batch, num_code]
+# ====== Distortion ====== #
 decoder_likelihood = make_decoder(approx_posterior_sample) # [num_sample, num_batch, 28, 28]
-latent_prior = make_prior(code_size=CODE_SIZE)
-# ====== Define the loss ====== #
 # `distortion` is just the negative log likelihood.
 distortion = -decoder_likelihood.log_prob(X) # [num_sample, num_batch]
 avg_distortion = tf.reduce_mean(distortion) # for monitoring
+# ====== KL ====== #
+latent_prior = make_prior(code_size=CODE_SIZE)
 # divergence between posterior and the prior
 if ANALYTIC_KL:
   rate = tfd.kl_divergence(approx_posterior, latent_prior) # [num_batch]
@@ -131,7 +131,7 @@ else:
   rate = (approx_posterior.log_prob(approx_posterior_sample) -
           latent_prior.log_prob(approx_posterior_sample)) # [num_sample, num_batch]
 avg_rate = tf.reduce_mean(rate) # for monitoring
-# ELBO
+# ====== ELBO ====== #
 elbo_local = -(rate + distortion)
 elbo = tf.reduce_mean(elbo_local) # maximize evidence-lower-bound
 loss = -elbo # minimize loss
@@ -151,7 +151,7 @@ random_image_mean = tf.squeeze(random_image.mean(), axis=1) # [16, 28, 28]
 update_op = tf.train.AdamOptimizer(0.001).minimize(-elbo)
 K.initialize_all_variables()
 
-V.plot_figure(nrow=NUM_EPOCH + 1, ncol=8)
+V.plot_figure(nrow=NUM_EPOCH + 2, ncol=4)
 num_iter = 0
 for epoch in range(NUM_EPOCH):
   # ====== evaluating ====== #
@@ -164,25 +164,17 @@ for epoch in range(NUM_EPOCH):
   img_sample = scores[-3]
   img_mean = scores[-2]
   code_sample = scores[-1].mean(axis=0)
-  if USE_TSNE:
-    code_ = fast_tsne(code_sample)
-  else:
-    code_ = PCA(n_components=2).fit_transform(code_sample)
   # ====== plotting ====== #
-  num_row = epoch * 4
-  ax = plt.subplot(NUM_EPOCH, 4, num_row + 1)
+  num_row = epoch * 3
+  ax = plt.subplot(NUM_EPOCH, 3, num_row + 1)
   ax.scatter(code_sample[:, 0], code_sample[:, 1], s=2, c=y_test, alpha=0.1)
   ax.axis('off')
 
-  ax = plt.subplot(NUM_EPOCH, 4, num_row + 2)
-  ax.scatter(code_[:, 0], code_[:, 1], s=2, c=y_test, alpha=0.1)
-  ax.axis('off')
-
-  ax = plt.subplot(NUM_EPOCH, 4, num_row + 3)
+  ax = plt.subplot(NUM_EPOCH, 3, num_row + 2)
   ax.imshow(V.tile_raster_images(img_sample), cmap=plt.cm.Greys_r)
   ax.axis('off')
 
-  ax = plt.subplot(NUM_EPOCH, 4, num_row + 4)
+  ax = plt.subplot(NUM_EPOCH, 3, num_row + 3)
   ax.imshow(V.tile_raster_images(img_mean), cmap=plt.cm.Greys_r)
   ax.axis('off')
   # ====== training ====== #

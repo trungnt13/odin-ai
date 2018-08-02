@@ -298,7 +298,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                allow_rollback=True, exit_on_error=False,
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=1, stochastic_downsample=True,
-               device='gpu', ncpu=None, gpu_factor=80,
+               device='cpu', ncpu=1, gpu_factor=80,
                seed=5218, path=None, name=None):
     super(GMM, self).__init__()
     # start from 1 mixture, then split and up

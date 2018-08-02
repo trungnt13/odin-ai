@@ -802,18 +802,23 @@ class MmapData(Data):
     Necessary information to create numpy.memmap
     """
     f = open(path, mode='rb' if read_only else 'rb+')
-    if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
+    # ====== check header signature ====== #
+    try:
+      if f.read(len(MmapData.HEADER)) != MmapData.HEADER:
+        raise Exception
+    except Exception as e:
+      f.close()
       raise Exception('Invalid header for MmapData.')
-    # 8 bytes for size of info
+    # ====== 8 bytes for size of info ====== #
     try:
       size = int(f.read(8))
       dtype, shape = marshal.loads(f.read(size))
     except Exception as e:
+      f.close()
       raise Exception('Error reading memmap data file: %s' % str(e))
-    # return file object
+    # ====== return file object ====== #
     if return_file:
       return dtype, shape, f
-    # only return header info
     f.close()
     return dtype, shape
 
