@@ -402,11 +402,9 @@ def subplot(*arg, **kwargs):
     subplot.set_title(kwargs['title'])
   return subplot
 
-
-def subplot2grid(shape, loc, colspan=1, rowspan=1):
+def plot_subplotGrid(shape, loc, colspan=1, rowspan=1):
   from matplotlib import pyplot as plt
-  return plt.subplot2grid(shape, loc, colspan=colspan, rowspan=rowspan)
-
+  return plt.subplot2grid(shape=shape, loc=loc, colspan=colspan, rowspan=rowspan)
 
 def set_labels(ax, title=None, xlabel=None, ylabel=None):
   if title is not None:
