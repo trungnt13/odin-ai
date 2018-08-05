@@ -7,6 +7,10 @@ import tensorflow as tf
 from odin.config import randint
 from .helpers import *
 
+def softplus_inverse(x):
+  """Helper which computes the function inverse of `tf.nn.softplus`."""
+  return tf.log(tf.expm1(x))
+
 def relu(x, alpha=0., name='ReLu'):
   if alpha == 0.:
     return tf.nn.relu(x, name=name)

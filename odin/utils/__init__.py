@@ -656,6 +656,40 @@ class FuncDesc(object):
 # ===========================================================================
 # ArgCOntrol
 # ===========================================================================
+def args_parse(descriptions):
+  """ Shortcut for parsing the argument from terminal
+  command
+
+  Parameter
+  ---------
+  descriptions : tuple, list
+    a list of tuple contain 1 to 3 of following information
+    (name, help, enum_values, default_value), where:
+    - name (string) is the name of argument can be `name` positional,
+      `-name` optional, or `--name` flag trigger
+    - help (string) is text for printing help
+    - enum_values (tuple, list, None) list of string (or Number) contain
+      acceptable values (set to None if no values given)
+    - default_value (Number, string) default value for the argument
+
+  Note
+  ----
+  The order is different from `ArgController.add`
+  """
+  args = ArgController()
+  for desc in descriptions:
+    if len(desc) == 1:
+      args.add(name=desc[0], help='')
+    elif len(desc) == 2:
+      args.add(name=desc[0], help=desc[1])
+    elif len(desc) == 3:
+      args.add(name=desc[0], help=desc[1], enum=desc[2])
+    elif len(desc) == 4:
+      args.add(name=desc[0], help=desc[1], enum=desc[2], default=desc[3])
+    else:
+      raise ValueError("No support for given description: %s" % str(desc))
+  return args.parse()
+
 class ArgController(object):
   """ Simple interface to argparse """
 
@@ -663,7 +697,8 @@ class ArgController(object):
     super(ArgController, self).__init__()
     self.parser = None
     self._require_input = False
-    self.arg_dict = {}
+    self.args_preprocessor = {}
+    self.args_enum = {}
     self.name = []
     self.print_parsed = print_parsed
 
@@ -674,7 +709,7 @@ class ArgController(object):
 
   def _parse_input(self, key, val):
     # ====== search if manual preprocessing available ====== #
-    for i, preprocess in self.arg_dict.items():
+    for i, preprocess in self.args_preprocessor.items():
       if key in i and preprocess is not None:
         return preprocess(val)
     # ====== auto preprocess ====== #
@@ -686,7 +721,8 @@ class ArgController(object):
       val = str(val)
     return val
 
-  def add(self, name, help, default=None, preprocess=None):
+  def add(self, name, help, default=None, enum=None,
+          preprocess=None):
     """ NOTE: if the default value is not given, the argument is
     required
 
@@ -697,11 +733,13 @@ class ArgController(object):
         [name] for positional parameters
     help: str
         description of the argument
-    default: str
+    default: {str, Number}
         default value for the argument
+    enum : {tuple, list}
+        list or tuple of acceptant values, for post-process
+        validating
     preprocess: call-able
-        take in the parsed argument and preprocess it into necessary
-        information
+        a function to perform preprocessing of the parsed argument
     """
     if self.parser is None:
       self.parser = argparse.ArgumentParser(
@@ -731,15 +769,19 @@ class ArgController(object):
     # store preprocess dictionary
     if not hasattr(preprocess, '__call__'):
       preprocess = None
-    self.arg_dict[name] = preprocess
+    self.args_preprocessor[name] = preprocess
+    # store the enum values
+    if enum is not None and not isinstance(enum, (tuple, list)):
+      enum = (enum,)
+    self.args_enum[name.replace('-', '')] = enum
     return self
 
   def parse(self, config_path=None):
     if self.parser is None:
       raise Exception('Call add to assign at least 1 argument for '
                       'for the function.')
-    # TODO fix bug here
     exit_now = False
+    # ====== validate arguments ====== #
     try:
       if len(sys.argv) == 1 and self._require_input:
         self.parser.print_help()
@@ -752,26 +794,37 @@ class ArgController(object):
              for i in sys.argv):
         self.parser.print_help()
       exit_now = True
-    if exit_now: exit()
-    # parse the arguments
+    if exit_now:
+      exit()
+    # ====== parse the arguments ====== #
     try:
       args = {i: self._parse_input(i, j)
               for i, j in args._get_kwargs()}
     except Exception as e:
-      print('Error parsing given arguments: "%s"' % str(e))
+      print('Error parsing argument with name "%s"' % str(e))
       self.parser.print_help()
       exit()
-    # reset everything
+    # ====== checking enumerate values ====== #
+    for name, val in args.items():
+      enum = self.args_enum[name.replace('-', '')]
+      if enum is None:
+        continue
+      if val not in enum:
+        raise ValueError("Argument with name '%s' given value: `%s`, but "
+                         "only accept one of the following: %s" %
+                         (name, val, enum))
+    # ====== reset everything ====== #
     self.parser = None
-    self.arg_dict = {}
+    self.args_preprocessor = {}
+    self.args_enum = {}
     self._require_input = False
-    # print the parsed arguments if necessary
+    # ====== print parsed values ====== #
     if self.print_parsed:
       max_len = max(len(i) for i in args.keys())
       max_len = '%-' + str(max_len) + 's'
       print('\n******** Parsed arguments ********')
-      for i, j in args.items():
-        print(max_len % i, ': ', j)
+      for name, val in args.items():
+        print(max_len % name, ': ', val)
       print('**********************************\n')
     # convert it to struct
     return struct(args)

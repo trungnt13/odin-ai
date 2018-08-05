@@ -240,6 +240,7 @@ class MmapDict(NoSQL):
                           'found in (read-only mode).' % path)
       file = open(str(path), mode='rb+')
       if file.read(len(MmapDict.HEADER)) != MmapDict.HEADER:
+        file.close() # close the file before Exception
         raise Exception('Given file is not in the right format '
                         'for MmapDict.')
       # 48 bytes for the file size
