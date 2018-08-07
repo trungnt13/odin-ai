@@ -8,7 +8,7 @@ from scipy import linalg
 
 from multiprocessing import Value, Array
 
-from sklearn.decomposition import IncrementalPCA
+from sklearn.decomposition import IncrementalPCA, PCA
 from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
@@ -19,10 +19,56 @@ from odin.fuel import Data
 from .base import TransformerMixin, BaseEstimator
 
 __all__ = [
+    "fast_pca",
     "MiniBatchPCA",
     "PPCA",
     "SupervisedPPCA",
 ]
+
+def fast_pca(*x, n_components=None, algo='pca', y=None,
+             random_state=None):
+  """ A shortcut for many different PCA algorithms
+
+  Parameters
+  ----------
+  x : {list, tuple}
+    list of matrices for transformation, the first matrix will
+    be used for training
+  n_components : {None, int}
+    number of PCA components
+  algo : {'pca', 'ppca', 'sppca', 'plda'}
+    different PCA algorithm
+  y : {numpy.ndarray, None}
+    required for labels in case of `sppca`
+  """
+  algo = str(algo).lower()
+  if algo not in ('pca', 'ppca', 'sppca', 'plda'):
+    raise ValueError("`algo` must be one of the following: 'pca', 'ppca', 'plda' or 'sppca'; but given: '%s'" % algo)
+  if algo in ('sppca', 'plda') and y is None:
+    raise RuntimeError("`y` must be not None if `algo='sppca'`")
+  # ====== pca train ====== #
+  x_train = x[0]
+  x_test = x[1:]
+  if algo == 'sppca':
+    pca = SupervisedPPCA(n_components=n_components, random_state=random_state)
+    pca.fit(x_train, y)
+  elif algo == 'plda':
+    from odin.ml import PLDA
+    pca = PLDA(n_phi=n_components, random_state=random_state)
+    pca.fit(x_train, y)
+  elif algo == 'pca':
+    pca = PCA(n_components=n_components, random_state=random_state)
+    pca.fit(x_train)
+  elif algo == 'ppca':
+    pca = PPCA(n_components=n_components, random_state=random_state)
+    pca.fit(x_train)
+  # ====== transform ====== #
+  x_train = pca.transform(x_train)
+  x_test = [pca.transform(x) for x in x_test]
+  if len(x_test) == 0:
+    return x_train
+  return (x_train,) + x_test
+
 # ===========================================================================
 # helper
 # ===========================================================================
@@ -42,9 +88,9 @@ class PPCA(BaseEstimator, TransformerMixin):
   n_iter : {integer, 'auto'}
     if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
     compared to the `improve_threshold`
-  solver : {'traditional', 'simple'}
   improve_threshold : scalar
     Only used in case `n_iter='auto'`
+  solver : {'traditional', 'simple'}
   verbose: {0, 1}
     showing logging information during fitting
   random_state : {None, integer, numpy.random.RandomState}

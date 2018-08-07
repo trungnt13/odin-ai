@@ -225,9 +225,11 @@ def _check_dtype(dtype):
 
 def _shape_compare(shape1, shape2):
   """Return True if shape1 == shape2"""
-  if len(shape1) != len(shape2):
+  if len(shape1) != len(shape2): # different ndim
     return False
   for s1, s2 in zip(shape1, shape2):
+    if s1 is None or s2 is None or s1 == -1 or s2 == -1:
+      continue
     if s1 != s2:
       return False
   return True
@@ -981,7 +983,15 @@ class NNOp(NNOpOutput):
 
   # ==================== interaction method ==================== #
   def _check_input_arg(self, x, name):
-    """Validate input variable
+    """Validate input argument to `apply` function
+
+    Parameters
+    ----------
+    x : {tensor, primitive}
+      given symbol for the argument
+    name : string
+      name of the argument
+
     Return
     ------
     tuple of (VariableDesc, raw_data)
@@ -1000,13 +1010,12 @@ class NNOp(NNOpOutput):
       curr_desc = self._kwargs_desc[name]
       # validating
       if isinstance(curr_desc, VariableDesc) and not curr_desc.is_equal(desc):
-        raise ValueError("Found variable with description: '%s', given "
-            "variable with description: '%s'" %
-            (str(curr_desc), str(desc)))
+        raise ValueError("Found stored argument with description: '%s', given new "
+                         "argument with description: '%s'" % (str(curr_desc), str(desc)))
       # overriding primitive
       else:
         self._kwargs_desc[name] = desc
-    # ====== if given data, use saved tensor with new data ====== #
+    # ====== if given raw data, use saved tensor with new data ====== #
     elif isinstance(x, np.ndarray):
       # keywords
       if name not in self._kwargs_desc:

@@ -81,7 +81,7 @@ lda.fit(X_train, y_train)
 X_train_lda = lda.transform(X_train)
 X_score_lda = lda.transform(X_score)
 # ====== plda ====== #
-plda = PLDA(num_phi=NUM_DIM, seed=SEED)
+plda = PLDA(n_phi=NUM_DIM, random_state=SEED)
 plda.fit(X_train, y_train)
 X_train_plda = plda.predict_log_proba(X_train)
 X_score_plda = plda.predict_log_proba(X_score)

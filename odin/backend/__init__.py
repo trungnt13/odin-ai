@@ -92,8 +92,27 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
   plh = tf.placeholder(dtype=dtype, shape=shape, name=name)
   return role.add_roles(plh, roles)
 
+# ===========================================================================
+# Fast evaluation
+# ===========================================================================
+def _validate_updates(updates):
+  if updates is not None:
+    if isinstance(updates, Mapping):
+      updates = updates.items()
+    # create updates ops
+    if not isinstance(updates, tf.Operation):
+      updates_ops = []
+      for u in updates:
+        if isinstance(u, (tuple, list)):
+          p, new_p = u
+          updates_ops.append(tf.assign(p, new_p))
+        elif is_operation(u): # assumed already an assign op
+          updates_ops.append(u)
+      updates = tf.group(*updates_ops)
+  return updates
+
 def eval(x, feed_dict=None,
-         updates=None, update_after=True,
+         update_before=None, update_after=None,
          options=None, run_metadata=None):
   ''' Generalized version of code evaluation, it
   could evaluate python and tensorflow expression.
@@ -104,12 +123,12 @@ def eval(x, feed_dict=None,
       tensorfow `Tensor` for evaluation
   feed_dict : dict
       Input dictionary, mapping placeholder -> values
-  updates: {None, list, or dict}
+  update_before: {None, list, or dict}
       mapping from `Tensor` to its new value which is `Tensor` or
-      real value.
-  update_after: bool (default: True)
-      if True, run the `updates` after evaluate `x`,
-      otherwise, running update before.
+      real value, the updates is runned before evaluating
+  update_after: {None, list, or dict}
+      same as `updates_before`, but run the `updates` after
+      evaluate `x`
   options: tensorflow.RunOptions
       thhe options allow controlling the behavior of
       this particular step (e.g. turning tracing on).
@@ -139,24 +158,11 @@ def eval(x, feed_dict=None,
   to your LD_LIBRARY_PATH
   '''
   results = ()
-  # ====== validate updates ====== #
-  update_after = bool(update_after)
-  if updates is not None:
-    if isinstance(updates, Mapping):
-      updates = updates.items()
-    # create updates ops
-    if not isinstance(updates, tf.Operation):
-      updates_ops = []
-      for u in updates:
-        if isinstance(u, (tuple, list)):
-          p, new_p = u
-          updates_ops.append(tf.assign(p, new_p))
-        elif is_operation(u): # assumed already an assign op
-          updates_ops.append(u)
-      updates = tf.group(*updates_ops)
+  update_before = _validate_updates(update_before)
+  update_after = _validate_updates(update_after)
   # ====== run updates before ====== #
-  if updates is not None and not update_after:
-    get_session(updates.graph).run(updates, feed_dict=feed_dict,
+  if update_before is not None:
+    get_session(update_before.graph).run(update_before, feed_dict=feed_dict,
                                    options=options,
                                    run_metadata=run_metadata)
   # ====== list of Tensor or string ====== #
@@ -220,10 +226,10 @@ def eval(x, feed_dict=None,
   else:
     raise RuntimeError("Cannot evaluate object of type: %s" % type(x))
   # ====== run updates after ====== #
-  if updates is not None and update_after:
-    get_session(updates.graph).run(updates, feed_dict=feed_dict,
-                                   options=options,
-                                   run_metadata=run_metadata)
+  if update_after is not None:
+    get_session(update_after.graph).run(update_after, feed_dict=feed_dict,
+                                        options=options,
+                                        run_metadata=run_metadata)
   return results
 
 # ===========================================================================

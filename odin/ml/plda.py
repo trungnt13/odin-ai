@@ -4,6 +4,8 @@ author: 'Omid Sadjadi, Timothee Kheyrkhah'
 email: 'omid.sadjadi@nist.gov'
 """
 import time
+from numbers import Number
+from six import string_types
 
 import numpy as np
 from scipy.linalg import eigh, cholesky, inv, svd, solve
@@ -24,16 +26,19 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
 
   Parameters
   ----------
-  num_phi : int
+  n_phi : int
     number of dimension for the latent space
-  num_iter : int (default: 12)
-    number of EM iteration
   centering : bool (default: True)
     mean normalization the data before EM
   wccn : bool (default: True)
     within class covariance normalization before EM
   unit_length : bool (default: True)
     normalize vector length of each sample to 1 before EM
+  n_iter : {integer, 'auto'}
+    if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
+    compared to the `improve_threshold`
+  improve_threshold : scalar
+    Only used in case `n_iter='auto'`
   labels : {list of string, or None} (default: None)
     labels information for `evaluate` method
   seed : int
@@ -47,7 +52,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
   Attributes
   ----------
   Sigma_ : [feat_dim, feat_dim]
-  Phi_ : [feat_dim, num_phi]
+  Phi_ : [feat_dim, n_phi]
   Sb_ : [feat_dim, feat_dim]
   St_ : [feat_dim, feat_dim]
   Lambda : []
@@ -57,14 +62,25 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     class-dependence feature vectors
   """
 
-  def __init__(self, num_phi, num_iter=12,
-               centering=True, wccn=True, unit_length=True,
-               labels=None, dtype='float64', seed=5218,
+  def __init__(self, n_phi=None, centering=True, wccn=True, unit_length=True,
+               n_iter='auto', improve_threshold=1e-1,
+               labels=None, dtype='float64', random_state=None,
                verbose=0):
     super(PLDA, self).__init__()
-    self.num_phi = int(num_phi)
-    self.num_iter = int(num_iter)
-    self._feat_dim = None
+    # ====== check n_phi ====== #
+    if n_phi is not None:
+      n_phi = int(n_phi)
+    self.n_phi_ = n_phi
+    # ====== check num_iter ====== #
+    if isinstance(n_iter, string_types):
+      n_iter = n_iter.lower()
+      assert n_iter == 'auto', 'Invalid `n_iter` value: %s' % n_iter
+    elif isinstance(n_iter, Number):
+      assert n_iter > 0, "`n_iter` must greater than 0, but given: %d" % n_iter
+    self.n_iter_ = n_iter
+    self.improve_threshold_ = float(improve_threshold)
+    # ====== other ====== #
+    self.feat_dim_ = None
     self._labels = labels
     self.verbose_ = int(verbose)
     # for normalization
@@ -72,7 +88,15 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
         centering=centering, wccn=wccn, unit_length=unit_length,
         lda=False, concat=False)
     self._dtype = np.dtype(dtype)
-    self._rand_state = np.random.RandomState(seed=seed)
+    # ====== check random state ====== #
+    if random_state is None:
+      self._rand_state = np.random.RandomState(None)
+    elif isinstance(random_state, Number):
+      self._rand_state = np.random.RandomState(seed=random_state)
+    elif isinstance(random_state, np.random.RandomState):
+      self._rand_state = random_state
+    else:
+      raise ValueError("Invalid argument for `random_state`: %s" % str(random_state))
     # Attributes
     self.Sigma_ = None
     self.Phi_ = None
@@ -86,7 +110,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
 
   @property
   def feat_dim(self):
-    return self._feat_dim
+    return self.feat_dim_
 
   @property
   def normalizer(self):
@@ -113,13 +137,13 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
   def __getstate__(self):
     if not self.is_fitted:
       raise RuntimeError("The PLDA have not been fitted, nothing to pickle!")
-    return (self.num_phi, self.num_iter, self._feat_dim, self._labels, self.verbose_,
+    return (self.n_phi_, self.n_iter_, self.feat_dim_, self._labels, self.verbose_,
             self._normalizer, self._dtype, self._rand_state,
             self.Sigma_, self.Phi_, self.Sb_, self.St_,
             self.Lambda_, self.Uk_, self.Q_hat_, self.X_model_)
 
   def __setstate__(self, states):
-    (self.num_phi, self.num_iter, self._feat_dim, self._labels, self.verbose_,
+    (self.n_phi_, self.n_iter_, self.feat_dim_, self._labels, self.verbose_,
      self._normalizer, self._dtype, self._rand_state,
      self.Sigma_, self.Phi_, self.Sb_, self.St_,
      self.Lambda_, self.Uk_, self.Q_hat_, self.X_model_) = states
@@ -128,12 +152,12 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
   def initialize(self, X, labels):
     feat_dim = X.shape[1]
     if self.feat_dim is None or self._num_classes is None:
-      self._feat_dim = int(feat_dim)
+      self.feat_dim_ = int(feat_dim)
       if self._labels is None:
         self._labels = labels
-      if self.feat_dim <= self.num_phi:
-        raise RuntimeError("`feat_dim=%d` must be greater than `num_phi=%d`" %
-          (self.feat_dim, self.num_phi))
+      if self.feat_dim <= self.n_phi_:
+        raise RuntimeError("`feat_dim=%d` must be greater than `n_phi=%d`" %
+          (self.feat_dim, self.n_phi_))
       # ====== initialize ====== #
       # covariance matrix of the residual term
       # self.Sigma_ = 1. / self.feat_dim * np.eye(self.feat_dim, dtype=self.dtype)
@@ -146,12 +170,12 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       #               ).astype(self.dtype)
       # self.Sigma_ = 100 * self._rand_state.randn(
       #     self.feat_dim, self.feat_dim).astype(self.dtype)
-      # factor loading matrix (Eignevoice matrix) [feat_dim, num_phi]
-      # self.Phi_ = np.r_[np.eye(self.num_phi),
-      #                  np.zeros((self.feat_dim - self.num_phi, self.num_phi))]
-      # self.Phi_ = self._rand_state.randn(self.feat_dim, self.num_phi).astype(self.dtype)
+      # factor loading matrix (Eignevoice matrix) [feat_dim, n_phi]
+      # self.Phi_ = np.r_[np.eye(self.n_phi_),
+      #                  np.zeros((self.feat_dim - self.n_phi_, self.n_phi_))]
+      # self.Phi_ = self._rand_state.randn(self.feat_dim, self.n_phi_).astype(self.dtype)
       self.Phi_ = self.normalizer.transform(
-          self._rand_state.randn(self.num_phi, self.feat_dim)
+          self._rand_state.randn(self.n_phi_, self.feat_dim)
       ).T.astype(self.dtype)
       self.Sb_ = np.zeros((self.feat_dim, self.feat_dim), dtype=self.dtype)
       self.St_ = np.zeros((self.feat_dim, self.feat_dim), dtype=self.dtype)
@@ -171,9 +195,9 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     Q = iSt - iS # [feat_dim, feat_dim]
     P = np.dot(np.dot(iSt, self.Sb_), iS) # [feat_dim, feat_dim]
     U, s, V = svd(P, full_matrices=False)
-    self.Lambda_ = np.diag(s[:self.num_phi]) # [num_phi, num_phi]
-    self.Uk_ = U[:, :self.num_phi] # [feat_dim, num_phi]
-    self.Q_hat_ = np.dot(np.dot(self.Uk_.T, Q), self.Uk_) # [num_phi, num_phi]
+    self.Lambda_ = np.diag(s[:self.n_phi_]) # [n_phi, n_phi]
+    self.Uk_ = U[:, :self.n_phi_] # [feat_dim, n_phi]
+    self.Q_hat_ = np.dot(np.dot(self.Uk_.T, Q), self.Uk_) # [n_phi, n_phi]
 
   def fit_maximum_likelihood(self, X, y):
     # ====== preprocessing ====== #
@@ -225,9 +249,12 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       # Speaker indices
       F[clz, :] = X[y == clz, :].sum(axis=0)
     if self.verbose_ > 0:
-      print('Re-estimating the Eigenvoice subspace with {} factors ...'.format(self.num_phi))
+      print('Re-estimating the Eigenvoice subspace with {} factors ...'.format(self.n_phi_))
     X_sqr = np.dot(X.T, X)
-    for iter in range(self.num_iter):
+    # ====== iteration ====== #
+    iter = 0
+    last_llk_value = None
+    while True:
       e_time = time.time()
       # expectation
       Ey, Eyy = self.expectation_plda(F, y_counts)
@@ -238,11 +265,22 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       m_time = time.time() - m_time
       # log-likelihood
       llk = 'None'
-      if self.verbose_ > 1:
-        llk = '%.2f' % self.compute_llk(X)
+      llk_value = None
+      if self.verbose_ > 1 or isinstance(self.n_iter_, string_types):
+        llk_value = self.compute_llk(X)
+        llk = '%.2f' % llk_value
       if self.verbose_ > 0:
         print('#iter:%-3d \t [llk = %s] \t [E-step = %.2f s] [M-step = %.2f s]' %
               (iter + 1, llk, e_time, m_time))
+      # check breaking condition
+      iter += 1
+      if isinstance(self.n_iter_, Number):
+        if iter >= self.n_iter_:
+          break
+      elif iter > 2 and last_llk_value is not None:
+        if llk_value - last_llk_value < self.improve_threshold_:
+          break
+      last_llk_value = llk_value
     # ====== Update the eigenvoice space ====== #
     self.Sb_ = self.Phi_.dot(self.Phi_.T)
     self.St_ = self.Sb_ + self.Sigma_
@@ -260,15 +298,15 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     """
     # computes the posterior mean and covariance of the factors
     num_classes = F.shape[0]
-    Eyy = np.zeros(shape=(self.num_phi, self.num_phi))
-    Ey_clz = np.zeros(shape=(num_classes, self.num_phi))
+    Eyy = np.zeros(shape=(self.n_phi_, self.n_phi_))
+    Ey_clz = np.zeros(shape=(num_classes, self.n_phi_))
     # initialize common terms to save computations
     uniqFreqs = unique(cls_counts, keep_order=True)
     n_uniq = len(uniqFreqs)
-    invTerms = np.empty(shape=(n_uniq, self.num_phi, self.num_phi))
-    PhiT_invS = solve(self.Sigma_.T, self.Phi_).T # [num_phi, feat_dim]
-    PhiT_invS_Phi = np.dot(PhiT_invS, self.Phi_) # [num_phi, num_phi]
-    I = np.eye(self.num_phi)
+    invTerms = np.empty(shape=(n_uniq, self.n_phi_, self.n_phi_))
+    PhiT_invS = solve(self.Sigma_.T, self.Phi_).T # [n_phi, feat_dim]
+    PhiT_invS_Phi = np.dot(PhiT_invS, self.Phi_) # [n_phi, n_phi]
+    I = np.eye(self.n_phi_)
 
     for ix in range(n_uniq):
       nPhiT_invS_Phi = uniqFreqs[ix] * PhiT_invS_Phi
@@ -308,12 +346,12 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     X : [num_samples, feat_dim]
     X_cov : [feat_dim, feat_dim]
     F : [num_classes, feat_dim]
-    Ey : [num_classes, num_phi]
-    Eyy : [num_phi, num_phi]
+    Ey : [num_classes, n_phi]
+    Eyy : [n_phi, n_phi]
     """
     num_samples = X.shape[0]
-    Ey_FT = np.dot(Ey.T, F) # [num_phi, feat_dim]
-    self.Phi_ = solve(Eyy.T, Ey_FT).T # [feat_dim, num_phi]
+    Ey_FT = np.dot(Ey.T, F) # [n_phi, feat_dim]
+    self.Phi_ = solve(Eyy.T, Ey_FT).T # [feat_dim, n_phi]
     self.Sigma_ = 1. / num_samples * (X_sqr - np.dot(self.Phi_, Ey_FT))
 
   def transform(self, X):
@@ -326,7 +364,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       X = X[:]
     # ====== transform into latent space ====== #
     X_norm = self.normalizer.transform(X)
-    X_project = np.dot(X_norm, self.Uk_) # [num_samples, num_phi]
+    X_project = np.dot(X_norm, self.Uk_) # [num_samples, n_phi]
     return X_project
     # return np.dot(X_project, self.Q_hat_)
     # h = np.dot(X_project, self.Q_hat_) * X_project
@@ -350,7 +388,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     if X_model is None:
       X_model = self.X_model_
     else:
-      # [num_classes, num_phi]
+      # [num_classes, n_phi]
       X_model = np.dot(self.normalizer.transform(X_model), self.Uk_)
     if X_model.shape[0] != self.num_classes:
       raise ValueError("The model matrix contains %d classes, but the "
@@ -362,7 +400,7 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     elif "odin.fuel" in str(type(X)):
       X = X[:]
     # ====== transform the input matrices ====== #
-    X = np.dot(self.normalizer.transform(X), self.Uk_) # [num_samples, num_phi]
+    X = np.dot(self.normalizer.transform(X), self.Uk_) # [num_samples, n_phi]
     # [num_classes, 1]
     score_h1 = np.sum(np.dot(X_model, self.Q_hat_) * X_model, axis=1, keepdims=True)
     # [num_samples, 1]

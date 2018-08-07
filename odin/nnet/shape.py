@@ -30,6 +30,12 @@ class Flatten(NNOp):
 # REshape
 # ===========================================================================
 class Reshape(NNOp):
+  """ More flexible version of reshape operation
+
+  x.shape = (25, 08, 12)
+  reshape(shape=([1], [2], [0]))
+  => x.shape = (08, 12, 25)
+  """
 
   def __init__(self, shape, **kwargs):
     super(Reshape, self).__init__(**kwargs)

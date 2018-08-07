@@ -272,9 +272,9 @@ scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 # ====== plda scoring ====== #
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
-scorer = ml.PLDA(nb_phi=100, niter=12,
+scorer = ml.PLDA(n_phi=100, n_iter=12,
                  centering=True, wccn=True, unit_length=True,
-                 show_llk=False, seed=5218)
+                 show_llk=False, random_state=5218)
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 # ====== svm scoring ====== #
