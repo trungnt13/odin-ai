@@ -13,8 +13,26 @@ from odin.backend.role import has_roles, Weight, Bias
 
 from .base import BaseEstimator, Evaluable
 
+__all__ = [
+    'NeuralClassifier',
+    'NeuralRegressor'
+]
+# ===========================================================================
+# Helper
+# ===========================================================================
+def _read_network_description(network):
+  pass
 
-class NeuralNetworkClassifier(BaseEstimator, Evaluable):
+class _NeuralEstimator(BaseEstimator, Evaluable):
+  pass
+
+# ===========================================================================
+# Main classes
+# ===========================================================================
+class NeuralRegressor(_NeuralEstimator):
+  pass
+
+class NeuralClassifier(_NeuralEstimator):
   """ NeuralNetwork """
 
   def __init__(self, network,

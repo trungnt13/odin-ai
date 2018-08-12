@@ -93,19 +93,24 @@ def get_args_scope():
   return __ARGS_SCOPE_STACK[-1].copy()
 
 @contextmanager
-def args_scope(ops, **kwargs):
+def args_scope(*ops_kwargs, **kwargs):
   """Stores the default arguments for the given set of applied_nnops.
 
   For usage, please see examples at top of the file.
 
   Parameters
   ----------
-  applied_nnops: List or tuple string, type, or NNOp
-      a dictionary containing the current scope. When list_ops_or_scope is a
-      dict, kwargs must be empty. When list_ops_or_scope is a list or tuple,
-      then every op in it need to be decorated with @add_arg_scope to work.
-  **kwargs: keyword=value that will define the defaults for each op in
-      list_ops. All the ops need to accept the given set of arguments.
+  ops_kwargs : series of list or tuple
+    Contain the mapping from (`list_or_single_NNOp`, `**kwargs`)
+     - The `list_or_single_NNOp` can be represented by string (name
+       of a specific NNOp, or name the NNOp class), class (instance
+       of NNOp), object (instance of any class inherited NNOp),
+       list or tuple (which is the list of all above option).
+     - `**kwargs` is list or dictionary containing the tuple of
+       (keyword, value) that will define the defaults for each op in
+       the listed ops
+  kwargs : **kwargs
+    default keywoard arguments for all given `NNOp` in `ops_kwargs`
 
   Return
   ------
@@ -121,15 +126,25 @@ def args_scope(ops, **kwargs):
   if the name scope is given, an increasement ID is generated for
   duplicated NNOp instead of UUID.
   """
+  new_scope = defaultdict(dict)
+  for ops, kw in ops_kwargs:
+    if isinstance(kw, (tuple, list)):
+      kw = dict(kw)
+    if not isinstance(ops, (tuple, list)):
+      ops = [ops]
+    for o in ops:
+      new_scope[o].update(kw)
   # ====== update Arguments Scope ====== #
-  ops = as_tuple(ops)
   # copy prevous scopes
   args_scope = defaultdict(dict)
   for i, j in __ARGS_SCOPE_STACK[-1].items():
     args_scope[i] = j.copy()
   # update new scopes
-  for o in ops:
-    args_scope[o].update(kwargs)
+  for op, kw in new_scope.items():
+    args_scope[op].update(kw)
+  # add the default kwargs
+  for kw in args_scope.values():
+    kw.update(kwargs)
   __ARGS_SCOPE_STACK.append(args_scope)
   # ====== return the scope ====== #
   yield None

@@ -1,4 +1,5 @@
 from __future__ import division, absolute_import, print_function
+from numbers import Number
 
 import numpy as np
 import tensorflow as tf
@@ -68,8 +69,7 @@ class Pool(NNOp):
   def _transpose(self):
     return Upsample(size=self.strides, axes='auto',
         mode=self.transpose_mode, transpose_mode=self.mode,
-        output_shape=self.input_shape)
-
+        desire_shape=self.input_shape)
 
 class Upsample(NNOp):
   """ Upsampling
@@ -78,22 +78,29 @@ class Upsample(NNOp):
   ----------
   size: int
       upsampling size (new_size = input_size * size)
-  axes: 'auto', int, list of int
-      pass
+  axes: int, list of int
+      the axes of tensor which the upsampling method will be applied
   mode: str, int
-      `repeat` is
+      'nn' for nearest neighbor (e.g. [1, 2] => [1, 1, 2, 2]),
+      'pad' for padding within the tensor. 'pad_margin' do padding
+      in the margin of the tensor. 'repeat' simple algorithm for
+      repeating the element (e.g. [1, 2] => [1, 2, 1, 2])
   transpose_mode: {'max', 'avg'}
       pass
+  desire_shape : shape tuple
+      specific output shape, if the upsampled image is bigger, then crop
+      the image, any axis specified with negative value or `None` will
+      be kept unchanged
   """
 
   def __init__(self, size=2, axes='auto', mode='nn', transpose_mode='max',
-               output_shape=None, **kwargs):
+               desire_shape=None, **kwargs):
     super(Upsample, self).__init__(**kwargs)
     self.size = size
     self.axes = axes
     self.mode = mode
     self.transpose_mode = transpose_mode
-    self.output_shape = output_shape
+    self.desire_shape = desire_shape
 
   def _apply(self, X):
     axes = self.axes
@@ -106,25 +113,27 @@ class Upsample(NNOp):
       elif ndims == 5:
         axes = (1, 2, 3)
     X = K.upsample(X, scale=self.size, axes=axes, method=self.mode)
-    # ====== check output_shape ====== #
-    output_shape = self.output_shape
-    if output_shape is not None:
+    # ====== check desire_shape ====== #
+    desire_shape = self.desire_shape
+    if desire_shape is not None:
+      desire_shape = [None if i is None or i < 0 else int(i)
+                      for i in desire_shape]
       # do padding if necessary
       paddings = [[0, 0] if i is None or o is None or i >= o else
                   [tf.cast(tf.ceil((o - i) / 2), 'int32'),
                    tf.cast(tf.floor((o - i) / 2), 'int32')]
-                  for i, o in zip(X.get_shape().as_list(), output_shape)]
+                  for i, o in zip(X.get_shape().as_list(), desire_shape)]
       if not all(i == [0, 0] for i in paddings):
         X = tf.pad(X, paddings=paddings, mode='CONSTANT')
       # do slice if necessary
       slices = [slice(tf.cast(tf.floor((i - o) / 2), 'int32'),
                       tf.cast(-tf.ceil((i - o) / 2), 'int32'), None)
-                if i > o else slice(None)
-                for i, o in zip(X.get_shape().as_list(), output_shape)]
+                if i is not None and o is not None and i > o else slice(None)
+                for i, o in zip(X.get_shape().as_list(), desire_shape)]
       if any(s is not slice(None) for s in slices):
         X = X[slices]
       K.set_shape(X, tuple([i if is_number(i) else None
-                            for i in output_shape]))
+                            for i in desire_shape]))
     return X
 
   def _transpose(self):

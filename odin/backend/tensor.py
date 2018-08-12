@@ -389,7 +389,7 @@ def upsample(x, scale, axes, method='nn', name="Upsample"):
   scale: int, list of int
       scaling up factor
   axes: int, list of int
-      axes is [1, 2] the width and height of an `channel last` image.
+      the axes of tensor which the upsampling method will be applied
   method: str, int
       'nn' for nearest neighbor (e.g. [1, 2] => [1, 1, 2, 2]),
       'pad' for padding within the tensor. 'pad_margin' do padding

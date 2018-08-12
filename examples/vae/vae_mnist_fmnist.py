@@ -1,4 +1,3 @@
-# Huber loss
 from __future__ import print_function, division, absolute_import
 import matplotlib
 matplotlib.use('Agg')
@@ -19,7 +18,7 @@ from odin.utils import args_parse, ctext, batching, Progbar
 
 args = args_parse(descriptions=[
     ('-dim', 'latent dimension', None, 2),
-    ('-data', 'dataset mnist or fmnist', ('mnist', 'fmnist'), 'mnist'),
+    ('-data', 'dataset mnist or fmnist', ('mnist', 'fmnist', 'cifar10'), 'mnist'),
     ('-loss', 'huber, mse, ce (cross-entropy), lglo (log loss)', ('huber', 'mse', 'ce', 'lglo'), 'ce'),
     ('-s', 'number of posterior samples', None, 25),
     ('-bs', 'batch size', None, 128),
@@ -42,36 +41,58 @@ if args.data == 'fmnist':
   X_train = X_train / 255.
   X_valid = X_valid / 255.
   X_test = X_test / 255.
-else:
+elif args.data == 'mnist':
   ds = F.MNIST.load()
   X_train, y_train = ds['X_train'][:], ds['y_train'][:]
   X_valid, y_valid = ds['X_valid'][:], ds['y_valid'][:]
   X_test, y_test = ds['X_test'][:], ds['y_test'][:]
-print(ds)
-X_samples, y_samples = X_train[:25], y_train[:25]
+elif args.data == 'cifar10':
+  ds = F.CIFAR10.load()
+  X_train, y_train = ds['X_train'][:], ds['y_train'][:]
+  X_test, y_test = ds['X_test'][:], ds['y_test'][:]
 
+  ids = np.random.permutation(len(X_train))
+  X_train, y_train = X_train[ids], y_train[ids]
+
+  X_valid, y_valid = X_train[40000:], y_train[40000:]
+  X_train, y_train = X_train[:40000], y_train[:40000]
+  # normalize value to [0, 1]
+  X_train = X_train / 255.
+  X_valid = X_valid / 255.
+  X_test = X_test / 255.
+print(ds)
+# ====== others ====== #
+X_samples, y_samples = X_train[:25], y_train[:25]
 input_shape = ds['X_train'].shape
-print("Input shape:", ctext(input_shape, 'cyan'))
+print("Train shape:", ctext(X_train.shape, 'cyan'))
+print("Valid shape:", ctext(X_valid.shape, 'cyan'))
+print("Test  shape:", ctext(X_test.shape, 'cyan'))
 # ====== create basic tensor ====== #
 X = K.placeholder(shape=(None,) + input_shape[1:], name='X_input')
 y = K.placeholder(shape=(None,), name='y_input')
 # ===========================================================================
 # Create the network
 # ===========================================================================
-f_encoder = N.Sequence([
-    N.Flatten(outdim=2),
-    N.Dense(num_units=200, activation=K.relu),
-    N.Dense(num_units=200, activation=K.relu),
-    N.Dense(num_units=args.dim * 2, activation=K.linear)
-], debug=True, name='EncoderNetwork')
+with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
+  f_encoder = N.Sequence([
+      N.Flatten(outdim=2),
+      N.Dropout(level=0.3),
+      N.Dense(num_units=512),
+      N.BatchNorm(axes=0, activation=K.relu),
+      N.Dense(num_units=512),
+      N.BatchNorm(axes=0, activation=K.relu),
+      N.Dense(num_units=args.dim * 2, activation=K.linear)
+  ], debug=True, name='EncoderNetwork')
 
-f_decoder = N.Sequence([
-    N.Reshape(shape=(-1, [-1])),
-    N.Dense(num_units=200, activation=K.relu),
-    N.Dense(num_units=200, activation=K.relu),
-    N.Dense(num_units=np.prod(input_shape[1:]), activation=K.linear),
-    N.Reshape(shape=([0],) + input_shape[1:])
-], debug=True, name='DecoderNetwork')
+  f_decoder = N.Sequence([
+      N.Reshape(shape=(-1, [-1])),
+      N.Dense(num_units=512, activation=K.relu),
+      N.BatchNorm(axes=0, activation=K.relu),
+      N.Dense(num_units=512, activation=K.relu),
+      N.BatchNorm(axes=0, activation=K.relu),
+      N.Dense(num_units=np.prod(input_shape[1:]), activation=K.linear),
+      N.Reshape(shape=([0],) + input_shape[1:])
+  ], debug=True, name='DecoderNetwork')
 # ===========================================================================
 # Create statistical model
 # ===========================================================================
@@ -156,7 +177,17 @@ importance_weighted_elbo = tf.reduce_mean(
 # ===========================================================================
 update_ops = K.optimizers.Adam(lr=0.001).minimize(-elbo)
 K.initialize_all_variables()
-
+# ====== helper ====== #
+def calc_loss_and_code(dat):
+  losses = []
+  for start, end in batching(batch_size=2048, n=dat.shape[0]):
+    losses.append(K.eval([distortion, rate, qZ_X_samples],
+                         feed_dict={X: dat[start:end]}))
+  d = np.concatenate([i[0] for i in losses], axis=1)
+  r = np.concatenate([i[1] for i in losses], axis=0 if args.analytic else 1)
+  code_samples = np.concatenate([i[-1] for i in losses], axis=1).mean(axis=0)
+  return code_samples, np.mean(d), np.mean(r), np.mean(d + r)
+# ====== intitalize ====== #
 record_train_loss = []
 record_valid_loss = []
 patience = 3
@@ -179,16 +210,18 @@ while True:
   print(ctext("[Epoch %d]" % epoch, 'yellow'), '%.2f(s)' % (timeit.default_timer() - start_time))
   print("[Training set] Distortion: %.4f    Rate: %.4f    Loss: %.4f" % tuple(train_losses))
   # ====== validation set ====== #
-  valid_losses = K.eval([avg_distortion, avg_rate, loss, qZ_X_samples, pX_Z_samples, pX_Z_mean],
-                        feed_dict={X: X_valid})
-  print("[Valid set]    Distortion: %.4f    Rate: %.4f    Loss: %.4f" % valid_losses[:-3])
+  code_samples, di, ra, lo = calc_loss_and_code(dat=X_valid)
+  print("[Valid set]    Distortion: %.4f    Rate: %.4f    Loss: %.4f" % (di, ra, lo))
+  # ====== record the history ====== #
+  record_train_loss.append(train_losses[-1])
+  record_valid_loss.append(lo)
   # ====== plotting ====== #
-  code_samples = valid_losses[-3].mean(axis=0)
   if args.dim > 2:
     code_samples = ml.fast_pca(code_samples, n_components=2,
                                random_state=K.get_rng().randint(10e8))
-  img_samples = valid_losses[-2]
-  img_mean = valid_losses[-1]
+  samples = K.eval([pX_Z_samples, pX_Z_mean])
+  img_samples = samples[0]
+  img_mean = samples[1]
 
   V.plot_figure(nrow=3, ncol=12)
 
@@ -209,14 +242,13 @@ while True:
   ax = plt.subplot(1, 4, 4)
   ax.imshow(V.tile_raster_images(img_mean), cmap=plt.cm.Greys_r)
   ax.axis('off')
-  # ====== record the history ====== #
-  record_train_loss.append(train_losses[-1])
-  record_valid_loss.append(valid_losses[2])
   # ====== check exit condition ====== #
   if args.epoch > 0:
     if epoch >= args.epoch:
       break
   elif len(record_valid_loss) >= 2 and record_valid_loss[-1] > record_valid_loss[-2]:
+    print(ctext("Dropped generalization loss `%.4f` -> `%.4f`" %
+                (record_valid_loss[-2], record_valid_loss[-1]), 'yellow'))
     patience -= 1
     if patience == 0:
       break
@@ -226,7 +258,17 @@ text = V.merge_text_graph(V.print_bar(record_train_loss, title="Train Loss"),
                           V.print_bar(record_valid_loss, title="Valid Loss"))
 print(text)
 # ====== testing ====== #
-_ = K.eval([avg_distortion, avg_rate, loss],
-           feed_dict={X: X_test})
-print("[Test set]     Distortion: %.4f    Rate: %.4f    Loss: %.4f" % _)
-V.plot_save()
+code_samples, di, ra, lo = calc_loss_and_code(dat=X_test)
+if args.dim > 2:
+  code_samples = ml.fast_pca(code_samples, n_components=2,
+                             random_state=K.get_rng().randint(10e8))
+print("[Test set]     Distortion: %.4f    Rate: %.4f    Loss: %.4f" % (di, ra, lo))
+# plot test code samples
+V.plot_figure(nrow=6, ncol=6)
+ax = plt.subplot(1, 1, 1)
+ax.scatter(code_samples[:, 0], code_samples[:, 1], s=2, c=y_valid, alpha=0.5)
+ax.set_title('Test set')
+ax.set_aspect('equal', 'box')
+ax.axis('off')
+
+V.plot_save('/tmp/tmp_vae.pdf')

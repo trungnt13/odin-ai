@@ -149,25 +149,25 @@ y_onehot = tf.one_hot(indices=tf.cast(inputs[-1], 'int32'),
                       depth=len(genders))
 print("Inputs:", ctext(inputs, 'cyan'))
 
-with N.args_scope(ops=['Conv', 'Dense'], b_init=None, activation=K.linear,
-                  pad='same'):
-  with N.args_scope(ops=['BatchNorm'], activation=K.relu):
-    f = N.Sequence([
-        N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+with N.args_scope(
+    [('Conv', 'Dense'), dict(b_init=None, activation=K.linear, pad='same')],
+        ['BatchNorm', dict(activation=K.relu)]):
+  f = N.Sequence([
+      N.Dimshuffle(pattern=(0, 1, 2, 'x')),
 
-        N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
-        N.Pool(pool_size=(3, 2), strides=2),
-        N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
-        N.Pool(pool_size=(3, 2), strides=2, name='PoolOutput'),
+      N.Conv(num_filters=32, filter_size=(7, 7)), N.BatchNorm(),
+      N.Pool(pool_size=(3, 2), strides=2),
+      N.Conv(num_filters=64, filter_size=(3, 3)), N.BatchNorm(),
+      N.Pool(pool_size=(3, 2), strides=2, name='PoolOutput'),
 
-        N.Flatten(outdim=2),
+      N.Flatten(outdim=2),
 
-        N.Dense(1024), N.BatchNorm(),
-        N.Dense(128),
-        N.Dense(512), N.BatchNorm(),
+      N.Dense(1024), N.BatchNorm(),
+      N.Dense(128),
+      N.Dense(512), N.BatchNorm(),
 
-        N.Dense(len(genders))
-    ], debug=1)
+      N.Dense(len(genders))
+  ], debug=1)
 
 y_logit = f(X)
 y_proba = tf.nn.softmax(y_logit)

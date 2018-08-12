@@ -13,7 +13,7 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils.mpi import MPI
-from odin.utils import batching, ctext
+from odin.utils import batching, ctext, flatten_list
 from odin.fuel import Data
 
 from .base import TransformerMixin, BaseEstimator
@@ -46,9 +46,19 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
     raise ValueError("`algo` must be one of the following: 'pca', 'ppca', 'plda' or 'sppca'; but given: '%s'" % algo)
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
-  # ====== pca train ====== #
+  x = flatten_list(x, level=None)
+  # ====== check input ====== #
   x_train = x[0]
   x_test = x[1:]
+  input_shape = None
+  if x_train.ndim > 2: # only 2D for PCA
+    input_shape = (-1,) + x_train.shape[1:]
+    new_shape = (-1, np.prod(input_shape[1:]))
+    x_train = np.reshape(x_train, new_shape)
+    x_test = [np.reshape(x, new_shape) for x in x_test]
+    if n_components is not None: # no need to reshape back
+      input_shape = None
+  # ====== train PCA ====== #
   if algo == 'sppca':
     pca = SupervisedPPCA(n_components=n_components, random_state=random_state)
     pca.fit(x_train, y)
@@ -65,9 +75,14 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   # ====== transform ====== #
   x_train = pca.transform(x_train)
   x_test = [pca.transform(x) for x in x_test]
+  # reshape back to original shape if necessary
+  if input_shape is not None:
+    x_train = np.reshape(x_train, input_shape)
+    x_test = [np.reshape(x, input_shape) for x in x_test]
+  # return the results
   if len(x_test) == 0:
     return x_train
-  return (x_train,) + x_test
+  return tuple([x_train] + x_test)
 
 # ===========================================================================
 # helper

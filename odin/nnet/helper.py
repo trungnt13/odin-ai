@@ -77,6 +77,9 @@ class Sequence(NNOp):
   def __init__(self, ops, all_layers=False,
                strict_transpose=False, debug=False, **kwargs):
     super(Sequence, self).__init__(**kwargs)
+    # ====== validate ops list ====== #
+    if isinstance(ops, (tuple, list)): # remove None values
+      ops = [o for o in ops if o is not None]
     ops = as_tuple(ops, t=NNOp)
     for o in ops:
       name = o.name.split('/')[-1]
