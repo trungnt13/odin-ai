@@ -55,6 +55,8 @@ optz = K.optimizers.Adam(lr=LEARNING_RATE)
 parameters = model.parameters
 print("#Parameters:", len(parameters))
 updates = optz(ce, parameters)
+K.initialize_all_variables()
+# ====== function ====== #
 print('Building training functions ...')
 f_train = K.function(inputs, [ce, optz.norm, cm], updates=updates, training=True)
 print('Building testing functions ...')

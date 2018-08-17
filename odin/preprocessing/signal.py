@@ -715,7 +715,6 @@ def rastafilt(x):
     y[ix, 4:] = signal.lfilter(numer, denom, x[ix, 4:], zi=z[ix, :], axis=-1)[0]
   return y.T
 
-
 def pre_emphasis(s, coeff=0.97):
   """Pre-emphasis of an audio signal.
   Parameters
@@ -729,7 +728,6 @@ def pre_emphasis(s, coeff=0.97):
     return np.append(s[0], s[1:] - coeff * s[:-1])
   else:
     return s - np.c_[s[:, :1], s[:, :-1]] * coeff
-
 
 def smooth(x, win=11, window='hanning'):
   """
@@ -1056,7 +1054,6 @@ def stack_frames(X, frame_length, step_length=None,
            frame_length * X.shape[1])
   strides = (X.strides[0] * step_length, X.strides[1])
   return np.lib.stride_tricks.as_strided(X, shape=shape, strides=strides)
-
 
 def segment_axis(a, frame_length=2048, step_length=512, axis=0,
                  end='cut', pad_value=0, pad_mode='post'):

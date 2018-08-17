@@ -973,6 +973,69 @@ def plot_scatter(x, y, z=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
+def plot_text_scatter(X, text, ax=None,
+                      font_weight='bold', font_size=8, font_alpha=0.8,
+                      elev=None, azim=None, title=None):
+  """
+  Parameters
+  ----------
+  X : numpy.ndarray
+    2-D array
+  text : {tuple, list, array}
+    list of the text or character for plotting at each data point
+  ax : {None, int, tuple of int, Axes object) (default: None)
+    if int, `ax` is the location of the subplot (e.g. `111`)
+    if tuple, `ax` is tuple of location (e.g. `(1, 1, 1)`)
+    if Axes object, `ax` must be `mpl_toolkits.mplot3d.Axes3D` in case `z`
+    is given
+  elev : {None, Number} (default: None or 30 degree)
+    stores the elevation angle in the z plane, with `elev=90` is
+    looking from top down.
+    This can be used to rotate the axes programatically.
+  azim : {None, Number} (default: None or -60 degree)
+    stores the azimuth angle in the x,y plane.
+    This can be used to rotate the axes programatically.
+  """
+  assert X.ndim == 2, \
+  "Only support `X` two dimension array, but given: %s" % str(X.shape)
+  if X.shape[1] == 2:
+    is_3D = False
+  elif X.shape[1] == 3:
+    is_3D = True
+  else:
+    raise ValueError("No support for `X` with shape: %s" % str(X.shape))
+  ax = to_axis(ax, is_3D=is_3D)
+  assert len(text) == len(X), \
+  "`text` length: %d is different from `X` length: %d" % (len(text), len(X))
+  from matplotlib import pyplot as plt
+  # ====== normalize X ====== #
+  x_min, x_max = np.min(X, axis=0), np.max(X, axis=0)
+  X = (X - x_min) / (x_max - x_min)
+  # ====== check y ====== #
+  text = [str(i) for i in text]
+  labels = sorted(set(text))
+  # ====== start plotting ====== #
+  font_dict = {'weight': font_weight,
+               'size': font_size,
+               'alpha':font_alpha}
+  for x, t in zip(X, text):
+    if is_3D:
+      plt.gca().text(x[0], x[1], x[2], t,
+                     color=plt.cm.tab20((labels.index(t) + 1) / float(len(labels))),
+                     fontdict=font_dict)
+    else:
+      plt.text(x[0], x[1], t,
+               color=plt.cm.tab20((labels.index(t) + 1) / float(len(labels))),
+               fontdict=font_dict)
+  # ====== minor adjustment ====== #
+  ax.set_xticklabels([])
+  ax.set_yticklabels([])
+  if is_3D:
+    ax.set_zticklabels([])
+  if title is not None:
+    ax.set_title(title, fontsize=font_size + 2, weight='semibold')
+  return ax
+
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
   '''
@@ -1409,7 +1472,6 @@ def plot_confusion_matrix(cm, labels, ax=None, fontsize=12, colorbar=False,
   # axis.tight_layout()
   return ax
 
-
 def plot_weights(x, ax=None, colormap = "Greys", colorbar=False, keep_aspect=True):
   '''
   Parameters
@@ -1475,9 +1537,7 @@ def plot_weights(x, ax=None, colormap = "Greys", colorbar=False, keep_aspect=Tru
     fig.colorbar(img, ax=axes)
   elif colorbar:
     plt.colorbar(img, ax=ax)
-
   return ax
-
 
 def plot_weights3D(x, colormap = "Greys"):
   '''
@@ -1527,9 +1587,7 @@ def plot_weights3D(x, colormap = "Greys"):
   # colorbar
   axes = fig.get_axes()
   fig.colorbar(img, ax=axes)
-
   return fig
-
 
 def plot_weights4D(x, colormap = "Greys"):
   '''
@@ -1576,9 +1634,7 @@ def plot_weights4D(x, colormap = "Greys"):
   # colorbar
   axes = fig.get_axes()
   fig.colorbar(img, ax=axes)
-
   return fig
-
 
 def plot_hinton(matrix, max_weight=None, ax=None):
   '''
@@ -1615,7 +1671,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
   ax.autoscale_view()
   ax.invert_yaxis()
   return ax
-
 
 # ===========================================================================
 # Helper methods
@@ -1683,7 +1738,6 @@ def _ppndf(cum_prob):
   # swap sign on left tail
   norm_dev[tailindexes[left]] = norm_dev[tailindexes[left]] * -1.0
   return norm_dev
-
 
 def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
                          ax=None, labels=None, legend=True,
@@ -1846,14 +1900,12 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   if legend and any(i is not None for i in labels):
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
-
 # ===========================================================================
 # Header
 # ===========================================================================
 def plot_close():
   from matplotlib import pyplot as plt
   plt.close('all')
-
 
 def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
               tight_plot=False, clear_all=True, log=True):
@@ -1883,7 +1935,6 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
       plt.close('all')
   except Exception as e:
     sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
-
 
 def plot_save_show(path, figs=None, dpi=180, tight_plot=False,
                    clear_all=True, log=True):
