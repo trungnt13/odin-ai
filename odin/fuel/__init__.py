@@ -121,17 +121,18 @@ class CIFAR100(DataLoader):
 # ===========================================================================
 # AUdio dataset
 # ===========================================================================
-class DIGITS(DataLoader):
+class TIDIGITS(DataLoader):
   """ Audio digits dataset
-  Encrytpted and required password
+  Encrypted and required password for access
   """
 
   @classmethod
   def md5(clazz, ext=''):
-    return '9d67ff310626afe27dcc6507862886d037a95791ee182559200683c6cda5ea036821430c78' + \
-    'd1be49fd32342b1dc83a795ab1dea4e69f084d16dc4c4157832f03e215427d46000403d7f3' + \
-    '11b2c6f51db6483295388189cab9cd4d44cce4983c6db4c3c11e985fccd032d29516f3584a' + \
-    '19c5ec616af96970f60c65a2b720f374f5'
+    return '82e2d8df7c376341a1f6deb35acdd1b0c569f0af82fb3f0173' + \
+    'd11af2b74780a6b27611fa1ad0aaf16f0d4f52bddc9be1640ac3881f1' + \
+    'ad074ce34f59650702632f919301507166bc190620ef168d5ef89b983' + \
+    'a428e38814f17af05a4bc51b9a913d1300d54239a6cfa7dd5d75bfdc1' + \
+    '7d2d958e5c3b50b3da499cf5c5eab9ee574'
 
   @classmethod
   def get_dataset(clazz, ext='', override=False):

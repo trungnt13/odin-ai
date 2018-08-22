@@ -221,64 +221,66 @@ for name in data_name:
   print(ctext('labels:', 'cyan'))
   print(ctext(' *', 'yellow'), len(y_true[name]))
 # ===========================================================================
-# Save score to matlab
+# I-vector
 # ===========================================================================
-from scipy.io import savemat
-X_train = ivecs['train'][:]
-y_train = np.array(y_true['train'])
-X_test = ivecs['test'][:]
-y_test = np.array(y_true['test'])
-savemat('/tmp/data.mat', mdict={'X_train': X_train.T, 'y_train': y_train[:, None],
-                                'X_test': X_test.T, 'y_test': y_test[:, None]})
-# ===========================================================================
-# Backend
-# ===========================================================================
-def filelist_2_feat(feat, flist):
-  X = []
-  y = []
-  for name, (start, end) in flist:
-    x = ds[feat][start:end]
-    x = np.mean(x, axis=0, keepdims=True)
-    X.append(x)
-    y.append(fn_label(name))
-  return np.concatenate(X, axis=0), np.array(y)
-
-def evaluate_features(X_train, y_train,
-                      X_test, y_test,
-                      verbose, title):
-  print(ctext("==== LogisticRegression: '%s'" % title, 'cyan'))
-  model = ml.LogisticRegression(nb_classes=labels)
-  model.fit(X_train, y_train)
-  model.evaluate(X_test, y_test)
+X_train = ivecs['train']
+X_test = ivecs['test']
 # ====== cosine scoring ====== #
 print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
 scorer = ml.Scorer(centering=True, wccn=True, lda=True, method='cosine')
-scorer.fit(X=ivecs['train'], y=y_true['train'])
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
 # ====== GMM scoring ====== #
 print(ctext("==== '%s'" % "Ivec GMM-scoring-ova", 'cyan'))
 scorer = ml.GMMclassifier(strategy="ova",
                           n_components=3, covariance_type='full',
                           centering=True, wccn=True, unit_length=True,
                           lda=False, concat=False)
-scorer.fit(X=ivecs['train'], y=y_true['train'])
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
 # ====== GMM scoring ====== #
 print(ctext("==== '%s'" % "Ivec GMM-scoring-all", 'cyan'))
 scorer = ml.GMMclassifier(strategy="all", covariance_type='full',
                           centering=True, wccn=True, unit_length=True,
                           lda=False, concat=False)
-scorer.fit(X=ivecs['train'], y=y_true['train'])
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
 # ====== plda scoring ====== #
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(n_phi=100, n_iter=12,
                  centering=True, wccn=True, unit_length=True,
                  random_state=5218)
-scorer.fit(X=ivecs['train'], y=y_true['train'])
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
 # ====== svm scoring ====== #
 print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='svm')
-scorer.fit(X=ivecs['train'], y=y_true['train'])
-scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
+# ===========================================================================
+# Super-vector
+# ===========================================================================
+X_train = stats['train'][1]
+X_test = stats['test'][1]
+X_train, X_test = ml.fast_pca(X_train, X_test, n_components=args.tdim,
+                              algo='ppca', random_state=5218)
+# ====== GMM scoring ====== #
+print(ctext("==== '%s'" % "Super-Vector GMM-scoring-ova", 'cyan'))
+scorer = ml.GMMclassifier(strategy="ova",
+                          n_components=3, covariance_type='full',
+                          centering=True, wccn=True, unit_length=True,
+                          lda=False, concat=False)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
+# ====== plda scoring ====== #
+print(ctext("==== '%s'" % "Super-Vector PLDA-scoring", 'cyan'))
+scorer = ml.PLDA(n_phi=100, n_iter=12,
+                 centering=True, wccn=True, unit_length=True,
+                 random_state=5218)
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)
+# ====== svm scoring ====== #
+print(ctext("==== '%s'" % "Super-Vector SVM-scoring", 'cyan'))
+scorer = ml.Scorer(wccn=True, lda=True, method='svm')
+scorer.fit(X=X_train, y=y_true['train'])
+scorer.evaluate(X_test, y_true['test'], labels=labels)

@@ -1344,10 +1344,9 @@ def istft(stft_matrix, frame_length, step_length=None,
   except ImportError:
     raise RuntimeError("`istft` requires scipy version >= 0.19")
   return _istft(stft_matrix, fs=1.0, window=window,
-                nperseg=frame_length, noverlap=frame_length - step_length, n_fft=n_fft,
+                nperseg=frame_length, noverlap=frame_length - step_length, nfft=n_fft,
                 input_onesided=True, boundary=padding,
                 time_axis=0, freq_axis=-1)[-1]
-
 
 def power_spectrogram(S, power=2.0):
   """ Extracting power spectrum from a complex-STFT array

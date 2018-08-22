@@ -47,6 +47,8 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
   x = flatten_list(x, level=None)
+  x = [i[:] if i.__class__.__name__ == 'MmapData' else i
+       for i in x]
   # ====== check input ====== #
   x_train = x[0]
   x_test = x[1:]

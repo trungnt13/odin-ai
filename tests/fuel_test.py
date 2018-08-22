@@ -115,7 +115,7 @@ class FuelTest(unittest.TestCase):
                          get_pitch=True, get_vad=True,
                          save_stats=True, substitute_nan=None,
                          dtype='float32', datatype='memmap',
-                         ncache=0.12, ncpu=4)
+                         n_cache=0.12, ncpu=4)
         feat.run()
         ds = F.Dataset(output_path)
 

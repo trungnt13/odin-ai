@@ -302,8 +302,6 @@ class AudioReader(Extractor):
       support downsample (i.e. must be smaller than sr).
   remove_dc_n_dither : bool
     dithering adds noise to the signal to remove periodic noise
-  preemphasis : {None, int(0-1)}
-    pre-emphasis filter, if 0 or None, no filter applied
 
   Input
   -----
@@ -321,14 +319,12 @@ class AudioReader(Extractor):
   """
 
   def __init__(self, sr=None, sr_new=None, best_resample=True,
-               remove_dc_n_dither=False, preemphasis=0.97,
-               dataset=None):
+               remove_dc=True, dataset=None):
     super(AudioReader, self).__init__(is_input_layer=True)
     self.sr = sr
     self.sr_new = sr_new
     self.best_resample = best_resample
-    self.remove_dc_n_dither = bool(remove_dc_n_dither)
-    self.preemphasis = preemphasis
+    self.remove_dc = bool(remove_dc)
     # ====== check dataset ====== #
     if is_string(dataset) and os.path.isdir(dataset):
       dataset = Dataset(dataset)
@@ -385,6 +381,9 @@ class AudioReader(Extractor):
         name = path_or_array
         if 'path' in self.dataset:
           path = self.dataset['path'][path_or_array]
+      # file not exist
+      else:
+        raise ValueError("Cannot locate file at path: %s" % path_or_array)
     # read from file object
     elif is_fileobj(path_or_array):
       path = path_or_array.name
@@ -416,27 +415,8 @@ class AudioReader(Extractor):
     # ====== remove DC offset and diterhing ====== #
     # Approached suggested by:
     # 'Omid Sadjadi': 'omid.sadjadi@nist.gov'
-    if self.remove_dc_n_dither:
-      # assuming 16-bit
-      if max(abs(raw)) <= 1.:
-        raw = raw * 2**15
-      # select alpha
-      if sr == 16000:
-        alpha = 0.99
-      elif sr == 8000:
-        alpha = 0.999
-      else:
-        raise ValueError('Sampling frequency %s not supported' % sr)
-      slen = raw.size
-      raw = lfilter([1, -1], [1, -alpha], raw)
-      dither = np.random.rand(slen) + np.random.rand(slen) - 1
-      s_pow = max(raw.std(), 1e-20)
-      raw = raw + 1.e-6 * s_pow * dither
-    else: # just remove DC offset
-      raw = raw - np.mean(raw, 0)
-    # ====== pre-emphasis ====== #
-    if self.preemphasis is not None and 0. < self.preemphasis < 1.:
-      raw = pre_emphasis(raw, coeff=float(self.preemphasis))
+    if self.remove_dc: # just remove DC offset
+      raw = raw - np.mean(raw, 0).astype(raw.dtype)
     # ====== get duration if possible ====== #
     if sr is not None:
       duration = max(raw.shape) / sr
@@ -451,6 +431,58 @@ class AudioReader(Extractor):
     if name is not None:
       ret['name'] = name
     return ret
+
+class Dithering(Extractor):
+  """ Dithering """
+
+  def __init__(self, input_name=('raw', 'sr'), output_name='raw'):
+    super(Dithering, self).__init__(
+        input_name=as_tuple(input_name, t=string_types),
+        output_name=str(output_name))
+
+  def _transform(self, feat):
+    raw, sr = [feat[name] for name in self.input_name]
+    # assuming 16-bit
+    if max(abs(raw)) <= 1.:
+      raw = raw * 2**15
+    # select alpha
+    if sr == 16000:
+      alpha = 0.99
+    elif sr == 8000:
+      alpha = 0.999
+    else:
+      raise ValueError('Sampling frequency %s not supported' % sr)
+    slen = raw.size
+    raw = lfilter([1, -1], [1, -alpha], raw)
+    dither = np.random.rand(slen) + np.random.rand(slen) - 1
+    s_pow = max(raw.std(), 1e-20)
+    raw = raw + 1.e-6 * s_pow * dither
+    return {self.output_name: raw}
+
+class PreEmphasis(Extractor):
+  """ PreEmphasis
+
+  Parameters
+  ----------
+  coeff : float (0-1)
+      pre-emphasis filter, if 0 or None, no filter applied
+  input_name : string
+      name of raw signal in the features pipeline dictionary
+  """
+
+  def __init__(self, coeff=0.97,
+               input_name='raw', output_name='raw'):
+    super(PreEmphasis, self).__init__(input_name=str(input_name),
+                                      output_name=str(output_name))
+    assert 0. < coeff < 1.
+    self.coeff = float(coeff)
+
+  def _transform(self, feat):
+    raw = feat[self.input_name]
+    if not 0 < raw.ndim <= 2:
+      raise ValueError("Only supper 1 or 2 channel audio but given shape: %s" %
+                       str(raw.shape))
+    return {self.output_name: pre_emphasis(raw, coeff=self.coeff)}
 
 # ===========================================================================
 # Spectrogram
@@ -934,11 +966,9 @@ class AcousticNorm(Extractor):
   windowed_mean_var_norm : bool (default: False)
     perform standardization on small windows, very computaiton
     intensive.
-  use_sad : bool
-    if True, using statistics from SAD indexed frames for
-    normalization
-  sad_name : str
-    feature name of SAD indices, only used if `use_sad=True`
+  sad_name : {str, None} (default: None)
+    feature name of SAD indices, and only using statistics from
+    SAD indexed frames for normalization
   ignore_sad_error : bool
     if True, when length of SAD and feature mismatch, still perform
     normalization, otherwise raise `RuntimeError`.
@@ -948,7 +978,7 @@ class AcousticNorm(Extractor):
   def __init__(self, input_name, output_name=None,
                mean_var_norm=True, windowed_mean_var_norm=False,
                win_length=301, var_norm=True,
-               sad_name='sad', ignore_sad_error=True):
+               sad_name=None, ignore_sad_error=True):
     # ====== check which features will be normalized ====== #
     self.sad_name = str(sad_name) if isinstance(sad_name, string_types) else None
     self.ignore_sad_error = bool(ignore_sad_error)

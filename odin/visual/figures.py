@@ -1190,8 +1190,10 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
       plt.subplots_adjust(hspace=0)
 
 def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
-                     linewidth=0.5, title=None):
-  '''
+                     linewidth=0.5, vmin='auto', vmax='auto',
+                     title=None):
+  ''' Plotting spectrogram
+
   Parameters
   ----------
   x : np.ndarray
@@ -1213,21 +1215,12 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
    - ValueError: The truth value of an array with more than one element is
       ambiguous. Use a.any() or a.all()
 
-  Example
-  -------
-  >>> x = np.random.rand(2000, 1000)
-  >>> fig = plt.figure()
-  >>> ax = fig.add_subplot(2, 2, 1)
-  >>> dnntoolkit.visual.plot_weights(x, ax)
-  >>> ax = fig.add_subplot(2, 2, 2)
-  >>> dnntoolkit.visual.plot_weights(x, ax)
-  >>> ax = fig.add_subplot(2, 2, 3)
-  >>> dnntoolkit.visual.plot_weights(x, ax)
-  >>> ax = fig.add_subplot(2, 2, 4)
-  >>> dnntoolkit.visual.plot_weights(x, ax, path='/Users/trungnt13/tmp/shit.png')
-  >>> plt.show()
   '''
   from matplotlib import pyplot as plt
+  if vmin == 'auto':
+    vmin = np.min(x)
+  if vmax == 'auto':
+    vmax = np.max(x)
 
   # colormap = _cmap(x)
   # colormap = 'spectral'
@@ -1255,23 +1248,22 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
   # ax.axis('off')
   if title is not None:
     ax.set_ylabel(str(title) + '-' + str(x.shape), fontsize=6)
-  img = ax.pcolorfast(x, cmap=colormap, alpha=0.9)
+  img = ax.imshow(x, cmap=colormap, interpolation='kaiser', alpha=0.9,
+                  vmin=vmin, vmax=vmax, origin='lower')
+  # img = ax.pcolorfast(x, cmap=colormap, alpha=0.9)
   # ====== draw vad vertical line ====== #
   if vad is not None:
     for i, j in enumerate(vad):
       if j: ax.axvline(x=i, ymin=0, ymax=1, color='r', linewidth=linewidth,
                        alpha=0.3)
   # plt.grid(True)
-
   if colorbar == 'all':
     fig = ax.get_figure()
     axes = fig.get_axes()
     fig.colorbar(img, ax=axes)
   elif colorbar:
     plt.colorbar(img, ax=ax)
-
   return ax
-
 
 def plot_images(X, tile_shape=None, tile_spacing=None,
                 fig=None, title=None):

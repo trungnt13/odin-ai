@@ -217,6 +217,14 @@ def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
 # Zip
 # ===========================================================================
 def zip_aes(in_path, out_path, password=None, verbose=False):
+  """
+  Parameters
+  ----------
+  in_path : string
+    path to a folder
+  out_path : string
+    path to output zip file
+  """
   if password is None:
     password = input("Your password:")
   password = str(password)
@@ -242,6 +250,14 @@ def zip_aes(in_path, out_path, password=None, verbose=False):
   f.close()
 
 def unzip_aes(in_path, out_path, password=None, verbose=False):
+  """
+  Parameters
+  ----------
+  in_path : string
+    path to input zip file
+  out_path : string
+    path to output parent folder
+  """
   if password is None:
     password = input("Your password:")
   password = str(password)

@@ -383,16 +383,14 @@ class FeatureProcessor(object):
       list of extactor for creating a Pipeline
   path: str
       path to a folder for saving output Dataset
-  ncache: float or int (> 0)
+  n_cache: float or int (> 0)
       pass
   ncpu: int (>0)
       number of Processes will be used to parallel the processor
-  name: None or str
-      identity for the Processor
   """
 
   def __init__(self, jobs, path, extractor,
-               ncache=0.12, ncpu=1, name=None, override=False):
+               n_cache=0.12, ncpu=1, override=False):
     super(FeatureProcessor, self).__init__()
     # ====== check outpath ====== #
     path = os.path.abspath(str(path))
@@ -405,9 +403,6 @@ class FeatureProcessor(object):
       shutil.rmtree(path)
     # set path and name
     self.path = path
-    if name is None:
-      name = self.path
-    self.name = name
     # ====== check jobs ====== #
     if not isinstance(jobs, (tuple, list, np.ndarray)):
       raise ValueError("Provided `jobs` must be instance of tuple, list or ndarray.")
@@ -418,11 +413,11 @@ class FeatureProcessor(object):
     if ncpu is None: # auto select number of CPU
       ncpu = min(len(jobs), cpu_count() - 1)
     ncpu = int(ncpu)
-    if ncpu <= 0 or ncache <= 0:
-      raise ValueError('`ncpu` and `ncache` must be greater than 0, but '
-                       'given values ncpu=%d ncache=%f' % (ncpu, ncache))
+    if ncpu <= 0 or n_cache <= 0:
+      raise ValueError('`ncpu` and `n_cache` must be greater than 0, but '
+                       'given values ncpu=%d n_cache=%f' % (ncpu, n_cache))
     self.ncpu = ncpu
-    self.ncache = ncache
+    self.n_cache = n_cache
     # ====== internal control for feature processor ====== #
     if isinstance(extractor, Pipeline):
       pass
@@ -445,9 +440,8 @@ class FeatureProcessor(object):
     padding = '  '
     # ====== basic info ====== #
     s += '- Jobs: ' + ctext(len(self.jobs), 'cyan') + '\n'
-    s += '- Name: ' + ctext(self.name, 'cyan') + '\n'
     s += '- #CPU: ' + ctext(self.ncpu, 'cyan') + '\n'
-    s += '- #Cache: ' + ctext(self.ncache, 'cyan') + '\n'
+    s += '- #Cache: ' + ctext(self.n_cache, 'cyan') + '\n'
     # ====== print pipeline ====== #
     s += ctext("* Pipeline:", 'red') + '\n'
     for _, extractor in self.extractor.steps:
@@ -466,10 +460,10 @@ class FeatureProcessor(object):
   def run(self):
     njobs = len(self.jobs)
     dataset = Dataset(self.path)
-    if self.ncache <= 1:
+    if self.n_cache <= 1:
       cache_limit = max(2, int(0.12 * njobs))
     else:
-      cache_limit = int(self.ncache)
+      cache_limit = int(self.n_cache)
     # ====== indices ====== #
     databases = defaultdictkey(lambda key:
         MmapDict(path=os.path.join(dataset.path, key), cache_size=10000,
@@ -573,7 +567,7 @@ class FeatureProcessor(object):
               ncpu=self.ncpu, batch=1,
               hwm=self.ncpu * 3,
               backend='python')
-    prog = Progbar(target=njobs, name=self.name,
+    prog = Progbar(target=njobs, name=self.path,
                    interval=0.12, print_report=True, print_summary=True)
     for result in mpi:
       name = post_processing(result)
@@ -627,7 +621,7 @@ class FeatureProcessor(object):
     config_path = os.path.join(dataset.path, 'config')
     config = MmapDict(config_path)
     config['__configuration_time__'] = time.time()
-    config['__processor__'] = self.name
+    config['__processor__'] = self.path
     for i in dir(self):
       if _default_module.match(i) is not None:
         continue

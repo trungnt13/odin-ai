@@ -23,7 +23,6 @@ import numpy as np
 from odin import visual as V, nnet as N
 from odin.utils import ctext, unique_labels, Progbar, UnitTimer
 from odin import fuel as F, utils, preprocessing as pp
-
 # ===========================================================================
 log_path = utils.get_logpath('speech_features_extraction.log',
                              override=True)
@@ -40,76 +39,81 @@ utils.stdio(log_path)
 #     * [digit_sequence]
 #     => "train_g_08_17_as_a_4291815"
 # ===========================================================================
-audio = F.DIGITS.load()
+audio = F.TIDIGITS.load()
+print(audio)
 all_files = sorted(list(audio['indices'].keys()))
-# all_files = all_files[:12] # for testing
-output_path = utils.get_datasetpath(name='DIGITS_feats', override=True)
 fig_path = utils.get_figpath(name='DIGITS', override=True)
 # ===========================================================================
-# Extractor
+# Configuration
 # ===========================================================================
-# ====== configuration ====== #
-debug = False
+debug = True
 padding = False
 frame_length = 0.025
 step_length = 0.005
 dtype = 'float16'
 bnf_network = N.models.BNF_2048_MFCC40()
 bnf_sad = False
-# ====== extractor ====== #
+# ===========================================================================
+# Extractor
+# ===========================================================================
 extractors = pp.make_pipeline(steps=[
-    pp.speech.AudioReader(sr=8000, remove_dc_n_dither=False, preemphasis=0.97,
-                          dataset=audio),
+    pp.speech.AudioReader(sr=8000, dataset=audio),
+    pp.speech.PreEmphasis(coeff=0.97),
+    # ====== STFT ====== #
     pp.speech.STFTExtractor(frame_length=frame_length, step_length=step_length,
-                            n_fft=512, window='hamm', energy=True),
-    pp.speech.PowerSpecExtractor(power=2.0),
-    pp.base.RemoveFeatures(feat_name=['stft', 'raw']),
-    # ====== spectrum ====== #
-    pp.speech.MelsSpecExtractor(n_mels=40, fmin=64, fmax=4000, top_db=80.0),
-    pp.speech.MFCCsExtractor(n_ceps=40, output_name='mfcc', remove_first_coef=False),
-    pp.speech.Power2Db(input_name='spec', top_db=80.0, output_name='pspec'),
-    # ====== sdc ====== #
-    pp.speech.MFCCsExtractor(n_ceps=7, output_name='sdc', remove_first_coef=True),
-    pp.speech.RASTAfilter(rasta=True, input_name='sdc', output_name='sdc'),
-    # ====== pitch ====== #
-    # pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
-    #                          fmin=32, fmax=620, voicingCutoff_pitch=0.7,
-    #                          f0min=64, f0max=420, voicingCutoff_f0=0.55,
-    #                          method='shs', f0=True, voiceProb=True, loudness=False),
-    # pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
-    #                             nmel=40, fmin=20, fmax=None, to_intensity=False),
-    # ====== sad ====== #
+                            n_fft=512, window='hamm'),
+    pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
+    pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
+    pp.base.RemoveFeatures(input_name=['stft', 'raw']),
+    # ====== SAD ====== #
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
-                           feat_name='energy'),
+                           input_name='energy', output_name='sad'),
+    # # ====== spectrum ====== #
+    pp.speech.MelsSpecExtractor(n_mels=40, fmin=64, fmax=4000, top_db=80.0,
+                                input_name=('spec', 'sr'), output_name='mspec'),
+    # # ====== sdc ====== #
+    pp.speech.MFCCsExtractor(n_ceps=7, remove_first_coef=True,
+                             input_name='mspec', output_name='sdc'),
+    pp.speech.RASTAfilter(rasta=True, input_name='sdc', output_name='sdc'),
+    # # ====== pitch ====== #
+    # # pp.speech.openSMILEpitch(frame_length=0.03, step_length=step_length,
+    # #                          fmin=32, fmax=620, voicingCutoff_pitch=0.7,
+    # #                          f0min=64, f0max=420, voicingCutoff_f0=0.55,
+    # #                          method='shs', f0=True, voiceProb=True, loudness=False),
+    # # pp.speech.openSMILEloudness(frame_length=0.03, step_length=step_length,
+    # #                             nmel=40, fmin=20, fmax=None, to_intensity=False),
     # ====== BNF ====== #
-    # pp.speech.BNFExtractor(input_feat='mfcc', stack_context=10, pre_mvn=True,
-    #                        sad_name='sad' if bnf_sad else None, dtype='float32',
-    #                        network=bnf_network, batch_size=32),
-    # ====== normalization ====== #
+    pp.speech.MFCCsExtractor(n_ceps=40, remove_first_coef=False,
+                             input_name='mspec', output_name='mfcc'),
+    # # pp.speech.BNFExtractor(input_feat='mfcc', stack_context=10, pre_mvn=True,
+    # #                        sad_name='sad' if bnf_sad else None, dtype='float32',
+    # #                        network=bnf_network, batch_size=32),
+    # # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           use_sad=False, sad_name='sad', ignore_sad_error=True,
-                           feat_name=('spec', 'pspec', 'mspec', 'mfcc', 'bnf', 'sdc')),
-    # pp.base.RunningStatistics(),
+                           sad_name=None, ignore_sad_error=True,
+                           input_name=('spec', 'mspec', 'mfcc', 'sdc')),
+    pp.base.RunningStatistics(),
     # ====== post processing ====== #
-    pp.base.EqualizeShape0(feat_name=('spec', 'pspec', 'mspec', 'mfcc', 'bnf', 'sdc',
-                                      'pitch', 'f0', 'sad', 'energy',
-                                      'sap', 'loudness')),
-    pp.base.AsType(dtype),
+    pp.base.EqualizeShape0(input_name=('spec', 'mspec', 'mfcc', 'sdc',
+                                       'energy', 'sad')),
+    pp.base.AsType(dtype='float16'),
 ], debug=debug)
 # If debug is ran, tensorflow session created,
 # multi-processing will be stopped during execution of tensorflow BNF
 if debug:
   for i, name in enumerate(all_files[:8]):
     tmp = extractors.transform(name)
+    print('\n')
     V.plot_multiple_features(tmp, title=name)
   V.plot_save(os.path.join(fig_path, 'debug.pdf'))
   exit()
 # ===========================================================================
 # Processor
 # ===========================================================================
+output_path = utils.get_datasetpath(name='DIGITS_feats', override=True)
 processor = pp.FeatureProcessor(jobs=all_files, path=output_path,
                                 extractor=extractors,
-                                ncache=0.12, ncpu=None, override=True)
+                                n_cache=0.12, ncpu=None, override=True)
 with utils.UnitTimer():
   processor.run()
 readme_path = os.path.join(audio.path, [i for i in os.listdir(audio.path)
@@ -151,6 +155,7 @@ if 'pitch' in ds:
     if not np.any(pitch):
       print("Pitch and f0 of name: %s contains only zeros" % name)
 # ====== Visual cluster ====== #
+# TODO: fix bug of the scatter method
 labels = list(set(filter(lambda x: len(x) == 1,
                          [i.split('_')[-1] for i in all_files])))
 print("Labels:", ctext(labels, 'cyan'))

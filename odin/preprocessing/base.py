@@ -236,7 +236,8 @@ class Extractor(BaseEstimator, TransformerMixin):
         print('    ', dummy_formatter(y))
       # parameters
       for name, param in self.get_params().items():
-        print('  ', ctext(name, 'yellow'), ':', dummy_formatter(param))
+        if name not in ('_input_name', '_output_name'):
+          print('  ', ctext(name, 'yellow'), ':', dummy_formatter(param))
     return y
 
 # ===========================================================================
@@ -248,6 +249,10 @@ class Converter(Extractor):
   using `converter` function, and save the new value to
   the `output_name`.
 
+  This could be mapping 1 -> 1 or many -> 1; in case of
+  many to 1 mapping, the `converter` function will be
+  call as `converter(*args)`
+
   Parameters
   ----------
   converter: {Mapping, call-able}
@@ -256,8 +261,8 @@ class Converter(Extractor):
   """
 
   def __init__(self, converter, input_name='name', output_name='name'):
-    super(Converter, self).__init__(input_name=input_name,
-                                    output_name=output_name)
+    super(Converter, self).__init__(input_name=as_tuple(input_name, t=string_types),
+                                    output_name=str(output_name))
     # ====== check converter ====== #
     if not hasattr(converter, '__call__') and \
     not isinstance(converter, Mapping):
@@ -268,11 +273,12 @@ class Converter(Extractor):
     else:
       self.converter = converter
 
-  def _transform(self, name):
+  def _transform(self, feat):
+    X = [feat[name] for name in self.input_name]
     if hasattr(self.converter, '__call__'):
-      name = self.converter(name)
+      name = self.converter(*X)
     else:
-      name = self.converter[name]
+      name = self.converter[X[0] if len(X) == 1 else X]
     return {self.output_name: name}
 
 class DeltaExtractor(Extractor):
@@ -493,7 +499,7 @@ class AsType(Extractor):
     updates = {}
     for name, y in zip(output_name, X):
       updates[name] = y.astype(self.dtype)
-    return X
+    return updates
 
 class DuplicateFeatures(Extractor):
 
@@ -505,6 +511,25 @@ class DuplicateFeatures(Extractor):
   def _transform(self, feat):
     return {out_name: feat[in_name]
             for in_name, out_name in zip(self.input_name, self.output_name)}
+
+class RenameFeatures(Extractor):
+
+  def __init__(self, input_name, output_name):
+    super(RenameFeatures, self).__init__(
+        input_name=as_tuple(input_name, t=string_types),
+        output_name=as_tuple(output_name, t=string_types))
+
+  def _transform(self, X):
+    return X
+
+  def transform(self, feat):
+    if isinstance(feat, Mapping):
+      for old_name, new_name in zip(self.input_name, self.output_name):
+        if old_name in feat: # only remove if it exist
+          X = feat[old_name]
+          del feat[old_name]
+          feat[new_name] = X
+    return feat
 
 class RemoveFeatures(Extractor):
   """ Remove features by name from extracted features dictionary """
@@ -521,7 +546,7 @@ class RemoveFeatures(Extractor):
       for name in self._name:
         if name in feat: # only remove if it exist
           del feat[name]
-    return super(RemoveFeatures, self).transform(feat)
+    return feat
 
 # ===========================================================================
 # Shape

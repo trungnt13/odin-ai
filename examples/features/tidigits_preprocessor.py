@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = "gpu=1,cpu=1,float32"
+os.environ['ODIN'] = "cpu=1,float32"
 import shutil
 
 import numpy as np
@@ -13,10 +13,13 @@ from odin import fuel as F, nnet as N
 from odin import preprocessing as pp
 from odin.utils import (get_all_files, get_all_ext, exec_commands,
                         MPI, cpu_count, Progbar, ArgController,
-                        stdio, ctext)
+                        stdio, ctext, crypto)
+
 args = ArgController(
 ).add('path', "path to TIDIGITS dataset"
-).add('--wav', "Converting sphere file to wave", False
+).add('--wav', "re-run Converting sphere file to wave", False
+).add('--ds', "re-run Group wave files into a dataset", False
+).add('--compress', "re-run compression of the dataset", False
 ).parse()
 
 TOTAL_FILES = 25096
@@ -98,15 +101,16 @@ Example of original data:
 # ====== main path ====== #
 # inpath = "/mnt/sdb1/TIDIGITS"
 inpath = args.path
-outpath = '/home/trung/data/tidigits'
+outpath = '/home/trung/data/TIDIGITS_wav'
+compress_path = '/home/trung/data/TIDIGITS.zip'
 # ====== others ====== #
 wav_path = os.path.join(inpath, "wave")
 infopath = os.path.join(inpath, 'data/children/doc/spkrinfo.txt')
 logpath = os.path.join(inpath, 'log.txt')
-print('Input path:', inpath)
-print("Output path:", outpath)
-print('Convert to WAV at:', wav_path)
-print("Log path:", logpath)
+print("Input path:       ", ctext(inpath, 'cyan'))
+print("Output path:      ", ctext(outpath, 'cyan'))
+print("Convert to WAV at:", ctext(wav_path, 'cyan'))
+print("Log path:         ", ctext(logpath, 'cyan'))
 stdio(logpath)
 
 exts = get_all_ext(inpath)
@@ -180,62 +184,30 @@ jobs = get_all_files(wav_path,
                      filter_func=lambda x: '.wav' == x[-4:])
 assert len(jobs) == TOTAL_FILES
 # ====== configuration ====== #
-padding = False
-NFFT = 2048
-SR_NEW = 16000
-frame_length = 0.05
-step_length = 0.0125
-dither = False
-dtype = 'float16'
-# the feature extraction configuration must match the bnf newwork
-# requirement
-bnf_network = N.models.BNF_2048_MFCC39()
-extractors = pp.make_pipeline(steps=[
-    pp.speech.AudioReader(sr=None, sr_new=SR_NEW, best_resample=True,
-                          remove_dc_n_dither=dither, preemphasis=0.97),
-    pp.base.Converter(converter=lambda x: os.path.basename(x).split('.')[0],
-                      input_name='path'),
-    pp.speech.SpectraExtractor(frame_length=frame_length,
-                               step_length=step_length,
-                               n_fft=NFFT, n_mels=40, n_ceps=13,
-                               fmin=100, fmax=4000, padding=padding),
-    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
-                           feat_name='energy'),
-    # ====== BNF ====== #
-    pp.base.DeltaExtractor(width=9, order=(0, 1, 2), axis=0,
-                           feat_name='mfcc'),
-    pp.base.StackFeatures(context=10, feat_name='mfcc'),
-    pp.speech.BNFExtractor(input_feat='mfcc', network=bnf_network,
-                           pre_mvn=True),
-    # ====== normalization ====== #
-    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           use_sad=False, sad_name='sad',
-                           ignore_sad_error=True,
-                           feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-                                      'qspec', 'qmfcc', 'qmspec')),
-    # ====== post processing ====== #
-    pp.base.EqualizeShape0(feat_name=('spec', 'mspec', 'mfcc', 'bnf',
-                                      'qspec', 'qmspec', 'qmfcc',
-                                      'pitch', 'f0', 'sad', 'energy',
-                                      'sap', 'loudness')),
-    pp.base.RunningStatistics(),
-    pp.base.AsType({'spec': dtype, 'mspec': dtype, 'mfcc': dtype,
-                    'qspec': dtype, 'qmspec': dtype, 'qmfcc': dtype,
-                    'pitch': dtype, 'f0': dtype, 'sap': dtype,
-                    'sad': dtype, 'energy': dtype, 'loudness': dtype,
-                    'raw': dtype, 'bnf': dtype}),
-], debug=False)
-processor = pp.FeatureProcessor(jobs=jobs, path=outpath, extractor=extractors,
-                                ncache=0.08, ncpu=None,
-                                override=True)
-processor.run()
-pp.validate_features(processor, path='/tmp/tidigits', nb_samples=12,
-                     override=True)
-with open(os.path.join(outpath, 'README'), 'w') as f:
-  f.write(README)
-pp.calculate_pca(processor, override=True)
+if not os.path.exists(outpath) or args.ds:
+  extractors = pp.make_pipeline(steps=[
+      pp.speech.AudioReader(sr=None, sr_new=8000, best_resample=True,
+                            remove_dc=True),
+      pp.base.Converter(converter=lambda x: os.path.basename(x).split('.')[0],
+                        input_name='path', output_name='name'),
+      pp.base.AsType(dtype='float16', input_name='raw')
+  ], debug=False)
+  processor = pp.FeatureProcessor(jobs=jobs, path=outpath, extractor=extractors,
+                                  n_cache=0.08, ncpu=None, override=True)
+  processor.run()
+  pp.validate_features(processor, path='/tmp/tidigits', nb_samples=12,
+                       override=True)
+  with open(os.path.join(outpath, 'README'), 'w') as f:
+    f.write(README)
 # ====== check the preprocessed dataset ====== #
 ds = F.Dataset(outpath, read_only=True)
 print(ds)
+print(ctext(ds.md5, 'yellow'))
 ds.close()
+# ====== compress ====== #
+if not os.path.exists(compress_path) or args.compress:
+  if os.path.exists(compress_path):
+    os.remove(compress_path)
+  crypto.zip_aes(in_path=outpath, out_path=compress_path,
+                 verbose=True)
 print("Log at path:", ctext(logpath, 'cyan'))
