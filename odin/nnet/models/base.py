@@ -72,7 +72,7 @@ class Model(NNOp):
   def load_parameters(clazz):
     # ====== all path ====== #
     name = clazz.__name__ + '.zip'
-    path = os.path.join(base64.decodestring(Model.ORIGIN).decode(), name)
+    path = os.path.join(base64.decodebytes(Model.ORIGIN).decode(), name)
     param_path = get_datasetpath(name=clazz.__name__, override=False)
     zip_path = os.path.join(Model.BASE_DIR, name)
     # ====== get params files ====== #

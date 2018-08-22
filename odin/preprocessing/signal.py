@@ -493,7 +493,7 @@ def dct_filters(n_filters, n_input):
   return basis
 
 @cache_memory
-def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
+def mel_filters(sr, n_fft, n_mels=128, fmin=0.0, fmax=None):
   """Create a Filterbank matrix to combine FFT bins into Mel-frequency bins
   Original code: librosa
 
@@ -502,10 +502,10 @@ def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
   sr        : number > 0 [scalar]
       sampling rate of the incoming signal
 
-  nfft     : int > 0 [scalar]
+  n_fft     : int > 0 [scalar]
       number of FFT components
 
-  nmels    : int > 0 [scalar]
+  n_mels    : int > 0 [scalar]
       number of Mel bands to generate
 
   fmin      : float >= 0 [scalar]
@@ -533,22 +533,22 @@ def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
   if fmax is None:
     fmax = float(sr) / 2
   # Initialize the weights
-  nmels = int(nmels)
-  weights = np.zeros((nmels, int(1 + nfft // 2)))
+  n_mels = int(n_mels)
+  weights = np.zeros((n_mels, int(1 + n_fft // 2)))
 
   # Center freqs of each FFT bin
-  fftfreqs = np.linspace(0, float(sr) / 2, int(1 + nfft // 2),
+  fftfreqs = np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
                          endpoint=True)
 
   # 'Center freqs' of mel bands - uniformly spaced between limits
   min_mel = hz2mel(fmin)
   max_mel = hz2mel(fmax)
-  mel_f = mel2hz(mels=np.linspace(min_mel, max_mel, nmels + 2))
+  mel_f = mel2hz(mels=np.linspace(min_mel, max_mel, n_mels + 2))
 
   fdiff = np.diff(mel_f)
   ramps = np.subtract.outer(mel_f, fftfreqs)
 
-  for i in range(nmels):
+  for i in range(n_mels):
     # lower and upper slopes for all bins
     lower = -ramps[i] / fdiff[i]
     upper = ramps[i + 2] / fdiff[i + 1]
@@ -557,7 +557,7 @@ def mel_filters(sr, nfft, nmels=128, fmin=0.0, fmax=None):
     weights[i] = np.maximum(0, np.minimum(lower, upper))
 
   # Slaney-style mel is scaled to be approx constant energy per channel
-  enorm = 2.0 / (mel_f[2:nmels + 2] - mel_f[:nmels])
+  enorm = 2.0 / (mel_f[2:n_mels + 2] - mel_f[:n_mels])
   weights *= enorm[:, np.newaxis]
 
   # Only check weights if f_mel[0] is positive
@@ -1202,7 +1202,7 @@ def get_energy(frames, log=True):
   return np.expand_dims(log_energy.astype('float32'), -1)
 
 
-def stft(y, frame_length, step_length=None, nfft=None,
+def stft(y, frame_length, step_length=None, n_fft=None,
          window='hann', padding=False, energy=False):
   """Short-time Fourier transform (STFT)
 
@@ -1222,7 +1222,7 @@ def stft(y, frame_length, step_length=None, nfft=None,
   step_length: int
       number of samples point for 1 step (when shifting the frames)
       If unspecified, defaults `frame_length / 4`.
-  nfft: int > 0 [scalar]
+  n_fft: int > 0 [scalar]
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
   window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
@@ -1254,10 +1254,10 @@ def stft(y, frame_length, step_length=None, nfft=None,
     step_length = frame_length // 4
   else:
     step_length = int(step_length)
-  if nfft is None:
-    nfft = int(2**np.ceil(np.log(frame_length) / np.log(2.0)))
-  elif nfft < frame_length:
-    raise ValueError('nfft must be greater than or equal to `frame_length`.')
+  if n_fft is None:
+    n_fft = int(2**np.ceil(np.log(frame_length) / np.log(2.0)))
+  elif n_fft < frame_length:
+    raise ValueError('n_fft must be greater than or equal to `frame_length`.')
   # ====== check if padding zeros ====== #
   if padding:
     y = np.pad(y, int(frame_length // 2), mode='constant')
@@ -1282,7 +1282,7 @@ def stft(y, frame_length, step_length=None, nfft=None,
     log_energy = get_energy(y_frames, log=True).astype('float32')
   # ====== STFT matrix ====== #
   # norm='ortho' ?
-  S = np.fft.rfft(a=y_frames, n=nfft, axis=-1)
+  S = np.fft.rfft(a=y_frames, n=n_fft, axis=-1)
   S *= scale # this scale is important for iSTFT recostruct original signal
   # return in form (t, d)
   if energy:
@@ -1337,14 +1337,14 @@ def istft(stft_matrix, frame_length, step_length=None,
     step_length = frame_length // 4
   else:
     step_length = int(step_length)
-  nfft = 2 * (stft_matrix.shape[1] - 1)
+  n_fft = 2 * (stft_matrix.shape[1] - 1)
   # ====== use scipy here ====== #
   try:
     from scipy.signal.spectral import istft as _istft
   except ImportError:
     raise RuntimeError("`istft` requires scipy version >= 0.19")
   return _istft(stft_matrix, fs=1.0, window=window,
-                nperseg=frame_length, noverlap=frame_length - step_length, nfft=nfft,
+                nperseg=frame_length, noverlap=frame_length - step_length, n_fft=n_fft,
                 input_onesided=True, boundary=padding,
                 time_axis=0, freq_axis=-1)[-1]
 
@@ -1354,7 +1354,7 @@ def power_spectrogram(S, power=2.0):
 
   Parameters
   ----------
-  S : array [nb_samples, nfft]
+  S : array [nb_samples, n_fft]
     complex type or real type
   power : float
     factor for converting spectrogram to power spectrum
@@ -1376,7 +1376,7 @@ def power_spectrogram(S, power=2.0):
     spec = np.power(spec, power)
   return spec
 
-def mels_spectrogram(spec, sr, nmels,
+def mels_spectrogram(spec, sr, n_mels,
                      fmin=64, fmax=None, top_db=80.0):
   """ Extracting mel-filter bands from power spectrum
   (i.e. the output from function
@@ -1384,7 +1384,7 @@ def mels_spectrogram(spec, sr, nmels,
 
   Parameters
   ----------
-  spec : array [nb_samples, nfft]
+  spec : array [nb_samples, n_fft]
     power spectrum array
   sr : int
     sample rate
@@ -1398,7 +1398,7 @@ def mels_spectrogram(spec, sr, nmels,
 
   """
   # ====== check arguments ====== #
-  nfft = int(2 * (spec.shape[1] - 1))
+  n_fft = int(2 * (spec.shape[1] - 1))
   # check fmax
   if sr is None and fmax is None:
     fmax = 4000
@@ -1411,7 +1411,7 @@ def mels_spectrogram(spec, sr, nmels,
                      (fmin, fmax))
   # ====== mel transform ====== #
   mel_basis = mel_filters(sr,
-      nfft=nfft, nmels=24 if nmels is None else int(nmels),
+      n_fft=n_fft, n_mels=24 if n_mels is None else int(n_mels),
       fmin=fmin, fmax=fmax)
   # transpose to (nb_samples; nb_mels)
   mel_spec = np.dot(mel_basis, spec.T)
@@ -1419,34 +1419,34 @@ def mels_spectrogram(spec, sr, nmels,
   mel_spec = power2db(mel_spec, top_db=top_db)
   return mel_spec
 
-def ceps_spectrogram(mspec, nceps, remove_first_coef=True):
+def ceps_spectrogram(mspec, n_ceps, remove_first_coef=True):
   """ Compute the MFCCs coefficients (cepstrum analysis)
   from extracted mel-filter bands spectrogram
   (i.e. output from `odin.preprocessing.signal.mels_spectrogram`)
 
   Parameters
   ----------
-  mspec : array [nb_samples, nfft]
+  mspec : array [nb_samples, n_fft]
     mels-spectrogram array
-  nceps : int
+  n_ceps : int
     number of ceptrum for cepstral analysis
   remove_first_coef : bool
     if True remove the first coefficient of the extracted MFCCs
 
   """
   if remove_first_coef:
-    nceps = int(nceps) + 1
-    dct_basis = dct_filters(nceps, mspec.shape[1])
+    n_ceps = int(n_ceps) + 1
+    dct_basis = dct_filters(n_ceps, mspec.shape[1])
     mfcc = np.dot(dct_basis, mspec.T)[1:, :].T
   else:
-    nceps = int(nceps)
-    dct_basis = dct_filters(nceps, mspec.shape[1])
+    n_ceps = int(n_ceps)
+    dct_basis = dct_filters(n_ceps, mspec.shape[1])
     mfcc = np.dot(dct_basis, mspec.T).T
   return mfcc
 
 def spectra(sr, frame_length, y=None, S=None,
-            step_length=None, nfft=512, window='hann',
-            nmels=None, nceps=None,
+            step_length=None, n_fft=512, window='hann',
+            n_mels=None, n_ceps=None,
             fmin=64, fmax=None,
             top_db=80.0, power=2.0, log=True,
             padding=False):
@@ -1476,16 +1476,16 @@ def spectra(sr, frame_length, y=None, S=None,
   step_length: int
       number of samples point for 1 step (when shifting the frames)
       If unspecified, defaults `frame_length / 4`.
-  nfft : int > 0 [scalar]
+  n_fft : int > 0 [scalar]
       length of the FFT window
   window      : string, tuple, number, function, np.ndarray [shape=(n_fft,)]
       - a window specification (string, tuple, or number);
         see `scipy.signal.get_window`
       - a window function, such as `scipy.signal.hanning`
       - a user-specified window vector of length `n_fft`
-  nmels: int, or None
+  n_mels: int, or None
       number of mel-filter bands
-  nceps: int, or None
+  n_ceps: int, or None
       number of ceptrum for cepstral analysis
   fmin: int
       min frequency for mel-filter bands
@@ -1522,9 +1522,9 @@ def spectra(sr, frame_length, y=None, S=None,
   # ====== compute STFT if needed ====== #
   if S is None:
     S, log_energy = stft(y, frame_length=frame_length,
-                         step_length=step_length, nfft=nfft,
+                         step_length=step_length, n_fft=n_fft,
                          window=window, padding=padding, energy=True)
-  nfft = int(2 * (S.shape[1] - 1))
+  n_fft = int(2 * (S.shape[1] - 1))
   # ====== check arguments ====== #
   power = int(power)
   # check fmax
@@ -1543,12 +1543,12 @@ def spectra(sr, frame_length, y=None, S=None,
   if power > 1:
     spec = np.power(spec, power)
   # ====== extrct mel-filter-bands features ====== #
-  if nmels is not None or nceps is not None:
-    mel_spec = mels_spectrogram(spec, sr, nmels)
+  if n_mels is not None or n_ceps is not None:
+    mel_spec = mels_spectrogram(spec, sr, n_mels)
   # ====== extract cepstrum features ====== #
   # extract MFCC
-  if nceps is not None:
-    mfcc = ceps_spectrogram(mel_spec, nceps)
+  if n_ceps is not None:
+    mfcc = ceps_spectrogram(mel_spec, n_ceps)
   # applying log to convert to db
   if log:
     spec = power2db(spec, top_db=top_db)
@@ -1603,7 +1603,7 @@ def ispec(spec, frame_length, step_length=None, window="hann",
   if frame_length < step_length:
     raise ValueError('frame_length=%d < step_length=%d' %
       (frame_length, step_length))
-  nfft = (spec.shape[1] - 1) * 2
+  n_fft = (spec.shape[1] - 1) * 2
   # ====== convert to power spectrogram ====== #
   if db:
     spec = db2power(spec)
@@ -1613,7 +1613,7 @@ def ispec(spec, frame_length, step_length=None, window="hann",
     X_t = istft(X_best, frame_length=frame_length, step_length=step_length,
                 window=window, padding=padding)
     est = stft(X_t, frame_length=frame_length, step_length=step_length,
-               nfft=nfft, window=window, padding=padding, energy=False)
+               n_fft=n_fft, window=window, padding=padding, energy=False)
     phase = est / np.maximum(1e-8, np.abs(est))
     X_best = spec * phase
   X_t = istft(X_best, frame_length=frame_length, step_length=step_length,

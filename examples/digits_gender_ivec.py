@@ -274,7 +274,7 @@ scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(n_phi=100, n_iter=12,
                  centering=True, wccn=True, unit_length=True,
-                 show_llk=False, random_state=5218)
+                 random_state=5218)
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
 # ====== svm scoring ====== #
@@ -282,27 +282,3 @@ print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='svm')
 scorer.fit(X=ivecs['train'], y=y_true['train'])
 scorer.evaluate(ivecs['test'], y_true['test'], labels=labels)
-# # ====== i-vec ====== #
-# evaluate_features(X_train=ivecs['train'], y_train=y_true['train'],
-#                   X_test=ivecs['test'], y_test=y_true['test'],
-#                   verbose=False, title="I-vectors")
-# # ====== zero-th ====== #
-# evaluate_features(X_train=stats['train'][0], y_train=y_true['train'],
-#                   X_test=stats['test'][0], y_test=y_true['test'],
-#                   verbose=False, title="Zero-th stats")
-# # ====== super-vector ====== #
-# evaluate_features(X_train=stats['train'][1], y_train=y_true['train'],
-#                   X_test=stats['test'][1], y_test=y_true['test'],
-#                   verbose=False, title="Super-vector")
-# # ====== bnf ====== #
-# X_train, y_train = filelist_2_feat('bnf', flist=train_files)
-# X_test, y_test = filelist_2_feat('bnf', flist=test_files)
-# evaluate_features(X_train, y_train,
-#                   X_test, y_test,
-#                   verbose=False, title="BNF")
-# # ====== mspec ====== #
-# X_train, y_train = filelist_2_feat('mspec', flist=train_files)
-# X_test, y_test = filelist_2_feat('mspec', flist=test_files)
-# evaluate_features(X_train, y_train,
-#                   X_test, y_test,
-#                   verbose=False, title="Mel-spectrogram")

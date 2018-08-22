@@ -1,9 +1,10 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import re
 import inspect
 
-from six import add_metaclass
+from six import add_metaclass, string_types
 from abc import ABCMeta, abstractmethod
 from collections import Mapping
 
@@ -16,11 +17,12 @@ from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter)
 from odin.utils.decorators import functionable
 from .signal import delta, mvn, stack_frames
+
 # ===========================================================================
 # Helper
 # ===========================================================================
 def make_pipeline(steps, debug=False):
-  """ NOTE: this method automatically:
+  """ NOTE: this method automatically revmove None entries
 
    - Flatten list or dictionary found in steps.
    - Remove any object that not is instance of `Extractor`
@@ -50,6 +52,7 @@ def make_pipeline(steps, debug=False):
   elif not isinstance(steps, (tuple, list)):
     steps = [steps]
   steps = [item2step(i) for i in steps]
+  # remove None
   steps = [s for s in steps if s is not None]
   if len(steps) == 0:
     raise ValueError("No instance of odin.preprocessing.base.Extractor found in `steps`.")
@@ -91,17 +94,69 @@ def _preprocess(x):
 class Extractor(BaseEstimator, TransformerMixin):
   """ Extractor
 
-  The developer must override the `_transform` method.
-   - Any returned features in form of `Mapping` (e.g. dictionary) will
-     be stored with the new extracted features.
-   - If the returned new features is not `Mapping`, all previous extracted
-     features will be ignored, and only return the new features.
+  The developer must override the `_transform` method:
+   - If the return is instance of `collections.Mapping`, the new features
+     will be merged into existed features dictionary (i.e. the input dictionary)
+   - If the return is not instance of `Mapping`, the name of given classes will
+     be used to name the returned features.
+   - If `None` is returned, no `_transform` is called, just return None for
+     the whole pipeline (i.e. None act as terminal signal)
+
+  Parameters
+  ----------
+  input_name : {None, string, list of string}
+    list of string represent the name of feature
+  output_name : {None, string, list of string}
+    default name for the output feature (in case the return is not
+    instance of dictionary);
+    If `input_name` is None and `output_name` is None, use lower
+    case of class name as default
+  is_input_layer : bool (default: False)
+    An input layer accept any type of input to `transform`,
+    otherwise, only accept a dictionary type as input.
 
   """
 
-  def __init__(self, debug=False):
+  def __init__(self, input_name=None, output_name=None,
+               is_input_layer=False):
     super(Extractor, self).__init__()
-    self._debug = bool(debug)
+    self._debug = False
+    self._is_input_layer = bool(is_input_layer)
+    # ====== check input_name ====== #
+    if input_name is None:
+      pass
+    elif isinstance(input_name, string_types):
+      pass
+    elif hasattr(input_name, '__iter__'):
+      input_name = tuple([str(i).lower() for i in input_name])
+    else:
+      raise ValueError("No support for `input_name` type: %s" % str(type(input_name)))
+    self._input_name = input_name
+    # ====== check output_name ====== #
+    if output_name is None:
+      if input_name is None:
+        output_name = self.__class__.__name__.lower()
+      else:
+        output_name = input_name
+    elif isinstance(output_name, string_types):
+      pass
+    elif hasattr(output_name, '__iter__'):
+      output_name = tuple([str(i).lower() for i in output_name])
+    else:
+      raise ValueError("No support for `output_name` type: %s" % str(type(output_name)))
+    self._output_name = output_name
+
+  @property
+  def input_name(self):
+    return self._input_name
+
+  @property
+  def output_name(self):
+    return self._output_name
+
+  @property
+  def is_input_layer(self):
+    return self._is_input_layer
 
   def set_debug(self, debug):
     self._debug = bool(debug)
@@ -116,45 +171,49 @@ class Extractor(BaseEstimator, TransformerMixin):
     raise NotImplementedError
 
   def transform(self, X):
+    # NOTE: do not override this method
     # nothing to transform from None results
     if X is None:
       return None
-    # NOTE: do not override this method
-    try:
-      y = self._transform(X)
-    except Exception as e:
-      print('\n')
-      import traceback; traceback.print_exc()
-      raise e
-    # ====== check returned types ====== #
-    if not isinstance(y, (Mapping, type(None))):
-      raise RuntimeError("Extractor can only return Mapping or None, but "
-                         "the returned type is: %s" % str(type(y)))
+    if not self.is_input_layer and not isinstance(X, Mapping):
+      raise ValueError("the input to `Extractor.transform` must be instance of dictionary, but "
+                       "given type: %s" % str(type(X)))
+    # ====== the transformation ====== #
+    if self.input_name is not None and isinstance(X, Mapping):
+      for name in as_tuple(self.input_name, t=string_types):
+        if name not in X:
+          raise RuntimeError("[%s] Cannot find features with name: %s" %
+                             (self.__class__.__name__, name))
+    y = self._transform(X)
+    # ====== return type must always be a dictionary ====== #
+    if not isinstance(y, Mapping):
+      if isinstance(y, (tuple, list)):
+        y = {i: j for i, j in zip(as_tuple(self.output_name, t=string_types), y)}
+      else:
+        y = {self.output_name: y}
     # ====== Merge previous results ====== #
-    if isinstance(y, Mapping):
-      # remove None values
-      tmp = {}
-      for name, feat in y.items():
+    # remove None values
+    tmp = {}
+    for name, feat in y.items():
+      if any(c.isupper() for c in name):
+        raise RuntimeError("name for features cannot contain "
+                           "upper case.")
+      if feat is None:
+        continue
+      tmp[name] = feat
+    y = tmp
+    # add old features extracted in X, but do NOT override new features in y
+    if isinstance(X, Mapping):
+      for name, feat in X.items():
         if any(c.isupper() for c in name):
           raise RuntimeError("name for features cannot contain "
                              "upper case.")
-        if feat is None:
-          continue
-        tmp[name] = feat
-      y = tmp
-      # add old features extracted in X,
-      # but do NOT override new features in y
-      if isinstance(X, Mapping):
-        for name, feat in X.items():
-          if any(c.isupper() for c in name):
-            raise RuntimeError("name for features cannot contain "
-                               "upper case.")
-          if name not in y:
-            y[name] = _preprocess(feat)
+        if name not in y:
+          y[name] = _preprocess(feat)
+    # ====== print debug text ====== #
     # maybe someone implement __getstate__ and forget _debug
     if not hasattr(self, '_debug'):
       self._debug = False
-    # ====== print debug text ====== #
     if self._debug:
       print(ctext("[Extractor]", 'cyan'),
             ctext(self.__class__.__name__, 'magenta'))
@@ -180,35 +239,26 @@ class Extractor(BaseEstimator, TransformerMixin):
         print('  ', ctext(name, 'yellow'), ':', dummy_formatter(param))
     return y
 
-
 # ===========================================================================
 # General extractor
 # ===========================================================================
-def _match_feat_name(feat_name, name):
-  if feat_name is None:
-    return True
-  elif hasattr(feat_name, '__call__'):
-    return bool(feat_name(name))
-  return name in feat_name
+class Converter(Extractor):
 
+  """ Convert the value under `input_name` to a new value
+  using `converter` function, and save the new value to
+  the `output_name`.
 
-class NameConverter(Extractor):
-
-  """
   Parameters
   ----------
-  converter: Mapping, function
+  converter: {Mapping, call-able}
       convert `inputs['name'] = converter(inputs[keys])`
-  input_name: str, or list of str
-      the order in the list is priority of each key, searching
-      through the inputs for given key and convert it to
-      new `name`
+
   """
 
-  def __init__(self, converter, input_name=None):
-    super(NameConverter, self).__init__()
+  def __init__(self, converter, input_name='name', output_name='name'):
+    super(Converter, self).__init__(input_name=input_name,
+                                    output_name=output_name)
     # ====== check converter ====== #
-    from odin.utils.decorators import functionable
     if not hasattr(converter, '__call__') and \
     not isinstance(converter, Mapping):
       raise ValueError("`converter` must be call-able.")
@@ -217,41 +267,37 @@ class NameConverter(Extractor):
       self.converter = functionable(converter)
     else:
       self.converter = converter
-    # ====== check keys ====== #
-    self.input_name = ('name', 'path') if input_name is None else \
-        as_tuple(input_name, t=str)
 
-  def _transform(self, X):
-    if isinstance(X, Mapping):
-      for key in self.input_name:
-        name = X.get(key, None)
-        if is_string(name):
-          break
-      name = self.converter(name) if hasattr(self.converter, '__call__') \
-          else self.converter[name]
-      X['name'] = str(name)
-    return X
-
+  def _transform(self, name):
+    if hasattr(self.converter, '__call__'):
+      name = self.converter(name)
+    else:
+      name = self.converter[name]
+    return {self.output_name: name}
 
 class DeltaExtractor(Extractor):
 
-  """
+  """ Extracting the delta coefficients given the axis
+
   Parameters
   ----------
-  width: int
+  input_name : list of str
+      list of all features name for calculating the delta
+  width : int
       amount of frames taken into account for 1 delta
-  order: list of int
+  order : list of int
       list of all delta order will be concatenate (NOTE: keep `0` in
       the list if you want to keep original features)
-  axis: int
-      which dimension calculating the data
-      (suggest time-dimension for acoustic features)
-  feat_name: list of str
-      list of all features name for calculating the delta
+  axis : int
+      which dimension calculating the delta
+      (suggest time-dimension for acoustic features, i.e. axis=0)
   """
 
-  def __init__(self, width=9, order=(0, 1), axis=0, feat_name=None):
-    super(DeltaExtractor, self).__init__()
+  def __init__(self, input_name, output_name=None,
+               width=9, order=(0, 1), axis=0):
+    super(DeltaExtractor, self).__init__(
+        input_name=as_tuple(input_name, t=string_types),
+        output_name=output_name)
     # ====== check width ====== #
     width = int(width)
     if width % 2 == 0 or width < 3:
@@ -261,26 +307,21 @@ class DeltaExtractor(Extractor):
     self.order = as_tuple(order, t=int)
     # ====== axis ====== #
     self.axis = axis
-    self.feat_name = feat_name
 
-  def _transform(self, X):
-    if isinstance(X, Mapping):
-      max_order = max(self.order)
-      for name, feat in X.items():
-        if _match_feat_name(self.feat_name, name):
-          all_deltas = delta(data=feat, width=self.width,
-                             order=max_order, axis=self.axis)
-          if not isinstance(all_deltas, (tuple, list)):
-            all_deltas = (all_deltas,)
-          else:
-            all_deltas = tuple(all_deltas)
-          all_deltas = (feat,) + all_deltas
-          all_deltas = tuple([d for i, d in enumerate(all_deltas)
-                              if i in self.order])
-          feat = np.concatenate(all_deltas, axis=-1)
-        X[name] = feat
-    return X
+  def _calc_deltas(self, X):
+    all_deltas = delta(data=X, width=self.width, order=max(self.order), axis=self.axis)
+    if not isinstance(all_deltas, (tuple, list)):
+      all_deltas = (all_deltas,)
+    else:
+      all_deltas = tuple(all_deltas)
+    all_deltas = (X,) + all_deltas
+    all_deltas = tuple([d for i, d in enumerate(all_deltas)
+                        if i in self.order])
+    return np.concatenate(all_deltas, axis=-1)
 
+  def _transform(self, feat):
+    return [self._calc_deltas(feat[name])
+            for name in self.input_name]
 
 class EqualizeShape0(Extractor):
   """ EqualizeShape0
@@ -293,98 +334,80 @@ class EqualizeShape0(Extractor):
 
   Parameters
   ----------
-  feat_name: None or list of string
+  input_name: {None, list of string}
       list of features name will be used for calculating the
       running statistics.
       If None, calculate the statistics for all `numpy.ndarray`
- shrink_mode: 'center', 'left', 'right'
-      center: remove data points from both left and right
-      left: remove data points at the beginning (left)
-      right: remove data points at the end (right)
-  length_dict: dict
-      dictionary mapping name of file to desire length.
-  keys: string, or list of string
-      if `length_dict` if provided, searching for the key in
-      this feature names.
+  shrink_mode: 'center', 'left', 'right'
+       center: remove data points from both left and right
+       left: remove data points at the beginning (left)
+       right: remove data points at the end (right)
   """
 
-  def __init__(self, feat_name, shrink_mode='right',
-               length_dict=None, keys=('name', 'path')):
-    super(EqualizeShape0, self).__init__()
-    if feat_name is None:
-      pass
-    elif hasattr(feat_name, '__call__'):
-      if not is_pickleable(feat_name):
-        raise ValueError("`feat_name` must be a pickle-able call-able.")
-    else:
-      feat_name = tuple([f.lower() for f in as_tuple(feat_name, t=str)])
-    self.feat_name = feat_name
+  def __init__(self, input_name=None, shrink_mode='right'):
+    super(EqualizeShape0, self).__init__(
+        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
     shrink_mode = str(shrink_mode).lower()
     if shrink_mode not in ('center', 'left', 'right'):
       raise ValueError("shrink mode support include: center, left, right")
     self.shrink_mode = shrink_mode
-    # ====== check length dict ====== #
-    if length_dict is not None and not isinstance(length_dict, Mapping):
-      raise ValueError("`length_dict` can be None or Mapping.")
-    self.length_dict = length_dict
-    self.keys = as_tuple(keys, t=str)
 
-  def _transform(self, X):
-    if isinstance(X, Mapping):
-      equalized = {}
-      # ====== searching for desire length ====== #
-      n = None
-      if self.length_dict is None:
-        n = min(feat.shape[0]
-                for name, feat in X.items()
-                if _match_feat_name(self.feat_name, name))
-      else:
-        for k in self.keys:
-          if k in X and X[k] in self.length_dict:
-            n = self.length_dict[X[k]]
-            break
-      if n is None:
-        raise RuntimeError("Cannot find desire length.")
-      # ====== equalize ====== #
-      for name, feat in X.items():
-        # cut the features in left and right
-        # if the shape[0] is longer
-        if _match_feat_name(self.feat_name, name) and feat.shape[0] != n:
-          diff = feat.shape[0] - n
-          if diff < 0:
-            print("Feature length: %d which is smaller "
+  def _transform(self, feat):
+    if self.input_name is None:
+      X = []
+      output_name = []
+      for key, val in feat.items():
+        if isinstance(val, np.ndarray) and val.ndim > 0:
+          X.append(val)
+          output_name.append(key)
+    else:
+      X = [feat[name] for name in self.input_name]
+      output_name = self.input_name
+    # ====== searching for desire length ====== #
+    n = min(i.shape[0] for i in X)
+    # ====== equalize ====== #
+    equalized = {}
+    for name, y in zip(output_name, X):
+      # cut the features in left and right
+      # if the shape[0] is longer
+      if y.shape[0] != n:
+        diff = y.shape[0] - n
+        if diff < 0:
+          print("Feature length: %d which is smaller "
                 "than desire length: %d, feature name is '%s'" %
-                (feat.shape[0], n, X['name']))
-            return None
-          elif diff > 0:
-            if self.shrink_mode == 'center':
-              diff_left = diff // 2
-              diff_right = diff - diff_left
-              feat = feat[diff_left:-diff_right]
-            elif self.shrink_mode == 'right':
-              feat = feat[:-diff]
-            elif self.shrink_mode == 'left':
-              feat = feat[diff:]
-        equalized[name] = feat
-      X = equalized
-    return X
-
+                (y.shape[0], n, X['name']))
+          return None
+        elif diff > 0:
+          if self.shrink_mode == 'center':
+            diff_left = diff // 2
+            diff_right = diff - diff_left
+            y = y[diff_left:-diff_right]
+          elif self.shrink_mode == 'right':
+            y = y[:-diff]
+          elif self.shrink_mode == 'left':
+            y = y[diff:]
+      equalized[name] = y
+    return equalized
 
 class RunningStatistics(Extractor):
   """ Running statistics
 
   Parameters
   ----------
-  feat_name: None or list of string
+  input_name: {string, list of string}
       list of features name will be used for calculating the
       running statistics.
       If None, calculate the statistics for all `numpy.ndarray`
+      with `ndim` > 0
+  axis : int (default: 0)
+      the axis for calculating the statistics
+  prefix : ''
+      the prefix append to 'sum1' and 'sum2'
   """
 
-  def __init__(self, feat_name=None, axis=0, prefix=''):
-    super(RunningStatistics, self).__init__()
-    self.feat_name = None if feat_name is None else \
-        as_tuple(feat_name, t=str)
+  def __init__(self, input_name=None, axis=0, prefix=''):
+    super(RunningStatistics, self).__init__(
+        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
     self.axis = axis
     self.prefix = str(prefix)
 
@@ -394,104 +417,111 @@ class RunningStatistics(Extractor):
   def get_sum2_name(self, feat_name):
     return '%s_%ssum2' % (feat_name, self.prefix)
 
-  def _transform(self, X):
-    if isinstance(X, Mapping):
-      # ====== preprocessing feat_name ====== #
-      feat_name = self.feat_name
-      if feat_name is None:
-        feat_name = [name for name, feat in X.items()
-                     if isinstance(feat, np.ndarray) and feat.ndim >= 1]
-      # ====== calculate the statistics ====== #
-      for feat_name in feat_name:
-        feat = X[feat_name]
-        # ====== SUM of x^1 ====== #
-        sum1 = np.sum(feat, axis=self.axis,
-                      dtype='float64')
-        s1_name = self.get_sum1_name(feat_name)
-        if s1_name not in X:
-          X[s1_name] = sum1
-        else:
-          X[s1_name] += sum1
-        # ====== SUM of x^2 ====== #
-        sum2 = np.sum(np.power(feat, 2), axis=self.axis,
-                      dtype='float64')
-        s2_name = self.get_sum2_name(feat_name)
-        if s2_name not in X:
-          X[s2_name] = sum2
-        else:
-          X[s2_name] += sum2
-    return X
-
+  def _transform(self, feat):
+    if self.input_name is None:
+      X = []
+      output_name = []
+      for key, val in feat.items():
+        if isinstance(val, np.ndarray) and val.ndim > 0:
+          X.append(val)
+          output_name.append(key)
+    else:
+      X = [feat[name] for name in self.input_name]
+      output_name = self.input_name
+    # ====== calculate the statistics ====== #
+    for name, y in zip(output_name, X):
+      # ====== SUM of x^1 ====== #
+      sum1 = np.sum(y, axis=self.axis, dtype='float64')
+      s1_name = self.get_sum1_name(name)
+      if s1_name not in feat:
+        feat[s1_name] = sum1
+      else:
+        feat[s1_name] += sum1
+      # ====== SUM of x^2 ====== #
+      sum2 = np.sum(np.power(y, 2), axis=self.axis, dtype='float64')
+      s2_name = self.get_sum2_name(name)
+      if s2_name not in feat:
+        feat[s2_name] = sum2
+      else:
+        feat[s2_name] += sum2
+    return feat
 
 class AsType(Extractor):
   """ An extractor convert given features to given types
 
   Parameters
   ----------
-  type_map: {Mapping, or list, tuple of (name, dtype)}
-      mapping from feature name -> desire numpy dtype of the features.
-      This is only applied for features which is `numpy.ndarray`
+  dtype : {string, numpy.dtype}
+      desire type
+  input_name: {string, list of string}
+      list of features name will be used for calculating the
+      running statistics.
+      If None, calculate the statistics for all object `hasattr`
+      'astype'
+  exclude_pattern : {string, None}
+      regular expression pattern to exclude all features with given
+      name pattern, only used when `input_name=None`.
+      By default, exclude all running statistics '*_sum1' and '*_sum2'
   """
 
-  def __init__(self, type_map={}):
-    super(AsType, self).__init__()
-    if is_string(type_map) or isinstance(type_map, np.dtype):
-      self.type_map = np.dtype(type_map)
+  def __init__(self, dtype, input_name=None, exclude_pattern=".+\_sum[1|2]"):
+    super(AsType, self).__init__(
+        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    self.dtype = np.dtype(dtype)
+    if isinstance(exclude_pattern, string_types):
+      exclude_pattern = re.compile(exclude_pattern)
     else:
-      if isinstance(type_map, Mapping):
-        type_map = type_map.items()
-      self.type_map = {str(feat_name): np.dtype(dtype)
-                       for feat_name, dtype in type_map}
+      exclude_pattern = None
+    self.exclude_pattern = exclude_pattern
 
-  def _transform(self, X):
-    if isinstance(X, Mapping):
-      # ====== given specific type_map ====== #
-      if isinstance(self.type_map, dict):
-        for feat_name, dtype in self.type_map.items():
-          if feat_name in X:
-            feat = X[feat_name]
-            if isinstance(feat, np.ndarray) and dtype != feat.dtype:
-              X[feat_name] = feat.astype(dtype)
-      # ====== given a single dtype ====== #
-      else:
-        X = {
-            name: data.astype(self.type_map) if hasattr(data, 'astype') else data
-            for name, data in X.items()}
+  def _transform(self, feat):
+    # ====== preprocessing ====== #
+    if self.input_name is None:
+      X = []
+      output_name = []
+      for key, val in feat.items():
+        if hasattr(val, 'astype'):
+          if self.exclude_pattern is not None and \
+          self.exclude_pattern.search(key):
+            continue
+          X.append(val)
+          output_name.append(key)
+    else:
+      X = [feat[name] for name in self.input_name]
+      output_name = self.input_name
+    # ====== astype ====== #
+    updates = {}
+    for name, y in zip(output_name, X):
+      updates[name] = y.astype(self.dtype)
     return X
-
 
 class DuplicateFeatures(Extractor):
 
-  def __init__(self, name, new_name):
-    super(DuplicateFeatures, self).__init__()
-    self.name = str(name)
-    self.new_name = str(new_name)
+  def __init__(self, input_name, output_name):
+    super(DuplicateFeatures, self).__init__(
+        input_name=as_tuple(input_name, t=string_types),
+        output_name=as_tuple(output_name, t=string_types))
 
-  def _transform(self, X):
-    if self.name not in X:
-      raise RuntimeError("Cannot find feature with name: '%s' in processed "
-                         "features list." % self.name)
-    X[self.new_name] = X[self.name]
-    return X
-
+  def _transform(self, feat):
+    return {out_name: feat[in_name]
+            for in_name, out_name in zip(self.input_name, self.output_name)}
 
 class RemoveFeatures(Extractor):
   """ Remove features by name from extracted features dictionary """
 
-  def __init__(self, feat_name=()):
+  def __init__(self, input_name):
     super(RemoveFeatures, self).__init__()
-    self.feat_name = as_tuple(feat_name, t=str)
+    self._name = as_tuple(input_name, t=string_types)
 
   def _transform(self, X):
     return X
 
-  def transform(self, X):
-    if isinstance(X, Mapping):
-      for f in self.feat_name:
-        if f in X: # only remove if it exist
-          del X[f]
-    return super(RemoveFeatures, self).transform(X)
-
+  def transform(self, feat):
+    if isinstance(feat, Mapping):
+      for name in self._name:
+        if name in feat: # only remove if it exist
+          del feat[name]
+    return super(RemoveFeatures, self).transform(feat)
 
 # ===========================================================================
 # Shape
@@ -502,32 +532,41 @@ class StackFeatures(Extractor):
 
   Parameters
   ----------
-  feat_name: None or list of string
-      list of features name will be used for calculating the
-      running statistics.
-      If None, calculate the statistics for all `numpy.ndarray`
-  context: int
+  n_context : int
       number of context frame on the left and right, the final
       number of stacked frame is `context * 2 + 1`
       NOTE: the stacking process, ignore `context` frames at the
       beginning on the left, and at the end on the right.
+  input_name : {None, list of string}
+      list of features name will be used for calculating the
+      running statistics.
+      If None, calculate the statistics for all `numpy.ndarray`
   mvn: bool
       if True, preform mean-variance normalization on input features.
   """
 
-  def __init__(self, context, feat_name=()):
-    super(StackFeatures, self).__init__()
-    self.context = int(context)
-    self.feat_name = as_tuple(feat_name, t=str)
+  def __init__(self, n_context, input_name=None):
+    super(StackFeatures, self).__init__(
+        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    self.n_context = int(n_context)
+    assert self.n_context > 0
 
-  def _transform(self, X):
-    for name in self.feat_name:
-      if name in X:
-        y = X[name]
-        # stacking the context frames
-        if self.context > 0:
-          y = stack_frames(y, frame_length=self.context * 2 + 1,
-                           step_length=1, keep_length=True,
-                           make_contigous=True)
-        X[name] = y
-    return X
+  def _transform(self, feat):
+    if self.input_name is None:
+      X = []
+      output_name = []
+      for key, val in feat.items():
+        if isinstance(val, np.ndarray) and val.ndim > 0:
+          X.append(val)
+          output_name.append(key)
+    else:
+      X = [feat[name] for name in self.input_name]
+      output_name = self.input_name
+    # ====== this ====== #
+    for name, y in zip(output_name, X):
+      # stacking the context frames
+      y = stack_frames(y, frame_length=self.n_context * 2 + 1,
+                       step_length=1, keep_length=True,
+                       make_contigous=True)
+      feat[name] = y
+    return feat

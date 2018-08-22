@@ -43,6 +43,7 @@ import copy
 import shutil
 import inspect
 import warnings
+from six import string_types
 from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
@@ -107,7 +108,7 @@ def read(path_or_file, encode=None):
   """
   Returns
   -------
-  audio_array : [nb_samples, nb_channels]
+  audio_array : [n_samples, nb_channels]
     the audio array
   sr : {int, None}
     sample rate
@@ -173,17 +174,6 @@ def save(file_or_path, s, sr, subtype=None):
 # ===========================================================================
 # Helper function
 # ===========================================================================
-def _extract_s_sr(s_sr):
-  if isinstance(s_sr, Mapping):
-    s_sr = (s_sr['raw'], s_sr['sr'])
-  elif not isinstance(s_sr, (tuple, list)) or \
-  not isinstance(s_sr[0], np.ndarray) or \
-  not is_number(s_sr[1]):
-    raise ValueError("Input to SpectraExtractor must be a tuple, or list "
-                     "of raw signal (ndarray) and sample rate (int).")
-  s, sr = s_sr
-  return s, int(sr)
-
 def _extract_frame_step_length(sr, frame_length, step_length):
   # ====== check frame length ====== #
   if frame_length < 1.:
@@ -333,7 +323,7 @@ class AudioReader(Extractor):
   def __init__(self, sr=None, sr_new=None, best_resample=True,
                remove_dc_n_dither=False, preemphasis=0.97,
                dataset=None):
-    super(AudioReader, self).__init__()
+    super(AudioReader, self).__init__(is_input_layer=True)
     self.sr = sr
     self.sr_new = sr_new
     self.best_resample = best_resample
@@ -476,127 +466,94 @@ class STFTExtractor(Extractor):
       number of samples point for 1 step (when shifting the frames),
       or length of step in millisecond
       If unspecified, defaults `win_length / 4`.
-  nfft: int > 0 [scalar]
+  n_fft: int > 0 [scalar]
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
 
+  Output
+  ------
+  'stft' : complex64 array [time, frequency]
+  'stft_energy' : float32 array [time, 1]
   """
 
-  def __init__(self, frame_length, step_length=None, nfft=512,
-               window='hann', padding=False, energy=False,
-               output_name='stft', output_energy='energy'):
-    super(STFTExtractor, self).__init__()
+  def __init__(self, frame_length, step_length=None, n_fft=512,
+               window='hann', padding=False,
+               input_name=('raw', 'sr'), output_name='stft'):
+    super(STFTExtractor, self).__init__(input_name=input_name, output_name=output_name)
     self.frame_length = frame_length
     self.step_length = step_length
-    self.nfft = nfft
+    self.n_fft = n_fft
     self.window = window
     self.padding = bool(padding)
-    self.energy = bool(energy)
-    self.output_name = str(output_name)
-    self.output_energy = str(output_energy)
 
-  def _transform(self, s_sr):
-    y, sr = _extract_s_sr(s_sr)
+  def _transform(self, y_sr):
+    y, sr = [y_sr[name] for name in self.input_name]
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
-    results = stft(y, frame_length=frame_length, step_length=step_length,
-                   nfft=self.nfft, window=self.window, padding=self.padding,
-                   energy=self.energy)
-    if self.energy:
-      s, e = results
-      return {self.output_name: s, self.output_energy: e}
-    else:
-      s, e = results, None
-      return {self.output_name: s}
+    results = stft(y=y, frame_length=frame_length, step_length=step_length,
+                   n_fft=self.n_fft, window=self.window, padding=self.padding,
+                   energy=True)
+    s, e = results
+    return {self.output_name: s,
+            '%s_energy' % self.output_name: e}
 
 class PowerSpecExtractor(Extractor):
-  """
-  Example
-  -------
-  >>> pipeline = make_pipeline(steps=[
-  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
-  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
-  ...     speech.PowerSpecExtractor(),
-  ...     speech.MelsSpecExtractor(nmels=40),
-  ...     speech.MFCCsExtractor(nceps=13),
-  ...     speech.Power2Db(input_name='spec'),
-  ...     base.RemoveFeatures(feat_name='stft')
-  >>> ], debug=True)
+  """ Extract power spectrogram from complex STFT array
+
+  Output
+  ------
+  'spec' : [time, n_fft / 2 + 1]
+
   """
 
   def __init__(self, power=2.0, input_name='stft', output_name='spec'):
-    super(PowerSpecExtractor, self).__init__()
+    super(PowerSpecExtractor, self).__init__(input_name=input_name,
+                                             output_name=output_name)
     self.power = float(power)
-    self.input_name = input_name
-    self.output_name = output_name
 
   def _transform(self, X):
-    if self.input_name not in X:
-      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
-    return {self.output_name: power_spectrogram(S=X[self.input_name],
-                                                power=self.power)}
+    return power_spectrogram(S=X[self.input_name], power=self.power)
 
 class MelsSpecExtractor(Extractor):
   """
-  Example
-  -------
-  >>> pipeline = make_pipeline(steps=[
-  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
-  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
-  ...     speech.PowerSpecExtractor(),
-  ...     speech.MelsSpecExtractor(nmels=40),
-  ...     speech.MFCCsExtractor(nceps=13),
-  ...     speech.Power2Db(input_name='spec'),
-  ...     base.RemoveFeatures(feat_name='stft')
-  >>> ], debug=True)
+  Parameters
+  ----------
+  input_name : (string, string) (default: ('spec', 'sr'))
+    the name of spectrogram and sample rate in the feature pipeline
+
+  Output
+  ------
+  'mspec' : [time, n_mels]
   """
 
-  def __init__(self, nmels, fmin=64, fmax=None, top_db=80.0,
-               input_name='spec', output_name='mspec'):
-    super(MelsSpecExtractor, self).__init__()
-    self.nmels = int(nmels)
+  def __init__(self, n_mels, fmin=64, fmax=None, top_db=80.0,
+               input_name=('spec', 'sr'), output_name='mspec'):
+    super(MelsSpecExtractor, self).__init__(input_name=input_name,
+                                            output_name=output_name)
+    self.n_mels = int(n_mels)
     self.fmin = fmin
     self.fmax = fmax
     self.top_db = top_db
-    self.input_name = str(input_name)
-    self.output_name = str(output_name)
 
   def _transform(self, X):
-    if self.input_name not in X:
-      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
-    return {self.output_name: mels_spectrogram(
-        spec=X[self.input_name], sr=X['sr'], nmels=self.nmels,
-        fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)}
+    return mels_spectrogram(spec=X[self.input_name[0]], sr=X[self.input_name[1]],
+                            n_mels=self.n_mels,
+                            fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)
 
 class MFCCsExtractor(Extractor):
   """
-  Example
-  -------
-  >>> pipeline = make_pipeline(steps=[
-  ...     speech.AudioReader(preemphasis=0., remove_dc_n_dither=False),
-  ...     speech.STFTExtractor(frame_length=0.02, step_length=0.01, nfft=512, energy=True),
-  ...     speech.PowerSpecExtractor(),
-  ...     speech.MelsSpecExtractor(nmels=40),
-  ...     speech.MFCCsExtractor(nceps=13),
-  ...     speech.Power2Db(input_name='spec'),
-  ...     base.RemoveFeatures(feat_name='stft')
-  >>> ], debug=True)
   """
 
-  def __init__(self, nceps, remove_first_coef=True,
+  def __init__(self, n_ceps, remove_first_coef=True,
                input_name='mspec', output_name='mfcc'):
-    super(MFCCsExtractor, self).__init__()
-    self.nceps = int(nceps)
+    super(MFCCsExtractor, self).__init__(input_name=input_name,
+                                         output_name=output_name)
+    self.n_ceps = int(n_ceps)
     self.remove_first_coef = bool(remove_first_coef)
-    self.input_name = str(input_name)
-    self.output_name = str(output_name)
 
   def _transform(self, X):
-    if self.input_name not in X:
-      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
-    return {self.output_name: ceps_spectrogram(
-        mspec=X[self.input_name], nceps=self.nceps,
-        remove_first_coef=self.remove_first_coef)}
+    return ceps_spectrogram(mspec=X[self.input_name], n_ceps=self.n_ceps,
+                            remove_first_coef=self.remove_first_coef)
 
 class Power2Db(Extractor):
   """ Convert power spectrogram to Decibel spectrogram
@@ -604,16 +561,13 @@ class Power2Db(Extractor):
   """
 
   def __init__(self, input_name, output_name=None, top_db=80.0):
-    super(Power2Db, self).__init__()
-    self.input_name = str(input_name)
-    self.output_name = self.input_name if output_name is None \
-        else str(self.output_name)
+    input_name = as_tuple(input_name, t=string_types)
+    super(Power2Db, self).__init__(input_name=input_name,
+                                   output_name=output_name)
     self.top_db = float(top_db)
 
   def _transform(self, X):
-    if self.input_name not in X:
-      raise RuntimeError("Cannot find input feature with name: '%s'" % self.input_name)
-    return {self.output_name: power2db(S=X[self.input_name], top_db=self.top_db)}
+    return [power2db(S=X[name], top_db=self.top_db) for name in self.input_name]
 
 class SpectraExtractor(Extractor):
   """AcousticExtractor
@@ -626,7 +580,7 @@ class SpectraExtractor(Extractor):
       number of samples point for 1 step (when shifting the frames),
       or length of step in millisecond
       If unspecified, defaults `win_length / 4`.
-  nfft: int > 0 [scalar]
+  n_fft: int > 0 [scalar]
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
   window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
@@ -643,21 +597,21 @@ class SpectraExtractor(Extractor):
       - If `True`, the signal `y` is padded so that frame
         `D[:, t]` is centered at `y[t * hop_length]`.
       - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
-
   """
 
-  def __init__(self, frame_length, step_length=None, nfft=512, window='hann',
-               nmels=None, nceps=None, fmin=64, fmax=None,
-               power=2.0, log=True, padding=False):
-    super(SpectraExtractor, self).__init__()
+  def __init__(self, frame_length, step_length=None, n_fft=512, window='hann',
+               n_mels=None, n_ceps=None, fmin=64, fmax=None,
+               power=2.0, log=True, padding=False,
+               input_name=('raw', 'sr')):
+    super(SpectraExtractor, self).__init__(input_name=input_name)
     # ====== STFT ====== #
     self.frame_length = frame_length
     self.step_length = step_length
-    self.nfft = nfft
+    self.n_fft = n_fft
     self.window = window
     # ====== ceptral analysis ====== #
-    self.nmels = nmels
-    self.nceps = nceps
+    self.n_mels = n_mels
+    self.n_ceps = n_ceps
     self.fmin = fmin
     self.fmax = fmax
     # ====== power spectrum ====== #
@@ -666,15 +620,15 @@ class SpectraExtractor(Extractor):
     # ====== others ====== #
     self.padding = bool(padding)
 
-  def _transform(self, s_sr):
-    s, sr = _extract_s_sr(s_sr)
+  def _transform(self, y_sr):
+    y, sr = [y_sr[i] for i in self.input_name]
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
     # ====== extract spectra ====== #
-    feat = spectra(sr=sr, frame_length=frame_length, y=s, S=None,
-                   step_length=step_length, nfft=self.nfft,
+    feat = spectra(sr=sr, frame_length=frame_length, y=y, S=None,
+                   step_length=step_length, n_fft=self.n_fft,
                    window=self.window,
-                   nmels=self.nmels, nceps=self.nceps,
+                   n_mels=self.n_mels, n_ceps=self.n_ceps,
                    fmin=self.fmin, fmax=self.fmax,
                    top_db=80., power=self.power, log=self.log,
                    padding=self.padding)
@@ -687,41 +641,42 @@ class CQTExtractor(Extractor):
 
   """
 
-  def __init__(self, frame_length, step_length=None, nbins=96, window='hann',
-               nmels=None, nceps=None, fmin=64, fmax=None, padding=False):
-    super(CQTExtractor, self).__init__()
+  def __init__(self, frame_length, step_length=None, n_bins=96, window='hann',
+               n_mels=None, n_ceps=None, fmin=64, fmax=None, padding=False,
+               input_name=('raw', 'sr')):
+    super(CQTExtractor, self).__init__(input_name=input_name)
     self.frame_length = frame_length
     self.step_length = step_length
-    self.nbins = int(nbins)
+    self.n_bins = int(n_bins)
     self.window = window
-    self.nmels = nmels
-    self.nceps = nceps
+    self.n_mels = n_mels
+    self.n_ceps = n_ceps
     self.fmin = fmin
     self.fmax = fmax
     self.padding = padding
 
-  def _transform(self, s_sr):
-    s, sr = _extract_s_sr(s_sr)
+  def _transform(self, y_sr):
+    y, sr = [y_sr[name] for name in self.input_name]
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
     # ====== extract CQT ====== #
     from librosa.core import constantq
     # auto adjust bins_per_octave to get maximum range of frequency
-    bins_per_octave = np.ceil(float(self.nbins - 1) / np.log2(sr / 2. / self.fmin)) + 1
+    bins_per_octave = np.ceil(float(self.n_bins - 1) / np.log2(sr / 2. / self.fmin)) + 1
     # adjust the bins_per_octave to make acceptable hop_length
     # i.e. 2_factors(hop_length) < [ceil(cqt_bins / bins_per_octave) - 1]
-    if _num_two_factors(step_length) < np.ceil(self.nbins / bins_per_octave) - 1:
-      bins_per_octave = np.ceil(self.nbins / (_num_two_factors(step_length) + 1))
+    if _num_two_factors(step_length) < np.ceil(self.n_bins / bins_per_octave) - 1:
+      bins_per_octave = np.ceil(self.n_bins / (_num_two_factors(step_length) + 1))
     with warnings.catch_warnings():
       warnings.filterwarnings("ignore", category=DeprecationWarning)
-      qtrans = constantq.cqt(s, sr=sr, hop_length=step_length, n_bins=self.nbins,
+      qtrans = constantq.cqt(y=y, sr=sr, hop_length=step_length, n_bins=self.n_bins,
                              bins_per_octave=int(bins_per_octave),
-                             fmin=self.fmin, tuning=0.0, real=False, norm=1,
+                             fmin=self.fmin, tuning=0.0, norm=1,
                              filter_scale=1., sparsity=0.01).astype('complex64')
     # ====== ceptral analysis ====== #
-    feat = spectra(sr, frame_length, y=None, S=qtrans.T,
-                   step_length=step_length, nfft=None, window='hann',
-                   nmels=self.nmels, nceps=self.nceps,
+    feat = spectra(sr=sr, frame_length=frame_length, y=None, S=qtrans.T,
+                   step_length=step_length, n_fft=None, window='hann',
+                   n_mels=self.n_mels, n_ceps=self.n_ceps,
                    fmin=64, fmax=self.fmax,
                    top_db=80.0, power=2.0, log=True,
                    padding=self.padding)
@@ -772,52 +727,60 @@ class BNFExtractor(Extractor):
 
   """
 
-  def __init__(self, input_feat, network,
-               stack_context=10, pre_mvn=True, sad_name='sad',
-               output_name='bnf', dtype=None, batch_size=2048):
-    super(BNFExtractor, self).__init__()
+  def __init__(self, input_name, network,
+               output_name='bnf', sad_name='sad',
+               stack_context=10, pre_mvn=True,
+               batch_size=2048):
+    assert isinstance(input_name, string_types), "`input_name` must be string"
+    if isinstance(sad_name, string_types):
+      input_name = (input_name, sad_name)
+      self.use_sad = True
+    else:
+      self.use_sad = False
+    super(BNFExtractor, self).__init__(input_name=input_name, output_name=output_name)
+    # ====== check the network ====== #
     from odin.nnet import NNOp
-    self.input_feat = str(input_feat)
     if not isinstance(network, NNOp):
       raise ValueError("`network` must be instance of odin.nnet.NNOp")
     self.network = network
+    # ====== other configs ====== #
     if stack_context is None:
       stack_context = 0
     self.stack_context = int(stack_context)
     self.pre_mvn = bool(pre_mvn)
-    self.sad_name = str(sad_name)
-    self.output_name = str(output_name)
-    self.dtype = dtype
     self.batch_size = int(batch_size)
 
   def __getstate__(self):
     from odin import nnet as N
     if not self.network.is_initialized:
       self.network()
-    return (self.input_feat, self.batch_size,
+    return (self._input_name, self._output_name,
+            self.use_sad, self.batch_size, self.stack_context, self.pre_mvn,
             N.serialize(self.network, binary_output=True))
 
   def __setstate__(self, states):
     from odin import nnet as N
-    (self.input_feat, self.batch_size, self.network) = states
+    (self._input_name, self._output_name,
+     self.use_sad, self.batch_size, self.stack_context, self.pre_mvn,
+     self.network) = states
     self.network = N.deserialize(self.network,
                                  force_restore_vars=False)
 
   def _transform(self, feat):
-    if self.input_feat not in feat:
-      raise RuntimeError("BNFExtractor require input feature with name: %s"
-                         ", which is not found." % self.input_feat)
-    X = feat[self.input_feat]
-    # ====== pre-normalization ====== #
-    sad = None
-    if self.sad_name in feat and len(feat[self.sad_name]) == len(X):
-      sad = feat[self.sad_name].astype('bool')
-      X_tmp = X[sad]
+    if self.use_sad:
+      X, sad = feat[self.input_name[0]], feat[self.input_name[1]]
+      sad = sad.astype('bool')
+      assert len(sad) == len(X), \
+      "Input mismatch, `sad` has shape: %s, and input feature with name: %s; shape: %s" % \
+      (sad.shape, self.input_name[0], X.shape)
     else:
-      X_tmp = X
+      X = feat[self.input_name]
+      sad = None
+    # ====== pre-normalization ====== #
+    X_sad = X[sad] if sad is not None else X
     if self.pre_mvn:
-      X = (X - X_tmp.mean(0, keepdims=True)) /  \
-          (X_tmp.std(0, keepdims=True) + 1e-18)
+      X = (X - X_sad.mean(0, keepdims=True)) /  \
+          (X_sad.std(0, keepdims=True) + 1e-18)
     # ====== stacking context and applying SAD ====== #
     if self.stack_context > 0:
       X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
@@ -825,18 +788,12 @@ class BNFExtractor(Extractor):
                        make_contigous=True)
     if sad is not None:
       X = X[sad]
-    if self.dtype is not None:
-      X = X.astype(dtype=self.dtype)
     # ====== transform ====== #
     y = []
-    # make prediciton
+    # make prediction
     for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
       y.append(self.network(X[s:e]))
-    y = np.concatenate(y, axis=0)
-    # ====== post-preocessing and return ====== #
-    feat[self.output_name] = y
-    return feat
-
+    return np.concatenate(y, axis=0)
 
 class PitchExtractor(Extractor):
   """
@@ -855,8 +812,8 @@ class PitchExtractor(Extractor):
 
   def __init__(self, frame_length, step_length=None,
                threshold=0.5, fmin=20, fmax=400,
-               algo='swipe', f0=False):
-    super(PitchExtractor, self).__init__()
+               algo='swipe', f0=False, input_name=('raw', 'sr')):
+    super(PitchExtractor, self).__init__(input_name=input_name)
     self.threshold = threshold
     self.fmin = int(fmin)
     self.fmax = int(fmax)
@@ -865,17 +822,17 @@ class PitchExtractor(Extractor):
     self.frame_length = frame_length
     self.step_length = step_length
 
-  def _transform(self, s_sr):
-    s, sr = _extract_s_sr(s_sr)
+  def _transform(self, y_sr):
+    y, sr = [y_sr[name] for name in self.input_name]
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
     # ====== extract pitch ====== #
-    pitch_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
+    pitch_freq = pitch_track(y=y, sr=sr, step_length=step_length, fmin=self.fmin,
         fmax=self.fmax, threshold=self.threshold, otype='pitch',
         algorithm=self.algo)
     pitch_freq = np.expand_dims(pitch_freq, axis=-1)
     if self.f0:
-      f0_freq = pitch_track(s, sr, step_length, fmin=self.fmin,
+      f0_freq = pitch_track(y=y, sr=sr, step_length=step_length, fmin=self.fmin,
           fmax=self.fmax, threshold=self.threshold, otype='f0',
           algorithm=self.algo)
       f0_freq = np.expand_dims(f0_freq, axis=-1)
@@ -885,33 +842,32 @@ class PitchExtractor(Extractor):
 
 
 class SADextractor(Extractor):
-  """ GMM based SAD extractor
+  """ GMM-based SAD extractor
   """
 
   def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
-               feat_name='energy'):
-    super(SADextractor, self).__init__()
+               input_name='energy', output_name='sad'):
+    super(SADextractor, self).__init__(input_name=input_name, output_name=output_name)
     self.nb_mixture = int(nb_mixture)
     self.nb_train_it = int(nb_train_it)
     self.smooth_window = int(smooth_window)
-    self.feat_name = str(feat_name).lower()
 
   def _transform(self, feat):
     # ====== select features type ====== #
-    features = feat[self.feat_name]
+    features = feat[self.input_name]
     if features.ndim > 1:
       features = features.sum(axis=-1)
     # ====== calculate VAD ====== #
-    vad, vad_threshold = vad_energy(log_energy=features.ravel(),
+    sad, sad_threshold = vad_energy(log_energy=features.ravel(),
         distrib_nb=self.nb_mixture, nb_train_it=self.nb_train_it)
     if self.smooth_window > 0:
       # at least 2 voice frames
       threshold = (2. / self.smooth_window)
-      vad = smooth(
-          vad, win=self.smooth_window, window='flat') >= threshold
+      sad = smooth(sad, win=self.smooth_window, window='flat') >= threshold
     # ====== vad is only 0 and 1 so 'uint8' is enough ====== #
-    vad = vad.astype('uint8')
-    return {'sad': vad, 'sad_threshold': float(vad_threshold)}
+    sad = sad.astype('uint8')
+    return {self.output_name: sad,
+            '%s_threshold' % self.output_name: float(sad_threshold)}
 
 # ===========================================================================
 # Normalization
@@ -945,32 +901,29 @@ class RASTAfilter(Extractor):
 
   def __init__(self, rasta=True, sdc=1,
                input_name='mfcc', output_name=None):
-    super(RASTAfilter, self).__init__()
+    super(RASTAfilter, self).__init__(input_name=as_tuple(input_name, t=string_types),
+                                      output_name=output_name)
     self.rasta = bool(rasta)
     self.sdc = int(sdc)
-    self.input_name = str(input_name)
-    self.output_name = self.input_name if output_name is None else str(output_name)
 
   def _transform(self, feat):
-    if self.input_name not in feat:
-      raise RuntimeError("Cannot find feature with name: '%s' in "
-                         "processed feature list." % self.feat_name)
-    mfcc = feat[self.input_name]
-    # apply RASTA
-    if self.rasta:
-      mfcc = rastafilt(mfcc)
-    # apply SDC if required
-    if self.sdc >= 1:
-      nb_ceps = mfcc.shape[-1]
-      mfcc = np.hstack([
-          mfcc,
-          shifted_deltas(mfcc, N=nb_ceps, d=self.sdc,
-                         P=3, k=nb_ceps) # k = 7
-      ])
-    # store new feature
-    feat[self.output_name] = mfcc.astype("float32")
-    return feat
-
+    new_feat = []
+    for name in self.input_name:
+      mfcc = feat[name]
+      # apply RASTA
+      if self.rasta:
+        mfcc = rastafilt(mfcc)
+      # apply SDC if required
+      if self.sdc >= 1:
+        n_ceps = mfcc.shape[-1]
+        mfcc = np.hstack([
+            mfcc,
+            shifted_deltas(mfcc, N=n_ceps, d=self.sdc,
+                           P=3, k=n_ceps) # k = 7
+        ])
+      # store new feature
+      new_feat.append(mfcc.astype("float32"))
+    return new_feat
 
 class AcousticNorm(Extractor):
   """
@@ -992,12 +945,16 @@ class AcousticNorm(Extractor):
 
   """
 
-  def __init__(self, mean_var_norm=True, windowed_mean_var_norm=False,
+  def __init__(self, input_name, output_name=None,
+               mean_var_norm=True, windowed_mean_var_norm=False,
                win_length=301, var_norm=True,
-               use_sad=False, sad_name='sad', ignore_sad_error=True,
-               feat_name=('mspec', 'spec', 'mfcc', 'bnf', 'sdc',
-                          'qspec', 'qmfcc', 'qmspec')):
-    super(AcousticNorm, self).__init__()
+               sad_name='sad', ignore_sad_error=True):
+    # ====== check which features will be normalized ====== #
+    self.sad_name = str(sad_name) if isinstance(sad_name, string_types) else None
+    self.ignore_sad_error = bool(ignore_sad_error)
+    super(AcousticNorm, self).__init__(input_name=as_tuple(input_name, t=string_types),
+                                       output_name=output_name)
+    # ====== configs ====== #
     self.mean_var_norm = bool(mean_var_norm)
     self.windowed_mean_var_norm = bool(windowed_mean_var_norm)
     self.var_norm = bool(var_norm)
@@ -1008,45 +965,35 @@ class AcousticNorm(Extractor):
     if win_length < 3:
       raise ValueError("win_length must >= 3")
     self.win_length = win_length
-    # ====== check which features will be normalized ====== #
-    self.feat_name = as_tuple(feat_name, t=str)
-    # ====== SAD ====== #
-    self.use_sad = bool(use_sad)
-    self.sad_name = str(sad_name)
-    self.ignore_sad_error = bool(ignore_sad_error)
 
   def _transform(self, feat):
     # ====== check SAD indices ====== #
     sad = None
-    if self.use_sad:
-      if self.sad_name not in feat:
-        raise RuntimeError("Cannot find SAD with name: '%s'" % self.sad_name)
+    if self.sad_name is not None:
       sad = feat[self.sad_name]
       if sad.dtype != np.bool:
         sad = sad.astype(np.bool)
     # ====== normalize ====== #
-    feat_normalized = {}
+    feat_normalized = []
     # all `features` is [t, f] shape
-    for name, X in feat.items():
-      if name in self.feat_name:
-        X_sad = sad
-        if sad is not None and len(sad) != len(X):
-          if self.ignore_sad_error:
-            X_sad = None
-          else:
-            raise RuntimeError("Features with name: '%s' have length %d, but "
-                               "given SAD has length %d" %
-                               (name, len(X), len(sad)))
-        # mean-variance normalization
-        if self.mean_var_norm:
-          X = mvn(X, varnorm=self.var_norm, indices=X_sad)
-        # windowed normalization
-        if self.windowed_mean_var_norm:
-          X = wmvn(X, w=self.win_length, varnorm=False, indices=X_sad)
+    for name in self.input_name:
+      X = feat[name]
+      X_sad = sad
+      if sad is not None and len(sad) != len(X):
+        if not self.ignore_sad_error:
+          raise RuntimeError("Features with name: '%s' have length %d, but "
+                             "given SAD has length %d" % (name, len(X), len(sad)))
+        else:
+          X_sad = None
+      # mean-variance normalization
+      if self.mean_var_norm:
+        X = mvn(X, varnorm=self.var_norm, indices=X_sad)
+      # windowed normalization
+      if self.windowed_mean_var_norm:
+        X = wmvn(X, w=self.win_length, varnorm=False, indices=X_sad)
       # update new features
-      feat_normalized[name] = X
+      feat_normalized.append(X)
     return feat_normalized
-
 
 class Read3ColSAD(Extractor):
   """ Read3ColSAD simple helper for applying 3 col
@@ -1062,12 +1009,9 @@ class Read3ColSAD(Extractor):
   ref_feat : str
       name of a reference features that must have the
       same length with the SAD.
-  name_converter: call-able
-      convert the 'path' element in features dictionary (provided to
-      `transform`) to name for search in parsed SAD dictionary.
-  ref_key : str (default: path)
-      reference key in the pipeline can be use to get SAD
-      from given dictionary.
+  input_name : str (default: path)
+      reference key in the pipeline can be use to get the coordinate value
+      of SAD from given dictionary.
   file_regex: str
       regular expression for filtering the files name
 
@@ -1078,21 +1022,13 @@ class Read3ColSAD(Extractor):
   """
 
   def __init__(self, path_or_map, step_length, ref_feat,
-               name_converter=None, ref_key='path',
+               input_name='path', output_name='sad',
                file_regex='.*'):
-    super(Read3ColSAD, self).__init__()
+    super(Read3ColSAD, self).__init__(input_name=str(input_name))
     self.step_length = float(step_length)
     self.ref_feat = str(ref_feat)
     # ====== file regex ====== #
     file_regex = re.compile(str(file_regex))
-    # ====== name_converter ====== #
-    if name_converter is not None:
-      if not hasattr(name_converter, '__call__'):
-        raise ValueError("`name_converter` must be call-able, or Mapping.")
-      if inspect.isfunction(name_converter):
-        name_converter = functionable(func=name_converter)
-    self.name_converter = name_converter
-    self.ref_key = as_tuple(ref_key, t=str)
     # ====== parse all file ====== #
     # read the SAD from file
     if is_string(path_or_map):
@@ -1107,51 +1043,30 @@ class Read3ColSAD(Extractor):
       sad = path_or_map
     else:
       raise ValueError("`path` must be path to folder, or dictionary.")
-    self.sad = sad
+    self._sad = sad
 
-  def _transform(self, feats):
+  def _transform(self, feat):
     # ====== get ref name ====== #
-    name = None
-    for k in self.ref_key:
-      name = feats.get(k, None)
-      if is_string(name):
-        break
-    # ====== get ref feature ====== #
-    if self.ref_feat not in feats:
-      raise RuntimeError("Cannot find reference feature with "
-          "name: '%s'" % self.ref_feat)
-    nb_samples = len(feats[self.ref_feat])
-    # ====== start ====== #
-    if is_string(name):
-      if self.name_converter is not None:
-        name = (self.name_converter[name]
-            if isinstance(self.name_converter, Mapping) else
-            self.name_converter(name))
-      # ====== convert step_length ====== #
-      step_length = self.step_length
-      if step_length >= 1: # step_length is number of frames
-        step_length = step_length / feats['sr']
-        # now step_length is in second
-      # ====== found SAD ====== #
-      no_sad_found = True
-      if name in self.sad:
-        sad = self.sad[name]
-        if len(sad) > 0:
-          sad_indices = np.zeros(shape=(nb_samples,), dtype=np.uint8)
-          for start_sec, end_sec in sad:
-            start_idx = int(start_sec / step_length)
-            end_idx = int(end_sec / step_length)
-            # ignore zero SAD
-            if end_idx - start_idx == 0:
-              continue
-            sad_indices[start_idx:end_idx] = 1
-          feats['sad'] = sad_indices
-          no_sad_found = False
+    name = feat[self.input_name]
+    ref_feat = feat[self.ref_feat]
+    n_samples = len(ref_feat)
+    # ====== convert step_length ====== #
+    step_length = self.step_length
+    if step_length >= 1: # step_length is number of frames
+      # now step_length is in second
+      step_length = step_length / feat['sr']
+    # ====== found SAD ====== #
+    sad_indices = np.zeros(shape=(n_samples,), dtype=np.uint8)
+    if name in self.sad and len(self.sad[name]) > 0:
+      for start_sec, end_sec in self.sad[name]:
+        start_idx = int(start_sec / step_length)
+        end_idx = int(end_sec / step_length)
+        # ignore zero SAD
+        if end_idx - start_idx == 0:
+          continue
+        sad_indices[start_idx:end_idx] = 1
     # ====== return ====== #
-    if no_sad_found:
-      feats['sad'] = np.zeros(shape=(nb_samples,), dtype=np.uint8)
-    return feats
-
+    return {self.output_name: sad_indices}
 
 class ApplyingSAD(Extractor):
   """ Applying SAD index to given features
@@ -1178,41 +1093,36 @@ class ApplyingSAD(Extractor):
 
   """
 
-  def __init__(self, sad_name='sad', threshold=None,
-               smooth_win=None, keep_unvoiced=False,
-               feat_name=('spec', 'mspec', 'mfcc',
-                          'qspec', 'qmspec', 'qmfcc',
-                          'pitch', 'f0', 'energy')):
-    super(ApplyingSAD, self).__init__()
+  def __init__(self, input_name, output_name=None, sad_name='sad',
+               threshold=None, smooth_win=None, keep_unvoiced=False):
+    super(ApplyingSAD, self).__init__(input_name=as_tuple(input_name, t=string_types),
+                                      output_name=output_name)
+    self.sad_name = str(sad_name)
     self.threshold = float(threshold) if is_number(threshold) else None
     self.smooth_win = int(smooth_win) if is_number(smooth_win) else None
-    self.sad_name = str(sad_name)
     self.keep_unvoiced = bool(keep_unvoiced)
-    self.feat_name = as_tuple(feat_name, t=str)
 
   def _transform(self, X):
-    if self.sad_name in X:
-      # ====== threshold sad to index ====== #
-      sad = X[self.sad_name]
-      if is_number(self.threshold):
-        sad = (sad >= self.threshold).astype('int32')
-      if is_number(self.smooth_win) and self.smooth_win > 0:
-        sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
-      sad = sad.astype('bool')
-      # ====== keep unvoiced or not ====== #
-      if np.sum(sad) == 0:
-        if not self.keep_unvoiced:
-          return None
-        else: # take all frames
-          sad[:] = True
-      # ====== start ====== #
-      X_new = {}
-      for feat_name, X_feat in X.items():
-        if feat_name in self.feat_name:
-          assert len(sad) == max(X_feat.shape),\
-              "Length of sad labels is: %d, but number of sample is: %s"\
-              % (len(sad), max(X_feat.shape))
-          X_sad = X_feat[sad]
-          # update feature
-          X_new[feat_name] = X_sad
+    # ====== threshold sad to index ====== #
+    sad = X[self.sad_name]
+    if is_number(self.threshold):
+      sad = (sad >= self.threshold).astype('int32')
+    if is_number(self.smooth_win) and self.smooth_win > 0:
+      sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
+    sad = sad.astype('bool')
+    # ====== keep unvoiced or not ====== #
+    if np.sum(sad) == 0:
+      if not self.keep_unvoiced:
+        return None
+      else: # take all frames
+        sad[:] = True
+    # ====== start ====== #
+    X_new = []
+    for name in self.input_name:
+      X_feat = X[name]
+      assert len(sad) == max(X_feat.shape),\
+          "Feature with name: %s, length of sad labels is: %d, but number of sample is: %s" % \
+          (name, len(sad), max(X_feat.shape))
+      # update feature
+      X_new.append(X_feat[sad])
     return X_new

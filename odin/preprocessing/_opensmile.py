@@ -31,7 +31,6 @@ __all__ = [
     'openSMILEsad'
 ]
 
-
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -59,7 +58,6 @@ def _get_conf_file(name):
     raise RuntimeError("Cannot find config file at path: %s" % conf_path)
   with open(conf_path, 'r') as f:
     return f.read()
-
 
 # ===========================================================================
 # Base
@@ -210,7 +208,6 @@ class openSMILEf0(_openSMILEbase):
     f0 = X[:-1]
     return {'f0': f0[:, np.newaxis]}
 
-
 class openSMILEloudness(_openSMILEbase):
   """ Loudness via simple auditory band model
   """
@@ -246,7 +243,6 @@ class openSMILEloudness(_openSMILEbase):
       X = X * 60
       name = 'intensity'
     return {name: X[:, np.newaxis]}
-
 
 class openSMILEpitch(_openSMILEbase):
   """
@@ -379,7 +375,6 @@ class openSMILEpitch(_openSMILEbase):
       ret['sap'] = X_sap
     return ret
 
-
 class openSMILEsad(_openSMILEbase):
   """ SMILEsad
   NOTE: This is only for testing, this method is really not efficience
@@ -402,7 +397,7 @@ class openSMILEsad(_openSMILEbase):
     self.window = str(window)
     self.threshold = None if threshold is None \
         else np.clip(threshold, -1., 1.)
-    self.output_name = str(output_name)
+    self._output_name = str(output_name)
 
   @property
   def config(self):

@@ -124,8 +124,8 @@ class CIFAR100(DataLoader):
 class DIGITS(DataLoader):
   """ Audio digits dataset
   Encrytpted and required password
-
   """
+
   @classmethod
   def md5(clazz, ext=''):
     return '9d67ff310626afe27dcc6507862886d037a95791ee182559200683c6cda5ea036821430c78' + \
