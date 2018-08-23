@@ -6,20 +6,21 @@
 from __future__ import print_function, division, absolute_import
 
 import numbers
-from abc import ABCMeta, abstractproperty
-from collections import OrderedDict
 from six import add_metaclass
+from abc import ABCMeta, abstractproperty
+from collections import OrderedDict, defaultdict
 
 import numpy as np
 import tensorflow as tf
 
 from odin.config import CONFIG, get_session
-from odin.utils import as_tuple, is_number, uuid
+from odin.utils import as_tuple, is_number, uuid, ctext
 from odin.utils.cache_utils import cache_memory
 
 from .role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
                    GradientsNorm, GraidentsClipping, has_roles, get_roles,
-                   Role, Parameter, Weight, Bias, TrainableParameter)
+                   Role, Parameter, Weight, Bias, TrainableParameter,
+                   Variable as _Variable)
 from .helpers import is_tensor, get_value, ComputationGraph, is_variable
 
 floatX = CONFIG.floatX
@@ -147,19 +148,70 @@ class Optimizer(object):
     return self._norm
 
   def minimize(self, loss, var_list=None,
-               roles=[TrainableParameter], ignore_roles=[]):
+               roles=[TrainableParameter], exclude_roles=[],
+               verbose=False):
+    """
+    Parameters
+    ----------
+    loss : {Tensor, list of Tensor}
+      the loss for minimize
+    var_list : {None, list of tensorflow.Variable}
+      if None, automatically selecting the Variables, by getting
+      all Variables associated with `loss` and using given
+      `roles` and `exclude_roles`
+    roles : {None, list of odin.backend.role}
+      in case of `var_list=None`, all Variables with given role
+      in this list will be selected for calculating gradients.
+    exclude_roles : {None, list of odin.backend.role}
+      all Variables have role in this list will be ignored.
+    verbose : bool (default: False)
+      if True, print out all found variables and their roles
+    """
+    if exclude_roles is None:
+      exclude_roles = []
     # ====== get all relevant variables ====== #
     if var_list is not None:
       all_variables = as_tuple(var_list, t=is_variable)
     else:
       all_variables = ComputationGraph(loss).variables
-    # ====== filtering ====== #
+    # ====== filtering by Roles ====== #
     trainable = [v for v in all_variables
                  if has_roles(v, roles=roles)]
-    if ignore_roles is not None and \
-    (isinstance(ignore_roles, Role) or len(ignore_roles) > 0):
-      trainable = [v for v in all_variables
-                   if not has_roles(v, roles=roles)]
+    if isinstance(exclude_roles, Role) or len(exclude_roles) > 0:
+      trainable = [v for v in trainable
+                   if not has_roles(v, roles=exclude_roles)]
+    # ====== filtering by dtype ====== #
+    # remove all boolean and string dtype
+    trainable = [v
+                 for v in trainable
+                 if 'int' in str(v.dtype) or 'float' in str(v.dtype)]
+    # ====== verbose ====== #
+    if bool(verbose):
+      # print loss first
+      print("Loss:", ctext(str(loss), 'yellow'))
+      # organize variable by role
+      role_vars = defaultdict(list)
+      for var in trainable:
+        roles = get_roles(var)
+        for r in roles:
+          role_vars[r].append(var)
+      # everything is variable already so no need to show Variable role
+      del role_vars['variables']
+      # print debug info (this is ugly but look nice and fun)
+      max_name_length = str(max(max(len(i.name)
+                                    for i in v)
+                                for v in role_vars.values()))
+      max_shape_length = str(max(max(len(str(i.get_shape().as_list()))
+                                     for i in v)
+                                 for v in role_vars.values()))
+      for role, var_list in sorted(role_vars.items(),
+                                   key=lambda x: str(x[0])):
+        print('Role:', ctext(role, 'yellow'))
+        for var in sorted(var_list, key=lambda x: x.name):
+          print(' ',
+                ('%-' + max_name_length + 's') % var.name.replace('/', ' '),
+                ctext(('%-' + max_shape_length + 's') % var.get_shape().as_list(), 'magenta'),
+                ctext(var.dtype.base_dtype.name, 'cyan'))
     # ====== get the updates ====== #
     updates = self.algorithm.minimize(loss=loss, global_step=self._step,
                                       var_list=trainable)

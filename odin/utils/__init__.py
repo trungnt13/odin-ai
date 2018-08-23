@@ -658,7 +658,8 @@ class FuncDesc(object):
 # ===========================================================================
 def args_parse(descriptions):
   """ Shortcut for parsing the argument from terminal
-  command
+  command, by a list of following tuple:
+    [(name, help, enum_values, default_value), ...]
 
   Parameter
   ---------

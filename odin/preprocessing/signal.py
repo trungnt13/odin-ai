@@ -988,10 +988,10 @@ def pad_sequences(sequences, maxlen=None, dtype='int32',
     X[idx, slice_] = np.asarray(s, dtype=dtype)
   return X
 
-
 def stack_frames(X, frame_length, step_length=None,
                  keep_length=False, make_contigous=False):
-  """
+  """ Stack consecutive frames into single vector, each operation
+  is shifted by `step_length`
 
   Parameters
   ----------
@@ -999,9 +999,9 @@ def stack_frames(X, frame_length, step_length=None,
       2D arrray
   frame_length: int
       number of frames will be stacked into 1 sample.
-  step_length: {int, None}
-      number of shift frame, if None, its value equal to
-      `frame_length // 2`
+  step_length: {int, None} (default: None)
+      number of shifted frame after each stacking operation,
+      if None, its value equals to `frame_length // 2`
   keep_length: bool
       if True, padding zeros to begin and end of `X` to
       make the output array has the same length as original
@@ -1029,9 +1029,13 @@ def stack_frames(X, frame_length, step_length=None,
   ...  [ 4  5  6  7  8  9 10 11 12 13]
   ...  [ 8  9 10 11 12 13 14 15 16 17]]
   """
+  if frame_length > len(X) and keep_length is False:
+    raise ValueError("`frame_length=%d` is greater than the length of input matrix %s;"
+                     "`keep_length` must be set to True to allow padding." %
+                     (frame_length, str(X.shape)))
   if keep_length:
     if step_length != 1:
-      raise ValueError("`keepdims` is only supported when `step_length` = 1.")
+      raise ValueError("`keep_length` is only supported when `step_length` = 1.")
     add_frames = (int(np.ceil(frame_length / 2)) - 1) * 2 + \
         (1 if frame_length % 2 == 0 else 0)
     right = add_frames // 2

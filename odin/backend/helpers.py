@@ -927,7 +927,28 @@ class ComputationGraph(object):
 
   def get(self, scope=None, name=None, full_name=None,
           roles=None, match_all=False, exact=False):
-    """ Return all variables and tensor with given roles """
+    """ Return all variables and tensor with given roles
+
+    Parameters
+    ----------
+    scope : {None, string}
+      name of variable scope, any of the scope that match given name
+      will be selected
+    name : {None, string}
+      the name of tensor without the output indexing ":0" and the scope
+    full_name : {None, string}
+      the full name includes both scope and tensor name without the
+      output indexing ":0"
+    roles : {None, odin.backend.role}
+      specific roles of the tensor
+    match_all : bool (default: False)
+      If ``True``, checks if the variable has all given roles.
+      If ``False``, any of the roles is sufficient.
+    exact : bool (default: False)
+      If ``True``, use ``==`` for comparison to get exactly same roles.
+      If ``False``, use `issubclass` for comparison, hence, also match the
+      descendant roles.
+    """
     alltensors = self.tensors + self.variables
     # ====== by role ====== #
     if roles is not None:

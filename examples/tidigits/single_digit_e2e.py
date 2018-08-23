@@ -55,7 +55,7 @@ VALID_PERCENTAGE = 0.4
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-path = get_datasetpath(name='DIGITS_feats', override=False)
+path = get_datasetpath(name='TIDIGITS_feats', override=False)
 assert os.path.isdir(path), \
     "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features.py'" % path
 ds = F.Dataset(path, read_only=True)

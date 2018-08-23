@@ -35,7 +35,6 @@ def unzip_folder(zip_path, out_path, remove_zip=True):
     if remove_zip:
       os.remove(zip_path)
 
-
 @add_metaclass(ABCMeta)
 class DataLoader(object):
   ORIGIN = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzLw==\n'
@@ -165,6 +164,9 @@ class TIDIGITS(DataLoader):
     else:
       os.remove(zip_path)
     return ds
+
+class TIDIGITS_feat(DataLoader):
+  pass
 
 class FSDD(object):
   """ Free Spoken Digit Dataset

@@ -70,14 +70,14 @@ TV_DTYPE = 'float64'
 # path and dataset
 # ===========================================================================
 # path to preprocessed dataset
-path = get_datasetpath(name='DIGITS_feats', override=False)
+path = get_datasetpath(name='TITIDIGITS_feats', override=False)
 assert os.path.isdir(path), \
     "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features.py'" % path
 ds = F.Dataset(path, read_only=True)
 assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
 indices = list(ds['indices'].items())
 # ====== general path ====== #
-EXP_DIR = get_exppath(tag='DIGITS_ivec',
+EXP_DIR = get_exppath(tag='TIDIGITS_ivec',
                       name='%s_%d_%d' % (FEAT, args.nmix, args.tdim))
 if not os.path.exists(EXP_DIR):
   os.mkdir(EXP_DIR)
@@ -110,15 +110,6 @@ def is_train(x):
 
 def extract_gender(x):
   return x.split('_')[1]
-
-def extract_dialect(x):
-  return x.split('_')[3]
-
-def extract_spk(x):
-  return x.split('_')[4]
-
-def extract_digit(x):
-  return x.split('_')[6]
 
 print("Task:", ctext("gender", 'cyan'))
 fn_extract = extract_gender

@@ -425,22 +425,58 @@ class Stacking(FeederRecipe):
       if idx in data_idx or idx in label_idx:
         # calculate new number of samples
         n = 0; ids_new = []
-        for name, nb_samples in ids:
-          nb_samples = 1 + (nb_samples - self.frame_length) // self.shift
-          ids_new.append((name, nb_samples))
-          n += nb_samples
+        for name, n_samples in ids:
+          n_samples = 1 + (n_samples - self.frame_length) // self.shift
+          ids_new.append((name, n_samples))
+          n += n_samples
         # for label_idx, number of features kept as original
         if idx in label_idx:
           shp = (n,) + shp[1:]
         # for data_idx, only apply for 2D
         elif idx in data_idx:
-          nb_features = shp[1] * self.frame_length if len(shp) == 2 \
+          n_features = shp[1] * self.frame_length if len(shp) == 2 \
               else self.frame_length # 1D case
-          shp = (n, nb_features)
-      new_shapes.append((shp, ids))
+          shp = (n, n_features)
+      new_shapes.append((shp, ids_new))
     # ====== do the shape infer ====== #
     return new_shapes
 
+class StackingSequence(FeederRecipe):
+  """ Using `stack_frames` method to create data sequence
+  """
+
+  def __init__(self, length, data_idx=None):
+    super(StackingSequence, self).__init__()
+    self.length = int(length)
+    self.data_idx = data_idx
+
+  def process(self, name, X):
+    data_idx = axis_normalize(axis=self.data_idx, ndim=len(X), return_tuple=True)
+    # ====== stacking  ====== #
+    X_new = []
+    for idx, x in enumerate(X):
+      # stack the data
+      if idx in data_idx:
+        if x.ndim == 1:
+          x = np.expand_dims(x, axis=-1)
+        feat_shape = x.shape[1:]
+        x = stack_frames(x, frame_length=self.length,
+                         step_length=1, keep_length=True, make_contigous=True)
+        x = np.reshape(x, newshape=(-1, self.length) + feat_shape)
+      X_new.append(x)
+    return name, X_new
+
+  def shape_transform(self, shapes):
+    data_idx = axis_normalize(axis=self.data_idx, ndim=len(shapes), return_tuple=True)
+    # ====== update the shape and indices ====== #
+    new_shapes = []
+    for idx, (shp, ids) in enumerate(shapes):
+      if idx in data_idx:
+        n_samples = shp[0]
+        shp = (n_samples, self.length) + shp[1:]
+      new_shapes.append((shp, ids))
+    # ====== do the shape infer ====== #
+    return new_shapes
 
 class Sequencing(FeederRecipe):
   """Generate a new array that chops the given array along the given axis
@@ -580,32 +616,32 @@ class Sequencing(FeederRecipe):
       if idx in data_idx or idx in label_idx:
         # transoform the indices
         n = 0; ids_new = []
-        for name, nb_samples in ids:
+        for name, n_samples in ids:
           # MODE = cut
           if self.end == 'cut':
-            if nb_samples < self.frame_length:
-              nb_samples = 0
+            if n_samples < self.frame_length:
+              n_samples = 0
             else:
-              nb_samples = 1 + np.floor(
-              (nb_samples - self.frame_length) / self.step_length)
+              n_samples = 1 + np.floor(
+              (n_samples - self.frame_length) / self.step_length)
           # MODE = ignore and pad
           elif self.end == 'ignore':
-            if nb_samples > self.frame_length:
-              nb_samples = 0
+            if n_samples > self.frame_length:
+              n_samples = 0
             else:
-              nb_samples = 1
+              n_samples = 1
           # MODE = pad
           else:
-            if nb_samples < self.frame_length:
-              nb_samples = 1
+            if n_samples < self.frame_length:
+              n_samples = 1
             else:
-              nb_samples = 1 + np.ceil(
-              (nb_samples - self.frame_length) / self.step_length)
+              n_samples = 1 + np.ceil(
+              (n_samples - self.frame_length) / self.step_length)
           # make sure everything is integer
-          nb_samples = int(nb_samples)
-          if nb_samples > 0:
-            ids_new.append((name, nb_samples))
-          n += nb_samples
+          n_samples = int(n_samples)
+          if n_samples > 0:
+            ids_new.append((name, n_samples))
+          n += n_samples
         # transoform the shape for data
         if idx in data_idx:
           feat_shape = (shp[-1],) if len(shp) >= 2 else ()
