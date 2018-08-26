@@ -30,8 +30,11 @@ class Flatten(NNOp):
 # REshape
 # ===========================================================================
 class Reshape(NNOp):
-  """ More flexible version of reshape operation
+  """ More flexible version of reshape operation, could be used
+  for dimension shuffling as well
 
+  Example
+  -------
   x.shape = (25, 08, 12)
   reshape(shape=([1], [2], [0]))
   => x.shape = (08, 12, 25)

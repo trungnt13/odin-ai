@@ -10,13 +10,11 @@ from odin.utils.decorators import functionable
 
 from .base import NNOp
 
-
 def _preprocess_windows(window, ndims):
   if len(window) == ndims - 2:
     return window
   else:
     return as_tuple(window, N=(ndims - 2))
-
 
 class Pool(NNOp):
   """
@@ -143,3 +141,48 @@ class Upsample(NNOp):
                          % self.axes)
     return Pool(pool_size=self.size, strides=None, pad='valid',
         mode=self.transpose_mode, transpose_mode=self.mode)
+
+class StatsPool(NNOp):
+  """ Calculate mean and stddev of input Tensor along `axes`
+  then merge the statistics based on given `output_mode`
+
+  This class is for parsing lines like
+    stats-layer name=tdnn1-stats config=mean+stddev(-99:3:9:99) input=tdnn1
+    This adds statistics-pooling and statistics-extraction components.  An
+    example string is 'mean(-99:3:9::99)', which means, compute the mean of
+    data within a window of -99 to +99, with distinct means computed every 9
+    frames (we round to get the appropriate one), and with the input extracted
+    on multiples of 3 frames (so this will force the input to this layer to be
+    evaluated every 3 frames).  Another example string is
+    'mean+stddev(-99:3:9:99)', which will also cause the standard deviation to
+    be computed.
+    The dimension is worked out from the input. mean and stddev add a
+    dimension of input_dim each to the output dimension. If counts is
+    specified, an additional dimension is added to the output to store log
+    counts.
+  """
+  _SUPPORT_OUTPUT_MODE = ('concat', 'sum', 'mean', 'max')
+
+  def __init__(self, axes, output_mode='concat', **kwargs):
+    super(StatsPool, self).__init__(**kwargs)
+    self.axes = axes
+    # ====== check output mode ====== #
+    output_mode = str(output_mode).lower()
+    if output_mode not in StatsPool._SUPPORT_OUTPUT_MODE:
+      raise ValueError("No support for `output_mode=%s`, the following values "
+                       "are accepted: %s" %
+                       (output_mode, StatsPool._SUPPORT_OUTPUT_MODE))
+    self.output_mode = output_mode
+
+  def _apply(self, X):
+    mean, var = tf.nn.moments(x=X, axes=self.axes, keep_dims=True)
+    std = tf.sqrt(var)
+    if self.output_mode == 'concat':
+      X = tf.concat((mean, std), self.axes)
+    elif self.output_mode == 'sum':
+      X = mean + std
+    elif self.output_mode == 'mean':
+      X = (mean + std) / 2
+    elif self.output_mode == 'max':
+      X = tf.maximum(mean, std)
+    return X

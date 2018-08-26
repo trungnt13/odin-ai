@@ -294,7 +294,7 @@ class Feeder(Data):
       data for accepting the batch
   batch_mode: 'batch' or 'file' (string type)
       'batch' mode return shuffling and return everything in small batches
-      'file' mode return [(file_name, order_index, data...), ...]
+      'file' mode return [(file_name, order_index_from_0, data...), ...]
   ncpu: int
       number of CPU used for multiprocessing
   buffer_size: int

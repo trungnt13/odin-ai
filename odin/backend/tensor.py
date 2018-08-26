@@ -582,7 +582,11 @@ def apply_mask(x, mask, name="ApplyMask"):
 # Shape manipulation
 # ===========================================================================
 def reshape(x, shape, name='Reshape'):
-  """ x.shape = [25, 08, 12]
+  """ More flexible version of reshape operation
+
+  Example
+  -------
+  x.shape = [25, 08, 12]
   reshape(shape=([1], [2], [0]))
   => x.shape = (08, 12, 25)
   """
@@ -599,7 +603,6 @@ def reshape(x, shape, name='Reshape'):
                      for i in new_shape])
   return tf.reshape(x, new_shape, name=name)
 
-
 def dimshuffle(x, pattern, name='Dimshuffle'):
   """Transpose dimensions.
 
@@ -613,7 +616,6 @@ def dimshuffle(x, pattern, name='Dimshuffle'):
       if p == 'x':
         x = tf.expand_dims(x, i)
   return x
-
 
 def flatten(x, outdim=1, name='Flatten'):
   with tf.variable_scope(name):

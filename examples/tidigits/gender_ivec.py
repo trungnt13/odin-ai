@@ -70,10 +70,7 @@ TV_DTYPE = 'float64'
 # path and dataset
 # ===========================================================================
 # path to preprocessed dataset
-path = get_datasetpath(name='TITIDIGITS_feats', override=False)
-assert os.path.isdir(path), \
-    "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features.py'" % path
-ds = F.Dataset(path, read_only=True)
+ds = F.TIDIGITS_feat.load()
 assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
 indices = list(ds['indices'].items())
 # ====== general path ====== #

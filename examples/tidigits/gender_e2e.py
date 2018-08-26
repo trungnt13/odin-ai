@@ -24,26 +24,25 @@ from collections import defaultdict
 import numpy as np
 import tensorflow as tf
 
-from odin import backend as K, nnet as N, fuel as F
+from odin import backend as K, nnet as N, fuel as F, visual as V
 from odin.stats import train_valid_test_split, freqcount
 from odin import training
-from odin.ml import evaluate
-from odin.visual import (print_dist, print_confusion, print_hist, plot_spectrogram,
-                         plot_save, figure, plot_multiple_features)
+from odin.ml import evaluate, fast_pca, PLDA, Scorer
 from odin.utils import (Progbar, unique_labels, as_tuple_of_shape, stdio,
                         get_datasetpath, ctext, args_parse, get_formatted_datetime,
-                        get_exppath)
+                        get_exppath, batching)
 
 args = args_parse(descriptions=[
-    ('-feat', 'Input feature for training', None, 'mspec')
+    ('-feat', 'Input feature for training', None, 'mspec'),
+    ('-batch', 'batch size', None, 32),
+    ('-epoch', 'Number of training epoch', None, 12),
 ])
 FEAT = args.feat
 # ===========================================================================
 # Const
 # ===========================================================================
 # ====== general path ====== #
-EXP_DIR = get_exppath(tag='TIDIGITS_e2e',
-                      name='%s' % FEAT)
+EXP_DIR = get_exppath(tag='TIDIGITS_e2e', name='%s' % FEAT)
 if not os.path.exists(EXP_DIR):
   os.mkdir(EXP_DIR)
 # ====== start logging ====== #
@@ -53,18 +52,13 @@ stdio(LOG_PATH)
 print("Exp-dir:", ctext(EXP_DIR, 'cyan'))
 print("Log path:", ctext(LOG_PATH, 'cyan'))
 stdio(LOG_PATH)
-DEBUG = False
 # ====== training ====== #
-BATCH_SIZE = 64
-NB_EPOCH = 20
-NB_SAMPLES = 8
+BATCH_SIZE = args.batch
+NB_EPOCH = args.epoch
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-path = get_datasetpath(name='TIDIGITS_feats', override=False)
-assert os.path.isdir(path), \
-    "Cannot find preprocessed feature at: %s, try to run 'odin/examples/features'" % path
-ds = F.Dataset(path, read_only=True)
+ds = F.TIDIGITS_feat.load()
 assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
 indices = list(ds['indices'].items())
 K.get_rng().shuffle(indices)
@@ -100,7 +94,11 @@ print("#Test:", len(test_files))
 # ====== length ====== #
 length = [(end - start) for _, (start, end) in indices]
 max_length = max(length)
-print("Max length:", ctext(max_length, 'cyan'))
+frame_length = max_length // 2
+step_length = frame_length
+print("Max length  :", ctext(max_length, 'yellow'))
+print("Frame length:", ctext(frame_length, 'yellow'))
+print("Step length :", ctext(step_length, 'yellow'))
 # ===========================================================================
 # SPlit dataset
 # ===========================================================================
@@ -111,11 +109,11 @@ train_files, valid_files = train_valid_test_split(train_files, train=0.8,
     inc_test=False)
 print("#File train:", ctext(len(train_files), 'cyan'))
 print("#File valid:", ctext(len(valid_files), 'cyan'))
-print("#File test:", ctext(len(test_files), 'cyan'))
+print("#File test :", ctext(len(test_files), 'cyan'))
 
 recipes = [
     F.recipes.Name2Trans(converter_func=fn_label),
-    F.recipes.Sequencing(frame_length=max_length, step_length=1,
+    F.recipes.Sequencing(frame_length=frame_length, step_length=step_length,
                          end='pad', pad_mode='post', pad_value=0,
                          label_mode='last', label_idx=-1),
     # F.recipes.StackingSequence(length=max_length, data_idx=0),
@@ -126,18 +124,24 @@ feeder_train = F.Feeder(F.DataDescriptor(ds[FEAT], indices=train_files),
 feeder_valid = F.Feeder(F.DataDescriptor(ds[FEAT], indices=valid_files),
                         ncpu=4, batch_mode='batch')
 feeder_test = F.Feeder(F.DataDescriptor(ds[FEAT], indices=test_files),
-                       ncpu=2, batch_mode='file')
-
+                       ncpu=4, batch_mode='file')
 feeder_train.set_recipes(recipes)
 feeder_valid.set_recipes(recipes)
 feeder_test.set_recipes(recipes)
 print(feeder_train)
-# ====== testing ====== #
-# prog = Progbar(target=len(feeder_train),
-#                print_report=False, print_summary=True,
-#                name='Iterate training set')
-# for X, y in feeder_train:
-#   prog.add(X.shape[0])
+# ====== process X_test, y_test in advance for faster evaluation ====== #
+prog = Progbar(target=len(feeder_test),
+               print_summary=True, name="Preprocessing test set")
+X_test = defaultdict(list)
+for name, idx, X, y in feeder_test:
+  # validate everything as expected
+  assert fn_label(name) == np.argmax(y), name # label is right
+  # save to list
+  X_test[name].append((idx, X))
+  prog.add(X.shape[0])
+X_test = {name: np.concatenate([x[1] for x in sorted(X, key=lambda i: i[0])],
+                               axis=0)
+          for name, X in X_test.items()}
 # ===========================================================================
 # Create model
 # ===========================================================================
@@ -156,12 +160,13 @@ with N.args_scope(
       N.Conv(num_filters=32, filter_size=(9, 7)), N.BatchNorm(),
       N.Pool(pool_size=(3, 2), strides=2),
       N.Conv(num_filters=64, filter_size=(5, 3)), N.BatchNorm(),
-      N.Pool(pool_size=(3, 2), strides=2, name='PoolOutput'),
+      N.Pool(pool_size=(3, 1), strides=(2, 1), name='PoolOutput1'),
+      N.Conv(num_filters=64, filter_size=(5, 3)), N.BatchNorm(),
+      N.Pool(pool_size=(3, 2), strides=(2, 2), name='PoolOutput2'),
 
       N.Flatten(outdim=2),
 
-      N.Dense(1024), N.BatchNorm(),
-      N.Dense(128),
+      N.Dense(512, name="LatentDense"), N.BatchNorm(),
       N.Dense(512), N.BatchNorm(),
 
       N.Dense(len(labels))
@@ -169,9 +174,10 @@ with N.args_scope(
 # ====== create outputs ====== #
 y_logit = f(X)
 y_proba = tf.nn.softmax(y_logit)
-z = K.flatten(K.ComputationGraph(y_proba).get(roles=N.Pool, scope='PoolOutput')[0],
-              outdim=3)
-print('Latent:', ctext(z, 'cyan'))
+z1 = K.ComputationGraph(y_proba).get(roles=N.Pool, scope='PoolOutput1')[0]
+z2 = K.ComputationGraph(y_proba).get(roles=N.Pool, scope='PoolOutput2')[0]
+z3 = K.ComputationGraph(y_proba).get(scope='LatentDense')[0]
+print('Latent space:', ctext([z1, z2, z3], 'cyan'))
 # ====== create loss ====== #
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
@@ -191,7 +197,10 @@ f_score = K.function(inputs, [ce, acc, cm],
                     training=False)
 print('Building predicting functions ...')
 f_pred_proba = K.function(X, y_proba, training=False)
-f_z = K.function(inputs=X, outputs=z, training=False)
+# Latent spaces
+f_z1 = K.function(inputs=X, outputs=z1, training=False)
+f_z2 = K.function(inputs=X, outputs=z2, training=False)
+f_z3 = K.function(inputs=X, outputs=z3, training=False)
 # ===========================================================================
 # Training
 # ===========================================================================
@@ -213,28 +222,69 @@ task.run()
 # ===========================================================================
 # Prediction
 # ===========================================================================
+# ====== making prediction for Deep Net ====== #
 y_true = []
-y_pred = []
-samples = []
-for outputs in Progbar(feeder_test, name="Evaluating",
-                       count_func=lambda x: x[-1].shape[0]):
-  name = str(outputs[0])
-  idx = int(outputs[1])
-  data = outputs[2:]
-  if idx >= 1:
-    raise ValueError("NOPE")
-  y_true.append(f_gender(name))
-  y_pred.append(f_pred_proba(*data))
-  if np.random.random(1) < NB_SAMPLES / len(feeder_test):
-    samples.append([name, data])
-y_true = np.array(y_true, dtype='int32')
-y_pred = np.concatenate(y_pred, axis=0)
-evaluate(y_true=y_true, y_pred_proba=y_pred, labels=genders)
-
-for name, data in samples:
-  z = f_z(data[0])
-  plot_multiple_features(features={
-      'spec': data[0][0],
-      'z': z[0]
-  }, title=name)
-plot_save(os.path.join(FIG_PATH, 'latent.pdf'))
+y_pred_proba = []
+Z1_test = []
+Z2_test = []
+Z3_test = []
+prog = Progbar(target=len(X_test), print_summary=True,
+               name="Making prediction for test set")
+for name, X in X_test.items():
+  y_pred_proba.append(np.mean(f_pred_proba(X), axis=0, keepdims=True))
+  Z1_test.append(np.mean(f_z1(X), axis=0, keepdims=True))
+  Z3_test.append(np.mean(f_z3(X), axis=0, keepdims=True))
+  y_true.append(fn_label(name))
+  prog.add(1)
+Z1_test = np.concatenate(Z1_test, axis=0)
+Z3_test = np.concatenate(Z3_test, axis=0)
+y_pred_proba = np.concatenate(y_pred_proba, axis=0)
+y_pred = np.argmax(y_pred_proba, axis=-1)
+evaluate(y_true=y_true, y_pred_proba=y_pred_proba, labels=labels,
+         title="Test set (Deep prediction)",
+         path=os.path.join(EXP_DIR, 'test_deep.pdf'))
+# ====== make a streamline classifier ====== #
+Z3_train = []
+y_train = []
+prog = Progbar(target=len(feeder_train) + len(feeder_valid),
+               print_summary=True,
+               name="Extracting training latent space")
+# for training set
+for X, y in feeder_train:
+  prog.add(X.shape[0])
+  Z3_train.append(f_z3(X))
+  y_train.append(np.argmax(y, axis=-1))
+# for validation set
+for X, y in feeder_valid:
+  prog.add(X.shape[0])
+  Z3_train.append(f_z3(X))
+  y_train.append(np.argmax(y, axis=-1))
+Z3_train = np.concatenate(Z3_train, axis=0)
+y_train = np.concatenate(y_train, axis=0)
+# training PLDA
+plda = PLDA(n_phi=256, random_state=K.get_rng().randint(10e8),
+            n_iter=12, labels=labels, verbose=2)
+plda.fit(Z3_train, y_train)
+y_pred_log_proba = plda.predict_log_proba(Z3_test)
+evaluate(y_true=y_true, y_pred_log_proba=y_pred_log_proba, labels=labels,
+         title="Test set (Latent prediction)",
+         path=os.path.join(EXP_DIR, 'test_latent.pdf'))
+# ====== evaluation of the latent space ====== #
+ids = K.get_rng().permutation(X_test.shape[0])
+n_channels = 25 # only plot first 25 channels
+for i in ids[:8]:
+  x = X_test[i]
+  z = Z1_test[i]
+  name = name_test[i]
+  V.plot_figure(nrow=20, ncol=8)
+  # plot original acoustic
+  V.plot_spectrogram(x.T, ax=(n_channels + 2, 1, 1),
+                     title='X')
+  # plot the mean
+  V.plot_spectrogram(np.mean(z, axis=-1).T, ax=(n_channels + 2, 1, 2),
+                     title='Zmean')
+  # plot first 25 channels
+  for i in range(n_channels):
+    V.plot_spectrogram(z[:, :, i].T, ax=(n_channels + 2, 1, i + 3), title='Z%d' % i)
+  V.plot_title(name)
+V.plot_save('/tmp/tmp.pdf', tight_plot=True)

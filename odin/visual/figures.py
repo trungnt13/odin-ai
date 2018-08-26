@@ -395,6 +395,10 @@ def plot_figure(nrow=8, ncol=8, dpi=180):
   fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
   return fig
 
+def plot_title(title, fontsize=12):
+  from matplotlib import pyplot as plt
+  plt.suptitle(str(title), fontsize=fontsize)
+
 def subplot(*arg, **kwargs):
   from matplotlib import pyplot as plt
   subplot = plt.subplot(*arg)

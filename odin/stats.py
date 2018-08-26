@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
+import math
+import random
 
 from numbers import Number
 from itertools import chain
@@ -297,7 +299,7 @@ def summary(x, axis=None, shorten=False):
   return s
 
 
-def KLdivergence(P, Q):
+def KL_divergence(P, Q):
   """ KL(P||Q) = ∑_i • p_i • log(p_i/q_i)
   The smaller this number, the better P match Q distribution
   """
@@ -315,3 +317,75 @@ def KLdivergence(P, Q):
   for pi, qi in zip(P, Q):
     D += pi * np.log(pi / qi)
   return D
+
+def sampling_iter(it, k, p=None, return_iter=True, seed=5218):
+  """ Reservoir sampling, randomly choosing a sample of k items from a
+  list S containing n items, where n is either a very large or unknown number.
+  Typically n is large enough that the list doesn't fit into main memory.
+
+  Parameters
+  ----------
+  it : iteration
+    any instance of of iteration (i.e. `hasattr` '__iter__' )
+  k : int
+    number of sample for sampling
+  p : {None, float (0.-1.)} (default: None)
+    if `p` is None, perform reservoir sampling that guarantee every
+    elements of the iteration is equally selected.
+    if `p` is scalar, perform decayed sampling with `p` is the start
+    probability (recommended in case `k` does not fit in the memory)
+  return_iter : bool (default: True)
+    if True, return an iteration of results instead of extracted list
+  seed : int (default: 5218)
+    random seed for reproducibility
+  """
+  k = int(k); assert k > 0
+  if p is not None:
+    p = float(p); assert 0. < p < 1.
+  assert hasattr(it, '__iter__')
+  # ====== reservoir sampling ====== #
+  if p is None:
+    random.seed(seed)
+    ret = []
+    for i, x in enumerate(it):
+      if i < k:
+        ret.append(x)
+      else:
+        # as the iteration move forward,
+        # the chance of picking new sample decrease
+        r = random.randint(0, i)
+        if r < k:
+          ret[r] = x
+    return tuple(ret)
+
+  # ====== simulating the probability decay ====== #
+  def _sampling():
+    n = 0
+    prob = p
+    ret = []
+    # this is compromise of randomness for speed
+    n_buffer = 12000
+    rand = np.random.RandomState(seed=seed)
+    buffered_random = rand.rand(n_buffer)
+    buffered_index = rand.randint(0, k, size=n_buffer, dtype=int)
+    for i, x in enumerate(it):
+      r = buffered_random[i % n_buffer]
+      # initialize the reservoir
+      if len(ret) < k:
+        ret.append(x)
+      # sample selected
+      elif r < prob:
+        yield x
+        n += 1
+      # update the reservoir
+      else:
+        ret[buffered_index[i % n_buffer]] = x
+      # check break condition
+      if n >= k:
+        break
+      # update the probability
+      prob = 0.8 * prob + 0.2 / (i + 1)
+    # return the rest of the samples to have enough k sample
+    for i in range(k - n):
+      yield ret[i]
+  return _sampling() if return_iter else list(_sampling)

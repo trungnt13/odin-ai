@@ -6,7 +6,7 @@
 from __future__ import print_function, division, absolute_import
 
 import numbers
-from six import add_metaclass
+from six import add_metaclass, string_types
 from abc import ABCMeta, abstractproperty
 from collections import OrderedDict, defaultdict
 
@@ -192,11 +192,22 @@ class Optimizer(object):
       # organize variable by role
       role_vars = defaultdict(list)
       for var in trainable:
-        roles = get_roles(var)
+        # remove all tensorflow collection name string
+        roles = [r
+                 for r in get_roles(var, return_string=False)
+                 if not isinstance(r, string_types)]
+        # only select highest role in the hierarchy
+        high_roles = []
+        for r1 in roles:
+          found_ancester = False
+          for r2 in roles:
+            if r1 != r2 and issubclass(r2, r1):
+              found_ancester = True
+          if not found_ancester:
+            high_roles.append(r1)
+        # append to mapping role -> var_list
         for r in roles:
-          role_vars[r].append(var)
-      # everything is variable already so no need to show Variable role
-      del role_vars['variables']
+          role_vars[r.__name__].append(var)
       # print debug info (this is ugly but look nice and fun)
       max_name_length = str(max(max(len(i.name)
                                     for i in v)

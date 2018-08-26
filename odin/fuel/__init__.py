@@ -166,7 +166,17 @@ class TIDIGITS(DataLoader):
     return ds
 
 class TIDIGITS_feat(DataLoader):
-  pass
+
+  @classmethod
+  def load(clazz):
+    path = get_datasetpath(name='TIDIGITS_feats', override=False)
+    if not os.path.exists(path):
+      raise RuntimeError("Cannot find dataset at path: %s" % path)
+    return Dataset(path, read_only=True)
+
+  @classmethod
+  def get_dataset(clazz):
+    return clazz.load()
 
 class FSDD(object):
   """ Free Spoken Digit Dataset

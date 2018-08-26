@@ -13,7 +13,7 @@ from sklearn.utils import check_array, gen_batches
 from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
 
 from odin.utils.mpi import MPI
-from odin.utils import batching, ctext, flatten_list
+from odin.utils import batching, ctext, flatten_list, Progbar
 from odin.fuel import Data
 
 from .base import TransformerMixin, BaseEstimator
@@ -26,7 +26,7 @@ __all__ = [
 ]
 
 def fast_pca(*x, n_components=None, algo='pca', y=None,
-             random_state=None):
+             batch_size=1024, return_model=False, random_state=None):
   """ A shortcut for many different PCA algorithms
 
   Parameters
@@ -36,13 +36,19 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
     be used for training
   n_components : {None, int}
     number of PCA components
-  algo : {'pca', 'ppca', 'sppca', 'plda'}
-    different PCA algorithm
+  algo : {'pca', 'ipca', 'ppca', 'sppca', 'plda'}
+    different PCA algorithm: 'ipca' - IncrementalPCA, 'ppca' - Probabilistic PCA,
+    'sppca' - Supervised Probabilistic PCA, 'plda' - Probabilistic LDA
   y : {numpy.ndarray, None}
     required for labels in case of `sppca`
+  batch_size : int (default: 1024)
+    batch size, only used for IncrementalPCA
+  return_model : bool (default: False)
+    if True, return the trained PCA model as the FIRST return
   """
+  batch_size = int(batch_size)
   algo = str(algo).lower()
-  if algo not in ('pca', 'ppca', 'sppca', 'plda'):
+  if algo not in ('pca', 'ipca', 'ppca', 'sppca', 'plda'):
     raise ValueError("`algo` must be one of the following: 'pca', 'ppca', 'plda' or 'sppca'; but given: '%s'" % algo)
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
@@ -71,6 +77,14 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   elif algo == 'pca':
     pca = PCA(n_components=n_components, random_state=random_state)
     pca.fit(x_train)
+  elif algo == 'ipca':
+    pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
+    prog = Progbar(target=x_train.shape[0],
+                   print_report=False, print_summary=False, name="Fitting PCA")
+    for start, end in batching(batch_size=batch_size, n=x_train.shape[0],
+                               seed=5218):
+      pca.partial_fit(x_train[start:end], check_input=False)
+      prog.add(end - start)
   elif algo == 'ppca':
     pca = PPCA(n_components=n_components, random_state=random_state)
     pca.fit(x_train)
@@ -83,8 +97,8 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
     x_test = [np.reshape(x, input_shape) for x in x_test]
   # return the results
   if len(x_test) == 0:
-    return x_train
-  return tuple([x_train] + x_test)
+    return x_train if not return_model else (pca, x_train)
+  return tuple([x_train] + x_test) if not return_model else tuple([pca, x_train] + x_test)
 
 # ===========================================================================
 # helper
