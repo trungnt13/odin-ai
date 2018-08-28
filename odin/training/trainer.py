@@ -11,12 +11,9 @@ import numpy as np
 from odin.config import get_rng
 from odin import fuel, backend as K, nnet as N
 from odin.fuel import Dataset, as_data
-from odin.utils import (struct, as_tuple, is_number,
-                        Progbar, add_notification,
-                        array_size)
-
+from odin.utils import (struct, as_tuple, is_number, Progbar,
+                        add_notification, array_size, ctext)
 from .callbacks import *
-
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -83,8 +80,13 @@ class Task(object):
       labels for printing the confusion matrix in `odin.utils.Progbar`
   name: None or string
       unique name for Task identity.
-  verbose : {0, 1, 2}
-      verbose level
+  verbose : {0, 1, 2, 3, 4}
+      specific verbose level controlling the log output
+      0 - Turn off all log
+      1 - progress off, only notification
+      2 - progress off, notification and summary
+      3 - progress on, notification and summary
+      4 - progress on, notification, summary and report
   """
 
   def __init__(self, func, data, epoch=1, p=1.0,
@@ -100,6 +102,8 @@ class Task(object):
                             interval=0.,
                             print_report=True, print_summary=True)
     self._progbar.set_labels(self._labels)
+    # ====== set callback and verbose ====== #
+    self._callback = CallbackList(callbacks)
     self.set_verbose(verbose)
     # ====== assign other arguments ====== #
     self._nb_epoch = epoch
@@ -117,23 +121,46 @@ class Task(object):
     # ====== iter tracking ====== #
     self._created_iter = None
     self._stop = False
-    self._callback = CallbackList(callbacks)
+
+  def set_callbacks(self, callbacks):
+    self._callback.set_callbacks(callbacks)
+    if self._verbose == 0:
+      self._callback.set_notification(False)
+    else:
+      self._callback.set_notification(True)
+    return self
 
   def set_verbose(self, verbose):
     verbose = int(verbose)
     self._verbose = verbose
-    if verbose == 0:
+    if verbose == 0: # turn off everything
+      self._callback.set_notification(False)
+      self._progbar.print_progress = False
       self._progbar.print_summary = False
       self._progbar.print_report = False
-    elif verbose == 1:
+    elif verbose == 1: # progress off, only notification
+      self._callback.set_notification(True)
+      self._progbar.print_progress = False
       self._progbar.print_summary = False
       self._progbar.print_report = False
-    elif verbose == 2:
+    elif verbose == 2: # progress off, notification + summary
+      self._callback.set_notification(True)
+      self._progbar.print_progress = False
       self._progbar.print_summary = True
       self._progbar.print_report = False
-    else:
+    elif verbose == 3: # progress on, notification + summary
+      self._callback.set_notification(True)
+      self._progbar.print_progress = True
+      self._progbar.print_summary = True
+      self._progbar.print_report = False
+    elif verbose == 4: # progress on, notification, report, summary
+      self._callback.set_notification(True)
+      self._progbar.print_progress = True
       self._progbar.print_summary = True
       self._progbar.print_report = True
+    else:
+      raise ValueError(
+          "Only support verbose value: 0, 1, 2, 3, 4; but given: %s" % str(verbose))
 
   def __getstate__(self):
     return (self._progbar, self._nb_epoch, self._p, self._name,
@@ -154,10 +181,6 @@ class Task(object):
     # ====== iter tracking ====== #
     self._created_iter = None
     self._stop = False
-
-  def set_callbacks(self, callbacks):
-    self._callback.set_callbacks(callbacks)
-    return self
 
   def set_func(self, func, data):
     # ====== check function ====== #
@@ -313,45 +336,46 @@ class Task(object):
         # ======  start the iteration ====== #
         self._curr_epoch_samples = 0
         self._curr_epoch_iter = 0
-        for i, x in enumerate(data):
-          # alread terminated, try to exhausted the iterator
-          # if forced_to_terminate: continue
-          # preprocessed the data
-          if not isinstance(x, (tuple, list)):
-            x = [x]
-          # update some info
-          shape0 = x[0].shape[0]
-          self._curr_samples += shape0
-          self._curr_iter += 1
-          self._curr_epoch_samples += shape0
-          self._curr_epoch_iter += 1
-          self._callback_msg = self._callback.batch_start(self, x)
-          # apply the function
-          if self.probability >= 1. or self._rng.rand() < self.probability:
-            results = self._func(*x)
-            # add msg from batch_end event
-            self._callback_msg += self._callback.batch_end(self, results)
-            # return results
-            yield results
-            # update the progress bar
-            for (name, shape), res in zip(self._output_info,
-                                          as_tuple(results)):
-              if len(shape) == 0: # return single value
-                self._progbar[name] = res
-              else: # return tensor
-                self._progbar[name] = res
-            self._progbar.add(shape0)
-          # check TERMINATE signal
-          if self._stop:
-            # send signal to the data iterators also
-            for i in data_it:
-              if hasattr(i, 'stop'):
-                i.stop()
-              else: # just iterate all over
-                for _ in i: pass
-            # break the epoch loop
-            break
-        # Epoch end signaling
+        with self._progbar.safe_progress():
+          for i, x in enumerate(data):
+            # alread terminated, try to exhausted the iterator
+            # if forced_to_terminate: continue
+            # preprocessed the data
+            if not isinstance(x, (tuple, list)):
+              x = [x]
+            # update some info
+            shape0 = x[0].shape[0]
+            self._curr_samples += shape0
+            self._curr_iter += 1
+            self._curr_epoch_samples += shape0
+            self._curr_epoch_iter += 1
+            self._callback_msg = self._callback.batch_start(self, x)
+            # apply the function
+            if self.probability >= 1. or self._rng.rand() < self.probability:
+              results = self._func(*x)
+              # add msg from batch_end event
+              self._callback_msg += self._callback.batch_end(self, results)
+              # return results
+              yield results
+              # update the progress bar
+              for (name, shape), res in zip(self._output_info,
+                                            as_tuple(results)):
+                if len(shape) == 0: # return single value
+                  self._progbar[name] = res
+                else: # return tensor
+                  self._progbar[name] = res
+              self._progbar.add(shape0)
+            # check TERMINATE signal
+            if self._stop:
+              # send signal to the data iterators also
+              for i in data_it:
+                if hasattr(i, 'stop'):
+                  i.stop()
+                else: # just iterate all over
+                  for _ in i: pass
+              # break the epoch loop
+              break
+        ### Epoch end signaling
         self._curr_epoch += 1
         self._callback_msg = self._callback.epoch_end(
             self, self._progbar.history[self._curr_epoch - 1])
@@ -365,7 +389,8 @@ class Task(object):
           self._callback_msg = self._callback.task_end(
               self, self._progbar.history)
           yield 'task_end'
-          if self._verbose > 0:
+          # showing notification
+          if self._verbose >= 1:
             self._progbar.add_notification('Task "%s" ended!' % str(self.name))
           break
     # ====== end of iteration ====== #
@@ -455,11 +480,8 @@ class Timer(object):
         return True
     return False
 
-
 class MainLoop(object):
-
-  """ MainLoop
-
+  """
   Parameters
   ----------
   batch_size: int
@@ -475,13 +497,13 @@ class MainLoop(object):
   rollback: bool
       if True, rollback to the best checkpoint whenever the validation
       performance is degraded.
-  verbose : int
-    0 - Turn off all log
-    1 - only show notification
-    2 - show notification, important log and summary
-    3 - Show progress, summary, notification and logging
-    4 - Show debug information and everything
-
+  verbose : {0, 1, 2, 3, 4}
+      specific verbose level controlling the log output
+      0 - Turn off all log
+      1 - progress off, only notification
+      2 - progress off, notification and summary
+      3 - progress on, notification and summary
+      4 - progress on, notification, summary and report
   """
 
   def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
@@ -682,11 +704,12 @@ class MainLoop(object):
   # ==================== logic ==================== #
   def _save(self):
     # trigger event for callbacks
-    self._callback.event(SIG_TRAIN_SAVE)
+    self._callback.event(TrainSignal.SAVE)
     # default save procedure
     if self._save_path is not None and self._save_obj is not None:
       if self._verbose >= 1:
-        add_notification("Creating checkpoint at:" + self._save_path)
+        add_notification("[%s] Creating checkpoint at: %s" %
+          (ctext('MainLoop', 'red'), self._save_path))
       if not os.path.exists(self._save_path):
         os.mkdir(self._save_path)
       elif os.path.isfile(self._save_path):
@@ -703,25 +726,26 @@ class MainLoop(object):
                      for v in self._best_variables.values()) / 1024 / 1024
       if self._verbose >= 1:
         add_notification(
-            "Creating checkpoint of %d-variables (%.2f MB) in RAM" %
-            (len(self._save_variables), mem_size))
+            "[%s] Creating checkpoint of %d-variables (%.2f MB) in RAM" %
+            (ctext('MainLoop', 'red'), len(self._save_variables), mem_size))
 
   def _rollback(self):
     if not self._allow_rollback:
       return
     # trigger event for callbacks
-    self._callback.event(SIG_TRAIN_ROLLBACK)
+    self._callback.event(TrainSignal.ROLLBACK)
     # default rollback procedure
     if self._save_path is not None and os.path.exists(self._save_path):
       if self._verbose >= 1:
-        add_notification("Rollback from:" + self._save_path)
+        add_notification("[%s] Rollback from: %s" %
+          (ctext('MainLoop', 'red'), self._save_path))
       # restore previous checkpoint immediately
       N.deserialize(self._save_path, force_restore_vars=True)
     # otherwise, load stored variables from RAM
     elif len(self._best_variables) > 0:
       if self._verbose >= 1:
-        add_notification("Rollback %d-variables from RAM" %
-                         len(self._best_variables))
+        add_notification("[%s] Rollback %d-variables from RAM" %
+                         (ctext('MainLoop', 'red'), len(self._best_variables)))
       from odin import backend as K
       import tensorflow as tf
       rollback_ops = []
@@ -737,8 +761,10 @@ class MainLoop(object):
     if self._main_task is None and len(self._evaltask) == 0:
       raise ValueError('You must call `set_task` and set the main task '
           'first, or you can specify evaluation task using `set_eval_task`.')
+    # ====== set the callback for all Task, make sure all Callbacks are up-to-date ====== #
     for t in self._task + self._subtask + self._evaltask:
       t.set_callbacks(self._callback)
+      t.set_verbose(self._verbose)
     # ====== prepare subtask ====== #
     if self._main_task is not None:
       finished_task = {i: False for i in self._task + self._subtask}
@@ -760,10 +786,10 @@ class MainLoop(object):
             pass
           # process callback msg for tasks
           msg = t.callback_msg
-          if SIG_TRAIN_SAVE in msg: self._save()
-          if SIG_TRAIN_ROLLBACK in msg: self._rollback()
-          if SIG_TRAIN_STOP in msg:
-            self._callback.event(SIG_TRAIN_STOP)
+          if TrainSignal.SAVE in msg: self._save()
+          if TrainSignal.ROLLBACK in msg: self._rollback()
+          if TrainSignal.STOP in msg:
+            self._callback.event(TrainSignal.STOP)
             finished_task[self._main_task] = True
             break
         # ====== execute valid and eval task ====== #
@@ -780,10 +806,10 @@ class MainLoop(object):
                 pass
             # process callback msg for subtasks
             msg = st.callback_msg
-            if SIG_TRAIN_SAVE in msg: self._save()
-            if SIG_TRAIN_ROLLBACK in msg: self._rollback()
-            if SIG_TRAIN_STOP in msg:
-              self._callback.event(SIG_TRAIN_STOP)
+            if TrainSignal.SAVE in msg: self._save()
+            if TrainSignal.ROLLBACK in msg: self._rollback()
+            if TrainSignal.STOP in msg:
+              self._callback.event(TrainSignal.STOP)
               finished_task[self._main_task] = True
               break
     # ====== end main task ====== #

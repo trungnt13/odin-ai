@@ -1,17 +1,11 @@
 # -*- coding: utf-8 -*-
-# ===========================================================================
-# The following signal might returned by Callbacks:
-# * SIG_TRAIN_STOP: stop the training task
-# * SIG_TRAIN_SAVE: save the parameters during training
-# * SIG_TRAIN_ROLLBACK: rollback the model to the best checkpoint
-# ===========================================================================
 from __future__ import division, absolute_import, print_function
 
 import re
 import sys
 import time
-import timeit
-import warnings
+import inspect
+from enum import Enum
 from numbers import Number
 from datetime import datetime
 from collections import defaultdict
@@ -22,38 +16,43 @@ from six.moves import cPickle
 import numpy as np
 import scipy as sp
 
-from odin.utils import as_tuple, is_string, add_notification
+from odin.utils import as_tuple, is_string, add_notification, ctext
 from odin.utils.decorators import functionable
 
 __all__ = [
-  'SIG_TRAIN_SAVE',
-  'SIG_TRAIN_ROLLBACK',
-  'SIG_TRAIN_STOP',
-  'Callback',
-  'Debug',
-  'CallbackList',
-  'NaNDetector',
-  'Checkpoint',
-  'EarlyStop',
-  'EarlyStopGeneralizationLoss',
-  'EarlyStopPatience',
-  'LRdecay',
+    'TrainSignal',
+    'Callback',
+    'Debug',
+    'LambdaCallback',
+    'CallbackList',
+    'NaNDetector',
+    'Checkpoint',
+    'EarlyStop',
+    'EarlyStopGeneralizationLoss',
+    'EarlyStopPatience',
+    'LRdecay',
 ]
 
 # This SIGNAL can terminate running iterator (or generator),
 # however, it cannot terminate them at the beginning,
 # so you should not call .send(SIG_TERMINATE_ITERATOR)
 # at beginning of iterator
-SIG_TRAIN_SAVE = '__signal_train_save__'
-SIG_TRAIN_ROLLBACK = '__signal_train_rollback__'
-SIG_TRAIN_STOP = '__signal_train_stop__'
+class TrainSignal(Enum):
+  """ TrainingSignal """
+  NONE = 0 # nothing happened
+  SAVE = 1 # save the parameters during training
+  ROLLBACK = 2 # rollback the model to the best checkpoint
+  STOP = 3 # stop the training task
 
-_ALLOW_MSG = {
-    SIG_TRAIN_SAVE: 1,
-    SIG_TRAIN_ROLLBACK: 1,
-    SIG_TRAIN_STOP: 1,
-}
-
+class TaskSignal(Enum):
+  """ Signal represent current activities of a Training, Validating or
+  Evaluating task """
+  BatchStart = 0
+  BatchEnd = 1
+  EpochStart = 2
+  EpochEnd = 3
+  TaskStart = 4
+  TaskEnd = 5
 
 # ===========================================================================
 # Helpers
@@ -67,18 +66,13 @@ def _parse_result(result):
   s = str(result)
   return s[:20]
 
-
 TASK_TYPES = ['task', 'subtask', 'crosstask', 'othertask']
-
 
 def time2date(timestamp):
   return datetime.fromtimestamp(timestamp).strftime('%y-%m-%d %H:%M:%S')
 
-
 def date2time(date):
   return time.mktime(datetime.datetime.strptime(date, '%y-%m-%d %H:%M:%S').timetuple())
-
-
 # ===========================================================================
 # Callbacks
 # ===========================================================================
@@ -86,14 +80,26 @@ class Callback(object):
 
   """Callback
   Order of execution:
-   - task_start(self, task, results)
-   - epoch_start(self, task, results)
-   - batch_start(self, task, results)
+   - task_start(self, task)
+   - epoch_start(self, task, data)
+   - batch_start(self, task, data)
    - batch_end(self, task, results)
    - epoch_end(self, task, results)
    - task_end(self, task, results)
 
-  Some accessible properties from `task`
+  For `batch_start` and `epoch_start`, `data` is the input data to training, validating
+  or any Task
+
+  For `batch_end`, `results` is the mapping `tensor_name` -> `returned_value`
+
+  For `epoch_end`, `results` is the mapping `tensor_name` -> `list_of_returned_value`
+
+  For `task_end`, results is the mapping `epoch_index` -> defaultdict(`epoch_results`),
+  where `epoch_results` is the results of `epoch_end`.
+
+  `task` is an instance of `odin.training.trainer.Task`, which
+  indicate which Task is running (e.g. Training, Validating, ...)
+  Some accessible properties from `task`:
    - curr_epoch: Total number of epoch finished since the beginning of the Task
    - curr_iter: Total number of iteration finished since the beginning of the Task
    - curr_samples: Total number of samples finished since the beginning of the Task
@@ -103,7 +109,12 @@ class Callback(object):
 
   def __init__(self, log=True):
     super(Callback, self).__init__()
-    self.log = log
+    self._log = bool(log)
+
+  def set_notification(self, is_enable):
+    """ Turn notification on and off """
+    self._log = bool(is_enable)
+    return self
 
   def batch_start(self, task, batch):
     pass
@@ -125,49 +136,15 @@ class Callback(object):
 
   def event(self, event_name):
     """ This function is directly called by MainLoop when
-    special event triggered, for example:
-     - SIG_TRAIN_ROLLBACK
-     - SIG_TRAIN_STOP
-     - SIG_TRAIN_SAVE
+    special event triggered, `odin.training.callback.TrainSignal`
     """
     pass
 
   def send_notification(self, msg):
-    if self.log:
-      add_notification('[%s]%s' % (self.__class__.__name__, msg))
+    if self._log:
+      add_notification(
+          '[%s] %s' % (ctext(self.__class__.__name__, 'magenta'), msg))
     return self
-
-
-class Debug(Callback):
-  """docstring for Debug"""
-
-  def __init__(self):
-    super(Debug, self).__init__()
-
-  def batch_start(self, task, batch):
-    print("Batch Start:", task.name, task.curr_epoch, task.curr_samples,
-          [(i.shape, i.dtype, type(i)) for i in batch])
-
-  def batch_end(self, task, batch_results):
-    print("Batch End:", task.name, task.curr_epoch, task.curr_samples,
-          [(i.shape, i.dtype, type(i)) for i in as_tuple(batch_results)])
-
-  def epoch_start(self, task, data):
-    print("Epoch Start:", task.name, task.curr_epoch, task.curr_samples,
-          [(i.shape, i.dtype, type(i)) for i in data])
-
-  def epoch_end(self, task, epoch_results):
-    print("Epoch End:", task.name, task.curr_epoch, task.curr_samples,
-          [(i, len(j), type(j[0])) for i, j in epoch_results.items()])
-
-  def task_start(self, task):
-    print("Task Start:", task.name, task.curr_epoch, task.curr_samples)
-
-  def task_end(self, task, task_results):
-    print("Task End:", task.name, task.curr_epoch, task.curr_samples,
-        [(i, [(n, len(v), type(v[0])) for n, v in j.items()])
-         for i, j in task_results.items()])
-
 
 class CallbackList(Callback):
 
@@ -187,6 +164,14 @@ class CallbackList(Callback):
     self._callbacks = [i for i in set(callbacks)]
     return self
 
+  def set_notification(self, is_enable):
+    """ Turn notification on and off """
+    is_enable = bool(is_enable)
+    self._log = is_enable
+    for cb in self._callbacks:
+      cb.set_notification(is_enable)
+    return self
+
   def __str__(self):
     return '<CallbackList: ' + \
     ', '.join([i.__class__.__name__ for i in self._callbacks]) + '>'
@@ -195,48 +180,167 @@ class CallbackList(Callback):
     msg = []
     for i in self._callbacks:
       m = i.batch_start(task, batch)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
   def batch_end(self, task, batch_results):
     msg = []
     for i in self._callbacks:
       m = i.batch_end(task, batch_results)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
   def epoch_start(self, task, data):
     msg = []
     for i in self._callbacks:
       m = i.epoch_start(task, data)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
   def epoch_end(self, task, epoch_results):
     msg = []
     for i in self._callbacks:
       m = i.epoch_end(task, epoch_results)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
   def task_start(self, task):
     msg = []
     for i in self._callbacks:
       m = i.task_start(task)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
   def task_end(self, task, task_results):
     msg = []
     for i in self._callbacks:
       m = i.task_end(task, task_results)
-      msg += [j for j in as_tuple(m) if j in _ALLOW_MSG]
+      msg += [j for j in as_tuple(m) if isinstance(j, TrainSignal)]
     return msg
 
-  def event(self, event_name):
+  def event(self, event_type):
+    assert isinstance(event_type, TrainSignal), \
+    "event must be enum `TrainSignal` but given: %s" % str(type(event_type))
     for i in self._callbacks:
-      i.event(event_name)
+      i.event(event_type)
 
+class Debug(Callback):
+  """ Debug """
+
+  def __init__(self, signal=None):
+    super(Debug, self).__init__()
+    if signal is None:
+      pass
+
+  def batch_start(self, task, batch):
+    print("Batch Start:", task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in batch])
+
+  def batch_end(self, task, batch_results):
+    print(ctext("Batch End:", 'cyan'),
+          task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in as_tuple(batch_results)])
+
+  def epoch_start(self, task, data):
+    print(ctext("Epoch Start:", 'cyan'),
+          task.name, task.curr_epoch, task.curr_samples,
+          [(i.shape, i.dtype, type(i)) for i in data])
+
+  def epoch_end(self, task, epoch_results):
+    print(ctext("Epoch End:", 'cyan'),
+          task.name, task.curr_epoch, task.curr_samples,
+          [(i, len(j), type(j[0])) for i, j in epoch_results.items()])
+
+  def task_start(self, task):
+    print(ctext("Task Start:", 'cyan'),
+          task.name, task.curr_epoch, task.curr_samples)
+
+  def task_end(self, task, task_results):
+    print(ctext("Task End:", 'cyan'),
+        task.name, task.curr_epoch, task.curr_samples,
+        [(i, [(n, len(v), type(v[0])) for n, v in j.items()])
+         for i, j in task_results.items()])
+
+  def event(self, event_type):
+    print(ctext("[Debug] Event:", 'cyan'), event_type)
+
+# ===========================================================================
+# Others
+# ===========================================================================
+class LambdaCallback(Callback):
+  """ LambdaCallback
+
+  Parameters
+  ----------
+  fn : function
+    a function, must follow one of the option:
+      - 0 argument: only the function is called
+      - 1 input argument: only input data for batch_start, epoch_start; or
+        returned results for `batch_end`, `epoch_end`, `task_end` are provided.
+      - 2 arguments: current number of epoch, and input_data/returned_results
+      - 4 arguments: current number of epoch, iteration, samples, and input_data/returned_results
+  name : string
+    name of the Task when this callback will be activated
+  signal : odin.training.callbacks.TaskSignal
+    signal that trigger this callback
+
+  """
+
+  def __init__(self, fn, name, signal=TaskSignal.EpochEnd):
+    super(LambdaCallback, self).__init__()
+    assert hasattr(fn, '__call__')
+    # ====== check function ====== #
+    spec = inspect.signature(fn)
+    assert len(spec.parameters) in (0, 1, 2, 4),\
+    "`fn` must accept 0, 1, 2 or 4 input arguments"
+    self.n_args = len(spec.parameters)
+    self.fn = fn
+    # ====== others ====== #
+    self.name = str(name)
+    assert isinstance(signal, TaskSignal)
+    self.signal = signal
+
+  def _call_fn(self, task, extra):
+    if self.n_args == 0:
+      return self.fn()
+    elif self.n_args == 1:
+      return self.fn(extra)
+    elif self.n_args == 2:
+      return self.fn(task.curr_epoch, extra)
+    elif self.n_args == 4:
+      return self.fn(task.curr_epoch, task.curr_iter, task.curr_samples, extra)
+    else:
+      raise RuntimeError()
+
+  def batch_start(self, task, data):
+    if self.signal == TaskSignal.BatchStart and \
+    self.name == task.name:
+      self._call_fn(task, data)
+
+  def batch_end(self, task, batch_results):
+    if self.signal == TaskSignal.BatchEnd and \
+    self.name == task.name:
+      self._call_fn(task, batch_results)
+
+  def epoch_start(self, task, data):
+    if self.signal == TaskSignal.EpochStart and \
+    self.name == task.name:
+      self._call_fn(task, data)
+
+  def epoch_end(self, task, epoch_results):
+    if self.signal == TaskSignal.EpochEnd and \
+    self.name == task.name:
+      self._call_fn(task, epoch_results)
+
+  def task_start(self, task):
+    if self.signal == TaskSignal.TaskStart and \
+    self.name == task.name:
+      self._call_fn(task, None)
+
+  def task_end(self, task, task_results):
+    if self.signal == TaskSignal.TaskEnd and \
+    self.name == task.name:
+      self._call_fn(task, task_results)
 
 # ===========================================================================
 # NaN value detection
@@ -266,16 +370,15 @@ class NaNDetector(Callback):
       return
     # found any NaN values
     if any(np.any(np.isnan(r)) for r in as_tuple(batch_results)):
-      signal = SIG_TRAIN_ROLLBACK
+      signal = TrainSignal.ROLLBACK
       self._patience -= 1
       if self._patience <= 0: # but if out of patience, stop
-        signal = SIG_TRAIN_STOP
+        signal = TrainSignal.STOP
       self.send_notification('Found NaN value, task:"%s"' % task.name)
       return signal
 
-
 class Checkpoint(Callback):
-  """docstring for NaNDetector"""
+  """ Checkpoint """
 
   def __init__(self, task_name, epoch_percent=1., log=True):
     super(Checkpoint, self).__init__(log)
@@ -285,16 +388,15 @@ class Checkpoint(Callback):
   def batch_end(self, task, batch_results):
     if task.name == self._task_name:
       if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
-        return SIG_TRAIN_SAVE
+        return TrainSignal.SAVE
     return None
-
 
 # ===========================================================================
 # Learning rate manipulation
 # ===========================================================================
 class LRdecay(Callback):
   """ LRdecay
-  whenever SIG_TRAIN_ROLLBACK is triggered, decrease the learning
+  whenever TrainSignal.ROLLBACK is triggered, decrease the learning
   rate by `decay_rate`
   """
 
@@ -306,11 +408,10 @@ class LRdecay(Callback):
     self.decay_rate = decay_rate
 
   def event(self, event_name):
-    if event_name == SIG_TRAIN_ROLLBACK:
+    if event_name == TrainSignal.ROLLBACK:
       from odin import backend as K
       self.lr_value *= self.decay_rate
       K.set_value(self.lr, self.lr_value)
-
 
 # ===========================================================================
 # EarlyStop utilities
@@ -376,13 +477,13 @@ class EarlyStop(Callback):
     shouldSave, shouldStop = self.earlystop(self._history, self._threshold)
     msg = None
     if shouldSave > 0:
-      msg = SIG_TRAIN_SAVE
+      msg = TrainSignal.SAVE
     if shouldStop > 0:
-      msg = SIG_TRAIN_ROLLBACK
+      msg = TrainSignal.ROLLBACK
       # check patience
       self._patience -= 1
       if self._patience < 0:
-        msg = SIG_TRAIN_STOP
+        msg = TrainSignal.STOP
     self.send_notification('Message "%s"' % str(msg))
     return msg
 

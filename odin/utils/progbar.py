@@ -131,9 +131,10 @@ class Progbar(object):
     if name is None:
       name = "Progress-%s" % datetime.utcnow()
     self._name = name
-
+    # ====== flags ====== #
     self.__interval = float(interval)
     self.__keep = keep
+    self.print_progress = True
     self.print_report = print_report
     self.print_summary = print_summary
     # ====== for history ====== #
@@ -232,6 +233,13 @@ class Progbar(object):
     self._epoch_hist[epoch][key]
 
   def set_summarizer(self, key, fn):
+    """ Epoch summarizer is a function, searching in the
+    report for given key, and summarize all the stored values
+    of each epoch into a readable format
+
+    i.e. the input arguments is a list of stored epoch report,
+    the output is a string.
+    """
     if not hasattr(fn, '__call__'):
       raise ValueError('`fn` must be call-able.')
     key = str(key)
@@ -294,8 +302,8 @@ class Progbar(object):
   def seen_so_far(self):
     return self._seen_so_far[self.epoch_idx]
 
-  def _generate_epoch_summary(self, i, inc_name=False, inc_counter=True):
-    seen_so_far = self._seen_so_far[i]
+  def _generate_epoch_summary(self, epoch, inc_name=False, inc_counter=True):
+    seen_so_far = self._seen_so_far[epoch]
     if seen_so_far == 0:
       return ''
     # ====== include name ====== #
@@ -304,11 +312,14 @@ class Progbar(object):
     else:
       s = ""
     # ====== create epoch summary ====== #
-    if seen_so_far == self.target:
-      speed = (1. / self._epoch_summary[i]['__avg_time__'])
-      elapsed = self._epoch_summary[i]['__total_time__']
-    else:
-      speed = 1. / self.progress_bar.avg_time
+    if seen_so_far == self.target: # epoch already finished
+      speed = (1. / self._epoch_summary[epoch]['__avg_time__'])
+      elapsed = self._epoch_summary[epoch]['__total_time__']
+    else: # epoch hasn't finished
+      avg_time = (time.time() - self._epoch_start_time) / self.seen_so_far \
+      if self.progress_bar.avg_time is None else \
+      self.progress_bar.avg_time
+      speed = 1. / avg_time
       elapsed = time.time() - self._epoch_start_time
     # ====== counter ====== #
     if inc_counter:
@@ -317,21 +328,19 @@ class Progbar(object):
       percentage = "%6.2f%%%s " % (frac * 100, counter_epoch)
     else:
       percentage = ''
-    s += _RED + " Epoch %d " % i + _RESET + \
-        "%.4f(s) %s%.4f(obj/s)" % \
+    s += _RED + " Epoch %d " % epoch + _RESET + "%.4f(s) %s%.4f(obj/s)" % \
         (elapsed, percentage, speed)
     # epoch summary
-    summary = dict(self._epoch_summary[i])
+    summary = dict(self._epoch_summary[epoch])
     if len(summary) > 2:
       summary.pop('__total_time__', None)
       summary.pop('__avg_time__', None)
-      s += '\n' + self.formatted_report(summary, margin='   ',
-                                        inc_name=False)
+      s += '\n' + self.formatted_report(summary, margin='   ', inc_name=False)
     return s
 
   @property
   def summary(self):
-    s = _MAGENTA + "Report \"%s\"    #Epoch: %d\n" % \
+    s = _MAGENTA + "Report \"%s\"    TotalEpoch: %d\n" % \
     (self.name, self.nb_epoch) + _RESET
     # ====== create summary for each epoch ====== #
     s += '\n'.join([self._generate_epoch_summary(i)
@@ -365,7 +374,7 @@ class Progbar(object):
         self.__pb.moveto(1)
       self.__pb.moveto(-(nlines * 2))
     self.__pb.close()
-    # create epoch summary
+    # ====== create epoch summary ====== #
     for key, values in self._epoch_hist[self._epoch_idx].items():
       values = [v for v in values]
       if key in self._epoch_summarizer: # provided summarizer
@@ -390,7 +399,18 @@ class Progbar(object):
     self._epoch_idx += 1
     return self
 
+  @contextmanager
+  def safe_progress(self):
+    """ This context manager will automatically call `pause` if the
+    progress unfinished, hence, it doesn't mesh up the screen. """
+    yield None
+    if 0 < self.seen_so_far < self.target:
+      self.pause()
+
   def pause(self):
+    """ Call `pause` if progress is running, hasn't finish, and
+    you want to print something else on the scree.
+    """
     # ====== clear the report ====== #
     if self._last_report is not None:
       nlines = len(self._last_report.split("\n"))
@@ -414,16 +434,14 @@ class Progbar(object):
     return self
 
   def add(self, n=1):
-    """ You need to call pause if
-
-    """
+    """ You need to call pause if """
     if n <= 0:
       return self
     fp = Progbar.FP
     # ====== update information ====== #
     seen_so_far = min(self._seen_so_far[self.epoch_idx] + n, self.target)
     self._seen_so_far[self.epoch_idx] = seen_so_far
-    # ====== check last updated prog, for automatically pause ====== #
+    # ====== check last updated progress, for automatically pause ====== #
     if _LAST_UPDATED_PROG[0] is None:
       _LAST_UPDATED_PROG[0] = self
     elif _LAST_UPDATED_PROG[0] != self:
@@ -456,11 +474,15 @@ class Progbar(object):
         self._last_report = report
         self.progress_bar.moveto(1)
     # ====== show progress ====== #
-    self.progress_bar.update(n=n)
+    if self.print_progress:
+      self.progress_bar.update(n=n)
+    else:
+      self.progress_bar
     # ====== end of epoch ====== #
     if seen_so_far >= self.target:
       self._new_epoch()
-      if self.print_summary: # print summary of epoch
+      # print summary of epoch
+      if self.print_summary:
         _tqdm.write(self._generate_epoch_summary(self.epoch_idx - 1,
                                                  inc_name=True,
                                                  inc_counter=False))

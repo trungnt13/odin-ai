@@ -48,7 +48,7 @@ optimizer = K.optimizers.SGD(lr=0.05)
 updates = optimizer(cost_ce, parameters)
 # ====== initialize all variable ====== #
 K.initialize_all_variables()
-# ====== fucntions ====== #
+# ====== function ====== #
 print('Building training functions ...')
 f_train = K.function([X, y], [cost_ce, optimizer.norm, cost_cm],
                      updates=updates, training=True)
@@ -61,12 +61,14 @@ f_pred = K.function(X, y_pred, training=False)
 # ===========================================================================
 print('Start training ...')
 task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
-                         allow_rollback=True)
+                         allow_rollback=True, verbose=1)
 task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops)
 task.set_callbacks([
     training.NaNDetector(),
     # training.Checkpoint('train'),
-    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=1)
+    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=1),
+    training.LambdaCallback(fn=lambda epoch, res:print("Training Epoch End:", epoch),
+                            name='train')
 ])
 task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=8,
                     name='train')

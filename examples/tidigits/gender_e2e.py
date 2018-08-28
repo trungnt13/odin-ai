@@ -25,7 +25,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K, nnet as N, fuel as F, visual as V
-from odin.stats import train_valid_test_split, freqcount
+from odin.stats import train_valid_test_split, freqcount, sampling_iter
 from odin import training
 from odin.ml import evaluate, fast_pca, PLDA, Scorer
 from odin.utils import (Progbar, unique_labels, as_tuple_of_shape, stdio,
@@ -139,6 +139,7 @@ for name, idx, X, y in feeder_test:
   # save to list
   X_test[name].append((idx, X))
   prog.add(X.shape[0])
+# X_test is mapping from name -> X
 X_test = {name: np.concatenate([x[1] for x in sorted(X, key=lambda i: i[0])],
                                axis=0)
           for name, X in X_test.items()}
@@ -223,6 +224,7 @@ task.run()
 # Prediction
 # ===========================================================================
 # ====== making prediction for Deep Net ====== #
+name2idx = {}
 y_true = []
 y_pred_proba = []
 Z1_test = []
@@ -230,7 +232,8 @@ Z2_test = []
 Z3_test = []
 prog = Progbar(target=len(X_test), print_summary=True,
                name="Making prediction for test set")
-for name, X in X_test.items():
+for idx, (name, X) in enumerate(X_test.items()):
+  name2idx[name] = idx
   y_pred_proba.append(np.mean(f_pred_proba(X), axis=0, keepdims=True))
   Z1_test.append(np.mean(f_z1(X), axis=0, keepdims=True))
   Z3_test.append(np.mean(f_z3(X), axis=0, keepdims=True))
@@ -270,21 +273,23 @@ evaluate(y_true=y_true, y_pred_log_proba=y_pred_log_proba, labels=labels,
          title="Test set (Latent prediction)",
          path=os.path.join(EXP_DIR, 'test_latent.pdf'))
 # ====== evaluation of the latent space ====== #
-ids = K.get_rng().permutation(X_test.shape[0])
 n_channels = 25 # only plot first 25 channels
-for i in ids[:8]:
-  x = X_test[i]
-  z = Z1_test[i]
-  name = name_test[i]
+for name, x in sampling_iter(it=X_test.items(), k=8,
+                             seed=K.get_rng().randint(10e8)):
+  # get the data
+  x = np.mean(x, axis=0) if x.shape[0] > 1 else x[0]
+  z1 = Z1_test[name2idx[name]]
+  z3 = Z3_test[name2idx[name]]
+  # start plotting
   V.plot_figure(nrow=20, ncol=8)
   # plot original acoustic
   V.plot_spectrogram(x.T, ax=(n_channels + 2, 1, 1),
                      title='X')
   # plot the mean
-  V.plot_spectrogram(np.mean(z, axis=-1).T, ax=(n_channels + 2, 1, 2),
+  V.plot_spectrogram(np.mean(z1, axis=-1).T, ax=(n_channels + 2, 1, 2),
                      title='Zmean')
   # plot first 25 channels
   for i in range(n_channels):
-    V.plot_spectrogram(z[:, :, i].T, ax=(n_channels + 2, 1, i + 3), title='Z%d' % i)
+    V.plot_spectrogram(z1[:, :, i].T, ax=(n_channels + 2, 1, i + 3), title='Z%d' % i)
   V.plot_title(name)
 V.plot_save('/tmp/tmp.pdf', tight_plot=True)
