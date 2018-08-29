@@ -64,7 +64,7 @@ extractors = pp.make_pipeline(steps=[
                             n_fft=512, window='hamm'),
     pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
     pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
-    pp.base.RemoveFeatures(input_name=['stft', 'raw']),
+    pp.base.DeleteFeatures(input_name=['stft', 'raw']),
     # ====== SAD ====== #
     pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                            input_name='energy', output_name='sad'),

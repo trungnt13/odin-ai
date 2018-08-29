@@ -94,7 +94,7 @@ def extract_acoustic_features(SR=SR, NFFT=NFFT, NMELS=NMELS,
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                              win_length=301,
                              feat_name=('spec', 'mspec', 'mfcc', 'sdc')),
-      pp.base.RemoveFeatures(feat_name=('stft')),
+      pp.base.DeleteFeatures(feat_name=('stft')),
   ], debug=False)
   features = {}
   prog = Progbar(target=len(files), print_report=True, print_summary=True,

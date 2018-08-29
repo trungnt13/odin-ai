@@ -1,7 +1,6 @@
 from .base import evaluate
 from .decompositions import *
-from .clustering import *
-from .gmm_ivec import GMM, Tmatrix
+from .gmm_tmat import GMM, Tmatrix
 from .linear_model import LogisticRegression
 from .deep_model import *
 from .scoring import (VectorNormalizer, Scorer,

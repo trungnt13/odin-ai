@@ -62,7 +62,7 @@ pp2 = make_pipeline(steps=[
     base.RunningStatistics(),
     base.AsType(dtype='float16'),
     base.DuplicateFeatures('spec', 'mag'),
-    base.RemoveFeatures('spec')
+    base.DeleteFeatures('spec')
 ])
 formatted_printer(feats=pp2.transform(AUDIO_PATH))
 print("///////////////////////////")

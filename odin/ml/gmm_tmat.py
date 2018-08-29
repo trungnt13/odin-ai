@@ -100,7 +100,7 @@ def logsumexp(X, axis):
   return y
 
 
-def _split_jobs(nb_samples, ncpu, device, gpu_factor):
+def _split_jobs(n_samples, ncpu, device, gpu_factor):
   """ Return: jobs_cpu, jobs_gpu"""
   # number of GPU
   ngpu = get_ngpu()
@@ -115,7 +115,7 @@ def _split_jobs(nb_samples, ncpu, device, gpu_factor):
     njob = ngpu + 1
   else:
     raise ValueError("Unknown device: '%s'" % device)
-  jobs = np.linspace(start=0, stop=nb_samples,
+  jobs = np.linspace(start=0, stop=n_samples,
                      num=njob, dtype='int32')
   jobs = list(zip(jobs, jobs[1:]))
   # use both GPU and CPU
@@ -132,13 +132,17 @@ def _split_jobs(nb_samples, ncpu, device, gpu_factor):
     jobs_cpu = jobs
   return jobs_cpu, jobs_gpu
 
-def _create_batch(X, start, end, batch_size,
+def _create_batch(X, sad, start, end, batch_size,
                   downsample, stochastic,
                   seed, curr_nmix, curr_niter):
-  """ Return:
-  (start, end, nframe, is_batch_selected)
   """
-  # stochastic downsasmple, seed change every iter and mixup
+  Return
+  ------
+  (X, n_selected_frame, n_original_frame)
+  i.e. the number of select frames might be different from number
+  of original frames after applying SAD
+  """
+  # stochastic downsample, seed change every iter and mixup
   if stochastic:
     random.seed(seed + curr_nmix + curr_niter)
   else: # deterministic
@@ -146,56 +150,75 @@ def _create_batch(X, start, end, batch_size,
   all_batches = list(batching(n=end - start, batch_size=batch_size))
   random.shuffle(all_batches)
   # iterate over batches
-  for batch_id, (s, e) in enumerate(all_batches):
-    n = e - s
+  for batch_id, (batch_start, batch_end) in enumerate(all_batches):
+    batch_start += start
+    batch_end += start
+    n_original_sample = batch_end - batch_start
     # first batch always selected,
     # downsample by randomly ignore a batch
     if batch_id == 0 or \
     downsample == 1 or \
     (downsample > 1 and random.random() <= 1. / downsample):
-      yield X[s + start:e + start], n
+      X_sad = (X[batch_start:batch_end]
+               if sad is None else
+               X[batch_start:batch_end][sad[batch_start:batch_end].astype('bool')])
+      yield X_sad, X_sad.shape[0], n_original_sample
+    # ====== batch ignored ====== #
     else:
-      yield None, n
+      yield None, n_original_sample, n_original_sample
 
-def _create_batch_indices(X, indices, batch_size,
+def _create_batch_indices(X, sad, indices, batch_size,
                           downsample, stochastic,
                           seed, curr_nmix, curr_niter):
-  """ Return:
-  (indices, nframe, is_batch_selected)
-  which indices is list of following format:
-    [(name, (start, end)), ...]
   """
-  # stochastic downsasmple, seed change every iter and mixup
+  Return
+  ------
+  (X, n_selected_frame, n_original_frame)
+  i.e. the number of select frames might be different from number
+  of original frames after applying SAD
+  """
+  # stochastic downsample, seed change every iter and mixup
   if stochastic:
     random.seed(seed + curr_nmix + curr_niter)
   else: # deterministic
     random.seed(seed)
   random.shuffle(indices)
   # iterate over batches
-  for batch_id, (name, (s, e)) in enumerate(indices):
-    n = e - s
+  for batch_id, (name, (file_start, file_end)) in enumerate(indices):
+    n_original_sample = file_end - file_start
     # first batch always selected,
     # downsample by randomly ignore a batch
     if batch_id == 0 or \
     downsample == 1 or \
     (downsample > 1 and random.random() <= 1. / downsample):
-      if n <= batch_size:
-        yield X[s:e], n
+      # not enough sample for batching
+      if n_original_sample <= batch_size:
+        X_sad = (X[file_start:file_end]
+                 if sad is None else
+                 X[file_start:file_end][sad[file_start:file_end].astype('bool')])
+        yield X_sad, X_sad.shape[0], n_original_sample
+      # split into smaller mini-batch
       else:
-        for start, end in batching(n=n, batch_size=batch_size):
-          yield X[start + s: end + s], end - start
+        for batch_start, batch_end in batching(n=n_original_sample, batch_size=batch_size):
+          batch_start = batch_start + file_start
+          batch_end = batch_end + file_start
+          X_sad = (X[batch_start: batch_end]
+                   if sad is None else
+                   X[batch_start: batch_end][sad[batch_start: batch_end].astype('bool')])
+          yield X_sad, X_sad.shape[0], n_original_sample
+    # ====== batch ignored ====== #
     else:
-      yield None, n
+      yield None, n_original_sample, n_original_sample
 
 class _ExpectationResults(object):
   """ ExpectationResult """
 
-  def __init__(self, nb_samples, nb_results, name, print_progress):
+  def __init__(self, n_samples, nb_results, name, print_progress):
     super(_ExpectationResults, self).__init__()
     # thread lock
     self.lock = threading.Lock()
     # progress bar
-    self.prog = Progbar(target=nb_samples, print_report=True,
+    self.prog = Progbar(target=n_samples, print_report=True,
                         print_summary=False, name=name)
     # GMM: Z, F, S, L, nframes
     # I-vector: LU, RU, llk, nframes
@@ -582,6 +605,19 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
   # ==================== sklearn ==================== #
   def fit(self, X, y=None):
     """
+    Parameters
+    ----------
+    X : {numpy.ndarray, tuple, list}
+      in case a tuple is given, two options are considered:
+       - length of the list is 1: only training feature is given
+       - length of the list is 2: training data (numpy.ndarray),
+       indices or sad indices (numpy.ndarray)
+       - length of the list is 3: training data (numpy.ndarray),
+       sad indices (numpy.ndarray), indices
+      where the `indices` is a dictionary of the mapping
+      'file_name' -> (start_index, end_index) in the training
+      data array
+
     NOTE
     ----
     from 1, 2, 4 components, python multi-threading is fastest
@@ -590,13 +626,33 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """
     # if indices is given it should be sorted for optimal
     # memory access
+    sad = None
+    indices = None
     if isinstance(X, (tuple, list)):
-      tmp = [i for i in X if hasattr(i, 'shape')][0]
-      indices = [i for i in X if i != tmp][0]
-      if isinstance(indices, Mapping):
-        indices = list(indices.items())
-      indices = sorted(indices, key=lambda x: x[1][0])
-      X = (tmp, indices)
+      if len(X) == 1:
+        data = X[0]
+      elif len(X) == 2:
+        if hasattr(X[1], 'shape'):
+          data, sad = X
+          assert data.shape[0] == sad.shape[0]
+        else:
+          data, indices = X
+      elif len(X) == 3:
+        data, sad, indices = X
+      else:
+        raise ValueError("No support for `X` in type of list with length: %d" % len(X))
+      # validate data
+      assert hasattr(data, 'shape') and data.ndim == 2, \
+      'Input data must be instance of 2-D ndarray but give: %s' % str(type(data))
+      # check if indices exist
+      if indices is not None:
+        if isinstance(indices, Mapping):
+          indices = list(indices.items())
+        indices = sorted(indices, key=lambda x: x[1][0])
+        X = (data, indices)
+      # otherwise, only data and sad are given
+      else:
+        X = data
     # ====== start GMM ====== #
     # supports 16384 components, modify for more components
     niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10, 16, 16]
@@ -611,7 +667,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       curr_niter = niter[idx] - last_niter
       if curr_niter > 0:
         for i in range(curr_niter):
-          self.expectation_maximization(X, print_progress=True)
+          self.expectation_maximization(X, sad=sad, print_progress=True)
           # check if stop now
           if self._stop_fitting:
             return self
@@ -920,7 +976,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== return ====== #
     return results if len(results) > 1 else results[0]
 
-  def expectation(self, X, zero=True, first=True, second=True,
+  def expectation(self, X, sad=None,
+                  zero=True, first=True, second=True,
                   llk=True, device=None, print_progress=True):
     """
     Parameters
@@ -953,32 +1010,47 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     llk   (optional) : scalar ()
     """
     X, indices = self.initialize(X)
+    if sad is not None:
+      assert sad.shape[0] == X.shape[0], \
+      "Number of samples for X and sad mismatch X.shape=%s and sad.shape=%s" %\
+      (X.shape, sad.shape)
+      assert sad.ndim == 1 or (sad.ndim == 2 and sad.shape[1] == 1), \
+      "`sad` must be 1-D array or 2-D array with second dimension equal to 1"
+    # ====== total number of sample (WITHOUT SAD) ====== #
     if indices is None:
-      nb_samples = X.shape[0]
+      n_samples = X.shape[0]
     else:
-      nb_samples = sum(end - start for name, (start, end) in indices)
+      n_samples = sum(end - start
+                      for name, (start, end) in indices)
     # ====== pick device ====== #
     device = self._device if device is None else str(device).lower()
     if device not in ('gpu', 'cpu', 'mix'):
       raise ValueError("`device` can only be of the following:"
                        "'gpu', 'cpu', and 'mix'.")
     # ====== only 1 batch ====== #
-    if (nb_samples <= self.batch_size_cpu and self._device == 'cpu') or\
-    (nb_samples <= self.batch_size_gpu and self._device in ('gpu', 'mix')):
-      if indices is None: # no indices
-        results = self._fast_expectation(X, zero, first, second, llk,
-                                         on_gpu=self._device != 'cpu')
-      else: # given indices
-        results = np.array([self._fast_expectation(X[start:end],
-                                                   zero, first, second, llk,
-                                                   on_gpu=self._device != 'cpu')
-                            for name, (start, end) in indices]
-                            ).sum(axis=0).tolist()
+    if (n_samples <= self.batch_size_cpu and self._device == 'cpu') or\
+    (n_samples <= self.batch_size_gpu and self._device in ('gpu', 'mix')):
+      # NO indices
+      if indices is None:
+        X_sad = X if sad is None else X[sad.astype('bool')]
+      # given indices
+      else:
+        X_sad = []
+        for name, (start, end) in indices:
+          X_sad.append(X[start:end]
+                       if sad is None else
+                       X[start:end][sad[start:end].astype('bool')])
+        X_sad = np.concatenate(X_sad, axis=0)
+      # applying _fast_expectation
+      results = self._fast_expectation(X_sad, zero, first, second, llk,
+                                       on_gpu=self._device != 'cpu')
+      # calculate log-likelihood
+      # (NOTE: after applying SAD, the number of sample may reduced)
       if llk:
         if isinstance(results, (tuple, list)):
-          results = tuple(results[:-1]) + (np.array(results[-1] / nb_samples),)
-        else:
-          results = np.array(results / nb_samples)
+          results = tuple(results[:-1]) + (np.array(results[-1] / X_sad.shape[0]),)
+        else: # only llk returned
+          results = np.array(results / X_sad.shape[0])
       return results
     # ====== mapping method ====== #
     curr_niter = len(self._llk_hist[self._curr_nmix])
@@ -988,41 +1060,45 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       reduction = np.floor(np.power(2, curr_nmix / 1024))
       get_batch_size = lambda on_gpu: int((self.batch_size_gpu if on_gpu
                                            else self.batch_size_cpu) / reduction)
+      # NO indices
       if indices is None:
         (start, end), on_gpu = start_end_gpu
-        batch_iterator = _create_batch(X, start, end,
-                batch_size=get_batch_size(on_gpu),
-                downsample=self.downsample,
-                stochastic=self.stochastic_downsample,
-                seed=self._seed,
-                curr_nmix=curr_nmix,
-                curr_niter=curr_niter)
+        batch_iterator = _create_batch(X, sad, start, end,
+            batch_size=get_batch_size(on_gpu),
+            downsample=self.downsample,
+            stochastic=self.stochastic_downsample,
+            seed=self._seed,
+            curr_nmix=curr_nmix,
+            curr_niter=curr_niter)
+      # Given indices
       else:
         jobs, on_gpu = start_end_gpu
-        batch_iterator = _create_batch_indices(X, jobs,
-                batch_size=get_batch_size(on_gpu),
-                downsample=self.downsample,
-                stochastic=self.stochastic_downsample,
-                seed=self._seed,
-                curr_nmix=curr_nmix,
-                curr_niter=curr_niter)
-      # Z, F, S, L, nfr
+        batch_iterator = _create_batch_indices(X, sad, jobs,
+            batch_size=get_batch_size(on_gpu),
+            downsample=self.downsample,
+            stochastic=self.stochastic_downsample,
+            seed=self._seed,
+            curr_nmix=curr_nmix,
+            curr_niter=curr_niter)
+      # Z, F, S, L, n_frames
       results = [0., 0., 0., 0., 0]
-      for y, n in batch_iterator:
+      for y, n_selected_frame, n_original_sample in batch_iterator:
         # update expectation
         if y is not None:
-          for i, res in enumerate(self._fast_expectation(y, on_gpu=on_gpu)):
+          for i, res in enumerate(
+          self._fast_expectation(y, zero=True, first=True, second=True,
+                                 llk=True, on_gpu=on_gpu)):
             results[i] += res
-          results[-1] += n
+          results[-1] += n_selected_frame
         # return the progress
-        yield n
+        yield n_original_sample
       yield tuple(results)
 
     def thread_expectation(results, start_end):
       for res in map_expectation((start_end, True)):
         results.update(res)
     # ====== split the jobs ====== #
-    jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nb_samples,
+    jobs_cpu, jobs_gpu = _split_jobs(n_samples=n_samples,
                                      ncpu=self.ncpu, device=device,
                                      gpu_factor=self.gpu_factor)
     # ====== convert jobs to indices jobs ====== #
@@ -1052,7 +1128,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       jobs_cpu = new_cpu_jobs
     # ====== run multiprocessing ====== #
     # Z, F, S, L, nfr
-    results = _ExpectationResults(nb_samples=nb_samples, nb_results=5,
+    results = _ExpectationResults(n_samples=n_samples, nb_results=5,
         name="[GMM] cmix:%d nmix:%d ndim:%d iter:%d" %
                    (curr_nmix, self.nmix, self.feat_dim, curr_niter + 1),
         print_progress=print_progress)
@@ -1135,13 +1211,14 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     del last_parameters
     return self
 
-  def expectation_maximization(self, X, device=None, print_progress=True):
+  def expectation_maximization(self, X, sad=None, device=None, print_progress=True):
     self.initialize(X)
     curr_nmix = self._curr_nmix
     curr_niter = len(self._llk_hist[curr_nmix]) + 1
     # ====== Expectation ====== #
     start_time = time.time()
-    Z, F, S, L = self.expectation(X, device=device, print_progress=print_progress)
+    Z, F, S, L = self.expectation(X, sad=sad,
+                                  device=device, print_progress=print_progress)
     time_Estep = time.time() - start_time
     # ====== maximization ====== #
     start_time = time.time()
@@ -1466,8 +1543,8 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
       T_invS = Tm / Sigma
       L1 = tf.matmul(Z, T_invS_Tt, name='L1') # (nfiles, t2_dim)
       B1 = tf.matmul(F, tf.transpose(T_invS), name='B1') # (nfiles, tv_dim)
-      nb_samples = tf.shape(L1)[0]
-      IDX = tf.range(start=0, limit=nb_samples, dtype='int32')
+      n_samples = tf.shape(L1)[0]
+      IDX = tf.range(start=0, limit=n_samples, dtype='int32')
 
       # ====== repeat for each utterance (file) ====== #
       def map_expectation_fn(idx):
@@ -1640,11 +1717,11 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
             tmp[i] += r
         results.update(tmp)
       # ====== prepare the jobs ====== #
-      jobs_cpu, jobs_gpu = _split_jobs(nb_samples=nfiles, ncpu=self.ncpu,
+      jobs_cpu, jobs_gpu = _split_jobs(n_samples=nfiles, ncpu=self.ncpu,
                                        device=device,
                                        gpu_factor=self.gpu_factor)
       # LU, RU, llk, nframes
-      results = _ExpectationResults(nb_samples=nfiles, nb_results=4,
+      results = _ExpectationResults(n_samples=nfiles, nb_results=4,
           name="[Tmatrix] Tdim:%d nmix:%d feat_dim:%d iter:%d" %
                      (self.tv_dim, self.nmix, self.feat_dim,
                       len(self._llk_hist) + 1),
@@ -1758,7 +1835,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     X : {tuple, list, numpy.ndarray, odin.fuel.data.MmapData}
       if tuple or list is given, the inputs include:
       Z-[1, nmix]; F-[1, nmix*feat_dim]
-      if numpy.ndarray is given, shape must be [nb_samples, feat_dim]
+      if numpy.ndarray is given, shape must be [n_samples, feat_dim]
 
     Return
     ------
@@ -1821,7 +1898,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     dtype = self.dtype if dtype is None else np.dtype(dtype)
     # ====== prepare inputs ====== #
     if Z is not None and F is not None:
-      nb_samples = Z.shape[0]
+      n_samples = Z.shape[0]
       if Z.shape[0] != F.shape[0]:
         raise ValueError("Number of samples in `Z` is %d which is different "
                          "from %d samples in `F`" % (Z.shape[0], F.shape[0]))
@@ -1829,18 +1906,18 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
       raise ValueError("Input arguments must contain `X` and `indices`, or "
                        "`Z` and `F`.")
     # ====== Progbar ====== #
-    prog = Progbar(target=nb_samples,
+    prog = Progbar(target=n_samples,
                    print_report=True, print_summary=True,
                    name="Extracting %d-D i-vector" % self.tv_dim)
     # ====== init data files ====== #
     if os.path.exists(path) and override:
       os.remove(path)
     dat = MmapData(path=path, dtype=dtype,
-                   shape=(nb_samples, self.tv_dim),
+                   shape=(n_samples, self.tv_dim),
                    read_only=False)
     # ====== run on GPU ====== #
     if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
-      for s, e in batching(batch_size=self.batch_size_gpu, n=nb_samples):
+      for s, e in batching(batch_size=self.batch_size_gpu, n=n_samples):
         z_minibatch = Z[s:e]
         f_minibatch = F[s:e]
         Ex = K.eval(self._gpu_t_outputs,
@@ -1870,7 +1947,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
             ivec = ivec.astype(dtype)
           vecs.append((i, ivec))
         return vecs
-      mpi = MPI(jobs=list(range(nb_samples)), func=extract_ivec,
+      mpi = MPI(jobs=list(range(n_samples)), func=extract_ivec,
                 ncpu=self.ncpu if ncpu is None else int(ncpu),
                 batch=max(12, self.batch_size_cpu))
       for vecs in mpi:

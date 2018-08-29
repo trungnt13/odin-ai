@@ -531,11 +531,11 @@ class RenameFeatures(Extractor):
           feat[new_name] = X
     return feat
 
-class RemoveFeatures(Extractor):
+class DeleteFeatures(Extractor):
   """ Remove features by name from extracted features dictionary """
 
   def __init__(self, input_name):
-    super(RemoveFeatures, self).__init__()
+    super(DeleteFeatures, self).__init__()
     self._name = as_tuple(input_name, t=string_types)
 
   def _transform(self, X):
