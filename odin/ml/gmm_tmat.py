@@ -183,7 +183,11 @@ def _create_batch_indices(X, sad, indices, batch_size,
   else: # deterministic
     random.seed(seed)
   random.shuffle(indices)
-  # iterate over batches
+  # ====== prepare the buffer ====== #
+  X_buffer = []
+  n_original_buffer = 0
+  n_selected_buffer = 0
+  # ====== iterate over each file ====== #
   for batch_id, (name, (file_start, file_end)) in enumerate(indices):
     n_original_sample = file_end - file_start
     # first batch always selected,
@@ -196,7 +200,10 @@ def _create_batch_indices(X, sad, indices, batch_size,
         X_sad = (X[file_start:file_end]
                  if sad is None else
                  X[file_start:file_end][sad[file_start:file_end].astype('bool')])
-        yield X_sad, X_sad.shape[0], n_original_sample
+        # store in buffer
+        X_buffer.append(X_sad)
+        n_selected_buffer += X_sad.shape[0]
+        n_original_buffer += n_original_sample
       # split into smaller mini-batch
       else:
         for batch_start, batch_end in batching(n=n_original_sample, batch_size=batch_size):
@@ -205,10 +212,24 @@ def _create_batch_indices(X, sad, indices, batch_size,
           X_sad = (X[batch_start: batch_end]
                    if sad is None else
                    X[batch_start: batch_end][sad[batch_start: batch_end].astype('bool')])
-          yield X_sad, X_sad.shape[0], n_original_sample
+          if X_sad.shape[0] >= batch_size: # full batch
+            yield X_sad, X_sad.shape[0], n_original_sample
+          else: # store in buffer
+            X_buffer.append(X_sad)
+            n_selected_buffer += X_sad.shape[0]
+            n_original_buffer += n_original_sample
     # ====== batch ignored ====== #
     else:
       yield None, n_original_sample, n_original_sample
+    # ====== check buffer to return ====== #
+    if n_selected_buffer >= batch_size:
+      yield np.concatenate(X_buffer, axis=0), n_selected_buffer, n_original_buffer
+      X_buffer = []
+      n_selected_buffer = 0
+      n_original_buffer = 0
+  # ====== check final buffer to return ====== #
+  if len(X_buffer) > 0:
+    yield np.concatenate(X_buffer, axis=0), n_selected_buffer, n_original_buffer
 
 class _ExpectationResults(object):
   """ ExpectationResult """
