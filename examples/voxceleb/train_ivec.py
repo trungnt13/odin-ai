@@ -6,7 +6,7 @@ from odin import ml
 from odin import fuel as F
 from odin.utils import args_parse, ctext
 
-from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA
+from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
 
 # ===========================================================================
 # Configs
@@ -27,7 +27,9 @@ args.tmat |= args.all | args.stat
 args.ivec |= args.all | args.tmat
 FEAT = args.feat
 NAME = '_'.join(['ivec', args.feat, str(args.nmix), str(args.tdim)])
+SAVE_PATH = os.path.join(PATH_EXP, NAME)
 print('Model name:', ctext(NAME, 'cyan'))
+print("Save path:", ctext(SAVE_PATH, 'cyan'))
 # ===========================================================================
 # Load dataset
 # ===========================================================================
@@ -39,7 +41,10 @@ train_indices = {name: ds['indices'][name]
 # ===========================================================================
 # Training I-vector model
 # ===========================================================================
-gmm = ml.GMM(nmix=args.nmix, niter=16, dtype='float64',
-             downsample=1, stochastic_downsample=True,
-             device='gpu')
-gmm.fit((X, ds['sad'], train_indices))
+# ivec = ml.Ivector(path=SAVE_PATH, nmix=8, tv_dim=8, niter_gmm=4, niter_tmat=4)
+ivec = ml.Ivector(path=SAVE_PATH,
+                  nmix=args.nmix,
+                  tv_dim=args.tdim)
+# from odin.ml import ivector
+# ivector._input_data_2_md5(X=X, sad=ds['sad'], indices=train_indices)
+ivec.fit(X, sad=ds['sad'], indices=train_indices)

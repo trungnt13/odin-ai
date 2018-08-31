@@ -49,12 +49,19 @@ def _data_to_io(file_or_data):
 # Hashing
 # ===========================================================================
 def md5_checksum(file_or_path, chunksize=512 * 1024):
-  """ MD5 checksum for:
-   * File object
-   * File path
-   * Bytes array
-   * Numpy array
-   * List or iterator of numpy array
+  """ Calculating MD5 checksum
+
+  Parameters
+  ---------
+  file_or_path : object
+    One of the following
+      - File object
+      - File path
+      - Bytes array
+      - Numpy array
+      - List or iterator of numpy array
+  chunksize : int (in bytes)
+    size of each chunk for updating MD5 value
 
   """
   hash_md5 = hashlib.md5()
@@ -85,8 +92,19 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
   # file object or buffer object
   elif hasattr(file_or_path, 'read'):
     f = file_or_path
+  # special case big custom array with shape attribute
+  elif hasattr(file_or_path, 'shape'):
+    itemsize = np.dtype(file_or_path.dtype).itemsize
+    batch_size = max(chunksize // (itemsize * np.prod(file_or_path.shape[1:])),
+                     8)
+    indices = range(0, file_or_path.shape[0] + batch_size, batch_size)
+    for start, end in zip(indices, indices[1:]):
+      x = file_or_path[start:end].tobytes()
+      hash_md5.update(x)
+    return hash_md5.hexdigest()
+  # NO support
   else:
-    raise ValueError("No support for value: %s" % str(file_or_path))
+    raise ValueError("MD5 checksum has NO support for input: %s" % str(file_or_path))
   # ====== iterate over file ====== #
   for chunk in iter(lambda: f.read(chunksize), b""):
     hash_md5.update(chunk)

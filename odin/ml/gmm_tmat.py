@@ -10,6 +10,7 @@ import time
 import random
 import pickle
 import threading
+from six import string_types
 from collections import OrderedDict, defaultdict, Mapping
 
 import numpy as np
@@ -19,7 +20,7 @@ import tensorflow as tf
 from odin import backend as K
 from odin.fuel import Data, DataDescriptor, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
-                        is_number, as_tuple, uuid, is_string,
+                        is_number, as_tuple, uuid,
                         wprint, eprint, segment_list, defaultdictkey,
                         array_size)
 from odin.config import EPS, get_ngpu
@@ -345,8 +346,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                device='cpu', ncpu=1, gpu_factor=80,
                seed=5218, path=None, name=None):
     super(GMM, self).__init__()
-    # start from 1 mixture, then split and up
+    self._path = path if isinstance(path, string_types) else None
     # ====== set number of mixtures ====== #
+    # start from 1 mixture, then split and up
     nmix = int(nmix)
     if nmix < 1:
       raise ValueError("Number of Mixture must be greater than 1.")
@@ -383,7 +385,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       self._name = 'GMM_%s' % name
     else:
       self._name = str(name)
-    self._path = path if is_string(path) else None
 
   def __getstate__(self):
     # 'means', 'variances', 'weights'
@@ -601,10 +602,10 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # const for specific dimension
     self._feat_const = self.feat_dim * np.log(2 * np.pi)
     # infer batch_size
-    if is_string(self.batch_size_cpu):
+    if isinstance(self.batch_size_cpu, string_types):
       self.batch_size_cpu = int(GMM.STANDARD_CPU_BATCH_SIZE /
        (self.feat_dim * self.dtype.itemsize))
-    if is_string(self.batch_size_gpu):
+    if isinstance(self.batch_size_gpu, string_types):
       self.batch_size_gpu = int(GMM.STANDARD_GPU_BATCH_SIZE /
        (self.feat_dim * self.dtype.itemsize))
     # [batch_size, feat_dim]
@@ -647,33 +648,33 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """
     # if indices is given it should be sorted for optimal
     # memory access
+    if not isinstance(X, (tuple, list)):
+      X = (X,)
     sad = None
     indices = None
-    if isinstance(X, (tuple, list)):
-      if len(X) == 1:
-        data = X[0]
-      elif len(X) == 2:
-        if hasattr(X[1], 'shape'):
-          data, sad = X
-          assert data.shape[0] == sad.shape[0]
-        else:
-          data, indices = X
-      elif len(X) == 3:
-        data, sad, indices = X
+    if len(X) == 1:
+      data = X[0]
+    elif len(X) == 2:
+      if hasattr(X[1], 'shape') and X[0].shape[0] == X[1].shape[0]:
+        data, sad = X
       else:
-        raise ValueError("No support for `X` in type of list with length: %d" % len(X))
-      # validate data
-      assert hasattr(data, 'shape') and data.ndim == 2, \
-      'Input data must be instance of 2-D ndarray but give: %s' % str(type(data))
-      # check if indices exist
-      if indices is not None:
-        if isinstance(indices, Mapping):
-          indices = list(indices.items())
-        indices = sorted(indices, key=lambda x: x[1][0])
-        X = (data, indices)
-      # otherwise, only data and sad are given
-      else:
-        X = data
+        data, indices = X
+    elif len(X) == 3:
+      data, sad, indices = X
+    else:
+      raise ValueError("No support for `X` in type of list with length: %d" % len(X))
+    # validate data
+    assert hasattr(data, 'shape') and data.ndim == 2, \
+    'Input data must be instance of 2-D ndarray but give: %s' % str(type(data))
+    # check if indices exist
+    if indices is not None:
+      if isinstance(indices, Mapping):
+        indices = list(indices.items())
+      indices = sorted(indices, key=lambda x: x[1][0])
+      X = (data, indices)
+    # otherwise, only data and sad are given
+    else:
+      X = data
     # ====== start GMM ====== #
     # supports 16384 components, modify for more components
     niter = [1, 2, 4, 4, 4, 4, 6, 6, 10, 10, 10, 10, 10, 16, 16]
@@ -707,8 +708,20 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     post = self.logprob(X)  # (batch_size, nmix)
     return logsumexp(post, axis=1) # (batch_size, 1)
 
-  def transform(self, X, device=None):
+  def transform(self, X, zero=True, first=True, device=None):
     """ Compute centered statistics given X and fitted mixtures
+
+    Parameters
+    ----------
+    X : ndarray
+      input feature [n_samples, feat_dim] (e.g. all frames
+      of an utterance for audio data)
+    zero : bool (default: True)
+      if True, return the zero-th order statistics
+    first : bool (default: True)
+      if True, return the first order statistics
+    device : {None, 'cpu', 'gpu'}
+      select device for execute the expectation calculation
 
     Return
     ------
@@ -724,16 +737,36 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     """
     if device is None:
       device = self._device
-    Z, F = self._fast_expectation(X, zero=True, first=True,
-                                  second=False, llk=False,
-                                  on_gpu=device != 'cpu')
-    # this equal to: .ravel()[np.newaxis, :]
-    F_hat = np.reshape(F - self.mean * Z,
-                       newshape=(1, self.feat_dim * self._curr_nmix),
-                       order='F')
-    return Z, F_hat
+    zero = bool(zero)
+    first = bool(first)
+    if not zero and not first:
+      raise ValueError("One of `zero` or `first` must be True")
+    # ====== expectation ====== #
+    Z = None
+    F = None; F_hat = None
+    results = self._fast_expectation(X, zero=zero, first=first,
+                                     second=False, llk=False,
+                                     on_gpu=device != 'cpu')
+    # ====== return the results ====== #
+    if zero and first:
+      Z, F = results
+      # this equal to: .ravel()[np.newaxis, :]
+      F_hat = np.reshape(F - self.mean * Z,
+                         newshape=(1, self.feat_dim * self._curr_nmix),
+                         order='F')
+      return Z, F_hat
+    elif zero and not first:
+      Z = results
+      return Z
+    elif not zero and first:
+      F = results
+      # this equal to: .ravel()[np.newaxis, :]
+      F_hat = np.reshape(F - self.mean * Z,
+                         newshape=(1, self.feat_dim * self._curr_nmix),
+                         order='F')
+      return F_hat
 
-  def transform_to_disk(self, X, indices,
+  def transform_to_disk(self, X, indices, sad=None,
                         pathZ=None, pathF=None, name_path=None,
                         dtype='float32', device='cpu', ncpu=None,
                         override=True):
@@ -753,6 +786,15 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     If your data contain many very long utterances, it is suggested to use
     `device='gpu'`, otherwise, 'cpu' is mostly significant faster.
     """
+    # ====== prepare inputs ====== #
+    if isinstance(indices, Mapping):
+      indices = sorted(indices.items(), key=lambda x: x[1][0])
+    if sad is not None:
+      assert sad.shape[0] == X.shape[0], \
+      "Number of samples in `X` (%d) and `sad` (%d) are mismatched" % (len(X), len(sad))
+      assert sad.ndim == 1 or (sad.ndim == 2 and sad.shape[1] == 1), \
+      "Invalid shape for `sad.shape=%s`" % str(sad.shape)
+    # ====== check device ====== #
     if device is None:
       device = self._device
     on_gpu = True if device != 'cpu' and get_ngpu() > 0 else False
@@ -787,10 +829,13 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       if f_dat is not None:
         f_dat.append(F)
 
-    def _batched_transform(x, on_gpu):
+    def _batched_transform(s, e, on_gpu):
       reduction = np.floor(np.power(2, self._curr_nmix / 1024))
       batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
       batch_size = int(batch_size / reduction)
+      x = X[s:e]
+      if sad is not None:
+        x = x[sad[s:e].astype('bool')]
       if x.shape[0] <= batch_size:
         res = [self._fast_expectation(x,
                                      zero=z_dat is not None or f_dat is not None,
@@ -816,7 +861,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== running on GPU ====== #
     if on_gpu:
       for n, (start, end) in indices:
-        Z, F = _batched_transform(X[start:end], on_gpu=True)
+        Z, F = _batched_transform(start, end, on_gpu=True)
         _update_zf(Z, F)
         name_list.append(n)
         prog.add(1)
@@ -827,7 +872,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         name = []
         for n, (start, end) in j:
           name.append(n)
-          Z, F = _batched_transform(X[start:end], on_gpu=False)
+          Z, F = _batched_transform(start, end, on_gpu=False)
           if z_dat is not None:
             Z_list.append(Z)
           if f_dat is not None:
@@ -863,7 +908,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       f_dat.flush()
       f_dat.close()
     # ====== save name_list ====== #
-    if is_string(name_path):
+    if isinstance(name_path, string_types):
       np.savetxt(fname=name_path, X=name_list, fmt='%s')
     return name_list
 
@@ -1294,7 +1339,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
         pickle.dump(self, f)
     return self
 
-
 # ===========================================================================
 # Tmatrix
 # ===========================================================================
@@ -1376,15 +1420,17 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     if not (isinstance(gmm, GMM) and gmm.is_initialized and gmm.is_fitted):
       raise ValueError("`gmm` must be instance of odin.ml.gmm.GMM "
                        "both is_initialized and is_fitted.")
+    self._is_fitted = False
     # ====== init ====== #
     self.niter = niter
     self._tv_dim = tv_dim
     self._t2_dim = tv_dim * (tv_dim + 1) // 2
+    # ====== setting the gmm ====== #
     self._feat_dim = gmm.feat_dim
     self._nmix = gmm.nmix
     self._gmm = gmm
     # ====== others ====== #
-    self._path = path if is_string(path) else None
+    self._path = path if isinstance(path, string_types) else None
     self._seed = seed
     self._llk_hist = []
     if name is None:
@@ -1398,13 +1444,13 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # ====== training ====== #
     self._dtype = np.dtype(dtype)
     # CPU batch
-    if is_string(batch_size_cpu):
+    if isinstance(batch_size_cpu, string_types):
       batch_size_cpu = int(Tmatrix.STANDARD_CPU_BATCH_SIZE /
        ((self.feat_dim * self.nmix * self.dtype.itemsize) +
         (self.nmix * self.dtype.itemsize)))
     self.batch_size_cpu = batch_size_cpu
     # GPU batch
-    if is_string(batch_size_gpu):
+    if isinstance(batch_size_gpu, string_types):
       batch_size_gpu = int(Tmatrix.STANDARD_GPU_BATCH_SIZE /
        ((self.feat_dim * self.nmix * self.dtype.itemsize) +
         (self.nmix * self.dtype.itemsize)))
@@ -1442,7 +1488,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
             self.batch_size_cpu, self.batch_size_gpu,
             self.niter, self.ncpu, self._device, self.gpu_factor,
             self.cache_path, self._dtype,
-            self._path, self._name)
+            self._is_fitted, self._path, self._name)
 
   def __setstate__(self, states):
     (self.Im, self.Sigma, self.Tm, self._gmm,
@@ -1451,7 +1497,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
      self.batch_size_cpu, self.batch_size_gpu,
      self.niter, self.ncpu, self._device, self.gpu_factor,
      self.cache_path, self._dtype,
-     self._path, self._name) = states
+     self._is_fitted, self._path, self._name) = states
     # ====== re-init ====== #
     self.T_invS_Tt = np.empty((self.nmix, self.t2_dim), dtype=self.dtype)
     self._itril = np.tril_indices(self.tv_dim)
@@ -1525,6 +1571,10 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
   @property
   def gmm(self):
     return self._gmm
+
+  @property
+  def is_fitted(self):
+    return self._is_fitted
 
   # ==================== i-vec ==================== #
   def _refresh_T_statistics(self):
@@ -1773,6 +1823,9 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
 
   def maximization(self, LU, RU, nframes=None,
                    min_div_est=True, orthogonalize=True):
+    # the call to maximization always update the T-matrix
+    # hence, the model is fitted.
+    self._is_fitted = True
     # ML re-estimation of the total subspace matrix or the factor loading
     # matrix
     # ====== Multi-processing on CPU ====== #
