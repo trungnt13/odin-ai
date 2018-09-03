@@ -45,6 +45,6 @@ train_indices = {name: ds['indices'][name]
 ivec = ml.Ivector(path=SAVE_PATH,
                   nmix=args.nmix,
                   tv_dim=args.tdim)
-# from odin.ml import ivector
-# ivector._input_data_2_md5(X=X, sad=ds['sad'], indices=train_indices)
-ivec.fit(X, sad=ds['sad'], indices=train_indices)
+ivec.fit(X, sad=ds['sad'], indices=train_indices,
+         extract_ivec=True)
+print(ivec)

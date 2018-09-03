@@ -741,6 +741,9 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     first = bool(first)
     if not zero and not first:
       raise ValueError("One of `zero` or `first` must be True")
+    assert X.ndim == 2 and X.shape[1] == self.feat_dim, \
+    "`X` must be 2-D matrix, with `X.shape[1]=%d`; but given: %s" % \
+    (self.feat_dim, str(X.shape))
     # ====== expectation ====== #
     Z = None
     F = None; F_hat = None
@@ -1924,8 +1927,13 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     """
     # ====== GMM transform ====== #
     if isinstance(X, (tuple, list)):
-      Z = [i for i in X if i.shape[1] == self.nmix][0]
-      F = [i for i in X if i.shape[1] == self.nmix * self.feat_dim][0]
+      Z, F = X
+      assert Z.ndim == 2 and Z.shape[1] == self.nmix, \
+      "Zero-th order statistics must be 2-D matrix, and `Z.shape=[?, %d]; but given: %s" % \
+      (self.nmix, str(Z.shape))
+      assert F.ndim == 2 and F.shape[1] == self.nmix * self.feat_dim, \
+      "First order statistics must be 2-D matrix, and `F.shape=[?, %d]; but given: %s" % \
+      (self.nmix * self.feat_dim, str(F.shape))
     else:
       Z, F = self.gmm.transform(X)
     # ====== pass ====== #
@@ -1942,7 +1950,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     # (1, tv_dim)
     return Ex.T
 
-  def transform_to_disk(self, path, Z, F,
+  def transform_to_disk(self, Z, F, path=None,
                         dtype='float32', device='gpu', ncpu=None,
                         override=True):
     """ Same as `transform`, however, save the transformed statistics
@@ -1950,10 +1958,13 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    path : str
-      saving path for extracted i-vector
     Z : {None, numpy.ndarray, odin.fuel.data.MmapData}
+      array of zero-th order statistic [n_samples, nmix]
     F : {None, numpy.ndarray, odin.fuel.data.MmapData}
+      array of first-th order statistic [n_samples, nmix * feat_dim]
+    path : {str, None}
+      if str, saving path for extracted i-vector, otherwise,
+      return numpy.ndarray for the i-vector
 
     Return
     ------
@@ -1984,11 +1995,15 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
                    print_report=True, print_summary=True,
                    name="Extracting %d-D i-vector" % self.tv_dim)
     # ====== init data files ====== #
-    if os.path.exists(path) and override:
-      os.remove(path)
-    dat = MmapData(path=path, dtype=dtype,
-                   shape=(n_samples, self.tv_dim),
-                   read_only=False)
+    if path is not None:
+      if os.path.exists(path) and override:
+        os.remove(path)
+      dat = MmapData(path=path, dtype=dtype,
+                     shape=(n_samples, self.tv_dim),
+                     read_only=False)
+    else:
+      dat = np.empty(shape=(n_samples, self.tv_dim),
+                     dtype=dtype)
     # ====== run on GPU ====== #
     if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
       for s, e in batching(batch_size=self.batch_size_gpu, n=n_samples):
@@ -2029,8 +2044,11 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
           dat[i:i + 1] = v
         prog.add(len(vecs))
     # ====== flush and close ====== #
-    dat.flush()
-    dat.close()
+    if path is not None:
+      dat.flush()
+      dat.close()
+      return MmapData(path=path, read_only=True)
+    return dat
 
   def fit(self, X, y=None):
     """ Extract i-vector from trained T-matrix
