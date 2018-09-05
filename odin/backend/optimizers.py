@@ -212,7 +212,7 @@ class Optimizer(object):
       max_name_length = str(max(max(len(i.name)
                                     for i in v)
                                 for v in role_vars.values()))
-      max_shape_length = str(max(max(len(str(i.get_shape().as_list()))
+      max_shape_length = str(max(max(len(str(i.shape.as_list()))
                                      for i in v)
                                  for v in role_vars.values()))
       for role, var_list in sorted(role_vars.items(),
@@ -221,7 +221,7 @@ class Optimizer(object):
         for var in sorted(var_list, key=lambda x: x.name):
           print(' ',
                 ('%-' + max_name_length + 's') % var.name.replace('/', ' '),
-                ctext(('%-' + max_shape_length + 's') % var.get_shape().as_list(), 'magenta'),
+                ctext(('%-' + max_shape_length + 's') % var.shape.as_list(), 'magenta'),
                 ctext(var.dtype.base_dtype.name, 'cyan'))
     # ====== get the updates ====== #
     updates = self.algorithm.minimize(loss=loss, global_step=self._step,

@@ -154,7 +154,7 @@ class NeuralClassifier(_NeuralEstimator):
       self._y = K.placeholder(shape=self.output_shape, dtype=self.dtype, name='output')
       # ====== run the network ====== #
       y_pred_logits = self.network.apply(self._X)
-      nb_classes = y_pred_logits.get_shape().as_list()[-1]
+      nb_classes = y_pred_logits.shape.as_list()[-1]
       if len(self._output_shape) == 1:
         y_true = tf.one_hot(indices=tf.cast(self._y, 'int32'),
                             depth=nb_classes)

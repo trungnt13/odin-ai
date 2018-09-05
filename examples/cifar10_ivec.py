@@ -28,11 +28,11 @@ print("Input:", X_train.shape, X_test.shape)
 # ===========================================================================
 # Training the GMM
 # ===========================================================================
-ivec = ml.Ivector(path=EXP_PATH, nmix=64, tv_dim=32,
+ivec = ml.Ivector(path=EXP_PATH, nmix=32, tv_dim=16,
                   niter_gmm=8, niter_tmat=8)
 ivec.fit(X_train)
-I_train = ivec.transform(X_train, save_ivecs=True, name='train')
-I_test = ivec.transform(X_test, save_ivecs=True, name='test')
+I_train = ivec.transform(X_train, save_ivecs=True, name='train')[:]
+I_test = ivec.transform(X_test, save_ivecs=True, name='test')[:]
 print(ivec)
 # ===========================================================================
 # Classifier

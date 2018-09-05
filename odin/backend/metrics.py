@@ -72,9 +72,9 @@ def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
                     name=None):
   """ Non-differentiable """
   with tf.name_scope(name, "binary_accuracy", [y_pred, y_true, threshold]):
-    if y_pred.get_shape().ndims > 1:
+    if y_pred.shape.ndims > 1:
       y_pred = tf.reshape(y_pred, (-1,))
-    if y_true.get_shape().ndims > 1:
+    if y_true.shape.ndims > 1:
       y_true = tf.reshape(y_true, (-1,))
     y_pred = tf.greater_equal(y_pred, threshold)
     match_values = tf.cast(tf.equal(tf.cast(y_pred, 'int32'),
@@ -88,9 +88,9 @@ def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
                          name=None):
   """ Non-differentiable """
   with tf.name_scope(name, "categorical_accuracy", [y_true, y_pred]):
-    if y_true.get_shape().ndims == y_pred.get_shape().ndims:
+    if y_true.shape.ndims == y_pred.shape.ndims:
       y_true = tf.argmax(y_true, axis=-1)
-    elif y_true.get_shape().ndims != y_pred.get_shape().ndims - 1:
+    elif y_true.shape.ndims != y_pred.shape.ndims - 1:
       raise TypeError('rank mismatch between y_true and y_pred')
     if top_k == 1:
       # standard categorical accuracy
@@ -155,15 +155,15 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
   with tf.name_scope(name, 'confusion_matrix', [y_true, y_pred]):
     from tensorflow.contrib.metrics import confusion_matrix as tf_cm
     nb_classes = None
-    if y_true.get_shape().ndims == 2:
-      nb_classes = y_true.get_shape().as_list()[-1]
+    if y_true.shape.ndims == 2:
+      nb_classes = y_true.shape.as_list()[-1]
       y_true = tf.argmax(y_true, -1)
-    elif y_true.get_shape().ndims != 1:
+    elif y_true.shape.ndims != 1:
       raise ValueError('actual must be 1-d or 2-d tensor variable')
-    if y_pred.get_shape().ndims == 2:
-      nb_classes = y_pred.get_shape().as_list()[-1]
+    if y_pred.shape.ndims == 2:
+      nb_classes = y_pred.shape.as_list()[-1]
       y_pred = tf.argmax(y_pred, -1)
-    elif y_pred.get_shape().ndims != 1:
+    elif y_pred.shape.ndims != 1:
       raise ValueError('pred must be 1-d or 2-d tensor variable')
     # check valid labels
     if labels is None:
@@ -228,10 +228,10 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
     if probability_input:
       y_llr = to_llr(y_llr)
     thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
-    nb_classes = y_llr.get_shape()[1].value
+    nb_classes = y_llr.shape[1].value
     if isinstance(y_true, (list, tuple)):
       y_true = np.asarray(y_true)
-    if y_true.get_shape().ndims == 1:
+    if y_true.shape.ndims == 1:
       y_true = tf.one_hot(y_true, depth=nb_classes, axis=-1)
     y_true = tf.cast(y_true, y_llr.dtype.base_dtype)
     # ====== statistics ====== #

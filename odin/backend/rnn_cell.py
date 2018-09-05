@@ -138,7 +138,7 @@ class AttentionCell(RNNCell):
                                     [-1, self._attn_length, self._attn_size])
     input_size = self._input_size
     if input_size is None:
-      input_size = inputs.get_shape().as_list()[1]
+      input_size = inputs.shape.as_list()[1]
     inputs = _linear([inputs, attns], input_size, True)
     lstm_output, new_state = self._cell(inputs, state)
     new_state_cat = array_ops.concat(nest.flatten(new_state), 1)

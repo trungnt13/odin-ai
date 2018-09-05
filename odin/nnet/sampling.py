@@ -57,7 +57,7 @@ class Pool(NNOp):
     self.transpose_mode = transpose_mode
 
   def _apply(self, X):
-    ndims = X.get_shape().ndims
+    ndims = X.shape.ndims
     return tf.nn.pool(X,
         window_shape=_preprocess_windows(self.pool_size, ndims),
         strides=_preprocess_windows(self.strides, ndims),
@@ -102,7 +102,7 @@ class Upsample(NNOp):
 
   def _apply(self, X):
     axes = self.axes
-    ndims = X.get_shape().ndims
+    ndims = X.shape.ndims
     if is_string(axes) and axes.lower() == 'auto':
       if ndims == 3:
         axes = (1,)
@@ -120,14 +120,14 @@ class Upsample(NNOp):
       paddings = [[0, 0] if i is None or o is None or i >= o else
                   [tf.cast(tf.ceil((o - i) / 2), 'int32'),
                    tf.cast(tf.floor((o - i) / 2), 'int32')]
-                  for i, o in zip(X.get_shape().as_list(), desire_shape)]
+                  for i, o in zip(X.shape.as_list(), desire_shape)]
       if not all(i == [0, 0] for i in paddings):
         X = tf.pad(X, paddings=paddings, mode='CONSTANT')
       # do slice if necessary
       slices = [slice(tf.cast(tf.floor((i - o) / 2), 'int32'),
                       tf.cast(-tf.ceil((i - o) / 2), 'int32'), None)
                 if i is not None and o is not None and i > o else slice(None)
-                for i, o in zip(X.get_shape().as_list(), desire_shape)]
+                for i, o in zip(X.shape.as_list(), desire_shape)]
       if any(s is not slice(None) for s in slices):
         X = X[slices]
       K.set_shape(X, tuple([i if is_number(i) else None

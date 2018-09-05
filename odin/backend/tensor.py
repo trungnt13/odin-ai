@@ -79,7 +79,7 @@ def variable(value=None, shape=None, dtype=None, name=None, roles=[],
       pass
     # 5. Shared variable, just check the shape.
     elif is_variable(value):
-      _shape = value.get_shape().as_list()
+      _shape = value.shape.as_list()
       if shape is not None and tuple(shape) != tuple(_shape):
         raise Exception('Require variable with shape=%s, but was given different '
                         'shape=%s' % (str(shape), str(_shape)))
@@ -241,7 +241,7 @@ def to_llr(x, name=None):
   # ====== tensorflow ====== #
   else:
     with tf.name_scope(name, "log_likelihood_ratio", [x]):
-      nb_classes = x.get_shape().as_list()[-1]
+      nb_classes = x.shape.as_list()[-1]
       new_arr = []
       for j in range(nb_classes):
         scores_copy = tf.transpose(tf.gather(tf.transpose(x),
@@ -262,7 +262,7 @@ def to_sample_weights(indices, weights, name=None):
   give weights to sample weights for training """
   with tf.name_scope(name, "to_sample_weights", [indices]):
     # ====== preprocess indices ====== #
-    ndim = len(indices.get_shape())
+    ndim = len(indices.shape)
     if ndim <= 1: # indices vector
       indices = tf.cast(indices, dtype=tf.int64)
     else:
@@ -399,8 +399,8 @@ def upsample(x, scale, axes, method='nn', name="Upsample"):
   with tf.variable_scope(name):
     method = method.lower()
     input_shape = tf.shape(x)
-    input_shape_int = x.get_shape().as_list()
-    ndims = x.get_shape().ndims
+    input_shape_int = x.shape.as_list()
+    ndims = x.shape.ndims
     # normalize all negative axes
     if axes is None:
       raise ValueError("axes cannot be None.")
@@ -478,10 +478,10 @@ def dot(x, y, name='Dot'):
    (2, 3, 4).(4, 5) => (2, 3, 5)
   """
   with tf.variable_scope(name):
-    shapeX = x.get_shape().as_list()
-    shapeY = y.get_shape().as_list()
-    ndimX = x.get_shape().ndims
-    ndimY = y.get_shape().ndims
+    shapeX = x.shape.as_list()
+    shapeY = y.shape.as_list()
+    ndimX = x.shape.ndims
+    ndimY = y.shape.ndims
     if ndimX > 2:
       x = tf.reshape(x, (-1, shapeX[-1]))
     if ndimY > 2:
@@ -504,10 +504,10 @@ def batched_dot(x, y, name='BatchedDot'):
   by iterating over the first dimension.
   """
   with tf.variable_scope(name):
-    shapeX = x.get_shape().as_list()
-    shapeY = y.get_shape().as_list()
-    ndimX = x.get_shape().ndims
-    ndimY = y.get_shape().ndims
+    shapeX = x.shape.as_list()
+    shapeY = y.shape.as_list()
+    ndimX = x.shape.ndims
+    ndimY = y.shape.ndims
     # same as dot but one more batch dimension
     if ndimX > 2 + 1:
       x = tf.reshape(x, (-1, np.prod(shapeX[1:-1]), shapeX[-1]))
@@ -531,11 +531,11 @@ def switch(condition, then_expression, else_expression, name='switch'):
   with tf.variable_scope(name):
     if condition.dtype != tf.bool:
       condition = tf.cast(condition, 'bool')
-    x_shape = copy.copy(then_expression.get_shape())
+    x_shape = copy.copy(then_expression.shape)
     # tensorflow require the last dimension of 3 variables is equal, too
     # it is irrelevant since condition can have shape[-1] = 1
-    cond_ndims = condition.get_shape().ndims
-    if cond_ndims > 1 and condition.get_shape()[-1] != x_shape[-1]:
+    cond_ndims = condition.shape.ndims
+    if cond_ndims > 1 and condition.shape[-1] != x_shape[-1]:
       cond_shape = tf.shape(condition)
       condition = tf.reshape(condition,
           [cond_shape[i] for i in range(cond_ndims - 1)])
@@ -560,7 +560,7 @@ def argsort(x, k=None, name='argsort'):
   # the return value contains (values, indices)
   # but we only take the indices
   if k is None:
-    k = x.get_shape()[-1]
+    k = x.shape[-1]
   return tf.nn.top_k(x, k=k, sorted=True, name=name)[1]
 
 
@@ -590,7 +590,7 @@ def reshape(x, shape, name='Reshape'):
   reshape(shape=([1], [2], [0]))
   => x.shape = (08, 12, 25)
   """
-  input_shape = x.get_shape().as_list()
+  input_shape = x.shape.as_list()
   new_shape = []
   for i in shape:
     if i is None:
@@ -621,7 +621,7 @@ def flatten(x, outdim=1, name='Flatten'):
   with tf.variable_scope(name):
     if outdim == 1:
       return tf.reshape(x, [-1], name=name)
-    input_shape = x.get_shape().as_list()
+    input_shape = x.shape.as_list()
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
     n = np.prod(input_shape[(outdim - 1):])
     output_shape = [-1 if i is None else i
@@ -643,7 +643,7 @@ def repeat(x, n, axes=None, name="Repeat"):
     all axes for repeating
   """
   if axes is not None:
-    ndim = x.get_shape().ndims
+    ndim = x.shape.ndims
     if not isinstance(axes, (tuple, list)):
       axes = (axes,)
     axes = _normalize_axis(axes, ndim)
@@ -662,7 +662,7 @@ def repeat(x, n, axes=None, name="Repeat"):
 # ===========================================================================
 def var(x, axes=None, keepdims=False, name="Variance"):
   with tf.variable_scope(name):
-    axes = _normalize_axis(axes, x.get_shape().ndims)
+    axes = _normalize_axis(axes, x.shape.ndims)
     x = tf.cast(x, floatX)
     m = tf.reduce_mean(x, axis=axes, keepdims=True)
     devs_squared = tf.square(x - m)
@@ -691,59 +691,165 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
                      y=X_rms)
     return target_rms * X / X_rms
 
-
 # ===========================================================================
 # RNN and loop
 # ===========================================================================
-def Scan(fn,
-         sequences=None,
-         outputs_info=None,
-         n_steps=None,
-         backwards=False,
-         name=None):
+def scan_tensors(fn,
+                 sequences=None,
+                 mask=None,
+                 initializer=None,
+                 axis=0,
+                 n_steps=None,
+                 backward=False,
+                 reverse=False,
+                 reshape_outputs=False,
+                 parallel_iterations=32,
+                 name=None):
   """
+
+  Parameters
+  ----------
+  fn : call-able
+  sequences : {Tensor, list of Tensor}
+  mask: {Tensor, list of Tensor}
+    binary tensors with shape [n_timestep, ...],
+    with a zero for every element that is masked out.
+  initializer : {None, Tensor, list of Tensor}
+    Containing the initial values for the states used in the step function.
+    If initializer is None, `sequences` must contain at least one element,
+    and its first element is used as the initializer.
+  axis : {int, list of int} (default: 0)
+    the axis to be unpacked (ravel) for iteration, if given a list,
+    applying each value for each input in `sequences`
+    For example, input to RNN is `[n_samples, n_timestep, n_features]`,
+    and we want iterate over `time` dimension, hence, `axis=1`
+  backward : bool (default: False)
+    If True, reverse the input sequences, so the scan Op iterate
+    from opposite order.
+  reverse : bool (default: False)
+    If True, do the iteration over the `axis` dimension in reverse
+    order and return the reversed sequence.
+    The difference between `reverse` and backward` is `reverse` also
+    flip the outputs, so it returns reversed outputs.
+  reshape_output : bool (default: False)
+    reshape the output so the `axis` dimension (e.g. time dimension)
+    back to original position.
+    The `axis` dimension is be moved to the first dimension for
+    iterating using scan
+  n_steps : {None, integer}
+    number of steps
+
   Note
   ----
   backwards mode only invert sequences then iterate over them
   """
-  # ====== check sequences ====== #
-  if sequences is None:
-    sequences = []
-  elif not isinstance(sequences, (tuple, list)):
-    sequences = [sequences]
-  if backwards:
-    sequences = [tf.reverse(seq, axis=(0,)) for seq in sequences]
-  if isinstance(n_steps, numbers.Number):
-    sequences = [seq[:n_steps] for seq in sequences]
-  # ====== check output info ====== #
-  if outputs_info is None:
-    outputs_info = []
-  elif not isinstance(outputs_info, (tuple, list)):
-    outputs_info = [outputs_info]
-  else:
-    outputs_info = list(outputs_info)
-  nb_outputs = len(outputs_info)
+  single_input = False
+  single_output = False
+  with tf.name_scope(name=name, default_name='ScanTensors'):
+    # ====== check sequences ====== #
+    if sequences is None:
+      sequences = []
+    elif not isinstance(sequences, (tuple, list)):
+      single_input = True
+      sequences = [sequences]
+    sequences = [tf.convert_to_tensor(x) for x in sequences]
+    n_inputs = len(sequences)
+    # ====== iterating axis ====== #
+    axis = as_tuple(axis, t=int, N=n_inputs)
+    new_sequences = []
+    for x, a in zip(sequences, axis):
+      if a != 0:
+        extra_dims = [i for i in range(x.shape.ndims) if i != a]
+        x = tf.transpose(x, perm=[a] + extra_dims)
+      new_sequences.append(x)
+    sequences = new_sequences
+    n_timestep = sequences[0].shape.as_list()[0]
+    # ====== check mask ====== #
+    if mask is not None:
+      mask = tf.cast(tf.convert_to_tensor(mask), tf.bool)
+      if len(set(axis)) == 1:
+        a = axis[0]
+        if mask.shape[a].value == n_timestep:
+          extra_dims = [i for i in range(mask.shape.ndims) if i != a]
+          mask = tf.transpose(mask, perm=[a] + extra_dims)
+      # special case for RNN
+      elif mask.shape.ndims == 2:
+        if mask.shape[1].value == n_timestep:
+          mask = tf.transpose(mask, perm=(1, 0))
+      # check match timestep for inputs and mask
+      if n_timestep is not None:
+        assert mask.shape.as_list()[0] == n_timestep,\
+        "First dimension of `mask` must be %d, but given shape: %s" % \
+        (n_timestep, str(mask.shape))
+    # ====== backward or reverse ====== #
+    if backward:
+      sequences = [tf.reverse(x, axis=(0,)) for x in sequences]
+      if mask is not None:
+        mask = tf.reverse(mask, axis=(0,))
+    # ====== fixed number of steps ====== #
+    if isinstance(n_steps, numbers.Number):
+      sequences = [x[:int(n_steps)] for x in sequences]
+      if mask is not None:
+        mask = mask[:int(n_steps)]
+    # ====== check output info ====== #
+    if initializer is None:
+      initializer = [x[0] for x in sequences]
+      single_output = single_input
+    elif not isinstance(initializer, (tuple, list)):
+      single_output = True
+      initializer = [initializer]
 
-  # ====== modified step function ====== #
-  def step_(outputs, inputs):
-    inputs = inputs + outputs
-    outputs = fn(*inputs)
-    if not isinstance(outputs, (tuple, list)):
-      outputs = [outputs]
+    # ====== modified step function ====== #
+    def step_(outputs, inputs):
+      mask_t = None
+      if mask is not None:
+        mask_t = inputs[-1]
+        inputs = inputs[:-1]
+      new_outputs = fn(outputs[0] if single_output else outputs,
+                       inputs[0] if single_input else inputs)
+      # masking the output
+      new_outputs = ([new_outputs]
+                     if not isinstance(new_outputs, (tuple, list)) else
+                     list(new_outputs))
+      if mask_t is not None:
+        _ = []
+        for o, new_o in zip(outputs, new_outputs):
+          if mask_t.shape.ndims == 0:
+            tiled_mask_t = mask_t
+          else:
+            m = mask_t
+            orig_ndims = m.shape.ndims
+            for i in range(o.shape.ndims - mask_t.shape.ndims):
+              m = tf.expand_dims(m, axis=-1)
+            multiples = [1] * orig_ndims + [tf.shape(o)[i]
+                                            for i in range(orig_ndims, m.shape.ndims)]
+            tiled_mask_t = tf.tile(m, multiples)
+          new_o = tf.where(tiled_mask_t, new_o, o)
+          _.append(new_o)
+        new_outputs = _
+      return new_outputs
+    # ====== call scan ====== #
+    ret = tf.scan(step_,
+                  elems=sequences + ([mask] if mask is not None else []),
+                  initializer=initializer,
+                  parallel_iterations=int(parallel_iterations),
+                  back_prop=is_training(),
+                  swap_memory=False, infer_shape=True, reverse=False)
+    # ====== reshape output ====== #
+    if reshape_outputs:
+      assert len(axis) == len(ret), \
+      "Number of outputs (%d) mismatch number of inputs (%d), cannot use `reshape_outputs`"\
+      % (len(ret), len(axis))
+      outputs = []
+      for x, a in zip(ret, axis):
+        if a != 0:
+          extra_dims = [i for i in range(x.shape.ndims) if i != a]
+          x = tf.transpose(x, perm=[a] + extra_dims)
+        outputs.append(x)
     else:
-      outputs = list(outputs)
-    return outputs
-  outputs = tf.scan(step_,
-              elems=sequences,
-              initializer=outputs_info,
-              parallel_iterations=32, back_prop=is_training(),
-              swap_memory=False, infer_shape=True,
-              name=name)
-  # consistent return as theano
-  if nb_outputs == 1:
-    outputs = outputs[0]
-  return outputs
-
+      outputs = ret
+    # ====== clean and return ====== #
+    return outputs[0] if single_output else outputs
 
 def rnn_decorator(*args, **kwargs):
   """Wraps any method (or function) to allow its iterative application.
@@ -901,7 +1007,7 @@ def rnn_decorator(*args, **kwargs):
                          (str(sequences_given), str(states_given)))
       # ====== configuraiton for iterations ====== #
       # Assumes time dimension is the second dimension
-      shape = sequences_given[0].get_shape()
+      shape = sequences_given[0].shape
       if n_steps is None:
         n_steps = shape[1]
       if batch_size is None:
@@ -909,13 +1015,13 @@ def rnn_decorator(*args, **kwargs):
       # ====== Ensure all initial states are with the right shape.
       _ = []
       for key, init_val in zip(states, states_given):
-        shape = None if init_val is None else init_val.get_shape().as_list()
+        shape = None if init_val is None else init_val.shape.as_list()
         # only one vector given for 1 batch matrix, should be repeated
         if init_val is not None and \
-        (init_val.get_shape().ndims == 1 or shape[0] == 1):
+        (init_val.shape.ndims == 1 or shape[0] == 1):
           if repeat_states:
             init_val = (tf.expand_dims(init_val, axis=0)
-                        if init_val.get_shape().ndims == 1 else init_val)
+                        if init_val.shape.ndims == 1 else init_val)
             init_val = repeat(init_val, batch_size, axes=0)
           else:
             print('[WARNING] The "states" should be initialized for all '
@@ -926,7 +1032,7 @@ def rnn_decorator(*args, **kwargs):
       states_given = list(_)
       # ====== shuffle sequences variable to get time dimension first
       sequences_given = [
-          dimshuffle(i, (1, 0) + tuple(range(2, i.get_shape().ndims)))
+          dimshuffle(i, (1, 0) + tuple(range(2, i.shape.ndims)))
           if i is not None else i for i in sequences_given]
       # ====== create steps functions ====== #
       arg_order = ([i for i, j in zip(sequences, sequences_given)
@@ -963,15 +1069,15 @@ def rnn_decorator(*args, **kwargs):
       # print('BatchSize:', batch_size)
       # print('Repeat:', repeat_states)
       # print('Name:', name)
-      results = Scan(scan_function,
+      results = scan_tensors(scan_function,
                      sequences=[i for i in sequences_given if i is not None],
-                     outputs_info=states_given,
+                     output_info=states_given,
                      n_steps=n_steps,
                      backwards=backwards,
                      name=name)
       # all the result in form (nb_time, nb_samples, trailing_dims)
       # we reshape them back to same as input
-      results = [dimshuffle(i, [1, 0] + range(2, i.get_shape().ndims))
+      results = [dimshuffle(i, [1, 0] + range(2, i.shape.ndims))
                  for i in to_list(results)]
       # Lasagne+blocks: if scan is backward reverse the output
       # but keras don't do this step (need to validate the performance)
@@ -1260,9 +1366,9 @@ def cudnn_rnn(X, num_units, rnn_mode,
     if s0 is None: return None
     if is_number(s0):
       s0 = tf.fill(dims=(nb_layers, batch_size, num_units), value=s0)
-    if s0.get_shape().ndims < 3:
+    if s0.shape.ndims < 3:
       s0 = tf.expand_dims(s0, dim=0)
-    s0shape = s0.get_shape().as_list()
+    s0shape = s0.shape.as_list()
     if s0shape[0] == 1 and s0shape[0] != nb_layers:
       s0 = repeat(s0, n=nb_layers, axes=0)
     if s0shape[1] == 1:
@@ -1272,8 +1378,8 @@ def cudnn_rnn(X, num_units, rnn_mode,
     return s0
   # ====== create RNNBlock ====== #
   from tensorflow.contrib.cudnn_rnn.python.ops import cudnn_rnn_ops
-  input_shape = X.get_shape().as_list()
-  if X.get_shape().ndims != 3:
+  input_shape = X.shape.as_list()
+  if X.shape.ndims != 3:
     raise ValueError('Input must be 3-D tensor, but X is %d-D tensor' % X.ndim)
   if input_shape[-1] != num_units and skip_input:
     raise ValueError('In skip_input mode, input size must be equal to hidden size'
@@ -1300,9 +1406,9 @@ def cudnn_rnn(X, num_units, rnn_mode,
                                  is_bidirectional=is_bidirectional,
                                  cudnn_vector=False)
       parameters = params_to_cudnn(weights, biases)
-    assert num_params == parameters.get_shape().as_list()[0], \
+    assert num_params == parameters.shape.as_list()[0], \
         "Require %d parameters but %d provided" % \
-        (num_params, parameters.get_shape()[0])
+        (num_params, parameters.shape[0])
     # check initial states
     total_num_layers = num_layers * 2 if is_bidirectional else num_layers
     h0 = tf.zeros(shape=(total_num_layers, batch_size, num_units),

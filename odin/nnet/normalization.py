@@ -174,25 +174,25 @@ class BatchNorm(NNOp):
                        "all axes not normalized over.")
     # init learnable parameters
     if self.beta_init is not None:
-      self.get_variable(initializer=self.beta_init,
+      self.get_variable_nnop(initializer=self.beta_init,
           shape=shape, name='beta',
           roles=BatchNormShiftParameter)
     if self.gamma_init is not None:
-      self.get_variable(initializer=self.gamma_init,
+      self.get_variable_nnop(initializer=self.gamma_init,
           shape=shape, name='gamma',
           roles=BatchNormScaleParameter)
     # running mean and invert std
     if self.mean_init is not None:
-      self.get_variable(initializer=self.mean_init,
+      self.get_variable_nnop(initializer=self.mean_init,
           shape=shape, name='mean',
           roles=BatchNormPopulationMean)
     if self.var_init is not None:
-      self.get_variable(initializer=self.var_init,
+      self.get_variable_nnop(initializer=self.var_init,
           shape=shape, name='var',
           roles=BatchNormPopulationInvStd)
 
   def _apply(self, X, noise=0):
-    ndim = X.get_shape().ndims
+    ndim = X.shape.ndims
     # if is training, normalize input by its own mean and std
     mean, var = tf.nn.moments(X, axes=self.axes)
     # prepare dimshuffle pattern inserting broadcastable axes as needed

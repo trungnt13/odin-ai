@@ -44,10 +44,46 @@ class Residual(NNOp):
   def _apply(self, X, **kwargs):
     pass
 
-class StochasticDepth(NNOp):
+# ===========================================================================
+# Base class
+# ===========================================================================
+class Container(NNOp):
+  """ Container """
+
+  def __init__(self, **kwargs):
+    super(Container, self).__init__(**kwargs)
+
+  def set_nnops(self, ops):
+    if isinstance(ops, (tuple, list)): # remove None values
+      ops = [o for o in ops if o is not None]
+    ops = as_tuple(ops, t=NNOp)
+    for o in ops:
+      name = o.name.split('/')[-1]
+      self.get_variable_nnop(name=name, initializer=o)
+    return self
+
+# ===========================================================================
+# Implementation
+# ===========================================================================
+class StochasticDepth(Container):
   pass
 
-class Sequence(NNOp):
+class TimeDistributed(Container):
+  """ TimeDistributed """
+
+  def __init__(self, ops, time_axis=1, **kwargs):
+    super(TimeDistributed, self).__init__(**kwargs)
+    self.set_nnops(ops)
+    self.time_axis = int(time_axis)
+
+  def _apply(self, *args, **kwargs):
+    pass
+    K.Scan
+
+  def _transpose(self):
+    pass
+
+class Sequence(Container):
 
   """ Sequence of Operators
 
@@ -59,7 +95,7 @@ class Sequence(NNOp):
   debug: bool
       if `1`, print NNOp name and its input and output shape
       if `2`, print all information of each NNOp
-  all_layers: bool
+  return_all_layers: bool
       if True, return the output from all layers instead of only the last
       layer.
 
@@ -74,26 +110,21 @@ class Sequence(NNOp):
   -------
   """
 
-  def __init__(self, ops, all_layers=False,
+  def __init__(self, ops, return_all_layers=False,
                strict_transpose=False, debug=False, **kwargs):
     super(Sequence, self).__init__(**kwargs)
     # ====== validate ops list ====== #
-    if isinstance(ops, (tuple, list)): # remove None values
-      ops = [o for o in ops if o is not None]
-    ops = as_tuple(ops, t=NNOp)
-    for o in ops:
-      name = o.name.split('/')[-1]
-      self.get_variable(name=name, initializer=o)
-    self.all_layers = bool(all_layers)
+    self.set_nnops(ops)
+    self.return_all_layers = bool(return_all_layers)
     self.strict_transpose = bool(strict_transpose)
     self.debug = int(debug)
 
   def _apply(self, *args, **kwargs):
     all_outputs = []
-    args_desc = [tuple(x.get_shape().as_list()) if hasattr(x, 'get_shape') else str(x)
+    args_desc = [tuple(x.shape.as_list()) if hasattr(x, 'get_shape') else str(x)
                  for x in self._current_args]
     kwargs_desc = {
-        k: tuple(v.get_shape().as_list()) if hasattr(v, 'get_shape') else str(v)
+        k: tuple(v.shape.as_list()) if hasattr(v, 'get_shape') else str(v)
         for k, v in self._current_kwargs.items()}
     # ====== print debug ====== #
     if self.debug > 0:
@@ -120,7 +151,7 @@ class Sequence(NNOp):
     if self.debug > 0:
       print('**************** End: %s ****************' %
             ctext(self.name, 'cyan'))
-    return all_outputs if self.all_layers else x
+    return all_outputs if self.return_all_layers else x
 
   def _transpose(self):
     transpose_ops = []

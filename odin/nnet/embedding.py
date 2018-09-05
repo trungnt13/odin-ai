@@ -37,9 +37,9 @@ class Embedding(NNOp):
     return (self.input_size, self.output_size)
 
   def _initialize(self):
-    self.get_variable(initializer=self.W_init,
-                      shape=(self.input_size, self.output_size),
-                      name='W', roles=K.role.EmbeddingWeight)
+    self.get_variable_nnop(initializer=self.W_init,
+                           shape=(self.input_size, self.output_size),
+                           name='W', roles=K.role.EmbeddingWeight)
 
   def _apply(self, X):
     return tf.gather(self.W, tf.cast(X, tf.int32))

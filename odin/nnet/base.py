@@ -284,7 +284,7 @@ class VariableDesc(object):
     if K.is_tensor(shape):
       if dtype is None:
         self._dtype = _check_dtype(shape.dtype)
-      self._shape = shape.get_shape().as_list()
+      self._shape = shape.shape.as_list()
       # store the placeholder so don't have to create it again
       self.__placeholder = shape
     # input the VariableDesc directly
@@ -311,14 +311,14 @@ class VariableDesc(object):
   def set_placeholder(self, plh):
     if not K.is_placeholder(plh):
       raise ValueError("a placholder must be specified.")
-    if plh.get_shape().as_list() == self.shape and \
+    if plh.shape.as_list() == self.shape and \
     _check_dtype(plh.dtype) == self.dtype:
       self.__placeholder = plh
     else:
       raise ValueError("This VariableDesc require input with shape=%s,"
                        "and dtype=%s, but given a placholder with shape=%s, "
                        "dtype=%s." % (str(self.shape), self.dtype,
-                      str(plh.get_shape().as_list()), _check_dtype(plh.dtype)))
+                      str(plh.shape.as_list()), _check_dtype(plh.dtype)))
     return self
 
   @property
@@ -357,7 +357,7 @@ class VariableDesc(object):
     # ====== compare to a TensorVariable ====== #
     if K.is_tensor(other):
       other = VariableDesc(
-          shape=other.get_shape().as_list(),
+          shape=other.shape.as_list(),
           dtype=_check_dtype(other.dtype))
     # ====== compare to a VariableDesc ====== #
     if isinstance(other, VariableDesc):
@@ -383,7 +383,7 @@ class _NNOp_Meta(ABCMeta):
   """
   def __new__(mcs, name, bases, class_dict):
     private = {'T', 'apply', '__call__', '__getstate__', '__setstate__',
-               '__getnewargs__', 'get', 'get_variable', '__setattr__',
+               '__getnewargs__', 'get', 'get_variable_nnop', '__setattr__',
                'input_shape', 'placeholders', 'last_output'}
     if name != 'NNOp':
       for attr in private:
@@ -651,7 +651,7 @@ class NNOp(NNOpOutput):
         raise ValueError("`name` must be string.")
       if name not in self._variable_info:
         raise ValueError("Variable with name: '%s' hasn't been created." % name)
-      return self.get_variable(name=name)
+      return self.get_variable_nnop(name=name)
     # ====== nnop ====== #
     for op in self.nnops:
       if name == op.name:
@@ -659,8 +659,9 @@ class NNOp(NNOpOutput):
     raise ValueError("Cannot find `NNOp` with name: '%s'" % name)
 
   @cache_memory
-  def get_variable(self, name, shape=None, initializer=None, roles=[]):
-    """
+  def get_variable_nnop(self, name, shape=None, initializer=None, roles=[]):
+    """ Initialize and return the Variable or NNOp with given description
+
     Parameters
     ----------
     name: str
@@ -750,7 +751,7 @@ class NNOp(NNOpOutput):
     #####################################
     # 4. Shared variable, just check the shape.
     elif K.is_variable(var):
-      _shape = var.get_shape().as_list()
+      _shape = var.shape.as_list()
       if shape is not None and tuple(shape) != tuple(_shape):
         raise Exception('Require variable with shape=%s, but was given different '
                         'shape=%s, name:%s.' %
@@ -765,9 +766,9 @@ class NNOp(NNOpOutput):
       # Note that we cannot assign a name here. We could assign to the
       # `name` attribute of the variable, but the user may have already
       # named the variable and we don't want to override this.
-      if shape is not None and var.get_shape().ndims != len(shape):
+      if shape is not None and var.shape.ndims != len(shape):
         raise Exception("parameter with name=%s has %d dimensions, should be "
-                        "%d" % (name, var.get_shape().ndims, len(shape)))
+                        "%d" % (name, var.shape.ndims, len(shape)))
       self._variable_info[name] = ((var.name, K.get_operation_footprint(var.op)),
                                    'tensor')
     elif isinstance(var, NNOp):
@@ -842,7 +843,7 @@ class NNOp(NNOpOutput):
       if vtype == 'variable':
         all_vars.append(global_vars[name])
       elif vtype == 'tensor':
-        tensors.append(self.get_variable(alias))
+        tensors.append(self.get_variable_nnop(alias))
       elif vtype == 'nnop':
         all_vars += name.variables
     # all variables from tensor
@@ -861,7 +862,7 @@ class NNOp(NNOpOutput):
   def nb_variables(self):
     n = 0
     for p in self.variables:
-      n += np.prod(p.get_shape().as_list()).astype('int32')
+      n += np.prod(p.shape.as_list()).astype('int32')
     return n
 
   @property
@@ -878,7 +879,7 @@ class NNOp(NNOpOutput):
   def nb_parameters(self):
     n = 0
     for p in self.parameters:
-      n += np.prod(p.get_shape().as_list()).astype('int32')
+      n += np.prod(p.shape.as_list()).astype('int32')
     return n
 
   @property
@@ -941,13 +942,13 @@ class NNOp(NNOpOutput):
     this NNOp,
     since the input argument can has default argument, this input
     shape can change after everytime you call the NNOp"""
-    x = [tuple(i.get_shape().as_list())
+    x = [tuple(i.shape.as_list())
          for i in as_tuple(self.placeholders)]
     return x[0] if len(x) == 1 else x
 
   @property
   def input_shape_map(self):
-    return {k: tuple(v.placeholder.get_shape().as_list())
+    return {k: tuple(v.placeholder.shape.as_list())
             for k, v in self._kwargs_desc.items()
             if isinstance(v, VariableDesc)}
 
@@ -958,7 +959,7 @@ class NNOp(NNOpOutput):
     since the input argument can has default argument, this input
     shape can change after everytime you call the NNOp"""
     output = self.last_output
-    extract_shape = lambda x: tuple(x.get_shape().as_list()) \
+    extract_shape = lambda x: tuple(x.shape.as_list()) \
         if hasattr(x, 'get_shape') else \
         (x.shape if hasattr(x, 'shape') else ())
     if isinstance(output, (tuple, list)):
@@ -1222,14 +1223,14 @@ class NNOp(NNOpOutput):
       roles = K.role.get_roles(v)
       ops_format += padding + "(Tensor)%s shape=%s, type=%s\n, role=%s\n" % \
           (ctext(v.name.split(':')[0], 'yellow'),
-           ctext(tuple(v.get_shape().as_list()), 'yellow'),
+           ctext(tuple(v.shape.as_list()), 'yellow'),
            ctext(v.dtype.base_dtype.name, 'yellow'),
            ctext(';'.join(roles), 'yellow'))
     # ====== print Variable ====== #
     for var in self.variables:
       name = var.name.split(':')[0]
       vtype = type(var).__name__
-      shape = tuple(var.get_shape().as_list())
+      shape = tuple(var.shape.as_list())
       roles = K.role.get_roles(var)
       dtype = var.dtype.base_dtype.name
       ops_format += padding + "(%s)%s shape=%s, type=%s, role=%s\n" % \
@@ -1327,7 +1328,7 @@ class Lambda(NNOp):
       else:
         init = info
         roles = []
-      self.get_variable(name=name, initializer=init, roles=roles)
+      self.get_variable_nnop(name=name, initializer=init, roles=roles)
 
   def _apply(self, *args, **kwargs):
     # ====== update additional specialized variable for this NNOp ====== #
@@ -1397,10 +1398,10 @@ class Dense(NNOp):
   def _initialize(self):
     input_shape = self.input_shape
     shape = (input_shape[-1], self.num_units)
-    self.get_variable(name='W', shape=shape, initializer=self.W_init,
+    self.get_variable_nnop(name='W', shape=shape, initializer=self.W_init,
                       roles=Weight)
     if self.b_init is not None:
-      self.get_variable(initializer=self.b_init,
+      self.get_variable_nnop(initializer=self.b_init,
           shape=(self.num_units,), name='b', roles=Bias)
 
   def _apply(self, X):

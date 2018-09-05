@@ -67,7 +67,7 @@ def antirectify(x, name="AntiRectify"):
 
   """
   with tf.variable_scope(name):
-    if x.get_shape().ndims != 2:
+    if x.shape.ndims != 2:
       raise Exception('This Ops only support 2D input.')
     x -= tf.reduce_mean(x, axis=1, keepdims=True)
     # l2 normalization
@@ -116,7 +116,7 @@ def randrectify(x, lower=0.3, upper=0.8, shared_axes='auto', name="RandRectify")
      Empirical Evaluation of Rectified Activations in Convolutional Network,
      http://arxiv.org/abs/1505.00853
   """
-  ndims = x.get_shape().ndims
+  ndims = x.shape.ndims
   # ====== check lower and upper ====== #
   if is_variable(lower):
     add_roles(lower, ActivationParameter)

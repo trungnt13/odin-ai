@@ -154,13 +154,13 @@ def set_shape(tensor, shape):
   if not is_tensor(tensor):
     raise ValueError('tensor must be instance of `Tensor`.')
   # ====== Test ====== #
-  ndims = tensor.get_shape().ndims
+  ndims = tensor.shape.ndims
   shape = as_tuple(shape)
   if ndims != len(shape):
     raise ValueError("The tensor has %d dimensions, but the given shape "
                      "has %d dimension." % (ndims, len(shape)))
   # ====== DO it ====== #
-  old_shape = tensor.get_shape()
+  old_shape = tensor.shape
   new_shape = []
   for old, new in zip(old_shape, shape):
     old_value = old.value
@@ -534,8 +534,8 @@ class Function(object):
       else: # already an tensorflow Ops
         self.updates_ops = updates
     # ====== cached shape ====== #
-    self._input_shape = [tuple(i.get_shape().as_list()) for i in self.inputs]
-    self._output_shape = [tuple(i.get_shape().as_list()) for i in self.outputs]
+    self._input_shape = [tuple(i.shape.as_list()) for i in self.inputs]
+    self._output_shape = [tuple(i.shape.as_list()) for i in self.outputs]
 
   @property
   def input_shape(self):

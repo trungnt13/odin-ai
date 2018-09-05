@@ -580,14 +580,14 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
     if hasattr(X, 'ndim'):
       ndim = X.ndim
     elif hasattr(X, 'get_shape'):
-      ndim = len(X.get_shape().as_list())
+      ndim = len(X.shape.as_list())
     else:
       raise ValueError("Cannot number of dimension from input.")
 
     if hasattr(X, 'shape'):
       feat_dim = X.shape[1]
     elif hasattr(X, 'get_shape'):
-      feat_dim = X.get_shape().as_list()[1]
+      feat_dim = X.shape.as_list()[1]
     else:
       raise ValueError("Cannot get feature dimension from input.")
     # ====== already init ====== #

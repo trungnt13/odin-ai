@@ -36,7 +36,7 @@ z1 = K.dot(z1, y4)
 print(z1)
 f1 = K.function([X3, y1, y2, y3, y4], outputs=z1)
 
-v = [np.random.rand(*i.get_shape().as_list()) for i in [X1, X2, X3, y1, y2, y3, y4]]
+v = [np.random.rand(*i.shape.as_list()) for i in [X1, X2, X3, y1, y2, y3, y4]]
 
 f(v[0], v[1], v[3], v[4], v[5], v[6])
 f1(v[2], v[3], v[4], v[5], v[6])

@@ -6,7 +6,7 @@ import tensorflow as tf
 
 @N.Lambda
 def test(X, y):
-  nb_classes = y.get_shape().as_list()[-1]
+  nb_classes = y.shape.as_list()[-1]
   f = N.Sequence([
       N.Flatten(outdim=2),
       N.Dense(512, activation=K.relu),
@@ -20,7 +20,7 @@ def test(X, y):
 
 @N.Lambda
 def cnn(X, y):
-  nb_classes = y.get_shape().as_list()[-1]
+  nb_classes = y.shape.as_list()[-1]
   with N.args_scope(['Conv', dict(b_init=None, activation=K.linear)],
                     ['BatchNorm', dict(activation=K.relu)]):
     f = N.Sequence([

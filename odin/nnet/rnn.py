@@ -38,17 +38,17 @@ def _init_input2hidden(ops, rnn_mode, input_mode, W_init, input_dims, hidden_dim
     msg = '(W_input_to_inputgate, W_input_to_forgetgate, W_input_to_hidden, W_input_to_outputgate)'
   # ====== check input ====== #
   if input_mode != 'skip':
-    ops.get_variable(initializer=W_init, shape=(input_dims, hidden_dims * N),
+    ops.get_variable_nnop(initializer=W_init, shape=(input_dims, hidden_dims * N),
                      name='W_in', roles=Weight)
     if input_mode == 'norm':
-      ops.get_variable(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
-                       name='beta', roles=BatchNormShiftParameter)
-      ops.get_variable(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
-                       name='gamma', roles=BatchNormScaleParameter)
-      ops.get_variable(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
-                       name='mean', roles=BatchNormPopulationMean)
-      ops.get_variable(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
-                       name='inv_std', roles=BatchNormPopulationInvStd)
+      ops.get_variable_nnop(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
+                            name='beta', roles=BatchNormShiftParameter)
+      ops.get_variable_nnop(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
+                            name='gamma', roles=BatchNormScaleParameter)
+      ops.get_variable_nnop(initializer=init_ops.constant_initializer(0.), shape=(hidden_dims * N,),
+                            name='mean', roles=BatchNormPopulationMean)
+      ops.get_variable_nnop(initializer=init_ops.constant_initializer(1.), shape=(hidden_dims * N,),
+                            name='inv_std', roles=BatchNormPopulationInvStd)
   # skip input mode
   elif input_dims != hidden_dims and \
   input_dims != hidden_dims * N: # 3 gates + 1 hid_update
@@ -69,7 +69,7 @@ def _check_cudnn_hidden_init(s0, shape, nnops, name):
     isinstance(s0, np.ndarray):
       _ = (nb_layers, 1, hidden_size) \
           if hasattr(s0, '__call__') or isinstance(s0, np.ndarray) \
-          else s0.get_shape()
+          else s0.shape
       s0 = nnops.config.create_params(
           s0, shape=_, name=name, roles=InitialState)
     # ====== check s0 shape ====== #
@@ -192,7 +192,7 @@ class RNN(NNOp):
           attn_length=attn_length, attn_size=attn_size,
           attn_vec_size=attn_vec_size)
     else: # seq2seq attention
-      num_units = kwargs.get('num_units', X.get_shape()[-1].value)
+      num_units = kwargs.get('num_units', X.shape[-1].value)
       attention_mechanism = self.attention(
           num_units=num_units, memory=memory, **kwargs)
       cell_with_attention = tf.contrib.seq2seq.AttentionWrapper(
@@ -414,8 +414,8 @@ class CudnnRNN(NNOp):
     self._weights_name = [w.name for w in weights]
     self._biases_name = [b.name for b in biases]
     for i in weights + biases:
-      self.get_variable(name=i.name.split('/')[-1].split(':')[0],
-                        shape=i.shape.as_list(), initializer=i)
+      self.get_variable_nnop(name=i.name.split('/')[-1].split(':')[0],
+                             shape=i.shape.as_list(), initializer=i)
 
   def _apply(self, X, h0=None, c0=None, training=None):
     if not hasattr(self, '_opaque_params'):

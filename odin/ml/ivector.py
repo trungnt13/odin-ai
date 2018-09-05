@@ -182,6 +182,47 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   def is_fitted(self):
     return self.is_gmm_fitted and self.is_tmat_fitted
 
+  # ====== getter ====== #
+  def get_z_path(self, name=None):
+    """ Return the path the zero-order statistics
+    according to the given name as identification during
+    `Ivector.transform`
+    If name is None, return `Ivector.z_path`
+    """
+    if name is None:
+      return self.z_path
+    return os.path.join(self.path, 'zstat_%s' % name)
+
+  def get_f_path(self, name):
+    """ Return the path the first-order statistics
+    according to the given name as identification during
+    `Ivector.transform`
+    If name is None, return `Ivector.f_path`
+    """
+    if name is None:
+      return self.f_path
+    return os.path.join(self.path, 'fstat_%s' % name)
+
+  def get_i_path(self, name):
+    """ Return the path the extracted i-vectors
+    according to the given name as identification during
+    `Ivector.transform`
+    If name is None, return `Ivector.ivec_path`
+    """
+    if name is None:
+      return self.ivec_path
+    return os.path.join(self.path, 'ivec_%s' % name)
+
+  def get_name_path(self, name):
+    """ Return the path of the name list if indices is used
+    according to the given name as identification during
+    `Ivector.transform`
+    If name is None, return `Ivector.name_path`
+    """
+    if name is None:
+      return self.name_path
+    return os.path.join(self.path, 'name_%s' % name)
+
   # ==================== sklearn methods ==================== #
   def fit(self, X, indices=None, sad=None,
           refit_gmm=False, refit_tmat=False,
@@ -315,13 +356,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     else:
       name = str(name)
     # ====== init ====== #
-    z_path = os.path.join(self.path, 'zstat_%s' % name)
-    f_path = os.path.join(self.path, 'fstat_%s' % name)
+    z_path = self.get_z_path(name)
+    f_path = self.get_f_path(name)
     if save_ivecs:
-      i_path = os.path.join(self.path, 'ivec_%s' % name)
+      i_path = self.get_i_path(name)
     else:
       i_path = None
-    name_path = os.path.join(self.path, 'name_%s' % name)
+    name_path = self.get_name_path(name)
     # ====== check exist i-vector file ====== #
     if os.path.exists(i_path):
       ivec = MmapData(path=i_path, read_only=True)

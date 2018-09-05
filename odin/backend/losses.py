@@ -94,7 +94,7 @@ def cosine_similarity(y_true, y_pred, weights=1.0,
   # ====== tensorflow Tensor ====== #
   if is_tensor(y_true) and is_tensor(y_pred):
     with tf.name_scope(name, "cosine_similarity", (y_true, y_pred, weights)):
-      y_pred.get_shape().assert_is_compatible_with(y_true.get_shape())
+      y_pred.shape.assert_is_compatible_with(y_true.shape)
       if unit_norm:
         y_true /= to_nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True), 1.)
         y_pred /= to_nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True), 1.)
@@ -123,20 +123,20 @@ def cosine_similarity(y_true, y_pred, weights=1.0,
 def bayes_crossentropy(y_true, y_pred, nb_classes=None, reduction=tf.reduce_mean,
                        name=None):
   with tf.name_scope(name, "bayes_crossentropy", [y_true, y_pred]):
-    y_pred_shape = y_pred.get_shape()
+    y_pred_shape = y_pred.shape
     if y_pred_shape.ndims == 1 or y_pred_shape[-1].value == 1:
       if y_pred_shape.ndims == 1:
         y_pred = tf.expand_dims(y_pred, -1)
       y_pred0 = 1. - y_pred
       y_pred = tf.concat([y_pred0, y_pred], axis=-1)
     # get number of classes
-    if y_true.get_shape().ndims == 1:
+    if y_true.shape.ndims == 1:
       if nb_classes is None:
         raise Exception('y_pred and y_true must be one_hot encoded, '
                         'otherwise you have to provide nb_classes.')
       y_true = tf.one_hot(y_true, depth=nb_classes)
     elif nb_classes is None:
-      nb_classes = y_true.get_shape()[1].value
+      nb_classes = y_true.shape[1].value
     # avoid numerical instability with _EPSILON clipping
     y_pred = tf.clip_by_value(y_pred, EPS, 1.0 - EPS)
     # ====== check distribution ====== #

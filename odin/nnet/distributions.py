@@ -70,12 +70,12 @@ class VariationalDense(NNOp):
 
   def _initialize(self):
     shape = (self.input_shape[-1], self.num_units)
-    self.get_variable(initializer=self.W_init, shape=shape, name='W_mean', roles=WEIGHT)
-    self.get_variable(initializer=self.W_init, shape=shape, name='W_logsigma', roles=WEIGHT)
+    self.get_variable_nnop(initializer=self.W_init, shape=shape, name='W_mean', roles=WEIGHT)
+    self.get_variable_nnop(initializer=self.W_init, shape=shape, name='W_logsigma', roles=WEIGHT)
     if self.b_init is not None:
-      self.get_variable(initializer=self.b_init,
+      self.get_variable_nnop(initializer=self.b_init,
           shape=(self.num_units,), name='b_mean', roles=BIAS)
-      self.get_variable(initializer=self.b_init,
+      self.get_variable_nnop(initializer=self.b_init,
           shape=(self.num_units,), name='b_logsigma', roles=BIAS)
 
   def _apply(self, X):

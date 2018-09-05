@@ -186,7 +186,7 @@ class Task(object):
     # ====== check function ====== #
     self._func = func
     if isinstance(func, K.Function):
-      self._output_info = [(o.name, o.get_shape().as_list())
+      self._output_info = [(o.name, o.shape.as_list())
                            for o in self._func.outputs]
     elif hasattr(func, '__call__'):
       self._output_info = [] # No info (normal function)

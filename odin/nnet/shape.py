@@ -71,7 +71,7 @@ class Squeeze(NNOp):
     self.axis = axis
 
   def _apply(self, X):
-    input_shape = X.get_shape()
+    input_shape = X.shape
     if input_shape[self.axis] != 1:
       raise ValueError('The squeeze axis=%d must be 1, but got %d instead' %
                        (self.axis, input_shape[self.axis]))

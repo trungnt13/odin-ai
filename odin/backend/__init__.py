@@ -75,7 +75,7 @@ def placeholder(shape=None, dtype=floatX, name=None, roles=[]):
     all_placeholders = [
         o._outputs[0] for o in get_all_operations(otype='Placeholder')]
     for v in all_placeholders:
-      v_shape = tuple(v.get_shape().as_list())
+      v_shape = tuple(v.shape.as_list())
       if v.name == name + ':0': # found duplicated variable
         # set new value for variable
         if shape is not None:
@@ -256,7 +256,7 @@ def save_variables(var_list, path, session=None):
   for v in var_list:
     name = v.name.split(':')[0]
     dtype = v.dtype.base_dtype.name
-    shape = v.get_shape().as_list()
+    shape = v.shape.as_list()
     var_meta.append((name, dtype, shape))
   # ====== save the collections ====== #
   collections = {var.name: role.get_roles(var, return_string=True)
