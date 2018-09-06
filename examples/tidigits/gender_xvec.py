@@ -112,7 +112,7 @@ print("#File valid:", ctext(len(valid_files), 'cyan'))
 print("#File test :", ctext(len(test_files), 'cyan'))
 
 recipes = [
-    F.recipes.Name2Trans(converter_func=fn_label),
+    F.recipes.Name2Label(converter_func=fn_label),
     F.recipes.Sequencing(frame_length=frame_length, step_length=step_length,
                          end='pad', pad_mode='post', pad_value=0,
                          label_mode='last', label_idx=-1),

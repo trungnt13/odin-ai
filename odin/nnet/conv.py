@@ -274,7 +274,6 @@ class Conv(NNOp):
         data_format=data_format)
     return conved
 
-
 # ===========================================================================
 # TransposeConv
 # ===========================================================================
@@ -336,3 +335,89 @@ class TransposeConv(Conv):
         output_shape=output_shape, strides=(1,) + self.strides + (1,),
         padding=self.pad)
     return K.set_shape(deconved, _)
+
+# ===========================================================================
+# Time Delayed Convolution
+# ===========================================================================
+class TimeDelayedConv(NNOp):
+  """ Time-delayed convolutional neural network
+  Input is 3-D tensor `[n_sample, n_timestep, n_features]`
+  Output is 2-D time-pooled tensor `[n_sample, num_filters]`
+
+  Parameters
+  ----------
+  num_filters : int
+      The number of learnable convolutional filters this layer has.
+
+  n_context : int
+      the length of time window context, i.e. kernel size in
+      time dimension for convolution operator
+
+  time_pool : {'max', 'avg', 'stat'}
+      pooling in time dimension after convolution operator
+      for 'stat' pooling, mean and standard deviation is calculated along
+      time-dimension, then output the concatenation of the two.
+
+  References
+  ----------
+  [1] Yoon Kim, Yacine Jernite, David Sontag, and Alexander M. Rush. 2016.
+  Character-aware neural language models, AAAI'16
+  """
+
+  def __init__(self, num_filters, n_context, time_pool='max',
+               W_init=init_ops.glorot_uniform_initializer(seed=randint()),
+               b_init=init_ops.constant_initializer(0),
+               activation=tf.tanh, **kwargs):
+    super(TimeDelayedConv, self).__init__(**kwargs)
+    self.num_filters = int(num_filters)
+    self.n_context = int(n_context)
+    self.W_init = W_init
+    self.b_init = b_init
+    self.activation = activation
+    time_pool = str(time_pool).lower()
+    assert time_pool in ('max', 'avg', 'stat'), \
+    "Only support max, average, statistics pooling, but given: %s" % str(time_pool)
+    self.time_pool = time_pool
+
+  def _initialize(self):
+    time_dim = self.input_shape[1]
+    feat_dim = self.input_shape[2]
+    channel_dim = 1 if len(self.input_shape) == 3 else self.input_shape[-1]
+    # weights
+    self.get_variable_nnop(initializer=self.W_init,
+        shape=(self.n_context, feat_dim, channel_dim, self.num_filters),
+        name='W', roles=ConvKernel)
+    if self.b_init is not None:
+      self.get_variable_nnop(initializer=self.b_init,
+          shape=(self.num_filters,), name='b', roles=Bias)
+
+  def _apply(self, X):
+    if X.shape.ndims == 3:
+      X = tf.expand_dims(X, axis=-1)
+    assert X.shape.ndims == 4, \
+    "TimeDelayedConv require 3-D or 4-D input, but given: %s" % str(X)
+    # ====== apply convolution ====== #
+    conved = tf.nn.convolution(input=X, filter=self.get('W'),
+        padding="VALID",
+        strides=[1, 1],
+        data_format="NHWC")
+    # ====== apply bias ====== #
+    if 'b' in self.variable_info:
+      conved += K.dimshuffle(self.get('b'), ('x', 'x', 'x', 0))
+    # ====== activation ====== #
+    conved = self.activation(conved)
+    # ====== applying pooling ====== #
+    if self.time_pool == 'stat':
+      mean, var = tf.nn.moments(conved, axes=1, keep_dims=True)
+      std = tf.sqrt(var)
+      pool = tf.concat([mean, std], -1)
+    else:
+      fn_pool = tf.nn.max_pool if self.time_pool == 'max' else tf.nn.avg_pool
+      pool = fn_pool(conved,
+                     ksize=[1, conved.shape[1].value, 1, 1],
+                     strides=[1, 1, 1, 1],
+                     padding='VALID',
+                     data_format="NHWC")
+    # ====== return 2D output ====== #
+    pool = tf.squeeze(pool, axis=[1, 2])
+    return pool

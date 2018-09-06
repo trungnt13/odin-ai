@@ -110,7 +110,7 @@ class Progbar(object):
 
   def __init__(self, target, interval=0.08, keep=False,
                print_report=True, print_summary=False,
-               count_func=None, report_func=None,
+               count_func=None, report_func=None, progress_func=None,
                name=None):
     self.__pb = None # tqdm object
     if isinstance(target, Number):
@@ -167,6 +167,11 @@ class Progbar(object):
       self.__report_func = report_func
     else:
       self.__report_func = lambda x: None
+    # ====== check progress function ====== #
+    if progress_func is not None:
+      if not hasattr(progress_func, '__call__'):
+        raise ValueError("`progress_func` must be call-able or None.")
+    self._progress_func = progress_func
     # ====== other ====== #
     self._labels = None # labels for printing the confusion matrix
 
@@ -435,6 +440,11 @@ class Progbar(object):
 
   def add(self, n=1):
     """ You need to call pause if """
+    if not isinstance(n, Number):
+      if self._progress_func is None:
+        raise RuntimeError(
+            "`n` is an object, but no given `progress_func` for preprocessing")
+      n = self._progress_func(n)
     if n <= 0:
       return self
     fp = Progbar.FP

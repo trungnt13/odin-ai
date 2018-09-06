@@ -318,7 +318,8 @@ def KL_divergence(P, Q):
     D += pi * np.log(pi / qi)
   return D
 
-def sampling_iter(it, k, p=None, return_iter=True, seed=5218):
+def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
+                  progress_bar=None):
   """ Reservoir sampling, randomly choosing a sample of k items from a
   list S containing n items, where n is either a very large or unknown number.
   Typically n is large enough that the list doesn't fit into main memory.
@@ -338,11 +339,18 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218):
     if True, return an iteration of results instead of extracted list
   seed : int (default: 5218)
     random seed for reproducibility
+  progress_bar : {None, odin.utils.Progbar.ProgBar}
   """
   k = int(k); assert k > 0
   if p is not None:
     p = float(p); assert 0. < p < 1.
   assert hasattr(it, '__iter__')
+  # ====== check progress bar ====== #
+  if progress_bar is not None:
+    from odin.utils import Progbar
+    assert isinstance(progress_bar, Progbar),\
+    '`progress_bar` must be instance of odin.utils.progbar.Progbar, but given: %s' \
+    % str(type(progress_bar))
   # ====== reservoir sampling ====== #
   if p is None:
     random.seed(seed)
@@ -356,6 +364,9 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218):
         r = random.randint(0, i)
         if r < k:
           ret[r] = x
+      # update progress bar
+      if progress_bar is not None:
+        progress_bar.add(x)
     return tuple(ret)
 
   # ====== simulating the probability decay ====== #
@@ -385,6 +396,9 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218):
         break
       # update the probability
       prob = 0.8 * prob + 0.2 / (i + 1)
+      # update progress bar
+      if progress_bar is not None:
+        progress_bar.add(x)
     # return the rest of the samples to have enough k sample
     for i in range(k - n):
       yield ret[i]

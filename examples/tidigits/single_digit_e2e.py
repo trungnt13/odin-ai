@@ -145,7 +145,7 @@ print(ctext("#File test:", 'yellow'), len(test), test[:2])
 # ====== create recipe ====== #
 recipes = [
     F.recipes.Slice(slices=slice(40), axis=-1, data_idx=0),
-    F.recipes.Name2Trans(converter_func=f_digits),
+    F.recipes.Name2Label(converter_func=f_digits),
     F.recipes.LabelOneHot(nb_classes=len(digits), data_idx=-1),
     F.recipes.Sequencing(frame_length=max_length, step_length=1,
                          end='pad', pad_mode='post', pad_value=0,

@@ -23,6 +23,7 @@ for path, channel, name in ds[FILE_LIST]:
 # some sampled files for testing
 SAMPLED_WAV_FILE = sampling_iter(it=WAV_FILES.items(), k=8, seed=5218)
 # ====== extract the list of all train files ====== #
-TRAIN_DATA = {} # mapping from name of training file to speaker label
+# mapping from name of training file to speaker label
+TRAIN_DATA = {}
 for x, y in ds[TRAIN_LIST]:
   TRAIN_DATA[x] = int(y)

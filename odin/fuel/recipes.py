@@ -157,7 +157,7 @@ class LabelOneHot(FeederRecipe):
             for idx, (shp, ids) in enumerate(shapes)]
 
 
-class Name2Trans(FeederRecipe):
+class Name2Label(FeederRecipe):
   """ This function convert the name (in indices) to transcription
   for given data
 
@@ -183,8 +183,8 @@ class Name2Trans(FeederRecipe):
 
   """
 
-  def __init__(self, converter_func, ref_idx=0):
-    super(Name2Trans, self).__init__()
+  def __init__(self, converter_func, dtype=None, ref_idx=0):
+    super(Name2Label, self).__init__()
     if inspect.isfunction(converter_func):
       converter_func = functionable(converter_func)
     if not hasattr(converter_func, '__call__'):
@@ -193,13 +193,16 @@ class Name2Trans(FeederRecipe):
       raise ValueError('"converter_func" must be pickle-able.')
     self.converter_func = converter_func
     self.ref_idx = int(ref_idx)
+    self.dtype = dtype
 
   def process(self, name, X):
     # X: is a list of ndarray
     ref_idx = axis_normalize(axis=self.ref_idx, ndim=len(X),
                              return_tuple=False)
     y = self.converter_func(name)
-    y = np.array([y] * X[ref_idx].shape[0])
+    y = np.full(shape=(X[ref_idx].shape[0],),
+                fill_value=y,
+                dtype=X[ref_idx].dtype if self.dtype is None else self.dtype)
     X.append(y)
     return name, X
 

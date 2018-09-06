@@ -194,7 +194,7 @@ class FuelTest(unittest.TestCase):
             test_iter_no_trans(feeder.set_batch(12, seed=1203, shuffle_level=2))
             # ==================== Convert name to indices ==================== #
             feeder.set_recipes([
-                F.recipes.Name2Trans(converter_func=
+                F.recipes.Name2Label(converter_func=
                     lambda name: int(name.split('_')[-1])),
                 F.recipes.CreateBatch()
             ])

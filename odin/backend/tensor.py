@@ -694,22 +694,27 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
 # ===========================================================================
 # RNN and loop
 # ===========================================================================
+def map_tensors(fn):
+  tf.map_fn
+
 def scan_tensors(fn,
-                 sequences=None,
-                 mask=None,
-                 initializer=None,
-                 axis=0,
-                 n_steps=None,
-                 backward=False,
-                 reverse=False,
+                 sequences=None, mask=None, initializer=None,
+                 axis=0, n_steps=None,
+                 backward=False, reverse=False,
                  reshape_outputs=False,
-                 parallel_iterations=32,
+                 parallel_iterations=12,
                  name=None):
   """
 
   Parameters
   ----------
-  fn : call-able
+  fn: callable
+    It accepts two arguments `(outputs, inputs)`.
+    The first will have the same structure as `initializer` if one is provided,
+    otherwise it will have the same structure as `elems`.  The second
+    will have the same (possibly nested) structure as `elems`.
+    Its returns must have the same structure as `initializer`
+    if one is provided, otherwise it must have the same structure as `elems`.
   sequences : {Tensor, list of Tensor}
   mask: {Tensor, list of Tensor}
     binary tensors with shape [n_timestep, ...],
@@ -805,6 +810,7 @@ def scan_tensors(fn,
       if mask is not None:
         mask_t = inputs[-1]
         inputs = inputs[:-1]
+      # applying the function
       new_outputs = fn(outputs[0] if single_output else outputs,
                        inputs[0] if single_input else inputs)
       # masking the output
