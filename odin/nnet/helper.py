@@ -108,15 +108,21 @@ class StochasticDepth(Container):
   pass
 
 class TimeDistributed(Container):
-  """ Time Distributed container
+  """ Time distributed container applying NNOp or list of NNOp
+  along given `time_axis` of input tensor
+
+  Parameters
+  ----------
   """
 
-  def __init__(self, ops, time_axis=1, backward=False, reverse=False, **kwargs):
+  def __init__(self, ops, time_axis=1, backward=False, reverse=False,
+               debug=False, **kwargs):
     super(TimeDistributed, self).__init__(**kwargs)
     self.set_nnops(ops)
     self.time_axis = int(time_axis)
     self.backward = bool(backward)
     self.reverse = bool(reverse)
+    self.debug = int(debug)
 
   def _apply(self, X, mask=None):
     def _step_fn(outs, ins):
