@@ -42,11 +42,11 @@ utils.stdio(log_path)
 audio = F.TIDIGITS.load()
 print(audio)
 all_files = sorted(list(audio['indices'].keys()))
-fig_path = utils.get_figpath(name='DIGITS', override=True)
+fig_path = utils.get_figpath(name='TIDIGITS', override=True)
 # ===========================================================================
 # Configuration
 # ===========================================================================
-debug = True
+debug = False
 padding = False
 frame_length = 0.025
 step_length = 0.005
@@ -71,7 +71,9 @@ extractors = pp.make_pipeline(steps=[
     # # ====== spectrum ====== #
     pp.speech.MelsSpecExtractor(n_mels=40, fmin=64, fmax=4000, top_db=80.0,
                                 input_name=('spec', 'sr'), output_name='mspec'),
-    # # ====== sdc ====== #
+    pp.speech.MelsSpecExtractor(n_mels=24, fmin=64, fmax=4000, top_db=80.0,
+                                input_name=('spec', 'sr'), output_name='mspec24'),
+    # ====== sdc ====== #
     pp.speech.MFCCsExtractor(n_ceps=7, remove_first_coef=True,
                              input_name='mspec', output_name='sdc'),
     pp.speech.RASTAfilter(rasta=True, input_name='sdc', output_name='sdc'),
@@ -91,10 +93,10 @@ extractors = pp.make_pipeline(steps=[
     # # ====== normalization ====== #
     pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                            sad_name=None, ignore_sad_error=True,
-                           input_name=('spec', 'mspec', 'mfcc', 'sdc')),
+                           input_name=('spec', 'mspec', 'mspec24', 'mfcc', 'sdc')),
     pp.base.RunningStatistics(),
     # ====== post processing ====== #
-    pp.base.EqualizeShape0(input_name=('spec', 'mspec', 'mfcc', 'sdc',
+    pp.base.EqualizeShape0(input_name=('spec', 'mspec', 'mspec24', 'mfcc', 'sdc',
                                        'energy', 'sad')),
     pp.base.AsType(dtype='float16'),
 ], debug=debug)

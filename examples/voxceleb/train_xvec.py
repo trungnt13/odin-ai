@@ -9,7 +9,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin import ml
+from odin import ml, training
 from odin.stats import (train_valid_test_split, sampling_iter)
 from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape)
 from odin import fuel as F, visual as V, nnet as N, backend as K
@@ -21,13 +21,14 @@ from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
 # ===========================================================================
 args = args_parse([
     ('-feat', "Acoustic feature", ('mspec', 'mfcc'), 'mspec'),
-    ('-pool', "max or avg pooling", ('max', 'avg'), 'max'),
+    ('-batch', "batch size", None, 32),
+    ('-epoch', "number of epoch", None, 12),
     ('-l', "audio segmenting length in second", None, 3),
     ('--debug', "enable debug mode", None, False),
 ])
 FEAT = args.feat
 DEBUG = bool(args.debug)
-NAME = '_'.join(['tvec', args.feat, args.pool, str(int(args.l))])
+NAME = '_'.join(['tvec', args.feat, str(int(args.l))])
 SAVE_PATH = os.path.join(PATH_EXP, NAME)
 print('Model name:', ctext(NAME, 'cyan'))
 print("Save path:", ctext(SAVE_PATH, 'cyan'))
@@ -98,30 +99,72 @@ y = inputs[1]
 print("Inputs:", ctext(inputs, 'cyan'))
 # ====== the network ====== #
 with N.args_scope(
-    [('Conv', 'Dense'), dict(b_init=None, activation=K.linear, pad='same')],
-        ['BatchNorm', dict(activation=K.relu)],
-        ['Pool', dict(mode=args.pool)]):
-  t_vec = N.Sequence([
-      N.Dimshuffle(pattern=(0, 1, 2, 'x')),
+    ['TimeDelayedConv', dict(time_pool='none', activation=K.relu)],
+    ['Dense', dict(activation=K.linear)]
+):
+  x_vec = N.Sequence([
+      N.TimeDelayedConv(n_new_features=512, n_time_context=5),
+      N.TimeDelayedConv(n_new_features=512, n_time_context=5),
+      N.TimeDelayedConv(n_new_features=512, n_time_context=7),
 
-      N.Conv(num_filters=5, filter_size=(5, 1), strides=1),
-      N.BatchNorm(),
-      N.Pool(pool_size=(5, 1), strides=None),
+      N.Dense(num_units=512, b_init=None),
+      N.BatchNorm(activation=K.relu),
+      N.Dense(num_units=1500, b_init=None),
+      N.BatchNorm(activation=K.relu),
 
-      N.Conv(num_filters=5, filter_size=(5, 1), strides=1),
-      N.BatchNorm(),
-      N.Pool(pool_size=(5, 1), strides=None),
-
+      N.StatsPool(axes=1, output_mode='concat'),
       N.Flatten(outdim=2),
-      N.Dense(512), N.BatchNorm(),
-      N.Dense(512), N.BatchNorm(),
-      N.Dense(n_speakers, b_init=init_ops.constant_initializer(0),
-              name='OutputSpeaker')
-  ], debug=1, name='Tvector')
-# ====== create outputs ====== #
-y_logit = t_vec(X)
-y_proba = tf.nn.softmax(y_logit)
 
+      N.Dense(512, b_init=None, name="LatentOutput"),
+      N.BatchNorm(activation=K.relu),
+      N.Dense(512, b_init=None),
+      N.BatchNorm(activation=K.relu),
+
+      N.Dense(n_speakers, activation=K.linear)
+  ], debug=1)
+# ====== create outputs ====== #
+y_logit = x_vec(X)
+y_proba = tf.nn.softmax(y_logit)
+z = K.ComputationGraph(y_proba).get(roles=N.Flatten, scope='StatsPooling')[0]
+print('Latent space:', ctext(z, 'cyan'))
+# ====== create loss ====== #
+ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
+acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
+# ====== params and optimizing ====== #
+updates = K.optimizers.Adam(lr=0.001).minimize(
+    loss=ce, roles=[K.role.TrainableParameter],
+    exclude_roles=[K.role.InitialState],
+    verbose=True)
+K.initialize_all_variables()
+# ====== Functions ====== #
+print('Building training functions ...')
+f_train = K.function(inputs, [ce, acc], updates=updates,
+                     training=True)
+print('Building testing functions ...')
+f_score = K.function(inputs, [ce, acc],
+                    training=False)
+print('Building predicting functions ...')
+f_pred_proba = K.function(X, y_proba, training=False)
+# Latent spaces
+f_z = K.function(inputs=X, outputs=z, training=False)
+# ===========================================================================
+# Create trainer
+# ===========================================================================
+print('Start training ...')
+task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
+                         allow_rollback=True)
+task.set_checkpoint(os.path.join(SAVE_PATH, 'model.ai'), x_vec)
+task.set_callbacks([
+    training.NaNDetector(),
+    training.EarlyStopGeneralizationLoss('valid', ce,
+                                         threshold=5, patience=5)
+])
+task.set_train_task(func=f_train, data=train_feeder,
+                    epoch=args.epoch, name='train')
+task.set_valid_task(func=f_score, data=valid_feeder,
+                    freq=training.Timer(percentage=0.8),
+                    name='valid')
+# task.run()
 # ===========================================================================
 # Evaluate and save the log
 # ===========================================================================

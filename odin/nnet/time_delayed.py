@@ -4,7 +4,9 @@
 # for modeling delayed inputs.
 #
 # The inputs could be 3-D or 4-D tensor
-# [n_samples, ]
+#  [n_samples, n_timestep, n_features]
+# or
+#  [n_samples, n_timestep, n_features, n_channels]
 #
 # References
 # ----------
@@ -39,11 +41,12 @@ class TimeDelayedDense(NNOp):
   Parameters
   ----------
   n_new_features : {None, integer, list of integer}
-    the amount of weighted sum (Dense layer) will be performed for each
-    time slice of `n_time_context`
-    if None, or empty list, no projection is performed.
-    Otherwise, a shallow Dense network or deep Dense network can be
-    specified by a list of integer representing number of hidden unit.
+      the amount of weighted sum (Dense layer) will be performed for each
+      time slice of `n_time_context`
+
+      if None, or empty list, no projection is performed.
+      Otherwise, a shallow Dense network or deep Dense network can be
+      specified by a list of integer representing number of hidden unit.
 
   n_time_context : int
       the length of time window context, i.e. kernel size in
@@ -64,11 +67,11 @@ class TimeDelayedDense(NNOp):
   """
 
   def __init__(self, n_new_features, n_time_context,
-               time_pool='none', backward=False,
+               time_pool='max', backward=False,
                W_init=init_ops.glorot_uniform_initializer(seed=randint()),
                b_init=init_ops.constant_initializer(0),
-               activation=K.linear):
-    super(TimeDelayedDense, self).__init__()
+               activation=K.linear, **kwargs):
+    super(TimeDelayedDense, self).__init__(**kwargs)
     if n_new_features is None:
       self.n_new_features = []
     else:
@@ -132,7 +135,7 @@ class TimeDelayedDense(NNOp):
     elif self.time_pool == 'stat':
       init_dim = new_feat_dim * 2
     initializer = tf.zeros(
-        shape=(X.shape[0], init_dim),
+        shape=(tf.shape(X)[0], init_dim),
         dtype=self.get('W0').dtype if len(self.n_new_features) > 0 else X.dtype)
 
     # ====== step function ====== #
@@ -149,7 +152,8 @@ class TimeDelayedDense(NNOp):
       ctx = tf.reshape(ctx, shape=(-1, self.n_time_context, new_feat_dim))
       # applying pooling
       if self.time_pool in ('concat', 'none'):
-        ctx = tf.reshape(ctx, shape=(ctx.shape[0], -1))
+        ctx = tf.reshape(ctx,
+                         shape=(tf.shape(ctx)[0], self.n_time_context * new_feat_dim))
       elif self.time_pool == 'max':
         ctx = tf.reduce_max(ctx, axis=1)
       elif self.time_pool == 'min':
@@ -266,14 +270,17 @@ class TimeDelayedConv(NNOp):
       pool = tf.concat([mean, std], -1)
       pool = tf.squeeze(pool, axis=[1, 2])
       # [n_sample, n_new_features * 2]
-    else:
+    elif self.time_pool in ('avg', 'max'):
       fn_pool = tf.nn.max_pool if self.time_pool == 'max' else tf.nn.avg_pool
       pool = fn_pool(conved,
-                     ksize=[1, conved.shape[1].value, 1, 1],
+                     ksize=[1, tf.shape(conved)[1], 1, 1],
                      strides=[1, 1, 1, 1],
                      padding='VALID',
                      data_format="NHWC")
       pool = tf.squeeze(pool, axis=[1, 2])
       # [n_sample, n_new_features]
+    elif self.time_pool in ('sum'):
+      pool = tf.reduce_mean(conved, axis=1)
+      pool = tf.squeeze(pool, axis=1)
     # ====== return 2D output ====== #
     return pool

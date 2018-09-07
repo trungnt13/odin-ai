@@ -698,7 +698,8 @@ def map_tensors(fn):
   tf.map_fn
 
 def scan_tensors(fn,
-                 sequences=None, mask=None, initializer=None,
+                 sequences=None, initializer=None,
+                 mask=None, mask_value=None,
                  axis=0, n_steps=None,
                  backward=False, reverse=False,
                  reshape_outputs=False,
@@ -715,34 +716,46 @@ def scan_tensors(fn,
     will have the same (possibly nested) structure as `elems`.
     Its returns must have the same structure as `initializer`
     if one is provided, otherwise it must have the same structure as `elems`.
+
   sequences : {Tensor, list of Tensor}
-  mask: {Tensor, list of Tensor}
+
+  mask : {Tensor, list of Tensor}
     binary tensors with shape [n_timestep, ...],
     with a zero for every element that is masked out.
+
+  mask_value : {None, scalar}
+    the replacement value of given time step is masked out,
+    if None use previous time step values.
+
   initializer : {None, Tensor, list of Tensor}
     Containing the initial values for the states used in the step function.
     If initializer is None, `sequences` must contain at least one element,
     and its first element is used as the initializer.
+
   axis : {int, list of int} (default: 0)
     the axis to be unpacked (ravel) for iteration, if given a list,
     applying each value for each input in `sequences`
     For example, input to RNN is `[n_samples, n_timestep, n_features]`,
     and we want iterate over `time` dimension, hence, `axis=1`
+
   backward : bool (default: False)
     If True, reverse the input sequences, so the scan Op iterate
     from opposite order.
+
   reverse : bool (default: False)
     If True, do the iteration over the `axis` dimension in reverse
     order and return the reversed sequence.
     The difference between `reverse` and backward` is `reverse` also
     flip the outputs, so it returns reversed outputs.
+
   reshape_output : bool (default: False)
     reshape the output so the `axis` dimension (e.g. time dimension)
     back to original position.
     The `axis` dimension is be moved to the first dimension for
     iterating using scan
+
   n_steps : {None, integer}
-    number of steps
+    number of time steps
 
   Note
   ----
@@ -786,6 +799,13 @@ def scan_tensors(fn,
         assert mask.shape.as_list()[0] == n_timestep,\
         "First dimension of `mask` must be %d, but given shape: %s" % \
         (n_timestep, str(mask.shape))
+    # ====== check mask value ====== #
+    if isinstance(mask_value, numbers.Number):
+      pass
+    elif mask_value is None:
+      pass
+    else:
+      raise ValueError("No support for `mask_value`: %s" % str(mask_value))
     # ====== backward or reverse ====== #
     if backward:
       sequences = [tf.reverse(x, axis=(0,)) for x in sequences]
@@ -830,7 +850,9 @@ def scan_tensors(fn,
             multiples = [1] * orig_ndims + [tf.shape(o)[i]
                                             for i in range(orig_ndims, m.shape.ndims)]
             tiled_mask_t = tf.tile(m, multiples)
-          new_o = tf.where(tiled_mask_t, new_o, o)
+          new_o = tf.where(tiled_mask_t,
+                           new_o,
+                           o if mask_value is None else mask_value)
           _.append(new_o)
         new_outputs = _
       return new_outputs
