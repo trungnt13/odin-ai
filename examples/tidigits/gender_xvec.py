@@ -71,18 +71,14 @@ with N.args_scope(
       N.TimeDelayedConv(n_new_features=512, n_time_context=7,
                         name="LatentTDNN"),
 
-      N.Dense(num_units=512),
-      N.BatchNorm(activation=K.relu),
-      N.Dense(num_units=1500),
-      N.BatchNorm(activation=K.relu),
+      N.Dense(512), N.BatchNorm(activation=K.relu),
+      N.Dense(1500), N.BatchNorm(activation=K.relu),
 
       N.StatsPool(axes=1, output_mode='concat'),
       N.Flatten(outdim=2, name="StatsPooling"),
 
-      N.Dense(num_units=512, name="LatentDense"),
-      N.BatchNorm(activation=K.relu),
-      N.Dense(num_units=512),
-      N.BatchNorm(activation=K.relu),
+      N.Dense(512, name="LatentDense"), N.BatchNorm(activation=K.relu),
+      N.Dense(512), N.BatchNorm(activation=K.relu),
 
       N.Dense(num_units=n_classes, activation=K.linear,
               b_init=init_ops.constant_initializer(0))

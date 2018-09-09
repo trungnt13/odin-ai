@@ -29,8 +29,26 @@ class Variable(Role):
   """Base class for all variable roles."""
   pass
 
+# ==================== NNOp related ==================== #
 class NNOpOutput(Role):
   """Base class for all Output of NNOp."""
+  pass
+
+# ==================== Optimizer Algorithm roles ==================== #
+class OptimizerVariable(Variable):
+  pass
+
+class OptimizerHyperParameter(OptimizerVariable):
+  """ Shared variables used in algorithms updates """
+  pass
+
+class LearningRate(OptimizerHyperParameter):
+  pass
+
+class LearningRateDecay(OptimizerHyperParameter):
+  pass
+
+class GraidentsClipping(OptimizerHyperParameter):
   pass
 
 # ==================== Role for Cost and Objective ==================== #
@@ -98,20 +116,6 @@ class ConvKernel(Weight):
 
 class Dropout(Variable):
   """ Inputs with applied dropout """
-  pass
-
-# ==================== Optimizer Algorithm roles ==================== #
-class OptimizerHyperParameter(Variable):
-  """ Shared variables used in algorithms updates """
-  pass
-
-class LearningRate(OptimizerHyperParameter):
-  pass
-
-class LearningRateDecay(OptimizerHyperParameter):
-  pass
-
-class GraidentsClipping(OptimizerHyperParameter):
   pass
 
 # ==================== Embedding ==================== #
@@ -202,8 +206,12 @@ def add_roles(variables, roles):
     # ====== shrink the roles so there is NO subrole ====== #
     new_roles = []
     for r in var_roles:
+      # issubclass(r0=LearningRate, r=OptimizerVariable) = True
+      # hence, remove var from `r` collection
       if any(r != r0 and issubclass(r0, r) for r0 in var_roles):
-        tf.get_collection_ref(r.__name__).remove(var)
+        r_collection = tf.get_collection_ref(r.__name__)
+        if var in r_collection:
+          r_collection.remove(var)
       else:
         new_roles.append(r)
     # ====== adding new role ====== #

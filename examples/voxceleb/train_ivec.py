@@ -6,9 +6,10 @@ import numpy as np
 
 from odin import ml
 from odin import fuel as F
-from odin.utils import args_parse, ctext
+from odin.utils import args_parse, ctext, stdio
 
 from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
+from utils import get_model_path, prepare_ivec_data
 
 # ===========================================================================
 # Configs
@@ -28,42 +29,33 @@ args.stat |= args.all | args.gmm
 args.tmat |= args.all | args.stat
 args.ivec |= args.all | args.tmat
 FEAT = args.feat
-NAME = '_'.join(['ivec', args.feat, str(args.nmix), str(args.tdim)])
-SAVE_PATH = os.path.join(PATH_EXP, NAME)
-print('Model name:', ctext(NAME, 'cyan'))
-print("Save path:", ctext(SAVE_PATH, 'cyan'))
+MODEL_PATH, LOG_PATH, TEST_PATH, NAME_PATH = get_model_path('ivec', args)
+stdio(LOG_PATH)
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-ds = F.Dataset(PATH_ACOUSTIC_FEAT, read_only=True)
-print(ds)
-X = ds[FEAT]
-train_indices = {name: ds['indices'][name]
-                 for name in TRAIN_DATA.keys()}
-test_indices = {name: start_end
-                for name, start_end in ds['indices'].items()
-                if name not in TRAIN_DATA}
-print("#Train files:", ctext(len(train_indices), 'cyan'))
-print("#Test files:", ctext(len(test_indices), 'cyan'))
+X, sad, train, test = prepare_ivec_data(FEAT)
 # ===========================================================================
 # Training I-vector model
 # ===========================================================================
-ivec = ml.Ivector(path=SAVE_PATH, nmix=args.nmix, tv_dim=args.tdim,
+ivec = ml.Ivector(path=MODEL_PATH, nmix=args.nmix, tv_dim=args.tdim,
                   niter_gmm=16, niter_tmat=16,
                   downsample=2, stochastic_downsample=True,
                   device='gpu', name="VoxCelebIvec")
 if not ivec.is_fitted:
-  ivec.fit(X, sad=ds['sad'], indices=train_indices,
+  ivec.fit(X, sad=sad, indices=train,
            extract_ivec=True, keep_stats=False)
 # ====== extract train i-vector ====== #
 I_train = F.MmapData(ivec.ivec_path, read_only=True)
-name_train = np.genfromtxt(ivec.name_path,
-                           dtype=str)
-# ====== extract test i-vector ====== #
-I_test = ivec.transform(X, sad=ds['sad'], indices=test_indices,
-                        save_ivecs=True, name='test')
-name_test = np.genfromtxt(ivec.get_name_path(name='test'),
-                          dtype=str)
+name_train = np.genfromtxt(ivec.name_path, dtype=str)
 print("Train i-vectors:", ctext(I_train, 'cyan'))
-print("Test i-vectors:", ctext(I_test, 'cyan'))
+# ====== extract test i-vector ====== #
+test = sorted(test.items(), key=lambda x: x[0])
+I_test = ivec.transform(X, sad=sad, indices=test,
+                        save_ivecs=False, keep_stats=False)
+with open(NAME_PATH, 'w') as f_name, open(TEST_PATH, 'w') as f_dat:
+  for (name, (start, end)), z in zip(test, I_test):
+    f_dat.write(' '.join([str(i) for i in z]) + '\n')
+    f_name.write(name + '\n')
+# ====== print the model ====== #
 print(ivec)

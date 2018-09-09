@@ -20,8 +20,9 @@ from odin.utils.cache_utils import cache_memory
 from .role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
                    GradientsNorm, GraidentsClipping, has_roles, get_roles,
                    Role, Parameter, Weight, Bias, TrainableParameter,
-                   Variable as _Variable)
-from .helpers import is_tensor, get_value, ComputationGraph, is_variable
+                   Variable as _Variable, OptimizerVariable)
+from .helpers import (is_tensor, get_value, ComputationGraph, is_variable,
+                      get_all_variables, set_value)
 
 floatX = CONFIG.floatX
 
@@ -36,8 +37,6 @@ __all__ = [
     "Nadam",
     "Adagrad"
 ]
-
-
 # ===========================================================================
 # Helper methods
 # ===========================================================================
@@ -50,7 +49,6 @@ def _as_variable(x, name, roles=None):
     x = tf.Variable(x, dtype=floatX, name=name)
     get_session().run(x.initializer)
   return add_roles(x, roles)
-
 
 # ===========================================================================
 # Optimizer
@@ -84,8 +82,13 @@ class Optimizer(object):
   """
 
   def __init__(self, lr, decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
-    self._name = self.__class__.__name__ + '_' + str(uuid(length=3))
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
+    if name is None:
+      name = self.__class__.__name__ + '_' + str(uuid(length=4))
+    elif not isinstance(name, string_types):
+      name = str(name)
+    self._name = str(name)
     self.staircase = bool(staircase)
     with tf.variable_scope(self._name):
       self._lr = _as_variable(lr, name='learning_rate', roles=LearningRate)
@@ -149,7 +152,7 @@ class Optimizer(object):
 
   def minimize(self, loss, var_list=None,
                roles=[TrainableParameter], exclude_roles=[],
-               verbose=False):
+               reuse_scope=None, verbose=False):
     """
     Parameters
     ----------
@@ -164,6 +167,10 @@ class Optimizer(object):
       in this list will be selected for calculating gradients.
     exclude_roles : {None, list of odin.backend.role}
       all Variables have role in this list will be ignored.
+    reuse_scope : {None, string}
+      if provided, searching for all `OptimizerVariable` within
+      given scope, and set the variables of this optimizer to
+      the desire values
     verbose : bool (default: False)
       if True, print out all found variables and their roles
     """
@@ -224,19 +231,42 @@ class Optimizer(object):
                 ctext(('%-' + max_shape_length + 's') % var.shape.as_list(), 'magenta'),
                 ctext(var.dtype.base_dtype.name, 'cyan'))
     # ====== get the updates ====== #
-    updates = self.algorithm.minimize(loss=loss, global_step=self._step,
-                                      var_list=trainable)
+    updates = self.get_updates(loss_or_grads=loss, params=trainable)
+    # with tf.variable_scope(self.name):
+    #   updates = self.algorithm.minimize(loss=loss, global_step=self._step,
+    #                                     var_list=trainable)
+    # ====== re-use variable from previous scope ====== #
+    if isinstance(reuse_scope, string_types):
+      old_variables = [v for v in get_all_variables(scope=reuse_scope)
+                       if has_roles(v, OptimizerVariable)]
+      old_variables = sorted(old_variables,
+                             key=lambda x: x.name.replace(reuse_scope, ''))
+      old_varname = [v.name.replace(reuse_scope, '') for v in old_variables]
+      # the hyper-parameters may not be included in `old_variables`
+      # so they are needed to be excluded in new_variables
+      new_variables = [v for v in get_all_variables(scope=self.name)
+                       if has_roles(v, OptimizerVariable)]
+      new_variables = sorted(new_variables,
+                             key=lambda x: x.name.replace(self.name, ''))
+      new_variables = [v for v in new_variables
+                       if v.name.replace(self.name, '') in old_varname]
+      assert len(old_variables) == len(new_variables), \
+      "Number of variables in scope:'%s' is %d mismatch scope:'%s' with %d variables"\
+      % (reuse_scope, len(old_variables), self.name, len(new_variables))
+      for v_old, v_new in zip(old_variables, new_variables):
+        assert v_new.shape == v_old.shape
+        set_value(v_new, get_value(v_old), return_ops=False)
     return updates
 
   @cache_memory
   def get_updates(self, loss_or_grads, params):
     grads_vars = self.get_gradients(loss_or_grads, params)
-    with tf.variable_scope(self.name):
+    with tf.variable_scope(self.name, reuse=tf.AUTO_REUSE) as scope:
+      scope_name = scope.name
       updates = self.algorithm.apply_gradients(grads_vars,
                                                global_step=self._step)
-    # ====== initialize ====== #
-    # init = tf.global_variables_initializer()
-    # get_session().run(init)
+    for v in get_all_variables(scope=scope_name):
+      add_roles(v, roles=OptimizerVariable)
     return updates
 
   def __call__(self, loss_or_grads, params):
@@ -255,7 +285,8 @@ class Optimizer(object):
     not hasattr(self.algorithm, 'apply_gradients'):
       raise RuntimeError("Optimizer is None, or doesn't has attributes: "
                          "compute_gradients and apply_gradients.")
-    with tf.variable_scope(self.name):
+    with tf.variable_scope(self.name, reuse=tf.AUTO_REUSE) as scope:
+      scope_name = scope.name
       # get the gradient
       grads_var = self.algorithm.compute_gradients(loss_or_grads,
                                                    var_list=params)
@@ -279,8 +310,10 @@ class Optimizer(object):
       # ====== get final norm value ====== #
       self._norm = add_roles(tf.global_norm(grads, name="GradientNorm"),
                             GradientsNorm)
-      return [(g, p) for g, p in zip(grads, params)]
-
+    # ====== setting Optimizer roles ====== #
+    for v in get_all_variables(scope=scope_name):
+      add_roles(v, roles=OptimizerVariable)
+    return [(g, p) for g, p in zip(grads, params)]
 
 class SGD(Optimizer):
 
@@ -311,10 +344,11 @@ class SGD(Optimizer):
   def __init__(self, lr=0.01, momentum=0.9, nesterov=False,
                decay_steps=None, decay_rate=0.96, staircase=True,
                clipnorm=None, clipvalue=None,
-               clip_alg='total_norm'):
+               clip_alg='total_norm', name=None):
     super(SGD, self).__init__(lr=lr,
         decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
-        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
+        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg,
+        name=name)
     with tf.variable_scope(self.name):
       # ====== momentum ====== #
       self.momentum = _as_variable(momentum, name='momentum',
@@ -385,10 +419,12 @@ class RMSProp(Optimizer):
 
   def __init__(self, lr=0.001, rho=0.9, momentum=0.0, epsilon=1e-10,
                decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
     super(RMSProp, self).__init__(lr=lr,
         decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
-        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
+        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg,
+        name=name)
     with tf.variable_scope(self.name):
       self.rho = _as_variable(rho, name='rho',
                               roles=OptimizerHyperParameter)
@@ -466,10 +502,12 @@ class Adadelta(Optimizer):
 
   def __init__(self, lr=1.0, rho=0.95, epsilon=1e-8,
                decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
     super(Adadelta, self).__init__(lr=lr,
         decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
-        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
+        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg,
+        name=name)
     with tf.variable_scope(self.name):
       self.rho = _as_variable(rho, name='rho',
                               roles=OptimizerHyperParameter)
@@ -477,7 +515,6 @@ class Adadelta(Optimizer):
       self._algorithm = tf.train.AdadeltaOptimizer(
           learning_rate=self.lr, rho=self.rho,
           epsilon=self.epsilon)
-
 
 class Adam(Optimizer):
   """Adam updates
@@ -529,10 +566,12 @@ class Adam(Optimizer):
 
   def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8,
                decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
     super(Adam, self).__init__(lr=lr,
         decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
-        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
+        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg,
+        name=name)
     with tf.variable_scope(self.name):
       self.beta1 = _as_variable(beta1, name='beta1',
                                 roles=OptimizerHyperParameter)
@@ -541,7 +580,6 @@ class Adam(Optimizer):
       self.epsilon = epsilon
       self._algorithm = tf.train.AdamOptimizer(learning_rate=self.lr,
           beta1=self.beta1, beta2=self.beta2, epsilon=self.epsilon)
-
 
 class Adamax(Optimizer):
   """Adamax updates
@@ -587,8 +625,10 @@ class Adamax(Optimizer):
   """
 
   def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
-    super(Adamax, self).__init__(lr, clipnorm, clipvalue, clip_alg=clip_alg)
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
+    super(Adamax, self).__init__(lr, clipnorm, clipvalue, clip_alg=clip_alg,
+                                 name=name)
     with tf.variable_scope(self.name):
       self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
       self.beta_1 = _as_variable(beta_1, name='beta_1',
@@ -650,8 +690,9 @@ class Nadam(Optimizer):
 
   def __init__(self, lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
                schedule_decay=0.004, clipnorm=None, clipvalue=None,
-               clip_alg='total_norm'):
-    super(Nadam, self).__init__(lr, clipnorm, clipvalue, clip_alg=clip_alg)
+               clip_alg='total_norm', name=None):
+    super(Nadam, self).__init__(lr, clipnorm, clipvalue, clip_alg=clip_alg,
+                                name=name)
     with tf.variable_scope(self.name):
       self.iterations = _as_variable(0, name='iterations', roles=Auxiliary)
       self.m_schedule = _as_variable(1., name='m_schedule', roles=Auxiliary)
@@ -723,10 +764,12 @@ class Adagrad(Optimizer):
                dual_avg=False,
                l1_regularization=0.0, l2_regularization=0.0,
                decay_steps=None, decay_rate=0.96, staircase=True,
-               clipnorm=None, clipvalue=None, clip_alg='total_norm'):
+               clipnorm=None, clipvalue=None, clip_alg='total_norm',
+               name=None):
     super(Adagrad, self).__init__(lr=lr,
         decay_steps=decay_steps, decay_rate=decay_rate, staircase=staircase,
-        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg)
+        clipnorm=clipnorm, clipvalue=clipvalue, clip_alg=clip_alg,
+        name=name)
     with tf.variable_scope(self.name):
       self.initial_accumulator_value = float(initial_accumulator_value)
       self.l1_regularization = _as_variable(l1_regularization,

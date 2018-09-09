@@ -163,7 +163,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   def name_path(self):
     """ In case indices is given during training, the order of
     processed files is store at this path """
-    return os.path.join(self.path, 'name_list')
+    return os.path.join(self.path, 'name_train')
 
   @property
   def feat_dim(self):
@@ -232,23 +232,30 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     ----------
     X : ndarray
       Training data [n_samples, n_features]
+
     indices : {Mapping, tuple, list}
       in case the data is given by a list of files, `indices`
       act as file indicator mapping from
       'file_name' -> (start_index_in_X, end_index_in_X)
       This mapping can be provided by a dictionary, or list of
       tuple.
+      Note: the order provided in indices will be preserved
+
     sad : ndarray
       inspired by the "Speech Activity Detection" (SAD) indexing,
       this array is indicator of which samples will be taken into
       training; the shape should be [n_samples,] or [n_samples, 1]
+
     refit_gmm : bool
       if True, re-fit the GMM even though it is fitted,
       consequently, the T-matrix will be re-fitted
+
     refit_tmat : bool
       if True, re-fit the T-matrix even though it is fitted
+
     extract_ivecs : bool
       if True, extract the i-vector for training data
+
     keep_stats : bool
       if True, keep the zero and first order statistics.
       The first order statistics could consume huge amount
@@ -339,7 +346,9 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       this array is indicator of which samples will be taken into
       training; the shape should be [n_samples,] or [n_samples, 1]
     save_ivecs : bool
-      save extracted i-vectors to disk at path `ivec_[name]`
+      if True, save extracted i-vectors to disk at path `ivec_[name]`
+      if False, return directly the i-vectors without saving
+
     keep_stats : bool
       if True, keep the zero and first order statistics.
       The first order statistics could consume huge amount
@@ -364,7 +373,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       i_path = None
     name_path = self.get_name_path(name)
     # ====== check exist i-vector file ====== #
-    if os.path.exists(i_path):
+    if i_path is not None and os.path.exists(i_path):
       ivec = MmapData(path=i_path, read_only=True)
       assert ivec.shape[0] == n_files and ivec.shape[1] == self.tv_dim,\
       "Need i-vectors for %d files, found exists data at path:'%s' with shape:%s" % \

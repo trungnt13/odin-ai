@@ -24,6 +24,13 @@ from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
                         decorators, batching)
 from .role import (has_roles, Auxiliary, Parameter)
+
+# ===========================================================================
+# Helper
+# ===========================================================================
+_TF_SCOPE_PATTERN = lambda scope, begin: \
+re.compile('%s%s(_\d+)?\/' % ('^' if bool(begin) else '', scope))
+
 # ===========================================================================
 # Basic query
 # ===========================================================================
@@ -252,7 +259,7 @@ def get_normalized_name(var, shape=True, dtype=True):
   return x
 
 def get_all_operations(otype=None, device=None, sort=False, scope=None,
-                       footprint=None, graph=None):
+                       footprint=None, graph=None, beginning_scope=True):
   """ Return list of all operations in default graph
   The follow attributes can be access within the operation:
    * name : string
@@ -272,6 +279,12 @@ def get_all_operations(otype=None, device=None, sort=False, scope=None,
    * "VariableV2"
    * "Const"
    * "Assign"
+
+  Parameters
+  ----------
+  beginning_scope : bool (default: True)
+    if True, the provide scope must be the beginning scope,
+    otherwise, it could be in the middle of multiple scopes
   """
   if graph is None:
     graph = get_session().graph
@@ -295,7 +308,7 @@ def get_all_operations(otype=None, device=None, sort=False, scope=None,
       ops = [o for o in ops
              if '/' not in o.name]
     else:
-      scope_name_pattern = re.compile('%s_?\d*\/' % scope)
+      scope_name_pattern = _TF_SCOPE_PATTERN(scope, beginning_scope)
       ops = [o for o in ops
              if len(scope_name_pattern.findall(o.name))]
   # ====== filter by unique footprint ====== #
@@ -367,7 +380,7 @@ def get_all_variables(scope=None, name=None, full_name=None,
                                   tf.GraphKeys.LOCAL_VARIABLES,
                                   tf.GraphKeys.MODEL_VARIABLES,
                                   tf.GraphKeys.TRAINABLE_VARIABLES],
-                      graph=None):
+                      graph=None, beginning_scope=True):
   """
   Parameters
   ----------
@@ -377,6 +390,9 @@ def get_all_variables(scope=None, name=None, full_name=None,
       name of tensor (WITHOUT variable scope)
   full_name: str
       name of tensor WITH variable scope.
+  beginning_scope : bool (default: True)
+    if True, the provide scope must be the beginning scope,
+    otherwise, it could be in the middle of multiple scopes
   """
   var = []
   # ====== first get all available variable ====== #
@@ -396,7 +412,7 @@ def get_all_variables(scope=None, name=None, full_name=None,
       var = [v for v in var
              if '/' not in v.name]
     else:
-      scope_name_pattern = re.compile('%s_?\d*\/' % scope)
+      scope_name_pattern = _TF_SCOPE_PATTERN(scope, beginning_scope)
       var = [v for v in var
              if len(scope_name_pattern.findall(v.name))]
   # ====== filter by name ====== #
@@ -926,7 +942,8 @@ class ComputationGraph(object):
     return outputs_new
 
   def get(self, scope=None, name=None, full_name=None,
-          roles=None, match_all=False, exact=False):
+          roles=None, match_all=False, exact=False,
+          beginning_scope=True):
     """ Return all variables and tensor with given roles
 
     Parameters
@@ -948,6 +965,9 @@ class ComputationGraph(object):
       If ``True``, use ``==`` for comparison to get exactly same roles.
       If ``False``, use `issubclass` for comparison, hence, also match the
       descendant roles.
+    beginning_scope : bool (default: True)
+      if True, the provide scope must be the beginning scope,
+      otherwise, it could be in the middle of multiple scopes
     """
     alltensors = self.tensors + self.variables
     # ====== by role ====== #
@@ -962,7 +982,7 @@ class ComputationGraph(object):
         alltensors = [t for t in alltensors
                       if '/' not in t.name]
       else:
-        scope_name_pattern = re.compile('%s_?\d*\/' % scope)
+        scope_name_pattern = _TF_SCOPE_PATTERN(scope, beginning_scope)
         alltensors = [t for t in alltensors
                       if len(scope_name_pattern.findall(t.name))]
     if name is not None:
