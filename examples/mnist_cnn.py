@@ -45,7 +45,7 @@ cost_cm = K.metrics.confusion_matrix(y_pred=y_pred, y_true=y, labels=10)
 # ====== optimizer ====== #
 parameters = ops.parameters
 optimizer = K.optimizers.SGD(lr=0.05)
-updates = optimizer(cost_ce, parameters)
+updates = optimizer.minimize(cost_ce, var_list=parameters)
 # ====== initialize all variable ====== #
 K.initialize_all_variables()
 # ====== function ====== #

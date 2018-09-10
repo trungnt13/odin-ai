@@ -14,7 +14,7 @@ from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
 # Path helpers
 # ===========================================================================
 def get_model_path(system_name, args):
-  """Return: model_path, log_path, test_path, name_path """
+  """Return: model_path, log_path, train_path, test_path"""
   name = '_'.join([str(system_name).lower(), args.feat])
   if 'l' in args:
     name += '_' + str(int(args.l))
@@ -28,11 +28,11 @@ def get_model_path(system_name, args):
   # ====== return path ====== #
   log_path = os.path.join(save_path, 'log.txt')
   model_path = os.path.join(save_path, 'model.ai')
+  train_path = os.path.join(save_path, 'train.dat')
   test_path = os.path.join(save_path, 'test.dat')
-  name_path = os.path.join(save_path, 'name_list')
   print("Model path:", ctext(model_path, 'cyan'))
   print("Log path:", ctext(log_path, 'cyan'))
-  return model_path, log_path, test_path, name_path
+  return model_path, log_path, train_path, test_path
 
 # ===========================================================================
 # Data helpers

@@ -18,10 +18,11 @@ from odin.utils import args_parse, ctext, batching, Progbar
 
 args = args_parse(descriptions=[
     ('-dim', 'latent dimension', None, 2),
+    ('-hid', 'number of hidden units', None, 1024),
     ('-data', 'dataset mnist or fmnist', ('mnist', 'fmnist', 'cifar10'), 'mnist'),
     ('-loss', 'huber, mse, ce (cross-entropy), lglo (log loss)', ('huber', 'mse', 'ce', 'lglo'), 'ce'),
     ('-s', 'number of posterior samples', None, 25),
-    ('-bs', 'batch size', None, 128),
+    ('-batch', 'batch size', None, 128),
     ('-epoch', 'batch size, if negative stop based on valid loss', None, -1),
     ('--analytic', 'using Analytic KL or not', None, False)
 ])
@@ -61,7 +62,7 @@ elif args.data == 'cifar10':
   X_valid = X_valid / 255.
   X_test = X_test / 255.
 print(ds)
-# ====== others ====== #
+# ====== print data info ====== #
 X_samples, y_samples = X_train[:25], y_train[:25]
 input_shape = ds['X_train'].shape
 print("Train shape:", ctext(X_train.shape, 'cyan'))
@@ -73,22 +74,23 @@ y = K.placeholder(shape=(None,), name='y_input')
 # ===========================================================================
 # Create the network
 # ===========================================================================
+num_units = int(args.hid)
 with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
   f_encoder = N.Sequence([
       N.Flatten(outdim=2),
       N.Dropout(level=0.3),
-      N.Dense(num_units=512),
+      N.Dense(num_units),
       N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units=512),
+      N.Dense(num_units),
       N.BatchNorm(axes=0, activation=K.relu),
       N.Dense(num_units=args.dim * 2, activation=K.linear)
   ], debug=True, name='EncoderNetwork')
 
   f_decoder = N.Sequence([
       N.Reshape(shape=(-1, [-1])),
-      N.Dense(num_units=512, activation=K.relu),
+      N.Dense(num_units, activation=K.relu),
       N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units=512, activation=K.relu),
+      N.Dense(num_units, activation=K.relu),
       N.BatchNorm(axes=0, activation=K.relu),
       N.Dense(num_units=np.prod(input_shape[1:]), activation=K.linear),
       N.Reshape(shape=([0],) + input_shape[1:])
@@ -198,7 +200,7 @@ while True:
   train_losses = []
   prog = Progbar(target=X_train.shape[0], name='Epoch%d' % epoch)
   start_time = timeit.default_timer()
-  for start, end in batching(batch_size=args.bs, n=X_train.shape[0],
+  for start, end in batching(batch_size=args.batch, n=X_train.shape[0],
                              seed=K.get_rng().randint(10e8)):
     _ = K.eval([avg_distortion, avg_rate, loss],
                feed_dict={X: X_train[start:end]},

@@ -30,10 +30,11 @@ args = args_parse([
     ('-epoch', "number of epoch", None, 25),
     ('-l', "audio segmenting length in second", None, 3),
     ('--debug', "enable debug mode", None, False),
+    ('--train', "force continue training the saved model", None, False),
 ])
 FEAT = args.feat
 DEBUG = bool(args.debug)
-MODEL_PATH, LOG_PATH, TEST_PATH, NAME_PATH = get_model_path('xvec', args)
+MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('xvec', args)
 stdio(LOG_PATH)
 # ===========================================================================
 # Create data feeder
@@ -107,39 +108,65 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 # ===========================================================================
 # Create trainer
 # ===========================================================================
-print('Start training ...')
-task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
-                         allow_rollback=True)
-task.set_checkpoint(MODEL_PATH, x_vec)
-task.set_callbacks([
-    training.NaNDetector(),
-    training.EarlyStopGeneralizationLoss('valid', ce,
-                                         threshold=5, patience=5)
-])
-task.set_train_task(func=f_train, data=train,
-                    epoch=args.epoch, name='train')
-task.set_valid_task(func=f_score, data=valid,
-                    freq=training.Timer(percentage=0.8),
-                    name='valid')
-task.run()
+if os.path.exists(MODEL_PATH) and not args.train:
+  pass
+else:
+  print('Start training ...')
+  task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
+                           allow_rollback=True)
+  task.set_checkpoint(MODEL_PATH, x_vec)
+  task.set_callbacks([
+      training.NaNDetector(),
+      training.EarlyStopGeneralizationLoss('valid', ce,
+                                           threshold=5, patience=5)
+  ])
+  task.set_train_task(func=f_train, data=train,
+                      epoch=args.epoch, name='train')
+  task.set_valid_task(func=f_score, data=valid,
+                      freq=training.Timer(percentage=0.8),
+                      name='valid')
+  task.run()
 # ===========================================================================
 # Saving the test data
+# CSV separated by tab
 # ===========================================================================
-prog = Progbar(target=len(test_ids),
+sep = '\t'
+prog = Progbar(target=len(test_ids) + len(train) + len(valid),
+               print_summary=True, print_report=True,
                name="Extracting x-vector")
-with open(NAME_PATH, 'w') as f_name, open(TEST_PATH, 'w') as f_dat:
+with open(TRAIN_PATH, 'w') as f_train, open(TEST_PATH, 'w') as f_test:
+  for name, idx, X, y in train.set_batch(batch_size=8000,
+                                         batch_mode='file', seed=None):
+    assert idx == 0
+    y = np.argmax(y, axis=-1)
+    assert len(set(y)) == 1
+    y = y[0]
+    z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
+    f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
+    prog.add(X.shape[0])
+
+  for name, idx, X, y in valid.set_batch(batch_size=8000,
+                                         batch_mode='file', seed=None):
+    assert idx == 0
+    y = np.argmax(y, axis=-1)
+    assert len(set(y)) == 1
+    y = y[0]
+    z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
+    f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
+    prog.add(X.shape[0])
+
   for name, (start, end) in sorted(test_ids.items(),
                                    key=lambda x: x[0]):
     y = test_dat[start:end]
     z = np.mean(f_z(y), axis=0, keepdims=False).astype('float32')
-    f_dat.write(' '.join([str(i) for i in z]) + '\n')
-    f_name.write(name + '\n')
+    f_test.write(sep.join([name] + [str(i) for i in z]) + '\n')
     prog.add(1)
 # ===========================================================================
 # Evaluate and save the log
 # ===========================================================================
 np.random.seed(52181208)
-X = np.random.rand(64, X.shape[1].value, X.shape[2].value).astype('float32')
+shape = inputs[0].shape
+X = np.random.rand(64, shape[1].value, shape[2].value).astype('float32')
 Z = f_z(X)
 # ====== make sure model has the same identity ====== #
 print(Z.shape, Z.sum(), (Z**2).sum(), Z.std())
