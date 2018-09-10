@@ -2,8 +2,9 @@ import os
 from odin.utils import get_exppath
 from odin.stats import sampling_iter
 
-# ====== fixed path to 'voxceleb1_wav' folder ====== #
+# fixed path to 'voxceleb1_wav' folder
 PATH_TO_WAV = '/mnt/sdb1/'
+# output path for acoustic features
 PATH_ACOUSTIC_FEAT = '/mnt/sdb1/voxceleb_feat'
 # path to folder contains experiment results
 PATH_EXP = get_exppath('voxceleb')

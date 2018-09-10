@@ -14,7 +14,7 @@ from .utils import MmapDict, SQLiteDict, NoSQL
 
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
-                        is_callable, flatten_list)
+                        is_callable, flatten_list, UnitTimer)
 from odin.utils.crypto import md5_checksum
 from .recipe_base import FeederRecipe, RecipeList
 
@@ -55,16 +55,48 @@ def copy_dataset2(origin, destination,
 # ===========================================================================
 # dataset
 # ===========================================================================
+def _infer_separator(path):
+  all_sep = ('\t', ' ', ';', ',')
+  with open(path, 'r') as f:
+    line = f.readline()
+    line = line.strip()
+    orig_length = len(line)
+    for s in all_sep:
+      if s not in line:
+        continue
+      if 1 < len(line.split(s)) < orig_length:
+        return s
+    raise RuntimeError("CSV file with the first line: `%s`, "
+                       "cannot match separator in known list: `%s`"
+                       % (line, str(all_sep)))
+
 def _parse_data_descriptor(path, read_only):
   """ Return mapping: name -> (dtype, shape, Data, path) """
   if not os.path.isfile(path):
     return None
+  file_ext = os.path.splitext(path)[-1]
+  file_name = os.path.basename(path)
+  # ====== text file .txt ====== #
+  if file_ext in ('.txt',):
+    return [(file_name, ('txt', 'unknown', None, path))]
+  # ====== check if is csv file ====== #
+  if file_ext in ('.csv',):
+    sep = _infer_separator(path)
+    data = []
+    # read by manually open file much faster than numpy.genfromtxt
+    with open(path, 'r') as f:
+      for line in f:
+        line = line.strip()
+        data.append(line.split(sep))
+      data = np.array(data, dtype=str)
+    return [('.'.join(file_name.split('.')[:-1]),
+             ('csv', data.shape, data, path))]
   # ====== check if a file is Data ====== #
   try:
     dtype, shape = MmapData.read_header(path, read_only=True,
                                         return_file=False)
     # shape[1:], because first dimension can be resize afterward
-    return [(os.path.basename(path), (dtype, shape, None, path))]
+    return [(file_name, (dtype, shape, None, path))]
   except Exception as e: # cannot read the header of MmapData, maybe Hdf5
     try:
       f = open_hdf5(path, read_only=read_only)
@@ -74,24 +106,23 @@ def _parse_data_descriptor(path, read_only):
     except Exception as e:
       pass
   # ====== try to load pickle file if possible ====== #
-  name = os.path.basename(path)
   try: # try with unpickling
     with open(path, 'rb') as f:
       data = cPickle.load(f)
-      return [(name,
+      return [(file_name,
       (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
   except cPickle.UnpicklingError as e:
     try: # try again with numpy load
       with open(path, 'rb') as f:
         data = np.load(f)
-        return [(name,
+        return [(file_name,
         (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
     except Exception as e:
       pass
   # ====== load memmap dict ====== #
   try:
     data = MmapDict(path, read_only=read_only)
-    return [(name, ('memdict', len(data), data, path))]
+    return [(file_name, ('memdict', len(data), data, path))]
   except Exception as e:
     pass
   # ====== load SQLiteDict ====== #
@@ -105,7 +136,7 @@ def _parse_data_descriptor(path, read_only):
     except Exception as e:
       pass
   # ====== unknown datatype ====== #
-  return [(name, ('unknown', 'unknown', None, path))]
+  return [(file_name, ('unknown', 'unknown', None, path))]
 
 
 class Dataset(object):
@@ -114,6 +145,10 @@ class Dataset(object):
 
   Any file name with "readme" prefix will be parsed as text and showed as
   readme.
+
+  Support data type:
+   - .txt or .csv files:
+   -
 
   Note
   ----

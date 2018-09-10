@@ -327,6 +327,20 @@ def load_lre_list():
   return np.genfromtxt(fname=path, dtype=str, delimiter=' ',
                        skip_header=1)
 
+def load_sre_list():
+  link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL1NSRV9GSUxFUy56aXA=\n'
+  link = str(base64.decodebytes(link), 'utf-8')
+  ds_path = get_datasetpath(name='SRE_FILES', root='~',
+                            is_folder=False, override=False)
+  if os.path.exists(ds_path) and len(os.listdir(ds_path)) != 5:
+    shutil.rmtree(ds_path)
+  if not os.path.exists(ds_path):
+    path = get_file(fname=os.path.basename(link),
+                    origin=link,
+                    outdir=get_datasetpath(root='~'))
+    unzip_folder(zip_path=path, out_path=ds_path, remove_zip=True)
+  return Dataset(ds_path, read_only=True)
+
 def load_voxceleb_list():
   link = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLWRhdGFzZXRzL3ZveGNlbGViX2xpc3RzLnppcA==\n'
   link = str(base64.decodebytes(link), 'utf-8')
