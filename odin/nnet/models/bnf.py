@@ -8,7 +8,6 @@ from odin.nnet.base import Dense
 
 from .base import Model
 
-
 @add_metaclass(ABCMeta)
 class _BNFbase(Model):
 

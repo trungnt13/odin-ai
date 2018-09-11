@@ -28,11 +28,9 @@ def _validate_shape_dtype(x):
     return False
   return True
 
-
 @add_metaclass(ABCMeta)
 class Model(NNOp):
-  """ Model
-  """
+  """ Model """
   ORIGIN = b'aHR0cHM6Ly9zMy5hbWF6b25hd3MuY29tL2FpLW0wZGVscy8=\n'
   BASE_DIR = get_datasetpath(root='~')
 

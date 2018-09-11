@@ -13,13 +13,14 @@
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 
+import os
 from collections import defaultdict
 
 import numpy as np
 
 from odin import fuel as F, backend as K, visual as V
 from odin.utils import (cache_disk, ctext, unique_labels,
-                        Progbar, batching)
+                        Progbar, batching, get_exppath)
 from odin.stats import train_valid_test_split, sampling_iter
 
 _support_label = {
@@ -35,7 +36,17 @@ _support_label = {
 # ===========================================================================
 # Const for path and features configuration
 # ===========================================================================
+PATH_EXP = get_exppath(tag='TIDIGITS', override=False)
+# ====== acoustic feature extraction ====== #
+PATH_FEATURE_EXTRACTION_LOG = os.path.join(PATH_EXP, 'feature_extraction.log')
+PATH_ACOUSTIC = os.path.join(PATH_EXP, 'acoustic')
+PATH_ACOUSTIC_FIG = os.path.join(PATH_EXP, 'features.pdf')
 
+class FeatureConfigs(object):
+  padding = False
+  frame_length = 0.025
+  step_length = 0.005
+  dtype = 'float16'
 
 # ===========================================================================
 # For DNN

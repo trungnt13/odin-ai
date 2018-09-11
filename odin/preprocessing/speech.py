@@ -40,6 +40,7 @@ import re
 import six
 import math
 import copy
+import base64
 import shutil
 import inspect
 import warnings
@@ -717,9 +718,72 @@ class CQTExtractor(Extractor):
     return feat
 
 # ===========================================================================
-# More features
+# Bottleneck features
 # ===========================================================================
-class BNFExtractor(Extractor):
+class _BNFExtractorBase(Extractor):
+  """ _BNFExtractorBase """
+
+  def __init__(self, input_name, network,
+               output_name='bnf', sad_name='sad',
+               stack_context=10, pre_mvn=True,
+               batch_size=2048):
+    assert isinstance(input_name, string_types), "`input_name` must be string"
+    if isinstance(sad_name, string_types):
+      input_name = (input_name, sad_name)
+      self.use_sad = True
+    else:
+      self.use_sad = False
+    super(_BNFExtractorBase, self).__init__(
+        input_name=input_name, output_name=output_name)
+    # ====== other configs ====== #
+    if stack_context is None:
+      stack_context = 0
+    self.stack_context = int(stack_context)
+    self.pre_mvn = bool(pre_mvn)
+    self.batch_size = int(batch_size)
+    # ====== check the network ====== #
+    self._prepare_network(network)
+
+  def _prepare_input(self, X, sad):
+    # ====== pre-normalization ====== #
+    X_sad = X[sad] if sad is not None else X
+    if self.pre_mvn:
+      X = (X - X_sad.mean(0, keepdims=True)) /  \
+          (X_sad.std(0, keepdims=True) + 1e-18)
+    # ====== stacking context and applying SAD ====== #
+    if self.stack_context > 0:
+      X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
+                       step_length=1, keep_length=True,
+                       make_contigous=True)
+    if sad is not None:
+      X = X[sad]
+    return X
+
+  def _transform(self, feat):
+    if self.use_sad:
+      X, sad = feat[self.input_name[0]], feat[self.input_name[1]]
+      sad = sad.astype('bool')
+      assert len(sad) == len(X), \
+      "Input mismatch, `sad` has shape: %s, and input feature with name: %s; shape: %s" % \
+      (sad.shape, self.input_name[0], X.shape)
+    else:
+      X = feat[self.input_name]
+      sad = None
+    # ====== transform ====== #
+    X = self._prepare_input(X, sad)
+    y = []
+    # make prediction
+    for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
+      y.append(self._apply_dnn(X[s:e]))
+    return np.concatenate(y, axis=0)
+
+  def _prepare_network(self, network):
+    raise NotImplementedError
+
+  def _apply_dnn(self, X):
+    raise NotImplementedError
+
+class BNFExtractorCPU(_BNFExtractorBase):
   """ Deep bottleneck feature extractor
   The following order of preprocessing features for BNF are suggested:
   * extract input features: `X`
@@ -759,28 +823,94 @@ class BNFExtractor(Extractor):
 
   """
 
-  def __init__(self, input_name, network,
-               output_name='bnf', sad_name='sad',
-               stack_context=10, pre_mvn=True,
-               batch_size=2048):
-    assert isinstance(input_name, string_types), "`input_name` must be string"
-    if isinstance(sad_name, string_types):
-      input_name = (input_name, sad_name)
-      self.use_sad = True
-    else:
-      self.use_sad = False
-    super(BNFExtractor, self).__init__(input_name=input_name, output_name=output_name)
-    # ====== check the network ====== #
+  def _prepare_network(self, network):
+    from odin.nnet.models.bnf import _BNFbase
+    if isinstance(network, _BNFbase):
+      network = network.__class__
+    assert isinstance(network, type) and issubclass(network, _BNFbase), \
+    "`network` must be a subclass of odin.nnet.models.Model, but given: %s"\
+    % str(network)
+    params = network.load_parameters()
+    # note: the weights are transposed for column matrix (Matlab format)
+    self.weights = [params[name][:]
+        for name in sorted([key for key in params.keys() if 'w' == key[0]])]
+    self.biases = [params[name][:]
+        for name in sorted([key for key in params.keys() if 'b' == key[0]])]
+    assert len(self.weights) == len(self.biases), \
+    'Number of weights is: %d; but number of biases is: %s' % \
+    (len(self.weights), len(self.biases))
+
+  def _renorm_rms(self, x, target_rms=1.0, axis=0):
+    """ scales the data such that RMS is 1.0 """
+    # scale = sqrt(x^t x / (D * target_rms^2)).
+    D = np.sqrt(x.shape[axis])
+    x_rms = np.sqrt(np.sum(x * x, axis=axis, keepdims=True)) / D
+    x_rms[x_rms == 0] = 1.
+    return target_rms * x / x_rms
+
+  def _apply_dnn(self, X):
+    assert X.shape[1] == self.weights[0].shape[1], \
+    "Input must has dimension (?, %d) but given tensor with shape: %s" % \
+    (self.weights[0].shape[0], str(X.shape))
+    X = X.T
+    for wi, bi in zip(self.weights[:-1], self.biases[:-1]):
+      X = wi.dot(X) + bi
+      # relu nonlinearity
+      np.maximum(X, 0, out=X)
+      # scale the RMS
+      X = self._renorm_rms(X, axis=0)
+    # last layer, only linear
+    X = self.weights[-1].dot(X) + self.biases[-1]
+    return X.T
+
+class BNFExtractor(_BNFExtractorBase):
+  """ Deep bottleneck feature extractor
+  The following order of preprocessing features for BNF are suggested:
+  * extract input features: `X`
+  * extract sad: `S`
+  * normalize by speech activities: `X = (X - X[S].mean()) / X[S].std()`
+  * Stacking features: `X = stacking(X, context=10)`
+  => X_bnf = network(X)
+
+  Parameters
+  ----------
+  input_feat : str
+    name of input feature
+  network : odin.nnet.base.NNOp
+    instance pre-trained NNOp
+  pre_mvn : bool (default: False)
+    perform mean-variance normalization before stacking,
+    then, feeding data to network.
+  sad_name : {str, None}
+    if None, or `sad_name` not found, don't applying SAD to
+    the input feature before BNF
+  dtype : (str, numpy.dtype, None)
+    cast input to specific dtype before BNF, if None,
+    keep original dtype
+  batch_size : int
+    batch size when feeding data to the network, suggest
+    to have as much data as possible.
+
+  Note
+  ----
+  Order of preprocessing for BNF:
+   - delta and delta delta extraction (optional)
+   - mean_var_norm based on SAD frames statistics.
+   - Stacking the left and right context frames.
+   - Applying SAD indices.
+   - Mean-variance normalization
+   => BNFExtractor
+
+  """
+
+  def _prepare_network(self, network):
     from odin.nnet import NNOp
     if not isinstance(network, NNOp):
       raise ValueError("`network` must be instance of odin.nnet.NNOp")
     self.network = network
-    # ====== other configs ====== #
-    if stack_context is None:
-      stack_context = 0
-    self.stack_context = int(stack_context)
-    self.pre_mvn = bool(pre_mvn)
-    self.batch_size = int(batch_size)
+
+  def _apply_dnn(self, X):
+    return self.network(X)
 
   def __getstate__(self):
     from odin import nnet as N
@@ -798,35 +928,9 @@ class BNFExtractor(Extractor):
     self.network = N.deserialize(self.network,
                                  force_restore_vars=False)
 
-  def _transform(self, feat):
-    if self.use_sad:
-      X, sad = feat[self.input_name[0]], feat[self.input_name[1]]
-      sad = sad.astype('bool')
-      assert len(sad) == len(X), \
-      "Input mismatch, `sad` has shape: %s, and input feature with name: %s; shape: %s" % \
-      (sad.shape, self.input_name[0], X.shape)
-    else:
-      X = feat[self.input_name]
-      sad = None
-    # ====== pre-normalization ====== #
-    X_sad = X[sad] if sad is not None else X
-    if self.pre_mvn:
-      X = (X - X_sad.mean(0, keepdims=True)) /  \
-          (X_sad.std(0, keepdims=True) + 1e-18)
-    # ====== stacking context and applying SAD ====== #
-    if self.stack_context > 0:
-      X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
-                       step_length=1, keepdims=True,
-                       make_contigous=True)
-    if sad is not None:
-      X = X[sad]
-    # ====== transform ====== #
-    y = []
-    # make prediction
-    for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
-      y.append(self.network(X[s:e]))
-    return np.concatenate(y, axis=0)
-
+# ===========================================================================
+# Pitch
+# ===========================================================================
 class PitchExtractor(Extractor):
   """
   Parameters
