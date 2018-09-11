@@ -31,10 +31,10 @@ from odin import ml
 from odin import training
 from odin import preprocessing as pp
 from odin.visual import print_dist, print_confusion, print_hist
-from odin.utils import (get_logpath, get_modelpath, get_datasetpath, get_exppath,
-                        Progbar, unique_labels, chain, get_formatted_datetime,
+from odin.utils import (Progbar, unique_labels, chain, get_formatted_datetime,
                         as_tuple_of_shape, stdio, ctext, ArgController)
 
+from utils import prepare_data, get_exp_path
 # ===========================================================================
 # Input arguments
 # ===========================================================================
@@ -42,17 +42,9 @@ args = ArgController(
 ).add('-nmix', "Number of GMM mixture", 256
 ).add('-tdim', "Dimension of t-matrix", 128
 ).add('-feat', "Acoustic feature: spec, mspec, mfcc, bnf, sdc", 'mspec'
-).add('--gmm', "Force re-run training GMM", False
-).add('--stat', "Force re-extraction of centered statistics", False
-).add('--tmat', "Force re-run training Tmatrix", False
-).add('--ivec', "Force re-run extraction of i-vector", False
-).add('--all', "Run all the system again, just a shortcut", False
+).add('-task', 'gender, age, dialect, speaker, digit', 'gender'
+).add('--retrain', "deleted trained model, and re-train everything", False
 ).parse()
-args.gmm |= args.all
-args.stat |= args.all | args.gmm
-args.tmat |= args.all | args.stat
-args.ivec |= args.all | args.tmat
-FEAT = args.feat
 # ===========================================================================
 # Const
 # ===========================================================================
@@ -68,50 +60,10 @@ TV_NITER = 10
 # ===========================================================================
 # path and dataset
 # ===========================================================================
-# path to preprocessed dataset
-ds = F.TIDIGITS_feat.load()
-assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
-indices = list(ds['indices'].items())
-# ====== general path ====== #
-EXP_DIR = get_exppath(tag='TIDIGITS_ivec',
-                      name='%s_%d_%d' % (FEAT, args.nmix, args.tdim))
-if not os.path.exists(EXP_DIR):
-  os.mkdir(EXP_DIR)
-# ====== start logging ====== #
-LOG_PATH = os.path.join(EXP_DIR,
-                        'log_%s.txt' % get_formatted_datetime(only_number=True))
+EXP_DIR, MODEL_PATH, LOG_PATH = get_exp_path('ivec', args, override=args.retrain)
 stdio(LOG_PATH)
-print("Exp-dir:", ctext(EXP_DIR, 'cyan'))
-print("Log path:", ctext(LOG_PATH, 'cyan'))
-# ===========================================================================
-# Helper
-# ===========================================================================
-def is_train(x):
-  return x.split('_')[0] == 'train'
-
-def extract_gender(x):
-  return x.split('_')[1]
-
-print("Task:", ctext("gender", 'cyan'))
-fn_extract = extract_gender
-fn_label, labels = unique_labels([i[0] for i in indices],
-                                 key_func=fn_extract,
-                                 return_labels=True)
-print("Labels:", ctext(labels, 'cyan'))
-# ===========================================================================
-# Preparing data
-# ===========================================================================
-train_files = [] # (name, (start, end)) ...
-test_files = []
-for name, (start, end) in indices:
-  if is_train(name):
-    train_files.append((name, (start, end)))
-  else:
-    test_files.append((name, (start, end)))
-# name for each dataset, useful for later
-data_name = ['train', 'test']
-print("#Train:", len(train_files))
-print("#Test:", len(test_files))
+X, train, y_train, test, y_test, labels = prepare_data(
+    feat=args.feat, label=args.task, for_ivec=True)
 # ===========================================================================
 # Training Ivector
 # ===========================================================================
@@ -121,20 +73,18 @@ ivec = ml.Ivector(path=EXP_DIR, nmix=NMIX, tv_dim=TV_DIM,
                   downsample=GMM_DOWNSAMPLE, stochastic_downsample=GMM_STOCHASTIC,
                   device='gpu', ncpu=1, gpu_factor_gmm=80, gpu_factor_tmat=3,
                   dtype=DTYPE, seed=5218, name=None)
-ivec.fit(X=ds[FEAT], indices=train_files,
+ivec.fit(X=X, indices=train,
          extract_ivecs=True, keep_stats=True)
-ivec.transform(X=ds[FEAT], indices=test_files,
+ivec.transform(X=X, indices=test,
                save_ivecs=True, keep_stats=True, name='test')
 # ====== i-vector ====== #
 I_train = F.MmapData(path=ivec.get_i_path(None), read_only=True)
 F_train = F.MmapData(path=ivec.get_f_path(None), read_only=True)
 name_train = np.genfromtxt(ivec.get_name_path(None), dtype=str)
-y_train = [fn_label(i) for i in name_train]
 
 I_test = F.MmapData(path=ivec.get_i_path(name='test'), read_only=True)
 F_test = F.MmapData(path=ivec.get_f_path(name='test'), read_only=True)
 name_test = np.genfromtxt(ivec.get_name_path(name='test'), dtype=str)
-y_test = [fn_label(i) for i in name_test]
 # ===========================================================================
 # I-vector
 # ===========================================================================

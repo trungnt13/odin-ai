@@ -14,13 +14,15 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import shutil
 from collections import defaultdict
 
 import numpy as np
 
 from odin import fuel as F, backend as K, visual as V
 from odin.utils import (cache_disk, ctext, unique_labels,
-                        Progbar, batching, get_exppath)
+                        Progbar, batching, get_exppath,
+                        get_formatted_datetime)
 from odin.stats import train_valid_test_split, sampling_iter
 
 _support_label = {
@@ -55,13 +57,45 @@ class FeatureConfigs(object):
   step_length = 0.010
   dtype = 'float16'
 
+def get_exp_path(system_name, args, override=False):
+  """ Return: exp_dir, model_path, log_path """
+  exp_dir = get_exppath(tag='TIDIGITS_%s_%s_%s' %
+    (system_name, args.task, args.feat))
+  if 'nmix' in args:
+    exp_dir += '_%d' % args.nmix
+  if 'tdim' in args:
+    exp_dir += '_%d' % args.tdim
+  # ====== check override ====== #
+  if bool(override) and os.path.exists(exp_dir):
+    shutil.rmtree(exp_dir)
+  if not os.path.exists(exp_dir):
+    os.mkdir(exp_dir)
+  # ====== basic paths ====== #
+  model_path = os.path.join(exp_dir, 'model.ai')
+  log_path = os.path.join(exp_dir,
+                         'log_%s.txt' % get_formatted_datetime(only_number=True))
+  print("Exp dir:", ctext(exp_dir, 'cyan'))
+  print("Model path:", ctext(model_path, 'cyan'))
+  print("Log path:", ctext(log_path, 'cyan'))
+  return exp_dir, model_path, log_path
+
 # ===========================================================================
 # For DNN
 # ===========================================================================
-def prepare_data_dnn(feat, label, utt_length=0.3):
+def prepare_data(feat, label, utt_length=0.4, for_ivec=False):
   """
-  Returns
-  -------
+
+  Returns (i-vector)
+  ------------------
+  ds[feat]
+  train_files
+  y_train
+  test_files
+  y_test
+  labels
+
+  Returns (x-vector)
+  ------------------
   train : Feeder
     feeder for training data for iterating over pair of (X, y)
   valid : Feeder
@@ -86,7 +120,10 @@ def prepare_data_dnn(feat, label, utt_length=0.3):
   assert label in _support_label, "No support for label: %s" % label
   assert 0 < utt_length <= 1.
   # ====== load dataset ====== #
-  ds = F.TIDIGITS_feat.load()
+  if not os.path.exists(PATH_ACOUSTIC):
+    raise RuntimeError("Cannot find extracted acoustic features at path: '%s',"
+                       "run the code speech_features_extraction.py!" % PATH_ACOUSTIC)
+  ds = F.Dataset(PATH_ACOUSTIC, read_only=True)
   assert feat in ds, "Cannot find feature with name: %s" % feat
   indices = list(ds['indices'].items())
   K.get_rng().shuffle(indices)
@@ -112,8 +149,13 @@ def prepare_data_dnn(feat, label, utt_length=0.3):
     else:
       test_files.append((name, (start, end)))
   # name for each dataset, useful for later
-  print("#Train:", len(train_files))
-  print("#Test:", len(test_files))
+  print("#Train:", ctext(len(train_files), 'cyan'))
+  print("#Test:", ctext(len(test_files), 'cyan'))
+  # ====== for i-vectors ====== #
+  y_train = np.array([fn_label(i[0]) for i in train_files])
+  y_test = np.array([fn_label(i[0]) for i in test_files])
+  if bool(for_ivec):
+    return ds[feat], train_files, y_train, test_files, y_test, labels
   # ====== length ====== #
   length = [(end - start) for _, (start, end) in indices]
   max_length = max(length)
@@ -124,9 +166,10 @@ def prepare_data_dnn(feat, label, utt_length=0.3):
   print("Step length :", ctext(step_length, 'yellow'))
   # ====== split dataset ====== #
   # split by speaker ID
-  train_files, valid_files = train_valid_test_split(train_files, train=0.8,
+  train_files, valid_files = train_valid_test_split(
+      x=train_files, train=0.8,
       cluster_func=None,
-      idfunc=lambda x: x[0].split('_')[4], # splitted by speaker
+      idfunc=lambda x: x[0].split('_')[4], # splited by speaker
       inc_test=False)
   print("#File train:", ctext(len(train_files), 'cyan'))
   print("#File valid:", ctext(len(valid_files), 'cyan'))
@@ -152,7 +195,7 @@ def prepare_data_dnn(feat, label, utt_length=0.3):
 
   # ====== process X_test, y_test in advance for faster evaluation ====== #
   @cache_disk
-  def _extract_test_data(feat=feat, label=label, utt_length=utt_length):
+  def _extract_test_data(feat, label, utt_length):
     prog = Progbar(target=len(feeder_test),
                    print_summary=True, name="Preprocessing test set")
     X_test = defaultdict(list)
@@ -174,7 +217,7 @@ def prepare_data_dnn(feat, label, utt_length=0.3):
     X_test_data = np.concatenate(X_test_data, axis=0)
     return X_test_name, X_test_data
   # convert everything back to float32
-  X_test_name, X_test_data = _extract_test_data()
+  X_test_name, X_test_data = _extract_test_data(feat, label, utt_length)
   X_test_true = np.array([fn_label(i.split('.')[0])
                           for i in X_test_name])
   return feeder_train, feeder_valid, \
@@ -219,15 +262,13 @@ def make_dnn_prediction(functions, X, batch_size=256, title=''):
     return results[0]
 
 # ===========================================================================
-# For I-vectors
-# ===========================================================================
-def prepare_data_ivec():
-  pass
-
-# ===========================================================================
 # visualization
 # ===========================================================================
 def visualize_latent_space(X_org, X_latent, name, labels, title):
+  """
+  X_org : [n_samples, n_timesteps, n_features]
+  X_latent : [n_samples, n_timesteps, n_latents]
+  """
   assert X_org.shape[0] == X_latent.shape[0] == len(name) == len(labels)
   assert not np.any(np.isnan(X_org))
   assert not np.any(np.isnan(X_latent))

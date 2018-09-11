@@ -165,19 +165,6 @@ class TIDIGITS(DataLoader):
       os.remove(zip_path)
     return ds
 
-class TIDIGITS_feat(DataLoader):
-
-  @classmethod
-  def load(clazz):
-    path = get_datasetpath(name='TIDIGITS_feats', override=False)
-    if not os.path.exists(path):
-      raise RuntimeError("Cannot find dataset at path: %s" % path)
-    return Dataset(path, read_only=True)
-
-  @classmethod
-  def get_dataset(clazz):
-    return clazz.load()
-
 class FSDD(object):
   """ Free Spoken Digit Dataset
   A simple audio/speech dataset consisting of recordings of
@@ -332,7 +319,7 @@ def load_sre_list():
   link = str(base64.decodebytes(link), 'utf-8')
   ds_path = get_datasetpath(name='SRE_FILES', root='~',
                             is_folder=False, override=False)
-  if os.path.exists(ds_path) and len(os.listdir(ds_path)) != 5:
+  if os.path.exists(ds_path) and len(os.listdir(ds_path)) != 6:
     shutil.rmtree(ds_path)
   if not os.path.exists(ds_path):
     path = get_file(fname=os.path.basename(link),
