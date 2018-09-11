@@ -876,7 +876,7 @@ class MmapData(Data):
       size = '%8d' % size
       f.write(size.encode())
       f.write(_)
-    # assign info
+    # ====== assign attributes ====== #
     self._file = f
     self._path = path
     data = np.memmap(f, dtype=dtype, shape=shape,
