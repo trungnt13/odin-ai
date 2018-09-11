@@ -40,12 +40,19 @@ PATH_EXP = get_exppath(tag='TIDIGITS', override=False)
 # ====== acoustic feature extraction ====== #
 PATH_FEATURE_EXTRACTION_LOG = os.path.join(PATH_EXP, 'feature_extraction.log')
 PATH_ACOUSTIC = os.path.join(PATH_EXP, 'acoustic')
-PATH_ACOUSTIC_FIG = os.path.join(PATH_EXP, 'features.pdf')
+PATH_ACOUSTIC_FIG = os.path.join(PATH_EXP, 'validate_features')
 
 class FeatureConfigs(object):
   padding = False
+  sr = 8000
+  window = 'hamm'
+  n_fft = 512
+  n_mels = 40
+  n_ceps = 40
+  fmin = 100
+  fmax = 4000
   frame_length = 0.025
-  step_length = 0.005
+  step_length = 0.010
   dtype = 'float16'
 
 # ===========================================================================

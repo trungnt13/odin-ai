@@ -723,8 +723,8 @@ class CQTExtractor(Extractor):
 class _BNFExtractorBase(Extractor):
   """ _BNFExtractorBase """
 
-  def __init__(self, input_name, network,
-               output_name='bnf', sad_name='sad',
+  def __init__(self, input_name, network, output_name='bnf',
+               sad_name='sad', remove_non_speech=True,
                stack_context=10, pre_mvn=True,
                batch_size=2048):
     assert isinstance(input_name, string_types), "`input_name` must be string"
@@ -733,6 +733,7 @@ class _BNFExtractorBase(Extractor):
       self.use_sad = True
     else:
       self.use_sad = False
+    self.remove_non_speech = bool(remove_non_speech)
     super(_BNFExtractorBase, self).__init__(
         input_name=input_name, output_name=output_name)
     # ====== other configs ====== #
@@ -755,7 +756,7 @@ class _BNFExtractorBase(Extractor):
       X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
                        step_length=1, keep_length=True,
                        make_contigous=True)
-    if sad is not None:
+    if self.remove_non_speech and sad is not None:
       X = X[sad]
     return X
 
@@ -804,9 +805,8 @@ class BNFExtractorCPU(_BNFExtractorBase):
   sad_name : {str, None}
     if None, or `sad_name` not found, don't applying SAD to
     the input feature before BNF
-  dtype : (str, numpy.dtype, None)
-    cast input to specific dtype before BNF, if None,
-    keep original dtype
+  remove_non_speech : bool (default: True)
+    if True, remove non-speech frames using given SAD
   batch_size : int
     batch size when feeding data to the network, suggest
     to have as much data as possible.
@@ -884,9 +884,8 @@ class BNFExtractor(_BNFExtractorBase):
   sad_name : {str, None}
     if None, or `sad_name` not found, don't applying SAD to
     the input feature before BNF
-  dtype : (str, numpy.dtype, None)
-    cast input to specific dtype before BNF, if None,
-    keep original dtype
+  remove_non_speech : bool (default: True)
+    if True, remove non-speech frames using given SAD
   batch_size : int
     batch size when feeding data to the network, suggest
     to have as much data as possible.
