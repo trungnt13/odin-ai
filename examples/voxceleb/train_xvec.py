@@ -41,7 +41,7 @@ stdio(LOG_PATH)
 (train, valid,
  test_ids, test_dat,
  all_speakers) = prepare_dnn_data(feat=FEAT, utt_length=args.l)
-n_speakers = len(all_speakers)
+n_speakers = len(all_speakers) + 1
 # ===========================================================================
 # Create the network
 # ===========================================================================

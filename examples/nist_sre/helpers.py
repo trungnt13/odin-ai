@@ -34,23 +34,24 @@ EXP_DIR = get_exppath('sre', override=False)
 #  * Switchboard
 #  * fisher
 PATH_RAW_DATA = {
-    'mx6': '/mnt/sdb1/SRE_DATA',
-    'voxceleb1': '/mnt/sdb1/SRE_DATA',
-    'voxceleb2': '/mnt/sdb1/SRE_DATA',
-    'swb': '/mnt/sdb1/SRE_DATA',
-    'fisher': '/mnt/sdb1/SRE_DATA',
-    'sre04': '/mnt/sdb1/SRE_DATA/NIST1996_2008/SRE02_SRE06/',
-    'sre05': '/mnt/sdb1/SRE_DATA/NIST1996_2008/SRE96_SRE05',
-    'sre06': '/mnt/sdb1/SRE_DATA/NIST1996_2008/SRE02_SRE06',
-    'sre08': '/mnt/sdb1/SRE_DATA',
-    'sre10': '/mnt/sdb1/SRE_DATA',
+    'mx6': '/media/data2/SRE_DATA',
+    'voxceleb1': '/media/data2/SRE_DATA',
+    'voxceleb2': '/media/data2/SRE_DATA',
+    'swb': '/media/data2/SRE_DATA',
+    'fisher': '/media/data2/SRE_DATA',
+    'sre04': '/media/data2/SRE_DATA/NIST1996_2008/SRE02_SRE06',
+    'sre05': '/media/data2/SRE_DATA/NIST1996_2008/SRE96_SRE05',
+    'sre06': '/media/data2/SRE_DATA/NIST1996_2008/SRE02_SRE06',
+    'sre08': '/media/data2/SRE_DATA',
+    'sre10': '/media/data2/SRE_DATA',
+    # noise datasets
+    'musan': '/media/data2/SRE_DATA',
+    'rirs': '/media/data2/SRE_DATA',
 }
-PATH_MUSAN = '/mnt/sdb1/SRE_DATA/musan'
-PATH_RIRS = '/mnt/sdb1/SRE_DATA/RIRS_NOISES'
 
 # all data will be down sampled to following
 SAMPLE_RATE = 8000
-PATH_ACOUSTIC_FEATURES = '/mnt/sda1/SRE_FEAT'
+PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'
 if not os.path.exists(PATH_ACOUSTIC_FEATURES):
   os.mkdir(PATH_ACOUSTIC_FEATURES)
 # ===========================================================================

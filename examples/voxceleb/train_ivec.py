@@ -42,9 +42,8 @@ ivec = ml.Ivector(path=MODEL_PATH, nmix=args.nmix, tv_dim=args.tdim,
                   niter_gmm=16, niter_tmat=16,
                   downsample=2, stochastic_downsample=True,
                   device='gpu', name="VoxCelebIvec")
-if not ivec.is_fitted:
-  ivec.fit(X, sad=sad, indices=train,
-           extract_ivec=True, keep_stats=False)
+ivec.fit(X, sad=sad, indices=train,
+         extract_ivecs=True, keep_stats=False)
 # ====== extract train i-vector ====== #
 I_train = F.MmapData(ivec.ivec_path, read_only=True)
 name_train = np.genfromtxt(ivec.name_path, dtype=str)

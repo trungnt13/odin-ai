@@ -28,7 +28,8 @@ recipe = pp.make_pipeline(steps=[
     pp.base.Converter(converter=WAV_FILES,
                       input_name='path', output_name='name'),
     # ====== STFT ====== #
-    pp.speech.STFTExtractor(frame_length=0.025, step_length=0.005,
+    pp.speech.STFTExtractor(frame_length=0.025,
+                            step_length=0.01,
                             n_fft=512),
     pp.base.RenameFeatures(input_name='stft_energy',
                            output_name='energy'),

@@ -3,9 +3,9 @@ from odin.utils import get_exppath
 from odin.stats import sampling_iter
 
 # fixed path to 'voxceleb1_wav' folder
-PATH_TO_WAV = '/mnt/sdb1/SRE_DATA/voxceleb'
+PATH_TO_WAV = '/media/data2/SRE_DATA/voxceleb'
 # output path for acoustic features
-PATH_ACOUSTIC_FEAT = '/mnt/sdb1/voxceleb_feat'
+PATH_ACOUSTIC_FEAT = '/media/data2/voxceleb_feat'
 # path to folder contains experiment results
 PATH_EXP = get_exppath('voxceleb')
 # ====== remove '_quarter' if you want full training data ====== #
