@@ -3,7 +3,7 @@ from odin.utils import get_exppath
 from odin.stats import sampling_iter
 
 # fixed path to 'voxceleb1_wav' folder
-PATH_TO_WAV = '/mnt/sdb1/voxceleb'
+PATH_TO_WAV = '/mnt/sdb1/SRE_DATA/voxceleb'
 # output path for acoustic features
 PATH_ACOUSTIC_FEAT = '/mnt/sdb1/voxceleb_feat'
 # path to folder contains experiment results
@@ -19,6 +19,7 @@ ds = F.load_voxceleb_list()
 WAV_FILES = {} # dictionary mapping 'file_path' -> 'file_name'
 for path, channel, name in ds[FILE_LIST]:
   path = os.path.join(PATH_TO_WAV, path)
+  # validate all files are exist
   assert os.path.exists(path), path
   WAV_FILES[path] = name
 # some sampled files for testing

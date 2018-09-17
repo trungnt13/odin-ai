@@ -2,6 +2,7 @@ import os
 import pickle
 
 import numpy as np
+from scipy.io import savemat
 
 from odin import fuel as F, visual as V
 from odin.utils import ctext, Progbar
@@ -14,7 +15,7 @@ from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
 # Path helpers
 # ===========================================================================
 def get_model_path(system_name, args):
-  """Return: model_path, log_path, train_path, test_path"""
+  """Return: exp_dir, model_path, log_path, train_path, test_path"""
   name = '_'.join([str(system_name).lower(), args.feat])
   if 'l' in args:
     name += '_' + str(int(args.l))
@@ -32,7 +33,7 @@ def get_model_path(system_name, args):
   test_path = os.path.join(save_path, 'test.dat')
   print("Model path:", ctext(model_path, 'cyan'))
   print("Log path:", ctext(log_path, 'cyan'))
-  return model_path, log_path, train_path, test_path
+  return save_path, model_path, log_path, train_path, test_path
 
 # ===========================================================================
 # Data helpers
@@ -146,3 +147,25 @@ def prepare_ivec_data(feat):
   print("#Train files:", ctext(len(train_indices), 'cyan'))
   print("#Test files:", ctext(len(test_indices), 'cyan'))
   return X, ds['sad'], train_indices, test_indices
+
+# ===========================================================================
+# Data saving helpers
+# ===========================================================================
+def csv2mat(exp_dir):
+  in_train = os.path.join(exp_dir, 'train.dat')
+  out_train = os.path.join(exp_dir, 'train.mat')
+  in_test = os.path.join(exp_dir, 'test.dat')
+  out_test = os.path.join(exp_dir, 'test.mat')
+  assert os.path.exists(in_train) and os.path.exists(in_test)
+
+  train_dat = np.genfromtxt(in_train, dtype=str, delimiter='\t')
+  X_train = train_dat[:, 1:].astype('float32').T
+  y_train = train_dat[:, 0].ravel()
+  print('Train:', X_train.shape, X_train.dtype, y_train.shape, y_train.dtype)
+  savemat(file_name=out_train, mdict={'X': X_train.T, 'y': y_train})
+
+  test_dat = np.genfromtxt(in_test, dtype=str, delimiter='\t')
+  X_test = test_dat[:, 1:].astype('float32').T
+  y_test = test_dat[:, 0].ravel()
+  print('Test:', X_test.shape, X_test.dtype, y_test.shape, y_test.dtype)
+  savemat(file_name=out_test, mdict={'X': X_test.T, 'y': y_test})

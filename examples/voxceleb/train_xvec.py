@@ -18,8 +18,7 @@ from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape,
                         crypto, stdio)
 from odin import fuel as F, visual as V, nnet as N, backend as K
 
-from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
-from utils import prepare_dnn_data, get_model_path
+from utils import prepare_dnn_data, get_model_path, csv2mat
 
 # ===========================================================================
 # Configs
@@ -34,7 +33,7 @@ args = args_parse([
 ])
 FEAT = args.feat
 DEBUG = bool(args.debug)
-MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('xvec', args)
+EXP_DIR, MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('xvec', args)
 stdio(LOG_PATH)
 # ===========================================================================
 # Create data feeder
@@ -135,6 +134,7 @@ prog = Progbar(target=len(test_ids) + len(train) + len(valid),
                print_summary=True, print_report=True,
                name="Extracting x-vector")
 with open(TRAIN_PATH, 'w') as f_train, open(TEST_PATH, 'w') as f_test:
+  # ====== save training set ====== #
   for name, idx, X, y in train.set_batch(batch_size=8000,
                                          batch_mode='file', seed=None):
     assert idx == 0
@@ -144,7 +144,7 @@ with open(TRAIN_PATH, 'w') as f_train, open(TEST_PATH, 'w') as f_test:
     z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
     f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
     prog.add(X.shape[0])
-
+  # ====== save validation set ====== #
   for name, idx, X, y in valid.set_batch(batch_size=8000,
                                          batch_mode='file', seed=None):
     assert idx == 0
@@ -154,13 +154,15 @@ with open(TRAIN_PATH, 'w') as f_train, open(TEST_PATH, 'w') as f_test:
     z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
     f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
     prog.add(X.shape[0])
-
+  # ====== save test set ====== #
   for name, (start, end) in sorted(test_ids.items(),
                                    key=lambda x: x[0]):
     y = test_dat[start:end]
     z = np.mean(f_z(y), axis=0, keepdims=False).astype('float32')
     f_test.write(sep.join([name] + [str(i) for i in z]) + '\n')
     prog.add(1)
+# convert everything to matlab format
+csv2mat(exp_dir=EXP_DIR)
 # ===========================================================================
 # Evaluate and save the log
 # ===========================================================================

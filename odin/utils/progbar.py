@@ -260,7 +260,7 @@ class Progbar(object):
       self._labels = tuple([str(l) for l in labels])
     return self
 
-  def formatted_report(self, report_dict, margin='', inc_name=True):
+  def _formatted_report(self, report_dict, margin='', inc_name=True):
     """ Convert a dictionary of key -> value to well formatted string."""
     if inc_name:
       text = _MAGENTA + "\t%s" % self.name + _RESET + '\n'
@@ -340,7 +340,7 @@ class Progbar(object):
     if len(summary) > 2:
       summary.pop('__total_time__', None)
       summary.pop('__avg_time__', None)
-      s += '\n' + self.formatted_report(summary, margin='   ', inc_name=False)
+      s += '\n' + self._formatted_report(summary, margin='   ', inc_name=False)
     return s
 
   @property
@@ -469,7 +469,7 @@ class Progbar(object):
         if self._last_report is not None:
           nlines = len(self._last_report.split('\n'))
           self.progress_bar.moveto(-nlines)
-        report = self.formatted_report(self._report)
+        report = self._formatted_report(self._report)
         # clear old report
         if self._last_report is not None:
           for i, l in enumerate(self._last_report.split('\n')):

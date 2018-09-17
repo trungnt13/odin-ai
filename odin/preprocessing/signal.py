@@ -17,9 +17,12 @@
 # ===========================================================================
 from __future__ import print_function, division, absolute_import
 
+import os
 import six
 import copy
 import warnings
+import subprocess
+from io import BytesIO
 from numbers import Number
 from six import string_types
 
@@ -38,6 +41,141 @@ except ImportError:
 
 # Constrain STFT block sizes to 512 KB
 MAX_MEM_BLOCK = 2**8 * 2**11
+# ===========================================================================
+# Helper
+# ===========================================================================
+def anything2wav(inpath, outpath=None,
+                 channel=None, sample_rate=None, codec=None,
+                 start=None, end=None,
+                 dataset='unknown', return_data=True):
+  """
+
+  Parameters
+  ----------
+  inpath : string
+    path to audio file
+  outpath : {string, None}
+    if None, return `BufferReader` contain the result of the conversion,
+    call `read()` to get all the binary data of the .wav file.
+    Otherwise, return the command for execute or the path of output file
+  channel : {None, integer}
+    specific channel for the conversion
+    0 for left channel, 1 for right channel
+  sample_rate : {None, integer}
+    sample rate for down-sampling
+  dataset : {'unknown', 'voxceleb2'}
+    predefine recipe for some datasets, supported datasets include:
+     - voxceleb2
+     - mx6 (mixer 6)
+  codec : {None, string}
+    the desire codec for output file
+  start : {None, float}
+    start time in second for trimming
+  end : {None, float}
+    end time in second for trimming
+  return_data : bool (default: True)
+    if False, return the output path of .wav or the shell command in case
+    `outpath=None`,
+    otherwise, execute the command using `subprocess.Popen` and
+    return the tuple of (data, sample_rate)
+
+  Return
+  ------
+
+  """
+  inpath = str(inpath)
+  dataset = str(dataset).lower()
+  ext = os.path.splitext(inpath)[-1]
+  is_given_outpath = True
+  if outpath is None:
+    outpath = '-'
+    is_given_outpath = False
+  # ====== voxceleb2 ====== #
+  tool = None
+  cmd = None
+  options = []
+  # ====== unknown ====== #
+  if dataset.lower() == 'mx6':
+    if '/ulaw_sphere/' in inpath:
+      cmd = 'sph2pipe -f wav -p -c %d %s %s' % \
+      (channel, inpath, '' if not is_given_outpath else outpath)
+    else:
+      cmd = 'sox -t flac %s -r %d -t wav %s trim %s =%s' % \
+      (inpath, sample_rate, outpath, start, end)
+  elif ext.lower() in ('.sph', '.wav', '.flac'):
+    tool = 'sox'
+    # options.append('-G')
+    options.append('--no-dither')
+    options.append('-t %s' % ext[1:])
+    options.append(str(inpath))
+    # downsample
+    options.append('-r %d' % int(sample_rate)
+                   if sample_rate is not None else '')
+    options.append('-t wav')
+    options.append('-e %s' % codec
+                   if codec is not None else '')
+    options.append(str(outpath))
+    # channel selection
+    if channel is not None: # for sox channel is 1 or 2
+      options.append('remix %d' % (int(channel) + 1))
+    # trim audio
+    if start is not None or end is not None:
+      options.append('trim %s %s' %
+                     ('%f' % start if start is not None else '',
+                      '=%f' % end if end is not None else ''))
+  elif ext.lower() in ('.m4a', '.mp3'):
+    tool = 'ffmpeg'
+    # force overwrite
+    options.append('-y')
+    # log level
+    options.append('-v 8')
+    options.append('-i %s' % inpath)
+    # channel selection
+    if channel is not None:
+      options.append('-map_channel 0.0.%d' % int(channel))
+    # downsample
+    options.append('-ar %d' % int(sample_rate)
+                   if sample_rate is not None else '')
+    # codec
+    options.append('-f wav')
+    if dataset == 'voxceleb2':
+      options.append('-acodec pcm_s16le')
+    options.append('-acodec %s' % str(codec)
+                   if codec is not None else '')
+    options.append(str(outpath))
+    # trim audio
+    if start is not None:
+      options.append('-ss %f' % start)
+    if end is not None:
+      options.append('-to %f' % end)
+  else:
+    raise ValueError("Nonsupport for file extension: %s" % inpath)
+  # ====== merge everything ====== #
+  if cmd is None:
+    cmd = tool + ' ' + ' '.join([i for i in options
+                                 if len(i) > 0])
+  if not return_data:
+    return cmd
+  # ====== run the command and return the data ====== #
+  import soundfile
+  # read bytes data from PIPE output
+  if outpath in ('-', '- |', '-|'):
+    task = subprocess.Popen(cmd, shell=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    data = BytesIO(task.stdout.read())
+    return soundfile.read(data) # y, sr
+  # read audio file from outpath
+  else:
+    try:
+      task = subprocess.Popen(cmd, shell=True)
+    except Exception as e:
+      print("Stdout:", task.stdout)
+      print("Stderr:", task.stderr)
+      raise e
+    with open(outpath, 'rb') as f:
+      return soundfile.read(f)
+
 # ===========================================================================
 # VAD
 # ===========================================================================

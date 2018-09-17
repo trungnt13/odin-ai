@@ -9,7 +9,7 @@ from odin import fuel as F
 from odin.utils import args_parse, ctext, stdio, Progbar
 
 from const import TRAIN_DATA
-from utils import get_model_path, prepare_ivec_data
+from utils import get_model_path, prepare_ivec_data, csv2mat
 
 # ===========================================================================
 # Configs
@@ -29,7 +29,7 @@ args.stat |= args.all | args.gmm
 args.tmat |= args.all | args.stat
 args.ivec |= args.all | args.tmat
 FEAT = args.feat
-MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('ivec', args)
+EXP_DIR, MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('ivec', args)
 stdio(LOG_PATH)
 # ===========================================================================
 # Load dataset
@@ -49,7 +49,7 @@ if not ivec.is_fitted:
 I_train = F.MmapData(ivec.ivec_path, read_only=True)
 name_train = np.genfromtxt(ivec.name_path, dtype=str)
 print("Train i-vectors:", ctext(I_train, 'cyan'))
-# save train i-vectors
+# save train i-vectors to csv
 prog = Progbar(target=len(name_train),
                print_report=True, print_summary=True,
                name="Saving train i-vectors")
@@ -63,8 +63,10 @@ with open(TRAIN_PATH, 'w') as f_train:
 test = sorted(test.items(), key=lambda x: x[0])
 I_test = ivec.transform(X, sad=sad, indices=test,
                         save_ivecs=False, keep_stats=False)
+# save test i-vector to csv
 with open(TEST_PATH, 'w') as f_test:
   for (name, (start, end)), z in zip(test, I_test):
     f_test.write('\t'.join([name] + [str(i) for i in z]) + '\n')
 # ====== print the model ====== #
+csv2mat(exp_dir=EXP_DIR)
 print(ivec)

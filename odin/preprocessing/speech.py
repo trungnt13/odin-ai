@@ -104,7 +104,6 @@ def _read_pcm(path, encode):
   raw = np.memmap(path, dtype=dtype, mode='r')
   return raw, sr
 
-
 def read(path_or_file, encode=None):
   """
   Returns
@@ -320,7 +319,8 @@ class AudioReader(Extractor):
   """
 
   def __init__(self, sr=None, sr_new=None, best_resample=True,
-               remove_dc=True, dataset=None):
+               remove_dc=True, auto_convert_wav=True,
+               dataset=None):
     super(AudioReader, self).__init__(is_input_layer=True)
     self.sr = sr
     self.sr_new = sr_new
