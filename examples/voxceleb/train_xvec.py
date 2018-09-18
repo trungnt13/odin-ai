@@ -25,7 +25,7 @@ from utils import prepare_dnn_data, get_model_path, csv2mat
 # ===========================================================================
 args = args_parse([
     ('-feat', "Acoustic feature", ('mspec', 'mfcc'), 'mspec'),
-    ('-batch', "batch size", None, 64),
+    ('-batch', "batch size", None, 128),
     ('-epoch', "number of epoch", None, 25),
     ('-l', "audio segmenting length in second", None, 3),
     ('--debug', "enable debug mode", None, False),
@@ -90,8 +90,9 @@ print('Latent space:', ctext(z, 'cyan'))
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
-updates = K.optimizers.Adam(lr=0.0001, name='XAdam').minimize(
-    loss=ce, roles=[K.role.TrainableParameter],
+updates = K.optimizers.Adam(lr=0.01, name='XAdam').minimize(
+    loss=ce,
+    roles=[K.role.TrainableParameter],
     exclude_roles=[K.role.InitialState],
     verbose=True)
 K.initialize_all_variables()

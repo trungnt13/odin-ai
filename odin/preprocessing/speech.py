@@ -57,7 +57,7 @@ from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable, Progbar, mpi, ctext,
                         is_fileobj, batching)
 from odin.utils.decorators import functionable
-from .base import Extractor
+from .base import Extractor, ExtractorSignal
 from .signal import (smooth, pre_emphasis, spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
                      shifted_deltas, stack_frames, stft,
@@ -561,6 +561,9 @@ class MelsSpecExtractor(Extractor):
 
   def __init__(self, n_mels, fmin=64, fmax=None, top_db=80.0,
                input_name=('spec', 'sr'), output_name='mspec'):
+    # automatically add sample rate to input_name
+    if isinstance(input_name, string_types):
+      input_name = (input_name, 'sr')
     super(MelsSpecExtractor, self).__init__(input_name=input_name,
                                             output_name=output_name)
     self.n_mels = int(n_mels)
@@ -912,9 +915,10 @@ class BNFExtractor(_BNFExtractorBase):
     return self.network(X)
 
   def __getstate__(self):
-    from odin import nnet as N
+    from odin import nnet as N, backend as K
     if not self.network.is_initialized:
       self.network()
+    K.initialize_all_variables()
     return (self._input_name, self._output_name,
             self.use_sad, self.batch_size, self.stack_context, self.pre_mvn,
             N.serialize(self.network, binary_output=True))
@@ -1214,7 +1218,7 @@ class ApplyingSAD(Extractor):
   threshold: None or float
       if `sad`, is continuous value, threshold need to be applied
   smooth_win: int (> 0)
-      ammount of adjent frames will be taken into the SAD
+      amount of adjacent frames will be taken into the SAD
   keep_unvoiced: bool
       if True, keep the whole audio file even though no SAD found
   stack_context : dict

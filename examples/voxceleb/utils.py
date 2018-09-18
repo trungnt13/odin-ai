@@ -146,7 +146,7 @@ def prepare_ivec_data(feat):
                   if name not in TRAIN_DATA}
   print("#Train files:", ctext(len(train_indices), 'cyan'))
   print("#Test files:", ctext(len(test_indices), 'cyan'))
-  return X, ds['sad'], train_indices, test_indices
+  return X, train_indices, test_indices
 
 # ===========================================================================
 # Data saving helpers

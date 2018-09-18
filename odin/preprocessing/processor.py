@@ -30,10 +30,11 @@ from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         get_tempdir, is_string, batching,
                         add_notification, defaultdictkey,
                         stdio, get_stdio_path, wprint,
-                        add_notification, flatten_list)
+                        add_notification, flatten_list,
+                        get_formatted_datetime)
 from odin.fuel import Dataset, MmapDict, MmapData
 
-from .base import Extractor
+from .base import Extractor, ExtractorSignal
 _default_module = re.compile('__.*__')
 
 
@@ -370,6 +371,23 @@ def validate_features(ds_or_processor, path, nb_samples=25,
 # ===========================================================================
 # Features Processor
 # ===========================================================================
+def _check_logpath(log_path):
+  main_path, ext = os.path.splitext(log_path)
+  main_path = main_path.split('.')
+  try:
+    current_log_index = int(main_path[-1])
+    main_path = main_path[:-1]
+  except ValueError:
+    current_log_index = 0
+  main_path = '.'.join(main_path)
+  # ====== increase log index until found a new file ====== #
+  while True:
+    path = main_path + '.' + str(current_log_index) + ext
+    if not os.path.exists(path):
+      break
+    current_log_index += 1
+  return main_path + '.' + str(current_log_index) + ext
+
 class FeatureProcessor(object):
 
   """ FeatureProcessor
@@ -379,18 +397,34 @@ class FeatureProcessor(object):
   jobs: list, or tuple
       list of jobs for processing, keep the jobs specification simple
       additional information can be introduced via custom Extractor.
+
   extractor: sklearn.Pipeline, odin.preprocessing.Extractor
       list of extactor for creating a Pipeline
+
   path: str
       path to a folder for saving output Dataset
+
   n_cache: float or int (> 0)
       pass
+
   ncpu: int (>0)
       number of Processes will be used to parallel the processor
+
+  override : bool (default: False)
+      if output folder already exist, deleted old features if
+      `override=True`
+
+  identifier : string (default: 'name')
+      extractor will return a dictionary, `identifier` is the key
+      of the entry that will be used to identify (or distinguish)
+      between files (or images, or samples).
+      Note this key must exist in the returned dictionary,
+      otherwise, RuntimeError will be raised
   """
 
   def __init__(self, jobs, path, extractor,
-               n_cache=0.12, ncpu=1, override=False):
+               n_cache=0.12, ncpu=1, override=False,
+               identifier='name', log_path=None):
     super(FeatureProcessor, self).__init__()
     # ====== check outpath ====== #
     path = os.path.abspath(str(path))
@@ -400,7 +434,12 @@ class FeatureProcessor(object):
     # check override
     if os.path.exists(path) and override:
       wprint("Remove existed Dataset at path: %s" % path)
-      shutil.rmtree(path)
+      for i in os.listdir(path):
+        i = os.path.join(path, i)
+        if os.path.isdir(i): # remove folder
+          shutil.rmtree(i)
+        else: # remove file
+          os.remove(i)
     # set path and name
     self.path = path
     # ====== check jobs ====== #
@@ -432,7 +471,24 @@ class FeatureProcessor(object):
       extractor = Pipeline(
           steps=[(extractor.__class__.__name__, extractor)])
     self.extractor = extractor
+    # ====== check identifier and log path ====== #
+    self._identifier = str(identifier)
+    if log_path is None:
+      log_path = os.path.join(self.path, 'log.txt')
+    else:
+      log_path = str(log_path)
+    self._log_path = _check_logpath(log_path)
+    # ====== others ====== #
     self.config = {}
+    self._error_log = []
+
+  @property
+  def identifier(self):
+    return self._identifier
+
+  @property
+  def error_log(self):
+    return list(self._error_log)
 
   # ==================== debugging ==================== #
   def __str__(self):
@@ -493,17 +549,13 @@ class FeatureProcessor(object):
 
     # ====== repeated for each result returned ====== #
     def post_processing(result):
-      # returned result is always dictionary or None
-      # if dictionary, it is mapping: name -> feature_matrix
-      if result is None:
-        return
       # search for file name
-      for key in ('name', 'path'):
-        file_name = result.get(key, None)
-        if file_name is not None:
-          break
+      if self.identifier not in result:
+        raise RuntimeError(
+            "Cannot find identifier '%s' in returned dictionary" % self.identifier)
+      file_name = result[self.identifier]
       # invalid file_name
-      if file_name is None or not is_string(file_name):
+      if not is_string(file_name):
         raise RuntimeError("Cannot find file name in returned features "
             "list, the file name can be specified in key: 'name', 'path' "
             "and the type of the value must be string. All available "
@@ -513,15 +565,16 @@ class FeatureProcessor(object):
       # processing
       for feat_name, X in result.items():
         # some invalid feat_name
-        if feat_name in ('config', 'pipeline'):
+        if feat_name in ('config', 'pipeline', 'sum1', 'sum2'):
           raise RuntimeError("Returned features' name cannot be one "
-                             "of the following: 'config', 'pipeline'.")
+                             "of the following: 'config', 'pipeline', 'sum1', 'sum2'.")
         # ignore some feat_name
         if feat_name in ('name'):
           continue
         # if numpy ndarray, save to MmapData
         if isinstance(X, np.ndarray) or \
-        'sum1' == feat_name[-4:] or 'sum2' == feat_name[-4:]:
+        'sum1' == feat_name[-4:] or \
+        'sum2' == feat_name[-4:]:
           # save statistics instead
           if 'sum1' == feat_name[-4:]:
             stats[feat_name[:-4]][0] += X
@@ -569,10 +622,40 @@ class FeatureProcessor(object):
               backend='python')
     prog = Progbar(target=njobs, name=self.path,
                    interval=0.12, print_report=True, print_summary=True)
-    for result in mpi:
-      name = post_processing(result)
-      prog['File'] = '%-20s' % str(name)
-      prog.add(1)
+    start_time = time.time()
+    with open(self._log_path, 'w') as flog:
+      for count, result in enumerate(mpi):
+        # some error might happened
+        if isinstance(result, ExtractorSignal):
+          flog.write(str(result)); flog.flush()
+          if result.action == 'error':
+            prog.add_notification(str(result))
+            raise RuntimeError("ExtractorSignal requests terminating processor!")
+          elif result.action == 'warn':
+            prog.add_notification(str(result))
+          elif result.action == 'ignore':
+            self._error_log.append(result)
+          else:
+            raise RuntimeError("Unknown action from ExtractorSignal: %s" % result.action)
+          prog['File'] = result.message
+        # otherwise, do post-processing
+        else:
+          name = post_processing(result)
+          prog['File'] = '%-20s' % str(name)
+        # update progress
+        prog.add(1)
+        # manually write to external log file
+        if (count + 1) % max(1, int(0.01 * njobs)) == 0:
+          elap = time.time() - start_time
+          speed = (count + 1) / elap
+          est = (njobs - count - 1) / speed
+          flog.write('[%s] Processed: %d(files)  '
+                     'Elapse: %.2f(seconds)  '
+                     'Estimate: %.2f(seconds)  '
+                     'Speed: %.2f(obj/sec)\n' %
+                     (get_formatted_datetime(only_number=False),
+                      count + 1, elap, est, speed))
+          flog.flush()
     # ====== end, flush the last time ====== #
     for feat_name, X_cached in cache.items():
       flush_feature(feat_name, X_cached)

@@ -17,7 +17,7 @@ from utils import get_model_path, prepare_ivec_data, csv2mat
 args = args_parse([
     ('-nmix', "Number of GMM mixture", None, 2048),
     ('-tdim', "Dimension of t-matrix", None, 600),
-    ('-feat', "Acoustic feature", ('mspec', 'mfcc'), 'mfcc'),
+    ('-feat', "Acoustic feature", ('mspec', 'bnf'), 'bnf'),
     ('--gmm', "Force re-run training GMM", None, False),
     ('--stat', "Force re-extraction of centered statistics", None, False),
     ('--tmat', "Force re-run training Tmatrix", None, False),
@@ -34,7 +34,7 @@ stdio(LOG_PATH)
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-X, sad, train, test = prepare_ivec_data(FEAT)
+X, train, test = prepare_ivec_data(FEAT)
 # ===========================================================================
 # Training I-vector model
 # ===========================================================================
@@ -42,7 +42,7 @@ ivec = ml.Ivector(path=MODEL_PATH, nmix=args.nmix, tv_dim=args.tdim,
                   niter_gmm=16, niter_tmat=16,
                   downsample=2, stochastic_downsample=True,
                   device='gpu', name="VoxCelebIvec")
-ivec.fit(X, sad=sad, indices=train,
+ivec.fit(X, indices=train,
          extract_ivecs=True, keep_stats=False)
 # ====== extract train i-vector ====== #
 I_train = F.MmapData(ivec.ivec_path, read_only=True)
@@ -60,7 +60,7 @@ with open(TRAIN_PATH, 'w') as f_train:
     prog.add(1)
 # ====== extract test i-vector ====== #
 test = sorted(test.items(), key=lambda x: x[0])
-I_test = ivec.transform(X, sad=sad, indices=test,
+I_test = ivec.transform(X, indices=test,
                         save_ivecs=False, keep_stats=False)
 # save test i-vector to csv
 with open(TEST_PATH, 'w') as f_test:

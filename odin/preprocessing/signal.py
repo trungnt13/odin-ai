@@ -81,6 +81,11 @@ def anything2wav(inpath, outpath=None,
 
   Return
   ------
+  if `return_data=True`: tuple(y, sr)
+    y : numpy.ndarray (n_samples, n_channels)
+    sr : integer (sample rate)
+  else: string
+    shell command for execute the conversion
 
   """
   inpath = str(inpath)
@@ -98,10 +103,12 @@ def anything2wav(inpath, outpath=None,
   if dataset.lower() == 'mx6':
     if '/ulaw_sphere/' in inpath:
       cmd = 'sph2pipe -f wav -p -c %d %s %s' % \
-      (channel, inpath, '' if not is_given_outpath else outpath)
+      (int(channel) + 1, inpath, '' if not is_given_outpath else outpath)
     else:
-      cmd = 'sox -t flac %s -r %d -t wav %s trim %s =%s' % \
-      (inpath, sample_rate, outpath, start, end)
+      cmd = 'sox -t flac %s %s -t wav %s trim %s =%s' % \
+      (inpath,
+       '' if sample_rate is None else '-r %d' % int(sample_rate),
+       outpath, start, end)
   elif ext.lower() in ('.sph', '.wav', '.flac'):
     tool = 'sox'
     # options.append('-G')
@@ -154,21 +161,23 @@ def anything2wav(inpath, outpath=None,
   if cmd is None:
     cmd = tool + ' ' + ' '.join([i for i in options
                                  if len(i) > 0])
+  # ====== only return the shell command ====== #
   if not return_data:
     return cmd
   # ====== run the command and return the data ====== #
   import soundfile
   # read bytes data from PIPE output
   if outpath in ('-', '- |', '-|'):
-    task = subprocess.Popen(cmd, shell=True,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-    data = BytesIO(task.stdout.read())
-    return soundfile.read(data) # y, sr
+    with subprocess.Popen(cmd, shell=True,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE) as task:
+      data = BytesIO(task.stdout.read())
+      return soundfile.read(data) # y, sr
   # read audio file from outpath
   else:
     try:
-      task = subprocess.Popen(cmd, shell=True)
+      with subprocess.Popen(cmd, shell=True) as task:
+        pass
     except Exception as e:
       print("Stdout:", task.stdout)
       print("Stderr:", task.stderr)

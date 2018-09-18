@@ -3,6 +3,7 @@ from __future__ import print_function, division, absolute_import
 import os
 import re
 import inspect
+from enum import Enum
 
 from six import add_metaclass, string_types
 from abc import ABCMeta, abstractmethod
@@ -14,9 +15,76 @@ from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 
 from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
-                        ctext, flatten_list, dummy_formatter)
+                        ctext, flatten_list, dummy_formatter,
+                        get_formatted_datetime)
 from odin.utils.decorators import functionable
 from .signal import delta, mvn, stack_frames
+
+class ExtractorSignal(object):
+  """ ExtractorSignal """
+
+  def __init__(self):
+    super(ExtractorSignal, self).__init__()
+    self._timestamp = get_formatted_datetime(only_number=False)
+    self._extractor = None
+    self._msg = ''
+    self._action = 'ignore'
+    self._last_input = {}
+
+  @property
+  def message(self):
+    return self._msg
+
+  @property
+  def action(self):
+    return self._action
+
+  def set_message(self, extractor, msg, last_input):
+    if self._extractor is not None:
+      raise RuntimeError(
+          "This signal has stored message, cannot set message twice.")
+    assert isinstance(extractor, Extractor), \
+    '`extractor` must be instance of odin.preprocessing.base.Extractor, ' +\
+    'but given type: %s' % str(type(extractor))
+    self._extractor = extractor
+    self._msg = str(msg)
+    self._last_input = last_input
+    return self
+
+  def set_action(self, action):
+    action = str(action).lower()
+    assert action in ('warn', 'error', 'ignore'), \
+    "`action` can be one of the following values: 'warn', 'error', 'ignore'; " + \
+    "but given: %s" % action
+    self._action = action
+    return self
+
+  def __str__(self):
+    if self._extractor is None:
+      raise RuntimeError("The Signal has not been configured by the Extractor")
+    s = '[%s]' % self._timestamp
+    s += '%s' % ctext(self._extractor.__class__.__name__, 'cyan') + '\n'
+    s += 'Error message: "%s"' % ctext(self._msg, 'yellow') + '\n'
+    s += 'Action: "%s"' % ctext(self._action, 'yellow') + '\n'
+    # last input
+    s += 'Last input: \n'
+    if isinstance(self._last_input, Mapping):
+      for k, v in sorted(self._last_input.items(),
+                         key=lambda x: x[0]):
+        s += '  %s: %s\n' + (ctext(str(k), 'yellow'), dummy_formatter(v))
+    else:
+      s += '  Type: %s\n' % ctext(type(self._last_input), 'yellow')
+      s += '  Object: %s\n' % ctext(str(self._last_input), 'yellow')
+    # parameters
+    s += 'Attributes: \n'
+    s += '  ' + ctext('InputLayer', 'yellow') + ': ' + str(self._extractor.is_input_layer) + '\n'
+    s += '  ' + ctext('RobustLevel', 'yellow') + ': ' + self._extractor.robust_level + '\n'
+    s += '  ' + ctext('InputName', 'yellow') + ': ' + str(self._extractor.input_name) + '\n'
+    s += '  ' + ctext('OutputName', 'yellow') + ': ' + str(self._extractor.output_name) + '\n'
+    for name, param in self._extractor.get_params().items():
+      if name not in ('_input_name', '_output_name'):
+        s += '  ' + ctext(name, 'yellow') + ': ' + dummy_formatter(param) + '\n'
+    return s[:-1]
 
 # ===========================================================================
 # Helper
@@ -64,14 +132,12 @@ def make_pipeline(steps, debug=False):
   ret = Pipeline(steps=steps)
   return ret
 
-
 def set_extractor_debug(debug, *extractors):
   extractors = [i for i in flatten_list(extractors)
                 if isinstance(i, Extractor)]
   for i in extractors:
     i.debug = bool(debug)
   return extractors
-
 
 def _equal_inputs_outputs(x, y):
   try:
@@ -80,7 +146,6 @@ def _equal_inputs_outputs(x, y):
   except Exception:
     pass
   return True
-
 
 def _preprocess(x):
   if isinstance(x, np.str_):
@@ -114,14 +179,23 @@ class Extractor(BaseEstimator, TransformerMixin):
   is_input_layer : bool (default: False)
     An input layer accept any type of input to `transform`,
     otherwise, only accept a dictionary type as input.
-
+  robust_level : {'ignore', 'warn', 'error'}
+    'ignore' - ignore error files
+    'warn' - warn about error file during processing
+    'error' - raise Exception and stop processing
   """
 
   def __init__(self, input_name=None, output_name=None,
-               is_input_layer=False):
+               is_input_layer=False, robust_level='ignore'):
     super(Extractor, self).__init__()
     self._debug = False
     self._is_input_layer = bool(is_input_layer)
+    # ====== robust level ====== #
+    robust_level = str(robust_level).lower()
+    assert robust_level in ('ignore', 'warn', 'error'),\
+    "`robust_level` can be one of the following values: " + \
+    "'warn', 'error', 'ignore'; but given: %s" % robust_level
+    self._robust_level = robust_level
     # ====== check input_name ====== #
     if input_name is None:
       pass
@@ -158,6 +232,10 @@ class Extractor(BaseEstimator, TransformerMixin):
   def is_input_layer(self):
     return self._is_input_layer
 
+  @property
+  def robust_level(self):
+    return self._robust_level
+
   def set_debug(self, debug):
     self._debug = bool(debug)
     return self
@@ -172,23 +250,41 @@ class Extractor(BaseEstimator, TransformerMixin):
 
   def transform(self, X):
     # NOTE: do not override this method
-    # nothing to transform from None results
+    if isinstance(X, ExtractorSignal):
+      return X
+    # ====== interpret different signal ====== #
     if X is None:
-      return None
+      return ExtractorSignal(
+      ).set_message(self, "`None` value is returned by extractor", X
+      ).set_action(self.robust_level)
+    # ====== input layer ====== #
     if not self.is_input_layer and not isinstance(X, Mapping):
-      raise ValueError("the input to `Extractor.transform` must be instance of dictionary, but "
-                       "given type: %s" % str(type(X)))
+      err_msg = "the input to `Extractor.transform` must be instance of dictionary, " + \
+      "but given type: %s" % str(type(X))
+      return ExtractorSignal(
+      ).set_message(self, err_msg, X
+      ).set_action(self.robust_level)
     # ====== the transformation ====== #
     if self.input_name is not None and isinstance(X, Mapping):
       for name in as_tuple(self.input_name, t=string_types):
         if name not in X:
-          raise RuntimeError("[%s] Cannot find features with name: %s" %
-                             (self.__class__.__name__, name))
+          return ExtractorSignal(
+          ).set_message(self, "Cannot find features with name: %s" % name, X
+          ).set_action('error')
     y = self._transform(X)
+    # if return Signal or None, no post-processing
+    if isinstance(y, ExtractorSignal):
+      return y
+    if y is None:
+      return ExtractorSignal(
+      ).set_message(self, "`None` value is returned by the extractor", X
+      ).set_action(self.robust_level)
     # ====== return type must always be a dictionary ====== #
     if not isinstance(y, Mapping):
       if isinstance(y, (tuple, list)):
-        y = {i: j for i, j in zip(as_tuple(self.output_name, t=string_types), y)}
+        y = {i: j
+             for i, j in zip(as_tuple(self.output_name, t=string_types),
+                             y)}
       else:
         y = {self.output_name: y}
     # ====== Merge previous results ====== #
@@ -196,8 +292,9 @@ class Extractor(BaseEstimator, TransformerMixin):
     tmp = {}
     for name, feat in y.items():
       if any(c.isupper() for c in name):
-        raise RuntimeError("name for features cannot contain "
-                           "upper case.")
+        return ExtractorSignal(
+        ).set_message(self, "Name for features cannot contain upper case", X
+        ).set_action('error')
       if feat is None:
         continue
       tmp[name] = feat
@@ -206,8 +303,9 @@ class Extractor(BaseEstimator, TransformerMixin):
     if isinstance(X, Mapping):
       for name, feat in X.items():
         if any(c.isupper() for c in name):
-          raise RuntimeError("name for features cannot contain "
-                             "upper case.")
+          return ExtractorSignal(
+          ).set_message(self, "Name for features cannot contain upper case", X
+          ).set_action('error')
         if name not in y:
           y[name] = _preprocess(feat)
     # ====== print debug text ====== #

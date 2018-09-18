@@ -2,26 +2,67 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import pickle
-from collections import defaultdict
+from shutil import which
+from collections import defaultdict, OrderedDict
 
 import numpy as np
 from scipy.io import wavfile
 
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
-                        mpi)
+                        mpi, args_parse)
 from odin.stats import freqcount
 from odin import fuel as F
 
+# ===========================================================================
+# Checking prerequisites
+# ===========================================================================
+if which('sox') is None:
+  raise RuntimeError("`sox` was not installed")
+if which('sph2pipe') is None:
+  raise RuntimeError("`sph2pipe` was not installed")
+if which('ffmpeg') is None:
+  raise RuntimeError("`ffmpeg` was not installed")
+# ===========================================================================
+# General arguments for all experiments
+# ===========================================================================
+_args = args_parse(descriptions=[
+    ('--debug', 'enable debugging', None, False),
+    ('-downsample', 'downsampling all the dataset for testing', None, 0)
+])
+IS_DEBUGGING = bool(_args.debug)
+# ===========================================================================
+# Configuration
+# ===========================================================================
+class Config(object):
+  # ====== Acoustic features ====== #
+  FRAME_LENGTH = 0.025
+  STEP_LENGTH = 0.01
+  SAMPLE_RATE = 8000
+  WINDOW = 'hamm'
+  NFFT = 512
+  NMELS = 24
+  NCEPS = 40
+  FMIN = 100
+  FMAX = 4000
+  dtype = 'float16'
+  # ====== File list ====== #
+  # <= 0 mean no downsample, > 0 mean number of sample
+# ===========================================================================
+# Load the file list
+# ===========================================================================
 sre_file_list = F.load_sre_list()
-print(sre_file_list)
-# ===========================================================================
-# Exp path
-# ===========================================================================
-EXP_DIR = get_exppath('sre', override=False)
+print('README at:', ctext(sre_file_list['README.txt'], 'cyan'))
+sre_file_list = {k: v
+                 for k, v in sre_file_list.items()
+                 if isinstance(v, np.ndarray)}
+print("Original dataset:")
+for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
+  print(' ', ctext(k, 'yellow'), ':', ctext(v.shape, 'cyan'))
 # ===========================================================================
 # FILE LIST PATH
 # ===========================================================================
+EXP_DIR = get_exppath('sre', override=False)
 # path to directory contain following folders:
 #  * mx6_speech
 #  * voxceleb
@@ -33,6 +74,8 @@ EXP_DIR = get_exppath('sre', override=False)
 #  * SRE10
 #  * Switchboard
 #  * fisher
+#  * musan
+#  * RIRS_NOISES
 PATH_RAW_DATA = {
     'mx6': '/media/data2/SRE_DATA',
     'voxceleb1': '/media/data2/SRE_DATA',
@@ -48,9 +91,7 @@ PATH_RAW_DATA = {
     'musan': '/media/data2/SRE_DATA',
     'rirs': '/media/data2/SRE_DATA',
 }
-
 # all data will be down sampled to following
-SAMPLE_RATE = 8000
 PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'
 if not os.path.exists(PATH_ACOUSTIC_FEATURES):
   os.mkdir(PATH_ACOUSTIC_FEATURES)
@@ -58,14 +99,23 @@ if not os.path.exists(PATH_ACOUSTIC_FEATURES):
 # Validating the datasets
 # ===========================================================================
 @cache_disk
-def validating_all_data(in_path_raw):
+def validating_all_data(in_path_raw, downsample):
+  file_list = dict(sre_file_list)
+  # ====== downsample for debugging ====== #
+  if downsample > 0:
+    np.random.seed(52181208)
+    for k, v in list(file_list.items()):
+      if not isinstance(v, np.ndarray):
+        continue
+      np.random.shuffle(v)
+      file_list[k] = v[:int(downsample)]
   # ====== meta info ====== #
   all_files = []
   non_exist_files = []
   extension_count = defaultdict(int)
-  total_data = sum(x.shape[0]
-                   for x in sre_file_list.values()
-                   if isinstance(x, np.ndarray))
+  total_data = sum(v.shape[0]
+                   for k, v in file_list.items()
+                   if k not in('musan', 'rirs'))
   # ====== progress ====== #
   prog = Progbar(target=total_data,
                  print_summary=True, print_report=True,
@@ -73,20 +123,29 @@ def validating_all_data(in_path_raw):
   prog.set_summarizer('#Files', fn=lambda x: x[-1])
   prog.set_summarizer('#Non-exist', fn=lambda x: x[-1])
   # ====== iterating ====== #
-  for ds_name, data in sorted(sre_file_list.items(),
+  for ds_name, data in sorted(file_list.items(),
                               key=lambda x: x[0]):
-    if 'README' in ds_name:
+    if ds_name in ('musan', 'rirs'):
       continue
     for row in data:
       path, channel, name, spkid = row[:4]
+      assert channel in ('0', '1')
       # check path provided
       if ds_name in in_path_raw:
         path = os.path.join(in_path_raw[ds_name], path)
+      # create new row
+      start_time = '-'
+      end_time = '-'
+      if ds_name == 'mx6':
+        start_time, end_time = row[-2:]
+      new_row = [path, channel, name,
+                 ds_name + '_' + spkid, ds_name,
+                 start_time, end_time]
       # check file exist
       if os.path.exists(path):
-        all_files.append([path, channel, name, spkid, ds_name])
+        all_files.append(new_row)
       else:
-        non_exist_files.append([path, channel, name, spkid, ds_name])
+        non_exist_files.append(new_row)
       # extension
       ext = os.path.splitext(path)[-1]
       extension_count[ext + '-' + ds_name] += 1
@@ -95,73 +154,45 @@ def validating_all_data(in_path_raw):
       prog['#Files'] = len(all_files)
       prog['#Non-exist'] = len(non_exist_files)
       prog.add(1)
-  # ====== final validation ====== #
+  # final results
   all_files = np.array(all_files)
+  # ====== check no duplicated name ====== #
   n_files = len(all_files)
   n_unique_files = len(np.unique(all_files[:, 2]))
-  # check no duplicated name
   assert n_files == n_unique_files, \
   'Found duplicated name: %d != %d' % (n_files, n_unique_files)
-  # ====== convert everything to .wav ====== #
-  exit()
-  jobs = defaultdict(list)
-  for row in all_files:
-    jobs[row[0]].append(row[1:])
-
-  # data will be saved at: `SRE_CLEAN/name + '.wav'`
-  def to_new_path(name):
-    return os.path.join(out_path_clean, name + '.wav')
-
-  def convert_to_wav(rows):
-    new_rows = []
-    for path, info in rows:
-      # # already converted skip
-      # if all(os.path.exists(to_new_path(i[1]))
-      #        for i in info):
-      #   for i in info:
-      #     new_rows.append((to_new_path(i[1]), i[2], duration, ds_name))
-      #   continue
-      # processing
-      ds_name = info[0][-1]
-      y, sr = anything2wav(inpath=path, outpath=None,
-                           dataset=ds_name,
-                           sample_rate=out_sample_rate,
-                           return_data=True)
-      duration = max(y.shape) / sr
-      for channel, name, spkid, ds_name in info:
-        channel = int(channel)
-        x = y[:, channel] if y.ndim == 2 else y
-        outpath = to_new_path(name)
-        with open(outpath, 'wb') as f:
-          wavfile.write(f, sr, x)
-        new_rows.append((outpath, spkid, duration, ds_name))
-    yield new_rows
-  # running the conversion
-  new_files = []
-  prog = Progbar(target=len(jobs), print_summary=True,
-                 name="Convert to wav: %s" % out_path_clean)
-  for rows in mpi.MPI(jobs=list(jobs.items()), func=convert_to_wav,
-                      batch=12, ncpu=mpi.cpu_count() - 2):
-    new_files += rows
-    prog.add(len(rows))
-  # outpath, spkid, duration, ds_name
-  new_files = np.array(new_files)
-  return new_files, np.array(non_exist_files), extension_count
+  # ====== check no duplicated speaker ====== #
+  n_spk = sum(len(np.unique(dat[:, 3]))
+              for name, dat in file_list.items()
+              if name not in ('musan', 'rirs'))
+  n_unique_spk = len(np.unique(all_files[:, 3]))
+  assert n_spk == n_unique_spk, \
+  'Found duplicated speakers: %d != %d' % (n_spk, n_unique_spk)
+  # ====== return ====== #
+  # Header:
+  #  0       1      2      3       4          5         6
+  # path, channel, name, spkid, dataset, start_time, end_time
+  return all_files, np.array(non_exist_files), extension_count
 
 # ==================== run the validation process ==================== #
-(all_files, non_exist_files, ext_count) = validating_all_data(
-    in_path_raw=PATH_RAW_DATA)
-print("#Non-exist-files:", ctext(len(non_exist_files), 'cyan'))
-print("Extensions:")
+(ALL_FILES, NON_EXIST_FILES, ext_count) = validating_all_data(
+    in_path_raw=PATH_RAW_DATA,
+    downsample=_args.downsample)
+ALL_DATASET = sorted(np.unique(ALL_FILES[:, 4]))
+print("All extensions:")
 for name, val in sorted(ext_count.items(), key=lambda x: x[0]):
-  print('  ', name, ':', ctext(val, 'cyan'))
-print("All Datasets:")
-for name, count in freqcount(all_files[:, -1], sort=True).items():
-  print('  ', ctext(name, 'yellow'), ':', ctext(count, 'cyan'))
-# ===========================================================================
-# DATA PATH
-# ===========================================================================
-
+  print('  ', '%-16s' % name, ':', ctext('%-6d' % val, 'cyan'), '(files)')
+print("#Speakers:", ctext(len(np.unique(ALL_FILES[:, 3])), 'cyan'))
+DS_SPK = defaultdict(list)
+for row in ALL_FILES:
+  DS_SPK[row[4]].append(row[3])
+DS_SPK = {k: sorted(set(v)) for k, v in DS_SPK.items()}
+print("Processed datasets:")
+for name, count in sorted(freqcount(ALL_FILES[:, 4]).items(),
+                          key=lambda x: x[0]):
+  print('  ', ctext('%-10s' % name, 'yellow'), ':',
+        '%s(files)' % ctext('%-6d' % count, 'cyan'),
+        '%s(spk)' % ctext('%-4d' % len(DS_SPK[name]), 'cyan'))
 # ===========================================================================
 # PATH HELPER
 # ===========================================================================
