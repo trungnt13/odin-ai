@@ -1,16 +1,3 @@
-# ===========================================================================
-# Using TIDIGITS dataset to predict single digit (number)
-# ===========================================================================
-# Saved WAV file format:
-#     0) [train|test]
-#     1) [m|w|b|g] (alias for man, women, boy, girl)
-#     2) [age]
-#     3) [dialectID]
-#     4) [speakerID]
-#     5) [production]
-#     6) [digit_sequence]
-#     => "train_g_08_17_as_a_4291815"
-# ===========================================================================
 from __future__ import print_function, division, absolute_import
 import matplotlib
 matplotlib.use('Agg')

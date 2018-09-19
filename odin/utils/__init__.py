@@ -1382,10 +1382,11 @@ def get_tempdir():
   return tempfile.mkdtemp()
 
 
-def _get_managed_path(folder, name, override, is_folder=False, root='~', odin=True):
+def _get_managed_path(folder, name, override, is_folder=False,
+                      root='~', odin_base=True):
   if root == '~':
     root = os.path.expanduser('~')
-  datadir_base = os.path.join(root, '.odin') if odin else root
+  datadir_base = os.path.join(root, '.odin') if odin_base else root
   if not os.path.exists(datadir_base):
     os.mkdir(datadir_base)
   elif not os.access(datadir_base, os.W_OK):
@@ -1421,9 +1422,38 @@ def get_modelpath(name=None, override=False, root='~'):
                            is_folder=True, root=root)
 
 
-def get_logpath(name=None, override=False, root='~'):
-  return _get_managed_path('logs', name, override,
-                           is_folder=False, root=root)
+def get_logpath(name=None, override=False, increasing=True,
+                odin_base=True, root='~'):
+  """
+  name : (string) name of log file
+  override : (bool) if True, override old log file if exist
+  increasing : (bool) append a number (e.g. "log.0.txt"...), if log file exists
+  odin_base : (bool) if True, create log file under '.odin/logs' folder
+  root : (string) root folder that contain all the log file
+  """
+  def _check_logpath(log_path):
+    main_path, ext = os.path.splitext(log_path)
+    main_path = main_path.split('.')
+    try:
+      current_log_index = int(main_path[-1])
+      main_path = main_path[:-1]
+    except ValueError:
+      current_log_index = 0
+    main_path = '.'.join(main_path)
+    # ====== increase log index until found a new file ====== #
+    while True:
+      path = main_path + '.' + str(current_log_index) + ext
+      if not os.path.exists(path):
+        break
+      current_log_index += 1
+    return main_path + '.' + str(current_log_index) + ext
+
+  path = _get_managed_path('logs' if odin_base else '', name, override,
+                           is_folder=False, root=root,
+                           odin_base=odin_base)
+  if increasing:
+    path = _check_logpath(path)
+  return path
 
 
 def get_exppath(tag, name=None, override=False, prompt=False,
@@ -1446,7 +1476,8 @@ def get_exppath(tag, name=None, override=False, prompt=False,
       root path for the results (default: "~/.odin")
   """
   path = _get_managed_path('exp', tag, False,
-                           is_folder=True, root=root, odin=False)
+                           is_folder=True, root=root,
+                           odin_base=False)
   # only return the main folder
   if name is None:
     pass

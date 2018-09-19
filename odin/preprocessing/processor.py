@@ -425,8 +425,19 @@ class FeatureProcessor(object):
       path to log file
 
   stop_on_failure : bool (default: False)
+      There are two types or error during running a FeatureProcessor.
+
+      The first type is handled by `odin.preprocessing.base.Extractor`
+      and return `odin.preprocessing.base.ExtractorSignal` which
+      contained instruction for handling the Exception.
+
+      The second type is non-handled by the `Extractor`, the
+      `FeatureProcessor` will automatically handle this Exception
+      getting the traceback and write everything to the log file
+      before decided to continue or terminating the process.
+
       if True, terminate the processor if non-handled Exception
-      happened
+      appeared.
   """
 
   def __init__(self, jobs, path, extractor,

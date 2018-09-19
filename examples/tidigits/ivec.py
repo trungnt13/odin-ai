@@ -41,7 +41,7 @@ from utils import prepare_data, get_exp_path
 args = ArgController(
 ).add('-nmix', "Number of GMM mixture", 256
 ).add('-tdim', "Dimension of t-matrix", 128
-).add('-feat', "Acoustic feature: spec, mspec, mfcc, bnf, sdc", 'mspec'
+).add('-feat', "Acoustic feature: spec, mspec, mfcc, bnf, sdc", 'bnf'
 ).add('-task', 'gender, age, dialect, speaker, digit', 'gender'
 ).add('--retrain', "deleted trained model, and re-train everything", False
 ).parse()

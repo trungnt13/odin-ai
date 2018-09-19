@@ -56,7 +56,7 @@ extractors = pp.make_pipeline(steps=[
                            stack_context=10, pre_mvn=True,
                            sad_name='sad', remove_non_speech=False,
                            network=bnf_network,
-                           batch_size=1024),
+                           batch_size=2048),
     # ====== MFCCs with deltas ====== #
     pp.speech.MFCCsExtractor(n_ceps=20, remove_first_coef=True,
                              input_name='mspec', output_name='mfcc'),

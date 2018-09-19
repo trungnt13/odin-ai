@@ -172,6 +172,13 @@ class FSDD(object):
   trimmed so that they have near minimal silence at the
   beginnings and ends.
 
+  Return
+  ------
+  list : contain path to all .wav files of the dataset
+  numpy.ndarray : the numpy array of loaded `metadata.csv`
+
+  Reference
+  ---------
   Link: https://github.com/Jakobovski/free-spoken-digit-dataset
   """
   LINK = 'https://github.com/Jakobovski/free-spoken-digit-dataset/archive/v1.0.7.zip'

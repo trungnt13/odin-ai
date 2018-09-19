@@ -22,7 +22,7 @@ from utils import (prepare_data, make_dnn_prediction, visualize_latent_space,
                    get_exp_path)
 
 args = args_parse(descriptions=[
-    ('-feat', 'Input feature for training', None, 'mspec24'),
+    ('-feat', 'Input feature for training', None, 'mspec'),
     ('-task', 'gender, age, dialect, speaker, digit', None, 'gender'),
     ('-batch', 'batch size', None, 32),
     ('-epoch', 'Number of training epoch', None, 12),
@@ -132,7 +132,7 @@ evaluate(y_true=X_test_true, y_pred_proba=y_pred_proba, labels=labels,
 # training PLDA
 Z1_train, y_train = make_dnn_prediction(f_z1, X=train, title="TRAIN")
 Z1_valid, y_valid = make_dnn_prediction(f_z1, X=valid, title="VALID")
-plda = PLDA(n_phi=200, random_state=K.get_rng().randint(10e8),
+plda = PLDA(n_phi=100, random_state=K.get_rng().randint(10e8),
             n_iter=12, labels=labels, verbose=0)
 plda.fit(np.concatenate([Z1_train, Z1_valid], axis=0),
          np.concatenate([y_train, y_valid], axis=0))

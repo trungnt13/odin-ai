@@ -39,9 +39,9 @@ from odin.utils import (get_logpath, get_modelpath, get_datasetpath, get_exppath
 # Input arguments
 # ===========================================================================
 args = ArgController(
-).add('-nmix', "Number of GMM mixture", 256
-).add('-tdim', "Dimension of t-matrix", 128
-).add('-feat', "Acoustic feature: spec, mspec, mfcc, bnf, sdc", 'mspec'
+).add('-nmix', "Number of GMM mixture", 128
+).add('-tdim', "Dimension of t-matrix", 64
+).add('-feat', "Acoustic feature: spec, mspec, mfcc", 'mfcc'
 ).add('--gmm', "Force re-run training GMM", False
 ).add('--stat', "Force re-extraction of centered statistics", False
 ).add('--tmat', "Force re-run training Tmatrix", False
@@ -56,60 +56,109 @@ FEAT = args.feat
 # ===========================================================================
 # Const
 # ===========================================================================
+EXP_DIR = get_exppath('FSDD')
+PATH_ACOUSTIC_FEATURES = os.path.join(EXP_DIR, 'features')
 # ====== GMM trainign ====== #
 NMIX = args.nmix
-GMM_NITER = 10
-GMM_DOWNSAMPLE = 4
+GMM_NITER = 12
+GMM_DOWNSAMPLE = 1
 GMM_STOCHASTIC = True
 GMM_DTYPE = 'float64'
 # ====== IVEC training ====== #
 TV_DIM = args.tdim
-TV_NITER = 10
+TV_NITER = 16
 TV_DTYPE = 'float64'
 # ===========================================================================
-# path and dataset
+# Extract acoustic features
 # ===========================================================================
 # path to preprocessed dataset
-ds = F.TIDIGITS_feat.load()
-assert FEAT in ds, "Cannot find feature with name: %s" % FEAT
+all_files, meta = F.FSDD.load()
+if not os.path.exists(PATH_ACOUSTIC_FEATURES) or \
+len(os.listdir(PATH_ACOUSTIC_FEATURES)) != 14:
+  extractors = pp.make_pipeline(steps=[
+      pp.speech.AudioReader(sr_new=8000, best_resample=True, remove_dc=True),
+      pp.speech.PreEmphasis(coeff=0.97),
+      pp.base.Converter(converter=lambda x: os.path.basename(x).split('.')[0],
+                        input_name='path', output_name='name'),
+      # ====== STFT ====== #
+      pp.speech.STFTExtractor(frame_length=0.025, step_length=0.005,
+                              n_fft=512, window='hamm'),
+      # ====== SAD ====== #
+      pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
+      pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+                             input_name='energy', output_name='sad'),
+      # ====== spectrogram ====== #
+      pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
+      pp.speech.MelsSpecExtractor(n_mels=24, fmin=64, fmax=4000,
+                                  input_name=('spec', 'sr'), output_name='mspec'),
+      pp.speech.MFCCsExtractor(n_ceps=20, remove_first_coef=True,
+                               input_name='mspec', output_name='mfcc'),
+      pp.base.DeltaExtractor(input_name='mfcc', order=(0, 1, 2)),
+      # ====== normalization ====== #
+      pp.base.DeleteFeatures(input_name=('stft', 'spec', 'sad_threshold')),
+      pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
+                             input_name=('mspec', 'mfcc')),
+      # ====== post processing ====== #
+      pp.base.AsType(dtype='float16'),
+  ], debug=False)
+  with np.warnings.catch_warnings():
+    np.warnings.filterwarnings('ignore')
+    processor = pp.FeatureProcessor(
+        jobs=all_files,
+        path=PATH_ACOUSTIC_FEATURES,
+        extractor=extractors,
+        n_cache=120,
+        ncpu=None,
+        override=True,
+        identifier='name',
+        log_path=os.path.join(EXP_DIR, 'processor.log'),
+        stop_on_failure=True)
+    processor.run()
+    pp.validate_features(processor,
+                         nb_samples=12,
+                         path=os.path.join(EXP_DIR, 'feature_validation'),
+                         override=True)
+ds = F.Dataset(PATH_ACOUSTIC_FEATURES, read_only=True)
+print(ds)
 indices = list(ds['indices'].items())
-# ====== general path ====== #
-EXP_DIR = get_exppath(tag='TIDIGITS_ivec',
-                      name='%s_%d_%d' % (FEAT, args.nmix, args.tdim))
-if not os.path.exists(EXP_DIR):
-  os.mkdir(EXP_DIR)
-# ====== start logging ====== #
-LOG_PATH = os.path.join(EXP_DIR,
-                        'log_%s.txt' % get_formatted_datetime(only_number=True))
+# ===========================================================================
+# Basic path for GMM, T-matrix and I-vector
+# ===========================================================================
+EXP_DIR = os.path.join(EXP_DIR, '%s_%d_%d' % (FEAT, NMIX, TV_DIM))
+LOG_PATH = get_logpath(name='log.txt', override=False, root=EXP_DIR, odin_base=False)
 stdio(LOG_PATH)
 print("Exp-dir:", ctext(EXP_DIR, 'cyan'))
 print("Log path:", ctext(LOG_PATH, 'cyan'))
 # ====== ivec path ====== #
 GMM_PATH = os.path.join(EXP_DIR, 'gmm')
 TMAT_PATH = os.path.join(EXP_DIR, 'tmat')
+# zero order statistics
 Z_PATH = (
     os.path.join(EXP_DIR, 'Z_train'),
     os.path.join(EXP_DIR, 'Z_test'))
+# first order statistics
 F_PATH = (
     os.path.join(EXP_DIR, 'F_train'),
     os.path.join(EXP_DIR, 'F_test'))
+# i-vector path
 I_PATH = (
     os.path.join(EXP_DIR, 'I_train'),
     os.path.join(EXP_DIR, 'I_test'))
+# labels
 L_PATH = ( # labels
     os.path.join(EXP_DIR, 'L_train'),
     os.path.join(EXP_DIR, 'L_test'))
 # ===========================================================================
 # Helper
 # ===========================================================================
+# jackson speaker for testing, all other speaker for training
 def is_train(x):
-  return x.split('_')[0] == 'train'
+  return x.split('_')[1] != 'jackson'
 
-def extract_gender(x):
-  return x.split('_')[1]
+def extract_digit(x):
+  return x.split('_')[0]
 
-print("Task:", ctext("gender", 'cyan'))
-fn_extract = extract_gender
+fn_extract = extract_digit
 fn_label, labels = unique_labels([i[0] for i in indices],
                                  key_func=fn_extract,
                                  return_labels=True)
@@ -133,11 +182,9 @@ print("#Test:", len(test_files))
 # ===========================================================================
 if not os.path.exists(GMM_PATH) or args.gmm:
   gmm = ml.GMM(nmix=NMIX, nmix_start=1,
-               niter=GMM_NITER,
-               dtype=GMM_DTYPE,
-               allow_rollback=True,
-               exit_on_error=True,
-               batch_size_cpu='auto', batch_size_gpu='auto',
+               niter=GMM_NITER, dtype=GMM_DTYPE,
+               allow_rollback=True, exit_on_error=True,
+               batch_size_cpu=2048, batch_size_gpu=2048,
                downsample=GMM_DOWNSAMPLE,
                stochastic_downsample=GMM_STOCHASTIC,
                device='gpu',
@@ -200,6 +247,7 @@ for i_path, name in zip(I_PATH, data_name):
   ivecs[name] = F.MmapData(i_path, read_only=True)
 # ====== print the i-vectors ====== #
 for name in data_name:
+  print('========= %s =========' % name)
   print(ctext('i-vectors:', 'cyan'))
   print(ctext(' *', 'yellow'), ivecs[name])
   print(ctext('z-stats:', 'cyan'))
@@ -208,67 +256,70 @@ for name in data_name:
   print(ctext(' *', 'yellow'), stats[name][1])
   print(ctext('labels:', 'cyan'))
   print(ctext(' *', 'yellow'), len(y_true[name]))
-# ===========================================================================
-# I-vector
-# ===========================================================================
-X_train = ivecs['train']
-X_test = ivecs['test']
-# ====== cosine scoring ====== #
-print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
-scorer = ml.Scorer(centering=True, wccn=True, lda=True, method='cosine')
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Ivec GMM-scoring-ova", 'cyan'))
-scorer = ml.GMMclassifier(strategy="ova",
-                          n_components=3, covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Ivec GMM-scoring-all", 'cyan'))
-scorer = ml.GMMclassifier(strategy="all", covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== plda scoring ====== #
-print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
-scorer = ml.PLDA(n_phi=100, n_iter=12,
-                 centering=True, wccn=True, unit_length=True,
-                 random_state=5218)
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== svm scoring ====== #
-print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
-scorer = ml.Scorer(wccn=True, lda=True, method='svm')
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ===========================================================================
-# Super-vector
-# ===========================================================================
-X_train = stats['train'][1]
-X_test = stats['test'][1]
-X_train, X_test = ml.fast_pca(X_train, X_test, n_components=args.tdim,
-                              algo='ppca', random_state=5218)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector GMM-scoring-ova", 'cyan'))
-scorer = ml.GMMclassifier(strategy="ova",
-                          n_components=3, covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== plda scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector PLDA-scoring", 'cyan'))
-scorer = ml.PLDA(n_phi=100, n_iter=12,
-                 centering=True, wccn=True, unit_length=True,
-                 random_state=5218)
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
-# ====== svm scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector SVM-scoring", 'cyan'))
-scorer = ml.Scorer(wccn=True, lda=True, method='svm')
-scorer.fit(X=X_train, y=y_true['train'])
-scorer.evaluate(X_test, y_true['test'], labels=labels)
+# ==================== turn off all annoying warning ==================== #
+with np.warnings.catch_warnings():
+  np.warnings.filterwarnings('ignore')
+  # ===========================================================================
+  # I-vector
+  # ===========================================================================
+  X_train = ivecs['train']
+  X_test = ivecs['test']
+  # ====== cosine scoring ====== #
+  print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
+  scorer = ml.Scorer(centering=True, wccn=True, lda=True, method='cosine')
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== GMM scoring ====== #
+  print(ctext("==== '%s'" % "Ivec GMM-scoring-ova", 'cyan'))
+  scorer = ml.GMMclassifier(strategy="ova",
+                            n_components=3, covariance_type='full',
+                            centering=True, wccn=True, unit_length=True,
+                            lda=False, concat=False)
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== GMM scoring ====== #
+  print(ctext("==== '%s'" % "Ivec GMM-scoring-all", 'cyan'))
+  scorer = ml.GMMclassifier(strategy="all", covariance_type='full',
+                            centering=True, wccn=True, unit_length=True,
+                            lda=False, concat=False)
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== plda scoring ====== #
+  print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
+  scorer = ml.PLDA(n_phi=TV_DIM // 2, n_iter=12,
+                   centering=True, wccn=True, unit_length=True,
+                   random_state=5218)
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== svm scoring ====== #
+  print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
+  scorer = ml.Scorer(wccn=True, lda=True, method='svm')
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ===========================================================================
+  # Super-vector
+  # ===========================================================================
+  X_train = stats['train'][1]
+  X_test = stats['test'][1]
+  X_train, X_test = ml.fast_pca(X_train, X_test, n_components=args.tdim,
+                                algo='ppca', random_state=5218)
+  # ====== GMM scoring ====== #
+  print(ctext("==== '%s'" % "Super-Vector GMM-scoring-ova", 'cyan'))
+  scorer = ml.GMMclassifier(strategy="ova",
+                            n_components=3, covariance_type='full',
+                            centering=True, wccn=True, unit_length=True,
+                            lda=False, concat=False)
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== plda scoring ====== #
+  print(ctext("==== '%s'" % "Super-Vector PLDA-scoring", 'cyan'))
+  scorer = ml.PLDA(n_phi=TV_DIM // 2, n_iter=12,
+                   centering=True, wccn=True, unit_length=True,
+                   random_state=5218)
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
+  # ====== svm scoring ====== #
+  print(ctext("==== '%s'" % "Super-Vector SVM-scoring", 'cyan'))
+  scorer = ml.Scorer(wccn=True, lda=True, method='svm')
+  scorer.fit(X=X_train, y=y_true['train'])
+  scorer.evaluate(X_test, y_true['test'], labels=labels)
