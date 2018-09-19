@@ -34,6 +34,7 @@ extractor = get_module_from_path(identifier=str(args.recipe),
 assert len(extractor) > 0, \
 "Cannot find any recipe with name: '%s' from path: '%s'" % (args.recipe, get_script_path())
 recipe = extractor[0](DEBUG)
+# ====== debugging ====== #
 if DEBUG:
   with np.warnings.catch_warnings():
     np.warnings.filterwarnings('ignore')
@@ -56,7 +57,10 @@ with np.warnings.catch_warnings():
       ncpu=min(18, cpu_count() - 2),
       override=True,
       identifier='name',
-      log_path=os.path.join(PATH_EXP, 'processor_%s.log' % args.recipe))
+      log_path=os.path.join(PATH_EXP, 'processor_%s.log' % args.recipe),
+      stop_on_failure=False)
   processor.run()
-  pp.validate_features(processor, path=os.path.join(PATH_EXP, 'acoustic'),
+  pp.validate_features(processor,
+                       nb_samples=12,
+                       path=os.path.join(PATH_EXP, args.recipe),
                        override=True)

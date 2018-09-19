@@ -18,12 +18,12 @@ PATH_TO_WAV = select_path(
     os.path.join(HOME_PATH, 'voxceleb'),
     create_new=False
 )
-# output path for acoustic features directory
-PATH_ACOUSTIC_FEAT = os.path.join(HOME_PATH, 'voxceleb_feat')
-if not os.path.exists(PATH_ACOUSTIC_FEAT):
-  os.mkdir(PATH_ACOUSTIC_FEAT)
 # path to folder contains experiment results
 PATH_EXP = get_exppath('voxceleb')
+# output path for acoustic features directory
+PATH_ACOUSTIC_FEAT = os.path.join(PATH_EXP, 'voxceleb_feat')
+if not os.path.exists(PATH_ACOUSTIC_FEAT):
+  os.mkdir(PATH_ACOUSTIC_FEAT)
 # ====== remove '_quarter' if you want full training data ====== #
 FILE_LIST = "voxceleb_files_quarter"
 TRAIN_LIST = "voxceleb_sys_train_with_labels_quarter"

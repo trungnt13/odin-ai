@@ -95,21 +95,6 @@ print(ctext("==== '%s'" % "Ivec cosine-scoring", 'cyan'))
 scorer = ml.Scorer(centering=True, wccn=True, lda=True, method='cosine')
 scorer.fit(X=X_train, y=y_train)
 scorer.evaluate(X_test, y_test, labels=labels)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Ivec GMM-scoring-ova", 'cyan'))
-scorer = ml.GMMclassifier(strategy="ova",
-                          n_components=3, covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_train)
-scorer.evaluate(X_test, y_test, labels=labels)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Ivec GMM-scoring-all", 'cyan'))
-scorer = ml.GMMclassifier(strategy="all", covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_train)
-scorer.evaluate(X_test, y_test, labels=labels)
 # ====== plda scoring ====== #
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(n_phi=100, n_iter=12,
@@ -119,33 +104,6 @@ scorer.fit(X=X_train, y=y_train)
 scorer.evaluate(X_test, y_test, labels=labels)
 # ====== svm scoring ====== #
 print(ctext("==== '%s'" % "Ivec SVM-scoring", 'cyan'))
-scorer = ml.Scorer(wccn=True, lda=True, method='svm')
-scorer.fit(X=X_train, y=y_train)
-scorer.evaluate(X_test, y_test, labels=labels)
-# ===========================================================================
-# Super-vector
-# ===========================================================================
-X_train = F_train
-X_test = F_test
-X_train, X_test = ml.fast_pca(X_train, X_test, n_components=args.tdim,
-                              algo='ppca', random_state=5218)
-# ====== GMM scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector GMM-scoring-ova", 'cyan'))
-scorer = ml.GMMclassifier(strategy="ova",
-                          n_components=3, covariance_type='full',
-                          centering=True, wccn=True, unit_length=True,
-                          lda=False, concat=False)
-scorer.fit(X=X_train, y=y_train)
-scorer.evaluate(X_test, y_test, labels=labels)
-# ====== plda scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector PLDA-scoring", 'cyan'))
-scorer = ml.PLDA(n_phi=100, n_iter=12,
-                 centering=True, wccn=True, unit_length=True,
-                 random_state=5218)
-scorer.fit(X=X_train, y=y_train)
-scorer.evaluate(X_test, y_test, labels=labels)
-# ====== svm scoring ====== #
-print(ctext("==== '%s'" % "Super-Vector SVM-scoring", 'cyan'))
 scorer = ml.Scorer(wccn=True, lda=True, method='svm')
 scorer.fit(X=X_train, y=y_train)
 scorer.evaluate(X_test, y_test, labels=labels)
