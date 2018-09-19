@@ -9,10 +9,13 @@ from shutil import which
 
 import numpy as np
 
+import soundfile as sf
+
 from odin import visual as V, nnet as N
 from odin.utils import (ctext, unique_labels, Progbar, UnitTimer,
                         stdio, Progbar)
 from odin import fuel as F, preprocessing as pp
+from odin.stats import sampling_iter
 
 from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR,
                      ALL_FILES, ALL_DATASET,
@@ -37,22 +40,35 @@ class SREAudioReader(pp.base.Extractor):
       start_time = None
     if end_time == '-':
       end_time = None
-    y, sr = pp.signal.anything2wav(inpath=path, outpath=None,
-                                   channel=channel,
-                                   dataset=dataset,
-                                   start=start_time, end=end_time,
-                                   sample_rate=Config.SAMPLE_RATE,
-                                   return_data=True)
-    # error happen ignore file
+    # ====== read audio ====== #
+    if dataset == 'voxceleb1':
+      with open(path, 'rb') as f:
+        y, sr = sf.read(f)
+        y = pp.signal.resample(y, sr_orig=sr, sr_new=8000)
+        sr = 8000
+    elif dataset[:3] == 'sre' or dataset == 'swb' or dataset == 'fisher':
+      with open(path, 'rb') as f:
+        y, sr = sf.read(f)
+        y = pp.signal.resample(y, sr_orig=sr, sr_new=8000)
+        if y.ndim == 2:
+          y = y[:, int(channel)]
+        sr = 8000
+    else:
+      y, sr = pp.signal.anything2wav(inpath=path, outpath=None,
+                                     channel=channel,
+                                     dataset=dataset,
+                                     start=start_time, end=end_time,
+                                     sample_rate=Config.SAMPLE_RATE,
+                                     return_data=True)
+    # ====== error happen ignore file ====== #
     if len(y) == 0:
       return None
-    # just remove DC offset
+    # ====== remove DC offset ====== #
     y = y - np.mean(y, 0)
     duration = max(y.shape) / sr
     return {'raw': y, 'sr': sr, 'duration': duration, # in second
             'path': path, 'spkid': spkid, 'name': name,
             'ds': dataset}
-
 # ===========================================================================
 # Extractor
 # ===========================================================================
@@ -81,6 +97,9 @@ extractors = pp.make_pipeline(steps=[
                                        'sad', 'energy', 'sad_threshold']),
     pp.base.AsType(dtype='float16'),
 ], debug=IS_DEBUGGING)
+# ===========================================================================
+# Running the extractor
+# ===========================================================================
 with np.warnings.catch_warnings():
   np.warnings.filterwarnings('ignore')
   # ====== debugging ====== #
@@ -95,9 +114,25 @@ with np.warnings.catch_warnings():
   else:
     processor = pp.FeatureProcessor(jobs=ALL_FILES, path=PATH_ACOUSTIC_FEATURES,
                                     extractor=extractors,
-                                    n_cache=250, ncpu=None, override=True)
+                                    n_cache=250, ncpu=None, override=True,
+                                    identifier='name',
+                                    log_path=os.path.join(EXP_DIR, 'processor.log'))
     with UnitTimer():
       processor.run()
-    ds = F.Dataset(PATH_ACOUSTIC_FEATURES, read_only=True)
-    print(ds)
-    ds.close()
+# ===========================================================================
+# Make some visualization
+# ===========================================================================
+if os.path.exists(PATH_ACOUSTIC_FEATURES):
+  ds = F.Dataset(PATH_ACOUSTIC_FEATURES, read_only=True)
+  print(ds)
+  V.plot_figure(nrow=7, ncol=8)
+  for idx, (name, (start, end)) in enumerate(sampling_iter(ds['indices'].items(),
+                                                           k=12,
+                                                           seed=52181208)):
+    X = ds['mspec'][start:end][:800, :].astype('float32')
+    dataset = ds['ds'][name]
+    V.plot_spectrogram(X.T,
+                       ax =(6, 2, idx + 1),
+                       title='%s-%s' % (name, dataset))
+  V.plot_save(os.path.join(EXP_DIR, 'features_extracted.pdf'))
+  ds.close()

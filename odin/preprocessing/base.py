@@ -71,7 +71,7 @@ class ExtractorSignal(object):
     if isinstance(self._last_input, Mapping):
       for k, v in sorted(self._last_input.items(),
                          key=lambda x: x[0]):
-        s += '  %s: %s\n' + (ctext(str(k), 'yellow'), dummy_formatter(v))
+        s += '  %s: %s\n' % (ctext(str(k), 'yellow'), dummy_formatter(v))
     else:
       s += '  Type: %s\n' % ctext(type(self._last_input), 'yellow')
       s += '  Object: %s\n' % ctext(str(self._last_input), 'yellow')
@@ -84,7 +84,7 @@ class ExtractorSignal(object):
     for name, param in self._extractor.get_params().items():
       if name not in ('_input_name', '_output_name'):
         s += '  ' + ctext(name, 'yellow') + ': ' + dummy_formatter(param) + '\n'
-    return s[:-1]
+    return s
 
 # ===========================================================================
 # Helper

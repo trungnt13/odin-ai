@@ -40,9 +40,7 @@ _support_label = {
 # ===========================================================================
 PATH_EXP = get_exppath(tag='TIDIGITS', override=False)
 # ====== acoustic feature extraction ====== #
-PATH_FEATURE_EXTRACTION_LOG = os.path.join(PATH_EXP, 'feature_extraction.log')
-PATH_ACOUSTIC = os.path.join(PATH_EXP, 'acoustic')
-PATH_ACOUSTIC_FIG = os.path.join(PATH_EXP, 'validate_features')
+PATH_ACOUSTIC = os.path.join(PATH_EXP, 'TIDIGITS_feat')
 
 class FeatureConfigs(object):
   padding = False

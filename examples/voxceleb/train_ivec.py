@@ -8,9 +8,8 @@ from odin import ml
 from odin import fuel as F
 from odin.utils import args_parse, ctext, stdio, Progbar
 
-from const import TRAIN_DATA
-from utils import get_model_path, prepare_ivec_data, csv2mat
-
+from utils import (get_model_path, prepare_ivec_data, csv2mat,
+                   TRAIN_DATA)
 # ===========================================================================
 # Configs
 # ===========================================================================

@@ -5,11 +5,46 @@ import numpy as np
 from scipy.io import savemat
 
 from odin import fuel as F, visual as V
-from odin.utils import ctext, Progbar
+from odin.utils import ctext, Progbar, get_exppath, select_path
 from odin.stats import train_valid_test_split, sampling_iter
 from odin.preprocessing.signal import segment_axis
 
-from const import PATH_ACOUSTIC_FEAT, TRAIN_DATA, PATH_EXP
+HOME_PATH = os.path.expanduser('~')
+# fixed path to 'voxceleb1_wav' folder
+PATH_TO_WAV = select_path(
+    '/media/data2/SRE_DATA/voxceleb',
+    '/mnt/sdb1/SRE_DATA/voxceleb',
+    os.path.join(HOME_PATH, 'data', 'voxceleb'),
+    os.path.join(HOME_PATH, 'voxceleb'),
+    create_new=False
+)
+# output path for acoustic features directory
+PATH_ACOUSTIC_FEAT = os.path.join(HOME_PATH, 'voxceleb_feat')
+if not os.path.exists(PATH_ACOUSTIC_FEAT):
+  os.mkdir(PATH_ACOUSTIC_FEAT)
+# path to folder contains experiment results
+PATH_EXP = get_exppath('voxceleb')
+# ====== remove '_quarter' if you want full training data ====== #
+FILE_LIST = "voxceleb_files_quarter"
+TRAIN_LIST = "voxceleb_sys_train_with_labels_quarter"
+TRIAL_LIST = "voxceleb_trials"
+# ====== Load the file list ====== #
+ds = F.load_voxceleb_list()
+WAV_FILES = {} # dictionary mapping 'file_path' -> 'file_name'
+for path, channel, name in ds[FILE_LIST]:
+  path = os.path.join(PATH_TO_WAV, path)
+  # validate all files are exist
+  assert os.path.exists(path), path
+  WAV_FILES[path] = name
+# some sampled files for testing
+SAMPLED_WAV_FILE = sampling_iter(it=sorted(WAV_FILES.items(),
+                                           key=lambda x: x[0]),
+                                 k=8, seed=52181208)
+# ====== extract the list of all train files ====== #
+# mapping from name of training file to speaker label
+TRAIN_DATA = {}
+for x, y in ds[TRAIN_LIST]:
+  TRAIN_DATA[x] = int(y)
 
 # ===========================================================================
 # Path helpers

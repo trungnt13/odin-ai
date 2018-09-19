@@ -10,7 +10,7 @@ from scipy.io import wavfile
 
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
-                        mpi, args_parse)
+                        mpi, args_parse, select_path)
 from odin.stats import freqcount
 from odin import fuel as F
 
@@ -63,6 +63,10 @@ for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
 # FILE LIST PATH
 # ===========================================================================
 EXP_DIR = get_exppath('sre', override=False)
+BASE_DIR = select_path(
+    '/media/data2/SRE_DATA',
+    '/mnt/sdb1/SRE_DATA',
+)
 # path to directory contain following folders:
 #  * mx6_speech
 #  * voxceleb
@@ -77,19 +81,19 @@ EXP_DIR = get_exppath('sre', override=False)
 #  * musan
 #  * RIRS_NOISES
 PATH_RAW_DATA = {
-    'mx6': '/media/data2/SRE_DATA',
-    'voxceleb1': '/media/data2/SRE_DATA',
-    'voxceleb2': '/media/data2/SRE_DATA',
-    'swb': '/media/data2/SRE_DATA',
-    'fisher': '/media/data2/SRE_DATA',
-    'sre04': '/media/data2/SRE_DATA/NIST1996_2008/SRE02_SRE06',
-    'sre05': '/media/data2/SRE_DATA/NIST1996_2008/SRE96_SRE05',
-    'sre06': '/media/data2/SRE_DATA/NIST1996_2008/SRE02_SRE06',
-    'sre08': '/media/data2/SRE_DATA',
-    'sre10': '/media/data2/SRE_DATA',
+    'mx6': BASE_DIR,
+    'voxceleb1': BASE_DIR,
+    'voxceleb2': BASE_DIR,
+    'swb': BASE_DIR,
+    'fisher': BASE_DIR,
+    'sre04': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
+    'sre05': os.path.join(BASE_DIR, 'NIST1996_2008/SRE96_SRE05'),
+    'sre06': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
+    'sre08': BASE_DIR,
+    'sre10': BASE_DIR,
     # noise datasets
-    'musan': '/media/data2/SRE_DATA',
-    'rirs': '/media/data2/SRE_DATA',
+    'musan': BASE_DIR,
+    'rirs': BASE_DIR,
 }
 # all data will be down sampled to following
 PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'

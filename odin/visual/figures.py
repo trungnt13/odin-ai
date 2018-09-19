@@ -1155,7 +1155,8 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
         if name not in order:
           order.append(name)
   # ====== get all numpy array ====== #
-  features = [(name, features[name]) for name in order
+  features = [(name, features[name])
+              for name in order
               if name in features and
               isinstance(features[name], np.ndarray) and
               features[name].ndim <= 4]

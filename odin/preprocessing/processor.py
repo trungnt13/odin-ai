@@ -420,11 +420,19 @@ class FeatureProcessor(object):
       between files (or images, or samples).
       Note this key must exist in the returned dictionary,
       otherwise, RuntimeError will be raised
+
+  log_path : string
+      path to log file
+
+  stop_on_failure : bool (default: False)
+      if True, terminate the processor if non-handled Exception
+      happened
   """
 
   def __init__(self, jobs, path, extractor,
                n_cache=0.12, ncpu=1, override=False,
-               identifier='name', log_path=None):
+               identifier='name', log_path=None,
+               stop_on_failure=False):
     super(FeatureProcessor, self).__init__()
     # ====== check outpath ====== #
     path = os.path.abspath(str(path))
@@ -455,7 +463,7 @@ class FeatureProcessor(object):
     if ncpu <= 0 or n_cache <= 0:
       raise ValueError('`ncpu` and `n_cache` must be greater than 0, but '
                        'given values ncpu=%d n_cache=%f' % (ncpu, n_cache))
-    self.ncpu = ncpu
+    self.n_cpu = ncpu
     self.n_cache = n_cache
     # ====== internal control for feature processor ====== #
     if isinstance(extractor, Pipeline):
@@ -481,6 +489,7 @@ class FeatureProcessor(object):
     # ====== others ====== #
     self.config = {}
     self._error_log = []
+    self.stop_on_failure = bool(stop_on_failure)
 
   @property
   def identifier(self):
@@ -492,19 +501,19 @@ class FeatureProcessor(object):
 
   # ==================== debugging ==================== #
   def __str__(self):
-    s = ctext('============= FeatureProcessor: %s =============' % self.path, 'red') + '\n'
+    s = ctext('============= FeatureProcessor: %s =============' % self.path, 'yellow') + '\n'
     padding = '  '
     # ====== basic info ====== #
     s += '- Jobs: ' + ctext(len(self.jobs), 'cyan') + '\n'
-    s += '- #CPU: ' + ctext(self.ncpu, 'cyan') + '\n'
+    s += '- #CPU: ' + ctext(self.n_cpu, 'cyan') + '\n'
     s += '- #Cache: ' + ctext(self.n_cache, 'cyan') + '\n'
     # ====== print pipeline ====== #
-    s += ctext("* Pipeline:", 'red') + '\n'
+    s += ctext("* Pipeline:", 'yellow') + '\n'
     for _, extractor in self.extractor.steps:
       for line in str(extractor).split('\n'):
         s += padding + ' ' + line + '\n'
     # ====== print config ====== #
-    s += ctext("* Configurations:", 'red') + '\n'
+    s += ctext("* Configurations:", 'yellow') + '\n'
     for i, j in self.config.items():
       s += padding + str(i) + ' : ' + str(j) + '\n'
     return s
@@ -614,19 +623,57 @@ class FeatureProcessor(object):
         cache.clear()
       # ====== update progress ====== #
       return file_name
+
     # ====== processing ====== #
+    def _map_func(dat):
+      try:
+        ret = self.extractor.transform(dat)
+      except Exception as e: # Non-handled exception
+        ret = '\n========\n'
+        ret += 'Time  : `%s`\n' % str(get_formatted_datetime(only_number=False))
+        ret += 'Error : `%s`\n' % str(e)
+        ret += 'Input : `%s`\n' % str(dat)
+        import traceback
+        etype, value, tb = sys.exc_info()
+        for line in traceback.TracebackException(
+                type(value), value, tb, limit=None).format(chain=True):
+          ret += line
+      return ret
     mpi = MPI(jobs=self.jobs,
-              func=self.extractor.transform,
-              ncpu=self.ncpu, batch=1,
-              hwm=self.ncpu * 3,
+              func=_map_func,
+              ncpu=self.n_cpu,
+              batch=1,
+              hwm=self.n_cpu * 3,
               backend='python')
+    # initialize
     prog = Progbar(target=njobs, name=self.path,
                    interval=0.12, print_report=True, print_summary=True)
     start_time = time.time()
+    last_time = time.time()
+    last_count = 0
     with open(self._log_path, 'w') as flog:
+      # writing the log head
+      flog.write('============================\n')
+      flog.write('Start Time : %s\n' % get_formatted_datetime(only_number=False))
+      flog.write('Outpath    : %s\n' % self.path)
+      flog.write('Extractor  : %s\n' % '->'.join([s[-1].__class__.__name__
+                                                  for s in self.extractor.steps]))
+      flog.write('#Jobs      : %d\n' % njobs)
+      flog.write('#CPU       : %d\n' % self.n_cpu)
+      flog.write('#Cache     : %d\n' % cache_limit)
+      flog.write('============================\n')
+      flog.flush()
+      # start processing the file list
       for count, result in enumerate(mpi):
+        # Non-handled exception
+        if isinstance(result, string_types):
+          flog.write(result)
+          flog.flush()
+          self._error_log.append(result)
+          if self.stop_on_failure:
+            raise RuntimeError(result)
         # some error might happened
-        if isinstance(result, ExtractorSignal):
+        elif isinstance(result, ExtractorSignal):
           flog.write(str(result)); flog.flush()
           if result.action == 'error':
             prog.add_notification(str(result))
@@ -638,7 +685,7 @@ class FeatureProcessor(object):
           else:
             raise RuntimeError("Unknown action from ExtractorSignal: %s" % result.action)
           prog['File'] = result.message
-        # otherwise, do post-processing
+        # otherwise, no error happened, do post-processing
         else:
           name = post_processing(result)
           prog['File'] = '%-20s' % str(name)
@@ -646,16 +693,23 @@ class FeatureProcessor(object):
         prog.add(1)
         # manually write to external log file
         if (count + 1) % max(1, int(0.01 * njobs)) == 0:
-          elap = time.time() - start_time
-          speed = (count + 1) / elap
-          est = (njobs - count - 1) / speed
-          flog.write('[%s] Processed: %d(files)  '
-                     'Elapse: %.2f(seconds)  '
-                     'Estimate: %.2f(seconds)  '
-                     'Speed: %.2f(obj/sec)\n' %
+          curr_time = time.time()
+          elap = curr_time - start_time
+          avg_speed = (count + 1) / elap
+          cur_speed = (count - last_count) / (curr_time - last_time)
+          avg_est = (njobs - count - 1) / avg_speed
+          cur_est = (njobs - count - 1) / cur_speed
+          flog.write('[%s] Processed: %d(files)   '
+                     'Elap.: %.2f(secs)\n'
+                     '   Avg.Spd: %.2f(obj/sec)  Avg.Est.: %.2f(secs)\n'
+                     '   Cur.Spd: %.2f(obj/sec)  Cur.Est.: %.2f(secs)\n' %
                      (get_formatted_datetime(only_number=False),
-                      count + 1, elap, est, speed))
+                      count + 1, elap,
+                      avg_speed, avg_est,
+                      cur_speed, cur_est))
           flog.flush()
+          last_time = curr_time
+          last_count = count
     # ====== end, flush the last time ====== #
     for feat_name, X_cached in cache.items():
       flush_feature(feat_name, X_cached)

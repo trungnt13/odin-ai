@@ -4,7 +4,6 @@ matplotlib.use('Agg')
 
 import os
 os.environ['ODIN'] = 'float32,gpu'
-import shutil
 
 import scipy.io
 import numpy as np
@@ -12,14 +11,12 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin import ml, training
-from odin.stats import (train_valid_test_split, sampling_iter)
+from odin import training
 from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape,
                         crypto, stdio)
 from odin import fuel as F, visual as V, nnet as N, backend as K
 
 from utils import prepare_dnn_data, get_model_path, csv2mat
-
 # ===========================================================================
 # Configs
 # ===========================================================================
@@ -90,7 +87,7 @@ print('Latent space:', ctext(z, 'cyan'))
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
-updates = K.optimizers.Adam(lr=0.01, name='XAdam').minimize(
+updates = K.optimizers.Adam(lr=0.0001, name='XAdam').minimize(
     loss=ce,
     roles=[K.role.TrainableParameter],
     exclude_roles=[K.role.InitialState],
