@@ -132,11 +132,20 @@ def make_pipeline(steps, debug=False):
   ret = Pipeline(steps=steps)
   return ret
 
-def set_extractor_debug(debug, *extractors):
-  extractors = [i for i in flatten_list(extractors)
-                if isinstance(i, Extractor)]
+def set_extractor_debug(extractors, debug):
+  # ====== prepare ====== #
+  if isinstance(extractors, (tuple, list)):
+    extractors = [i for i in flatten_list(extractors)
+                  if isinstance(i, Extractor)]
+  elif isinstance(extractors, Pipeline):
+    extractors = [i[-1] for i in extractors.steps]
+  elif isinstance(extractors, Mapping):
+    extractors = [i[-1] for i in extractors.items()]
+  else:
+    raise ValueError("No support for `extractors` type: %s" % type(extractors))
+  # ====== set the value ====== #
   for i in extractors:
-    i.debug = bool(debug)
+    i._debug = bool(debug)
   return extractors
 
 def _equal_inputs_outputs(x, y):
@@ -190,6 +199,7 @@ class Extractor(BaseEstimator, TransformerMixin):
     super(Extractor, self).__init__()
     self._debug = False
     self._is_input_layer = bool(is_input_layer)
+    self._last_debugging_text = ''
     # ====== robust level ====== #
     robust_level = str(robust_level).lower()
     assert robust_level in ('ignore', 'warn', 'error'),\
@@ -219,6 +229,14 @@ class Extractor(BaseEstimator, TransformerMixin):
     else:
       raise ValueError("No support for `output_name` type: %s" % str(type(output_name)))
     self._output_name = output_name
+
+  @property
+  def last_debugging_text(self):
+    """ Return the last debugging information recorded during
+    calling the `transform` method with `debug=True` """
+    if not hasattr(self, '_last_debugging_text'):
+      self._last_debugging_text = ''
+    return self._last_debugging_text
 
   @property
   def input_name(self):
@@ -313,29 +331,33 @@ class Extractor(BaseEstimator, TransformerMixin):
     if not hasattr(self, '_debug'):
       self._debug = False
     if self._debug:
-      print(ctext("[Extractor]", 'cyan'),
-            ctext(self.__class__.__name__, 'magenta'))
+      debug_text = ''
+      debug_text += '%s %s\n' % (ctext("[Extractor]", 'cyan'),
+                                 ctext(self.__class__.__name__, 'magenta'))
       # inputs
       if not _equal_inputs_outputs(X, y):
-        print('  ', ctext("Inputs:", 'yellow'))
-        print('  ', ctext("-------", 'yellow'))
+        debug_text += '  %s\n' % ctext("Inputs:", 'yellow')
+        debug_text += '  %s\n' % ctext("-------", 'yellow')
         if isinstance(X, Mapping):
           for k, v in X.items():
-            print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))
+            debug_text += '    %s : %s\n' % (ctext(k, 'blue'), dummy_formatter(v))
         else:
-          print('    ', dummy_formatter(X))
+          debug_text += '    %s\n' % dummy_formatter(X)
       # outputs
-      print('  ', ctext("Outputs:", 'yellow'))
-      print('  ', ctext("-------", 'yellow'))
+      debug_text += '  %s\n' % ctext("Outputs:", 'yellow')
+      debug_text += '  %s\n' % ctext("-------", 'yellow')
       if isinstance(y, Mapping):
         for k, v in y.items():
-          print('    ', ctext(k, 'blue'), ':', dummy_formatter(v))
+          debug_text += '    %s : %s\n' % (ctext(k, 'blue'), dummy_formatter(v))
       else:
-        print('    ', dummy_formatter(y))
+        debug_text += '    %s\n' % dummy_formatter(y)
       # parameters
       for name, param in self.get_params().items():
-        if name not in ('_input_name', '_output_name'):
-          print('  ', ctext(name, 'yellow'), ':', dummy_formatter(param))
+        if name not in ('_input_name',
+                        '_output_name'):
+          debug_text += '  %s : %s\n' % (ctext(name, 'yellow'), dummy_formatter(param))
+      self._last_debugging_text = debug_text
+      print(debug_text)
     return y
 
 # ===========================================================================

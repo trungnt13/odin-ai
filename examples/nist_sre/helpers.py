@@ -27,9 +27,11 @@ if which('ffmpeg') is None:
 # General arguments for all experiments
 # ===========================================================================
 _args = args_parse(descriptions=[
+    ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
+    ('-downsample', 'downsampling all the dataset for testing', None, 0),
     ('--debug', 'enable debugging', None, False),
-    ('-downsample', 'downsampling all the dataset for testing', None, 0)
 ])
+FEATURE_RECIPE = str(_args.recipe)
 IS_DEBUGGING = bool(_args.debug)
 # ===========================================================================
 # Configuration
@@ -99,6 +101,10 @@ PATH_RAW_DATA = {
 PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'
 if not os.path.exists(PATH_ACOUSTIC_FEATURES):
   os.mkdir(PATH_ACOUSTIC_FEATURES)
+# For augmentation data
+PATH_AUGMENTATION = '/media/data1/SRE_AUG'
+if not os.path.exists(PATH_AUGMENTATION):
+  os.mkdir(PATH_AUGMENTATION)
 # ===========================================================================
 # Validating the datasets
 # ===========================================================================
@@ -182,6 +188,7 @@ def validating_all_data(in_path_raw, downsample):
 (ALL_FILES, NON_EXIST_FILES, ext_count) = validating_all_data(
     in_path_raw=PATH_RAW_DATA,
     downsample=_args.downsample)
+# list of all dataset
 ALL_DATASET = sorted(np.unique(ALL_FILES[:, 4]))
 print("All extensions:")
 for name, val in sorted(ext_count.items(), key=lambda x: x[0]):

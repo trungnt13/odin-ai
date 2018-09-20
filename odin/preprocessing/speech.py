@@ -510,7 +510,7 @@ class STFTExtractor(Extractor):
   """
 
   def __init__(self, frame_length, step_length=None, n_fft=512,
-               window='hann', padding=False,
+               window='hamm', padding=False,
                input_name=('raw', 'sr'), output_name='stft'):
     super(STFTExtractor, self).__init__(input_name=input_name, output_name=output_name)
     self.frame_length = frame_length

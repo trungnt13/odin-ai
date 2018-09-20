@@ -760,11 +760,12 @@ class FeatureProcessor(object):
     dataset.flush()
     dataset.close()
     # ====== saving the extractor ====== #
-    pipeline_path = os.path.join(dataset.path, 'pipeline')
-    with open(pipeline_path, 'wb') as f:
-      cPickle.dump(self.extractor, f, protocol=2)
-    prog.add_notification("Saved Extractor pipeline at: %s" %
-                          ctext(pipeline_path, 'yellow'))
+    # not good idea to save the extractor all the time
+    # pipeline_path = os.path.join(dataset.path, 'pipeline')
+    # with open(pipeline_path, 'wb') as f:
+    #   cPickle.dump(self.extractor, f, protocol=2)
+    # prog.add_notification("Saved Extractor pipeline at: %s" %
+    #                       ctext(pipeline_path, 'yellow'))
     # ====== saving the configuration ====== #
     config_path = os.path.join(dataset.path, 'config')
     config = MmapDict(config_path)
@@ -777,7 +778,8 @@ class FeatureProcessor(object):
       if isinstance(j, (Number, string_types, bool)):
         config[i] = j
     config.flush(save_all=True)
-    self.config = {i: j for i, j in config}
+    self.config = {i: j
+                   for i, j in config}
     config.close()
     prog.add_notification("Saved configuration at: %s" %
                           ctext(config_path, 'yellow'))

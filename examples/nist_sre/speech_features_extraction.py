@@ -5,134 +5,154 @@ matplotlib.use('Agg')
 import os
 os.environ['ODIN'] = 'float32,gpu'
 import sys
-from shutil import which
+import time
+from collections import defaultdict
 
 import numpy as np
-
 import soundfile as sf
 
 from odin import visual as V, nnet as N
-from odin.utils import (ctext, unique_labels, Progbar, UnitTimer,
-                        stdio, Progbar)
+from odin.utils import (ctext, unique_labels, UnitTimer,
+                        Progbar, get_logpath,
+                        get_module_from_path,
+                        get_script_path, mpi)
 from odin import fuel as F, preprocessing as pp
 from odin.stats import sampling_iter
 
-from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR,
-                     ALL_FILES, ALL_DATASET,
-                     Config, IS_DEBUGGING)
-
-stdio(os.path.join(EXP_DIR, 'features_extraction.log'))
-# ===========================================================================
-# Customized Extractor
-# ===========================================================================
-class SREAudioReader(pp.base.Extractor):
-  """ SREAudioReader """
-
-  def __init__(self):
-    super(SREAudioReader, self).__init__(is_input_layer=True)
-
-  def _transform(self, row):
-    # `row`:
-    #  0       1      2      3       4          5         6
-    # path, channel, name, spkid, dataset, start_time, end_time
-    path, channel, name, spkid, dataset, start_time, end_time = row
-    if start_time == '-':
-      start_time = None
-    if end_time == '-':
-      end_time = None
-    # ====== read audio ====== #
-    if dataset == 'voxceleb1':
-      with open(path, 'rb') as f:
-        y, sr = sf.read(f)
-        y = pp.signal.resample(y, sr_orig=sr, sr_new=8000)
-        sr = 8000
-    elif dataset[:3] == 'sre' or dataset == 'swb' or dataset == 'fisher':
-      with open(path, 'rb') as f:
-        y, sr = sf.read(f)
-        y = pp.signal.resample(y, sr_orig=sr, sr_new=8000)
-        if y.ndim == 2:
-          y = y[:, int(channel)]
-        sr = 8000
-    else:
-      y, sr = pp.signal.anything2wav(inpath=path, outpath=None,
-                                     channel=channel,
-                                     dataset=dataset,
-                                     start=start_time, end=end_time,
-                                     sample_rate=Config.SAMPLE_RATE,
-                                     return_data=True)
-    # ====== error happen ignore file ====== #
-    if len(y) == 0:
-      return None
-    # ====== remove DC offset ====== #
-    y = y - np.mean(y, 0)
-    duration = max(y.shape) / sr
-    return {'raw': y, 'sr': sr, 'duration': duration, # in second
-            'path': path, 'spkid': spkid, 'name': name,
-            'ds': dataset}
+from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR, BASE_DIR,
+                     ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE,
+                     ALL_DATASET)
+# ALL_FILES
+# Header:
+#  0       1      2      3       4          5         6
+# path, channel, name, spkid, dataset, start_time, end_time
+np.random.seed(52181208)
+NCPU = min(18, mpi.cpu_count() - 2)
 # ===========================================================================
 # Extractor
 # ===========================================================================
-extractors = pp.make_pipeline(steps=[
-    SREAudioReader(),
-    pp.speech.PreEmphasis(coeff=0.97, input_name='raw'),
-    # ====== STFT ====== #
-    pp.speech.STFTExtractor(frame_length=Config.FRAME_LENGTH,
-                            step_length=Config.STEP_LENGTH,
-                            n_fft=Config.NFFT, window=Config.WINDOW),
-    pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-    # ====== SAD ====== #
-    pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
-                           input_name='energy', output_name='sad'),
-    # ====== for x-vector ====== #
-    pp.speech.PowerSpecExtractor(power=2.0, input_name='stft', output_name='spec'),
-    pp.speech.MelsSpecExtractor(n_mels=Config.NMELS,
-                                fmin=Config.FMIN, fmax=Config.FMAX,
-                                input_name=('spec', 'sr'), output_name='mspec'),
-    pp.speech.ApplyingSAD(input_name='mspec', sad_name='sad'),
-    # ====== normalization ====== #
-    pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                           win_length=301, input_name='mspec'),
-    # ====== post processing ====== #
-    pp.base.DeleteFeatures(input_name=['stft', 'spec', 'raw',
-                                       'sad', 'energy', 'sad_threshold']),
-    pp.base.AsType(dtype='float16'),
-], debug=IS_DEBUGGING)
+recipe = get_module_from_path(identifier=FEATURE_RECIPE,
+                              path=get_script_path(),
+                              prefix='feature_recipes')
+if len(recipe) == 0:
+  raise ValueError("Cannot find feature recipe with name: '%s'" % FEATURE_RECIPE)
+recipe = recipe[0]()
+# ===========================================================================
+# Debug mode
+# ===========================================================================
+if IS_DEBUGGING:
+  with np.warnings.catch_warnings():
+    np.warnings.filterwarnings('ignore')
+    # ====== stratify sampling from each dataset ====== #
+    clusters = defaultdict(list)
+    clusters_count = defaultdict(int)
+    samples = []
+    for row in ALL_FILES:
+      clusters[row[4]].append(row)
+      clusters_count[row[4]] += 1
+    for k, v in clusters.items():
+      np.random.shuffle(v)
+      samples += v[:12]
+
+    # ====== run the MPI for feature extraction ====== #
+    def _benchmark_func(job):
+      s = time.time()
+      res = recipe.transform(job)
+      return res, time.time() - s
+    prog = Progbar(target=len(samples),
+                   print_report=True, print_summary=False,
+                   name=FEATURE_RECIPE)
+    start_time = time.time()
+    all_duration = []
+    all_benchmark = defaultdict(list)
+    for feat, benchmark in mpi.MPI(jobs=samples,
+                        func=_benchmark_func,
+                        ncpu=NCPU, batch=1):
+      # update progress
+      prog['path'] = feat['path'].replace(BASE_DIR, '')
+      prog['spkid'] = feat['spkid']
+      prog['name'] = feat['name']
+      prog['dsname'] = feat['dsname']
+      prog['duration'] = feat['duration']
+      prog.add(1)
+      # update benchmark
+      all_benchmark[feat['dsname']].append(benchmark)
+      all_duration.append(feat['duration'])
+      # 30% chance plotting
+      if np.random.rand() < 0.3:
+        V.plot_multiple_features(feat,
+                                 title=feat['path'])
+    V.plot_save(os.path.join(EXP_DIR, 'debug_%s.pdf' % FEATURE_RECIPE))
+    # ====== save the extractor debugging log ====== #
+    pp.set_extractor_debug(recipe, debug=True)
+    recipe.transform(samples[0])
+    with open(os.path.join(EXP_DIR, 'debug_%s.log' % FEATURE_RECIPE), 'w') as f:
+      for name, step in recipe.steps:
+        f.write(step.last_debugging_text)
+    # ====== summary ====== #
+    print("Avg.Duration:", ctext(np.mean(all_duration), 'cyan'))
+    end_time = time.time()
+    print("Elapse:", ctext(end_time - start_time, 'cyan'))
+    print("Avg.Speed:", ctext(len(samples) / (end_time - start_time), 'cyan'))
+    # ====== estimate processing time ====== #
+    est_time = 0
+    for name in sorted(ALL_DATASET):
+      t = all_benchmark[name]
+      c = clusters_count[name]
+      e = c * np.mean(t)
+      print('%-12s' % name,
+            ctext('Avg.Time: %.2f(s)' % np.mean(t), 'yellow'),
+            ctext('Est.Time: %.2f(hour)' % (e / 3600), 'yellow'))
+      est_time += e
+    # this time is not precise, just for fun
+    print("Total time:",
+          'Est.: %s(hour)' % ctext('%.2f' % ((end_time - start_time) / len(samples) * len(ALL_FILES) / 3600), 'cyan'),
+          '%d-cores: %s(hour)' % (NCPU, ctext('%.2f' % (est_time / 3600 / NCPU), 'cyan')),
+    )
+  exit()
 # ===========================================================================
 # Running the extractor
 # ===========================================================================
+# ====== basic path ====== #
+output_dataset_path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
+processor_log_path = get_logpath(name='processor_%s.log' % FEATURE_RECIPE,
+                                 increasing=True,
+                                 odin_base=False,
+                                 root=EXP_DIR)
+ds_validation_path = os.path.join(EXP_DIR, 'validate_%s.pdf' % FEATURE_RECIPE)
+# ====== running the processing ====== #
 with np.warnings.catch_warnings():
   np.warnings.filterwarnings('ignore')
-  # ====== debugging ====== #
-  if IS_DEBUGGING:
-    perm = np.random.permutation(len(ALL_FILES))
-    for row in ALL_FILES[perm][:18]:
-      feat = extractors.transform(row)
-      feat['mspec'] = feat['mspec'][:800]
-      V.plot_multiple_features(feat, title=feat['path'])
-    V.plot_save(os.path.join(EXP_DIR, 'features_debug.pdf'))
-  # ====== main processor ====== #
-  else:
-    processor = pp.FeatureProcessor(jobs=ALL_FILES, path=PATH_ACOUSTIC_FEATURES,
-                                    extractor=extractors,
-                                    n_cache=250, ncpu=None, override=True,
-                                    identifier='name',
-                                    log_path=os.path.join(EXP_DIR, 'processor.log'))
-    with UnitTimer():
-      processor.run()
+  # ====== shuffling all files so the jobs is more evenly distributed ====== #
+  perm = np.random.permutation(len(ALL_FILES))
+  jobs = ALL_FILES[perm]
+  # ====== start processing ====== #
+  processor = pp.FeatureProcessor(jobs=jobs,
+      path=output_dataset_path,
+      extractor=recipe,
+      n_cache=250,
+      ncpu=NCPU,
+      override=True,
+      identifier='name',
+      log_path=processor_log_path,
+      stop_on_failure=False)
+  with UnitTimer():
+    processor.run()
 # ===========================================================================
 # Make some visualization
 # ===========================================================================
-if os.path.exists(PATH_ACOUSTIC_FEATURES):
-  ds = F.Dataset(PATH_ACOUSTIC_FEATURES, read_only=True)
+if os.path.exists(output_dataset_path):
+  ds = F.Dataset(output_dataset_path, read_only=True)
   print(ds)
-  V.plot_figure(nrow=7, ncol=8)
-  for idx, (name, (start, end)) in enumerate(sampling_iter(ds['indices'].items(),
-                                                           k=12,
-                                                           seed=52181208)):
-    X = ds['mspec'][start:end][:800, :].astype('float32')
-    dataset = ds['ds'][name]
-    V.plot_spectrogram(X.T,
-                       ax =(6, 2, idx + 1),
-                       title='%s-%s' % (name, dataset))
-  V.plot_save(os.path.join(EXP_DIR, 'features_extracted.pdf'))
+  for name, (start, end) in sampling_iter(it=ds['indices'].items(),
+                                          k=30, seed=52181208):
+    dsname = ds['ds'][name]
+    if 'voxceleb2' == dsname and np.random.rand() < 0.95:
+      continue
+    spkid = ds['spkid'][name]
+    dur = ds['duration'][name]
+    X = ds['mspec'][start:end][:1200].astype('float32')
+    V.plot_figure(nrow=4, ncol=12)
+    V.plot_spectrogram(X.T, title='%s  %s  %s  %f' % (name, spkid, dsname, dur))
+  V.plot_save(ds_validation_path)
   ds.close()
