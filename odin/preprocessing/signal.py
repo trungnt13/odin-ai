@@ -245,6 +245,14 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
   label = log_energy.ravel() > threshold
   return label, threshold
 
+def vad_threshold(frames, threshold=35):
+  """
+  threshold : scalar (30,40)
+  """
+  energies = 20 * np.log10(np.std(frames, axis=0) + np.finfo(float).eps)
+  max_energy = np.max(energies)
+  return (energies > max_energy - threshold) & (energies > -55)
+
 def vad_split_audio(s, sr, maximum_duration=30, minimum_duration=None,
                     frame_length=128, nb_mixtures=3, threshold=0.6,
                     return_vad=False, return_voices=False, return_cut=False):

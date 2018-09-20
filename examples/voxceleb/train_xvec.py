@@ -21,23 +21,27 @@ from utils import prepare_dnn_data, get_model_path, csv2mat
 # Configs
 # ===========================================================================
 args = args_parse([
+    ('recipe', 'the name of function defined in feature_recipes.py', None),
     ('-feat', "Acoustic feature", ('mspec', 'mfcc'), 'mspec'),
-    ('-batch', "batch size", None, 128),
+    ('-batch', "batch size", None, 64),
     ('-epoch', "number of epoch", None, 25),
     ('-l', "audio segmenting length in second", None, 3),
     ('--debug', "enable debug mode", None, False),
     ('--train', "force continue training the saved model", None, False),
 ])
 FEAT = args.feat
+TRAIN_MODEL = args.train
 DEBUG = bool(args.debug)
-EXP_DIR, MODEL_PATH, LOG_PATH, TRAIN_PATH, TEST_PATH = get_model_path('xvec', args)
+(EXP_DIR, MODEL_PATH, LOG_PATH,
+ TRAIN_PATH, TEST_PATH) = get_model_path('xvec', args)
 stdio(LOG_PATH)
 # ===========================================================================
 # Create data feeder
 # ===========================================================================
 (train, valid,
  test_ids, test_dat,
- all_speakers) = prepare_dnn_data(feat=FEAT, utt_length=args.l)
+ all_speakers) = prepare_dnn_data(
+    recipe=args.recipe, feat=FEAT, utt_length=args.l)
 n_speakers = len(all_speakers) + 1
 # ===========================================================================
 # Create the network
@@ -53,6 +57,7 @@ print("Inputs:", ctext(inputs, 'cyan'))
 if os.path.exists(MODEL_PATH):
   x_vec = N.deserialize(path=MODEL_PATH, force_restore_vars=True)
 else:
+  TRAIN_MODEL = True
   with N.args_scope(
       ['TimeDelayedConv', dict(time_pool='none', activation=K.relu)],
       ['Dense', dict(activation=K.linear, b_init=None)],
@@ -105,9 +110,7 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 # ===========================================================================
 # Create trainer
 # ===========================================================================
-if os.path.exists(MODEL_PATH) and not args.train:
-  pass
-else:
+if TRAIN_MODEL:
   print('Start training ...')
   task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
                            allow_rollback=True)

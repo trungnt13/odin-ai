@@ -14,6 +14,7 @@ from utils import (get_model_path, prepare_ivec_data, csv2mat,
 # Configs
 # ===========================================================================
 args = args_parse([
+    ('recipe', 'the name of function defined in feature_recipes.py', None),
     ('-nmix', "Number of GMM mixture", None, 2048),
     ('-tdim', "Dimension of t-matrix", None, 600),
     ('-feat', "Acoustic feature", ('mspec', 'bnf'), 'bnf'),
@@ -33,7 +34,7 @@ stdio(LOG_PATH)
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-X, train, test = prepare_ivec_data(FEAT)
+X, train, test = prepare_ivec_data(args.recipe, FEAT)
 # ===========================================================================
 # Training I-vector model
 # ===========================================================================

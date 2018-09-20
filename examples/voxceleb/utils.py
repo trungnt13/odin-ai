@@ -51,7 +51,7 @@ for x, y in ds[TRAIN_LIST]:
 # ===========================================================================
 def get_model_path(system_name, args):
   """Return: exp_dir, model_path, log_path, train_path, test_path"""
-  name = '_'.join([str(system_name).lower(), args.feat])
+  name = '_'.join([str(system_name).lower(), args.recipe, args.feat])
   if 'l' in args:
     name += '_' + str(int(args.l))
   if 'nmix' in args:
@@ -75,7 +75,7 @@ def get_model_path(system_name, args):
 # ===========================================================================
 FRAME_SHIFT = 0.005
 
-def prepare_dnn_data(feat, utt_length, seed=52181208):
+def prepare_dnn_data(recipe, feat, utt_length, seed=52181208):
   """
   Return
   ------
@@ -87,7 +87,8 @@ def prepare_dnn_data(feat, utt_length, seed=52181208):
   """
   # Load dataset
   frame_length = int(utt_length / FRAME_SHIFT)
-  ds = F.Dataset(PATH_ACOUSTIC_FEAT, read_only=True)
+  ds = F.Dataset(os.path.join(PATH_ACOUSTIC_FEAT, recipe),
+                 read_only=True)
   X = ds[feat]
   train_indices = {name: ds['indices'][name]
                    for name in TRAIN_DATA.keys()}
@@ -171,8 +172,9 @@ def prepare_dnn_data(feat, utt_length, seed=52181208):
   return (train_feeder, valid_feeder,
           ids, dat, all_speakers)
 
-def prepare_ivec_data(feat):
-  ds = F.Dataset(PATH_ACOUSTIC_FEAT, read_only=True)
+def prepare_ivec_data(recipe, feat):
+  ds = F.Dataset(os.path.join(PATH_ACOUSTIC_FEAT, recipe),
+                 read_only=True)
   X = ds[feat]
   train_indices = {name: ds['indices'][name]
                    for name in TRAIN_DATA.keys()}
