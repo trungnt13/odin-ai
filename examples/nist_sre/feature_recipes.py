@@ -105,17 +105,33 @@ class SREAugmentor(pp.base.Extractor):
       cmd = cmd % (cmd_wav, noise_path)
     # ====== MUSAN ====== #
     elif self.ds_name == 'musan':
-      # noise
+      ### noise (in kaldi: noise snrs is choose from one of
+      # following value 15:10:5:0)
       if noise_type == 'noise':
-        cmd = '%s | wav-reverberate --shift-output=true --additive-signals=\''
-        'sox -t wav /mnt/sdb1/SRE_DATA/musan/noise/free-sound/noise-free-sound-0053.wav -r 8k -t wav - |,'
-        'sox -t wav /mnt/sdb1/SRE_DATA/musan/noise/free-sound/noise-free-sound-0089.wav -r 8k -t wav - |,'
-        'sox -t wav /mnt/sdb1/SRE_DATA/musan/noise/free-sound/noise-free-sound-0272.wav -r 8k -t wav - |,'
-        'sox -t wav /mnt/sdb1/SRE_DATA/musan/noise/sound-bible/noise-sound-bible-0015.wav -r 8k -t wav - |'
-        '\' --start-times=\'0,6.272,21.143,63.20112\''
-        '--snrs=\'5,0,15,15\' - -'
-        raise NotImplementedError
-      # music in background
+        # duration until start the next noise audio
+        noise_interval = 1 # in second
+        noise = []; noise_start = []; noise_snrs = []
+        curr_dur = 0; indices = np.arange(len(noise_data))
+        # adding noise until the end of the utterance
+        while curr_dur < duration:
+          idx = self.rand.choice(indices, size=1)[0]
+          noise_path, noise_name, noise_dur = noise_data[idx]
+          # this does not apply anymore if we don't have enough
+          # noise duration
+          if len(noise) < len(noise_data) and noise_path in noise:
+            continue
+          noise.append(noise_path)
+          noise_start.append(curr_dur)
+          noise_snrs.append(self.rand.randint(low=0, high=15, size=1, dtype=int)[0])
+          curr_dur += float(noise_dur) + noise_interval
+        # start creating command, careful all space must be there
+        cmd = '%s | wav-reverberate --shift-output=true --additive-signals=\'' % cmd_wav
+        for path in noise:
+          cmd += 'sox -t wav %s -r 8k -t wav - |,' % path
+        cmd = cmd[:-1]
+        cmd += '\' --start-times=\'%s\' ' % ','.join(['%f' % i for i in noise_start])
+        cmd += '--snrs=\'%s\' - -' % ','.join(['%d' % i for i in noise_snrs])
+      ### music in background
       elif noise_type == 'music':
         idx = self.rand.randint(low=0, high=len(noise_data), size=1, dtype=int)[0]
         noise_path, noise_name, noise_dur = noise_data[idx]
@@ -125,13 +141,15 @@ class SREAugmentor(pp.base.Extractor):
         '\'wav-reverberate --duration=%f "sox -t wav %s -r 8k -t wav - |" - |\' ' + \
         '--start-times=\'0\' --snrs=\'%d\' - -'
         cmd = cmd % (cmd_wav, duration, noise_path, snrs)
-      # combined multiple speech from different speakers
+      ### combined multiple speech from different speakers
+      #(in kaldi: snrs is one of 20:17:15:13)
       elif noise_type == 'speech':
         n_speaker = self.rand.randint(3, 7, size=1, dtype=int)[0]
         idx = self.rand.choice(a=np.arange(len(noise_data)),
                                size=n_speaker, replace=False)
         speech = noise_data[idx]
         snrs = self.rand.randint(low=13, high=20, size=n_speaker, dtype=int)
+        # start creating command, careful all space must be there
         cmd = '%s | wav-reverberate --shift-output=true --additive-signals=\'' % cmd_wav
         for spk in speech:
           cmd += 'wav-reverberate --duration=%f "sox -t wav %s -r 8k -t wav - |" - |,' % (duration, spk[0])
@@ -143,6 +161,7 @@ class SREAugmentor(pp.base.Extractor):
     # ====== error ====== #
     else:
       raise RuntimeError("No support noise dataset with name: %s" % self.ds_name)
+    # ====== get the data ====== #
     print(cmd)
     exit()
 # ===========================================================================
