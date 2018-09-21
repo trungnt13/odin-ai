@@ -54,25 +54,63 @@ def anything2wav(inpath, outpath=None,
   ----------
   inpath : string
     path to audio file
+
   outpath : {string, None}
     if None, return `BufferReader` contain the result of the conversion,
     call `read()` to get all the binary data of the .wav file.
     Otherwise, return the command for execute or the path of output file
-  channel : {None, integer}
+
+  channel : {None, 0, 1}
     specific channel for the conversion
     0 for left channel, 1 for right channel
+
   sample_rate : {None, integer}
     sample rate for down-sampling
+
   dataset : {'unknown', 'voxceleb2'}
     predefine recipe for some datasets, supported datasets include:
      - voxceleb2
      - mx6 (mixer 6)
+
   codec : {None, string}
     the desire codec for output file
+    for `sox`:
+      'signed-integer' - pcm16
+      'unsigned-integer' - pcm8
+      'floating-point' -
+      'a-law' - PCM A-law
+      'u-law' -
+      'mu-law' - PCM mu-law
+      'oki-adpcm' -
+    'ima-adpcm', 'ms-adpcm', 'gsm-full-rate'
+    for `ffmpeg`:
+      'alaw ' - PCM A-law
+      'f32be' - PCM 32-bit floating-point big-endian
+      'f32le' - PCM 32-bit floating-point little-endian
+      'f64be' - PCM 64-bit floating-point big-endian
+      'f64le' - PCM 64-bit floating-point little-endian
+      'mulaw' - PCM mu-law
+      's16be' - PCM signed 16-bit big-endian
+      's16le' - PCM signed 16-bit little-endian (pcm 16)
+      's24be' - PCM signed 24-bit big-endian
+      's24le' - PCM signed 24-bit little-endian
+      's32be' - PCM signed 32-bit big-endian
+      's32le' - PCM signed 32-bit little-endian
+      's8   ' - PCM signed 8-bit
+      'u16be' - PCM unsigned 16-bit big-endian
+      'u16le' - PCM unsigned 16-bit little-endian
+      'u24be' - PCM unsigned 24-bit big-endian
+      'u24le' - PCM unsigned 24-bit little-endian
+      'u32be' - PCM unsigned 32-bit big-endian
+      'u32le' - PCM unsigned 32-bit little-endian
+      'u8   ' - PCM unsigned 8-bit (pcm8)
+
   start : {None, float}
     start time in second for trimming
+
   end : {None, float}
-    end time in second for trimming
+    end time in second (relative to the beginning) for trimming
+
   return_data : bool (default: True)
     if False, return the output path of .wav or the shell command in case
     `outpath=None`,
@@ -87,6 +125,14 @@ def anything2wav(inpath, outpath=None,
   else: string
     shell command for execute the conversion
 
+  Note
+  ----
+  by default: we only accept channel of 0 (left) or 1 (right),
+  and this value will be automatically converted to appropriate
+  value for each toolkit:
+    - for `sox` and `sph2pipe` the channel is 1 or 2
+    - for `ffmpeg` the channel is 0 or 1
+
   """
   inpath = str(inpath)
   dataset = str(dataset).lower()
@@ -95,20 +141,34 @@ def anything2wav(inpath, outpath=None,
   if outpath is None:
     outpath = '-'
     is_given_outpath = False
-  # ====== voxceleb2 ====== #
+  # ====== unknown start and end time ====== #
+  if start == '-':
+    start = None
+  if end == '-':
+    end = None
+  # ====== init ====== #
   tool = None
   cmd = None
   options = []
-  # ====== unknown ====== #
+  # ====== mixer6 dataset ====== #
   if dataset.lower() == 'mx6':
     if '/ulaw_sphere/' in inpath:
       cmd = 'sph2pipe -f wav -p -c %d %s %s' % \
       (int(channel) + 1, inpath, '' if not is_given_outpath else outpath)
     else:
-      cmd = 'sox -t flac %s %s -t wav %s trim %s =%s' % \
+      # codec
+      if codec is not None:
+        codec = '-e signed-integer' if 'pcm16' in codec else '-e %s' % str(codec)
+      else:
+        codec = ''
+      # main command
+      cmd = 'sox -t flac %s %s -t wav %s %s trim %s =%s' % \
       (inpath,
        '' if sample_rate is None else '-r %d' % int(sample_rate),
-       outpath, start, end)
+       codec,
+       outpath,
+       start, end)
+  # ====== other using SOX ====== #
   elif ext.lower() in ('.sph', '.wav', '.flac'):
     tool = 'sox'
     # options.append('-G')
@@ -119,8 +179,13 @@ def anything2wav(inpath, outpath=None,
     options.append('-r %d' % int(sample_rate)
                    if sample_rate is not None else '')
     options.append('-t wav')
-    options.append('-e %s' % codec
-                   if codec is not None else '')
+    # codec
+    if codec is not None:
+      codec = 'signed-integer' if 'pcm16' in codec else str(codec)
+    else:
+      codec = ''
+    options.append('-e %s' % codec)
+    # output path
     options.append(str(outpath))
     # channel selection
     if channel is not None: # for sox channel is 1 or 2
@@ -130,6 +195,7 @@ def anything2wav(inpath, outpath=None,
       options.append('trim %s %s' %
                      ('%f' % start if start is not None else '',
                       '=%f' % end if end is not None else ''))
+  # ====== other using ffmpeg ====== #
   elif ext.lower() in ('.m4a', '.mp3'):
     tool = 'ffmpeg'
     # force overwrite
@@ -143,12 +209,18 @@ def anything2wav(inpath, outpath=None,
     # downsample
     options.append('-ar %d' % int(sample_rate)
                    if sample_rate is not None else '')
-    # codec
+    # output wav
     options.append('-f wav')
+    # codec
     if dataset == 'voxceleb2':
       options.append('-acodec pcm_s16le')
-    options.append('-acodec %s' % str(codec)
-                   if codec is not None else '')
+    else:
+      if codec is None:
+        codec = ''
+      else:
+        codec = 'pcm_s16le' if 'pcm16' in codec else str(codec)
+      options.append('-acodec %s' % codec)
+    # output path
     options.append(str(outpath))
     # trim audio
     if start is not None:

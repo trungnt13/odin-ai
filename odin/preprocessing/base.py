@@ -273,21 +273,27 @@ class Extractor(BaseEstimator, TransformerMixin):
     # ====== interpret different signal ====== #
     if X is None:
       return ExtractorSignal(
-      ).set_message(self, "`None` value is returned by extractor", X
+      ).set_message(extractor=self,
+                    msg="`None` value is returned by extractor",
+                    last_input=X
       ).set_action(self.robust_level)
     # ====== input layer ====== #
     if not self.is_input_layer and not isinstance(X, Mapping):
       err_msg = "the input to `Extractor.transform` must be instance of dictionary, " + \
       "but given type: %s" % str(type(X))
       return ExtractorSignal(
-      ).set_message(self, err_msg, X
+      ).set_message(extractor=self,
+                    msg=err_msg,
+                    last_input=X
       ).set_action(self.robust_level)
     # ====== the transformation ====== #
     if self.input_name is not None and isinstance(X, Mapping):
       for name in as_tuple(self.input_name, t=string_types):
         if name not in X:
           return ExtractorSignal(
-          ).set_message(self, "Cannot find features with name: %s" % name, X
+          ).set_message(extractor=self,
+                        msg="Cannot find features with name: %s" % name,
+                        last_input=X
           ).set_action('error')
     y = self._transform(X)
     # if return Signal or None, no post-processing
@@ -295,7 +301,9 @@ class Extractor(BaseEstimator, TransformerMixin):
       return y
     if y is None:
       return ExtractorSignal(
-      ).set_message(self, "`None` value is returned by the extractor", X
+      ).set_message(extractor=self,
+                    msg="`None` value is returned by the extractor: %s" % self.__class__.__name__,
+                    last_input=X
       ).set_action(self.robust_level)
     # ====== return type must always be a dictionary ====== #
     if not isinstance(y, Mapping):
@@ -311,7 +319,9 @@ class Extractor(BaseEstimator, TransformerMixin):
     for name, feat in y.items():
       if any(c.isupper() for c in name):
         return ExtractorSignal(
-        ).set_message(self, "Name for features cannot contain upper case", X
+        ).set_message(extractor=self,
+                      msg="Name for features cannot contain upper case",
+                      last_input=X
         ).set_action('error')
       if feat is None:
         continue
@@ -322,7 +332,9 @@ class Extractor(BaseEstimator, TransformerMixin):
       for name, feat in X.items():
         if any(c.isupper() for c in name):
           return ExtractorSignal(
-          ).set_message(self, "Name for features cannot contain upper case", X
+          ).set_message(extractor=self,
+                        msg="Name for features cannot contain upper case",
+                        last_input=X
           ).set_action('error')
         if name not in y:
           y[name] = _preprocess(feat)

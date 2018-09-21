@@ -21,12 +21,12 @@ from odin.stats import sampling_iter
 
 from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR, BASE_DIR,
                      ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE,
-                     ALL_DATASET)
+                     ALL_DATASET, Config)
 # ALL_FILES
 # Header:
 #  0       1      2      3       4          5         6
 # path, channel, name, spkid, dataset, start_time, end_time
-np.random.seed(52181208)
+np.random.seed(Config.SUPER_SEED)
 NCPU = min(18, mpi.cpu_count() - 2)
 # ===========================================================================
 # Extractor
@@ -145,7 +145,7 @@ if os.path.exists(output_dataset_path):
   ds = F.Dataset(output_dataset_path, read_only=True)
   print(ds)
   for name, (start, end) in sampling_iter(it=ds['indices'].items(),
-                                          k=30, seed=52181208):
+                                          k=30, seed=Config.SUPER_SEED):
     dsname = ds['ds'][name]
     if 'voxceleb2' == dsname and np.random.rand() < 0.95:
       continue

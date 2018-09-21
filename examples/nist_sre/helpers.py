@@ -28,11 +28,13 @@ if which('ffmpeg') is None:
 # ===========================================================================
 _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
+    ('-aug', 'Name of the augmentation dataset: musan, rirs', None, 'None'),
     ('-downsample', 'downsampling all the dataset for testing', None, 0),
     ('--debug', 'enable debugging', None, False),
 ])
 FEATURE_RECIPE = str(_args.recipe)
 IS_DEBUGGING = bool(_args.debug)
+AUGMENTATION_NAME = _args.aug
 # ===========================================================================
 # Configuration
 # ===========================================================================
@@ -49,6 +51,7 @@ class Config(object):
   FMAX = 4000
   dtype = 'float16'
   # ====== File list ====== #
+  SUPER_SEED = 52181208
   # <= 0 mean no downsample, > 0 mean number of sample
 # ===========================================================================
 # Load the file list
@@ -108,12 +111,67 @@ if not os.path.exists(PATH_AUGMENTATION):
 # ===========================================================================
 # Validating the datasets
 # ===========================================================================
+# ====== validating noise data for augmentation ====== #
+@cache_disk
+def validating_noise_data(in_path_raw):
+  # preparing
+  noise_dataset = ['musan', 'rirs']
+  all_files = defaultdict(list)
+  n_files = sum(len(sre_file_list[i])
+                for i in noise_dataset
+                if i in sre_file_list)
+  n_non_exist = 0
+  n_exist = 0
+  prog = Progbar(target=n_files, print_summary=True,
+                 name="Validating noise dataset")
+  prog.set_summarizer(key='#Non-exist', fn=lambda x: x[-1])
+  prog.set_summarizer(key='#Exist', fn=lambda x: x[-1])
+  # check all dataset
+  for ds_name in noise_dataset:
+    if ds_name not in sre_file_list:
+      continue
+    if ds_name not in in_path_raw:
+      continue
+    base_path = in_path_raw[ds_name]
+    base_ds = all_files[ds_name]
+    # start validating
+    for row in sre_file_list[ds_name]:
+      # check file
+      path, channel, name, noise_type, duration = row[:5]
+      path = os.path.join(base_path, path)
+      if os.path.exists(path):
+        base_ds.append([path, channel, name, noise_type, duration])
+        n_exist += 1
+      else:
+        n_non_exist += 1
+      # update progress
+      prog['ds'] = ds_name
+      prog['#Exist'] = n_exist
+      prog['#Non-exist'] = n_non_exist
+      prog.add(1)
+  # ====== return ====== #
+  # Header:
+  #  0       1      2         3         4
+  # path, channel, name, noise_type, duration
+  return {key: np.array(sorted(val, key=lambda x: x[0]))
+          for key, val in all_files.items()}
+
+ALL_NOISE = validating_noise_data(
+    in_path_raw=PATH_RAW_DATA)
+print("Processed noise data:")
+for ds_name, noise_list in ALL_NOISE.items():
+  print(" ", ctext(ds_name, 'yellow'), ':', noise_list.shape)
+  for name, count in sorted(freqcount(noise_list[:, 3]).items(),
+                            key=lambda x: x[0]):
+    print('  ', ctext('%-10s' % name, 'yellow'), ':',
+          '%s(files)' % ctext('%-6d' % count, 'cyan'))
+# ====== validating the file list of training data ====== #
 @cache_disk
 def validating_all_data(in_path_raw, downsample):
   file_list = dict(sre_file_list)
   # ====== downsample for debugging ====== #
   if downsample > 0:
-    np.random.seed(52181208)
+    np.random.seed(Config.SUPER_SEED)
     for k, v in list(file_list.items()):
       if not isinstance(v, np.ndarray):
         continue
