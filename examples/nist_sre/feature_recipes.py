@@ -1,5 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
+import subprocess
+from io import BytesIO
 from six import string_types
 from collections import defaultdict
 
@@ -58,24 +60,30 @@ class SREAudioReader(pp.base.Extractor):
     y = y - np.mean(y, 0)
     duration = max(y.shape) / sr
     return {'raw': y, 'sr': sr, 'duration': duration, # in second
-            'path': path, 'spkid': spkid, 'name': name,
+            'path': path,
+            'spkid': spkid,
+            'name': name,
             'dsname': dataset}
 
 class SREAugmentor(pp.base.Extractor):
-  """ SREAugmentor """
+  """ SREAugmentor
+  New name for each utterance is:
+    [utt_name]/[noise1_name]/[noise2_name]...
+  """
 
-  def __init__(self, ds_name):
+  def __init__(self, noise_ds):
     super(SREAugmentor, self).__init__(is_input_layer=True)
-    self.ds_name = str(ds_name)
-    assert self.ds_name in ALL_NOISE, \
+    self.noise_ds = str(noise_ds)
+    assert self.noise_ds in ALL_NOISE, \
     "Cannot find noise dataset with name: %s; given following option: %s" % \
-    (self.ds_name, ', '.join(list(ALL_NOISE.keys())))
-    self.file_list = ALL_NOISE[self.ds_name]
+    (self.noise_ds, ', '.join(list(ALL_NOISE.keys())))
+    # ====== mapping noise_type -> list of row ====== #
     self.noise_type = defaultdict(list)
-    for path, channel, name, ntype, duration in self.file_list:
+    for path, channel, name, ntype, duration in ALL_NOISE[self.noise_ds]:
       self.noise_type[ntype].append((path, name, duration))
     self.noise_type = {k: np.array(v)
                        for k, v in self.noise_type.items()}
+    # ====== fixed RandomState ====== #
     self.rand = np.random.RandomState(seed=Config.SUPER_SEED)
 
   def _transform(self, row):
@@ -86,7 +94,6 @@ class SREAugmentor(pp.base.Extractor):
     # musan: music, speech, noise
     noise_type = self.rand.choice(a=sorted((self.noise_type.keys())),
                                   size=1, replace=False)[0]
-    noise_type = 'noise'
     noise_data = self.noise_type[noise_type]
     # ====== wav command ====== #
     cmd_wav = pp.signal.anything2wav(inpath=path, outpath=None,
@@ -97,14 +104,16 @@ class SREAugmentor(pp.base.Extractor):
                                      codec='pcm16',
                                      return_data=False)
     # ====== reverberation ====== #
-    if self.ds_name == 'rirs':
+    if self.noise_ds == 'rirs':
       idx = self.rand.randint(low=0, high=len(noise_data), size=1, dtype=int)[0]
       noise_path, noise_name, noise_dur = noise_data[idx]
       cmd = '%s | ' + \
       'wav-reverberate --shift-output=true --impulse-response="sox %s -r 8000 -t wav - |"  - -'
       cmd = cmd % (cmd_wav, noise_path)
+      # update the name
+      name += '/%s' % noise_name
     # ====== MUSAN ====== #
-    elif self.ds_name == 'musan':
+    elif self.noise_ds == 'musan':
       ### noise (in kaldi: noise snrs is choose from one of
       # following value 15:10:5:0)
       if noise_type == 'noise':
@@ -124,6 +133,8 @@ class SREAugmentor(pp.base.Extractor):
           noise_start.append(curr_dur)
           noise_snrs.append(self.rand.randint(low=0, high=15, size=1, dtype=int)[0])
           curr_dur += float(noise_dur) + noise_interval
+          # update the name
+          name += '/%s' % noise_name
         # start creating command, careful all space must be there
         cmd = '%s | wav-reverberate --shift-output=true --additive-signals=\'' % cmd_wav
         for path in noise:
@@ -141,6 +152,8 @@ class SREAugmentor(pp.base.Extractor):
         '\'wav-reverberate --duration=%f "sox -t wav %s -r 8k -t wav - |" - |\' ' + \
         '--start-times=\'0\' --snrs=\'%d\' - -'
         cmd = cmd % (cmd_wav, duration, noise_path, snrs)
+        # update the name
+        name += '/%s' % noise_name
       ### combined multiple speech from different speakers
       #(in kaldi: snrs is one of 20:17:15:13)
       elif noise_type == 'speech':
@@ -151,25 +164,54 @@ class SREAugmentor(pp.base.Extractor):
         snrs = self.rand.randint(low=13, high=20, size=n_speaker, dtype=int)
         # start creating command, careful all space must be there
         cmd = '%s | wav-reverberate --shift-output=true --additive-signals=\'' % cmd_wav
-        for spk in speech:
-          cmd += 'wav-reverberate --duration=%f "sox -t wav %s -r 8k -t wav - |" - |,' % (duration, spk[0])
+        for spk_path, spk_name, spk_dur in speech:
+          cmd += 'wav-reverberate --duration=%f "sox -t wav %s -r 8k -t wav - |" - |,' % \
+          (duration, spk_path)
+          # update the name
+          name += '/%s' % spk_name
         cmd = cmd[:-1] # remove the `,` in the end
         cmd += '\' --start-times=\'%s\' ' % ','.join(['0'] * n_speaker)
         cmd += '--snrs=\'%s\' - -' % ','.join(['%d' % i for i in snrs])
+      ### Error
       else:
         raise RuntimeError("Unknown MUSAN noise type: %s" % noise_type)
     # ====== error ====== #
     else:
-      raise RuntimeError("No support noise dataset with name: %s" % self.ds_name)
+      raise RuntimeError("No support noise dataset with name: %s" % self.noise_ds)
     # ====== get the data ====== #
-    print(cmd)
-    exit()
+    try:
+      with subprocess.Popen(args=cmd, shell=True,
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE) as p:
+        data = BytesIO(p.stdout.read())
+        y, sr = sf.read(data)
+    except Exception as e:
+      signal = pp.base.ExtractorSignal()
+      signal.set_message(extractor=self,
+                         msg=str(e),
+                         last_input=row)
+      signal.set_action(self.action)
+      return signal
+    # ====== error happen ignore file ====== #
+    if len(y) == 0:
+      return None
+    # ====== remove DC offset ====== #
+    y = y - np.mean(y, 0)
+    duration = max(y.shape) / sr
+    return {'raw': y, 'sr': sr, 'duration': duration, # in second
+            'path': path, 'spkid': spkid, 'name': name,
+            'dsname': dataset,
+            'dsnoise': self.noise_ds,
+            'noisetype': noise_type,
+            'cmd': cmd}
 # ===========================================================================
 # Extractor
+# NOTE: you must save the SAD label for augmentation data later
 # ===========================================================================
 def mspec(augmentation=None):
   extractors = pp.make_pipeline(steps=[
-      SREAugmentor(augmentation) if isinstance(augmentation, string_types) else SREAudioReader(),
+      SREAugmentor(augmentation) if isinstance(augmentation, string_types) else
+      SREAudioReader(),
       pp.speech.PreEmphasis(coeff=0.97, input_name='raw'),
       # ====== STFT ====== #
       pp.speech.STFTExtractor(frame_length=Config.FRAME_LENGTH,
@@ -184,13 +226,14 @@ def mspec(augmentation=None):
       pp.speech.MelsSpecExtractor(n_mels=Config.NMELS,
                                   fmin=Config.FMIN, fmax=Config.FMAX,
                                   input_name=('spec', 'sr'), output_name='mspec'),
-      pp.speech.ApplyingSAD(input_name='mspec', sad_name='sad'),
+      pp.speech.ApplyingSAD(input_name='mspec', sad_name='sad',
+                            keep_unvoiced=False),
       # ====== normalization ====== #
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                              win_length=301, input_name='mspec'),
       # ====== post processing ====== #
       pp.base.DeleteFeatures(input_name=['stft', 'spec', 'raw',
-                                         'sad', 'energy', 'sad_threshold']),
+                                         'energy', 'sad_threshold']),
       pp.base.AsType(dtype='float16'),
   ])
   return extractors
@@ -229,7 +272,7 @@ def bnf(augmentation=None):
                              win_length=301),
       # ====== cleaning ====== #
       pp.base.DeleteFeatures(input_name=('stft', 'raw', 'energy',
-                                         'sad', 'sad_threshold',
+                                         'sad_threshold',
                                          'spec', 'mspec', 'mfcc')),
       pp.base.AsType(dtype='float16')
   ])

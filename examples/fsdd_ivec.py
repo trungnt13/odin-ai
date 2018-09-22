@@ -47,6 +47,7 @@ args = ArgController(
 ).add('--tmat', "Force re-run training Tmatrix", False
 ).add('--ivec', "Force re-run extraction of i-vector", False
 ).add('--all', "Run all the system again, just a shortcut", False
+).add('--acous', "Force re-run acoustic feature extraction", False
 ).parse()
 args.gmm |= args.all
 args.stat |= args.all | args.gmm
@@ -74,7 +75,8 @@ TV_DTYPE = 'float64'
 # path to preprocessed dataset
 all_files, meta = F.FSDD.load()
 if not os.path.exists(PATH_ACOUSTIC_FEATURES) or \
-len(os.listdir(PATH_ACOUSTIC_FEATURES)) != 14:
+len(os.listdir(PATH_ACOUSTIC_FEATURES)) != 14 or \
+bool(args.acous):
   extractors = pp.make_pipeline(steps=[
       pp.speech.AudioReader(sr_new=8000, best_resample=True, remove_dc=True),
       pp.speech.PreEmphasis(coeff=0.97),

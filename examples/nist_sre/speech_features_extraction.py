@@ -21,13 +21,12 @@ from odin.stats import sampling_iter
 
 from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR, BASE_DIR,
                      ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE,
-                     ALL_DATASET, Config)
+                     ALL_DATASET, Config, NCPU, validate_feature_dataset)
 # ALL_FILES
 # Header:
 #  0       1      2      3       4          5         6
 # path, channel, name, spkid, dataset, start_time, end_time
 np.random.seed(Config.SUPER_SEED)
-NCPU = min(18, mpi.cpu_count() - 2)
 # ===========================================================================
 # Extractor
 # ===========================================================================
@@ -55,19 +54,13 @@ if IS_DEBUGGING:
       samples += v[:12]
 
     # ====== run the MPI for feature extraction ====== #
-    def _benchmark_func(job):
-      s = time.time()
-      res = recipe.transform(job)
-      return res, time.time() - s
     prog = Progbar(target=len(samples),
                    print_report=True, print_summary=False,
                    name=FEATURE_RECIPE)
-    start_time = time.time()
-    all_duration = []
-    all_benchmark = defaultdict(list)
-    for feat, benchmark in mpi.MPI(jobs=samples,
-                        func=_benchmark_func,
+    for feat in mpi.MPI(jobs=samples,
+                        func=recipe.transform,
                         ncpu=NCPU, batch=1):
+      assert 'sad' in feat, "SAD must be saved for later data augmentation"
       # update progress
       prog['path'] = feat['path'].replace(BASE_DIR, '')
       prog['spkid'] = feat['spkid']
@@ -75,11 +68,9 @@ if IS_DEBUGGING:
       prog['dsname'] = feat['dsname']
       prog['duration'] = feat['duration']
       prog.add(1)
-      # update benchmark
-      all_benchmark[feat['dsname']].append(benchmark)
-      all_duration.append(feat['duration'])
       # 30% chance plotting
       if np.random.rand() < 0.3:
+        feat[FEATURE_RECIPE] = feat[FEATURE_RECIPE][:1200]
         V.plot_multiple_features(feat,
                                  title=feat['path'])
     V.plot_save(os.path.join(EXP_DIR, 'debug_%s.pdf' % FEATURE_RECIPE))
@@ -89,26 +80,6 @@ if IS_DEBUGGING:
     with open(os.path.join(EXP_DIR, 'debug_%s.log' % FEATURE_RECIPE), 'w') as f:
       for name, step in recipe.steps:
         f.write(step.last_debugging_text)
-    # ====== summary ====== #
-    print("Avg.Duration:", ctext(np.mean(all_duration), 'cyan'))
-    end_time = time.time()
-    print("Elapse:", ctext(end_time - start_time, 'cyan'))
-    print("Avg.Speed:", ctext(len(samples) / (end_time - start_time), 'cyan'))
-    # ====== estimate processing time ====== #
-    est_time = 0
-    for name in sorted(ALL_DATASET):
-      t = all_benchmark[name]
-      c = clusters_count[name]
-      e = c * np.mean(t)
-      print('%-12s' % name,
-            ctext('Avg.Time: %.2f(s)' % np.mean(t), 'yellow'),
-            ctext('Est.Time: %.2f(hour)' % (e / 3600), 'yellow'))
-      est_time += e
-    # this time is not precise, just for fun
-    print("Total time:",
-          'Est.: %s(hour)' % ctext('%.2f' % ((end_time - start_time) / len(samples) * len(ALL_FILES) / 3600), 'cyan'),
-          '%d-cores: %s(hour)' % (NCPU, ctext('%.2f' % (est_time / 3600 / NCPU), 'cyan')),
-    )
   exit()
 # ===========================================================================
 # Running the extractor
@@ -123,11 +94,9 @@ ds_validation_path = os.path.join(EXP_DIR, 'validate_%s.pdf' % FEATURE_RECIPE)
 # ====== running the processing ====== #
 with np.warnings.catch_warnings():
   np.warnings.filterwarnings('ignore')
-  # ====== shuffling all files so the jobs is more evenly distributed ====== #
-  perm = np.random.permutation(len(ALL_FILES))
-  jobs = ALL_FILES[perm]
   # ====== start processing ====== #
-  processor = pp.FeatureProcessor(jobs=jobs,
+  processor = pp.FeatureProcessor(
+      jobs=ALL_FILES,
       path=output_dataset_path,
       extractor=recipe,
       n_cache=250,
@@ -135,24 +104,11 @@ with np.warnings.catch_warnings():
       override=True,
       identifier='name',
       log_path=processor_log_path,
+      primary_indices=FEATURE_RECIPE,
       stop_on_failure=False)
-  with UnitTimer():
-    processor.run()
+  processor.run()
 # ===========================================================================
 # Make some visualization
 # ===========================================================================
-if os.path.exists(output_dataset_path):
-  ds = F.Dataset(output_dataset_path, read_only=True)
-  print(ds)
-  for name, (start, end) in sampling_iter(it=ds['indices'].items(),
-                                          k=30, seed=Config.SUPER_SEED):
-    dsname = ds['ds'][name]
-    if 'voxceleb2' == dsname and np.random.rand() < 0.95:
-      continue
-    spkid = ds['spkid'][name]
-    dur = ds['duration'][name]
-    X = ds['mspec'][start:end][:1200].astype('float32')
-    V.plot_figure(nrow=4, ncol=12)
-    V.plot_spectrogram(X.T, title='%s  %s  %s  %f' % (name, spkid, dsname, dur))
-  V.plot_save(ds_validation_path)
-  ds.close()
+validate_feature_dataset(path=output_dataset_path,
+                         outpath=ds_validation_path)

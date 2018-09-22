@@ -8,10 +8,11 @@ from collections import defaultdict, OrderedDict
 import numpy as np
 from scipy.io import wavfile
 
+from odin import visual as V
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
                         mpi, args_parse, select_path)
-from odin.stats import freqcount
+from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
 # ===========================================================================
@@ -30,11 +31,13 @@ _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
     ('-aug', 'Name of the augmentation dataset: musan, rirs', None, 'None'),
     ('-downsample', 'downsampling all the dataset for testing', None, 0),
+    ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
     ('--debug', 'enable debugging', None, False),
 ])
 FEATURE_RECIPE = str(_args.recipe)
 IS_DEBUGGING = bool(_args.debug)
 AUGMENTATION_NAME = _args.aug
+NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ===========================================================================
 # Configuration
 # ===========================================================================
@@ -104,10 +107,6 @@ PATH_RAW_DATA = {
 PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'
 if not os.path.exists(PATH_ACOUSTIC_FEATURES):
   os.mkdir(PATH_ACOUSTIC_FEATURES)
-# For augmentation data
-PATH_AUGMENTATION = '/media/data1/SRE_AUG'
-if not os.path.exists(PATH_AUGMENTATION):
-  os.mkdir(PATH_AUGMENTATION)
 # ===========================================================================
 # Validating the datasets
 # ===========================================================================
@@ -269,3 +268,39 @@ for name, count in sorted(freqcount(ALL_FILES[:, 4]).items(),
 # ===========================================================================
 # DATA HELPER
 # ===========================================================================
+def validate_feature_dataset(path, outpath):
+  if os.path.exists(path):
+    ds = F.Dataset(path, read_only=True)
+    print(ds)
+
+    for name, (start, end) in ds['indices'].items():
+      if end - start == 0:
+        print('Zero-length:', ctext(name, 'yellow'))
+
+      if 'mspec' in ds:
+        feat_name = 'mspec'
+      elif 'spec' in ds:
+        feat_name = 'spec'
+      elif 'mfcc' in ds:
+        feat_name = 'mfcc'
+      elif 'bnf' in ds:
+        feat_name = 'bnf'
+      else:
+        raise RuntimeError()
+
+    for name, (start, end) in sampling_iter(it=ds['indices'].items(),
+                                            k=80, seed=Config.SUPER_SEED):
+      dsname = ds['dsname'][name]
+      if 'voxceleb2' == dsname and np.random.rand() < 0.95:
+        continue
+      if np.random.rand() < 0.8:
+        continue
+      spkid = ds['spkid'][name]
+      dur = ds['duration'][name]
+      # ====== search for the right features ====== #
+      X = ds[feat_name][start:end][:1200].astype('float32')
+      V.plot_figure(nrow=4, ncol=12)
+      V.plot_spectrogram(X.T)
+      V.plot_title(title='%s  %s  %s  %f' % (name.split('/')[0], spkid, dsname, dur))
+    V.plot_save(outpath, tight_plot=True)
+    ds.close()

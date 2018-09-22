@@ -1244,15 +1244,16 @@ class ApplyingSAD(Extractor):
     sad = X[self.sad_name]
     if is_number(self.threshold):
       sad = (sad >= self.threshold).astype('int32')
-    if is_number(self.smooth_win) and self.smooth_win > 0:
-      sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
-    sad = sad.astype('bool')
     # ====== keep unvoiced or not ====== #
-    if np.sum(sad) == 0:
+    if np.isclose(np.sum(sad), 0.):
       if not self.keep_unvoiced:
         return None
       else: # take all frames
-        sad[:] = True
+        sad[:] = 1
+    # ====== preprocessing sad ====== #
+    if is_number(self.smooth_win) and self.smooth_win > 0:
+      sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
+    sad = sad.astype('bool')
     # ====== start ====== #
     X_new = []
     for name in self.input_name:
