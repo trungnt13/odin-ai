@@ -816,7 +816,6 @@ def get_window(window, frame_length, periodic=True):
   else:
     raise ValueError('Invalid window specification: %s' % str(window))
 
-
 # ===========================================================================
 # Array utils
 # ===========================================================================
@@ -862,7 +861,6 @@ def mvn(x, varnorm=True, indices=None):
     return _fnorm2(x, x_stat, True)
   else:
     return _fnorm1(x, x_stat, True)
-
 
 def wmvn(x, w=301, varnorm=True, indices=None):
   """ Windowed - Mean and Variance Normalization
@@ -911,7 +909,6 @@ def wmvn(x, w=301, varnorm=True, indices=None):
   x_stat = x[nobs - w:] if indices is None else x[nobs - w:][indices[nobs - w:]]
   y[nobs - hlen:nobs] = fnorm(x[nobs - hlen:nobs], x_stat, True)
   return y
-
 
 def rastafilt(x):
   """ Based on rastafile.m by Dan Ellis
@@ -989,7 +986,6 @@ def smooth(x, win=11, window='hanning'):
   y = np.convolve(w / w.sum(), s, mode='same')
   return y[win:-win + 1]
 
-
 def delta(data, width=9, order=1, axis=0):
   r'''Compute delta features: local estimate of the derivative
   of the input data along the selected axis.
@@ -1056,7 +1052,6 @@ def delta(data, width=9, order=1, axis=0):
     trim_deltas.append(delta_x.astype('float32'))
   return trim_deltas[0] if order == 1 else trim_deltas
 
-
 def shifted_deltas(x, N=7, d=1, P=3, k=7):
   """ Calculate Shifted Delta Coefficients
   (suggested applying on time-dimension) for MFCCs
@@ -1080,7 +1075,6 @@ def shifted_deltas(x, N=7, d=1, P=3, k=7):
       break
     sdc[ix * N:(ix + 1) * N, :nobs - ix * P] = dx[:, ix * P:nobs]
   return sdc.T
-
 
 @cache_memory('__strict__')
 def pad_center(data, size, axis=-1, **kwargs):
@@ -1408,7 +1402,6 @@ def segment_axis(a, frame_length=2048, step_length=512, axis=0,
     return np.ndarray.__new__(np.ndarray, strides=newstrides,
                               shape=newshape, buffer=a, dtype=a.dtype)
 
-
 # ===========================================================================
 # Fourier transform
 # ===========================================================================
@@ -1432,9 +1425,10 @@ def get_energy(frames, log=True):
     log_energy = np.log(log_energy)
   return np.expand_dims(log_energy.astype('float32'), -1)
 
-
-def stft(y, frame_length, step_length=None, n_fft=None,
-         window='hann', padding=False, energy=False):
+def stft(y,
+         frame_length=None, step_length=None, n_fft=None,
+         window='hann', scale=None,
+         padding=False, energy=False):
   """Short-time Fourier transform (STFT)
 
   Returns a complex-valued matrix D such that
@@ -1446,25 +1440,36 @@ def stft(y, frame_length, step_length=None, n_fft=None,
 
   Parameters
   ----------
-  y : np.ndarray [shape=(n,)], real-valued
-      the input signal (audio time series)
+  y : numpy.ndarray [shape=(n_samples,)] or [shape=(n_frames, frame_length)]
+      the input signal (audio time series) or framed signal in case
+      of 2-D matrix with `shape[1] > 2`
+
   frame_length: int
       number of samples point for 1 frame
+
   step_length: int
       number of samples point for 1 step (when shifting the frames)
       If unspecified, defaults `frame_length / 4`.
+
   n_fft: int > 0 [scalar]
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
+
   window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
       - a window specification (string, tuple, or number);
         see `scipy.signal.get_window`
       - a window function, such as `scipy.signal.hanning`
       - a vector or array of length `n_fft`
+
+  scale : {None, float}
+      re-scale the STFT matrix after windowing, it is important factor
+      for reconstruct original signal using iSTFT
+
   padding: boolean
       - If `True`, the signal `y` is padded so that frame
         `D[:, t]` is centered at `y[t * step_length]`.
       - If `False`, then `D[:, t]` begins at `y[t * step_length]`
+
   energy: bool
       if True, return log-frame-wise energy
 
@@ -1480,41 +1485,63 @@ def stft(y, frame_length, step_length=None, n_fft=None,
   This implementation have been tested to achieve slightly better speed
   than scipy implementation
   """
-  frame_length = int(frame_length)
+  # ====== check input signal ====== #
+  if y.ndim == 2 and y.shape[1] > 2:
+    y, frames = None, y
+  else:
+    y, frames = y, None
+  # ====== check others ====== #
+  # check frame_length
+  if frame_length is None:
+    if frames is not None:
+      frame_length = frames.shape[1]
+    else:
+      raise ValueError("When `frame_length` is None, `frames` must be provided")
+  else:
+    frame_length = int(frame_length)
+  # check step_length
   if step_length is None:
     step_length = frame_length // 4
   else:
     step_length = int(step_length)
+  # check n_fft
   if n_fft is None:
     n_fft = int(2**np.ceil(np.log(frame_length) / np.log(2.0)))
   elif n_fft < frame_length:
     raise ValueError('n_fft must be greater than or equal to `frame_length`.')
-  # ====== check if padding zeros ====== #
-  if padding:
-    y = np.pad(y, int(frame_length // 2), mode='constant')
-  # ====== framing the signal ====== #
-  shape = y.shape[:-1] + (y.shape[-1] - frame_length + 1, frame_length)
-  strides = y.strides + (y.strides[-1],)
-  y_frames = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
-  if y_frames.ndim > 2:
-    y_frames = np.rollaxis(y_frames, 1)
-  y_frames = y_frames[::step_length] # [n, frame_length]
+  # ====== doing framing on raw signal ====== #
+  if frames is None:
+    # check if padding zeros
+    if padding:
+      y = np.pad(y, int(frame_length // 2), mode='constant')
+    # framing the signal
+    shape = y.shape[:-1] + (y.shape[-1] - frame_length + 1, frame_length)
+    strides = y.strides + (y.strides[-1],)
+    y_frames = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
+    if y_frames.ndim > 2:
+      y_frames = np.rollaxis(y_frames, 1)
+    # [n_frames, frame_length]
+    y_frames = y_frames[::step_length]
+  else:
+    y_frames = frames
   # ====== prepare the window function ====== #
   if window is not None:
     fft_window = get_window(window, frame_length, periodic=True
         ).reshape(1, -1)
-    # scaling the windows
-    scale = np.sqrt(1.0 / fft_window.sum()**2)
     y_frames = fft_window * y_frames
+    # scaling factor
+    scale = np.sqrt(1.0 / fft_window.sum()**2) if scale is None else float(scale)
   else:
-    scale = np.sqrt(1.0 / frame_length**2)
+    scale = np.sqrt(1.0 / frame_length**2) if scale is None else float(scale)
   # ====== calculate frames energy ====== #
   if energy:
     log_energy = get_energy(y_frames, log=True).astype('float32')
   # ====== STFT matrix ====== #
   # norm='ortho' ?
   S = np.fft.rfft(a=y_frames, n=n_fft, axis=-1)
-  S *= scale # this scale is important for iSTFT recostruct original signal
+  # this scale is important for iSTFT reconstruct original signal
+  if scale is not None:
+    S *= scale
   # return in form (t, d)
   if energy:
     return S, log_energy

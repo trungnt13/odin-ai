@@ -60,7 +60,6 @@ if IS_DEBUGGING:
     for feat in mpi.MPI(jobs=samples,
                         func=recipe.transform,
                         ncpu=NCPU, batch=1):
-      assert 'sad' in feat, "SAD must be saved for later data augmentation"
       # update progress
       prog['path'] = feat['path'].replace(BASE_DIR, '')
       prog['spkid'] = feat['spkid']

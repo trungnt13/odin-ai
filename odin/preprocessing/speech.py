@@ -44,6 +44,7 @@ import base64
 import shutil
 import inspect
 import warnings
+from numbers import Number
 from six import string_types
 from collections import OrderedDict, Mapping, defaultdict
 
@@ -58,7 +59,8 @@ from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         is_fileobj, batching)
 from odin.utils.decorators import functionable
 from .base import Extractor, ExtractorSignal
-from .signal import (smooth, pre_emphasis, spectra, vad_energy,
+from .signal import (smooth, pre_emphasis, get_window, get_energy,
+                     spectra, vad_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
                      shifted_deltas, stack_frames, stft,
                      power_spectrogram, mels_spectrogram, ceps_spectrogram,
@@ -486,6 +488,60 @@ class PreEmphasis(Extractor):
     return {self.output_name: pre_emphasis(raw, coeff=self.coeff)}
 
 # ===========================================================================
+# Low-level operator
+# ===========================================================================
+class Framing(Extractor):
+  """ Framing
+
+  Parameters
+  ----------
+
+  """
+
+  def __init__(self, frame_length, step_length=None,
+               window='hamm', padding=False, energy=True,
+               input_name=('raw', 'sr'), output_name='frames'):
+    assert isinstance(output_name, string_types), "`output_name` must be string"
+    super(Framing, self).__init__(input_name=input_name, output_name=output_name)
+    if step_length is None:
+      step_length = frame_length // 4
+    self.frame_length = frame_length
+    self.step_length = step_length
+    self.window = window
+    self.padding = bool(padding)
+    self.energy = bool(energy)
+
+  def _transform(self, y_sr):
+    y, sr = [y_sr[name] for name in self.input_name]
+    frame_length, step_length = _extract_frame_step_length(
+        sr, self.frame_length, self.step_length)
+    # ====== check if padding zeros ====== #
+    if self.padding:
+      y = np.pad(y, int(frame_length // 2), mode='constant')
+    # ====== framing the signal ====== #
+    shape = y.shape[:-1] + (y.shape[-1] - frame_length + 1, frame_length)
+    strides = y.strides + (y.strides[-1],)
+    y_frames = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
+    if y_frames.ndim > 2:
+      y_frames = np.rollaxis(y_frames, 1)
+    y_frames = y_frames[::step_length] # [n, frame_length]
+    # ====== prepare the window function ====== #
+    if self.window is not None:
+      fft_window = get_window(
+          self.window, frame_length, periodic=True).reshape(1, -1)
+      # scaling the windows
+      scale = np.sqrt(1.0 / fft_window.sum()**2)
+      y_frames = fft_window * y_frames
+    else:
+      scale = np.sqrt(1.0 / frame_length**2)
+    # ====== calculate frames energy ====== #
+    ret = {self.output_name: y_frames, 'scale': scale}
+    if self.energy:
+      log_energy = get_energy(y_frames, log=True).astype('float32')
+      ret['%s_energy' % self.output_name] = log_energy
+    return ret
+
+# ===========================================================================
 # Spectrogram
 # ===========================================================================
 class STFTExtractor(Extractor):
@@ -503,32 +559,64 @@ class STFTExtractor(Extractor):
       FFT window size
       If not provided, uses the smallest power of 2 enclosing `frame_length`.
 
+  scale : {None, string, float}
+      value for scaling the matrix after STFT, important for
+      iSTFT afterward
+      if None, no extra scale is performed
+      if string, looking for feature with given name in the pipeline
+      if float, directly using given value for scaling
+
   Output
   ------
   'stft' : complex64 array [time, frequency]
   'stft_energy' : float32 array [time, 1]
   """
 
-  def __init__(self, frame_length, step_length=None, n_fft=512,
-               window='hamm', padding=False,
-               input_name=('raw', 'sr'), output_name='stft'):
-    super(STFTExtractor, self).__init__(input_name=input_name, output_name=output_name)
+  def __init__(self, frame_length=None, step_length=None, n_fft=512,
+               window='hamm', padding=False, energy=True,
+               scale=None, input_name=('raw', 'sr'), output_name='stft'):
+    if isinstance(input_name, string_types):
+      input_name = (input_name, 'sr')
+    assert isinstance(output_name, string_types), "`output_name` must be string"
+    super(STFTExtractor, self).__init__(input_name=input_name,
+                                        output_name=output_name)
     self.frame_length = frame_length
     self.step_length = step_length
     self.n_fft = n_fft
     self.window = window
     self.padding = bool(padding)
+    self.energy = bool(energy)
+    assert isinstance(scale, (string_types, Number, type(None)))
+    self.scale = scale
 
   def _transform(self, y_sr):
     y, sr = [y_sr[name] for name in self.input_name]
-    frame_length, step_length = _extract_frame_step_length(
-        sr, self.frame_length, self.step_length)
-    results = stft(y=y, frame_length=frame_length, step_length=step_length,
-                   n_fft=self.n_fft, window=self.window, padding=self.padding,
-                   energy=True)
-    s, e = results
-    return {self.output_name: s,
-            '%s_energy' % self.output_name: e}
+    scale = self.scale
+    if isinstance(scale, string_types):
+      scale = y_sr[scale]
+    # ====== check frame_length ====== #
+    if self.frame_length is None:
+      if y.ndim == 2 and y.shape[1] > 2:
+        frame_length = y.shape[1]
+        step_length = None
+      else:
+        raise ValueError("`frame_length` is not provided, the input to "
+                         "the extractor must be framed signal from "
+                         "`odin.preprocessing.speech.Framing`")
+    else:
+      frame_length, step_length = _extract_frame_step_length(
+          sr, self.frame_length, self.step_length)
+    # ====== stft ====== #
+    results = stft(y=y,
+                   frame_length=frame_length, step_length=step_length,
+                   n_fft=self.n_fft, window=self.window, scale=scale,
+                   padding=self.padding, energy=self.energy)
+    if self.energy:
+      s, e = results
+      return {self.output_name: s,
+              '%s_energy' % self.output_name: e}
+    else:
+      return {self.output_name: results}
 
 class PowerSpecExtractor(Extractor):
   """ Extract power spectrogram from complex STFT array
@@ -557,6 +645,7 @@ class MelsSpecExtractor(Extractor):
   Output
   ------
   'mspec' : [time, n_mels]
+
   """
 
   def __init__(self, n_mels, fmin=64, fmax=None, top_db=80.0,
