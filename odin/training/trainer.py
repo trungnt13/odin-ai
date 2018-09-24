@@ -754,7 +754,7 @@ class MainLoop(object):
       if self._verbose >= 1:
         add_notification("[%s] Creating %scheckpoint at: %s" %
           (ctext('MainLoop', 'red'),
-           '[best]' if is_best else '',
+           ctext('[best]', 'yellow') if is_best else '',
            final_save_path))
     # ====== otherwise, store variables directly in RAM ====== #
     elif len(self._save_variables) > 0:

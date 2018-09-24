@@ -70,7 +70,7 @@ class FeederRecipe(object):
     name: string
         the name of file in indices
     X: list of data
-        list of all features given in DataDescriptor(s)
+        list of all features given in IndexedData(s)
     """
     raise NotImplementedError
 

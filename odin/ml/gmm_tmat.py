@@ -18,7 +18,7 @@ from scipy import linalg
 import tensorflow as tf
 
 from odin import backend as K
-from odin.fuel import Data, DataDescriptor, Feeder, MmapData
+from odin.fuel import Data, Feeder, MmapData
 from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid,
                         wprint, eprint, segment_list, defaultdictkey,

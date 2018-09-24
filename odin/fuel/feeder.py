@@ -119,7 +119,7 @@ def _weird_grouping(batch):
   pass
 
 # ===========================================================================
-# DataDescriptor
+# IndexedData
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 _indices_dtype = [('name', 'object'), ('start', 'i4'), ('end', 'i4')]
@@ -156,7 +156,7 @@ def _preprocessing_indices(indices):
   return indices, indices_info
 
 
-class DataDescriptor(Data):
+class IndexedData(Data):
   """
   Parameters
   ----------
@@ -171,7 +171,7 @@ class DataDescriptor(Data):
   """
 
   def __init__(self, data, indices):
-    super(DataDescriptor, self).__init__(data=data, read_only=True)
+    super(IndexedData, self).__init__(data=data, read_only=True)
     # ====== states variables ====== #
     self._length = None
     # if True return name during __iter__
@@ -236,7 +236,7 @@ class DataDescriptor(Data):
     return tuple(ret_shape) if self.is_data_list else ret_shape[0]
 
   def __str__(self):
-    name = ctext('DataDescriptor', 'cyan')
+    name = ctext('IndexedData', 'cyan')
     s = '<%s: Indices(type:"%s" length:%d)>\n' % \
         (name, self.indices_info[0], len(self.indices))
     for dat in self.data:
@@ -254,7 +254,7 @@ class DataDescriptor(Data):
   def __getitem__(self, key):
     if is_string(key):
       key = slice(*self.indices[key])
-    return super(DataDescriptor, self).__getitem__(key)
+    return super(IndexedData, self).__getitem__(key)
 
 
 # ===========================================================================
@@ -341,9 +341,9 @@ class Feeder(Data):
                batch_filter=None, batch_mode='batch',
                ncpu=1, buffer_size=8, hwm=86,
                mpi_backend='python'):
-    super(Feeder, self).__init__(data=as_tuple(data_desc, t=DataDescriptor),
+    super(Feeder, self).__init__(data=as_tuple(data_desc, t=IndexedData),
                                  read_only=True)
-    # find intersection of all indices in DataDescriptor
+    # find intersection of all indices in IndexedData
     self._indices_keys = async(
         lambda: np.array(
             list(set.intersection(*[set(dat.indices.keys())

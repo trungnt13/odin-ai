@@ -536,7 +536,7 @@ class Dataset(object):
     using the method `set_multiprocessing(ncpu=None, buffer_size=None,
     maximum_queue_size=None)` for changing this information.
     """
-    from .feeder import Feeder, DataDescriptor
+    from .feeder import Feeder, IndexedData
     # check data
     data = [self.__getitem__(dat) if is_string(dat) else
             as_data(dat)
@@ -560,7 +560,7 @@ class Dataset(object):
       if name not in self._saved_recipes or override:
         self.add_recipes(recipes, name, override=True)
     # ====== create Feeder ====== #
-    feeder = Feeder(DataDescriptor(data=data, indices=indices),
+    feeder = Feeder(IndexedData(data=data, indices=indices),
                     batch_filter=batch_filter, batch_mode=batch_mode,
                     ncpu=1, buffer_size=1)
     return feeder.set_recipes(recipes)

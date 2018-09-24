@@ -100,10 +100,11 @@ if not os.path.exists(MODEL_PATH) or IS_TRAINING:
   task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
                            shuffle_level=2, allow_rollback=True,
                            verbose=4)
-  task.set_checkpoint(MODEL_PATH, x_vec)
+  task.set_checkpoint(MODEL_PATH, x_vec,
+                      increasing=True, max_checkpoint=-1)
   task.set_callbacks([
       training.NaNDetector(),
-      training.Checkpoint(task_name='train', epoch_percent=1.),
+      training.Checkpoint(task_name='train', epoch_percent=0.5),
       # training.EarlyStopGeneralizationLoss('valid', ce,
       #                                      threshold=5, patience=3)
   ])

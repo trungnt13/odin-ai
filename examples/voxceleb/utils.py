@@ -111,10 +111,10 @@ def prepare_dnn_data(recipe, feat, utt_length, seed=52181208):
       F.recipes.LabelOneHot(nb_classes=n_speakers, data_idx=1)
   ]
   train_feeder = F.Feeder(
-      data_desc=F.DataDescriptor(data=X, indices=train_indices),
+      data_desc=F.IndexedData(data=X, indices=train_indices),
       batch_mode='batch', ncpu=7, buffer_size=12)
   valid_feeder = F.Feeder(
-      data_desc=F.DataDescriptor(data=X, indices=valid_indices),
+      data_desc=F.IndexedData(data=X, indices=valid_indices),
       batch_mode='batch', ncpu=2, buffer_size=4)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)

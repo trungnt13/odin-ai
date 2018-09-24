@@ -139,15 +139,15 @@ recipes = [
                          data_idx=None, label_mode='last', label_idx=-1),
 ]
 data = [ds[f] for f in FEAT]
-train = F.Feeder(F.DataDescriptor(data=data, indices=train),
+train = F.Feeder(F.IndexedData(data=data, indices=train),
                  dtype='float32', ncpu=6,
                  buffer_size=len(digits),
                  batch_mode='batch')
-valid = F.Feeder(F.DataDescriptor(data=data, indices=valid),
+valid = F.Feeder(F.IndexedData(data=data, indices=valid),
                  dtype='float32', ncpu=2,
                  buffer_size=len(digits),
                  batch_mode='batch')
-test = F.Feeder(F.DataDescriptor(data=data, indices=test),
+test = F.Feeder(F.IndexedData(data=data, indices=test),
                 dtype='float32', ncpu=1,
                 buffer_size=1,
                 batch_mode='file')

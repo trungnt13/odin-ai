@@ -180,11 +180,11 @@ def prepare_data(feat, label, utt_length=0.4, for_ivec=False):
                            label_mode='last', label_idx=-1),
       F.recipes.LabelOneHot(nb_classes=len(labels), data_idx=-1)
   ]
-  feeder_train = F.Feeder(F.DataDescriptor(ds[feat], indices=train_files),
+  feeder_train = F.Feeder(F.IndexedData(ds[feat], indices=train_files),
                           ncpu=6, batch_mode='batch')
-  feeder_valid = F.Feeder(F.DataDescriptor(ds[feat], indices=valid_files),
+  feeder_valid = F.Feeder(F.IndexedData(ds[feat], indices=valid_files),
                           ncpu=4, batch_mode='batch')
-  feeder_test = F.Feeder(F.DataDescriptor(ds[feat], indices=test_files),
+  feeder_test = F.Feeder(F.IndexedData(ds[feat], indices=test_files),
                          ncpu=4, batch_mode='file')
   feeder_train.set_recipes(recipes)
   feeder_valid.set_recipes(recipes)
