@@ -471,6 +471,7 @@ class PreEmphasis(Extractor):
       pre-emphasis filter, if 0 or None, no filter applied
   input_name : string
       name of raw signal in the features pipeline dictionary
+
   """
 
   def __init__(self, coeff=0.97,
@@ -662,7 +663,8 @@ class PowerSpecExtractor(Extractor):
 
   """
 
-  def __init__(self, power=2.0, input_name='stft', output_name='spec'):
+  def __init__(self, power=2.0,
+               input_name='stft', output_name='spec'):
     super(PowerSpecExtractor, self).__init__(input_name=input_name,
                                              output_name=output_name)
     self.power = float(power)

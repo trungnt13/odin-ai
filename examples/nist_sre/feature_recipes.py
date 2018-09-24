@@ -1,5 +1,6 @@
 from __future__ import print_function, division, absolute_import
 
+import os
 import subprocess
 from io import BytesIO
 from six import string_types
@@ -11,7 +12,7 @@ import soundfile as sf
 from odin import nnet as N
 from odin import fuel as F, preprocessing as pp
 
-from helpers import Config, ALL_NOISE
+from helpers import Config, ALL_NOISE, PATH_ACOUSTIC_FEATURES
 # ===========================================================================
 # Customized Audio Reader Extractor
 # `row`:
@@ -204,6 +205,30 @@ class SREAugmentor(pp.base.Extractor):
             'dsnoise': self.noise_ds,
             'noisetype': noise_type,
             'cmd': cmd}
+
+class SADreader(pp.base.Extractor):
+  """ This class read SAD label from acoustic dataset and
+  use it for augmentation dataset
+  """
+
+  def __init__(self, ds_path):
+    super(SADreader, self).__init__()
+    indices = os.path.join(ds_path, 'indices_sad')
+    assert os.path.isfile(indices), "Cannot find indices at path: %s" % indices
+    self.indices = F.MmapDict(indices, read_only=True)
+
+    data = os.path.join(ds_path, 'sad')
+    assert os.path.isfile(data), "Cannot find SAD at path: %s" % data
+    self.data = F.MmapData(data, read_only=True)
+
+  def _transform(self, X):
+    name = X['name'].split('/')[0]
+    if name not in self.indices:
+      return None
+    start, end = self.indices[name]
+    sad = self.data[start:end][:]
+    return {'sad': sad}
+
 # ===========================================================================
 # Extractor
 # NOTE: you must save the SAD label for augmentation data later
@@ -217,17 +242,24 @@ def sad(augmentation=None):
       # ====== STFT ====== #
       pp.speech.Framing(frame_length=Config.FRAME_LENGTH,
                         step_length=Config.STEP_LENGTH,
-                        window=Config.WINDOW),
+                        window=Config.WINDOW,
+                        output_name='frames'),
+      pp.speech.CalculateEnergy(log=True,
+                                input_name='frames', output_name='energy'),
       pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
-                             input_name='frames_energy', output_name='sad'),
-      pp.base.DeleteFeatures(input_name=['raw',
-                                         'frames', 'frames_energy',
-                                         'sad_threshold']),
+                             input_name='energy', output_name='sad'),
+      pp.base.DeleteFeatures(input_name=['raw', 'frames', 'scale',
+                                         'energy', 'sad_threshold']),
       pp.base.AsType(dtype=np.uint8),
   ])
   return extractors
 
 def mspec(augmentation=None):
+  delete_list = ['stft', 'spec', 'raw',
+                 'stft_energy', 'sad_threshold']
+  if augmentation is not None:
+    delete_list.append('sad')
+
   extractors = pp.make_pipeline(steps=[
       SREAugmentor(augmentation) if isinstance(augmentation, string_types) else
       SREAudioReader(),
@@ -235,13 +267,16 @@ def mspec(augmentation=None):
       # ====== STFT ====== #
       pp.speech.STFTExtractor(frame_length=Config.FRAME_LENGTH,
                               step_length=Config.STEP_LENGTH,
-                              n_fft=Config.NFFT, window=Config.WINDOW),
-      pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
+                              n_fft=Config.NFFT, window=Config.WINDOW,
+                              energy=False if augmentation is None else True),
       # ====== SAD ====== #
       pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
-                             input_name='energy', output_name='sad'),
+                             input_name='stft_energy', output_name='sad')
+      if augmentation is None else
+      SADreader(ds_path=os.path.join(PATH_ACOUSTIC_FEATURES, 'mspec')),
       # ====== for x-vector ====== #
-      pp.speech.PowerSpecExtractor(power=2.0, input_name='stft', output_name='spec'),
+      pp.speech.PowerSpecExtractor(power=2.0,
+                                   input_name='stft', output_name='spec'),
       pp.speech.MelsSpecExtractor(n_mels=Config.NMELS,
                                   fmin=Config.FMIN, fmax=Config.FMAX,
                                   input_name=('spec', 'sr'), output_name='mspec'),
@@ -251,13 +286,13 @@ def mspec(augmentation=None):
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                              win_length=301, input_name='mspec'),
       # ====== post processing ====== #
-      pp.base.DeleteFeatures(input_name=['stft', 'spec', 'raw',
-                                         'energy', 'sad_threshold']),
+      pp.base.DeleteFeatures(input_name=delete_list),
       pp.base.AsType(dtype='float16'),
   ])
   return extractors
 
 def bnf(augmentation=None):
+  raise NotImplementedError
   bnf_network = N.models.BNF_2048_MFCC40()
   recipe = pp.make_pipeline(steps=[
       SREAudioReader(),

@@ -19,7 +19,7 @@ if AUGMENTATION_NAME == 'None':
   raise ValueError("`-aug` option was not provided, choose: 'rirs' or 'musan'")
 np.random.seed(Config.SUPER_SEED)
 # percentage of data will be used for augmentation
-PERCENTAGE_AUGMENTATION = 0.8
+PERCENTAGE_AUGMENTATION = 0.6
 # ===========================================================================
 # Constant
 # ===========================================================================
@@ -83,7 +83,7 @@ if IS_DEBUGGING:
         feat = {i: j[:1200] if isinstance(j, np.ndarray) else j
                 for i, j in feat.items()}
         V.plot_multiple_features(feat, title=feat['name'])
-      prog['name'] = feat['name']
+      prog['name'] = feat['name'][:48]
       prog['dsname'] = feat['dsname']
       prog['dsnoise'] = feat['dsnoise']
       prog.add(1)
