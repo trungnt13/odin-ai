@@ -499,8 +499,10 @@ class Framing(Extractor):
   """
 
   def __init__(self, frame_length, step_length=None,
-               window='hamm', padding=False, energy=True,
+               window='hamm', padding=False,
                input_name=('raw', 'sr'), output_name='frames'):
+    if isinstance(input_name, string_types):
+      input_name = (input_name, 'sr')
     assert isinstance(output_name, string_types), "`output_name` must be string"
     super(Framing, self).__init__(input_name=input_name, output_name=output_name)
     if step_length is None:
@@ -509,7 +511,6 @@ class Framing(Extractor):
     self.step_length = step_length
     self.window = window
     self.padding = bool(padding)
-    self.energy = bool(energy)
 
   def _transform(self, y_sr):
     y, sr = [y_sr[name] for name in self.input_name]
@@ -529,23 +530,50 @@ class Framing(Extractor):
     if self.window is not None:
       fft_window = get_window(
           self.window, frame_length, periodic=True).reshape(1, -1)
+      y_frames = fft_window * y_frames
       # scaling the windows
       scale = np.sqrt(1.0 / fft_window.sum()**2)
-      y_frames = fft_window * y_frames
     else:
       scale = np.sqrt(1.0 / frame_length**2)
     # ====== calculate frames energy ====== #
-    ret = {self.output_name: y_frames, 'scale': scale}
-    if self.energy:
-      log_energy = get_energy(y_frames, log=True).astype('float32')
-      ret['%s_energy' % self.output_name] = log_energy
-    return ret
+    return {self.output_name: y_frames,
+            'scale': scale}
+
+class CalculateEnergy(Extractor):
+  """
+  Parameters
+  ----------
+  log : bool (default: True)
+    take the natural logarithm of the energy
+
+  Input
+  -----
+  numpy.ndarray : 2D [n_samples, n_features]
+
+  Output
+  ------
+  numpy.ndarray : 1D [n_samples,]
+    Energy for each frames
+
+  """
+
+  def __init__(self, log=True,
+               input_name='frames', output_name='energy'):
+    super(CalculateEnergy, self).__init__(input_name=str(input_name),
+                                  output_name=str(output_name))
+    self.log = bool(log)
+
+  def _transform(self, X):
+    frames = X[self.input_name]
+    energy = get_energy(frames, log=self.log).astype('float32')
+    return {self.output_name: energy}
 
 # ===========================================================================
 # Spectrogram
 # ===========================================================================
 class STFTExtractor(Extractor):
   """ Short time Fourier transform
+  `window` should be `None` if input is windowed framed signal
 
   Parameters
   ----------
@@ -566,6 +594,13 @@ class STFTExtractor(Extractor):
       if string, looking for feature with given name in the pipeline
       if float, directly using given value for scaling
 
+  Input
+  -----
+  numpy.ndarray : [n_samples,] or [n_frames, frame_length]
+    raw signal or framed signal
+  integer : > 0
+    sample rate of the audio
+
   Output
   ------
   'stft' : complex64 array [time, frequency]
@@ -573,8 +608,8 @@ class STFTExtractor(Extractor):
   """
 
   def __init__(self, frame_length=None, step_length=None, n_fft=512,
-               window='hamm', padding=False, energy=True,
-               scale=None, input_name=('raw', 'sr'), output_name='stft'):
+               window='hamm', padding=False, energy=True, scale=None,
+               input_name=('raw', 'sr'), output_name='stft'):
     if isinstance(input_name, string_types):
       input_name = (input_name, 'sr')
     assert isinstance(output_name, string_types), "`output_name` must be string"

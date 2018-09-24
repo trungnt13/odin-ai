@@ -285,6 +285,8 @@ def validate_feature_dataset(path, outpath):
         feat_name = 'mfcc'
       elif 'bnf' in ds:
         feat_name = 'bnf'
+      elif 'sad' in ds:
+        raise NotImplementedError("No support for visualize SAD")
       else:
         raise RuntimeError()
 
