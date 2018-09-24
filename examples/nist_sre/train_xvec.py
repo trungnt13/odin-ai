@@ -16,33 +16,18 @@ from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape,
                         crypto, stdio)
 from odin import fuel as F, visual as V, nnet as N, backend as K
 
-from utils import prepare_dnn_data, get_model_path, csv2mat
-# ===========================================================================
-# Configs
-# ===========================================================================
-args = args_parse([
-    ('recipe', 'the name of function defined in feature_recipes.py', None),
-    ('-feat', "Acoustic feature", ('mspec', 'mfcc'), 'mspec'),
-    ('-batch', "batch size", None, 64),
-    ('-epoch', "number of epoch", None, 25),
-    ('-l', "audio segmenting length in second", None, 3),
-    ('--debug', "enable debug mode", None, False),
-    ('--train', "force continue training the saved model", None, False),
-])
-FEAT = args.feat
-TRAIN_MODEL = args.train
-DEBUG = bool(args.debug)
-(EXP_DIR, MODEL_PATH, LOG_PATH,
- TRAIN_PATH, TEST_PATH) = get_model_path('xvec', args)
-stdio(LOG_PATH)
+from helpers import (get_model_path, prepare_dnn_data,
+                     IS_TRAINING, BATCH_SIZE, EPOCH)
 # ===========================================================================
 # Create data feeder
 # ===========================================================================
+(EXP_DIR, MODEL_PATH, LOG_PATH) = get_model_path(system_name='xvec',
+                                                 args_name=['utt'])
+stdio(LOG_PATH)
+# ====== load the data ====== #
 (train, valid,
- test_ids, test_dat,
- all_speakers) = prepare_dnn_data(
-    recipe=args.recipe, feat=FEAT, utt_length=args.l)
-n_speakers = len(all_speakers) + 1
+ all_speakers) = prepare_dnn_data()
+n_speakers = len(all_speakers)
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -55,9 +40,9 @@ y = inputs[1]
 print("Inputs:", ctext(inputs, 'cyan'))
 # ====== the network ====== #
 if os.path.exists(MODEL_PATH):
-  x_vec = N.deserialize(path=MODEL_PATH, force_restore_vars=True)
+  x_vec = N.deserialize(path=MODEL_PATH,
+                        force_restore_vars=True)
 else:
-  TRAIN_MODEL = True
   with N.args_scope(
       ['TimeDelayedConv', dict(time_pool='none', activation=K.relu)],
       ['Dense', dict(activation=K.linear, b_init=None)],
@@ -81,7 +66,7 @@ else:
 
         N.Dense(n_speakers, activation=K.linear,
                 b_init=init_ops.constant_initializer(value=0))
-    ], debug=1)
+    ], debug=1, name='XNetwork')
 # ====== create outputs ====== #
 y_logit = x_vec(X)
 y_proba = tf.nn.softmax(y_logit)
@@ -110,67 +95,21 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 # ===========================================================================
 # Create trainer
 # ===========================================================================
-if TRAIN_MODEL:
+if not os.path.exists(MODEL_PATH) or IS_TRAINING:
   print('Start training ...')
-  task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
-                           allow_rollback=True)
+  task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
+                           shuffle_level=2, allow_rollback=True,
+                           verbose=4)
   task.set_checkpoint(MODEL_PATH, x_vec)
   task.set_callbacks([
       training.NaNDetector(),
-      training.EarlyStopGeneralizationLoss('valid', ce,
-                                           threshold=5, patience=5)
+      training.Checkpoint(task_name='train', epoch_percent=1.),
+      # training.EarlyStopGeneralizationLoss('valid', ce,
+      #                                      threshold=5, patience=3)
   ])
   task.set_train_task(func=f_train, data=train,
-                      epoch=args.epoch, name='train')
+                      epoch=EPOCH, name='train')
   task.set_valid_task(func=f_score, data=valid,
-                      freq=training.Timer(percentage=0.8),
+                      freq=training.Timer(percentage=1.),
                       name='valid')
   task.run()
-# ===========================================================================
-# Saving the test data
-# CSV separated by tab
-# ===========================================================================
-sep = '\t'
-prog = Progbar(target=len(test_ids) + len(train) + len(valid),
-               print_summary=True, print_report=True,
-               name="Extracting x-vector")
-with open(TRAIN_PATH, 'w') as f_train, open(TEST_PATH, 'w') as f_test:
-  # ====== save training set ====== #
-  for name, idx, X, y in train.set_batch(batch_size=8000,
-                                         batch_mode='file', seed=None):
-    assert idx == 0
-    y = np.argmax(y, axis=-1)
-    assert len(set(y)) == 1
-    y = y[0]
-    z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
-    f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
-    prog.add(X.shape[0])
-  # ====== save validation set ====== #
-  for name, idx, X, y in valid.set_batch(batch_size=8000,
-                                         batch_mode='file', seed=None):
-    assert idx == 0
-    y = np.argmax(y, axis=-1)
-    assert len(set(y)) == 1
-    y = y[0]
-    z = np.mean(f_z(X), axis=0, keepdims=False).astype('float32')
-    f_train.write(sep.join([str(y)] + [str(i) for i in z]) + '\n')
-    prog.add(X.shape[0])
-  # ====== save test set ====== #
-  for name, (start, end) in sorted(test_ids.items(),
-                                   key=lambda x: x[0]):
-    y = test_dat[start:end]
-    z = np.mean(f_z(y), axis=0, keepdims=False).astype('float32')
-    f_test.write(sep.join([name] + [str(i) for i in z]) + '\n')
-    prog.add(1)
-# convert everything to matlab format
-csv2mat(exp_dir=EXP_DIR)
-# ===========================================================================
-# Evaluate and save the log
-# ===========================================================================
-np.random.seed(52181208)
-shape = inputs[0].shape
-X = np.random.rand(64, shape[1].value, shape[2].value).astype('float32')
-Z = f_z(X)
-# ====== make sure model has the same identity ====== #
-print(Z.shape, Z.sum(), (Z**2).sum(), Z.std())
-print(ctext(crypto.md5_checksum(Z), 'cyan'))

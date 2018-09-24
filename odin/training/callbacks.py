@@ -41,8 +41,9 @@ class TrainSignal(Enum):
   """ TrainingSignal """
   NONE = 0 # nothing happened
   SAVE = 1 # save the parameters during training
-  ROLLBACK = 2 # rollback the model to the best checkpoint
-  STOP = 3 # stop the training task
+  SAVE_BEST = 2 # saving the best model, signaled by EarlyStop
+  ROLLBACK = 3 # rollback the model to the best checkpoint
+  STOP = 4 # stop the training task
 
 class TaskSignal(Enum):
   """ Signal represent current activities of a Training, Validating or
@@ -107,9 +108,9 @@ class Callback(object):
    - curr_epoch_samples: Number of samples within current epoch
   """
 
-  def __init__(self, log=True):
+  def __init__(self, logging=True):
     super(Callback, self).__init__()
-    self._log = bool(log)
+    self._log = bool(logging)
 
   def set_notification(self, is_enable):
     """ Turn notification on and off """
@@ -360,8 +361,8 @@ class NaNDetector(Callback):
     pass
   """
 
-  def __init__(self, task_name=None, patience=-1, log=True):
-    super(NaNDetector, self).__init__(log)
+  def __init__(self, task_name=None, patience=-1, logging=True):
+    super(NaNDetector, self).__init__(logging=logging)
     self._task_name = task_name
     self._patience = patience
 
@@ -380,8 +381,8 @@ class NaNDetector(Callback):
 class Checkpoint(Callback):
   """ Checkpoint """
 
-  def __init__(self, task_name, epoch_percent=1., log=True):
-    super(Checkpoint, self).__init__(log)
+  def __init__(self, task_name, epoch_percent=1., logging=True):
+    super(Checkpoint, self).__init__(logging=logging)
     self._task_name = task_name
     self._epoch_percent = epoch_percent
 
@@ -451,8 +452,8 @@ class EarlyStop(Callback):
   """
 
   def __init__(self, task_name, output_name, threshold, patience=1,
-               get_value=lambda x: np.mean(x), log=True):
-    super(EarlyStop, self).__init__(log)
+               get_value=lambda x: np.mean(x), logging=True):
+    super(EarlyStop, self).__init__(logging=logging)
     self._task_name = str(task_name)
     self._output_name = output_name if is_string(output_name) \
         else output_name.name
@@ -477,7 +478,7 @@ class EarlyStop(Callback):
     shouldSave, shouldStop = self.earlystop(self._history, self._threshold)
     msg = None
     if shouldSave > 0:
-      msg = TrainSignal.SAVE
+      msg = TrainSignal.SAVE_BEST
     if shouldStop > 0:
       msg = TrainSignal.ROLLBACK
       # check patience
@@ -522,10 +523,10 @@ class EarlyStopGeneralizationLoss(EarlyStop):
   """
 
   def __init__(self, task_name, output_name, threshold=5, patience=1,
-               get_value=lambda x: np.mean(x), log=True):
+               get_value=lambda x: np.mean(x), logging=True):
     super(EarlyStopGeneralizationLoss, self).__init__(
         task_name, output_name, threshold, patience,
-        get_value, log)
+        get_value, logging=logging)
 
   def earlystop(self, history, threshold):
     gl_exit_threshold = threshold
@@ -601,10 +602,10 @@ class EarlyStopPatience(EarlyStop):
   """
 
   def __init__(self, task_name, output_name, threshold, patience=1,
-               get_value=lambda x: np.mean(x), log=True):
+               get_value=lambda x: np.mean(x), logging=True):
     super(EarlyStopPatience, self).__init__(
         task_name, output_name, threshold, patience,
-        get_value, log)
+        get_value, logging=logging)
 
   def earlystop(self, history, threshold):
     if not hasattr(self, 'wait'): self.wait = 0

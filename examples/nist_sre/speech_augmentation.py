@@ -13,13 +13,15 @@ from odin.utils import (ctext, get_logpath, get_module_from_path,
 from helpers import (ALL_FILES, ALL_NOISE, ALL_DATASET, IS_DEBUGGING,
                      PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
                      AUGMENTATION_NAME, Config,
-                     EXP_DIR, NCPU, validate_feature_dataset)
+                     EXP_DIR, NCPU, validate_feature_dataset,
+                     check_requirement_feature_processing)
 
 if AUGMENTATION_NAME == 'None':
   raise ValueError("`-aug` option was not provided, choose: 'rirs' or 'musan'")
 np.random.seed(Config.SUPER_SEED)
 # percentage of data will be used for augmentation
 PERCENTAGE_AUGMENTATION = 0.6
+check_requirement_feature_processing()
 # ===========================================================================
 # Constant
 # ===========================================================================

@@ -62,18 +62,19 @@ f_pred = K.function(X, y_pred, training=False)
 print('Start training ...')
 task = training.MainLoop(batch_size=128, seed=12, shuffle_level=2,
                          allow_rollback=True, verbose=1)
-task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops)
+task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops,
+                    max_checkpoint=-1)
 task.set_callbacks([
     training.NaNDetector(),
-    # training.Checkpoint('train'),
-    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=1),
+    training.Checkpoint('train', epoch_percent=1.),
+    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5),
     training.LambdaCallback(fn=lambda epoch, res:print("Training Epoch End:", epoch),
                             name='train')
 ])
-task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=8,
+task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=12,
                     name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
-                    freq=training.Timer(percentage=0.6), name='valid')
+                    freq=training.Timer(percentage=0.8), name='valid')
 task.set_eval_task(f_test, (ds['X_test'], ds['y_test']), name='test')
 task.run()
 # ===========================================================================

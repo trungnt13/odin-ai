@@ -2,7 +2,6 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import pickle
-from shutil import which
 from collections import defaultdict, OrderedDict
 
 import numpy as np
@@ -11,32 +10,32 @@ from scipy.io import wavfile
 from odin import visual as V
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
-                        mpi, args_parse, select_path)
+                        mpi, args_parse, select_path, get_logpath)
 from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
-# ===========================================================================
-# Checking prerequisites
-# ===========================================================================
-if which('sox') is None:
-  raise RuntimeError("`sox` was not installed")
-if which('sph2pipe') is None:
-  raise RuntimeError("`sph2pipe` was not installed")
-if which('ffmpeg') is None:
-  raise RuntimeError("`ffmpeg` was not installed")
 # ===========================================================================
 # General arguments for all experiments
 # ===========================================================================
 _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
-    ('-aug', 'Name of the augmentation dataset: musan, rirs', None, 'None'),
+    ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
     ('-downsample', 'downsampling all the dataset for testing', None, 0),
     ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
+    ('-utt', 'for x-vector training, maximum utterance length', None, 4),
+    ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
+    ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
+    ('-batch', 'batch size, for training DNN', None, 256),
+    ('-epoch', 'number of epoch, for training DNN', None, 25),
+    ('--train', 'if the model is already trained, forced running the fine-tuning', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
 FEATURE_RECIPE = str(_args.recipe)
 IS_DEBUGGING = bool(_args.debug)
+IS_TRAINING = bool(_args.train)
 AUGMENTATION_NAME = _args.aug
+BATCH_SIZE = int(_args.batch)
+EPOCH = int(_args.epoch)
 NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ===========================================================================
 # Configuration
@@ -56,17 +55,19 @@ class Config(object):
   # ====== File list ====== #
   SUPER_SEED = 52181208
   # <= 0 mean no downsample, > 0 mean number of sample
+
 # ===========================================================================
-# Load the file list
+# Checking prerequisites
 # ===========================================================================
-sre_file_list = F.load_sre_list()
-print('README at:', ctext(sre_file_list['README.txt'], 'cyan'))
-sre_file_list = {k: v
-                 for k, v in sre_file_list.items()
-                 if isinstance(v, np.ndarray)}
-print("Original dataset:")
-for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
-  print(' ', ctext(k, 'yellow'), ':', ctext(v.shape, 'cyan'))
+def check_requirement_feature_processing():
+  from shutil import which
+  if which('sox') is None:
+    raise RuntimeError("`sox` was not installed")
+  if which('sph2pipe') is None:
+    raise RuntimeError("`sph2pipe` was not installed")
+  if which('ffmpeg') is None:
+    raise RuntimeError("`ffmpeg` was not installed")
+
 # ===========================================================================
 # FILE LIST PATH
 # ===========================================================================
@@ -74,7 +75,7 @@ EXP_DIR = get_exppath('sre', override=False)
 BASE_DIR = select_path(
     '/media/data2/SRE_DATA',
     '/mnt/sdb1/SRE_DATA',
-)
+default='')
 # path to directory contain following folders:
 #  * mx6_speech
 #  * voxceleb
@@ -103,10 +104,26 @@ PATH_RAW_DATA = {
     'musan': BASE_DIR,
     'rirs': BASE_DIR,
 }
-# all data will be down sampled to following
-PATH_ACOUSTIC_FEATURES = '/media/data1/SRE_FEAT'
+# all features will be stored here
+OUTPUT_DIR = select_path(
+    '/home/trung/data',
+    '/media/data1',
+    '/mnt/sda1'
+)
+PATH_ACOUSTIC_FEATURES = os.path.join(OUTPUT_DIR, "SRE_FEAT")
 if not os.path.exists(PATH_ACOUSTIC_FEATURES):
   os.mkdir(PATH_ACOUSTIC_FEATURES)
+# ===========================================================================
+# Load the file list
+# ===========================================================================
+sre_file_list = F.load_sre_list()
+print('README at:', ctext(sre_file_list['README.txt'], 'cyan'))
+sre_file_list = {k: v
+                 for k, v in sre_file_list.items()
+                 if isinstance(v, np.ndarray)}
+print("Original dataset:")
+for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
+  print(' ', ctext(k, 'yellow'), ':', ctext(v.shape, 'cyan'))
 # ===========================================================================
 # Validating the datasets
 # ===========================================================================
@@ -160,6 +177,8 @@ ALL_NOISE = validating_noise_data(
 print("Processed noise data:")
 for ds_name, noise_list in ALL_NOISE.items():
   print(" ", ctext(ds_name, 'yellow'), ':', noise_list.shape)
+  if len(noise_list) == 0:
+    continue
   for name, count in sorted(freqcount(noise_list[:, 3]).items(),
                             key=lambda x: x[0]):
     print('  ', ctext('%-10s' % name, 'yellow'), ':',
@@ -223,6 +242,8 @@ def validating_all_data(in_path_raw, downsample):
       prog.add(1)
   # final results
   all_files = np.array(all_files)
+  if len(all_files) == 0:
+    return all_files, np.array(non_exist_files), extension_count
   # ====== check no duplicated name ====== #
   n_files = len(all_files)
   n_unique_files = len(np.unique(all_files[:, 2]))
@@ -246,27 +267,162 @@ def validating_all_data(in_path_raw, downsample):
     in_path_raw=PATH_RAW_DATA,
     downsample=_args.downsample)
 # list of all dataset
-ALL_DATASET = sorted(np.unique(ALL_FILES[:, 4]))
-print("All extensions:")
-for name, val in sorted(ext_count.items(), key=lambda x: x[0]):
-  print('  ', '%-16s' % name, ':', ctext('%-6d' % val, 'cyan'), '(files)')
-print("#Speakers:", ctext(len(np.unique(ALL_FILES[:, 3])), 'cyan'))
-DS_SPK = defaultdict(list)
-for row in ALL_FILES:
-  DS_SPK[row[4]].append(row[3])
-DS_SPK = {k: sorted(set(v)) for k, v in DS_SPK.items()}
-print("Processed datasets:")
-for name, count in sorted(freqcount(ALL_FILES[:, 4]).items(),
-                          key=lambda x: x[0]):
-  print('  ', ctext('%-10s' % name, 'yellow'), ':',
-        '%s(files)' % ctext('%-6d' % count, 'cyan'),
-        '%s(spk)' % ctext('%-4d' % len(DS_SPK[name]), 'cyan'))
+if len(ALL_FILES) > 0:
+  ALL_DATASET = sorted(np.unique(ALL_FILES[:, 4]))
+  print("All extensions:")
+  for name, val in sorted(ext_count.items(), key=lambda x: x[0]):
+    print('  ', '%-16s' % name, ':', ctext('%-6d' % val, 'cyan'), '(files)')
+  print("#Speakers:", ctext(len(np.unique(ALL_FILES[:, 3])), 'cyan'))
+
+  # map Dataset_name -> speaker_ID
+  DS_SPK = defaultdict(list)
+  for row in ALL_FILES:
+    DS_SPK[row[4]].append(row[3])
+  DS_SPK = {k: sorted(set(v))
+            for k, v in DS_SPK.items()}
+
+  print("Processed datasets:")
+  for name, count in sorted(freqcount(ALL_FILES[:, 4]).items(),
+                            key=lambda x: x[0]):
+    print('  ', ctext('%-10s' % name, 'yellow'), ':',
+          '%s(files)' % ctext('%-6d' % count, 'cyan'),
+          '%s(spk)' % ctext('%-4d' % len(DS_SPK[name]), 'cyan'))
+else:
+  ALL_DATASET = []
+  DS_SPK = defaultdict(list)
 # ===========================================================================
 # PATH HELPER
 # ===========================================================================
+def get_model_path(system_name, args_name):
+  """
+  Parameters
+  ----------
+  args_name : list of string
+    list of name for parsed argument, taken into account for creating
+    model name
+
+  Return
+  ------
+  exp_dir, model_path, log_path
+  """
+  args_name = [i
+               for i in args_name
+               if i != 'aug']
+  name = '_'.join([str(system_name).lower(), FEATURE_RECIPE])
+  # ====== concat the attributes ====== #
+  for i in sorted(str(i) for i in args_name):
+    name += '_' + str(int(getattr(_args, i)))
+  # ====== augmentation datasets ====== #
+  if AUGMENTATION_NAME != 'None':
+    for i in AUGMENTATION_NAME.split(','):
+      aug_ds_path = os.path.join(PATH_ACOUSTIC_FEATURES, '%s_%s' % (FEATURE_RECIPE, i))
+      assert os.path.exists(aug_ds_path),\
+      "Cannot find augmented dataset at path: %s" % aug_ds_path
+    name += '_'
+    name += '_'.join(sorted(AUGMENTATION_NAME.split(',')))
+  # ====== check save_path ====== #
+  save_path = os.path.join(EXP_DIR, name)
+  if not os.path.exists(save_path):
+    os.mkdir(save_path)
+  # ====== return path ====== #
+  log_path = get_logpath(name='log.txt', increasing=True,
+                         odin_base=False, root=save_path)
+  model_path = os.path.join(save_path, 'model.ai')
+  print("Model path:", ctext(model_path, 'cyan'))
+  print("Log path:", ctext(log_path, 'cyan'))
+  return save_path, model_path, log_path
 
 # ===========================================================================
-# DATA HELPER
+# Data helper
+# ===========================================================================
+def prepare_dnn_data():
+  path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
+  assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
+  ds = F.Dataset(path=path, read_only=True)
+  ids_name = 'indices_%s' % FEATURE_RECIPE
+  assert FEATURE_RECIPE in ds, "Cannot find feature with name: %s" % FEATURE_RECIPE
+  assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
+  X = ds[FEATURE_RECIPE]
+  indices = ds[ids_name]
+  # ====== all training file name ====== #
+  rand = np.random.RandomState(seed=Config.SUPER_SEED)
+  # modify here to train full dataset
+  all_name = sorted(indices.keys())
+  rand.shuffle(all_name)
+  all_name = all_name
+  n_files = len(all_name)
+  print("#Files:", ctext(n_files, 'cyan'))
+  # ====== speaker mapping ====== #
+  name2spk = {name: ds['spkid'][name]
+              for name in all_name}
+  all_speakers = sorted(set(name2spk.values()))
+  spk2label = {spk: i
+               for i, spk in enumerate(all_speakers)}
+  name2label = {name: spk2label[spk]
+                for name, spk in name2spk.items()}
+  print("#Speakers:", ctext(len(all_speakers), 'cyan'))
+  # ====== stratify sampling based on speaker ====== #
+  valid_name = []
+  # create speakers' cluster
+  label2name = defaultdict(list)
+  for name, label in name2label.items():
+    label2name[label].append(name)
+  # for each speaker with >= 2 utterance, pick 1 utterance
+  for label, name_list in label2name.items():
+    if len(name_list) < 2:
+      continue
+    n = max(1, int(0.1 * len(name_list))) # 10% for validation
+    valid_name += rand.choice(a=name_list, size=n).tolist()
+  # train list is the rest
+  _ = {name: 1 for name in valid_name}
+  train_name = [i for i in all_name
+                if i not in _]
+  # ====== split training and validation ====== #
+  train_indices = {name: indices[name]
+                   for name in train_name}
+  valid_indices = {name: indices[name]
+                   for name in valid_name}
+
+  print("#Train files:", ctext('%-8d' % len(train_indices), 'cyan'),
+        "#spk:", ctext(len(set(name2label[name]
+                               for name in train_name)), 'cyan'))
+
+  print("#Valid files:", ctext('%-8d' % len(valid_indices), 'cyan'),
+        "#spk:", ctext(len(set(name2label[name]
+                               for name in valid_name)), 'cyan'))
+  # ====== create the recipe ====== #
+  frame_length = float(_args.utt) / Config.STEP_LENGTH
+  recipes = [
+      F.recipes.Sequencing(frame_length=frame_length,
+                           step_length=frame_length,
+                           end='cut', data_idx=0),
+      F.recipes.Name2Label(lambda name:name2label[name.split('/')[0]],
+                           ref_idx=0),
+      F.recipes.LabelOneHot(nb_classes=len(all_speakers), data_idx=1)
+  ]
+  train_feeder = F.Feeder(
+      data_desc=F.DataDescriptor(data=X, indices=train_indices),
+      batch_mode='batch', ncpu=NCPU, buffer_size=80)
+  valid_feeder = F.Feeder(
+      data_desc=F.DataDescriptor(data=X, indices=valid_indices),
+      batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
+  train_feeder.set_recipes(recipes)
+  valid_feeder.set_recipes(recipes)
+  print(train_feeder)
+  print(valid_feeder)
+  # ====== debugging ====== #
+  if IS_DEBUGGING:
+    prog = Progbar(target=len(valid_feeder), print_summary=True,
+                   name="Iterating validation set")
+    for X, y in valid_feeder.set_batch(BATCH_SIZE):
+      prog['X'] = X.shape
+      prog['y'] = y.shape
+      prog.add(X.shape[0])
+  # ====== return ====== #
+  return train_feeder, valid_feeder, all_speakers
+
+# ===========================================================================
+# Evaluation HELPER
 # ===========================================================================
 def validate_feature_dataset(path, outpath):
   if os.path.exists(path):

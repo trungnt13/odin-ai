@@ -63,12 +63,16 @@ class abstractclassmethod(classmethod):
 # ===========================================================================
 # Path utils
 # ===========================================================================
-def select_path(*paths, create_new=False):
+def select_path(*paths, default=None, create_new=False):
   """
   Parameters
   ----------
   paths : str
     multiple path are given
+
+  default : str
+    default path for return
+
   create_new : bool (default: False)
     if no path is found, create new folder based on the
     first path found to be `creat-able`
@@ -87,6 +91,8 @@ def select_path(*paths, create_new=False):
     if os.path.exists(p):
       return p
   # ====== check if create_new ====== #
+  if default is not None:
+    return str(default)
   if create_new:
     for p in paths:
       base_dir = os.path.dirname(p)

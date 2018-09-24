@@ -21,12 +21,14 @@ from odin.stats import sampling_iter
 
 from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR, BASE_DIR,
                      ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE,
-                     ALL_DATASET, Config, NCPU, validate_feature_dataset)
+                     ALL_DATASET, Config, NCPU, validate_feature_dataset,
+                     check_requirement_feature_processing)
 # ALL_FILES
 # Header:
 #  0       1      2      3       4          5         6
 # path, channel, name, spkid, dataset, start_time, end_time
 np.random.seed(Config.SUPER_SEED)
+check_requirement_feature_processing()
 # ===========================================================================
 # Extractor
 # ===========================================================================

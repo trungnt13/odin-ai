@@ -2,6 +2,7 @@
 from __future__ import division, absolute_import, print_function
 
 import os
+import shutil
 from itertools import chain
 from collections import defaultdict
 from six.moves import range, zip, cPickle
@@ -507,7 +508,8 @@ class MainLoop(object):
   """
 
   def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
-               allow_rollback=True, labels=None, verbose=3):
+               allow_rollback=True, labels=None, log_path=None,
+               verbose=3):
     super(MainLoop, self).__init__()
     self._labels = labels
     self._main_task = None
@@ -530,6 +532,10 @@ class MainLoop(object):
     self._save_obj = None
     self._save_variables = []
     self._best_variables = {}
+    # ====== maximum stored checkpoint ====== #
+    self._checkpoint_increasing = True
+    self._checkpoint_max = -1
+    self._current_checkpoint_count = 0
 
   # ==================== pickling ==================== #
   def __setstate__(self, value):
@@ -549,7 +555,8 @@ class MainLoop(object):
             self._callback, self._allow_rollback)
 
   # ==================== Signal handling ==================== #
-  def set_checkpoint(self, path=None, obj=None, variables=[]):
+  def set_checkpoint(self, path=None, obj=None, variables=[],
+                     increasing=True, max_checkpoint=-1):
     """ If `path` and `obj` given, the `obj` will be pickled
     at `path` for every checkpoint, otherwise, store the
     best values of `variables` in RAM
@@ -558,11 +565,19 @@ class MainLoop(object):
     ----------
     path: str
         path to save the obj when the callback return save signal
+
     obj: object
         any pickle-able object you want to save
+
     variables : {list of tensorflow.Variable}
         external variables will be saved together with the
         model
+
+    increasing : bool (default: True)
+        pass
+
+    max_checkpoint : int (default: 3)
+        pass
     """
     self._save_path = path
     self._save_obj = obj
@@ -571,8 +586,11 @@ class MainLoop(object):
       if len(variables) > 0:
         from odin import backend as K
         self._save_variables = [v for v in variables if K.is_variable(v)]
+    # other
+    self._checkpoint_increasing = bool(increasing)
+    self._checkpoint_max = int(max_checkpoint)
     # save first checkpoint
-    self._save()
+    self._save(is_best=False)
 
   # ==================== properties ==================== #
   @property
@@ -702,22 +720,43 @@ class MainLoop(object):
     return self
 
   # ==================== logic ==================== #
-  def _save(self):
+  def _save(self, is_best):
+    is_best = bool(is_best)
     # trigger event for callbacks
-    self._callback.event(TrainSignal.SAVE)
-    # default save procedure
+    self._callback.event(TrainSignal.SAVE_BEST
+                         if is_best else
+                         TrainSignal.SAVE)
+    # ====== save the model to hard drive ====== #
     if self._save_path is not None and self._save_obj is not None:
-      if self._verbose >= 1:
-        add_notification("[%s] Creating checkpoint at: %s" %
-          (ctext('MainLoop', 'red'), self._save_path))
+      final_save_path = self._save_path
+      # check save path
       if not os.path.exists(self._save_path):
         os.mkdir(self._save_path)
       elif os.path.isfile(self._save_path):
         raise ValueError("Save path for the model must be a folder.")
-      N.serialize(nnops=self._save_obj, path=self._save_path,
-                  save_variables=True, variables=self._save_variables,
-                  binary_output=False, override=True)
-    # otherwise, store variables directly in RAM
+      # serialize the best model to disk
+      if is_best:
+        N.serialize(nnops=self._save_obj, path=self._save_path,
+                    save_variables=True, variables=self._save_variables,
+                    binary_output=False, override=True)
+      else: # not the best model saved, just periodically saving
+        final_save_path = self._save_path + '.%d' % self._current_checkpoint_count
+        N.serialize(nnops=self._save_obj,
+                    path=final_save_path,
+                    save_variables=True, variables=self._save_variables,
+                    binary_output=False, override=True)
+        self._current_checkpoint_count += 1
+        if self._checkpoint_max > 1 and self._current_checkpoint_count > self._checkpoint_max:
+          shutil.rmtree(
+              self._save_path + '.%d' %
+              (self._current_checkpoint_count - self._checkpoint_max - 1))
+      # print the log
+      if self._verbose >= 1:
+        add_notification("[%s] Creating %scheckpoint at: %s" %
+          (ctext('MainLoop', 'red'),
+           '[best]' if is_best else '',
+           final_save_path))
+    # ====== otherwise, store variables directly in RAM ====== #
     elif len(self._save_variables) > 0:
       from odin import backend as K
       self._best_variables = {v.name: K.get_value(v)
@@ -786,8 +825,12 @@ class MainLoop(object):
             pass
           # process callback msg for tasks
           msg = t.callback_msg
-          if TrainSignal.SAVE in msg: self._save()
-          if TrainSignal.ROLLBACK in msg: self._rollback()
+          if TrainSignal.SAVE in msg:
+            self._save(is_best=False)
+          if TrainSignal.SAVE_BEST in msg:
+            self._save(is_best=True)
+          if TrainSignal.ROLLBACK in msg:
+            self._rollback()
           if TrainSignal.STOP in msg:
             self._callback.event(TrainSignal.STOP)
             finished_task[self._main_task] = True
@@ -806,8 +849,12 @@ class MainLoop(object):
                 pass
             # process callback msg for subtasks
             msg = st.callback_msg
-            if TrainSignal.SAVE in msg: self._save()
-            if TrainSignal.ROLLBACK in msg: self._rollback()
+            if TrainSignal.SAVE in msg:
+              self._save(is_best=False)
+            if TrainSignal.SAVE_BEST in msg:
+              self._save(is_best=True)
+            if TrainSignal.ROLLBACK in msg:
+              self._rollback()
             if TrainSignal.STOP in msg:
               self._callback.event(TrainSignal.STOP)
               finished_task[self._main_task] = True
