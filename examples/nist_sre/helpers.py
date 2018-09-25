@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import pickle
+from enum import Enum
 from collections import defaultdict, OrderedDict
 
 import numpy as np
@@ -10,33 +11,11 @@ from scipy.io import wavfile
 from odin import visual as V
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
-                        mpi, args_parse, select_path, get_logpath)
+                        mpi, args_parse, select_path, get_logpath,
+                        get_script_name, get_script_path, get_module_from_path)
 from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
-# ===========================================================================
-# General arguments for all experiments
-# ===========================================================================
-_args = args_parse(descriptions=[
-    ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
-    ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
-    ('-downsample', 'downsampling all the dataset for testing', None, 0),
-    ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
-    ('-utt', 'for x-vector training, maximum utterance length', None, 4),
-    ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
-    ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
-    ('-batch', 'batch size, for training DNN', None, 256),
-    ('-epoch', 'number of epoch, for training DNN', None, 25),
-    ('--train', 'if the model is already trained, forced running the fine-tuning', None, False),
-    ('--debug', 'enable debugging', None, False),
-])
-FEATURE_RECIPE = str(_args.recipe)
-IS_DEBUGGING = bool(_args.debug)
-IS_TRAINING = bool(_args.train)
-AUGMENTATION_NAME = _args.aug
-BATCH_SIZE = int(_args.batch)
-EPOCH = int(_args.epoch)
-NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ===========================================================================
 # Configuration
 # ===========================================================================
@@ -52,14 +31,53 @@ class Config(object):
   FMIN = 100
   FMAX = 4000
   dtype = 'float16'
-  # ====== File list ====== #
+  # Random seed for reproducibility
   SUPER_SEED = 52181208
-  # <= 0 mean no downsample, > 0 mean number of sample
+
+class SystemStates(Enum):
+  """ SystemStates """
+  UNKNOWN = 0
+  EXTRACT_FEATURES = 1
+  TRAINING = 2
+  SCORING = 3
 
 # ===========================================================================
-# Checking prerequisites
+# General arguments for all experiments
 # ===========================================================================
-def check_requirement_feature_processing():
+_args = args_parse(descriptions=[
+    ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
+    ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
+    ('-downsample', 'downsampling all the dataset for testing code', None, 0),
+    ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
+    # for scoring
+    ('-sys', 'name of the system for scoring: xvec, ivec, e2e ...', None, 'xvec'),
+    ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
+    ('-score', 'name of dataset for scoring, multiple dataset splited by ","', None, 'sre18'),
+    # for ivector
+    ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
+    ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
+    # for DNN
+    ('-utt', 'for x-vector training, maximum utterance length', None, 4),
+    ('-batch', 'batch size, for training DNN', None, 256),
+    ('-epoch', 'number of epoch, for training DNN', None, 25),
+    ('--train', 'if the model is already trained, forced running the fine-tuning', None, False),
+    ('--debug', 'enable debugging', None, False),
+])
+IS_DEBUGGING = _args.debug
+IS_TRAINING = _args.train
+# this variable determine which state is running
+CURRENT_STATE = SystemStates.UNKNOWN
+# ====== Features ====== #
+FEATURE_RECIPE = str(_args.recipe)
+AUGMENTATION_NAME = _args.aug
+# ====== DNN ====== #
+BATCH_SIZE = int(_args.batch)
+EPOCH = int(_args.epoch)
+# ====== system ====== #
+NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
+# ====== helper for checking the requirement ====== #
+def _check_feature_extraction_requirement():
+  # check requirement for feature extraction
   from shutil import which
   if which('sox') is None:
     raise RuntimeError("`sox` was not installed")
@@ -68,6 +86,28 @@ def check_requirement_feature_processing():
   if which('ffmpeg') is None:
     raise RuntimeError("`ffmpeg` was not installed")
 
+def _check_recipe_name_for_extraction():
+  # check the requirement of recipe name for feature extraction
+  if '_' in FEATURE_RECIPE:
+    raise ValueError("'_' can appear in recipe name which is: '%s'" % FEATURE_RECIPE)
+# ====== check the running script to determine the current running states ====== #
+_script_name = get_script_name()
+if _script_name in ('speech_augmentation', 'speech_features_extraction'):
+  CURRENT_STATE = SystemStates.EXTRACT_FEATURES
+  _check_feature_extraction_requirement()
+  _check_recipe_name_for_extraction()
+elif _script_name in ('train_xvec', 'train_ivec', 'train_tvec'):
+  CURRENT_STATE = SystemStates.TRAINING
+elif _script_name in ('make_score'):
+  CURRENT_STATE = SystemStates.SCORING
+  _check_feature_extraction_requirement()
+else:
+  raise RuntimeError("Unknown states for current running script: %s/%s" %
+    (get_script_path(), get_script_name()))
+# some fancy log of current state
+print(ctext('====================================', 'red'))
+print(ctext("System state:", 'cyan'), ctext(CURRENT_STATE, 'yellow'))
+print(ctext('====================================', 'red'))
 # ===========================================================================
 # FILE LIST PATH
 # ===========================================================================
@@ -85,6 +125,7 @@ default='')
 #  * SRE06
 #  * SRE08
 #  * SRE10
+#  * SRE18
 #  * Switchboard
 #  * fisher
 #  * musan
@@ -100,6 +141,7 @@ PATH_RAW_DATA = {
     'sre06': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
     'sre08': BASE_DIR,
     'sre10': BASE_DIR,
+    'sre18': os.path.join(BASE_DIR, 'SRE18'),
     # noise datasets
     'musan': BASE_DIR,
     'rirs': BASE_DIR,
@@ -123,11 +165,49 @@ sre_file_list = {k: v
                  if isinstance(v, np.ndarray)}
 print("Original dataset:")
 for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
-  print(' ', ctext(k, 'yellow'), ':', ctext(v.shape, 'cyan'))
+  print(' ', ctext('%-12s' % k, 'yellow'), ':',
+    ctext(v.shape, 'cyan'))
+# ====== check dataset for scoring ====== #
+if CURRENT_STATE == SystemStates.SCORING:
+  assert len(_args.score) > 0, \
+  "No dataset are provided for scoring, specify '-score' option"
+
+  def validate_scoring_dataset(in_path_raw, score_dataset):
+    all_files = {}
+    for dsname in score_dataset:
+      if dsname not in sre_file_list:
+        raise ValueError("Cannot find dataset with name: '%s' in the file list" % dsname)
+      if dsname not in in_path_raw:
+        raise ValueError("Cannot find dataset with name: '%s' in provided path" % dsname)
+
+      base_path = in_path_raw[dsname]
+      ds = []
+      for row in sre_file_list[dsname]:
+        path = os.path.join(base_path, row[0])
+        # every file must exist
+        if not os.path.exists(path):
+          raise RuntimeError("File not exist at path: %s" % path)
+        ds.append([path] + row[1:].tolist() + [dsname])
+      all_files[dsname] = np.array(ds)
+    # Header:
+    #  0       1      2        3           4
+    # path, channel, name, something, dataset_name
+    return all_files
+
+  SCORING_DATASETS = validate_scoring_dataset(
+      in_path_raw=PATH_RAW_DATA,
+      score_dataset=_args.score.split(','))
+  print("Processed scoring data:")
+  for dsname, dsarray in SCORING_DATASETS.items():
+    print('  ', ctext('%-10s' % dsname, 'yellow'), ':',
+          '%s' % ctext(dsarray.shape, 'cyan'))
+
+  # searching for the appropriate system
+  SCORE_SYSTEM_NAME = _args.sys
+  SCORE_SYSTEM_ID = int(_args.sysid)
 # ===========================================================================
-# Validating the datasets
+# Validating the Noise dataset for augmentation
 # ===========================================================================
-# ====== validating noise data for augmentation ====== #
 @cache_disk
 def validating_noise_data(in_path_raw):
   # preparing
@@ -171,30 +251,27 @@ def validating_noise_data(in_path_raw):
   # path, channel, name, noise_type, duration
   return {key: np.array(sorted(val, key=lambda x: x[0]))
           for key, val in all_files.items()}
-
-ALL_NOISE = validating_noise_data(
-    in_path_raw=PATH_RAW_DATA)
-print("Processed noise data:")
-for ds_name, noise_list in ALL_NOISE.items():
-  print(" ", ctext(ds_name, 'yellow'), ':', noise_list.shape)
-  if len(noise_list) == 0:
-    continue
-  for name, count in sorted(freqcount(noise_list[:, 3]).items(),
-                            key=lambda x: x[0]):
-    print('  ', ctext('%-10s' % name, 'yellow'), ':',
-          '%s(files)' % ctext('%-6d' % count, 'cyan'))
-# ====== validating the file list of training data ====== #
+# ==================== run the validation ==================== #
+if CURRENT_STATE == SystemStates.EXTRACT_FEATURES:
+  ALL_NOISE = validating_noise_data(
+      in_path_raw=PATH_RAW_DATA)
+  print("Processed noise data:")
+  for ds_name, noise_list in ALL_NOISE.items():
+    print(" ", ctext(ds_name, 'yellow'), ':', noise_list.shape)
+    if len(noise_list) == 0:
+      continue
+    for name, count in sorted(freqcount(noise_list[:, 3]).items(),
+                              key=lambda x: x[0]):
+      print('  ', ctext('%-10s' % name, 'yellow'), ':',
+            '%s(files)' % ctext('%-6d' % count, 'cyan'))
+# ===========================================================================
+# Validating the file list of training data
+# ===========================================================================
 @cache_disk
-def validating_all_data(in_path_raw, downsample):
-  file_list = dict(sre_file_list)
-  # ====== downsample for debugging ====== #
-  if downsample > 0:
-    np.random.seed(Config.SUPER_SEED)
-    for k, v in list(file_list.items()):
-      if not isinstance(v, np.ndarray):
-        continue
-      np.random.shuffle(v)
-      file_list[k] = v[:int(downsample)]
+def validating_training_data(in_path_raw, training_dataset):
+  file_list = {ds: sre_file_list[ds]
+               for ds in training_dataset
+               if ds in sre_file_list}
   # ====== meta info ====== #
   all_files = []
   non_exist_files = []
@@ -261,13 +338,17 @@ def validating_all_data(in_path_raw, downsample):
   #  0       1      2      3       4          5         6
   # path, channel, name, spkid, dataset, start_time, end_time
   return all_files, np.array(non_exist_files), extension_count
-
 # ==================== run the validation process ==================== #
-(ALL_FILES, NON_EXIST_FILES, ext_count) = validating_all_data(
-    in_path_raw=PATH_RAW_DATA,
-    downsample=_args.downsample)
-# list of all dataset
-if len(ALL_FILES) > 0:
+if CURRENT_STATE == SystemStates.EXTRACT_FEATURES:
+  (ALL_FILES, NON_EXIST_FILES, ext_count) = validating_training_data(
+      in_path_raw=PATH_RAW_DATA,
+      training_dataset=['mx6', 'voxceleb1', 'voxceleb2', 'swb', 'fisher',
+                        'sre04', 'sre05', 'sre06', 'sre08', 'sre10']
+  )
+  if len(ALL_FILES) == 0:
+    raise RuntimeError("No files found for feature extraction")
+
+  # list of all dataset
   ALL_DATASET = sorted(np.unique(ALL_FILES[:, 4]))
   print("All extensions:")
   for name, val in sorted(ext_count.items(), key=lambda x: x[0]):
@@ -287,13 +368,10 @@ if len(ALL_FILES) > 0:
     print('  ', ctext('%-10s' % name, 'yellow'), ':',
           '%s(files)' % ctext('%-6d' % count, 'cyan'),
           '%s(spk)' % ctext('%-4d' % len(DS_SPK[name]), 'cyan'))
-else:
-  ALL_DATASET = []
-  DS_SPK = defaultdict(list)
 # ===========================================================================
 # PATH HELPER
 # ===========================================================================
-def get_model_path(system_name, args_name):
+def get_model_path(system_name):
   """
   Parameters
   ----------
@@ -305,21 +383,17 @@ def get_model_path(system_name, args_name):
   ------
   exp_dir, model_path, log_path
   """
-  args_name = [i
-               for i in args_name
-               if i != 'aug']
+  if system_name == 'xvec':
+    args_name = ['utt']
+  elif system_name == 'ivec':
+    args_name = ['nmix', 'tdim']
+  else:
+    raise ValueError("No support for system with name: %s" % system_name)
+  # ====== prefix ====== #
   name = '_'.join([str(system_name).lower(), FEATURE_RECIPE])
   # ====== concat the attributes ====== #
   for i in sorted(str(i) for i in args_name):
     name += '_' + str(int(getattr(_args, i)))
-  # ====== augmentation datasets ====== #
-  if AUGMENTATION_NAME != 'None':
-    for i in AUGMENTATION_NAME.split(','):
-      aug_ds_path = os.path.join(PATH_ACOUSTIC_FEATURES, '%s_%s' % (FEATURE_RECIPE, i))
-      assert os.path.exists(aug_ds_path),\
-      "Cannot find augmented dataset at path: %s" % aug_ds_path
-    name += '_'
-    name += '_'.join(sorted(AUGMENTATION_NAME.split(',')))
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
   if not os.path.exists(save_path):
@@ -331,18 +405,38 @@ def get_model_path(system_name, args_name):
   print("Model path:", ctext(model_path, 'cyan'))
   print("Log path:", ctext(log_path, 'cyan'))
   return save_path, model_path, log_path
-
 # ===========================================================================
 # Data helper
 # ===========================================================================
+def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
+  frame_length = float(_args.utt) / Config.STEP_LENGTH
+  recipes = [
+      F.recipes.Sequencing(frame_length=frame_length,
+                           step_length=frame_length,
+                           end='cut', data_idx=0),
+  ]
+  if name2label is not None and \
+  n_speakers is not None:
+    recipes += [
+        F.recipes.Name2Label(lambda name:name2label[name.split('/')[0]],
+                             ref_idx=0),
+        F.recipes.LabelOneHot(nb_classes=n_speakers, data_idx=1)
+    ]
+  elif (name2label is not None and n_speakers is None) or\
+  (name2label is None and n_speakers is not None):
+    raise RuntimeError("name2label and n_speakers must both be None, or not-None")
+  return recipes
+
 def prepare_dnn_data():
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
   ds = F.Dataset(path=path, read_only=True)
-  ids_name = 'indices_%s' % FEATURE_RECIPE
-  assert FEATURE_RECIPE in ds, "Cannot find feature with name: %s" % FEATURE_RECIPE
+  # ====== find the right feature ====== #
+  feature_name = FEATURE_RECIPE.split('_')[0]
+  ids_name = 'indices_%s' % feature_name
+  assert feature_name in ds, "Cannot find feature with name: %s" % feature_name
   assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
-  X = ds[FEATURE_RECIPE]
+  X = ds[feature_name]
   indices = ds[ids_name]
   # ====== all training file name ====== #
   rand = np.random.RandomState(seed=Config.SUPER_SEED)
@@ -391,20 +485,13 @@ def prepare_dnn_data():
         "#spk:", ctext(len(set(name2label[name]
                                for name in valid_name)), 'cyan'))
   # ====== create the recipe ====== #
-  frame_length = float(_args.utt) / Config.STEP_LENGTH
-  recipes = [
-      F.recipes.Sequencing(frame_length=frame_length,
-                           step_length=frame_length,
-                           end='cut', data_idx=0),
-      F.recipes.Name2Label(lambda name:name2label[name.split('/')[0]],
-                           ref_idx=0),
-      F.recipes.LabelOneHot(nb_classes=len(all_speakers), data_idx=1)
-  ]
+  recipes = prepare_dnn_feeder_recipe(name2label=name2label,
+                                      n_speakers=len(all_speakers))
   train_feeder = F.Feeder(
-      data_desc=F.DataDescriptor(data=X, indices=train_indices),
+      data_desc=F.IndexedData(data=X, indices=train_indices),
       batch_mode='batch', ncpu=NCPU, buffer_size=80)
   valid_feeder = F.Feeder(
-      data_desc=F.DataDescriptor(data=X, indices=valid_indices),
+      data_desc=F.IndexedData(data=X, indices=valid_indices),
       batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)
@@ -420,7 +507,6 @@ def prepare_dnn_data():
       prog.add(X.shape[0])
   # ====== return ====== #
   return train_feeder, valid_feeder, all_speakers
-
 # ===========================================================================
 # Evaluation HELPER
 # ===========================================================================

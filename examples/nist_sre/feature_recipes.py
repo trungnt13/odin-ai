@@ -12,7 +12,7 @@ import soundfile as sf
 from odin import nnet as N
 from odin import fuel as F, preprocessing as pp
 
-from helpers import Config, ALL_NOISE, PATH_ACOUSTIC_FEATURES
+from helpers import Config, PATH_ACOUSTIC_FEATURES
 # ===========================================================================
 # Customized Audio Reader Extractor
 # `row`:
@@ -26,7 +26,12 @@ class SREAudioReader(pp.base.Extractor):
     super(SREAudioReader, self).__init__(is_input_layer=True)
 
   def _transform(self, row):
-    path, channel, name, spkid, dataset, start_time, end_time = row
+    if len(row) == 7:
+      path, channel, name, spkid, dataset, start_time, end_time = row
+    else:
+      path, channel, name, spkid, dataset = row[:5]
+      start_time = None
+      end_time = None
     # ====== read audio ====== #
     # for voxceleb1
     if dataset == 'voxceleb1':
@@ -36,9 +41,9 @@ class SREAudioReader(pp.base.Extractor):
                                best_algorithm=True)
         sr = 8000
     # for sre, fisher and swb
-    elif dataset[:3] == 'sre' or \
-    dataset == 'swb' or \
-    dataset == 'fisher':
+    elif (dataset[:3] == 'sre' or
+     dataset == 'swb' or
+     dataset == 'fisher'):
       with open(path, 'rb') as f:
         y, sr = sf.read(f)
         y = pp.signal.resample(y, sr_orig=sr, sr_new=8000,
@@ -60,11 +65,12 @@ class SREAudioReader(pp.base.Extractor):
     # ====== remove DC offset ====== #
     y = y - np.mean(y, 0)
     duration = max(y.shape) / sr
-    return {'raw': y, 'sr': sr, 'duration': duration, # in second
-            'path': path,
-            'spkid': spkid,
-            'name': name,
-            'dsname': dataset}
+    ret = {'raw': y, 'sr': sr, 'duration': duration, # in second
+           'path': path,
+           'spkid': spkid,
+           'name': name,
+           'dsname': dataset}
+    return ret
 
 class SREAugmentor(pp.base.Extractor):
   """ SREAugmentor
@@ -74,6 +80,7 @@ class SREAugmentor(pp.base.Extractor):
 
   def __init__(self, noise_ds):
     super(SREAugmentor, self).__init__(is_input_layer=True)
+    from helpers import ALL_NOISE
     self.noise_ds = str(noise_ds)
     assert self.noise_ds in ALL_NOISE, \
     "Cannot find noise dataset with name: %s; given following option: %s" % \
@@ -261,14 +268,15 @@ def mspec(augmentation=None):
     delete_list.append('sad')
 
   extractors = pp.make_pipeline(steps=[
-      SREAugmentor(augmentation) if isinstance(augmentation, string_types) else
+      SREAugmentor(augmentation)
+      if isinstance(augmentation, string_types) else
       SREAudioReader(),
       pp.speech.PreEmphasis(coeff=0.97, input_name='raw'),
       # ====== STFT ====== #
       pp.speech.STFTExtractor(frame_length=Config.FRAME_LENGTH,
                               step_length=Config.STEP_LENGTH,
                               n_fft=Config.NFFT, window=Config.WINDOW,
-                              energy=False if augmentation is None else True),
+                              energy=True if augmentation is None else False),
       # ====== SAD ====== #
       pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
                              input_name='stft_energy', output_name='sad')

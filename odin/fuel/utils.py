@@ -283,7 +283,7 @@ class MmapDict(NoSQL):
     """
     Parameters
     ----------
-    save_indices: bool
+    save_all: bool
         force the indices dictionary to be saved, even though,
         its increased hasn't reach the maximum.
     """

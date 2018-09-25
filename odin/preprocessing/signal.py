@@ -135,6 +135,8 @@ def anything2wav(inpath, outpath=None,
 
   """
   inpath = str(inpath)
+  if dataset is None:
+    dataset = 'unknown'
   dataset = str(dataset).lower()
   ext = os.path.splitext(inpath)[-1]
   is_given_outpath = True

@@ -421,13 +421,6 @@ class FeatureProcessor(object):
       Note this key must exist in the returned dictionary,
       otherwise, RuntimeError will be raised
 
-  primary_indices : {string, None}
-      name of the feature that its indices will be select as primary
-      indices
-      if None, select the most dominant (popular) indices
-      NOTE: any features with the same shape[0] will be group
-      into 1 indices
-
   log_path : string
       path to log file
 
@@ -450,7 +443,6 @@ class FeatureProcessor(object):
   def __init__(self, jobs, path, extractor,
                n_cache=0.12, ncpu=1, override=False,
                identifier='name',
-               primary_indices=None,
                log_path=None,
                stop_on_failure=False):
     super(FeatureProcessor, self).__init__()
@@ -507,7 +499,6 @@ class FeatureProcessor(object):
       log_path = str(log_path)
     self._log_path = _check_logpath(log_path)
     # ====== others ====== #
-    self.primary_indices = primary_indices
     self.config = {}
     self._error_log = []
     self.stop_on_failure = bool(stop_on_failure)
@@ -565,7 +556,7 @@ class FeatureProcessor(object):
         stats[key[:-4]][1] = dataset[key][:]
     # all data are cached for periodically flushed
     cache = defaultdict(list)
-    nb_processed = [0] # store the value as reference
+    n_processed = [0] # store the value as reference
 
     # ====== helper ====== #
     def flush_feature(feat_name, X_cached):
@@ -592,7 +583,7 @@ class FeatureProcessor(object):
             "keys are: %s" % str(result.keys()))
       # store all new indices
       # mapping [X.shape[0]] -> [feat_name, feat_name, ...]
-      all_indices = defaultdict(list)
+      all_indices = {}
       # processing
       for feat_name, X in result.items():
         # some invalid feat_name
@@ -613,7 +604,7 @@ class FeatureProcessor(object):
             stats[feat_name[:-4]][1] += X
           # save features array
           else:
-            all_indices[X.shape[0]].append(feat_name)
+            all_indices[feat_name] = X.shape[0]
             # cache data, only if we have more than 0 sample
             if X.shape[0] > 0:
               cache[feat_name].append(X)
@@ -624,23 +615,14 @@ class FeatureProcessor(object):
         del X
       # ====== update indices ====== #
       if len(all_indices) > 0:
-        all_indices = sorted(all_indices.items(),
-                             key=lambda x: '%d-%s' % (len(x[1]), ''.join(x[1])),
-                             reverse=True)
-        # the first dominant indices
-        # n, _ = all_indices[0]
-        # databases['indices'][file_name] = (last_start['indices'],
-        #                                    last_start['indices'] + n)
-        # last_start['indices'] += n
-        # the rest append feature name
-        for n, feats in all_indices:
-          ids_name = 'indices_%s' % '_'.join(sorted(feats))
+        for feat, n in all_indices.items():
+          ids_name = 'indices_%s' % feat
           databases[ids_name][file_name] = (last_start[ids_name],
                                             last_start[ids_name] + n)
           last_start[ids_name] += n
       # ====== flush cache ====== #
-      nb_processed[0] += 1
-      if nb_processed[0] % cache_limit == 0: # 12 + 8
+      n_processed[0] += 1
+      if n_processed[0] % cache_limit == 0: # 12 + 8
         for feat_name, X_cached in cache.items():
           flush_feature(feat_name, X_cached)
         cache.clear()
@@ -741,31 +723,13 @@ class FeatureProcessor(object):
     dataset.flush()
     prog.add_notification("Flushed all data to disk")
     # ====== saving indices ====== #
-    indices_name2path = {}
     for name, db in databases.items():
-      if 'indices_' == name[:8]:
-        indices_name2path[name] = db.path
       db.flush(save_all=True)
       db_size = len(db)
       db.close()
       prog.add_notification('Flush MmapDict "%s" to disk, size: %s' %
                             (ctext(name, 'yellow'),
                              ctext(str(db_size), 'yellow')))
-    # ====== copy the most dominant indices as default 'indices' ====== #
-    if len(indices_name2path) > 0:
-      if isinstance(self.primary_indices, string_types):
-        dominant_indices = [(k, v)
-                            for k, v in indices_name2path.items()
-                            if self.primary_indices in k][0]
-      else:
-        dominant_indices = sorted(indices_name2path.items(),
-                                  key=lambda x: '%d-%s' % (len(x[0].split('_')),
-                                                           x[0]),
-                                  reverse=True)[0]
-      os.symlink(dominant_indices[1],
-                 os.path.join(os.path.dirname(dominant_indices[1]), 'indices'))
-      prog.add_notification('Selecting "%s" as dominant indices' %
-                            ctext(dominant_indices[0], 'yellow'))
 
     # ====== save mean and std ====== #
     def save_mean_std(sum1, sum2, name):

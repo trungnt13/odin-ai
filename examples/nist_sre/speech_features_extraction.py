@@ -105,7 +105,6 @@ with np.warnings.catch_warnings():
       override=True,
       identifier='name',
       log_path=processor_log_path,
-      primary_indices=FEATURE_RECIPE,
       stop_on_failure=False)
   processor.run()
 # ===========================================================================

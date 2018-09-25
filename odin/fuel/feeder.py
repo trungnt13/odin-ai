@@ -115,15 +115,11 @@ def _file_grouping(batch, batch_size, rng, batch_filter):
       r = [name, i] + [j[start:end] for j in ret]
       yield tuple(batch_filter(r))
 
-def _weird_grouping(batch):
-  pass
-
 # ===========================================================================
 # IndexedData
 # ===========================================================================
 _apply_approx = lambda n, x: int(round(n * x)) if x < 1. + 1e-12 else int(x)
 _indices_dtype = [('name', 'object'), ('start', 'i4'), ('end', 'i4')]
-
 
 def _preprocessing_indices(indices):
   """ Three different kind of indices:
@@ -155,9 +151,9 @@ def _preprocessing_indices(indices):
     indices_info = ('mapping', indices)
   return indices, indices_info
 
-
 class IndexedData(Data):
   """
+
   Parameters
   ----------
   data : {Data, list of Data}
@@ -165,9 +161,7 @@ class IndexedData(Data):
     NOTE: all Data must have the same length
   indices : Mapping
     mapping from `name`->(start, end)
-  concat : bool
-    whether all data in this Descriptor will be concatenated during
-    any operators, the concatenation will be performed on axis=-1
+
   """
 
   def __init__(self, data, indices):
@@ -255,7 +249,6 @@ class IndexedData(Data):
     if is_string(key):
       key = slice(*self.indices[key])
     return super(IndexedData, self).__getitem__(key)
-
 
 # ===========================================================================
 # Multiprocessing Feeder

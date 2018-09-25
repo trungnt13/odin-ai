@@ -21,8 +21,8 @@ from helpers import (get_model_path, prepare_dnn_data,
 # ===========================================================================
 # Create data feeder
 # ===========================================================================
-(EXP_DIR, MODEL_PATH, LOG_PATH) = get_model_path(system_name='xvec',
-                                                 args_name=['utt'])
+LEARNING_RATE = 0.0001 # kaldi: 0.001
+(EXP_DIR, MODEL_PATH, LOG_PATH) = get_model_path(system_name='xvec')
 stdio(LOG_PATH)
 # ====== load the data ====== #
 (train, valid,
@@ -77,7 +77,7 @@ print('Latent space:', ctext(z, 'cyan'))
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
-updates = K.optimizers.Adam(lr=0.0001, name='XAdam').minimize(
+updates = K.optimizers.Adam(lr=LEARNING_RATE, name='XAdam').minimize(
     loss=ce,
     roles=[K.role.TrainableParameter],
     exclude_roles=[K.role.InitialState],
@@ -100,7 +100,7 @@ if not os.path.exists(MODEL_PATH) or IS_TRAINING:
   task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
                            shuffle_level=2, allow_rollback=True,
                            verbose=4)
-  task.set_checkpoint(MODEL_PATH, x_vec,
+  task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
                       increasing=True, max_checkpoint=-1)
   task.set_callbacks([
       training.NaNDetector(),
@@ -111,6 +111,6 @@ if not os.path.exists(MODEL_PATH) or IS_TRAINING:
   task.set_train_task(func=f_train, data=train,
                       epoch=EPOCH, name='train')
   task.set_valid_task(func=f_score, data=valid,
-                      freq=training.Timer(percentage=1.),
+                      freq=training.Timer(percentage=0.5),
                       name='valid')
   task.run()
