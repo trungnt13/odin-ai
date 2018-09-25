@@ -17,11 +17,10 @@ from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape,
 from odin import fuel as F, visual as V, nnet as N, backend as K
 
 from helpers import (get_model_path, prepare_dnn_data,
-                     IS_TRAINING, BATCH_SIZE, EPOCH)
+                     IS_TRAINING, BATCH_SIZE, EPOCH, LEARNING_RATE)
 # ===========================================================================
 # Create data feeder
 # ===========================================================================
-LEARNING_RATE = 0.0001 # kaldi: 0.001
 (EXP_DIR, MODEL_PATH, LOG_PATH) = get_model_path(system_name='xvec')
 stdio(LOG_PATH)
 # ====== load the data ====== #
@@ -98,7 +97,7 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 if not os.path.exists(MODEL_PATH) or IS_TRAINING:
   print('Start training ...')
   task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
-                           shuffle_level=2, allow_rollback=True,
+                           shuffle_level=2, allow_rollback=False,
                            verbose=4)
   task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
                       increasing=True, max_checkpoint=-1)

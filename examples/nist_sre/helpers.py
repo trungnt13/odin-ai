@@ -60,6 +60,7 @@ _args = args_parse(descriptions=[
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 256),
     ('-epoch', 'number of epoch, for training DNN', None, 25),
+    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default', None, 0.001),
     ('--train', 'if the model is already trained, forced running the fine-tuning', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
@@ -73,6 +74,7 @@ AUGMENTATION_NAME = _args.aug
 # ====== DNN ====== #
 BATCH_SIZE = int(_args.batch)
 EPOCH = int(_args.epoch)
+LEARNING_RATE = float(_args.lr)
 # ====== system ====== #
 NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ====== helper for checking the requirement ====== #

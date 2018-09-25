@@ -2,6 +2,7 @@ from __future__ import print_function, division, absolute_import
 
 import os
 os.environ['ODIN'] = 'cpu=4,float32'
+import pickle
 
 import numpy as np
 import tensorflow as tf
@@ -81,6 +82,7 @@ for dsname, ds in scoring_features.items():
 # Searching for trained system
 # ===========================================================================
 model_dir, _, _ = get_model_path(system_name=SCORE_SYSTEM_NAME)
+model_name = os.path.basename(model_dir)
 all_model = []
 for path in os.listdir(model_dir):
   path = os.path.join(model_dir, path)
@@ -97,6 +99,10 @@ print("Found pre-trained at:", ctext(final_model, 'cyan'))
 # ===========================================================================
 # Extract the x-vector
 # ===========================================================================
+# mapping from
+# dataset_name -> {'name': 1-D array, 'meta': 1-D array, 'data': 2-D array}
+all_score = {}
+
 if 'xvec' == SCORE_SYSTEM_NAME:
   # ====== load the network ====== #
   x_vec = N.deserialize(path=final_model,
@@ -110,9 +116,20 @@ if 'xvec' == SCORE_SYSTEM_NAME:
   f_z = K.function(inputs=X, outputs=z, training=False)
   print('Inputs:', ctext(X, 'cyan'))
   print('Latent:', ctext(z, 'cyan'))
-  # ====== prepare the data ====== #
+
   recipe = prepare_dnn_feeder_recipe()
   for dsname, ds in scoring_features.items():
+    n_files = len(ds['indices_%s' % extractor_name])
+    # ====== check exist scores ====== #
+    score_path = os.path.join(SCORE_DIR, '%s.%s' % (model_name, dsname))
+    if os.path.exists(score_path):
+      with open(score_path, 'rb') as f:
+        scores = pickle.load(f)
+        if (len(scores['name']) == len(scores['meta']) == len(scores['data']) == n_files):
+          all_score[dsname] = scores
+          print(' - Loaded scores at:', ctext(score_path, 'cyan'))
+          continue # skip the calculation
+    # ====== create feeder ====== #
     feeder = F.Feeder(
         data_desc=F.IndexedData(data=ds[extractor_name],
                                 indices=ds['indices_%s' % extractor_name]),
@@ -120,10 +137,12 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     feeder.set_recipes(recipe)
     # ====== init ====== #
     output_name = []
+    output_meta = []
     output_data = []
     prog = Progbar(target=len(feeder),
                    print_summary=True,
-                   name='Making prediction on: %s' % dsname)
+                   name=score_path)
+    spkID = ds['spkid'] # metadata stored in spkID
     # ====== make prediction ====== #
     for name, idx, X in feeder.set_batch(batch_size=100000,
                                          seed=None, shuffle_level=0):
@@ -132,6 +151,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
       if z.shape[0] > 1:
         z = np.mean(z, axis=0, keepdims=True)
       output_name.append(name)
+      output_meta.append(spkID[name])
       output_data.append(z)
       # update the progress
       prog['ds'] = dsname
@@ -140,11 +160,15 @@ if 'xvec' == SCORE_SYSTEM_NAME:
       prog.add(X.shape[0])
     # ====== post-processing ====== #
     output_name = np.array(output_name)
-    output_data = np.array(output_data)
-    print(output_name)
-    print(output_data)
-    print(output_name.shape, output_name.dtype)
-    print(output_data.shape, output_data.dtype)
+    output_meta = np.array(output_meta)
+    output_data = np.concatenate(output_data, axis=0)
+    # ====== save the score ====== #
+    with open(score_path, 'wb') as f:
+      scores = {'name': output_name,
+                'meta': output_meta,
+                'data': output_data.astype('float32')}
+      pickle.dump(scores, f)
+      all_score[dsname] = scores
 # ===========================================================================
 # Extract the i-vector
 # ===========================================================================
@@ -155,3 +179,8 @@ elif 'ivec' == SCORE_SYSTEM_NAME:
 # ===========================================================================
 else:
   raise RuntimeError("No support for system: %s" % SCORE_SYSTEM_NAME)
+# ===========================================================================
+# Now scoring
+# ===========================================================================
+for name, scores in all_model.items():
+  print(name, scores['data'].shape)
