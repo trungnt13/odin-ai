@@ -60,12 +60,15 @@ extractor = extractor()
 print(extractor)
 # ====== extract the feature if not exists ====== #
 scoring_features = {}
+print("Acoustic feature extraction:")
 for dsname, file_list in sorted(SCORING_DATASETS.items(),
                                 key=lambda x: x[0]):
   feat_dir = os.path.join(PATH_ACOUSTIC_FEATURES,
                           '%s_%s' % (dsname, extractor_name))
   log_path = get_logpath(name='%s_%s.log' % (dsname, extractor_name),
                          increasing=True, odin_base=False, root=EXP_DIR)
+  print("  Name  :", ctext(dsname, 'cyan'))
+  print("  #Files:", ctext(len(file_list), 'cyan'))
   # check if need running the feature extraction
   if _check_running_feature_extraction(feat_dir,
                                        feat_name=extractor_name,
@@ -82,7 +85,7 @@ for dsname, file_list in sorted(SCORING_DATASETS.items(),
                                       stop_on_failure=False)
       processor.run()
   # store the extracted dataset
-  print("Load dataset:", ctext(feat_dir, 'cyan'))
+  print("  Load dataset:", ctext(feat_dir, 'cyan'))
   scoring_features[dsname] = F.Dataset(path=feat_dir, read_only=True)
 # ====== check the duration ====== #
 for dsname, ds in scoring_features.items():
@@ -113,9 +116,10 @@ else:
   final_model = all_models[SCORE_SYSTEM_ID]
   model_index = final_model[-2:]
 # ====== print the log ====== #
-print("Found pre-trained at:", ctext(final_model, 'cyan'))
-print("Model name :", ctext(model_name, 'cyan'))
-print("Model index:", ctext(model_index, 'cyan'))
+print("Searching pre-trained model:")
+print("  Found pre-trained at:", ctext(final_model, 'cyan'))
+print("  Model name :", ctext(model_name, 'cyan'))
+print("  Model index:", ctext(model_index, 'cyan'))
 # just check one more time
 assert os.path.exists(final_model), \
 "Cannot find pre-trained model at: '%s'" % final_model
@@ -124,7 +128,8 @@ assert os.path.exists(final_model), \
 # ===========================================================================
 # mapping from
 # dataset_name -> {'name': 1-D array [n_samples],
-#                  'meta': 1-D array [n_samples],
+#                  'meta': 1-D array [n_samples], # (e.g. 'test', 'enroll', 'unlabeled')
+#                  'path': 1-D array [n_samples], # (path to original audio)
 #                  'data': 2-D array [n_samples, n_latent_dim]}
 all_scores = {}
 
@@ -173,8 +178,10 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     # ====== init ====== #
     output_name = []
     output_meta = []
+    output_path = []
     output_data = []
     spkID = ds['spkid'] # metadata stored in spkID
+    pathMap = ds['path']
     # progress bar
     prog = Progbar(target=len(feeder), print_summary=True,
                    name=score_path)
@@ -191,6 +198,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
         z = np.mean(z, axis=0, keepdims=True)
       output_name.append(name)
       output_meta.append(spkID[name])
+      output_path.append(pathMap[name])
       output_data.append(z)
       # update the progress
       prog['ds'] = dsname
@@ -287,6 +295,11 @@ if 'xvec' == SCORE_SYSTEM_NAME:
 elif 'ivec' == SCORE_SYSTEM_NAME:
   raise NotImplementedError
 # ===========================================================================
+# Extract the end-to-end system
+# ===========================================================================
+elif 'e2e' == SCORE_SYSTEM_NAME:
+  raise NotImplementedError
+# ===========================================================================
 # Unknown system
 # ===========================================================================
 else:
@@ -325,8 +338,11 @@ print("  y        :", ctext(y_backend.shape, 'cyan'))
 for dsname, scores in all_scores.items():
   print("Scoring:", ctext(dsname, 'yellow'))
   # load the scores
-  seg_name, seg_meta, seg_data = scores['name'], scores['meta'], scores['data']
-  name_2_data = {i: j for i, j in zip(seg_name, seg_data)}
+  (seg_name, seg_meta,
+   seg_path, seg_data) = (scores['name'], scores['meta'],
+                          scores['path'], scores['data'])
+  name_2_data = {i: j
+                 for i, j in zip(seg_name, seg_data)}
   # get the enroll and trials list
   enroll_name = '%s_enroll' % dsname
   trials_name = '%s_trials' % dsname
@@ -356,6 +372,7 @@ for dsname, scores in all_scores.items():
                 centering=True, wccn=True, unit_length=True,
                 n_iter=20, random_state=Config.SUPER_SEED,
                 verbose=1)
+    plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
     plda.fit(X=X_backend, y=y_backend)
   else:
     raise RuntimeError(

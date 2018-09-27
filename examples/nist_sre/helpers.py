@@ -63,7 +63,7 @@ _args = args_parse(descriptions=[
     # for DNN
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 64),
-    ('-epoch', 'number of epoch, for training DNN', None, 25),
+    ('-epoch', 'number of epoch, for training DNN', None, 8),
     ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.0001),
     # others
     ('--debug', 'enable debugging', None, False),
@@ -127,19 +127,24 @@ BASE_DIR = select_path(
     '/mnt/sdb1/SRE_DATA',
 default='')
 # path to directory contain following folders:
-#  * mx6_speech
-#  * voxceleb
-#  * voxceleb2
-#  * SRE04
-#  * SRE05
-#  * SRE06
-#  * SRE08
-#  * SRE10
-#  * SRE18 (dev and eval)
-#  * Switchboard
-#  * fisher
-#  * musan
-#  * RIRS_NOISES
+##############
+#   * fisher
+#   * mx6
+#   * sre04
+#   * sre05
+#   * sre06
+#   * sre08
+#   * sre10
+#   * swb
+#   * voxceleb1
+#   * voxceleb2
+###############
+#   * musan
+#   * rirs
+###############
+#   * sre18dev
+#   * sre18eval
+
 PATH_RAW_DATA = {
     'mx6': BASE_DIR,
     'voxceleb1': BASE_DIR,
