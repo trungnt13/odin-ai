@@ -8,14 +8,15 @@ from six.moves import zip, range, cPickle
 
 import numpy as np
 
-from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
-                   MAX_OPEN_MMAP, Data, as_data)
-from .utils import MmapDict, SQLiteDict, NoSQL
-
+from odin.utils.mpi import async
+from odin.utils.crypto import md5_checksum
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
                         is_callable, flatten_list, UnitTimer)
-from odin.utils.crypto import md5_checksum
+
+from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
+                   MAX_OPEN_MMAP, Data, as_data)
+from .utils import MmapDict, SQLiteDict, NoSQL
 from .recipe_base import FeederRecipe, RecipeList
 
 
@@ -80,7 +81,7 @@ def _parse_data_descriptor(path, read_only):
   if file_ext in ('.txt',):
     return [(file_name, ('txt', 'unknown', None, path))]
   # ====== check if is csv file ====== #
-  if file_ext in ('.csv',):
+  if file_ext in ('.csv', '.tsv'):
     sep = _infer_separator(path)
     data = []
     # read by manually open file much faster than numpy.genfromtxt

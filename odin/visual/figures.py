@@ -1112,6 +1112,8 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
   known_order = [
       # For audio processing
       'raw',
+      'stft_energy', 'stft_energy_d1', 'stft_energy_d2',
+      'frames_energy', 'frames_energy_d1', 'frames_energy_d2',
       'energy', 'energy_d1', 'energy_d2',
       'vad',
       'sad',

@@ -508,8 +508,8 @@ class MainLoop(object):
   """
 
   def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
-               allow_rollback=True, labels=None, log_path=None,
-               verbose=3):
+               allow_rollback=True, labels=None,
+               log_path=None, verbose=3):
     super(MainLoop, self).__init__()
     self._labels = labels
     self._main_task = None
@@ -589,8 +589,21 @@ class MainLoop(object):
     # other
     self._checkpoint_increasing = bool(increasing)
     self._checkpoint_max = int(max_checkpoint)
+    # get the lastest checkpoint count
+    saved_files = []
+    base_dir = os.path.dirname(self._save_path)
+    for i in os.listdir(base_dir):
+      i = os.path.join(base_dir, i)
+      if self._save_path + '.' in i:
+        saved_files.append(i)
+    saved_files = sorted(saved_files)
+    if len(saved_files) == 0:
+      self._current_checkpoint_count = 0
+    else:
+      self._current_checkpoint_count = int(saved_files[-1].split('.')[-1]) + 1
     # save first checkpoint
-    self._save(is_best=False)
+    if self._current_checkpoint_count == 0:
+      self._save(is_best=False)
 
   # ==================== properties ==================== #
   @property
@@ -739,7 +752,8 @@ class MainLoop(object):
         N.serialize(nnops=self._save_obj, path=self._save_path,
                     save_variables=True, variables=self._save_variables,
                     binary_output=False, override=True)
-      else: # not the best model saved, just periodically saving
+      # not the best model saved, just periodically saving
+      else:
         final_save_path = self._save_path + '.%d' % self._current_checkpoint_count
         N.serialize(nnops=self._save_obj,
                     path=final_save_path,
@@ -769,6 +783,7 @@ class MainLoop(object):
             (ctext('MainLoop', 'red'), len(self._save_variables), mem_size))
 
   def _rollback(self):
+    # TODO: update rollback mechanism
     if not self._allow_rollback:
       return
     # trigger event for callbacks

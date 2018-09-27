@@ -186,7 +186,8 @@ def anything2wav(inpath, outpath=None,
       codec = 'signed-integer' if 'pcm16' in codec else str(codec)
     else:
       codec = ''
-    options.append('-e %s' % codec)
+    if len(codec) > 0:
+      options.append('-e %s' % codec)
     # output path
     options.append(str(outpath))
     # channel selection
@@ -221,7 +222,8 @@ def anything2wav(inpath, outpath=None,
         codec = ''
       else:
         codec = 'pcm_s16le' if 'pcm16' in codec else str(codec)
-      options.append('-acodec %s' % codec)
+      if len(codec) > 0:
+        options.append('-acodec %s' % codec)
     # output path
     options.append(str(outpath))
     # trim audio
@@ -246,15 +248,23 @@ def anything2wav(inpath, outpath=None,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE) as task:
       data = BytesIO(task.stdout.read())
-      return soundfile.read(data) # y, sr
+      try:
+        data = soundfile.read(data) # y, sr
+      except Exception as e:
+        print("Error running command:", cmd)
+        print("Stdout:", str(task.stdout.read(), 'utf-8'))
+        print("Stderr:", str(task.stderr.read(), 'utf-8'))
+        raise e
+      return data
   # read audio file from outpath
   else:
     try:
       with subprocess.Popen(cmd, shell=True) as task:
         pass
     except Exception as e:
-      print("Stdout:", task.stdout)
-      print("Stderr:", task.stderr)
+      print("Error running command:", cmd)
+      print("Stdout:", str(task.stdout.read(), 'utf-8'))
+      print("Stderr:", str(task.stderr.read(), 'utf-8'))
       raise e
     with open(outpath, 'rb') as f:
       return soundfile.read(f)

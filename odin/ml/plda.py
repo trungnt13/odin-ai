@@ -62,7 +62,8 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
     class-dependence feature vectors
   """
 
-  def __init__(self, n_phi=None, centering=True, wccn=True, unit_length=True,
+  def __init__(self, n_phi=None,
+               centering=True, wccn=True, unit_length=True,
                n_iter='auto', improve_threshold=1e-1,
                labels=None, dtype='float64', random_state=None,
                verbose=0):

@@ -30,6 +30,7 @@ class Config(object):
   NCEPS = 40
   FMIN = 100
   FMAX = 4000
+  SAD_SMOOTH = 6
   dtype = 'float16'
   # Random seed for reproducibility
   SUPER_SEED = 52181208
@@ -47,25 +48,27 @@ class SystemStates(Enum):
 _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
     ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
-    ('-downsample', 'downsampling all the dataset for testing code', None, 0),
     ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
     # for scoring
+    ('-backend', 'list of dataset for training the backend: PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
     ('-sys', 'name of the system for scoring: xvec, ivec, e2e ...', None, 'xvec'),
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
-    ('-score', 'name of dataset for scoring, multiple dataset splited by ","', None, 'sre18'),
+    ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
+    # for training
+    ('-downsample', 'absolute number of files used for training', None, 0),
+    ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
     # for ivector
     ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
     ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
     # for DNN
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
-    ('-batch', 'batch size, for training DNN', None, 256),
+    ('-batch', 'batch size, for training DNN', None, 64),
     ('-epoch', 'number of epoch, for training DNN', None, 25),
-    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default', None, 0.001),
-    ('--train', 'if the model is already trained, forced running the fine-tuning', None, False),
+    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.0001),
+    # others
     ('--debug', 'enable debugging', None, False),
 ])
 IS_DEBUGGING = _args.debug
-IS_TRAINING = _args.train
 # this variable determine which state is running
 CURRENT_STATE = SystemStates.UNKNOWN
 # ====== Features ====== #
@@ -75,6 +78,11 @@ AUGMENTATION_NAME = _args.aug
 BATCH_SIZE = int(_args.batch)
 EPOCH = int(_args.epoch)
 LEARNING_RATE = float(_args.lr)
+# searching for the appropriate system
+SCORE_SYSTEM_NAME = _args.sys
+SCORE_SYSTEM_ID = int(_args.sysid)
+# for training the backend
+BACKEND_DATASET = str(_args.backend).split(',')
 # ====== system ====== #
 NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ====== helper for checking the requirement ====== #
@@ -127,7 +135,7 @@ default='')
 #  * SRE06
 #  * SRE08
 #  * SRE10
-#  * SRE18
+#  * SRE18 (dev and eval)
 #  * Switchboard
 #  * fisher
 #  * musan
@@ -143,7 +151,8 @@ PATH_RAW_DATA = {
     'sre06': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
     'sre08': BASE_DIR,
     'sre10': BASE_DIR,
-    'sre18': os.path.join(BASE_DIR, 'SRE18'),
+    'sre18dev': BASE_DIR,
+    'sre18eval': BASE_DIR,
     # noise datasets
     'musan': BASE_DIR,
     'rirs': BASE_DIR,
@@ -167,34 +176,37 @@ sre_file_list = {k: v
                  if isinstance(v, np.ndarray)}
 print("Original dataset:")
 for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
-  print(' ', ctext('%-12s' % k, 'yellow'), ':',
+  print(' ', ctext('%-18s' % k, 'yellow'), ':',
     ctext(v.shape, 'cyan'))
+# ===========================================================================
+# Validate scoring dataset
+# ===========================================================================
+def validate_scoring_dataset(in_path_raw, score_dataset):
+  all_files = {}
+  for dsname in score_dataset:
+    if dsname not in sre_file_list:
+      raise ValueError("Cannot find dataset with name: '%s' in the file list" % dsname)
+    if dsname not in in_path_raw:
+      raise ValueError("Cannot find dataset with name: '%s' in provided path" % dsname)
+    base_path = in_path_raw[dsname]
+
+    ds = []
+    for row in sre_file_list[dsname]:
+      path = os.path.join(base_path, row[0])
+      # every file must exist
+      if not os.path.exists(path):
+        raise RuntimeError("File not exist at path: %s" % path)
+      ds.append([path] + row[1:4].tolist() + [dsname])
+    all_files[dsname] = np.array(ds)
+  # Header:
+  #  0       1      2        3           4
+  # path, channel, name, something, dataset_name
+  return all_files
+
 # ====== check dataset for scoring ====== #
 if CURRENT_STATE == SystemStates.SCORING:
   assert len(_args.score) > 0, \
   "No dataset are provided for scoring, specify '-score' option"
-
-  def validate_scoring_dataset(in_path_raw, score_dataset):
-    all_files = {}
-    for dsname in score_dataset:
-      if dsname not in sre_file_list:
-        raise ValueError("Cannot find dataset with name: '%s' in the file list" % dsname)
-      if dsname not in in_path_raw:
-        raise ValueError("Cannot find dataset with name: '%s' in provided path" % dsname)
-
-      base_path = in_path_raw[dsname]
-      ds = []
-      for row in sre_file_list[dsname]:
-        path = os.path.join(base_path, row[0])
-        # every file must exist
-        if not os.path.exists(path):
-          raise RuntimeError("File not exist at path: %s" % path)
-        ds.append([path] + row[1:].tolist() + [dsname])
-      all_files[dsname] = np.array(ds)
-    # Header:
-    #  0       1      2        3           4
-    # path, channel, name, something, dataset_name
-    return all_files
 
   SCORING_DATASETS = validate_scoring_dataset(
       in_path_raw=PATH_RAW_DATA,
@@ -203,10 +215,6 @@ if CURRENT_STATE == SystemStates.SCORING:
   for dsname, dsarray in SCORING_DATASETS.items():
     print('  ', ctext('%-10s' % dsname, 'yellow'), ':',
           '%s' % ctext(dsarray.shape, 'cyan'))
-
-  # searching for the appropriate system
-  SCORE_SYSTEM_NAME = _args.sys
-  SCORE_SYSTEM_ID = int(_args.sysid)
 # ===========================================================================
 # Validating the Noise dataset for augmentation
 # ===========================================================================
@@ -396,6 +404,11 @@ def get_model_path(system_name):
   # ====== concat the attributes ====== #
   for i in sorted(str(i) for i in args_name):
     name += '_' + str(int(getattr(_args, i)))
+  # ====== check the exclude dataset ====== #
+  excluded_dataset = str(_args.exclude).strip()
+  if len(excluded_dataset) > 0:
+    for excluded in sorted(excluded_dataset.split(',')):
+      name += '_' + excluded
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
   if not os.path.exists(save_path):
@@ -417,10 +430,9 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
                            step_length=frame_length,
                            end='cut', data_idx=0),
   ]
-  if name2label is not None and \
-  n_speakers is not None:
+  if name2label is not None and n_speakers is not None:
     recipes += [
-        F.recipes.Name2Label(lambda name:name2label[name.split('/')[0]],
+        F.recipes.Name2Label(lambda name:name2label[name],
                              ref_idx=0),
         F.recipes.LabelOneHot(nb_classes=n_speakers, data_idx=1)
     ]
@@ -433,19 +445,45 @@ def prepare_dnn_data():
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
   ds = F.Dataset(path=path, read_only=True)
+  rand = np.random.RandomState(seed=Config.SUPER_SEED)
   # ====== find the right feature ====== #
   feature_name = FEATURE_RECIPE.split('_')[0]
   ids_name = 'indices_%s' % feature_name
   assert feature_name in ds, "Cannot find feature with name: %s" % feature_name
   assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
   X = ds[feature_name]
-  indices = ds[ids_name]
+  # ====== exclude some dataset ====== #
+  if len(_args.exclude) > 0:
+    exclude_dataset = {i: 1 for i in str(_args.exclude).split(',')}
+    print("* Excluded dataset:", ctext(exclude_dataset, 'cyan'))
+    indices = {name: (start, end)
+               for name, (start, end) in ds[ids_name].items()
+               if ds['dsname'][name] not in exclude_dataset}
+  else:
+    indices = {i: j for i, j in ds[ids_name].items()}
+  # ====== down-sampling if necessary ====== #
+  if _args.downsample > 1000:
+    dataset2name = defaultdict(list)
+    # ordering the indices so we sample the same set every time
+    for name in sorted(indices.keys()):
+      dataset2name[ds['dsname'][name]].append(name)
+    n_total_files = len(indices)
+    n_sample_files = int(_args.downsample)
+    # get the percentage of each dataset
+    dataset2per = {i: len(j) / n_total_files
+                   for i, j in dataset2name.items()}
+    # sampling based on percentage
+    _ = {}
+    for dsname, flist in dataset2name.items():
+      rand.shuffle(flist)
+      n_dataset_files = int(dataset2per[dsname] * n_sample_files)
+      _.update({i: indices[i]
+                for i in flist[:n_dataset_files]})
+    indices = _
   # ====== all training file name ====== #
-  rand = np.random.RandomState(seed=Config.SUPER_SEED)
   # modify here to train full dataset
   all_name = sorted(indices.keys())
   rand.shuffle(all_name)
-  all_name = all_name
   n_files = len(all_name)
   print("#Files:", ctext(n_files, 'cyan'))
   # ====== speaker mapping ====== #
@@ -456,6 +494,7 @@ def prepare_dnn_data():
                for i, spk in enumerate(all_speakers)}
   name2label = {name: spk2label[spk]
                 for name, spk in name2spk.items()}
+  assert len(name2label) == len(all_name)
   print("#Speakers:", ctext(len(all_speakers), 'cyan'))
   # ====== stratify sampling based on speaker ====== #
   valid_name = []
@@ -467,7 +506,7 @@ def prepare_dnn_data():
   for label, name_list in label2name.items():
     if len(name_list) < 2:
       continue
-    n = max(1, int(0.1 * len(name_list))) # 10% for validation
+    n = max(1, int(0.05 * len(name_list))) # 5% for validation
     valid_name += rand.choice(a=name_list, size=n).tolist()
   # train list is the rest
   _ = {name: 1 for name in valid_name}
@@ -481,19 +520,29 @@ def prepare_dnn_data():
 
   print("#Train files:", ctext('%-8d' % len(train_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
-                               for name in train_name)), 'cyan'))
+                               for name in train_name)), 'cyan'),
+        "#noise:", ctext(len([name for name in train_name
+                              if '/' in name]), 'cyan'))
 
   print("#Valid files:", ctext('%-8d' % len(valid_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
-                               for name in valid_name)), 'cyan'))
+                               for name in valid_name)), 'cyan'),
+        "#noise:", ctext(len([name for name in valid_name
+                              if '/' in name]), 'cyan'))
   # ====== create the recipe ====== #
+  assert all(name in name2label
+             for name in train_indices.keys())
+  assert all(name in name2label
+            for name in valid_indices.keys())
   recipes = prepare_dnn_feeder_recipe(name2label=name2label,
                                       n_speakers=len(all_speakers))
   train_feeder = F.Feeder(
-      data_desc=F.IndexedData(data=X, indices=train_indices),
-      batch_mode='batch', ncpu=NCPU, buffer_size=80)
+      data_desc=F.IndexedData(data=X,
+                              indices=train_indices),
+      batch_mode='batch', ncpu=NCPU, buffer_size=128)
   valid_feeder = F.Feeder(
-      data_desc=F.IndexedData(data=X, indices=valid_indices),
+      data_desc=F.IndexedData(data=X,
+                              indices=valid_indices),
       batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)

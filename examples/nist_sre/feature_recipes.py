@@ -12,7 +12,7 @@ import soundfile as sf
 from odin import nnet as N
 from odin import fuel as F, preprocessing as pp
 
-from helpers import Config, PATH_ACOUSTIC_FEATURES
+from helpers import Config, PATH_ACOUSTIC_FEATURES, CURRENT_STATE, SystemStates
 # ===========================================================================
 # Customized Audio Reader Extractor
 # `row`:
@@ -254,6 +254,7 @@ def sad(augmentation=None):
       pp.speech.CalculateEnergy(log=True,
                                 input_name='frames', output_name='energy'),
       pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+                             smooth_window=Config.SAD_SMOOTH,
                              input_name='energy', output_name='sad'),
       pp.base.DeleteFeatures(input_name=['raw', 'frames', 'scale',
                                          'energy', 'sad_threshold']),
@@ -279,6 +280,7 @@ def mspec(augmentation=None):
                               energy=True if augmentation is None else False),
       # ====== SAD ====== #
       pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+                             smooth_window=Config.SAD_SMOOTH,
                              input_name='stft_energy', output_name='sad')
       if augmentation is None else
       SADreader(ds_path=os.path.join(PATH_ACOUSTIC_FEATURES, 'mspec')),
@@ -289,7 +291,9 @@ def mspec(augmentation=None):
                                   fmin=Config.FMIN, fmax=Config.FMAX,
                                   input_name=('spec', 'sr'), output_name='mspec'),
       pp.speech.ApplyingSAD(input_name='mspec', sad_name='sad',
-                            keep_unvoiced=False),
+                            keep_unvoiced=False
+                            if CURRENT_STATE == SystemStates.EXTRACT_FEATURES
+                            else True),
       # ====== normalization ====== #
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
                              win_length=301, input_name='mspec'),

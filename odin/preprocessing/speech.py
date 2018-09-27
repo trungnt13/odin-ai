@@ -1343,7 +1343,7 @@ class ApplyingSAD(Extractor):
       specific feature will be used name for the cutting
   threshold: None or float
       if `sad`, is continuous value, threshold need to be applied
-  smooth_win: int (> 0)
+  smooth_window: int (> 0)
       amount of adjacent frames will be taken into the SAD
   keep_unvoiced: bool
       if True, keep the whole audio file even though no SAD found
@@ -1357,12 +1357,12 @@ class ApplyingSAD(Extractor):
   """
 
   def __init__(self, input_name, output_name=None, sad_name='sad',
-               threshold=None, smooth_win=None, keep_unvoiced=False):
+               threshold=None, smooth_window=None, keep_unvoiced=False):
     super(ApplyingSAD, self).__init__(input_name=as_tuple(input_name, t=string_types),
                                       output_name=output_name)
     self.sad_name = str(sad_name)
     self.threshold = float(threshold) if is_number(threshold) else None
-    self.smooth_win = int(smooth_win) if is_number(smooth_win) else None
+    self.smooth_window = int(smooth_window) if is_number(smooth_window) else None
     self.keep_unvoiced = bool(keep_unvoiced)
 
   def _transform(self, X):
@@ -1377,8 +1377,8 @@ class ApplyingSAD(Extractor):
       else: # take all frames
         sad[:] = 1
     # ====== preprocessing sad ====== #
-    if is_number(self.smooth_win) and self.smooth_win > 0:
-      sad = smooth(sad, win=self.smooth_win, window='flat') > 0.
+    if is_number(self.smooth_window) and self.smooth_window > 0:
+      sad = smooth(sad, win=self.smooth_window, window='flat') > 0.
     sad = sad.astype('bool')
     # ====== start ====== #
     X_new = []

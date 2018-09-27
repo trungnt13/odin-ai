@@ -63,7 +63,15 @@ class NoSQL(MutableMapping):
     if override and os.path.exists(path) and os.path.isfile(path):
       os.remove(path)
     # ====== init ====== #
-    self._restore_dict(self.path, self.read_only, self.cache_size)
+    try:
+      self._restore_dict(self.path, self.read_only, self.cache_size)
+    except Exception as e:
+      # exception when restoring the data,
+      # remove singleton instance first
+      del NoSQL._INSTANCES[self.__class__.__name__][self.path]
+      import traceback
+      traceback.print_exc()
+      raise e
 
   # ==================== abstract methods ==================== #
   @abstractmethod
@@ -206,6 +214,15 @@ class NoSQL(MutableMapping):
 # ===========================================================================
 # MmapDict
 # ===========================================================================
+def _safe_loading_indices(file_obj, class_name, path):
+  try:
+    return cPickle.loads(file_obj)
+  except Exception as e:
+    del NoSQL._INSTANCES[class_name][path]
+    import traceback
+    traceback.print_exc()
+    raise e
+
 class MmapDict(NoSQL):
   """ MmapDict
   Handle enormous dictionary (up to thousand terabytes of data) in
@@ -250,7 +267,8 @@ class MmapDict(NoSQL):
       # read dictionary
       file.seek(max_position)
       pickled_indices = file.read(dict_size)
-      self._indices_dict = async(lambda: cPickle.loads(pickled_indices))()
+      self._indices_dict = async(_safe_loading_indices)(
+          pickled_indices, self.__class__.__name__, path)
     # ====== create new file from scratch ====== #
     else:
       file = open(str(path), mode='wb+')

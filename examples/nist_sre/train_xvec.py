@@ -17,7 +17,8 @@ from odin.utils import (args_parse, ctext, Progbar, as_tuple_of_shape,
 from odin import fuel as F, visual as V, nnet as N, backend as K
 
 from helpers import (get_model_path, prepare_dnn_data,
-                     IS_TRAINING, BATCH_SIZE, EPOCH, LEARNING_RATE)
+                     BATCH_SIZE, EPOCH, LEARNING_RATE,
+                     SCORE_SYSTEM_ID)
 # ===========================================================================
 # Create data feeder
 # ===========================================================================
@@ -27,6 +28,11 @@ stdio(LOG_PATH)
 (train, valid,
  all_speakers) = prepare_dnn_data()
 n_speakers = len(all_speakers)
+# ====== print some log ====== #
+print("Training info:")
+print('  ', "Batch size   :", ctext(BATCH_SIZE, 'cyan'))
+print('  ', "Epoch        :", ctext(EPOCH, 'cyan'))
+print('  ', "Learning Rate:", ctext(LEARNING_RATE, 'cyan'))
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -37,9 +43,13 @@ inputs = [K.placeholder(shape=(None,) + shape[1:],
 X = inputs[0]
 y = inputs[1]
 print("Inputs:", ctext(inputs, 'cyan'))
+# ====== get all saved model if exists ====== #
+all_models = [os.path.join(EXP_DIR, i) for i in os.listdir(EXP_DIR)]
+all_models = sorted([i for i in all_models if MODEL_PATH + '.' in i])
 # ====== the network ====== #
-if os.path.exists(MODEL_PATH):
-  x_vec = N.deserialize(path=MODEL_PATH,
+if len(all_models) > 0:
+  print("Load model at:", ctext(all_models[SCORE_SYSTEM_ID], 'cyan'))
+  x_vec = N.deserialize(path=all_models[SCORE_SYSTEM_ID],
                         force_restore_vars=True)
 else:
   with N.args_scope(
@@ -76,7 +86,11 @@ print('Latent space:', ctext(z, 'cyan'))
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
-updates = K.optimizers.Adam(lr=LEARNING_RATE, name='XAdam').minimize(
+optimizer = K.optimizers.RMSProp(lr=LEARNING_RATE, name='Xrms')
+# optimizer = K.optimizers.Adam(lr=LEARNING_RATE, name='XAdam')
+# optimizer = K.optimizers.SGD(lr=LEARNING_RATE, momentum=0.5, name='Xmomentum')
+print("Optimizer:", ctext(optimizer, 'cyan'))
+updates = optimizer.minimize(
     loss=ce,
     roles=[K.role.TrainableParameter],
     exclude_roles=[K.role.InitialState],
@@ -94,22 +108,21 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 # ===========================================================================
 # Create trainer
 # ===========================================================================
-if not os.path.exists(MODEL_PATH) or IS_TRAINING:
-  print('Start training ...')
-  task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
-                           shuffle_level=2, allow_rollback=False,
-                           verbose=4)
-  task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
-                      increasing=True, max_checkpoint=-1)
-  task.set_callbacks([
-      training.NaNDetector(),
-      training.Checkpoint(task_name='train', epoch_percent=0.5),
-      # training.EarlyStopGeneralizationLoss('valid', ce,
-      #                                      threshold=5, patience=3)
-  ])
-  task.set_train_task(func=f_train, data=train,
-                      epoch=EPOCH, name='train')
-  task.set_valid_task(func=f_score, data=valid,
-                      freq=training.Timer(percentage=0.5),
-                      name='valid')
-  task.run()
+print('Start training ...')
+task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
+                         shuffle_level=2, allow_rollback=False,
+                         verbose=4)
+task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
+                    increasing=True, max_checkpoint=-1)
+task.set_callbacks([
+    training.NaNDetector(),
+    training.Checkpoint(task_name='train', epoch_percent=0.5),
+    # training.EarlyStopGeneralizationLoss('valid', ce,
+    #                                      threshold=5, patience=3)
+])
+task.set_train_task(func=f_train, data=train,
+                    epoch=EPOCH, name='train')
+task.set_valid_task(func=f_score, data=valid,
+                    freq=training.Timer(percentage=0.5),
+                    name='valid')
+task.run()

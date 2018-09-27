@@ -615,8 +615,8 @@ class FeatureProcessor(object):
         del X
       # ====== update indices ====== #
       if len(all_indices) > 0:
-        for feat, n in all_indices.items():
-          ids_name = 'indices_%s' % feat
+        for feat_name, n in all_indices.items():
+          ids_name = 'indices_%s' % feat_name
           databases[ids_name][file_name] = (last_start[ids_name],
                                             last_start[ids_name] + n)
           last_start[ids_name] += n
