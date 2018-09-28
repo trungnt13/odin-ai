@@ -18,7 +18,7 @@ from odin import fuel as F, visual as V, nnet as N, backend as K
 
 from helpers import (get_model_path, prepare_dnn_data,
                      BATCH_SIZE, EPOCH, LEARNING_RATE,
-                     SCORE_SYSTEM_ID)
+                     SCORE_SYSTEM_ID, GRADIENT_CLIPPING)
 # ===========================================================================
 # Create data feeder
 # ===========================================================================

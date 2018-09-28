@@ -94,19 +94,21 @@ def compute_wccn(X, y, classes=None, class_avg=None):
 
 class VectorNormalizer(BaseEstimator, TransformerMixin):
   """ Perform of sequence of normalization as following
-    * Centering: Substract sample mean
-    * Whitening: using within-class-covariance-normalization
-    * Applying LDA
-    * Length normalization
+    -> Centering: Substract sample mean
+    -> Whitening: using within-class-covariance-normalization
+    -> Applying LDA (optional)
+    -> Length normalization
 
   Parameters
   ----------
+  centering : bool (default: True)
+    mean normalized the vectors
   wccn : bool (default: True)
     within class covariance normalization
   lda : bool (default: True)
     Linear Discriminant Analysis
   concat : bool (default: False)
-    concatenate original vector to the transformed
+    concatenate original vector to the normalized vector
 
   Return
   ------
@@ -249,7 +251,22 @@ class VectorNormalizer(BaseEstimator, TransformerMixin):
     return self.normalize(X)
 
 class Scorer(BaseEstimator, TransformerMixin, Evaluable):
-  """ Scorer """
+  """ Scorer
+
+  Parameters
+  ----------
+  centering : bool (default: True)
+    mean normalized the vectors
+  wccn : bool (default: True)
+    within class covariance normalization
+  lda : bool (default: True)
+    Linear Discriminant Analysis
+  concat : bool (default: False)
+    concatenate original vector to the normalized vector
+  method : {'cosine', 'svm'}
+    method for scoring
+
+  """
 
   def __init__(self, centering=True, wccn=True, lda=True, concat=False,
                method='cosine', labels=None):
@@ -311,10 +328,10 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
       self._labels = np.unique(y)
     # ====== for SVM method ====== #
     if self.method == 'svm':
-      X = self.normalizer.transform(X)
+      X = self._normalizer.transform(X)
       # normalize to [0, 1]
-      X = 2 * (X - self.normalizer.vmin) /\
-          (self.normalizer.vmax - self.normalizer.vmin) - 1
+      X = 2 * (X - self._normalizer.vmin) /\
+          (self._normalizer.vmax - self._normalizer.vmin) - 1
       self._svm = SVC(C=1, kernel='rbf', gamma='auto', coef0=1,
                       shrinking=True, random_state=0,
                       probability=True, tol=1e-3,
@@ -326,23 +343,23 @@ class Scorer(BaseEstimator, TransformerMixin, Evaluable):
   def _predict_proba(self, X):
     if self.method != 'svm':
       raise RuntimeError("`predict_proba` only for 'svm' method")
-    return self._svm.predict_proba(self.normalizer.transform(X))
+    return self._svm.predict_proba(self._normalizer.transform(X))
 
   def predict_log_proba(self, X):
     return self.transform(X)
 
   def transform(self, X):
     # [nb_samples, nb_classes - 1] (if LDA applied)
-    X = self.normalizer.transform(X)
+    X = self._normalizer.transform(X)
     # ====== cosine scoring ====== #
     if self.method == 'cosine':
       # [nb_classes, nb_classes - 1]
-      model_ivectors = self.normalizer.enroll_vecs
+      model_ivectors = self._normalizer.enroll_vecs
       test_ivectors = X
       scores = np.dot(test_ivectors, model_ivectors.T)
     # ====== svm ====== #
     elif self.method == 'svm':
-      X = 2 * (X - self.normalizer.vmin) /\
-          (self.normalizer.vmax - self.normalizer.vmin) - 1
+      X = 2 * (X - self._normalizer.vmin) /\
+          (self._normalizer.vmax - self._normalizer.vmin) - 1
       scores = self._svm.predict_log_proba(X)
     return scores

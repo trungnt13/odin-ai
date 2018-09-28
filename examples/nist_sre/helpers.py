@@ -50,10 +50,12 @@ _args = args_parse(descriptions=[
     ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
     ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
     # for scoring
-    ('-backend', 'list of dataset for training the backend: PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
     ('-sys', 'name of the system for scoring: xvec, ivec, e2e ...', None, 'xvec'),
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
+    ('-backend', 'list of dataset for training the backend: PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
+    ('--lda', 'running LDA before training the backend', None, False),
+    ('--mll', 'pre-fitting maximum likelihood before training PLDA', None, False),
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
     ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
@@ -64,6 +66,7 @@ _args = args_parse(descriptions=[
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 64),
     ('-epoch', 'number of epoch, for training DNN', None, 8),
+    ('-clip', 'gradient clipping', None, 0),
     ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.0001),
     # others
     ('--debug', 'enable debugging', None, False),
@@ -78,9 +81,12 @@ AUGMENTATION_NAME = _args.aug
 BATCH_SIZE = int(_args.batch)
 EPOCH = int(_args.epoch)
 LEARNING_RATE = float(_args.lr)
+GRADIENT_CLIPPING = float(_args.clip)
 # searching for the appropriate system
 SCORE_SYSTEM_NAME = _args.sys
 SCORE_SYSTEM_ID = int(_args.sysid)
+IS_LDA = bool(_args.lda)
+MAXIMUM_LIKELIHOOD = bool(_args.mll)
 # for training the backend
 BACKEND_DATASET = str(_args.backend).split(',')
 # ====== system ====== #
@@ -121,8 +127,22 @@ print(ctext('====================================', 'red'))
 # ===========================================================================
 # FILE LIST PATH
 # ===========================================================================
+# ====== basic directories ====== #
 EXP_DIR = get_exppath('sre', override=False)
-BASE_DIR = select_path(
+# this folder store extracted vectors for trials and enroll
+SCORE_DIR = os.path.join(EXP_DIR, 'scores')
+if not os.path.exists(SCORE_DIR):
+  os.mkdir(SCORE_DIR)
+# this folder store extracted vectors for training backend
+BACKEND_DIR = os.path.join(EXP_DIR, 'backend')
+if not os.path.exists(BACKEND_DIR):
+  os.mkdir(BACKEND_DIR)
+# this folder store the results
+RESULT_DIR = os.path.join(EXP_DIR, 'results')
+if not os.path.exists(RESULT_DIR):
+  os.mkdir(RESULT_DIR)
+# ====== raw data ====== #
+PATH_BASE = select_path(
     '/media/data2/SRE_DATA',
     '/mnt/sdb1/SRE_DATA',
 default='')
@@ -144,23 +164,22 @@ default='')
 ###############
 #   * sre18dev
 #   * sre18eval
-
 PATH_RAW_DATA = {
-    'mx6': BASE_DIR,
-    'voxceleb1': BASE_DIR,
-    'voxceleb2': BASE_DIR,
-    'swb': BASE_DIR,
-    'fisher': BASE_DIR,
-    'sre04': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
-    'sre05': os.path.join(BASE_DIR, 'NIST1996_2008/SRE96_SRE05'),
-    'sre06': os.path.join(BASE_DIR, 'NIST1996_2008/SRE02_SRE06'),
-    'sre08': BASE_DIR,
-    'sre10': BASE_DIR,
-    'sre18dev': BASE_DIR,
-    'sre18eval': BASE_DIR,
+    'mx6': PATH_BASE,
+    'voxceleb1': PATH_BASE,
+    'voxceleb2': PATH_BASE,
+    'swb': PATH_BASE,
+    'fisher': PATH_BASE,
+    'sre04': os.path.join(PATH_BASE, 'NIST1996_2008/SRE02_SRE06'),
+    'sre05': os.path.join(PATH_BASE, 'NIST1996_2008/SRE96_SRE05'),
+    'sre06': os.path.join(PATH_BASE, 'NIST1996_2008/SRE02_SRE06'),
+    'sre08': PATH_BASE,
+    'sre10': PATH_BASE,
+    'sre18dev': PATH_BASE,
+    'sre18eval': PATH_BASE,
     # noise datasets
-    'musan': BASE_DIR,
-    'rirs': BASE_DIR,
+    'musan': PATH_BASE,
+    'rirs': PATH_BASE,
 }
 # all features will be stored here
 OUTPUT_DIR = select_path(
@@ -412,7 +431,9 @@ def get_model_path(system_name):
   # ====== check the exclude dataset ====== #
   excluded_dataset = str(_args.exclude).strip()
   if len(excluded_dataset) > 0:
-    for excluded in sorted(excluded_dataset.split(',')):
+    for excluded in sorted(set(excluded_dataset.split(','))):
+      assert excluded in sre_file_list or excluded == 'noise', \
+      "Unknown excluded dataset with name: '%s'" % excluded
       name += '_' + excluded
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
@@ -459,11 +480,16 @@ def prepare_dnn_data():
   X = ds[feature_name]
   # ====== exclude some dataset ====== #
   if len(_args.exclude) > 0:
-    exclude_dataset = {i: 1 for i in str(_args.exclude).split(',')}
+    exclude_dataset = {i: 1 for i in str(_args.exclude.strip()).split(',')}
     print("* Excluded dataset:", ctext(exclude_dataset, 'cyan'))
     indices = {name: (start, end)
                for name, (start, end) in ds[ids_name].items()
                if ds['dsname'][name] not in exclude_dataset}
+    # special case exclude all the noise data
+    if 'noise' in exclude_dataset:
+      indices = {name: (start, end)
+                 for name, (start, end) in indices.items()
+                 if '/' not in name}
   else:
     indices = {i: j for i, j in ds[ids_name].items()}
   # ====== down-sampling if necessary ====== #

@@ -1,32 +1,32 @@
 from __future__ import print_function, division, absolute_import
 
 import os
-os.environ['ODIN'] = 'cpu=4,float32,gpu'
+os.environ['ODIN'] = 'float32,gpu'
 import pickle
 from collections import OrderedDict, defaultdict
 
 import numpy as np
+from scipy.io import savemat
+from scipy import stats
+
 import tensorflow as tf
 
-from odin.ml import PLDA
+from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+from odin.ml import PLDA, Scorer
 from odin import preprocessing as pp
 from odin import fuel as F, nnet as N, backend as K
 from odin.utils import (get_module_from_path, get_script_path, ctext,
                         Progbar)
 
 from helpers import (SCORING_DATASETS, SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
-                     PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE, EXP_DIR,
+                     IS_LDA, MAXIMUM_LIKELIHOOD,
+                     PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
-                     sre_file_list, Config, BACKEND_DATASET)
+                     sre_file_list, Config, BACKEND_DATASET,
+                     EXP_DIR, SCORE_DIR, BACKEND_DIR, RESULT_DIR)
 
-# ====== this folder store extracted vectors for trials and enroll ====== #
-SCORE_DIR = os.path.join(EXP_DIR, 'scores')
-if not os.path.exists(SCORE_DIR):
-  os.mkdir(SCORE_DIR)
-# ====== this folder store extracted vectors for training backend ====== #
-BACKEND_DIR = os.path.join(EXP_DIR, 'backend')
-if not os.path.exists(BACKEND_DIR):
-  os.mkdir(BACKEND_DIR)
 # ===========================================================================
 # Some helper
 # ===========================================================================
@@ -58,17 +58,44 @@ extractor = get_module_from_path(identifier=extractor_name,
                                  prefix='feature_recipes')[0]
 extractor = extractor()
 print(extractor)
-# ====== extract the feature if not exists ====== #
+# mapping from
+# scoring_data_name -> [features 2-D array,
+#                       indices {name: (start, end)},
+#                       spkid_or_meta {name: spkid_or_meta},
+#                       path {name: path}]
 scoring_features = {}
+training_ds = F.Dataset(path=os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE),
+                        read_only=True)
+all_training_dataset = set(training_ds['dsname'].values())
+# ====== extract the feature if not exists ====== #
 print("Acoustic feature extraction:")
 for dsname, file_list in sorted(SCORING_DATASETS.items(),
                                 key=lambda x: x[0]):
+  # acoustic features already extracted in training dataset
+  if dsname in all_training_dataset:
+    X = training_ds[extractor_name]
+    indices = {name: (start, end)
+               for name, (start, end) in training_ds['indices_%s' % extractor_name].items()
+               if training_ds['dsname'][name] == dsname}
+    meta = {name: meta
+            for name, meta in training_ds['spkid'].items()
+            if name in indices}
+    if 'path' in training_ds:
+      path = {name: path
+              for name, path in training_ds['path'].items()
+              if name in indices}
+    else:
+      path = None
+    print("  Name  :", ctext(dsname, 'cyan'))
+    print("   #Files:", ctext(len(indices), 'cyan'))
+    print("   Load dataset:", ctext(training_ds.path, 'cyan'))
+    scoring_features[dsname] = [X, indices, meta, path]
+    continue
+  # extract acoustic feature from scratch
   feat_dir = os.path.join(PATH_ACOUSTIC_FEATURES,
                           '%s_%s' % (dsname, extractor_name))
   log_path = get_logpath(name='%s_%s.log' % (dsname, extractor_name),
                          increasing=True, odin_base=False, root=EXP_DIR)
-  print("  Name  :", ctext(dsname, 'cyan'))
-  print("  #Files:", ctext(len(file_list), 'cyan'))
   # check if need running the feature extraction
   if _check_running_feature_extraction(feat_dir,
                                        feat_name=extractor_name,
@@ -85,15 +112,23 @@ for dsname, file_list in sorted(SCORING_DATASETS.items(),
                                       stop_on_failure=False)
       processor.run()
   # store the extracted dataset
-  print("  Load dataset:", ctext(feat_dir, 'cyan'))
-  scoring_features[dsname] = F.Dataset(path=feat_dir, read_only=True)
+  print("  Name  :", ctext(dsname, 'cyan'))
+  print("   #Files:", ctext(len(file_list), 'cyan'))
+  print("   Load dataset:", ctext(feat_dir, 'cyan'))
+  ds = F.Dataset(path=feat_dir, read_only=True)
+  scoring_features[dsname] = [
+      ds[extractor_name],
+      dict(ds['indices_%s' % extractor_name].items()),
+      dict(ds['spkid'].items()),
+      dict(ds['path'].items()),
+  ]
 # ====== check the duration ====== #
-for dsname, ds in scoring_features.items():
-  for fname, dur in ds['duration'].items():
-    dur = float(dur)
-    if dur < 5:
-      raise RuntimeError("Dataset: '%s' contains file: '%s', duration='%f' < 5(s)"
-        % (dsname, fname, dur))
+# for dsname, ds in scoring_features.items():
+#   for fname, dur in ds['duration'].items():
+#     dur = float(dur)
+#     if dur < 5:
+#       raise RuntimeError("Dataset: '%s' contains file: '%s', duration='%f' < 5(s)"
+#         % (dsname, fname, dur))
 # ===========================================================================
 # Searching for trained system
 # ===========================================================================
@@ -156,23 +191,23 @@ if 'xvec' == SCORE_SYSTEM_NAME:
   # ====== recipe for feeder ====== #
   recipe = prepare_dnn_feeder_recipe()
   # ==================== extract x-vector for enroll and trials ==================== #
-  for dsname, ds in sorted(scoring_features.items(),
-                           key=lambda x: x[0]):
-    n_files = len(ds['indices_%s' % extractor_name])
+  for dsname, (ds_feat, ds_indices, ds_meta, ds_path) in sorted(
+      scoring_features.items(), key=lambda x: x[0]):
+    n_files = len(ds_indices)
     # ====== check exist scores ====== #
     score_path = os.path.join(SCORE_DIR,
                               '%s%s.%s' % (model_name, model_index, dsname))
     if os.path.exists(score_path):
       with open(score_path, 'rb') as f:
         scores = pickle.load(f)
-        if (len(scores['name']) == len(scores['meta']) == len(scores['data']) == n_files):
+        if (len(scores['name']) == len(scores['meta']) ==
+                len(scores['path']) == len(scores['data']) == n_files):
           all_scores[dsname] = scores
           print(' - Loaded scores at:', ctext(score_path, 'cyan'))
           continue # skip the calculation
     # ====== create feeder ====== #
     feeder = F.Feeder(
-        data_desc=F.IndexedData(data=ds[extractor_name],
-                                indices=ds['indices_%s' % extractor_name]),
+        data_desc=F.IndexedData(data=ds_feat, indices=ds_indices),
         batch_mode='file', ncpu=8)
     feeder.set_recipes(recipe)
     # ====== init ====== #
@@ -180,8 +215,6 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     output_meta = []
     output_path = []
     output_data = []
-    spkID = ds['spkid'] # metadata stored in spkID
-    pathMap = ds['path']
     # progress bar
     prog = Progbar(target=len(feeder), print_summary=True,
                    name=score_path)
@@ -197,8 +230,8 @@ if 'xvec' == SCORE_SYSTEM_NAME:
       if z.shape[0] > 1:
         z = np.mean(z, axis=0, keepdims=True)
       output_name.append(name)
-      output_meta.append(spkID[name])
-      output_path.append(pathMap[name])
+      output_meta.append(ds_meta[name])
+      output_path.append(None if ds_path is None else ds_path[name])
       output_data.append(z)
       # update the progress
       prog['ds'] = dsname
@@ -210,11 +243,13 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     # ====== post-processing ====== #
     output_name = np.array(output_name)
     output_meta = np.array(output_meta)
+    output_path = np.array(output_path)
     output_data = np.concatenate(output_data, axis=0)
     # ====== save the score ====== #
     with open(score_path, 'wb') as f:
       scores = {'name': output_name,
                 'meta': output_meta,
+                'path': output_path,
                 'data': output_data.astype('float32')}
       pickle.dump(scores, f)
       all_scores[dsname] = scores
@@ -238,7 +273,10 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     indices_ds = [(name, (start, end))
                   for name, (start, end) in indices.items()
                   if indices_dsname[name] == dsname]
-    print("  Found: %s (files)" % ctext(len(indices_ds), 'cyan'))
+    print("  Found: %s (files)" %
+      ctext(len(indices_ds), 'cyan'))
+    print("  Found: %s (speakers)" %
+      ctext(len(set(indices_spkid[i[0]] for i in indices_ds)), 'cyan'))
     # skip if no files found
     if len(indices_ds) == 0:
       print("  Skip the calculation!")
@@ -332,6 +370,23 @@ print("Training data for backend:")
 print("  #Speakers:", ctext(n_speakers, 'cyan'))
 print("  X        :", ctext(X_backend.shape, 'cyan'))
 print("  y        :", ctext(y_backend.shape, 'cyan'))
+# ====== fast checking the array ====== #
+print("Check backend data statistics:")
+print("  Mean  :", ctext(np.mean(X_backend), 'cyan'))
+print("  Std   :", ctext(np.std(X_backend), 'cyan'))
+print("  Max   :", ctext(np.max(X_backend), 'cyan'))
+print("  Min   :", ctext(np.min(X_backend), 'cyan'))
+print("  NaN   :", ctext(np.any(np.isnan(X_backend)), 'cyan'))
+n = int(np.prod(X_backend.shape))
+n_non_zeros = np.count_nonzero(X_backend)
+print("  #Zeros: %s/%s or %.1f%%" %
+  (ctext(n - n_non_zeros, 'lightcyan_ex'),
+   ctext(n, 'cyan'),
+   (n - n_non_zeros) / n * 100))
+# ====== optional save data to matlab for testing ====== #
+with open('/tmp/xvecs.mat', 'wb') as ftmp:
+  savemat(ftmp, {'X': np.array(X_backend.astype('float32'), order='F'),
+                 'y': np.array(y_backend.astype('int32'), order='F')})
 # ===========================================================================
 # Now scoring
 # ===========================================================================
@@ -343,6 +398,8 @@ for dsname, scores in all_scores.items():
                           scores['path'], scores['data'])
   name_2_data = {i: j
                  for i, j in zip(seg_name, seg_data)}
+  name_2_ext = {i: '' if j is None else os.path.splitext(j)[-1]
+                for i, j in zip(seg_name, seg_path)}
   # get the enroll and trials list
   enroll_name = '%s_enroll' % dsname
   trials_name = '%s_trials' % dsname
@@ -361,19 +418,28 @@ for dsname, scores in all_scores.items():
         for model_id, seg_list in models.items()
     ])
     models_name = list(models.keys())
-    models_vecs = np.concatenate(list(models.values()), axis=0)
-    print("  Enroll model:", ctext(models_vecs.shape, 'cyan'))
+    X_models = np.concatenate(list(models.values()), axis=0)
+    print("  Enroll model:", ctext(X_models.shape, 'cyan'))
     # ====== create the trials list ====== #
-    X = np.concatenate([name_2_data[i][None, :] for i in trials[:, 1]],
-                       axis=0)
-    print("  Trials      :", ctext(X.shape, 'cyan'))
+    X_trials = np.concatenate([name_2_data[i][None, :] for i in trials[:, 1]],
+                              axis=0)
+    print("  Trials      :", ctext(X_trials.shape, 'cyan'))
     # ====== training the plda ====== #
+    if IS_LDA:
+      print("  Fitting LDA ...")
+      lda = LinearDiscriminantAnalysis(n_components=200)
+      X_backend = lda.fit_transform(X=X_backend, y=y_backend)
     plda = PLDA(n_phi=150,
                 centering=True, wccn=True, unit_length=True,
                 n_iter=20, random_state=Config.SUPER_SEED,
                 verbose=1)
-    plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
+    if MAXIMUM_LIKELIHOOD:
+      print("  Fitting PLDA maximum likelihood ...")
+      plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
     plda.fit(X=X_backend, y=y_backend)
+    y_scores = plda.predict_log_proba(X=X_trials, X_model=X_models)
+    print(y_scores.shape)
   else:
     raise RuntimeError(
-        "Cannot find '_trials.csv' and '_enroll.csv' for dataset: %s" % dsname)
+        "Cannot find '%s_trials.csv' and '%s_enroll.csv' for dataset: %s" %
+        (dsname, dsname, dsname))
