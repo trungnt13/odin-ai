@@ -82,7 +82,11 @@ def ctext(s, color='red'):
   """
   try:
     from colorama import Fore
+    color = str(color).strip()
     color = color.upper()
+    # special fix for light color
+    if 'LIGHT' == color[:5] and '_EX' != color[-3:]:
+      color = color + '_EX'
     color = getattr(Fore, color, '')
     return color + str(s) + Fore.RESET
   except ImportError:

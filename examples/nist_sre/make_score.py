@@ -201,9 +201,13 @@ if 'xvec' == SCORE_SYSTEM_NAME:
       with open(score_path, 'rb') as f:
         scores = pickle.load(f)
         if (len(scores['name']) == len(scores['meta']) ==
-                len(scores['path']) == len(scores['data']) == n_files):
+                len(scores['path']) == len(scores['data']) <= n_files):
           all_scores[dsname] = scores
           print(' - Loaded scores at:', ctext(score_path, 'cyan'))
+          if len(scores['name']) != n_files:
+            print(' - [WARNING] Extracted scores only for: %s/%s (files)' %
+              (ctext(len(scores['name']), 'lightcyan'),
+               ctext(n_files, 'cyan')))
           continue # skip the calculation
     # ====== create feeder ====== #
     feeder = F.Feeder(
@@ -380,7 +384,7 @@ print("  NaN   :", ctext(np.any(np.isnan(X_backend)), 'cyan'))
 n = int(np.prod(X_backend.shape))
 n_non_zeros = np.count_nonzero(X_backend)
 print("  #Zeros: %s/%s or %.1f%%" %
-  (ctext(n - n_non_zeros, 'lightcyan_ex'),
+  (ctext(n - n_non_zeros, 'lightcyan'),
    ctext(n, 'cyan'),
    (n - n_non_zeros) / n * 100))
 # ====== optional save data to matlab for testing ====== #
