@@ -18,7 +18,8 @@ from odin.utils import as_tuple, is_number, uuid, ctext
 from odin.utils.cache_utils import cache_memory
 
 from .role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
-                   GradientsNorm, GraidentsClipping, has_roles, get_roles,
+                   GradientsNorm, GraidentsClippingNorm, GraidentsClippingValue,
+                   has_roles, get_roles,
                    Role, Parameter, Weight, Bias, TrainableParameter,
                    Variable as _Variable, OptimizerVariable)
 from .helpers import (is_tensor, get_value, ComputationGraph, is_variable,
@@ -98,17 +99,17 @@ class Optimizer(object):
       self.decay_steps = decay_steps
       self.decay_rate = decay_rate
 
-      if clipnorm is not None and \
-      (clipnorm <= 0 if is_number(clipnorm) else get_value(clipnorm)) <= 0:
-        raise ValueError('clipnorm value must greater than 0.')
+      if clipnorm is not None:
+        if (clipnorm if is_number(clipnorm) else get_value(clipnorm)) <= 0:
+          raise ValueError('clipnorm value must greater than 0.')
       self.clipnorm = _as_variable(clipnorm, name="clip_norm",
-          roles=GraidentsClipping)
+          roles=GraidentsClippingNorm)
 
-      if clipvalue is not None and \
-      (clipvalue <= 0 if is_number(clipnorm) else get_value(clipvalue)) <= 0:
-        raise ValueError('clipvalue value must greater than 0.')
+      if clipvalue is not None:
+        if (clipvalue if is_number(clipvalue) else get_value(clipvalue)) <= 0:
+          raise ValueError('clipvalue value must greater than 0.')
       self.clipvalue = _as_variable(clipvalue, name="clip_value",
-          roles=GraidentsClipping)
+          roles=GraidentsClippingValue)
     # ====== internal states values ====== #
     clip_alg = clip_alg.lower()
     if clip_alg not in ('total_norm', 'norm', 'avg_norm'):
@@ -271,6 +272,10 @@ class Optimizer(object):
 
   def __call__(self, loss_or_grads, params):
     return self.get_updates(loss_or_grads, params)
+
+  def grad(self, loss_or_grads, params):
+    return self.get_gradients(loss_or_grads=loss_or_grads,
+                              params=params)
 
   @cache_memory
   def get_gradients(self, loss_or_grads, params):

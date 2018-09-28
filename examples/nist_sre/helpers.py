@@ -56,6 +56,7 @@ _args = args_parse(descriptions=[
     ('-backend', 'list of dataset for training the backend: PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
     ('--lda', 'running LDA before training the backend', None, False),
     ('--mll', 'pre-fitting maximum likelihood before training PLDA', None, False),
+    ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, False),
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
     ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
@@ -86,7 +87,8 @@ GRADIENT_CLIPPING = float(_args.clip)
 SCORE_SYSTEM_NAME = _args.sys
 SCORE_SYSTEM_ID = int(_args.sysid)
 IS_LDA = bool(_args.lda)
-MAXIMUM_LIKELIHOOD = bool(_args.mll)
+PLDA_MAXIMUM_LIKELIHOOD = bool(_args.mll)
+PLDA_SHOW_LLK = bool(_args.showllk)
 # for training the backend
 BACKEND_DATASET = str(_args.backend).split(',')
 # ====== system ====== #

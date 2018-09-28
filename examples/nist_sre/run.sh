@@ -1,5 +1,26 @@
-# For training: fisher, mx6, sre04, sre05, sre06, sre08, sre10, swb, voxceleb1, voxceleb2
+# For training: fisher,mx6,sre04,sre05,sre06,sre08,sre10,swb,voxceleb1,voxceleb2
 # For noise   : musan, rirs
+
+# test training on only one of the sre (without noise)
+# sre04
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre05,sre06,sre08,sre10,swb,voxceleb1,voxceleb2,noise
+# sre05
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre06,sre08,sre10,swb,voxceleb1,voxceleb2,noise
+# sre06
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre08,sre10,swb,voxceleb1,voxceleb2,noise
+# sre08
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre06,sre10,swb,voxceleb1,voxceleb2,noise
+# sre10
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre06,sre08,swb,voxceleb1,voxceleb2,noise
+
+# swb
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre06,sre08,sre10,voxceleb1,voxceleb2,noise
+
+# test training on only sre06 and noise
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre08,sre10,swb,voxceleb1,voxceleb2
+
+# Test training on voxceleb2
+python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre06,sre08,sre10,swb,voxceleb1
 
 # Test training on voxceleb1
 python train_xvec.py mspec_musan_rirs -exclude fisher,mx6,sre04,sre05,sre06,sre08,sre10,swb,voxceleb2

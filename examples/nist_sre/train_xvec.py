@@ -30,9 +30,8 @@ stdio(LOG_PATH)
 n_speakers = len(all_speakers)
 # ====== print some log ====== #
 print("Training info:")
-print('  ', "Batch size   :", ctext(BATCH_SIZE, 'cyan'))
-print('  ', "Epoch        :", ctext(EPOCH, 'cyan'))
-print('  ', "Learning Rate:", ctext(LEARNING_RATE, 'cyan'))
+print('  ', "Batch size       :", ctext(BATCH_SIZE, 'cyan'))
+print('  ', "Epoch            :", ctext(EPOCH, 'cyan'))
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -86,10 +85,14 @@ print('Latent space:', ctext(z, 'cyan'))
 ce = tf.losses.softmax_cross_entropy(onehot_labels=y, logits=y_logit)
 acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
-optimizer = K.optimizers.RMSProp(lr=LEARNING_RATE, name='Xrms')
+clipvalue = None if GRADIENT_CLIPPING <= 0 else float(GRADIENT_CLIPPING)
+optimizer = K.optimizers.RMSProp(lr=LEARNING_RATE, name='Xrms',
+                                 clipvalue=clipvalue)
 # optimizer = K.optimizers.Adam(lr=LEARNING_RATE, name='XAdam')
 # optimizer = K.optimizers.SGD(lr=LEARNING_RATE, momentum=0.5, name='Xmomentum')
-print("Optimizer:", ctext(optimizer, 'cyan'))
+print("Optimizer:", ctext(optimizer, 'yellow'))
+print('  ', "Learning Rate    :", ctext(LEARNING_RATE, 'cyan'))
+print('  ', "Gradient Clipping:", ctext(clipvalue, 'cyan'))
 updates = optimizer.minimize(
     loss=ce,
     roles=[K.role.TrainableParameter],
@@ -104,7 +107,8 @@ print('Building testing functions ...')
 f_score = K.function(inputs, [ce, acc],
                     training=False)
 # Latent spaces
-f_z = K.function(inputs=X, outputs=z, training=False)
+f_z = K.function(inputs=X, outputs=z,
+                 training=False)
 # ===========================================================================
 # Create trainer
 # ===========================================================================

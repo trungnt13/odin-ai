@@ -21,7 +21,7 @@ from odin.utils import (get_module_from_path, get_script_path, ctext,
                         Progbar)
 
 from helpers import (SCORING_DATASETS, SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
-                     IS_LDA, MAXIMUM_LIKELIHOOD,
+                     IS_LDA, PLDA_MAXIMUM_LIKELIHOOD, PLDA_SHOW_LLK,
                      PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
                      sre_file_list, Config, BACKEND_DATASET,
@@ -436,8 +436,8 @@ for dsname, scores in all_scores.items():
     plda = PLDA(n_phi=150,
                 centering=True, wccn=True, unit_length=True,
                 n_iter=20, random_state=Config.SUPER_SEED,
-                verbose=1)
-    if MAXIMUM_LIKELIHOOD:
+                verbose=2 if PLDA_SHOW_LLK else 1)
+    if PLDA_MAXIMUM_LIKELIHOOD:
       print("  Fitting PLDA maximum likelihood ...")
       plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
     plda.fit(X=X_backend, y=y_backend)

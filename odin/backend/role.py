@@ -51,6 +51,12 @@ class LearningRateDecay(OptimizerHyperParameter):
 class GraidentsClipping(OptimizerHyperParameter):
   pass
 
+class GraidentsClippingNorm(GraidentsClipping):
+  pass
+
+class GraidentsClippingValue(GraidentsClipping):
+  pass
+
 # ==================== Role for Cost and Objective ==================== #
 class Auxiliary(Variable):
   """ Variables added to the graph as annotations """
