@@ -4,6 +4,7 @@ author: 'Omid Sadjadi, Timothee Kheyrkhah'
 email: 'omid.sadjadi@nist.gov'
 """
 import time
+import warnings
 from numbers import Number
 from six import string_types
 
@@ -392,9 +393,9 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
       # [num_classes, n_phi]
       X_model = np.dot(self.normalizer.transform(X_model), self.Uk_)
     if X_model.shape[0] != self.num_classes:
-      raise ValueError("The model matrix contains %d classes, but the "
-                       "fitted number of classes is %d" %
-                       (X_model.shape[0], self.num_classes))
+      warnings.warn("The model matrix contains %d classes, but the "
+                    "fitted number of classes is %d" %
+                    (X_model.shape[0], self.num_classes))
     # ====== check X ====== #
     if isinstance(X, (tuple, list)):
       X = np.asarray(X)
