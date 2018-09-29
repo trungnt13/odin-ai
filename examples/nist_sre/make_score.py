@@ -26,7 +26,6 @@ from helpers import (SCORING_DATASETS, SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
                      sre_file_list, Config, BACKEND_DATASET,
                      EXP_DIR, SCORE_DIR, BACKEND_DIR, RESULT_DIR)
-
 # ===========================================================================
 # Some helper
 # ===========================================================================
@@ -132,32 +131,33 @@ for dsname, file_list in sorted(SCORING_DATASETS.items(),
 # ===========================================================================
 # Searching for trained system
 # ===========================================================================
-model_dir, _, _ = get_model_path(system_name=SCORE_SYSTEM_NAME)
-model_name = os.path.basename(model_dir)
-all_models = []
-for path in os.listdir(model_dir):
-  path = os.path.join(model_dir, path)
+sys_dir, _, _ = get_model_path(system_name=SCORE_SYSTEM_NAME,
+                               logging=False)
+sys_name = os.path.basename(sys_dir)
+all_sys = []
+for path in os.listdir(sys_dir):
+  path = os.path.join(sys_dir, path)
   if 'model.ai.' in path:
-    all_models.append(path)
+    all_sys.append(path)
 # ====== get the right model based on given system index ====== #
-if len(all_models) == 0:
-  final_model = os.path.join(model_dir, 'model.ai')
-  model_index = ''
-  assert os.path.exists(final_model), \
-  "Cannot find pre-trained model at path: %s" % model_dir
+if len(all_sys) == 0:
+  final_sys = os.path.join(sys_dir, 'model.ai')
+  sys_index = ''
+  assert os.path.exists(final_sys), \
+  "Cannot find pre-trained model at path: %s" % sys_dir
 else:
-  all_models = sorted(all_models,
-                      key=lambda x: int(x.split('.')[-1]))
-  final_model = all_models[SCORE_SYSTEM_ID]
-  model_index = final_model[-2:]
+  all_sys = sorted(all_sys,
+                   key=lambda x: int(x.split('.')[-1]))
+  final_sys = all_sys[SCORE_SYSTEM_ID]
+  sys_index = '.' + final_sys.split('.')[-1]
 # ====== print the log ====== #
 print("Searching pre-trained model:")
-print("  Found pre-trained at:", ctext(final_model, 'cyan'))
-print("  Model name :", ctext(model_name, 'cyan'))
-print("  Model index:", ctext(model_index, 'cyan'))
+print("  Found pre-trained at:", ctext(final_sys, 'cyan'))
+print("  System name         :", ctext(sys_name, 'cyan'))
+print("  System index        :", ctext(sys_index, 'cyan'))
 # just check one more time
-assert os.path.exists(final_model), \
-"Cannot find pre-trained model at: '%s'" % final_model
+assert os.path.exists(final_sys), \
+"Cannot find pre-trained model at: '%s'" % final_sys
 # ===========================================================================
 # All system must extract following information
 # ===========================================================================
@@ -177,7 +177,7 @@ all_backend = {}
 # ===========================================================================
 if 'xvec' == SCORE_SYSTEM_NAME:
   # ====== load the network ====== #
-  x_vec = N.deserialize(path=final_model,
+  x_vec = N.deserialize(path=final_sys,
                         force_restore_vars=True)
   # ====== get output tensors ====== #
   y_logit = x_vec()
@@ -196,7 +196,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     n_files = len(ds_indices)
     # ====== check exist scores ====== #
     score_path = os.path.join(SCORE_DIR,
-                              '%s%s.%s' % (model_name, model_index, dsname))
+                              '%s%s.%s' % (sys_name, sys_index, dsname))
     if os.path.exists(score_path):
       with open(score_path, 'rb') as f:
         scores = pickle.load(f)
@@ -221,7 +221,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     output_data = []
     # progress bar
     prog = Progbar(target=len(feeder), print_summary=True,
-                   name=score_path)
+                   name=os.path.basename(score_path))
     prog.set_summarizer('#File', fn=lambda x: x[-1])
     prog.set_summarizer('#Batch', fn=lambda x: x[-1])
     # ====== make prediction ====== #
@@ -261,17 +261,15 @@ if 'xvec' == SCORE_SYSTEM_NAME:
   assert len(BACKEND_DATASET) > 0, \
   "Datasets for training the backend must be provided"
   print("Backend dataset:", ctext(BACKEND_DATASET, 'cyan'))
-  ds = F.Dataset(path=os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE),
-                 read_only=True)
   feature_name = FEATURE_RECIPE.split('_')[0]
   ids_name = 'indices_%s' % feature_name
-  indices = ds[ids_name]
-  indices_dsname = {i: j for i, j in ds['dsname'].items()}
-  indices_spkid = {i: j for i, j in ds['spkid'].items()}
+  indices = training_ds[ids_name]
+  indices_dsname = {i: j for i, j in training_ds['dsname'].items()}
+  indices_spkid = {i: j for i, j in training_ds['spkid'].items()}
   # ====== extract vector for each dataset ====== #
   for dsname in sorted(BACKEND_DATASET):
     path = os.path.join(BACKEND_DIR,
-                        model_name + model_index + '.' + dsname)
+                        sys_name + sys_index + '.' + dsname)
     print("Processing ...", ctext(os.path.basename(path), 'yellow'))
     # ====== indices ====== #
     indices_ds = [(name, (start, end))
@@ -298,7 +296,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
           continue
     # ====== create feeder ====== #
     feeder = F.Feeder(
-        data_desc=F.IndexedData(data=ds[feature_name],
+        data_desc=F.IndexedData(data=training_ds[feature_name],
                                 indices=indices_ds),
         batch_mode='file', ncpu=8)
     feeder.set_recipes(recipe)
@@ -394,7 +392,8 @@ with open('/tmp/xvecs.mat', 'wb') as ftmp:
 # ===========================================================================
 # Now scoring
 # ===========================================================================
-for dsname, scores in all_scores.items():
+for dsname, scores in sorted(all_scores.items(),
+                             key=lambda x: x[0]):
   print("Scoring:", ctext(dsname, 'yellow'))
   # load the scores
   (seg_name, seg_meta,
@@ -408,10 +407,27 @@ for dsname, scores in all_scores.items():
   enroll_name = '%s_enroll' % dsname
   trials_name = '%s_trials' % dsname
   if enroll_name in sre_file_list and trials_name in sre_file_list:
-    trials = sre_file_list[trials_name]
-    enroll = sre_file_list[enroll_name]
+    # ====== checking the trials ====== #
+    trials = np.array([(i, j)
+                       for i, j in sre_file_list[trials_name][:, :2]
+                       if j in name_2_data])
+    print("  Missing trials: %s/%s" %
+      (ctext(len(sre_file_list[trials_name]) - len(trials), 'lightcyan'),
+       ctext(len(sre_file_list[trials_name]), 'cyan')))
+    # ====== checking the enrollments ====== #
+    enroll = np.array([(i, j)
+                       for i, j in sre_file_list[enroll_name][:, :2]
+                       if j in name_2_data])
+    print("  Missing enroll: %s/%s" %
+      (ctext(len(sre_file_list[enroll_name]) - len(enroll), 'lightcyan'),
+       ctext(len(sre_file_list[enroll_name]), 'cyan')))
+    # ====== skip the scoring if necessary ====== #
+    if len(trials) == 0 or len(enroll) == 0:
+      print("  Skip scoring for:", ctext(dsname, 'yellow'))
+      continue
     # ====== create the enrollments data ====== #
     models = OrderedDict()
+    # for now we don't care about channel (or size) information
     for model_id, segment_id in enroll[:, :2]:
       if model_id not in models:
         models[model_id] = []
@@ -421,13 +437,13 @@ for dsname, scores in all_scores.items():
         (model_id, np.mean(seg_list, axis=0, keepdims=True))
         for model_id, seg_list in models.items()
     ])
-    models_name = list(models.keys())
+    model_2_index = {j: i for i, j in enumerate(models.keys())}
     X_models = np.concatenate(list(models.values()), axis=0)
-    print("  Enroll model:", ctext(X_models.shape, 'cyan'))
+    print("  Enroll:", ctext(X_models.shape, 'cyan'))
     # ====== create the trials list ====== #
     X_trials = np.concatenate([name_2_data[i][None, :] for i in trials[:, 1]],
                               axis=0)
-    print("  Trials      :", ctext(X_trials.shape, 'cyan'))
+    print("  Trials:", ctext(X_trials.shape, 'cyan'))
     # ====== training the plda ====== #
     if IS_LDA:
       print("  Fitting LDA ...")
@@ -442,7 +458,16 @@ for dsname, scores in all_scores.items():
       plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
     plda.fit(X=X_backend, y=y_backend)
     y_scores = plda.predict_log_proba(X=X_trials, X_model=X_models)
-    print(y_scores.shape)
+    print("  Scores:", ctext(y_scores.shape, 'cyan'))
+    # ====== write the scores to file ====== #
+    score_path = os.path.join(RESULT_DIR,
+                              '%s%s.%s.csv' % (sys_name, sys_index, dsname))
+    with open(score_path, 'w') as fout:
+      fout.write('\t'.join(['modelid', 'segmentid', 'side', 'LLR']) + '\n')
+      for i, (model_id, seg_id) in enumerate(trials):
+        score = '%f' % y_scores[i][model_2_index[model_id]]
+        fout.write('\t'.join([model_id, seg_id + name_2_ext[seg_id], 'a', score]) + '\n')
+    print("  Saved trials:", ctext(score_path, 'cyan'))
   else:
     raise RuntimeError(
         "Cannot find '%s_trials.csv' and '%s_enroll.csv' for dataset: %s" %

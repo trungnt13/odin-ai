@@ -87,7 +87,7 @@ acc = K.metrics.categorical_accuracy(y_true=y, y_pred=y_proba)
 # ====== params and optimizing ====== #
 clipvalue = None if GRADIENT_CLIPPING <= 0 else float(GRADIENT_CLIPPING)
 optimizer = K.optimizers.RMSProp(lr=LEARNING_RATE, name='Xrms',
-                                 clipvalue=clipvalue)
+                                 clipnorm=clipvalue, clip_alg='total_norm')
 # optimizer = K.optimizers.Adam(lr=LEARNING_RATE, name='XAdam')
 # optimizer = K.optimizers.SGD(lr=LEARNING_RATE, momentum=0.5, name='Xmomentum')
 print("Optimizer:", ctext(optimizer, 'yellow'))
@@ -101,7 +101,8 @@ updates = optimizer.minimize(
 K.initialize_all_variables()
 # # ====== Functions ====== #
 print('Building training functions ...')
-f_train = K.function(inputs, [ce, acc], updates=updates,
+f_train = K.function(inputs, [ce, acc, optimizer.norm],
+                     updates=updates,
                      training=True)
 print('Building testing functions ...')
 f_score = K.function(inputs, [ce, acc],
@@ -119,7 +120,7 @@ task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
 task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
                     increasing=True, max_checkpoint=-1)
 task.set_callbacks([
-    training.NaNDetector(),
+    training.NaNDetector(task_name='train', patience=-1),
     training.Checkpoint(task_name='train', epoch_percent=0.5),
     # training.EarlyStopGeneralizationLoss('valid', ce,
     #                                      threshold=5, patience=3)

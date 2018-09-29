@@ -326,7 +326,7 @@ def load_sre_list():
   link = str(base64.decodebytes(link), 'utf-8')
   ds_path = get_datasetpath(name='SRE_FILES', root='~',
                             is_folder=False, override=False)
-  if os.path.exists(ds_path) and len(os.listdir(ds_path)) != 22:
+  if os.path.exists(ds_path) and len(os.listdir(ds_path)) != 24:
     shutil.rmtree(ds_path)
   if not os.path.exists(ds_path):
     path = get_file(fname=os.path.basename(link),

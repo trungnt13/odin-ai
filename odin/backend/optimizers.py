@@ -101,17 +101,17 @@ class Optimizer(object):
 
       if clipnorm is not None:
         if (clipnorm if is_number(clipnorm) else get_value(clipnorm)) <= 0:
-          raise ValueError('clipnorm value must greater than 0.')
+          raise ValueError('`clipnorm` value must greater than 0.')
       self.clipnorm = _as_variable(clipnorm, name="clip_norm",
           roles=GraidentsClippingNorm)
 
       if clipvalue is not None:
         if (clipvalue if is_number(clipvalue) else get_value(clipvalue)) <= 0:
-          raise ValueError('clipvalue value must greater than 0.')
+          raise ValueError('`clipvalue` value must greater than 0.')
       self.clipvalue = _as_variable(clipvalue, name="clip_value",
           roles=GraidentsClippingValue)
     # ====== internal states values ====== #
-    clip_alg = clip_alg.lower()
+    clip_alg = str(clip_alg).strip().lower()
     if clip_alg not in ('total_norm', 'norm', 'avg_norm'):
       raise ValueError("clip_arg must be one of the following: "
           "'norm', 'total_norm', 'avg_norm'")
@@ -308,13 +308,15 @@ class Optimizer(object):
         elif self.clip_alg == 'avg_norm':
           grads = [tf.clip_by_average_norm(g, self.clipnorm)
                    for g in grads]
+        else:
+          raise ValueError("Unknown norm clipping algorithm: '%s'" % self.clip_alg)
       # ====== clipvalue ====== #
       if self.clipvalue is not None:
         grads = [tf.clip_by_value(g, -self.clipvalue, self.clipvalue)
                  for g in grads]
       # ====== get final norm value ====== #
       self._norm = add_roles(tf.global_norm(grads, name="GradientNorm"),
-                            GradientsNorm)
+                             GradientsNorm)
     # ====== setting Optimizer roles ====== #
     for v in get_all_variables(scope=scope_name):
       add_roles(v, roles=OptimizerVariable)
@@ -323,6 +325,7 @@ class Optimizer(object):
 class SGD(Optimizer):
 
   """
+
   Parameters
   ----------
   momentum: float >= 0. None

@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import shutil
 import pickle
 from enum import Enum
 from collections import defaultdict, OrderedDict
@@ -34,6 +35,8 @@ class Config(object):
   dtype = 'float16'
   # Random seed for reproducibility
   SUPER_SEED = 52181208
+  # for training
+  MINIMUM_SPEECH_DURATION = 0.25
 
 class SystemStates(Enum):
   """ SystemStates """
@@ -47,7 +50,8 @@ class SystemStates(Enum):
 # ===========================================================================
 _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
-    ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset for training: "musan,rirs"', None, 'None'),
+    ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset '
+             'for training: "musan,rirs"', None, 'None'),
     ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
     # for scoring
     ('-sys', 'name of the system for scoring: xvec, ivec, e2e ...', None, 'xvec'),
@@ -67,9 +71,12 @@ _args = args_parse(descriptions=[
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 64),
     ('-epoch', 'number of epoch, for training DNN', None, 8),
-    ('-clip', 'gradient clipping', None, 0),
+    ('-clip', 'The maximum change in parameters allowed per minibatch, '
+              'measured in Euclidean norm over the entire model (change '
+              'will be clipped to this value), kaldi use 2.0', None, 2.0),
     ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.0001),
     # others
+    ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
 IS_DEBUGGING = _args.debug
@@ -407,7 +414,7 @@ if CURRENT_STATE == SystemStates.EXTRACT_FEATURES:
 # ===========================================================================
 # PATH HELPER
 # ===========================================================================
-def get_model_path(system_name):
+def get_model_path(system_name, logging=True):
   """
   Parameters
   ----------
@@ -439,14 +446,18 @@ def get_model_path(system_name):
       name += '_' + excluded
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
+  if os.path.exists(save_path) and bool(_args.override):
+    print("Override path:", ctext(save_path, 'yellow'))
+    shutil.rmtree(save_path)
   if not os.path.exists(save_path):
     os.mkdir(save_path)
   # ====== return path ====== #
   log_path = get_logpath(name='log.txt', increasing=True,
                          odin_base=False, root=save_path)
   model_path = os.path.join(save_path, 'model.ai')
-  print("Model path:", ctext(model_path, 'cyan'))
-  print("Log path:", ctext(log_path, 'cyan'))
+  if bool(logging):
+    print("Model path:", ctext(model_path, 'cyan'))
+    print("Log path:", ctext(log_path, 'cyan'))
   return save_path, model_path, log_path
 # ===========================================================================
 # Data helper
@@ -468,6 +479,83 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
   (name2label is None and n_speakers is not None):
     raise RuntimeError("name2label and n_speakers must both be None, or not-None")
   return recipes
+
+def filter_utterances(X, indices):
+  minimum_amount_of_frames = Config.MINIMUM_SPEECH_DURATION / Config.STEP_LENGTH
+
+  prog = Progbar(target=len(indices),
+                 print_report=True, print_summary=True,
+                 name='Filtering broken utterances')
+  prog.set_summarizer('zero-length', fn=lambda x: x[-1])
+  prog.set_summarizer('min-frames', fn=lambda x: x[-1])
+  prog.set_summarizer('zero-var', fn=lambda x: x[-1])
+  prog.set_summarizer('small-var', fn=lambda x: x[-1])
+
+  # ====== mpi function for checking ====== #
+  def _mpi_func(jobs):
+    for name, (start, end) in jobs:
+      y = X[start:end]
+      # flags
+      is_zero_len = False
+      is_zero_var = False
+      is_small_var = False
+      is_min_frames = False
+      # checking length
+      if y.shape[0] == 0:
+        is_zero_len = True
+      elif y.shape[0] <= minimum_amount_of_frames:
+        is_min_frames = True
+      # checking statistics
+      else:
+        mean = np.mean(y, axis=-1)
+        var = np.var(y, axis=-1)
+        min_val = np.min(y, axis=-1)
+        max_val = np.max(y, axis=-1)
+        if np.any(np.isclose(var, 0)):
+          is_zero_var = True
+        # very heuristic and aggressive here
+        # filter-out anything with ~16.67% of low-var
+        # this could remove 1/3 of the original data
+        if np.sum(var < 0.01) > (len(y) / 6):
+          is_small_var = True
+      # return the flags
+      yield name, is_zero_len, is_min_frames, is_zero_var, is_small_var
+  # ====== running the multiprocessing filter ====== #
+  zero_len_files = {}
+  min_frame_files = {}
+  zero_var_files = {}
+  small_var_files = {}
+  for res in mpi.MPI(jobs=sorted(indices.items(),
+                                 key=lambda x: x[1][0]),
+                     func=_mpi_func,
+                     ncpu=NCPU, batch=250):
+    name = res[0]
+    if res[1]:
+      zero_len_files[name] = 1
+    if res[2]:
+      min_frame_files[name] = 1
+    if res[3]:
+      zero_var_files[name] = 1
+    if res[4]:
+      small_var_files[name] = 1
+    # update progress
+    prog['name'] = name[:48]
+    prog['zero-length'] = len(zero_len_files)
+    prog['min-frames'] = len(min_frame_files)
+    prog['zero-var'] = len(zero_var_files)
+    prog['small-var'] = len(small_var_files)
+    prog.add(1)
+  # ====== remove broken files ====== #
+  new_indices = {name: (start, end)
+                 for name, (start, end) in indices.items()
+                 if name not in zero_len_files and
+                 name not in min_frame_files and
+                 name not in zero_var_files and
+                 name not in small_var_files}
+  print("Filtered #utterances: %s/%s (files)" %
+    (ctext(len(indices) - len(new_indices), 'lightcyan'),
+     ctext(len(indices), 'cyan')))
+  return new_indices
 
 def prepare_dnn_data():
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
@@ -513,6 +601,8 @@ def prepare_dnn_data():
       _.update({i: indices[i]
                 for i in flist[:n_dataset_files]})
     indices = _
+  # ====== * filter out "bad" sample ====== #
+  indices = filter_utterances(X=X, indices=indices)
   # ====== all training file name ====== #
   # modify here to train full dataset
   all_name = sorted(indices.keys())
@@ -576,19 +666,50 @@ def prepare_dnn_data():
   valid_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=valid_indices),
-      batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
+      batch_mode='batch', ncpu=1, buffer_size=4)
+  # max(2, NCPU // 4)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)
   print(train_feeder)
   print(valid_feeder)
   # ====== debugging ====== #
   if IS_DEBUGGING:
+    import matplotlib
+    matplotlib.use('Agg')
     prog = Progbar(target=len(valid_feeder), print_summary=True,
                    name="Iterating validation set")
-    for X, y in valid_feeder.set_batch(BATCH_SIZE):
+    samples = []
+    n_visual = 250
+    for name, idx, X, y in valid_feeder.set_batch(batch_size=100000,
+                                                  batch_mode='file',
+                                                  seed=None, shuffle_level=0):
+      assert idx == 0, "Utterances longer than %.2f(sec)" % (100000 * Config.STEP_LENGTH)
       prog['X'] = X.shape
       prog['y'] = y.shape
       prog.add(X.shape[0])
+      # random sampling
+      if rand.rand(1) < 0.5 and len(samples) < n_visual:
+        for i in rand.randint(0, X.shape[0], size=4, dtype='int32'):
+          samples.append((name, X[i], np.argmax(y[i], axis=-1)))
+    # plot the spectrogram
+    n_visual = len(samples)
+    V.plot_figure(nrow=n_visual, ncol=8)
+    for i, (name, X, y) in enumerate(samples):
+      is_noise = '/' in name
+      assert name2label[name] == y, "Speaker lable mismatch for file: %s" % name
+      name = name.split('/')[0]
+      dsname = ds['dsname'][name]
+      spkid = ds['spkid'][name]
+      y = np.argmax(y, axis=-1)
+      ax = V.plot_spectrogram(X.T,
+                              ax=(n_visual, 1, i + 1),
+                              title='#%d' % (i + 1))
+      ax.set_title('[%s][%s]%s  %s' %
+                   ('noise' if is_noise else 'clean', dsname, name, spkid),
+                   fontsize=6)
+    # don't need to be high resolutions
+    V.plot_save('/tmp/tmp.pdf', dpi=32)
+    exit()
   # ====== return ====== #
   return train_feeder, valid_feeder, all_speakers
 # ===========================================================================

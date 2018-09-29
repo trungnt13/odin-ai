@@ -354,11 +354,14 @@ class NaNDetector(Callback):
   task_name : {str, None}
     name of specific Task will be applied, otherwise, all
     Tasks are considered
+
   patience : {int}
     the Task will be stopped if `patience` < 0, `patience` will
-    abstract by 1 everytime NaN is detected
-  log : {}
-    pass
+    subtracted by 1 every time NaN is detected
+
+  logging : bool (default: True)
+    show notification when NaN detected
+
   """
 
   def __init__(self, task_name=None, patience=-1, logging=True):
