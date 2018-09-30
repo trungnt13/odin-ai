@@ -3,10 +3,12 @@ from __future__ import print_function, division, absolute_import
 import os
 import shutil
 import pickle
+import warnings
 from enum import Enum
 from collections import defaultdict, OrderedDict
 
 import numpy as np
+import numba as nb
 from scipy.io import wavfile
 
 from odin import visual as V
@@ -490,8 +492,23 @@ def filter_utterances(X, indices):
   prog.set_summarizer('min-frames', fn=lambda x: x[-1])
   prog.set_summarizer('zero-var', fn=lambda x: x[-1])
   prog.set_summarizer('small-var', fn=lambda x: x[-1])
+  prog.set_summarizer('overflow', fn=lambda x: x[-1])
 
   # ====== mpi function for checking ====== #
+  @nb.jit(nopython=True, nogil=True)
+  def _fast_mean_var_ax0(z):
+    # using this function for calculating mean and variance
+    # can double the speed but cannot check overflow,
+    # only accept float32 or float64 input
+    s1 = np.zeros(shape=(z.shape[1],), dtype=z.dtype)
+    s2 = np.zeros(shape=(z.shape[1],), dtype=z.dtype)
+    for i in range(z.shape[0]):
+      s1 += z[i]
+      s2 += np.power(z[i], 2)
+    mean = s1 / z.shape[0]
+    var = s2 / z.shape[0] - np.power(mean, 2)
+    return mean, var
+
   def _mpi_func(jobs):
     for name, (start, end) in jobs:
       y = X[start:end]
@@ -500,6 +517,7 @@ def filter_utterances(X, indices):
       is_zero_var = False
       is_small_var = False
       is_min_frames = False
+      is_overflow = False
       # checking length
       if y.shape[0] == 0:
         is_zero_len = True
@@ -507,24 +525,38 @@ def filter_utterances(X, indices):
         is_min_frames = True
       # checking statistics
       else:
-        mean = np.mean(y, axis=-1)
-        var = np.var(y, axis=-1)
-        min_val = np.min(y, axis=-1)
-        max_val = np.max(y, axis=-1)
-        if np.any(np.isclose(var, 0)):
-          is_zero_var = True
-        # very heuristic and aggressive here
-        # filter-out anything with ~16.67% of low-var
-        # this could remove 1/3 of the original data
-        if np.sum(var < 0.01) > (len(y) / 6):
-          is_small_var = True
+        with warnings.catch_warnings():
+          warnings.filterwarnings('error', category=RuntimeWarning)
+          try:
+            mean = np.mean(y, axis=-1)
+            var = np.var(y, axis=-1)
+            min_val = np.min(y, axis=-1)
+            max_val = np.max(y, axis=-1)
+          # numerical unstable
+          except RuntimeWarning as w:
+            if 'overflow encountered' in str(w):
+              is_overflow = True
+            else:
+              print(name, ':', w)
+          # process with more numerical filtering
+          else:
+            if np.any(np.isclose(var, 0)):
+              is_zero_var = True
+            # very heuristic and aggressive here
+            # filter-out anything with ~16.67% of low-var
+            # this could remove 1/3 of the original data
+            if np.sum(var < 0.01) > (len(y) / 6):
+              is_small_var = True
       # return the flags
-      yield name, is_zero_len, is_min_frames, is_zero_var, is_small_var
+      yield (name, is_zero_len, is_min_frames,
+             is_zero_var, is_small_var,
+             is_overflow)
   # ====== running the multiprocessing filter ====== #
   zero_len_files = {}
   min_frame_files = {}
   zero_var_files = {}
   small_var_files = {}
+  overflow_files = {}
   for res in mpi.MPI(jobs=sorted(indices.items(),
                                  key=lambda x: x[1][0]),
                      func=_mpi_func,
@@ -538,12 +570,15 @@ def filter_utterances(X, indices):
       zero_var_files[name] = 1
     if res[4]:
       small_var_files[name] = 1
+    if res[5]:
+      overflow_files[name] = 1
     # update progress
     prog['name'] = name[:48]
     prog['zero-length'] = len(zero_len_files)
     prog['min-frames'] = len(min_frame_files)
     prog['zero-var'] = len(zero_var_files)
     prog['small-var'] = len(small_var_files)
+    prog['overflow'] = len(overflow_files)
     prog.add(1)
   # ====== remove broken files ====== #
   new_indices = {name: (start, end)
@@ -551,10 +586,12 @@ def filter_utterances(X, indices):
                  if name not in zero_len_files and
                  name not in min_frame_files and
                  name not in zero_var_files and
-                 name not in small_var_files}
+                 name not in small_var_files and
+                 name not in overflow_files}
   print("Filtered #utterances: %s/%s (files)" %
     (ctext(len(indices) - len(new_indices), 'lightcyan'),
      ctext(len(indices), 'cyan')))
+  # 15090
   return new_indices
 
 def prepare_dnn_data():
@@ -666,8 +703,7 @@ def prepare_dnn_data():
   valid_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=valid_indices),
-      batch_mode='batch', ncpu=1, buffer_size=4)
-  # max(2, NCPU // 4)
+      batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)
   print(train_feeder)
