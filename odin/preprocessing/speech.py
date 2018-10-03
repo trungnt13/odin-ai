@@ -1149,6 +1149,7 @@ def _numba_thresholding(energy,
   return sad, energy_threshold
 
 class SADthreshold(Extractor):
+
   """ Compute voice-activity vector for a file: 1 if we judge the frame as
   voiced, 0 otherwise.  There are no continuity constraints.
   This method is a very simple energy-based method which only looks
@@ -1189,6 +1190,12 @@ class SADthreshold(Extractor):
   smooth_window : int (default: 5)
     smooth the transition between SAD windows, the higher the value
     the more continuity of the SAD
+
+  Note
+  ----
+  This implementation is slightly different from kaldi implementation,
+  we normalize the energy to [0, 1] and thresholding based on
+  these values
 
   Copyright
   ---------
@@ -1236,6 +1243,11 @@ class SADthreshold(Extractor):
 
 class SADgmm(Extractor):
   """ GMM-based SAD extractor
+
+  Note
+  ----
+  This method can completely fail for very noisy audio, or audio
+  with very long silence
   """
 
   def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
