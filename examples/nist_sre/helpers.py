@@ -30,12 +30,6 @@ class Config(object):
   SAMPLE_RATE = 8000
   WINDOW = 'hamm'
   NFFT = 512
-  NMELS = 24
-  NCEPS = 40
-  FMIN = 100
-  FMAX = 4000
-  SAD_SMOOTH = 6
-  dtype = 'float16'
   # Random seed for reproducibility
   SUPER_SEED = 52181208
   # for training
@@ -53,6 +47,7 @@ class SystemStates(Enum):
 # ===========================================================================
 _args = args_parse(descriptions=[
     ('recipe', 'recipe is the name of acoustic Dataset defined in feature_recipes.py', None),
+    ('-feat', 'specific name for the acoustic features, extracted from the given recipe', None, ''),
     ('-aug', 'augmentation dataset: musan, rirs; could be multiple dataset '
              'for training: "musan,rirs"', None, 'None'),
     ('-ncpu', 'number of CPU to be used, if <= 0, auto-select', None, 0),
@@ -85,12 +80,16 @@ _args = args_parse(descriptions=[
     ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
-IS_DEBUGGING = _args.debug
+IS_DEBUGGING = bool(_args.debug)
+IS_OVERRIDE = bool(_args.override)
 # this variable determine which state is running
 CURRENT_STATE = SystemStates.UNKNOWN
-# ====== Features ====== #
+# ====== Features extraction ====== #
 FEATURE_RECIPE = str(_args.recipe)
+FEATURE_NAME = FEATURE_RECIPE.split('_')[0] if len(str(_args.feat)) == 0 else str(_args.feat)
 AUGMENTATION_NAME = _args.aug
+TRAINING_DATASET = ['mx6', 'voxceleb1', 'voxceleb2', 'swb', 'fisher',
+                    'sre04', 'sre05', 'sre06', 'sre08', 'sre10']
 # ====== DNN ====== #
 BATCH_SIZE = int(_args.batch)
 EPOCH = int(_args.epoch)
@@ -405,8 +404,7 @@ def validating_training_data(in_path_raw, training_dataset):
 if CURRENT_STATE == SystemStates.EXTRACT_FEATURES:
   (ALL_FILES, NON_EXIST_FILES, ext_count) = validating_training_data(
       in_path_raw=PATH_RAW_DATA,
-      training_dataset=['mx6', 'voxceleb1', 'voxceleb2', 'swb', 'fisher',
-                        'sre04', 'sre05', 'sre06', 'sre08', 'sre10']
+      training_dataset=TRAINING_DATASET
   )
   if len(ALL_FILES) == 0:
     raise RuntimeError("No files found for feature extraction")
@@ -466,7 +464,7 @@ def get_model_path(system_name, logging=True):
       name += '_' + excluded
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
-  if os.path.exists(save_path) and bool(_args.override):
+  if os.path.exists(save_path) and IS_OVERRIDE:
     print("Override path:", ctext(save_path, 'yellow'))
     shutil.rmtree(save_path)
   if not os.path.exists(save_path):

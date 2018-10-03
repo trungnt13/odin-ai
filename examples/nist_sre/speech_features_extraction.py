@@ -9,26 +9,23 @@ import time
 from collections import defaultdict
 
 import numpy as np
-import soundfile as sf
 
 from odin import visual as V, nnet as N
 from odin.utils import (ctext, unique_labels, UnitTimer,
                         Progbar, get_logpath,
                         get_module_from_path,
-                        get_script_path, mpi)
+                        get_script_path, mpi,
+                        catch_warnings_ignore)
 from odin import fuel as F, preprocessing as pp
 from odin.stats import sampling_iter
 
-from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR, BASE_DIR,
-                     ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE,
-                     ALL_DATASET, Config, NCPU, validate_feature_dataset,
-                     check_requirement_feature_processing)
+from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR,
+                     ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE, FEATURE_NAME,
+                     ALL_DATASET, Config, NCPU)
 # ALL_FILES
 # Header:
 #  0       1      2      3       4          5         6
 # path, channel, name, spkid, dataset, start_time, end_time
-np.random.seed(Config.SUPER_SEED)
-check_requirement_feature_processing()
 # ===========================================================================
 # Extractor
 # ===========================================================================
@@ -43,64 +40,78 @@ recipe = recipe[0]()
 # ===========================================================================
 if IS_DEBUGGING:
   with np.warnings.catch_warnings():
+    rand = np.random.RandomState(seed=Config.SUPER_SEED)
     np.warnings.filterwarnings('ignore')
     # ====== stratify sampling from each dataset ====== #
     clusters = defaultdict(list)
     clusters_count = defaultdict(int)
     samples = []
-    for row in ALL_FILES:
+    for row in sorted(ALL_FILES,
+                      key=lambda x: x[0]):
       clusters[row[4]].append(row)
       clusters_count[row[4]] += 1
     for k, v in clusters.items():
-      np.random.shuffle(v)
-      samples += v[:12]
-
+      rand.shuffle(v)
+      samples += v[:18] # 18 files from each dataset
     # ====== run the MPI for feature extraction ====== #
     prog = Progbar(target=len(samples),
                    print_report=True, print_summary=False,
                    name=FEATURE_RECIPE)
+    error_signal = []
     for feat in mpi.MPI(jobs=samples,
                         func=recipe.transform,
                         ncpu=NCPU, batch=1):
+      assert FEATURE_NAME in feat
       # update progress
-      prog['path'] = feat['path'].replace(BASE_DIR, '')
+      if isinstance(feat, pp.base.ExtractorSignal):
+        error_signal.append(feat)
+        prog.add(1)
+        continue
       prog['spkid'] = feat['spkid']
       prog['name'] = feat['name']
       prog['dsname'] = feat['dsname']
       prog['duration'] = feat['duration']
       prog.add(1)
       # 30% chance plotting
-      if np.random.rand() < 0.3:
-        feat[FEATURE_RECIPE] = feat[FEATURE_RECIPE][:1200]
-        V.plot_multiple_features(feat,
-                                 title=feat['path'])
-    V.plot_save(os.path.join(EXP_DIR, 'debug_%s.pdf' % FEATURE_RECIPE))
+      if rand.rand() < 0.5:
+        V.plot_multiple_features(feat, fig_width=20,
+                                 title='[%s]%s' % (feat['dsname'], feat['name']))
+    V.plot_save(os.path.join(EXP_DIR, 'debug_%s.pdf' % FEATURE_RECIPE),
+                dpi=30)
     # ====== save the extractor debugging log ====== #
     pp.set_extractor_debug(recipe, debug=True)
     recipe.transform(samples[0])
     with open(os.path.join(EXP_DIR, 'debug_%s.log' % FEATURE_RECIPE), 'w') as f:
       for name, step in recipe.steps:
         f.write(step.last_debugging_text)
+      # ====== print error signal ====== #
+      for e in error_signal:
+        f.write(str(e) + '\n')
+        print(e)
   exit()
 # ===========================================================================
 # Running the extractor
 # ===========================================================================
 # ====== basic path ====== #
 output_dataset_path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
-processor_log_path = get_logpath(name='processor_%s.log' % FEATURE_RECIPE,
-                                 increasing=True,
-                                 odin_base=False,
-                                 root=EXP_DIR)
+
+processor_log_path = os.path.join(EXP_DIR, 'processor_%s.log' % FEATURE_RECIPE)
+if os.path.exists(processor_log_path):
+  os.remove(processor_log_path)
+print("Log path:", ctext(processor_log_path, 'cyan'))
+
 ds_validation_path = os.path.join(EXP_DIR, 'validate_%s.pdf' % FEATURE_RECIPE)
+if os.path.exists(ds_validation_path):
+  os.remove(ds_validation_path)
+print("Validation path:", ctext(ds_validation_path, 'cyan'))
+
 # ====== running the processing ====== #
-with np.warnings.catch_warnings():
-  np.warnings.filterwarnings('ignore')
-  # ====== start processing ====== #
+with catch_warnings_ignore(Warning):
   processor = pp.FeatureProcessor(
       jobs=ALL_FILES,
       path=output_dataset_path,
       extractor=recipe,
-      n_cache=250,
+      n_cache=320,
       ncpu=NCPU,
       override=True,
       identifier='name',
@@ -110,5 +121,31 @@ with np.warnings.catch_warnings():
 # ===========================================================================
 # Make some visualization
 # ===========================================================================
-validate_feature_dataset(path=output_dataset_path,
-                         outpath=ds_validation_path)
+ds = F.Dataset(output_dataset_path, read_only=True)
+print(ds)
+
+features = {}
+for key, val in ds.items():
+  if 'indices_' in key:
+    name = key.split('_')[-1]
+    features[name] = (val, ds[name])
+
+all_indices = [val[0] for val in features.values()]
+# ====== sampling 250 files ====== #
+all_files = sampling_iter(it=all_indices[0].keys(), k=250,
+                          seed=Config.SUPER_SEED)
+all_files = [f for f in all_files
+             if all(f in ids for ids in all_indices)]
+print("#Samples:", ctext(len(all_files), 'cyan'))
+
+# ====== ignore the 20-figures warning ====== #
+with catch_warnings_ignore(RuntimeWarning):
+  for file_name in all_files:
+    X = {}
+    for feat_name, (ids, data) in features.items():
+      start, end = ids[file_name]
+      X[feat_name] = data[start:end][:].astype('float32')
+    V.plot_multiple_features(features=X, fig_width=20,
+          title='[%s]%s' % (ds['dsname'][file_name], file_name))
+
+V.plot_save(ds_validation_path, dpi=12)

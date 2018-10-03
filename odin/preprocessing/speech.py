@@ -90,7 +90,6 @@ timit_map = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er',
     'pcl': 'sil', 'tcl': 'sil', 'kcl': 'sil', 'bcl': 'sil',
     'dcl': 'sil', 'gcl': 'sil', 'h#': 'sil', 'pau': 'sil', 'epi': 'sil'}
 
-
 # ===========================================================================
 # Basics
 # ===========================================================================
@@ -142,7 +141,6 @@ def read(path_or_file, encode=None):
   # close file
   f.close()
   return raw, sr
-
 
 def save(file_or_path, s, sr, subtype=None):
   '''
@@ -1124,6 +1122,8 @@ class PitchExtractor(Extractor):
 def _numba_thresholding(energy,
                         energy_threshold, energy_mean_scale,
                         frame_context, proportion_threshold):
+  """ Using this numba function if at least 5 time faster than
+  python/numpy implementation """
   n_frames = len(energy)
   # ====== normalize to [0, 1] ====== #
   e_min = np.min(energy)
@@ -1186,6 +1186,10 @@ class SADthreshold(Extractor):
     the window that need to have more energy than the
     threshold
 
+  smooth_window : int (default: 5)
+    smooth the transition between SAD windows, the higher the value
+    the more continuity of the SAD
+
   Copyright
   ---------
   Daniel Povey, voice-activity-detection.cc, kaldi toolkit
@@ -1193,7 +1197,7 @@ class SADthreshold(Extractor):
   """
 
   def __init__(self, energy_threshold=0.55, energy_mean_scale=0.5,
-               frame_context=2, proportion_threshold=0.12, smooth_window=3,
+               frame_context=2, proportion_threshold=0.12, smooth_window=5,
                input_name='energy', output_name='sad'):
     super(SADthreshold, self).__init__(input_name=str(input_name),
                                        output_name=str(output_name))

@@ -254,17 +254,17 @@ def sad(augmentation=None):
       pp.speech.CalculateEnergy(log=True,
                                 input_name='frames', output_name='energy'),
       pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
-                             smooth_window=Config.SAD_SMOOTH,
-                             input_name='energy', output_name='sad'),
+                       smooth_window=Config.SAD_SMOOTH,
+                       input_name='energy', output_name='sad'),
       pp.base.DeleteFeatures(input_name=['raw', 'frames', 'scale',
                                          'energy', 'sad_threshold']),
       pp.base.AsType(dtype=np.uint8),
   ])
   return extractors
 
-def mspec(augmentation=None):
+def mfcc(augmentation=None):
   delete_list = ['stft', 'spec', 'raw',
-                 'stft_energy', 'sad_threshold']
+                 'mfcc_energy', 'sad_threshold']
   if augmentation is not None:
     delete_list.append('sad')
 
@@ -277,26 +277,27 @@ def mspec(augmentation=None):
       pp.speech.STFTExtractor(frame_length=Config.FRAME_LENGTH,
                               step_length=Config.STEP_LENGTH,
                               n_fft=Config.NFFT, window=Config.WINDOW,
-                              energy=True if augmentation is None else False),
-      # ====== SAD ====== #
-      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
-                             smooth_window=Config.SAD_SMOOTH,
-                             input_name='stft_energy', output_name='sad')
-      if augmentation is None else
-      SADreader(ds_path=os.path.join(PATH_ACOUSTIC_FEATURES, 'mspec')),
+                              padding=False, energy=False),
       # ====== for x-vector ====== #
       pp.speech.PowerSpecExtractor(power=2.0,
                                    input_name='stft', output_name='spec'),
-      pp.speech.MelsSpecExtractor(n_mels=Config.NMELS,
-                                  fmin=Config.FMIN, fmax=Config.FMAX,
+      pp.speech.MelsSpecExtractor(n_mels=24, fmin=20, fmax=3700,
                                   input_name=('spec', 'sr'), output_name='mspec'),
-      pp.speech.ApplyingSAD(input_name='mspec', sad_name='sad',
-                            keep_unvoiced=False
-                            if CURRENT_STATE == SystemStates.EXTRACT_FEATURES
-                            else True),
+      pp.speech.MFCCsExtractor(n_ceps=24,
+                               remove_first_coef=True, first_coef_energy=True,
+                               input_name='mspec', output_name='mfcc'),
+      # ====== extract SAD ====== #
+      pp.speech.SADthreshold(energy_threshold=0.55, energy_mean_scale=0.5,
+                             frame_context=2, proportion_threshold=0.12,
+                             smooth_window=3,
+                             input_name='mfcc_energy', output_name='sad')
+      if augmentation is None else
+      SADreader(ds_path=os.path.join(PATH_ACOUSTIC_FEATURES, 'mfcc')),
+      pp.speech.ApplyingSAD(input_name=('mspec', 'mfcc'), sad_name='sad',
+          keep_unvoiced=False if CURRENT_STATE == SystemStates.EXTRACT_FEATURES else True),
       # ====== normalization ====== #
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
-                             win_length=301, input_name='mspec'),
+                             win_length=301, input_name=('mspec', 'mfcc')),
       # ====== post processing ====== #
       pp.base.DeleteFeatures(input_name=delete_list),
       pp.base.AsType(dtype='float16'),
@@ -317,7 +318,7 @@ def bnf(augmentation=None):
       # ====== SAD ====== #
       pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
       pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
-                             input_name='energy', output_name='sad'),
+                       input_name='energy', output_name='sad'),
       # ====== BNF ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
       pp.speech.MelsSpecExtractor(n_mels=Config.NCEPS,
