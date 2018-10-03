@@ -253,7 +253,7 @@ def sad(augmentation=None):
                         output_name='frames'),
       pp.speech.CalculateEnergy(log=True,
                                 input_name='frames', output_name='energy'),
-      pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
                              smooth_window=Config.SAD_SMOOTH,
                              input_name='energy', output_name='sad'),
       pp.base.DeleteFeatures(input_name=['raw', 'frames', 'scale',
@@ -279,7 +279,7 @@ def mspec(augmentation=None):
                               n_fft=Config.NFFT, window=Config.WINDOW,
                               energy=True if augmentation is None else False),
       # ====== SAD ====== #
-      pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
                              smooth_window=Config.SAD_SMOOTH,
                              input_name='stft_energy', output_name='sad')
       if augmentation is None else
@@ -316,7 +316,7 @@ def bnf(augmentation=None):
                               window=Config.WINDOW),
       # ====== SAD ====== #
       pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-      pp.speech.SADextractor(nb_mixture=3, smooth_window=3,
+      pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
                              input_name='energy', output_name='sad'),
       # ====== BNF ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),

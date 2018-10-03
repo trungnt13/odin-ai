@@ -40,7 +40,7 @@ pp1 = make_pipeline(steps=[
     speech.MFCCsExtractor(n_ceps=13, input_name='mspec'),
     # others
     speech.PitchExtractor(frame_length=0.025, f0=True),
-    speech.SADextractor(input_name='stft_energy'),
+    speech.SADgmm(input_name='stft_energy'),
     speech.RASTAfilter(input_name='mfcc', output_name='rasta'),
     base.EqualizeShape0(input_name=None),
     speech.AcousticNorm(input_name=('mfcc', 'mspec', 'spec'),

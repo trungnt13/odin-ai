@@ -10,7 +10,7 @@ The following order is recommended for extracting spectra:
 + SpectraExtractor (or CQTExtractor):
     - Extracting the Spectra
 # ===== SAD ===== #
-+ SADextractor:
++ SADgmm:
     - Extracting SAD (optional)
 + Read3ColSAD:
     - Generating SAD labels from 3-cols files
@@ -49,6 +49,7 @@ from six import string_types
 from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
+import numba as nb
 import tensorflow as tf
 from scipy.signal import lfilter
 
@@ -706,16 +707,27 @@ class MFCCsExtractor(Extractor):
   """
   """
 
-  def __init__(self, n_ceps, remove_first_coef=True,
+  def __init__(self, n_ceps,
+               remove_first_coef=True, first_coef_energy=False,
                input_name='mspec', output_name='mfcc'):
     super(MFCCsExtractor, self).__init__(input_name=input_name,
                                          output_name=output_name)
     self.n_ceps = int(n_ceps)
     self.remove_first_coef = bool(remove_first_coef)
+    self.first_coef_energy = bool(first_coef_energy)
 
   def _transform(self, X):
-    return ceps_spectrogram(mspec=X[self.input_name], n_ceps=self.n_ceps,
-                            remove_first_coef=self.remove_first_coef)
+    n_ceps = self.n_ceps
+    if self.remove_first_coef:
+      n_ceps += 1
+    mfcc = ceps_spectrogram(mspec=X[self.input_name],
+                            n_ceps=n_ceps,
+                            remove_first_coef=False)
+    ret = {
+        self.output_name: mfcc[:, 1:] if self.remove_first_coef else mfcc}
+    if self.first_coef_energy:
+      ret['%s_energy' % self.output_name] = mfcc[:, 0]
+    return ret
 
 class Power2Db(Extractor):
   """ Convert power spectrogram to Decibel spectrogram
@@ -1105,14 +1117,126 @@ class PitchExtractor(Extractor):
               'f0': f0_freq}
     return {'pitch': pitch_freq}
 
+# ===========================================================================
+# SAD
+# ===========================================================================
+@nb.jit(nopython=True, nogil=True)
+def _numba_thresholding(energy,
+                        energy_threshold, energy_mean_scale,
+                        frame_context, proportion_threshold):
+  n_frames = len(energy)
+  # ====== normalize to [0, 1] ====== #
+  e_min = np.min(energy)
+  e_max = np.max(energy)
+  energy = (energy - e_min) / (e_max - e_min)
+  # ====== scale the threshold ====== #
+  if energy_mean_scale != 0:
+    energy_threshold += energy_mean_scale * np.sum(energy) / n_frames
+  # ====== thresholding ====== #
+  sad = np.empty(shape=(n_frames,))
+  for t in range(n_frames):
+    num_count = 0
+    den_count = 0
+    for t2 in range(t - frame_context, t + frame_context + 1):
+      if 0 <= t2 < n_frames:
+        den_count += 1
+        if energy[t2] > energy_threshold:
+          num_count += 1
+    if num_count >= den_count * proportion_threshold:
+      sad[t] = 1
+    else:
+      sad[t] = 0
+  return sad, energy_threshold
 
-class SADextractor(Extractor):
+class SADthreshold(Extractor):
+  """ Compute voice-activity vector for a file: 1 if we judge the frame as
+  voiced, 0 otherwise.  There are no continuity constraints.
+  This method is a very simple energy-based method which only looks
+  at the first coefficient of "input_features", which is assumed to
+  be a log-energy or something similar.  A cutoff is set-- we use
+  a formula of the general type: cutoff = 5.0 + 0.5 * (average log-energy
+  in this file), and for each frame the decision is based on the
+  proportion of frames in a context window around the current frame,
+  which are above this cutoff.
+
+  This method is geared toward speaker-id applications and is not suitable
+  for automatic speech recognition (ASR) because it makes independent
+  decisions for each frame without imposing any notion of continuity.
+
+  This function is optimized by numba, hence, the performance is
+  comparable to kaldi-C code
+
+  Parameters
+  ----------
+  energy_threshold : float (default: 0.55)
+    value from [0., 1.], constant term in energy threshold
+    for MFCC0 for SAD, the higher the value, the more strict
+    the SAD
+
+  energy_mean_scale : float (default: 0.5)
+    If this is set, to get the actual threshold we let m be the mean
+    log-energy of the file, and use `s*m + vad-energy-threshold`
+
+  frames_context : float (default: 2)
+    Number of frames of context on each side of central frame,
+    in window for which energy is monitored
+
+  proportion_threshold : float (default: 0.12)
+    Parameter controlling the proportion of frames within
+    the window that need to have more energy than the
+    threshold
+
+  Copyright
+  ---------
+  Daniel Povey, voice-activity-detection.cc, kaldi toolkit
+
+  """
+
+  def __init__(self, energy_threshold=0.55, energy_mean_scale=0.5,
+               frame_context=2, proportion_threshold=0.12, smooth_window=3,
+               input_name='energy', output_name='sad'):
+    super(SADthreshold, self).__init__(input_name=str(input_name),
+                                       output_name=str(output_name))
+    self.energy_threshold = float(energy_threshold)
+    self.energy_mean_scale = float(energy_mean_scale)
+    self.proportion_threshold = float(proportion_threshold)
+    self.frame_context = int(frame_context)
+    self.smooth_window = int(smooth_window)
+    # ====== validate all parameters ====== #
+    assert self.energy_mean_scale > 0, \
+    'energy_mean_scale > 0, given: %.2f' % self.energy_mean_scale
+    assert self.frame_context >= 0, \
+    'frame_context >= 0, given: %d' % self.frame_context
+    assert 0. < self.proportion_threshold < 1., \
+    '0 < proportion_threshold < 1, given: %.2f' % self.proportion_threshold
+
+  def _transform(self, X):
+    # ====== preprocess ====== #
+    energy = X[self.input_name]
+    if energy.ndim > 1:
+      energy = np.squeeze(energy)
+    assert energy.ndim == 1, "Only support 1-D energy"
+    sad, energy_threshold = _numba_thresholding(
+        energy.astype('float32'),
+        self.energy_threshold, self.energy_mean_scale,
+        self.frame_context, self.proportion_threshold)
+    sad = sad.astype('uint8')
+    # ====== smooth the sad ====== #
+    if self.smooth_window > 0:
+      # at least 2 voice frames
+      threshold = (2. / self.smooth_window)
+      sad = smooth(x=sad, win=self.smooth_window, window='flat') >= threshold
+    # ====== return the sad ====== #
+    return {self.output_name: sad,
+            '%s_threshold' % self.output_name: energy_threshold}
+
+class SADgmm(Extractor):
   """ GMM-based SAD extractor
   """
 
   def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
                input_name='energy', output_name='sad'):
-    super(SADextractor, self).__init__(input_name=input_name, output_name=output_name)
+    super(SADgmm, self).__init__(input_name=input_name, output_name=output_name)
     self.nb_mixture = int(nb_mixture)
     self.nb_train_it = int(nb_train_it)
     self.smooth_window = int(smooth_window)
@@ -1153,7 +1277,7 @@ class RASTAfilter(Extractor):
   ----------
   RASTA : bool
     R.A.S.T.A filter
-  sdc : int
+  sdc : int (default: 1)
       Lag size for delta feature computation for
       "Shifted Delta Coefficients", if `sdc` > 0, the
       shifted delta features will be append to MFCCs

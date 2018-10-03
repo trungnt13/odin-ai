@@ -125,9 +125,8 @@ def make_pipeline(steps, debug=False):
   if len(steps) == 0:
     raise ValueError("No instance of odin.preprocessing.base.Extractor found in `steps`.")
   # ====== set debug mode ====== #
-  if debug:
-    for name, extractor in steps:
-      extractor.set_debug(True)
+  set_extractor_debug([i[1] for i in steps],
+                      debug=bool(debug))
   # ====== return pipeline ====== #
   ret = Pipeline(steps=steps)
   return ret

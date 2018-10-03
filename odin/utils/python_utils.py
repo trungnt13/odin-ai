@@ -2,6 +2,8 @@ from __future__ import print_function, division, absolute_import
 
 import os
 import inspect
+import warnings
+from contextlib import contextmanager
 
 from datetime import datetime
 from collections import defaultdict
@@ -104,3 +106,34 @@ def select_path(*paths, default=None, create_new=False):
   # ====== raise exception ====== #
   raise RuntimeError("Cannot find any exists path from list: %s" %
     '; '.join(all_paths))
+
+# ===========================================================================
+# Warnings and Exception
+# ===========================================================================
+@contextmanager
+def catch_warnings_error(w):
+  """ This method turn any given warnings into exception
+
+  use: `warnings.Warning` for all warnings
+
+  Example
+  -------
+  >>> with catch_warnings([RuntimeWarning, UserWarning]):
+  >>>   try:
+  >>>     warnings.warn('test', category=RuntimeWarning)
+  >>>   except RuntimeWarning as w:
+  >>>     pass
+  """
+  with warnings.catch_warnings():
+    warnings.filterwarnings(action='error', category=w)
+    yield
+
+@contextmanager
+def catch_warnings_ignore(w):
+  """ This method ignore any given warnings
+
+  use: `warnings.Warning` for all warnings
+  """
+  with warnings.catch_warnings():
+    warnings.filterwarnings(action='ignore', category=w)
+    yield

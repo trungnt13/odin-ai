@@ -87,7 +87,7 @@ bool(args.acous):
                               n_fft=512, window='hamm'),
       # ====== SAD ====== #
       pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-      pp.speech.SADextractor(nb_mixture=3, nb_train_it=25,
+      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
                              input_name='energy', output_name='sad'),
       # ====== spectrogram ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),

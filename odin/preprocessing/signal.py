@@ -991,7 +991,7 @@ def smooth(x, win=11, window='hanning'):
                       2 * x[-1] - x[-1:-win:-1]], axis=0)
   # moving average
   if window == 'flat':
-    w = np.ones(win, 'd')
+    w = np.ones(win, dtype='d')
   # windowing
   else:
     w = eval('np.' + window + '(win)')
@@ -1419,6 +1419,7 @@ def segment_axis(a, frame_length=2048, step_length=512, axis=0,
 # ===========================================================================
 def get_energy(frames, log=True):
   """ Calculate frame-wise energy
+
   Parameters
   ----------
   frames: ndarray

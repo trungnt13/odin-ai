@@ -15,7 +15,8 @@ from odin import visual as V
 from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
                         mpi, args_parse, select_path, get_logpath,
-                        get_script_name, get_script_path, get_module_from_path)
+                        get_script_name, get_script_path, get_module_from_path,
+                        catch_warnings_error)
 from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
@@ -59,10 +60,13 @@ _args = args_parse(descriptions=[
     ('-sys', 'name of the system for scoring: xvec, ivec, e2e ...', None, 'xvec'),
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
-    ('-backend', 'list of dataset for training the backend: PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
-    ('--lda', 'running LDA before training the backend', None, False),
+    ('-backend', 'list of dataset for training the backend: '
+                 'PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
+    ('-lda', 'if > 0, running LDA before training the backend '
+             'with given number of components', None, 0),
+    ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
     ('--mll', 'pre-fitting maximum likelihood before training PLDA', None, False),
-    ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, False),
+    ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, True),
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
     ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
@@ -92,14 +96,14 @@ BATCH_SIZE = int(_args.batch)
 EPOCH = int(_args.epoch)
 LEARNING_RATE = float(_args.lr)
 GRADIENT_CLIPPING = float(_args.clip)
-# searching for the appropriate system
+# ====== searching for the appropriate system ====== #
 SCORE_SYSTEM_NAME = _args.sys
 SCORE_SYSTEM_ID = int(_args.sysid)
-IS_LDA = bool(_args.lda)
+N_LDA = int(_args.lda)
+N_PLDA = int(_args.plda)
+assert N_PLDA > 0, "Number of PLDA components must > 0, but given: %d" % N_PLDA
 PLDA_MAXIMUM_LIKELIHOOD = bool(_args.mll)
 PLDA_SHOW_LLK = bool(_args.showllk)
-# for training the backend
-BACKEND_DATASET = str(_args.backend).split(',')
 # ====== system ====== #
 NCPU = min(18, mpi.cpu_count() - 2) if _args.ncpu <= 0 else int(_args.ncpu)
 # ====== helper for checking the requirement ====== #
@@ -144,10 +148,10 @@ EXP_DIR = get_exppath('sre', override=False)
 SCORE_DIR = os.path.join(EXP_DIR, 'scores')
 if not os.path.exists(SCORE_DIR):
   os.mkdir(SCORE_DIR)
-# this folder store extracted vectors for training backend
-BACKEND_DIR = os.path.join(EXP_DIR, 'backend')
-if not os.path.exists(BACKEND_DIR):
-  os.mkdir(BACKEND_DIR)
+# this folder store extracted vectors for training backend and extracting scores
+VECTORS_DIR = os.path.join(EXP_DIR, 'vectors')
+if not os.path.exists(VECTORS_DIR):
+  os.mkdir(VECTORS_DIR)
 # this folder store the results
 RESULT_DIR = os.path.join(EXP_DIR, 'results')
 if not os.path.exists(RESULT_DIR):
@@ -243,11 +247,25 @@ if CURRENT_STATE == SystemStates.SCORING:
   assert len(_args.score) > 0, \
   "No dataset are provided for scoring, specify '-score' option"
 
+  # for scoring
   SCORING_DATASETS = validate_scoring_dataset(
       in_path_raw=PATH_RAW_DATA,
-      score_dataset=_args.score.split(','))
-  print("Processed scoring data:")
-  for dsname, dsarray in SCORING_DATASETS.items():
+      score_dataset=str(_args.score).strip().split(','))
+  print("Processed scoring dataset:")
+  for dsname, dsarray in sorted(SCORING_DATASETS.items(),
+                                key=lambda x: x[0]):
+    print('  ', ctext('%-10s' % dsname, 'yellow'), ':',
+          '%s' % ctext(dsarray.shape, 'cyan'))
+
+  # for training the backend
+  BACKEND_DATASETS = validate_scoring_dataset(
+      in_path_raw=PATH_RAW_DATA,
+      score_dataset=str(_args.backend).strip().split(','))
+  assert len(BACKEND_DATASETS) > 0, \
+  "Datasets for training the backend must be provided"
+  print("Processed backend dataset:")
+  for dsname, dsarray in sorted(BACKEND_DATASETS.items(),
+                                key=lambda x: x[0]):
     print('  ', ctext('%-10s' % dsname, 'yellow'), ':',
           '%s' % ctext(dsarray.shape, 'cyan'))
 # ===========================================================================
@@ -525,8 +543,7 @@ def filter_utterances(X, indices):
         is_min_frames = True
       # checking statistics
       else:
-        with warnings.catch_warnings():
-          warnings.filterwarnings('error', category=RuntimeWarning)
+        with catch_warnings_error(RuntimeWarning):
           try:
             mean = np.mean(y, axis=-1)
             var = np.var(y, axis=-1)
@@ -591,7 +608,6 @@ def filter_utterances(X, indices):
   print("Filtered #utterances: %s/%s (files)" %
     (ctext(len(indices) - len(new_indices), 'lightcyan'),
      ctext(len(indices), 'cyan')))
-  # 15090
   return new_indices
 
 def prepare_dnn_data():
@@ -639,11 +655,11 @@ def prepare_dnn_data():
                 for i in flist[:n_dataset_files]})
     indices = _
   # ====== * filter out "bad" sample ====== #
-  indices = filter_utterances(X=X, indices=indices)
+  # indices = filter_utterances(X=X, indices=indices)
   # ====== all training file name ====== #
   # modify here to train full dataset
   all_name = sorted(indices.keys())
-  rand.shuffle(all_name)
+  rand.shuffle(all_name); rand.shuffle(all_name)
   n_files = len(all_name)
   print("#Files:", ctext(n_files, 'cyan'))
   # ====== speaker mapping ====== #
@@ -666,7 +682,7 @@ def prepare_dnn_data():
   for label, name_list in label2name.items():
     if len(name_list) < 2:
       continue
-    n = max(1, int(0.05 * len(name_list))) # 5% for validation
+    n = max(1, int(0.1 * len(name_list))) # 10% for validation
     valid_name += rand.choice(a=name_list, size=n).tolist()
   # train list is the rest
   _ = {name: 1 for name in valid_name}

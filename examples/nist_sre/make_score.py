@@ -20,12 +20,13 @@ from odin import fuel as F, nnet as N, backend as K
 from odin.utils import (get_module_from_path, get_script_path, ctext,
                         Progbar)
 
-from helpers import (SCORING_DATASETS, SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
-                     IS_LDA, PLDA_MAXIMUM_LIKELIHOOD, PLDA_SHOW_LLK,
+from helpers import (SCORING_DATASETS, BACKEND_DATASETS,
+                     SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
+                     N_PLDA, N_LDA, PLDA_MAXIMUM_LIKELIHOOD, PLDA_SHOW_LLK,
                      PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
-                     sre_file_list, Config, BACKEND_DATASET,
-                     EXP_DIR, SCORE_DIR, BACKEND_DIR, RESULT_DIR)
+                     sre_file_list, Config,
+                     EXP_DIR, SCORE_DIR, VECTORS_DIR, RESULT_DIR)
 # ===========================================================================
 # Some helper
 # ===========================================================================
@@ -48,86 +49,6 @@ def _check_running_feature_extraction(feat_dir, feat_name, n_files):
   if n_indices != n_files:
     return True
   return False
-# ===========================================================================
-# Searching for extractor
-# ===========================================================================
-extractor_name = FEATURE_RECIPE.split("_")[0]
-extractor = get_module_from_path(identifier=extractor_name,
-                                 path=get_script_path(),
-                                 prefix='feature_recipes')[0]
-extractor = extractor()
-print(extractor)
-# mapping from
-# scoring_data_name -> [features 2-D array,
-#                       indices {name: (start, end)},
-#                       spkid_or_meta {name: spkid_or_meta},
-#                       path {name: path}]
-scoring_features = {}
-training_ds = F.Dataset(path=os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE),
-                        read_only=True)
-all_training_dataset = set(training_ds['dsname'].values())
-# ====== extract the feature if not exists ====== #
-print("Acoustic feature extraction:")
-for dsname, file_list in sorted(SCORING_DATASETS.items(),
-                                key=lambda x: x[0]):
-  # acoustic features already extracted in training dataset
-  if dsname in all_training_dataset:
-    X = training_ds[extractor_name]
-    indices = {name: (start, end)
-               for name, (start, end) in training_ds['indices_%s' % extractor_name].items()
-               if training_ds['dsname'][name] == dsname}
-    meta = {name: meta
-            for name, meta in training_ds['spkid'].items()
-            if name in indices}
-    if 'path' in training_ds:
-      path = {name: path
-              for name, path in training_ds['path'].items()
-              if name in indices}
-    else:
-      path = None
-    print("  Name  :", ctext(dsname, 'cyan'))
-    print("   #Files:", ctext(len(indices), 'cyan'))
-    print("   Load dataset:", ctext(training_ds.path, 'cyan'))
-    scoring_features[dsname] = [X, indices, meta, path]
-    continue
-  # extract acoustic feature from scratch
-  feat_dir = os.path.join(PATH_ACOUSTIC_FEATURES,
-                          '%s_%s' % (dsname, extractor_name))
-  log_path = get_logpath(name='%s_%s.log' % (dsname, extractor_name),
-                         increasing=True, odin_base=False, root=EXP_DIR)
-  # check if need running the feature extraction
-  if _check_running_feature_extraction(feat_dir,
-                                       feat_name=extractor_name,
-                                       n_files=len(file_list)):
-    with np.warnings.catch_warnings():
-      np.warnings.filterwarnings('ignore')
-      processor = pp.FeatureProcessor(jobs=file_list,
-                                      path=feat_dir,
-                                      extractor=extractor,
-                                      ncpu=NCPU,
-                                      override=True,
-                                      identifier='name',
-                                      log_path=log_path,
-                                      stop_on_failure=False)
-      processor.run()
-  # store the extracted dataset
-  print("  Name  :", ctext(dsname, 'cyan'))
-  print("   #Files:", ctext(len(file_list), 'cyan'))
-  print("   Load dataset:", ctext(feat_dir, 'cyan'))
-  ds = F.Dataset(path=feat_dir, read_only=True)
-  scoring_features[dsname] = [
-      ds[extractor_name],
-      dict(ds['indices_%s' % extractor_name].items()),
-      dict(ds['spkid'].items()),
-      dict(ds['path'].items()),
-  ]
-# ====== check the duration ====== #
-# for dsname, ds in scoring_features.items():
-#   for fname, dur in ds['duration'].items():
-#     dur = float(dur)
-#     if dur < 5:
-#       raise RuntimeError("Dataset: '%s' contains file: '%s', duration='%f' < 5(s)"
-#         % (dsname, fname, dur))
 # ===========================================================================
 # Searching for trained system
 # ===========================================================================
@@ -158,20 +79,95 @@ print("  System index        :", ctext(sys_index, 'cyan'))
 # just check one more time
 assert os.path.exists(final_sys), \
 "Cannot find pre-trained model at: '%s'" % final_sys
+# ====== generate path ====== #
+def get_vectors_outpath(dsname):
+  return os.path.join(VECTORS_DIR, '%s%s.%s' % (sys_name, sys_index, dsname))
+# ===========================================================================
+# Searching for extractor
+# ===========================================================================
+extractor_name = FEATURE_RECIPE.split("_")[0]
+extractor = get_module_from_path(identifier=extractor_name,
+                                 path=get_script_path(),
+                                 prefix='feature_recipes')[0]
+extractor = extractor()
+print(extractor)
+# ====== initializing ====== #
+# mapping from
+# scoring_data_name -> [features 2-D array,
+#                       indices {name: (start, end)},
+#                       spkid_or_meta {name: spkid_or_meta},
+#                       path {name: path}]
+acoustic_features = {}
+training_ds = F.Dataset(path=os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE),
+                        read_only=True)
+all_training_dataset = set(training_ds['dsname'].values())
+# ====== extract the feature if not exists ====== #
+for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DATASETS.items()),
+                                key=lambda x: x[0]):
+  # acoustic features already extracted in training dataset
+  if dsname in all_training_dataset:
+    X = training_ds[extractor_name]
+    indices = {name: (start, end)
+               for name, (start, end) in training_ds['indices_%s' % extractor_name].items()
+               if training_ds['dsname'][name] == dsname}
+    meta = {name: meta
+            for name, meta in training_ds['spkid'].items()
+            if name in indices}
+    if 'path' in training_ds:
+      path = {name: path
+              for name, path in training_ds['path'].items()
+              if name in indices}
+    else:
+      path = None
+    acoustic_features[dsname] = [X, indices, meta, path]
+    continue
+  # extract acoustic feature from scratch
+  feat_dir = os.path.join(PATH_ACOUSTIC_FEATURES,
+                          '%s_%s' % (dsname, extractor_name))
+  log_path = get_logpath(name='%s_%s.log' % (dsname, extractor_name),
+                         increasing=True, odin_base=False, root=EXP_DIR)
+  # check if need running the feature extraction
+  if _check_running_feature_extraction(feat_dir,
+                                       feat_name=extractor_name,
+                                       n_files=len(file_list)):
+    with np.warnings.catch_warnings():
+      np.warnings.filterwarnings('ignore')
+      processor = pp.FeatureProcessor(jobs=file_list,
+                                      path=feat_dir,
+                                      extractor=extractor,
+                                      ncpu=NCPU,
+                                      override=True,
+                                      identifier='name',
+                                      log_path=log_path,
+                                      stop_on_failure=False)
+      processor.run()
+  # store the extracted dataset
+  ds = F.Dataset(path=feat_dir, read_only=True)
+  acoustic_features[dsname] = [
+      ds[extractor_name],
+      dict(ds['indices_%s' % extractor_name].items()),
+      dict(ds['spkid'].items()),
+      dict(ds['path'].items()),
+  ]
+# ====== print log ====== #
+print("Acoustic features:")
+for dsname, (X, indices, y, path) in sorted(acoustic_features.items(),
+                                         key=lambda x: x[0]):
+  print("  %s" % ctext(dsname, 'yellow'))
+  print("   #Files:", ctext(len(indices), 'cyan'))
+  print("   Loaded features:", ctext(X.path, 'cyan'))
 # ===========================================================================
 # All system must extract following information
 # ===========================================================================
 # mapping from
-# dataset_name -> {'name': 1-D array [n_samples],
-#                  'meta': 1-D array [n_samples], # (e.g. 'test', 'enroll', 'unlabeled')
-#                  'path': 1-D array [n_samples], # (path to original audio)
-#                  'data': 2-D array [n_samples, n_latent_dim]}
-all_scores = {}
-
-# mapping of data for training the backend
-# dataset_name -> {'X': 2-D array [n_samples, n_latent_dim],
-#                  'y': 1-D array [n_samples]}
-all_backend = {}
+# dataset_name -> 'name': 1-D array [n_samples],
+#                 # (path to original audio)
+#                 'path': 1-D array [n_samples],
+#                 # Extracted latent vectors
+#                 'X': 2-D array [n_samples, n_latent_dim]}
+#                 # speaker label or meta-data (e.g. 'test', 'enroll', 'unlabeled')
+#                 'y': 1-D array [n_samples],
+all_vectors = {}
 # ===========================================================================
 # Extract the x-vector for enroll and trials
 # ===========================================================================
@@ -190,23 +186,22 @@ if 'xvec' == SCORE_SYSTEM_NAME:
   print('Latent:', ctext(z, 'cyan'))
   # ====== recipe for feeder ====== #
   recipe = prepare_dnn_feeder_recipe()
-  # ==================== extract x-vector for enroll and trials ==================== #
+  # ==================== extract x-vector from acoustic features ==================== #
   for dsname, (ds_feat, ds_indices, ds_meta, ds_path) in sorted(
-      scoring_features.items(), key=lambda x: x[0]):
+      acoustic_features.items(), key=lambda x: x[0]):
     n_files = len(ds_indices)
     # ====== check exist scores ====== #
-    score_path = os.path.join(SCORE_DIR,
-                              '%s%s.%s' % (sys_name, sys_index, dsname))
-    if os.path.exists(score_path):
-      with open(score_path, 'rb') as f:
-        scores = pickle.load(f)
-        if (len(scores['name']) == len(scores['meta']) ==
-                len(scores['path']) == len(scores['data']) <= n_files):
-          all_scores[dsname] = scores
-          print(' - Loaded scores at:', ctext(score_path, 'cyan'))
-          if len(scores['name']) != n_files:
-            print(' - [WARNING] Extracted scores only for: %s/%s (files)' %
-              (ctext(len(scores['name']), 'lightcyan'),
+    vector_outpath = get_vectors_outpath(dsname)
+    if os.path.exists(vector_outpath):
+      with open(vector_outpath, 'rb') as f:
+        vectors = pickle.load(f)
+        if (len(vectors['name']) == len(vectors['y']) ==
+                len(vectors['path']) == len(vectors['X']) <= n_files):
+          all_vectors[dsname] = vectors
+          print(' - Loaded vectors at:', ctext(vector_outpath, 'yellow'))
+          if len(vectors['name']) != n_files:
+            print('    [WARNING] Extracted scores only for: %s/%s (files)' %
+              (ctext(len(vectors['name']), 'lightcyan'),
                ctext(n_files, 'cyan')))
           continue # skip the calculation
     # ====== create feeder ====== #
@@ -221,15 +216,11 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     output_data = []
     # progress bar
     prog = Progbar(target=len(feeder), print_summary=True,
-                   name=os.path.basename(score_path))
-    prog.set_summarizer('#File', fn=lambda x: x[-1])
-    prog.set_summarizer('#Batch', fn=lambda x: x[-1])
+                   name='Extract vectors: %s' % dsname)
     # ====== make prediction ====== #
-    curr_nfile = 0
     for batch_idx, (name, idx, X) in enumerate(feeder.set_batch(
         batch_size=100000, seed=None, shuffle_level=0)):
       assert idx == 0, "File '%s' longer than maximum batch size" % name
-      curr_nfile += 1
       z = f_z(X)
       if z.shape[0] > 1:
         z = np.mean(z, axis=0, keepdims=True)
@@ -241,8 +232,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
       prog['ds'] = dsname
       prog['name'] = name[:48]
       prog['latent'] = z.shape
-      prog['#File'] = curr_nfile
-      prog['#Batch'] = batch_idx + 1
+      prog['outpath'] = vector_outpath
       prog.add(X.shape[0])
     # ====== post-processing ====== #
     output_name = np.array(output_name)
@@ -250,85 +240,13 @@ if 'xvec' == SCORE_SYSTEM_NAME:
     output_path = np.array(output_path)
     output_data = np.concatenate(output_data, axis=0)
     # ====== save the score ====== #
-    with open(score_path, 'wb') as f:
+    with open(vector_outpath, 'wb') as f:
       scores = {'name': output_name,
-                'meta': output_meta,
                 'path': output_path,
-                'data': output_data.astype('float32')}
+                'X': output_data.astype('float32'),
+                'y': output_meta}
       pickle.dump(scores, f)
-      all_scores[dsname] = scores
-  # ==================== Extract the x-vector for training the backend ==================== #
-  assert len(BACKEND_DATASET) > 0, \
-  "Datasets for training the backend must be provided"
-  print("Backend dataset:", ctext(BACKEND_DATASET, 'cyan'))
-  feature_name = FEATURE_RECIPE.split('_')[0]
-  ids_name = 'indices_%s' % feature_name
-  indices = training_ds[ids_name]
-  indices_dsname = {i: j for i, j in training_ds['dsname'].items()}
-  indices_spkid = {i: j for i, j in training_ds['spkid'].items()}
-  # ====== extract vector for each dataset ====== #
-  for dsname in sorted(BACKEND_DATASET):
-    path = os.path.join(BACKEND_DIR,
-                        sys_name + sys_index + '.' + dsname)
-    print("Processing ...", ctext(os.path.basename(path), 'yellow'))
-    # ====== indices ====== #
-    indices_ds = [(name, (start, end))
-                  for name, (start, end) in indices.items()
-                  if indices_dsname[name] == dsname]
-    print("  Found: %s (files)" %
-      ctext(len(indices_ds), 'cyan'))
-    print("  Found: %s (speakers)" %
-      ctext(len(set(indices_spkid[i[0]] for i in indices_ds)), 'cyan'))
-    # skip if no files found
-    if len(indices_ds) == 0:
-      print("  Skip the calculation!")
-      continue
-    # ====== found exists vectors ====== #
-    if os.path.exists(path):
-      with open(path, 'rb') as fin:
-        vectors = pickle.load(fin)
-        if len(vectors['X']) == len(vectors['y']) and \
-        len(vectors['X']) > 0:
-          print("  Loaded vectors:",
-                ctext(vectors['X'].shape, 'cyan'),
-                ctext(vectors['y'].shape, 'cyan'))
-          all_backend[dsname] = vectors
-          continue
-    # ====== create feeder ====== #
-    feeder = F.Feeder(
-        data_desc=F.IndexedData(data=training_ds[feature_name],
-                                indices=indices_ds),
-        batch_mode='file', ncpu=8)
-    feeder.set_recipes(recipe)
-    prog = Progbar(target=len(feeder), print_summary=True,
-                   name="Extracting vector for: %s - %d (files)" %
-                   (dsname, len(indices_ds)))
-    # ====== extracting vectors ====== #
-    Z_out = []
-    y_out = []
-    for name, idx, X in feeder.set_batch(
-        batch_size=100000, seed=None, shuffle_level=0):
-      assert idx == 0, "File '%s' longer than maximum batch size" % name
-      # get the latent
-      z = f_z(X)
-      if z.shape[0] > 1:
-        z = np.mean(z, axis=0, keepdims=True)
-      Z_out.append(z)
-      y_out.append(indices_spkid[name])
-      # update the progress
-      prog['name'] = name[:48]
-      prog.add(X.shape[0])
-    # ====== post processing ====== #
-    Z_out = np.concatenate(Z_out).astype('float32')
-    y_out = np.array(y_out)
-    with open(path, 'wb') as fout:
-      pickle.dump({'X': Z_out,
-                   'y': y_out},
-                  fout)
-    print('  Extracted:', ctext(Z_out.shape, 'cyan'), y_out.shape)
-    # ====== store the backend vectors ====== #
-    all_backend[dsname] = {'X': Z_out,
-                           'y': y_out}
+      all_vectors[dsname] = scores
 # ===========================================================================
 # Extract the i-vector
 # ===========================================================================
@@ -347,11 +265,12 @@ else:
 # ===========================================================================
 # Prepare data for training the backend
 # ===========================================================================
-assert len(all_backend) > 0
+all_backend_data = {name: all_vectors[name]
+                    for name in BACKEND_DATASETS.keys()}
 X_backend = []
 y_backend = []
 n_speakers = 0
-for dsname, vectors in all_backend.items():
+for dsname, vectors in all_backend_data.items():
   X, y = vectors['X'], vectors['y']
   # add the data
   X_backend.append(X)
@@ -386,19 +305,35 @@ print("  #Zeros: %s/%s or %.1f%%" %
    ctext(n, 'cyan'),
    (n - n_non_zeros) / n * 100))
 # ====== optional save data to matlab for testing ====== #
-with open('/tmp/xvecs.mat', 'wb') as ftmp:
+with open('/tmp/backend.mat', 'wb') as ftmp:
   savemat(ftmp, {'X': np.array(X_backend.astype('float32'), order='F'),
                  'y': np.array(y_backend.astype('int32'), order='F')})
+for dsname in SCORING_DATASETS.keys():
+  vectors = all_vectors[dsname]
+  with open(os.path.join('/tmp', '%s.mat' % dsname), 'wb') as ftmp:
+    y = []
+    for i in range(len(vectors['X'])):
+      name = vectors['name'][i]
+      path = vectors['path'][i]
+      if path is not None:
+        name += os.path.splitext(path)[-1]
+      y.append(name)
+    savemat(ftmp, {'X': np.array(vectors['X'].astype('float32'), order='F'),
+                   'y': np.array(y)})
 # ===========================================================================
 # Now scoring
 # ===========================================================================
-for dsname, scores in sorted(all_scores.items(),
+for dsname, scores in sorted(all_vectors.items(),
                              key=lambda x: x[0]):
+  # ====== skip non scoring dataset ====== #
+  if dsname not in SCORING_DATASETS:
+    continue
+  # ====== proceed ====== #
   print("Scoring:", ctext(dsname, 'yellow'))
   # load the scores
   (seg_name, seg_meta,
-   seg_path, seg_data) = (scores['name'], scores['meta'],
-                          scores['path'], scores['data'])
+   seg_path, seg_data) = (scores['name'], scores['y'],
+                          scores['path'], scores['X'])
   name_2_data = {i: j
                  for i, j in zip(seg_name, seg_data)}
   name_2_ext = {i: '' if j is None else os.path.splitext(j)[-1]
@@ -445,11 +380,11 @@ for dsname, scores in sorted(all_scores.items(),
                               axis=0)
     print("  Trials:", ctext(X_trials.shape, 'cyan'))
     # ====== training the plda ====== #
-    if IS_LDA:
+    if N_LDA > 0:
       print("  Fitting LDA ...")
-      lda = LinearDiscriminantAnalysis(n_components=200)
+      lda = LinearDiscriminantAnalysis(n_components=N_LDA)
       X_backend = lda.fit_transform(X=X_backend, y=y_backend)
-    plda = PLDA(n_phi=150,
+    plda = PLDA(n_phi=N_PLDA,
                 centering=True, wccn=True, unit_length=True,
                 n_iter=20, random_state=Config.SUPER_SEED,
                 verbose=2 if PLDA_SHOW_LLK else 1)

@@ -15,8 +15,8 @@ def feat_sad(debugging):
                               window='hamm', n_fft=512),
       # ====== SAD ====== #
       pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-      pp.speech.SADextractor(nb_mixture=3, smooth_window=3,
-                             input_name='energy', output_name='sad'),
+      pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
+                          input_name='energy', output_name='sad'),
       # ====== spectrogram ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
       pp.speech.MelsSpecExtractor(n_mels=24, fmin=100, fmax=4000,
@@ -63,8 +63,8 @@ def feat_all(debugging):
                               window='hamm', n_fft=512),
       # ====== SAD ====== #
       pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-      pp.speech.SADextractor(nb_mixture=3, smooth_window=3,
-                             input_name='energy', output_name='sad'),
+      pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
+                          input_name='energy', output_name='sad'),
       # ====== spectrogram ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
       pp.speech.MelsSpecExtractor(n_mels=24, fmin=100, fmax=4000,
@@ -115,8 +115,8 @@ def feat_old(debugging):
       pp.speech.MFCCsExtractor(n_ceps=20, remove_first_coef=True,
                                output_name='mfcc'),
       # ====== SAD ====== #
-      pp.speech.SADextractor(nb_mixture=3, smooth_window=3,
-                             output_name='sad'),
+      pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
+                          output_name='sad'),
       pp.speech.AcousticNorm(input_name=('mfcc', 'mspec'), mean_var_norm=True,
                              windowed_mean_var_norm=True, win_length=121),
       pp.base.DeltaExtractor(input_name='mfcc', width=9, order=(0, 1, 2)),
@@ -166,8 +166,8 @@ def mspec_sad(debugging):
       pp.speech.MelsSpecExtractor(n_mels=24, fmin=64, fmax=None,
                                   output_name='mspec'),
       # ====== SAD ====== #
-      pp.speech.SADextractor(nb_mixture=3, smooth_window=3,
-                             input_name='energy', output_name='sad'),
+      pp.speech.SADgmm(nb_mixture=3, smooth_window=3,
+                          input_name='energy', output_name='sad'),
       pp.speech.ApplyingSAD(input_name=('mspec',)),
       pp.speech.AcousticNorm(input_name=('mspec',), mean_var_norm=True,
                              windowed_mean_var_norm=True, win_length=121),
