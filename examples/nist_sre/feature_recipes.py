@@ -240,28 +240,6 @@ class SADreader(pp.base.Extractor):
 # Extractor
 # NOTE: you must save the SAD label for augmentation data later
 # ===========================================================================
-def sad(augmentation=None):
-  if augmentation is not None:
-    raise ValueError("This feature recipe doesn't support augmentation")
-  extractors = pp.make_pipeline(steps=[
-      SREAudioReader(),
-      pp.speech.PreEmphasis(coeff=0.97, input_name='raw'),
-      # ====== STFT ====== #
-      pp.speech.Framing(frame_length=Config.FRAME_LENGTH,
-                        step_length=Config.STEP_LENGTH,
-                        window=Config.WINDOW,
-                        output_name='frames'),
-      pp.speech.CalculateEnergy(log=True,
-                                input_name='frames', output_name='energy'),
-      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
-                       smooth_window=Config.SAD_SMOOTH,
-                       input_name='energy', output_name='sad'),
-      pp.base.DeleteFeatures(input_name=['raw', 'frames', 'scale',
-                                         'energy', 'sad_threshold']),
-      pp.base.AsType(dtype=np.uint8),
-  ])
-  return extractors
-
 def mfcc(augmentation=None):
   delete_list = ['stft', 'spec', 'raw',
                  'mfcc_energy', 'sad_threshold']

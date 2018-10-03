@@ -12,16 +12,15 @@ import numpy as np
 
 from odin import visual as V, nnet as N
 from odin.utils import (ctext, unique_labels, UnitTimer,
-                        Progbar, get_logpath,
-                        get_module_from_path,
-                        get_script_path, mpi,
-                        catch_warnings_ignore)
+                        Progbar, get_logpath, get_module_from_path,
+                        get_script_path, mpi, catch_warnings_ignore)
 from odin import fuel as F, preprocessing as pp
 from odin.stats import sampling_iter
 
 from helpers import (PATH_ACOUSTIC_FEATURES, EXP_DIR,
                      ALL_FILES, IS_DEBUGGING, FEATURE_RECIPE, FEATURE_NAME,
-                     ALL_DATASET, Config, NCPU)
+                     ALL_DATASET, Config, NCPU,
+                     validate_features_dataset)
 # ALL_FILES
 # Header:
 #  0       1      2      3       4          5         6
@@ -121,31 +120,4 @@ with catch_warnings_ignore(Warning):
 # ===========================================================================
 # Make some visualization
 # ===========================================================================
-ds = F.Dataset(output_dataset_path, read_only=True)
-print(ds)
-
-features = {}
-for key, val in ds.items():
-  if 'indices_' in key:
-    name = key.split('_')[-1]
-    features[name] = (val, ds[name])
-
-all_indices = [val[0] for val in features.values()]
-# ====== sampling 250 files ====== #
-all_files = sampling_iter(it=all_indices[0].keys(), k=250,
-                          seed=Config.SUPER_SEED)
-all_files = [f for f in all_files
-             if all(f in ids for ids in all_indices)]
-print("#Samples:", ctext(len(all_files), 'cyan'))
-
-# ====== ignore the 20-figures warning ====== #
-with catch_warnings_ignore(RuntimeWarning):
-  for file_name in all_files:
-    X = {}
-    for feat_name, (ids, data) in features.items():
-      start, end = ids[file_name]
-      X[feat_name] = data[start:end][:].astype('float32')
-    V.plot_multiple_features(features=X, fig_width=20,
-          title='[%s]%s' % (ds['dsname'][file_name], file_name))
-
-V.plot_save(ds_validation_path, dpi=12)
+validate_features_dataset(output_dataset_path, ds_validation_path)

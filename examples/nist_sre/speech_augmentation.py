@@ -8,20 +8,19 @@ import numpy as np
 from odin import preprocessing as pp
 from odin import fuel as F, visual as V
 from odin.utils import (ctext, get_logpath, get_module_from_path,
-                        get_script_path, Progbar, mpi)
+                        get_script_path, Progbar, mpi,
+                        catch_warnings_ignore)
 
 from helpers import (ALL_FILES, ALL_NOISE, ALL_DATASET, IS_DEBUGGING,
                      PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
                      AUGMENTATION_NAME, Config,
-                     EXP_DIR, NCPU, validate_feature_dataset,
-                     check_requirement_feature_processing)
+                     EXP_DIR, NCPU, validate_features_dataset)
 
 if AUGMENTATION_NAME == 'None':
   raise ValueError("`-aug` option was not provided, choose: 'rirs' or 'musan'")
 np.random.seed(Config.SUPER_SEED)
 # percentage of data will be used for augmentation
-PERCENTAGE_AUGMENTATION = 0.6
-check_requirement_feature_processing()
+PERCENTAGE_AUGMENTATION = 0.8
 # ===========================================================================
 # Constant
 # ===========================================================================
@@ -73,8 +72,7 @@ recipe = recipe[0](augmentation=AUGMENTATION_NAME)
 # Debugging
 # ===========================================================================
 if IS_DEBUGGING:
-  with np.warnings.catch_warnings():
-    np.warnings.filterwarnings('ignore')
+  with catch_warnings_ignore(Warning):
     n_samples = 120
     prog = Progbar(target=n_samples, print_summary=True,
                    name='Debugging Augmentation')
@@ -84,7 +82,7 @@ if IS_DEBUGGING:
       if np.random.rand() > 0.8:
         feat = {i: j[:1200] if isinstance(j, np.ndarray) else j
                 for i, j in feat.items()}
-        V.plot_multiple_features(feat, title=feat['name'])
+        V.plot_multiple_features(feat, fig_width=20, title=feat['name'])
       prog['name'] = feat['name'][:48]
       prog['dsname'] = feat['dsname']
       prog['dsnoise'] = feat['dsnoise']
@@ -105,22 +103,18 @@ if IS_DEBUGGING:
 # ====== basic path ====== #
 output_dataset_path = os.path.join(PATH_ACOUSTIC_FEATURES,
                                    '%s_%s' % (FEATURE_RECIPE, AUGMENTATION_NAME))
-processor_log_path = get_logpath(name='processor_%s_%s.log' %
-                                (FEATURE_RECIPE, AUGMENTATION_NAME),
-                                 increasing=True,
-                                 odin_base=False,
-                                 root=EXP_DIR)
-ds_validation_path = os.path.join(EXP_DIR, 'validate_%s_%s.pdf' %
-                                  (FEATURE_RECIPE, AUGMENTATION_NAME))
+processor_log_path = os.path.join(EXP_DIR,
+  'processor_%s_%s.log' % (FEATURE_RECIPE, AUGMENTATION_NAME))
+ds_validation_path = os.path.join(EXP_DIR,
+  'validate_%s_%s.pdf' % (FEATURE_RECIPE, AUGMENTATION_NAME))
 # ====== running the processing ====== #
-with np.warnings.catch_warnings():
-  np.warnings.filterwarnings('ignore')
+with catch_warnings_ignore(Warning):
   # ====== start processing ====== #
   processor = pp.FeatureProcessor(
       jobs=AUG_FILES,
       path=output_dataset_path,
       extractor=recipe,
-      n_cache=250,
+      n_cache=320,
       ncpu=NCPU,
       override=True,
       identifier='name',
@@ -130,4 +124,4 @@ with np.warnings.catch_warnings():
 # ===========================================================================
 # Validation
 # ===========================================================================
-validate_feature_dataset(path=output_dataset_path, outpath=ds_validation_path)
+validate_features_dataset(output_dataset_path, ds_validation_path)

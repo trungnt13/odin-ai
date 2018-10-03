@@ -1197,6 +1197,9 @@ class SADthreshold(Extractor):
   we normalize the energy to [0, 1] and thresholding based on
   these values
 
+  This algorithm could fail if there is significant amount
+  of noise in the audio, then it treats all frames as non-speech
+
   Copyright
   ---------
   Daniel Povey, voice-activity-detection.cc, kaldi toolkit

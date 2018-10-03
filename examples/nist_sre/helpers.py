@@ -16,7 +16,7 @@ from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
                         mpi, args_parse, select_path, get_logpath,
                         get_script_name, get_script_path, get_module_from_path,
-                        catch_warnings_error)
+                        catch_warnings_error, catch_warnings_ignore)
 from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
@@ -762,3 +762,35 @@ def prepare_dnn_data():
     exit()
   # ====== return ====== #
   return train_feeder, valid_feeder, all_speakers
+# ===========================================================================
+# Evaluation and validation helper
+# ===========================================================================
+def validate_features_dataset(output_dataset_path, ds_validation_path):
+  ds = F.Dataset(output_dataset_path, read_only=True)
+  print(ds)
+
+  features = {}
+  for key, val in ds.items():
+    if 'indices_' in key:
+      name = key.split('_')[-1]
+      features[name] = (val, ds[name])
+
+  all_indices = [val[0] for val in features.values()]
+  # ====== sampling 250 files ====== #
+  all_files = sampling_iter(it=all_indices[0].keys(), k=250,
+                            seed=Config.SUPER_SEED)
+  all_files = [f for f in all_files
+               if all(f in ids for ids in all_indices)]
+  print("#Samples:", ctext(len(all_files), 'cyan'))
+
+  # ====== ignore the 20-figures warning ====== #
+  with catch_warnings_ignore(RuntimeWarning):
+    for file_name in all_files:
+      X = {}
+      for feat_name, (ids, data) in features.items():
+        start, end = ids[file_name]
+        X[feat_name] = data[start:end][:].astype('float32')
+      V.plot_multiple_features(features=X, fig_width=20,
+            title='[%s]%s' % (ds['dsname'][file_name], file_name))
+
+  V.plot_save(ds_validation_path, dpi=12)
