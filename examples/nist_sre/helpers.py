@@ -71,11 +71,11 @@ _args = args_parse(descriptions=[
     # for DNN
     ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 64),
-    ('-epoch', 'number of epoch, for training DNN', None, 8),
+    ('-epoch', 'number of epoch, for training DNN', None, 12),
     ('-clip', 'The maximum change in parameters allowed per minibatch, '
               'measured in Euclidean norm over the entire model (change '
               'will be clipped to this value), kaldi use 2.0', None, 2.0),
-    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.0001),
+    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.001),
     # others
     ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
@@ -451,7 +451,9 @@ def get_model_path(system_name, logging=True):
   else:
     raise ValueError("No support for system with name: %s" % system_name)
   # ====== prefix ====== #
-  name = '_'.join([str(system_name).lower(), FEATURE_RECIPE])
+  name = '_'.join([str(system_name).lower(),
+                   FEATURE_RECIPE.replace('_', ''),
+                   FEATURE_NAME])
   # ====== concat the attributes ====== #
   for i in sorted(str(i) for i in args_name):
     name += '_' + str(int(getattr(_args, i)))
@@ -485,7 +487,8 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
   recipes = [
       F.recipes.Sequencing(frame_length=frame_length,
                            step_length=frame_length,
-                           end='cut', data_idx=0),
+                           end='pad', pad_value=0, pad_mode='post',
+                           data_idx=0),
   ]
   if name2label is not None and n_speakers is not None:
     recipes += [
@@ -614,11 +617,10 @@ def prepare_dnn_data():
   ds = F.Dataset(path=path, read_only=True)
   rand = np.random.RandomState(seed=Config.SUPER_SEED)
   # ====== find the right feature ====== #
-  feature_name = FEATURE_RECIPE.split('_')[0]
-  ids_name = 'indices_%s' % feature_name
-  assert feature_name in ds, "Cannot find feature with name: %s" % feature_name
+  ids_name = 'indices_%s' % FEATURE_NAME
+  assert FEATURE_NAME in ds, "Cannot find feature with name: %s" % FEATURE_NAME
   assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
-  X = ds[feature_name]
+  X = ds[FEATURE_NAME]
   # ====== exclude some dataset ====== #
   if len(_args.exclude) > 0:
     exclude_dataset = {i: 1 for i in str(_args.exclude.strip()).split(',')}
@@ -653,7 +655,7 @@ def prepare_dnn_data():
                 for i in flist[:n_dataset_files]})
     indices = _
   # ====== * filter out "bad" sample ====== #
-  # indices = filter_utterances(X=X, indices=indices)
+  indices = filter_utterances(X=X, indices=indices)
   # ====== all training file name ====== #
   # modify here to train full dataset
   all_name = sorted(indices.keys())
@@ -676,9 +678,9 @@ def prepare_dnn_data():
   label2name = defaultdict(list)
   for name, label in name2label.items():
     label2name[label].append(name)
-  # for each speaker with >= 2 utterance, pick 1 utterance
+  # for each speaker with >= 3 utterance
   for label, name_list in label2name.items():
-    if len(name_list) < 2:
+    if len(name_list) < 3:
       continue
     n = max(1, int(0.1 * len(name_list))) # 10% for validation
     valid_name += rand.choice(a=name_list, size=n).tolist()
@@ -713,11 +715,11 @@ def prepare_dnn_data():
   train_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=train_indices),
-      batch_mode='batch', ncpu=NCPU, buffer_size=128)
+      batch_mode='batch', ncpu=NCPU, buffer_size=256)
   valid_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=valid_indices),
-      batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=4)
+      batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=64)
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)
   print(train_feeder)
@@ -758,7 +760,7 @@ def prepare_dnn_data():
                    ('noise' if is_noise else 'clean', dsname, name, spkid),
                    fontsize=6)
     # don't need to be high resolutions
-    V.plot_save('/tmp/tmp.pdf', dpi=32)
+    V.plot_save('/tmp/tmp.pdf', dpi=12)
     exit()
   # ====== return ====== #
   return train_feeder, valid_feeder, all_speakers
