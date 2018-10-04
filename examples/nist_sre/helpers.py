@@ -33,7 +33,7 @@ class Config(object):
   # Random seed for reproducibility
   SUPER_SEED = 52181208
   # for training
-  MINIMUM_UTT_DURATION = 1. # in seconds
+  MINIMUM_UTT_DURATION = 1 # in seconds
   MINIMUM_UTT_PER_SPEAKERS = 8 # number of utterances
 
 class SystemStates(Enum):
@@ -484,7 +484,7 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
   recipes = [
       F.recipes.Sequencing(frame_length=frame_length,
                            step_length=frame_length,
-                           end='pad', pad_value=0, pad_mode='post',
+                           end='mix', pad_value=0, pad_mode='post',
                            data_idx=0),
   ]
   if name2label is not None and n_speakers is not None:
@@ -498,7 +498,26 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
     raise RuntimeError("name2label and n_speakers must both be None, or not-None")
   return recipes
 
-def filter_utterances(X, indices):
+def filter_utterances(X, indices, spkid,
+                      remove_min_length=True, remove_min_uttspk=True,
+                      ncpu=None):
+  """
+  X : 2-D matrix
+    input features
+
+  indices : Mapping
+    utterance_name -> (start, end) in `X`
+
+  spkid : Mapping
+    utterance_name -> speaker_id
+
+  remove_min_length : bool (default: True)
+    if True, remove all files shorter than Config.MINIMUM_UTT_DURATION
+
+  remove_min_uttspk : bool (default: True)
+    if True, remove all speakers with lower amount of utterances than
+    Config.MINIMUM_UTT_PER_SPEAKERS
+  """
   minimum_amount_of_frames = Config.MINIMUM_UTT_DURATION / Config.STEP_LENGTH
 
   prog = Progbar(target=len(indices),
@@ -575,7 +594,8 @@ def filter_utterances(X, indices):
   for res in mpi.MPI(jobs=sorted(indices.items(),
                                  key=lambda x: x[1][0]),
                      func=_mpi_func,
-                     ncpu=NCPU, batch=250):
+                     ncpu=NCPU if ncpu is None else int(ncpu),
+                     batch=250):
     name = res[0]
     if res[1]:
       zero_len_files[name] = 1
@@ -596,6 +616,8 @@ def filter_utterances(X, indices):
     prog['overflow'] = len(overflow_files)
     prog.add(1)
   # ====== remove broken files ====== #
+  if not bool(remove_min_length):
+    min_frame_files = {}
   new_indices = {name: (start, end)
                  for name, (start, end) in indices.items()
                  if name not in zero_len_files and
@@ -606,7 +628,34 @@ def filter_utterances(X, indices):
   print("Filtered #utterances: %s/%s (files)" %
     (ctext(len(indices) - len(new_indices), 'lightcyan'),
      ctext(len(indices), 'cyan')))
-  return new_indices
+  indices = new_indices
+  # ====== filter-out by number of utt-per-speaker ====== #
+  if bool(remove_min_uttspk):
+    spk2utt = defaultdict(list)
+    for name in indices.keys():
+      spk2utt[spkid[name]].append(name)
+
+    n_utt_removed = 0
+    n_spk_removed = 0
+    keep_utt = {}
+    for spk, utt in spk2utt.items():
+      if len(utt) < Config.MINIMUM_UTT_PER_SPEAKERS:
+        n_utt_removed += len(utt)
+        n_spk_removed += 1
+      else:
+        for u in utt:
+          keep_utt[u] = 1
+
+    print("Removed min-utt/spk:  %s/%s(utt)  %s/%s(spk)" % (
+        ctext(n_utt_removed, 'lightcyan'), ctext(len(indices), 'cyan'),
+        ctext(n_spk_removed, 'lightcyan'), ctext(len(spk2utt), 'cyan')
+    ))
+    assert len(indices) == n_utt_removed + len(keep_utt), "Not possible!"
+    indices = {name: (start, end)
+               for name, (start, end) in indices.items()
+               if name in keep_utt}
+  # ====== return the new indices ====== #
+  return indices
 
 def prepare_dnn_data():
   assert int(_args.utt) > Config.MINIMUM_UTT_DURATION, \
@@ -656,31 +705,9 @@ def prepare_dnn_data():
                 for i in flist[:n_dataset_files]})
     indices = _
   # ====== * filter out "bad" sample ====== #
-  indices = filter_utterances(X=X, indices=indices)
-  # ====== filter-out by number of utt-per-speaker ====== #
-  spk2utt = defaultdict(list)
-  for name in indices.keys():
-    spk2utt[ds['spkid'][name]].append(name)
-
-  n_utt_removed = 0
-  n_spk_removed = 0
-  keep_utt = {}
-  for spk, utt in spk2utt.items():
-    if len(utt) < Config.MINIMUM_UTT_PER_SPEAKERS:
-      n_utt_removed += len(utt)
-      n_spk_removed += 1
-    else:
-      for u in utt:
-        keep_utt[u] = 1
-
-  print("Removed min-utt/spk:  %s/%s(utt)  %s/%s(spk)" % (
-      ctext(n_utt_removed, 'lightcyan'), ctext(len(indices), 'cyan'),
-      ctext(n_spk_removed, 'lightcyan'), ctext(len(spk2utt), 'cyan')
-  ))
-  assert len(indices) == n_utt_removed + len(keep_utt), "Not possible!"
-  indices = {name: (start, end)
-             for name, (start, end) in indices.items()
-             if name in keep_utt}
+  indices = filter_utterances(X=X, indices=indices, spkid=ds['spkid'],
+                              remove_min_length=True,
+                              remove_min_uttspk=True)
   # ====== all training file name ====== #
   # modify here to train full dataset
   all_name = sorted(indices.keys())

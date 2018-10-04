@@ -26,7 +26,7 @@ import tensorflow as tf
 from sklearn.metrics import confusion_matrix, accuracy_score
 
 from odin import backend as K, nnet as N, fuel as F, visual as V
-from odin.stats import train_valid_test_split, freqcount
+from odin.stats import train_valid_test_split, freqcount, describe
 from odin import ml
 from odin import training
 from odin import preprocessing as pp
@@ -84,18 +84,19 @@ bool(args.acous):
                         input_name='path', output_name='name'),
       # ====== STFT ====== #
       pp.speech.STFTExtractor(frame_length=0.025, step_length=0.005,
-                              n_fft=512, window='hamm'),
-      # ====== SAD ====== #
-      pp.base.RenameFeatures(input_name='stft_energy', output_name='energy'),
-      pp.speech.SADgmm(nb_mixture=3, nb_train_it=25,
-                             input_name='energy', output_name='sad'),
+                              n_fft=512, window='hamm', energy=False),
       # ====== spectrogram ====== #
       pp.speech.PowerSpecExtractor(power=2.0, output_name='spec'),
       pp.speech.MelsSpecExtractor(n_mels=24, fmin=64, fmax=4000,
                                   input_name=('spec', 'sr'), output_name='mspec'),
-      pp.speech.MFCCsExtractor(n_ceps=20, remove_first_coef=True,
+      pp.speech.MFCCsExtractor(n_ceps=20,
+                               remove_first_coef=True, first_coef_energy=True,
                                input_name='mspec', output_name='mfcc'),
       pp.base.DeltaExtractor(input_name='mfcc', order=(0, 1, 2)),
+      # ====== SAD ====== #
+      pp.base.RenameFeatures(input_name='mfcc_energy', output_name='energy'),
+      pp.speech.SADthreshold(energy_threshold=0.55, smooth_window=5,
+                             input_name='energy', output_name='sad'),
       # ====== normalization ====== #
       pp.base.DeleteFeatures(input_name=('stft', 'spec', 'sad_threshold')),
       pp.speech.AcousticNorm(mean_var_norm=True, windowed_mean_var_norm=True,
@@ -116,13 +117,15 @@ bool(args.acous):
         log_path=os.path.join(EXP_DIR, 'processor.log'),
         stop_on_failure=True)
     processor.run()
-    pp.validate_features(processor,
-                         nb_samples=12,
-                         path=os.path.join(EXP_DIR, 'feature_validation'),
-                         override=True)
+    # pp.validate_features(processor,
+    #                      nb_samples=12,
+    #                      path=os.path.join(EXP_DIR, 'feature_validation'),
+    #                      override=True)
 ds = F.Dataset(PATH_ACOUSTIC_FEATURES, read_only=True)
 print(ds)
-indices = list(ds['indices'].items())
+indices = list(ds['indices_%s' % args.feat].items())
+print("Utterances length:")
+print("   ", describe([end - start for name, (start, end) in indices], shorten=True))
 # ===========================================================================
 # Basic path for GMM, T-matrix and I-vector
 # ===========================================================================

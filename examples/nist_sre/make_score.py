@@ -27,7 +27,8 @@ from helpers import (SCORING_DATASETS, BACKEND_DATASETS,
                      PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE, FEATURE_NAME,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
                      sre_file_list, Config,
-                     EXP_DIR, VECTORS_DIR, RESULT_DIR)
+                     EXP_DIR, VECTORS_DIR, RESULT_DIR,
+                     filter_utterances)
 # ====== scoring log ====== #
 stdio(get_logpath(name='make_score.log', increasing=True,
                   odin_base=False, root=EXP_DIR))
@@ -123,11 +124,14 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
     assert FEATURE_NAME in training_ds, \
         "Cannot find feature with name: %s, from: %s" % (FEATURE_NAME, training_ds.path)
     X = training_ds[FEATURE_NAME]
-    # this also filter-out all utterances with invalid small length
     indices = {name: (start, end)
                for name, (start, end) in training_ds['indices_%s' % FEATURE_NAME].items()
-               if training_ds['dsname'][name] == dsname and
-               (end - start) > Config.MINIMUM_UTT_DURATION / Config.STEP_LENGTH}
+               if training_ds['dsname'][name] == dsname}
+    # we use everything for PLDA
+    indices = filter_utterances(X, indices, training_ds['spkid'],
+                                remove_min_length=False,
+                                remove_min_uttspk=False,
+                                ncpu=4)
     meta = {name: meta
             for name, meta in training_ds['spkid'].items()
             if name in indices}

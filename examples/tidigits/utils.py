@@ -174,10 +174,9 @@ def prepare_data(feat, label, utt_length=0.4, for_ivec=False):
   print("#File test :", ctext(len(test_files), 'cyan'))
 
   recipes = [
-      F.recipes.Name2Label(converter_func=fn_label),
       F.recipes.Sequencing(frame_length=frame_length, step_length=step_length,
-                           end='pad', pad_mode='post', pad_value=0,
-                           label_mode='last', label_idx=-1),
+                           end='pad', pad_mode='post', pad_value=0),
+      F.recipes.Name2Label(converter_func=fn_label),
       F.recipes.LabelOneHot(nb_classes=len(labels), data_idx=-1)
   ]
   feeder_train = F.Feeder(F.IndexedData(ds[feat], indices=train_files),

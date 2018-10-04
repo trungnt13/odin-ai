@@ -159,6 +159,7 @@ def _special_cases(X, feat_name, file_name, ds, path):
 def validate_features(ds_or_processor, path, nb_samples=25,
                       override=False, seed=12082518, fig_width=4):
   # TODO: add PCA visualization
+  # TODO: update to match new indices style
   def logger(title, tag, check):
     check = bool(check)
     text_color = 'yellow' if check else 'red'

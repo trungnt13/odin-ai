@@ -503,9 +503,11 @@ class Sequencing(FeederRecipe):
   end: str
       what to do with the last frame, if the array is not evenly
           divisible into pieces. Options are:
-          - 'cut'   Simply discard the extra values
-          - 'wrap'  Copy values from the beginning of the array
-          - 'pad'   Pad with a constant value
+          - 'cut'    Simply discard the extra values
+          - 'wrap'   Copy values from the beginning of the array
+          - 'pad'    Pad with a constant value
+          - 'ignore' Pad any samples with length <= frame_length, otherwise, ignore
+          - 'mix'   'cut' when >= frame_length, otherwise, 'pad'
   pad_value: Number
       the value to use for end='pad'
   pad_mode: 'pre', 'post'
@@ -513,13 +515,6 @@ class Sequencing(FeederRecipe):
       if "post", padding or wrapping at the ending of the array.
   data_idx: int, list of int, None, or empty list, tuple
       list of index of all data will be applied
-  label_mode: string
-      'common': most common label in the sequence of label
-      'last': last seen label in the sequence
-      'first': first seen label in the sequence
-      'middle' or 'mid': middle of the sequence.
-  label_idx: int, list of int, None, or empty list, tuple
-      list of all label will be sequenced and applied the `label_transform`
 
   Return
   ------
@@ -537,7 +532,7 @@ class Sequencing(FeederRecipe):
 
   def __init__(self, frame_length=256, step_length=None,
                end='cut', pad_value=0., pad_mode='post',
-               data_idx=None, label_mode='last', label_idx=()):
+               data_idx=None):
     super(Sequencing, self).__init__()
     frame_length = int(frame_length)
     step_length = frame_length // 2 if step_length is None else int(step_length)
@@ -548,17 +543,15 @@ class Sequencing(FeederRecipe):
     self.step_length = step_length
     # ====== check mode ====== #
     end = str(end).lower()
-    if end not in ('cut', 'pad', 'wrap', 'ignore'):
+    if end not in ('cut', 'pad', 'wrap', 'ignore', 'mix'):
       raise ValueError(
-          "`end` mode support included: 'cut', 'pad', 'wrap', 'ignore'")
+          "`end` mode support included: 'cut', 'pad', 'wrap', 'ignore', 'mix'")
     self.end = end
     self.pad_value = pad_value
     self.pad_mode = str(pad_mode)
     # ====== transform function ====== #
     # specific index
     self.data_idx = data_idx
-    self.label_idx = label_idx
-    self.label_mode = _check_label_mode(label_mode)
 
   def process(self, name, X):
     # ====== not enough data points for sequencing ====== #
@@ -572,65 +565,60 @@ class Sequencing(FeederRecipe):
     if end == 'ignore':
       end = 'pad'
     # ====== preprocessing data-idx, label-idx ====== #
-    data_idx, label_idx = _get_data_label_idx(
-        self.data_idx, self.label_idx, len(X))
-    # ====== segnments X ====== #
+    data_idx = axis_normalize(axis=self.data_idx, ndim=len(X),
+                              return_tuple=True)
+    # ====== segments X ====== #
     X_new = []
     for idx, x in enumerate(X):
-      # for data
+      ## for data
       if idx in data_idx:
-        x = segment_axis(a=x,
-                         frame_length=self.frame_length,
-                         step_length=self.step_length, axis=0,
-                         end=end, pad_value=self.pad_value,
-                         pad_mode=self.pad_mode)
-      # for label
-      elif idx in label_idx:
-        org_dtype = x.dtype
-        x = segment_axis(
-            a=x if end == 'cut' else np.asarray(x, dtype='str'),
-            frame_length=self.frame_length, step_length=self.step_length,
-            axis=0, end=end,
-            pad_value='__end__', pad_mode=self.pad_mode)
-        if end == 'cut':
-          x = _apply_label_mode(y=x, mode=self.label_mode)
-        # need to remove padded value
+        if end == 'mix':
+          x = segment_axis(a=x,
+                           frame_length=self.frame_length,
+                           step_length=self.step_length, axis=0,
+                           end='cut' if x.shape[0] >= self.frame_length else 'pad',
+                           pad_value=self.pad_value, pad_mode=self.pad_mode)
         else:
-          x = np.asarray(
-              [_apply_label_mode(
-                  y=np.expand_dims([j for j in i if '__end__' not in j], 0),
-                  mode=self.label_mode)
-               for i in x],
-              dtype=org_dtype
-          )
-          x = x[:, 0]
+          x = segment_axis(a=x,
+                           frame_length=self.frame_length,
+                           step_length=self.step_length, axis=0,
+                           end=end, pad_value=self.pad_value,
+                           pad_mode=self.pad_mode)
+      ## for all
       X_new.append(x)
     return name, X_new
 
   def shape_transform(self, shapes):
-    data_idx, label_idx = _get_data_label_idx(
-        self.data_idx, self.label_idx, len(shapes))
+    data_idx = axis_normalize(axis=self.data_idx, ndim=len(shapes),
+                              return_tuple=True)
     # ====== update the indices ====== #
     new_shapes = []
     for idx, (shp, ids) in enumerate(shapes):
-      if idx in data_idx or idx in label_idx:
+      if idx in data_idx:
         # transoform the indices
         n = 0; ids_new = []
         for name, n_samples in ids:
-          # MODE = cut
+          ## MODE = cut
           if self.end == 'cut':
             if n_samples < self.frame_length:
               n_samples = 0
             else:
               n_samples = 1 + np.floor(
               (n_samples - self.frame_length) / self.step_length)
-          # MODE = ignore and pad
+          ## MODE = ignore and pad
           elif self.end == 'ignore':
             if n_samples > self.frame_length:
               n_samples = 0
             else:
               n_samples = 1
-          # MODE = pad
+          ## MODE = mix
+          elif self.end == 'mix':
+            if n_samples < self.frame_length:
+              n_samples = 1
+            else:
+              n_samples = 1 + np.floor(
+              (n_samples - self.frame_length) / self.step_length)
+          ## MODE = pad or wrap
           else:
             if n_samples < self.frame_length:
               n_samples = 1
@@ -642,14 +630,11 @@ class Sequencing(FeederRecipe):
           if n_samples > 0:
             ids_new.append((name, n_samples))
           n += n_samples
-        # transoform the shape for data
+        # transform the shape for data
         if idx in data_idx:
           feat_shape = (shp[-1],) if len(shp) >= 2 else ()
           mid_shape = tuple(shp[1:-1])
           shp = (n, self.frame_length,) + mid_shape + feat_shape
-        # for labels, #this assume that the label_transform
-        # will remove unncessary dimension
-        elif idx in label_idx:
-          shp = (n,) + shp[1:]
+      # end
       new_shapes.append((shp, ids))
     return new_shapes

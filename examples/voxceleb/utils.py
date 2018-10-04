@@ -104,10 +104,10 @@ def prepare_dnn_data(recipe, feat, utt_length, seed=52181208):
   print("#Test files:", ctext(len(test_indices), 'cyan'))
   print("#Speakers:", ctext(n_speakers, 'cyan'))
   recipes = [
-      F.recipes.Name2Label(lambda name:TRAIN_DATA[name], ref_idx=0),
       F.recipes.Sequencing(frame_length=frame_length, step_length=frame_length,
                            end='pad', pad_value=0, pad_mode='post',
-                           data_idx=0, label_idx=1),
+                           data_idx=0),
+      F.recipes.Name2Label(lambda name:TRAIN_DATA[name], ref_idx=0),
       F.recipes.LabelOneHot(nb_classes=n_speakers, data_idx=1)
   ]
   train_feeder = F.Feeder(
