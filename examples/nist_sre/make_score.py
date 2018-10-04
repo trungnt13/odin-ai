@@ -127,7 +127,7 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
     indices = {name: (start, end)
                for name, (start, end) in training_ds['indices_%s' % FEATURE_NAME].items()
                if training_ds['dsname'][name] == dsname and
-               (end - start) > Config.MINIMUM_SPEECH_DURATION / Config.STEP_LENGTH}
+               (end - start) > Config.MINIMUM_UTT_DURATION / Config.STEP_LENGTH}
     meta = {name: meta
             for name, meta in training_ds['spkid'].items()
             if name in indices}

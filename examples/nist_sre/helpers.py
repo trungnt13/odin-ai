@@ -33,8 +33,8 @@ class Config(object):
   # Random seed for reproducibility
   SUPER_SEED = 52181208
   # for training
-  MINIMUM_SPEECH_DURATION = 3 # in seconds
-  MINIMUM_UTT_PER_SPEAKERS = 5 # number of utterances
+  MINIMUM_UTT_DURATION = 1. # in seconds
+  MINIMUM_UTT_PER_SPEAKERS = 8 # number of utterances
 
 class SystemStates(Enum):
   """ SystemStates """
@@ -62,7 +62,7 @@ _args = args_parse(descriptions=[
              'with given number of components', None, 0),
     ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
     ('--mll', 'pre-fitting maximum likelihood before training PLDA', None, False),
-    ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, True),
+    ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, False),
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
     ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
@@ -499,7 +499,7 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
   return recipes
 
 def filter_utterances(X, indices):
-  minimum_amount_of_frames = Config.MINIMUM_SPEECH_DURATION / Config.STEP_LENGTH
+  minimum_amount_of_frames = Config.MINIMUM_UTT_DURATION / Config.STEP_LENGTH
 
   prog = Progbar(target=len(indices),
                  print_report=True, print_summary=True,
@@ -543,10 +543,10 @@ def filter_utterances(X, indices):
       else:
         with catch_warnings_error(RuntimeWarning):
           try:
-            mean = np.mean(y, axis=-1)
+            # mean = np.mean(y, axis=-1)
             var = np.var(y, axis=-1)
-            min_val = np.min(y, axis=-1)
-            max_val = np.max(y, axis=-1)
+            # min_val = np.min(y, axis=-1)
+            # max_val = np.max(y, axis=-1)
           # numerical unstable
           except RuntimeWarning as w:
             if 'overflow encountered' in str(w):
@@ -609,6 +609,10 @@ def filter_utterances(X, indices):
   return new_indices
 
 def prepare_dnn_data():
+  assert int(_args.utt) > Config.MINIMUM_UTT_DURATION, \
+      "Training utterances length is: %d(s), must be greater than minimum utterance duration: %d(s)" % \
+      (int(_args.utt), Config.MINIMUM_UTT_DURATION)
+  # ====== prepare the dataset ====== #
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
   ds = F.Dataset(path=path, read_only=True)
@@ -653,6 +657,30 @@ def prepare_dnn_data():
     indices = _
   # ====== * filter out "bad" sample ====== #
   indices = filter_utterances(X=X, indices=indices)
+  # ====== filter-out by number of utt-per-speaker ====== #
+  spk2utt = defaultdict(list)
+  for name in indices.keys():
+    spk2utt[ds['spkid'][name]].append(name)
+
+  n_utt_removed = 0
+  n_spk_removed = 0
+  keep_utt = {}
+  for spk, utt in spk2utt.items():
+    if len(utt) < Config.MINIMUM_UTT_PER_SPEAKERS:
+      n_utt_removed += len(utt)
+      n_spk_removed += 1
+    else:
+      for u in utt:
+        keep_utt[u] = 1
+
+  print("Removed min-utt/spk:  %s/%s(utt)  %s/%s(spk)" % (
+      ctext(n_utt_removed, 'lightcyan'), ctext(len(indices), 'cyan'),
+      ctext(n_spk_removed, 'lightcyan'), ctext(len(spk2utt), 'cyan')
+  ))
+  assert len(indices) == n_utt_removed + len(keep_utt), "Not possible!"
+  indices = {name: (start, end)
+             for name, (start, end) in indices.items()
+             if name in keep_utt}
   # ====== all training file name ====== #
   # modify here to train full dataset
   all_name = sorted(indices.keys())
@@ -760,6 +788,7 @@ def prepare_dnn_data():
     V.plot_save('/tmp/tmp.pdf', dpi=12)
     exit()
   # ====== return ====== #
+  exit()
   return train_feeder, valid_feeder, all_speakers
 # ===========================================================================
 # Evaluation and validation helper
