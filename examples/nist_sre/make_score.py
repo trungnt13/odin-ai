@@ -18,23 +18,36 @@ from odin.ml import PLDA, Scorer
 from odin import preprocessing as pp
 from odin import fuel as F, nnet as N, backend as K
 from odin.utils import (get_module_from_path, get_script_path, ctext,
-                        Progbar)
+                        Progbar, stdio, get_logpath, get_formatted_datetime)
+from odin.stats import describe
 
 from helpers import (SCORING_DATASETS, BACKEND_DATASETS,
                      SCORE_SYSTEM_NAME, SCORE_SYSTEM_ID,
                      N_PLDA, N_LDA, PLDA_MAXIMUM_LIKELIHOOD, PLDA_SHOW_LLK,
-                     PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE,
+                     PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE, FEATURE_NAME,
                      get_model_path, NCPU, get_logpath, prepare_dnn_feeder_recipe,
                      sre_file_list, Config,
-                     EXP_DIR, SCORE_DIR, VECTORS_DIR, RESULT_DIR)
+                     EXP_DIR, VECTORS_DIR, RESULT_DIR)
+# ====== scoring log ====== #
+stdio(get_logpath(name='make_score.log', increasing=True,
+                  odin_base=False, root=EXP_DIR))
+print('=' * 48)
+print(get_formatted_datetime(only_number=False))
+print("System name    :", SCORE_SYSTEM_NAME)
+print("System id      :", SCORE_SYSTEM_ID)
+print("Feature recipe :", FEATURE_RECIPE)
+print("Feature name   :", FEATURE_NAME)
+print("Backend dataset:", ','.join(BACKEND_DATASETS.keys()))
+print("Scoring dataset:", ','.join(SCORING_DATASETS.keys()))
+print('=' * 48)
 # ===========================================================================
 # Some helper
 # ===========================================================================
-def _check_running_feature_extraction(feat_dir, feat_name, n_files):
+def _check_running_feature_extraction(feat_dir, n_files):
   # True mean need to run the feature extraction
   if not os.path.exists(feat_dir):
     return True
-  indices_path = os.path.join(feat_dir, 'indices_%s' % feat_name)
+  indices_path = os.path.join(feat_dir, 'indices_%s' % FEATURE_NAME)
   if not os.path.exists(indices_path):
     return True
   try:
@@ -85,12 +98,13 @@ def get_vectors_outpath(dsname):
 # ===========================================================================
 # Searching for extractor
 # ===========================================================================
-extractor_name = FEATURE_RECIPE.split("_")[0]
-extractor = get_module_from_path(identifier=extractor_name,
+EXTRACTOR_NAME = FEATURE_RECIPE.split("_")[0]
+extractor = get_module_from_path(identifier=EXTRACTOR_NAME,
                                  path=get_script_path(),
-                                 prefix='feature_recipes')[0]
-extractor = extractor()
-print(extractor)
+                                 prefix='feature_recipes')
+assert len(extractor) > 0, \
+    "Cannot find extractor with name: %s" % EXTRACTOR_NAME
+extractor = extractor[0]()
 # ====== initializing ====== #
 # mapping from
 # scoring_data_name -> [features 2-D array,
@@ -106,30 +120,29 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
                                 key=lambda x: x[0]):
   # acoustic features already extracted in training dataset
   if dsname in all_training_dataset:
-    X = training_ds[extractor_name]
+    assert FEATURE_NAME in training_ds, \
+        "Cannot find feature with name: %s, from: %s" % (FEATURE_NAME, training_ds.path)
+    X = training_ds[FEATURE_NAME]
+    # this also filter-out all utterances with invalid small length
     indices = {name: (start, end)
-               for name, (start, end) in training_ds['indices_%s' % extractor_name].items()
-               if training_ds['dsname'][name] == dsname}
+               for name, (start, end) in training_ds['indices_%s' % FEATURE_NAME].items()
+               if training_ds['dsname'][name] == dsname and
+               (end - start) > Config.MINIMUM_SPEECH_DURATION / Config.STEP_LENGTH}
     meta = {name: meta
             for name, meta in training_ds['spkid'].items()
             if name in indices}
-    if 'path' in training_ds:
-      path = {name: path
-              for name, path in training_ds['path'].items()
-              if name in indices}
-    else:
-      path = None
+    path = {name: path
+            for name, path in training_ds['path'].items()
+            if name in indices}
     acoustic_features[dsname] = [X, indices, meta, path]
     continue
   # extract acoustic feature from scratch
   feat_dir = os.path.join(PATH_ACOUSTIC_FEATURES,
-                          '%s_%s' % (dsname, extractor_name))
-  log_path = get_logpath(name='%s_%s.log' % (dsname, extractor_name),
+                          '%s_%s' % (dsname, EXTRACTOR_NAME))
+  log_path = get_logpath(name='%s_%s.log' % (dsname, EXTRACTOR_NAME),
                          increasing=True, odin_base=False, root=EXP_DIR)
   # check if need running the feature extraction
-  if _check_running_feature_extraction(feat_dir,
-                                       feat_name=extractor_name,
-                                       n_files=len(file_list)):
+  if _check_running_feature_extraction(feat_dir, n_files=len(file_list)):
     with np.warnings.catch_warnings():
       np.warnings.filterwarnings('ignore')
       processor = pp.FeatureProcessor(jobs=file_list,
@@ -143,19 +156,32 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
       processor.run()
   # store the extracted dataset
   ds = F.Dataset(path=feat_dir, read_only=True)
+  assert FEATURE_NAME in ds, \
+      "Cannot find feature with name: %s, from: %s" % (FEATURE_NAME, ds.path)
   acoustic_features[dsname] = [
-      ds[extractor_name],
-      dict(ds['indices_%s' % extractor_name].items()),
+      ds[FEATURE_NAME],
+      dict(ds['indices_%s' % FEATURE_NAME].items()),
       dict(ds['spkid'].items()),
       dict(ds['path'].items()),
   ]
 # ====== print log ====== #
 print("Acoustic features:")
 for dsname, (X, indices, y, path) in sorted(acoustic_features.items(),
-                                         key=lambda x: x[0]):
+                                            key=lambda x: x[0]):
+  all_utt_length = dict([(name, end - start)
+                         for name, (start, end) in indices.items()])
   print("  %s" % ctext(dsname, 'yellow'))
-  print("   #Files:", ctext(len(indices), 'cyan'))
+  print("   #Files         :", ctext(len(indices), 'cyan'))
+  print("   #Noise         : %s/%s" % (
+      ctext(len([i for i in indices if '/' in i]), 'lightcyan'),
+      ctext(len(indices), 'cyan')))
   print("   Loaded features:", ctext(X.path, 'cyan'))
+  print("   Utt length     :", describe(list(all_utt_length.values()), shorten=True))
+  print("   Min length(+8) :")
+  min_length = min(all_utt_length.values())
+  for name, length in all_utt_length.items():
+    if length <= min_length + 8:
+      print('    %s | %s' % (name.split('/')[0], path[name]))
 # ===========================================================================
 # All system must extract following information
 # ===========================================================================
@@ -226,7 +252,7 @@ if 'xvec' == SCORE_SYSTEM_NAME:
         z = np.mean(z, axis=0, keepdims=True)
       output_name.append(name)
       output_meta.append(ds_meta[name])
-      output_path.append(None if ds_path is None else ds_path[name])
+      output_path.append(ds_path[name])
       output_data.append(z)
       # update the progress
       prog['ds'] = dsname

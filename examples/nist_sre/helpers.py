@@ -33,7 +33,8 @@ class Config(object):
   # Random seed for reproducibility
   SUPER_SEED = 52181208
   # for training
-  MINIMUM_SPEECH_DURATION = 0.25
+  MINIMUM_SPEECH_DURATION = 3 # in seconds
+  MINIMUM_UTT_PER_SPEAKERS = 5 # number of utterances
 
 class SystemStates(Enum):
   """ SystemStates """
@@ -143,10 +144,6 @@ print(ctext('====================================', 'red'))
 # ===========================================================================
 # ====== basic directories ====== #
 EXP_DIR = get_exppath('sre', override=False)
-# this folder store extracted vectors for trials and enroll
-SCORE_DIR = os.path.join(EXP_DIR, 'scores')
-if not os.path.exists(SCORE_DIR):
-  os.mkdir(SCORE_DIR)
 # this folder store extracted vectors for training backend and extracting scores
 VECTORS_DIR = os.path.join(EXP_DIR, 'vectors')
 if not os.path.exists(VECTORS_DIR):

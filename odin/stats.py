@@ -59,6 +59,9 @@ def prior2weights(prior, exponential=False,
     prior.insert(i, 0)
   return np.array(prior)
 
+# ===========================================================================
+# Diagnose
+# ===========================================================================
 def classification_report(y_pred, y_true, labels):
   """
   Parameters
@@ -217,7 +220,6 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     return train_list, valid_list, test_list
   return train_list, valid_list
 
-
 def freqcount(x, key=None, count=1, normalize=False, sort=False,
               pretty_return=False):
   """ x: list, iterable
@@ -268,37 +270,9 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False,
     return s
   return freq
 
-
-def summary(x, axis=None, shorten=False):
-  if isinstance(x, Iterator):
-    x = list(x)
-  if isinstance(x, (tuple, list)):
-    x = np.array(x)
-  mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)
-  median = np.median(x, axis=axis)
-  qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
-  min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
-  samples = ', '.join([str(i)
-             for i in np.random.choice(x.ravel(), size=8, replace=False).tolist()])
-  s = ""
-  if not shorten:
-    s += "***** Summary *****\n"
-    s += "    Min : %s\n" % str(min_)
-    s += "1st Qu. : %s\n" % str(qu1)
-    s += " Median : %s\n" % str(median)
-    s += "   Mean : %.8f\n" % mean
-    s += "3rd Qu. : %s\n" % str(qu3)
-    s += "    Max : %s\n" % str(max_)
-    s += "-------------------\n"
-    s += "    Std : %.8f\n" % std
-    s += "#Samples : %d\n" % len(x)
-    s += "Samples : %s\n" % samples
-  else:
-    s += "{#:%d|min:%s|qu1:%s|med:%s|mea:%.8f|qu3:%s|max:%s|std:%.8f}" %\
-    (len(x), str(min_), str(qu1), str(median), mean, str(qu3), str(max_), std)
-  return s
-
-
+# ===========================================================================
+# Bayesian
+# ===========================================================================
 def KL_divergence(P, Q):
   """ KL(P||Q) = ∑_i • p_i • log(p_i/q_i)
   The smaller this number, the better P match Q distribution
@@ -318,6 +292,9 @@ def KL_divergence(P, Q):
     D += pi * np.log(pi / qi)
   return D
 
+# ===========================================================================
+# Sampler
+# ===========================================================================
 def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
                   progress_bar=None):
   """ Reservoir sampling, randomly choosing a sample of k items from a
@@ -403,3 +380,48 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
     for i in range(k - n):
       yield ret[i]
   return _sampling() if return_iter else list(_sampling)
+
+# ===========================================================================
+# Others
+# ===========================================================================
+def summary(x, axis=None, shorten=False):
+  """ Return string of statistical summary given series `x`
+
+  {#:%d|min:%s|qu1:%s|med:%s|mea:%.8f|qu3:%s|max:%s|std:%.8f}
+  """
+  if isinstance(x, Iterator):
+    x = list(x)
+  if isinstance(x, (tuple, list)):
+    x = np.array(x)
+  mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)
+  median = np.median(x, axis=axis)
+  qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
+  min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
+  samples = ', '.join([str(i)
+             for i in np.random.choice(x.ravel(), size=8, replace=False).tolist()])
+  s = ""
+  if not shorten:
+    s += "***** Summary *****\n"
+    s += "    Min : %s\n" % str(min_)
+    s += "1st Qu. : %s\n" % str(qu1)
+    s += " Median : %s\n" % str(median)
+    s += "   Mean : %g\n" % mean
+    s += "3rd Qu. : %s\n" % str(qu3)
+    s += "    Max : %s\n" % str(max_)
+    s += "-------------------\n"
+    s += "    Std : %g\n" % std
+    s += "#Samples: %d\n" % len(x)
+    s += "Samples : %s\n" % samples
+  else:
+    s += "{#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}" %\
+    (ctext(len(x), 'cyan'),
+     ctext('%g' % min_, 'cyan'),
+     ctext('%g' % qu1, 'cyan'),
+     ctext('%g' % median, 'cyan'),
+     ctext('%g' % mean, 'cyan'),
+     ctext('%g' % qu3, 'cyan'),
+     ctext('%g' % max_, 'cyan'),
+     ctext('%g' % std, 'cyan'))
+  return s
+
+describe = summary
