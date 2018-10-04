@@ -32,9 +32,6 @@ class Config(object):
   NFFT = 512
   # Random seed for reproducibility
   SUPER_SEED = 52181208
-  # for training
-  MINIMUM_UTT_DURATION = 1 # in seconds
-  MINIMUM_UTT_PER_SPEAKERS = 8 # number of utterances
 
 class SystemStates(Enum):
   """ SystemStates """
@@ -78,11 +75,15 @@ _args = args_parse(descriptions=[
               'will be clipped to this value), kaldi use 2.0', None, 2.0),
     ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.001),
     # others
+    ('-mindur', 'minimum duration of utterance for training (in second)', None, 1.5),
+    ('-minutt', 'minimum number of utterance of each speaker for training', None, 8),
     ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
 IS_DEBUGGING = bool(_args.debug)
 IS_OVERRIDE = bool(_args.override)
+MINIMUM_UTT_DURATION = float(_args.mindur) # in seconds
+MINIMUM_UTT_PER_SPEAKERS = int(_args.minutt) # number of utterances
 # this variable determine which state is running
 CURRENT_STATE = SystemStates.UNKNOWN
 # ====== Features extraction ====== #
@@ -512,13 +513,13 @@ def filter_utterances(X, indices, spkid,
     utterance_name -> speaker_id
 
   remove_min_length : bool (default: True)
-    if True, remove all files shorter than Config.MINIMUM_UTT_DURATION
+    if True, remove all files shorter than MINIMUM_UTT_DURATION
 
   remove_min_uttspk : bool (default: True)
     if True, remove all speakers with lower amount of utterances than
-    Config.MINIMUM_UTT_PER_SPEAKERS
+    MINIMUM_UTT_PER_SPEAKERS
   """
-  minimum_amount_of_frames = Config.MINIMUM_UTT_DURATION / Config.STEP_LENGTH
+  minimum_amount_of_frames = MINIMUM_UTT_DURATION / Config.STEP_LENGTH
 
   prog = Progbar(target=len(indices),
                  print_report=True, print_summary=True,
@@ -639,7 +640,7 @@ def filter_utterances(X, indices, spkid,
     n_spk_removed = 0
     keep_utt = {}
     for spk, utt in spk2utt.items():
-      if len(utt) < Config.MINIMUM_UTT_PER_SPEAKERS:
+      if len(utt) < MINIMUM_UTT_PER_SPEAKERS:
         n_utt_removed += len(utt)
         n_spk_removed += 1
       else:
@@ -658,9 +659,11 @@ def filter_utterances(X, indices, spkid,
   return indices
 
 def prepare_dnn_data():
-  assert int(_args.utt) > Config.MINIMUM_UTT_DURATION, \
+  assert int(_args.utt) > MINIMUM_UTT_DURATION, \
       "Training utterances length is: %d(s), must be greater than minimum utterance duration: %d(s)" % \
-      (int(_args.utt), Config.MINIMUM_UTT_DURATION)
+      (int(_args.utt), MINIMUM_UTT_DURATION)
+  print("Minimum duration: %s(s)" % ctext(MINIMUM_UTT_DURATION, 'cyan'))
+  print("Minimum utt/spk : %s(utt)" % ctext(MINIMUM_UTT_PER_SPEAKERS, 'cyan'))
   # ====== prepare the dataset ====== #
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
@@ -815,7 +818,6 @@ def prepare_dnn_data():
     V.plot_save('/tmp/tmp.pdf', dpi=12)
     exit()
   # ====== return ====== #
-  exit()
   return train_feeder, valid_feeder, all_speakers
 # ===========================================================================
 # Evaluation and validation helper
