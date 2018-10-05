@@ -13,7 +13,6 @@ import numba as nb
 from scipy.io import wavfile
 
 from odin import visual as V
-from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
                         mpi, args_parse, select_path, get_logpath,
                         get_script_name, get_script_path, get_module_from_path,
@@ -804,7 +803,7 @@ def prepare_dnn_data(save_dir):
                                    key=lambda x: x[0]):
       if len(name_list) < 3:
         continue
-      n = max(1, int(0.1 * len(name_list))) # 10% for validation
+      n = max(1, int(0.05 * len(name_list))) # 5% for validation
       valid_name += rand.choice(a=name_list, size=n, replace=False).tolist()
     # train list is the rest
     _ = set(valid_name)

@@ -267,7 +267,7 @@ def mfcc(augmentation=None):
       # ====== extract SAD ====== #
       pp.speech.SADthreshold(energy_threshold=0.55, energy_mean_scale=0.5,
                              frame_context=2, proportion_threshold=0.12,
-                             smooth_window=3,
+                             smooth_window=5,
                              input_name='mfcc_energy', output_name='sad')
       if augmentation is None else
       SADreader(ds_path=os.path.join(PATH_ACOUSTIC_FEATURES, 'mfcc')),
