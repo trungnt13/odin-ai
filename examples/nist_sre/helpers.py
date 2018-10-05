@@ -713,7 +713,7 @@ def filter_utterances(X, indices, spkid,
         (save_path, str(e)))
   return indices
 
-def prepare_dnn_data(save_dir):
+def prepare_dnn_data(save_dir, return_dataset=False):
   assert os.path.isdir(save_dir), \
       "Path to '%s' is not a directory" % save_dir
   print("Minimum duration: %s(s)" % ctext(MINIMUM_UTT_DURATION, 'cyan'))
@@ -851,15 +851,15 @@ def prepare_dnn_data(save_dir):
   # ====== training files ====== #
   print("#Train files:", ctext('%-8d' % len(train_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
-                               for name in train_name)), 'cyan'),
-        "#noise:", ctext(len([name for name in train_name
+                               for name in train_indices.keys())), 'cyan'),
+        "#noise:", ctext(len([name for name in train_indices.keys()
                               if '/' in name]), 'cyan'))
   summary_indices(ids=train_indices)
   # ====== valid files ====== #
   print("#Valid files:", ctext('%-8d' % len(valid_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
-                               for name in valid_name)), 'cyan'),
-        "#noise:", ctext(len([name for name in valid_name
+                               for name in valid_indices.keys())), 'cyan'),
+        "#noise:", ctext(len([name for name in valid_indices.keys()
                               if '/' in name]), 'cyan'))
   summary_indices(ids=valid_indices)
   # ******************** create the recipe ******************** #
@@ -920,6 +920,8 @@ def prepare_dnn_data(save_dir):
     V.plot_save('/tmp/tmp.pdf', dpi=12)
     exit()
   # ====== return ====== #
+  if bool(return_dataset):
+    return train_feeder, valid_feeder, all_speakers, ds
   return train_feeder, valid_feeder, all_speakers
 
 # ===========================================================================
