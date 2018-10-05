@@ -26,7 +26,7 @@ from helpers import (get_model_path, prepare_dnn_data,
 stdio(LOG_PATH)
 # ====== load the data ====== #
 (train, valid,
- all_speakers) = prepare_dnn_data()
+ all_speakers) = prepare_dnn_data(save_dir=EXP_DIR)
 n_speakers = len(all_speakers)
 # ====== print some log ====== #
 print("Training info:")

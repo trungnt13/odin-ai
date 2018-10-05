@@ -129,9 +129,10 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
                if training_ds['dsname'][name] == dsname}
     # we use everything for PLDA
     indices = filter_utterances(X, indices, training_ds['spkid'],
-                                remove_min_length=False,
-                                remove_min_uttspk=False,
-                                ncpu=4)
+                remove_min_length=True if 'voxceleb' in dsname else False,
+                remove_min_uttspk=True if 'voxceleb' in dsname else False,
+                n_speakers=800 if 'voxceleb' in dsname else None,
+                ncpu=8 if 'voxceleb' in dsname else 4)
     meta = {name: meta
             for name, meta in training_ds['spkid'].items()
             if name in indices}

@@ -5,6 +5,7 @@ import shutil
 import pickle
 import warnings
 from enum import Enum
+from numbers import Number
 from collections import defaultdict, OrderedDict
 
 import numpy as np
@@ -54,7 +55,7 @@ _args = args_parse(descriptions=[
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
     ('-backend', 'list of dataset for training the backend: '
-                 'PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10'),
+                 'PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10,voxceleb2'),
     ('-lda', 'if > 0, running LDA before training the backend '
              'with given number of components', None, 0),
     ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
@@ -501,7 +502,7 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
 
 def filter_utterances(X, indices, spkid,
                       remove_min_length=True, remove_min_uttspk=True,
-                      ncpu=None):
+                      n_speakers=None, ncpu=None, save_path=None):
   """
   X : 2-D matrix
     input features
@@ -518,8 +519,16 @@ def filter_utterances(X, indices, spkid,
   remove_min_uttspk : bool (default: True)
     if True, remove all speakers with lower amount of utterances than
     MINIMUM_UTT_PER_SPEAKERS
+
+  n_speakers : {None, int} (default: None)
+    if given, downsample the dataset by given number of speakers
+
+  save_path : {None, str} (default: None)
+    if given, pickle all filtered files to disk
+
   """
   minimum_amount_of_frames = MINIMUM_UTT_DURATION / Config.STEP_LENGTH
+  save_data = {}
 
   prog = Progbar(target=len(indices),
                  print_report=True, print_summary=True,
@@ -630,6 +639,12 @@ def filter_utterances(X, indices, spkid,
     (ctext(len(indices) - len(new_indices), 'lightcyan'),
      ctext(len(indices), 'cyan')))
   indices = new_indices
+  # ====== store save data ====== #
+  save_data['zero_len'] = zero_len_files
+  save_data['min_dur'] = min_frame_files
+  save_data['zero_var'] = zero_var_files
+  save_data['small_var'] = small_var_files
+  save_data['overflow'] = overflow_files
   # ====== filter-out by number of utt-per-speaker ====== #
   if bool(remove_min_uttspk):
     spk2utt = defaultdict(list)
@@ -638,33 +653,65 @@ def filter_utterances(X, indices, spkid,
 
     n_utt_removed = 0
     n_spk_removed = 0
-    keep_utt = {}
+    removed_utt = []
+    keep_utt = []
     for spk, utt in spk2utt.items():
       if len(utt) < MINIMUM_UTT_PER_SPEAKERS:
         n_utt_removed += len(utt)
         n_spk_removed += 1
+        removed_utt += utt
       else:
-        for u in utt:
-          keep_utt[u] = 1
+        keep_utt += utt
+
+    removed_utt = set(removed_utt)
+    keep_utt = set(keep_utt)
+    save_data['min_utt'] = removed_utt
 
     print("Removed min-utt/spk:  %s/%s(utt)  %s/%s(spk)" % (
         ctext(n_utt_removed, 'lightcyan'), ctext(len(indices), 'cyan'),
         ctext(n_spk_removed, 'lightcyan'), ctext(len(spk2utt), 'cyan')
     ))
     assert len(indices) == n_utt_removed + len(keep_utt), "Not possible!"
+
     indices = {name: (start, end)
                for name, (start, end) in indices.items()
                if name in keep_utt}
+  # ====== sample by number of speakers ====== #
+  if isinstance(n_speakers, Number) and n_speakers > 0:
+    all_speakers = [spkid[name] for name in indices.keys()]
+    n_org_spk = len(all_speakers)
+    n_org_ids = len(indices)
+    rand = np.random.RandomState(seed=Config.SUPER_SEED)
+    # only need down-sampling with smaller number of speaker
+    if n_speakers < len(all_speakers):
+      all_speakers = set(rand.choice(a=all_speakers, size=int(n_speakers),
+                                     replace=False).tolist())
+      indices = {name: (start, end)
+                 for name, (start, end) in indices.items()
+                 if name in all_speakers}
+    print("Selected: %s/%s(spk) which have %s/%s(utt)" % (
+        ctext(len(all_speakers), 'lightcyan'), ctext(n_org_spk, 'cyan'),
+        ctext(len(indices), 'lightcyan'), ctext(n_org_ids, 'cyan')
+    ))
   # ====== return the new indices ====== #
+  if save_path is not None:
+    try:
+      with open(save_path, 'wb') as save_file:
+        pickle.dump(save_data, save_file)
+    except Exception as e:
+      print("Cannot save filtering data to path: '%s', error: '%s'" %
+        (save_path, str(e)))
   return indices
 
-def prepare_dnn_data():
+def prepare_dnn_data(save_dir):
   assert int(_args.utt) > MINIMUM_UTT_DURATION, \
       "Training utterances length is: %d(s), must be greater than minimum utterance duration: %d(s)" % \
       (int(_args.utt), MINIMUM_UTT_DURATION)
+  assert os.path.isdir(save_dir), \
+      "Path to '%s' is not a directory" % save_dir
   print("Minimum duration: %s(s)" % ctext(MINIMUM_UTT_DURATION, 'cyan'))
   print("Minimum utt/spk : %s(utt)" % ctext(MINIMUM_UTT_PER_SPEAKERS, 'cyan'))
-  # ====== prepare the dataset ====== #
+  # ******************** prepare dataset ******************** #
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
   ds = F.Dataset(path=path, read_only=True)
@@ -674,81 +721,109 @@ def prepare_dnn_data():
   assert FEATURE_NAME in ds, "Cannot find feature with name: %s" % FEATURE_NAME
   assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
   X = ds[FEATURE_NAME]
-  # ====== exclude some dataset ====== #
-  if len(_args.exclude) > 0:
-    exclude_dataset = {i: 1 for i in str(_args.exclude.strip()).split(',')}
-    print("* Excluded dataset:", ctext(exclude_dataset, 'cyan'))
-    indices = {name: (start, end)
-               for name, (start, end) in ds[ids_name].items()
-               if ds['dsname'][name] not in exclude_dataset}
-    # special case exclude all the noise data
-    if 'noise' in exclude_dataset:
+  # ====== basic path ====== #
+  path_filtered_data = os.path.join(save_dir, 'filtered_files.pkl')
+  path_train_files = os.path.join(save_dir, 'train_files.pkl')
+  path_speaker_info = os.path.join(save_dir, 'speaker_info.pkl')
+  # ******************** cannot find cached data ******************** #
+  if any(not os.path.exists(p) for p in [path_filtered_data,
+                                         path_train_files,
+                                         path_speaker_info]):
+    # ====== exclude some dataset ====== #
+    if len(_args.exclude) > 0:
+      exclude_dataset = {i: 1 for i in str(_args.exclude.strip()).split(',')}
+      print("* Excluded dataset:", ctext(exclude_dataset, 'cyan'))
       indices = {name: (start, end)
-                 for name, (start, end) in indices.items()
-                 if '/' not in name}
+                 for name, (start, end) in ds[ids_name].items()
+                 if ds['dsname'][name] not in exclude_dataset}
+      # special case exclude all the noise data
+      if 'noise' in exclude_dataset:
+        indices = {name: (start, end)
+                   for name, (start, end) in indices.items()
+                   if '/' not in name}
+    else:
+      indices = {i: j for i, j in ds[ids_name].items()}
+    # ====== down-sampling if necessary ====== #
+    if _args.downsample > 1000:
+      dataset2name = defaultdict(list)
+      # ordering the indices so we sample the same set every time
+      for name in sorted(indices.keys()):
+        dataset2name[ds['dsname'][name]].append(name)
+      n_total_files = len(indices)
+      n_sample_files = int(_args.downsample)
+      # get the percentage of each dataset
+      dataset2per = {i: len(j) / n_total_files
+                     for i, j in dataset2name.items()}
+      # sampling based on percentage
+      _ = {}
+      for dsname, flist in dataset2name.items():
+        rand.shuffle(flist)
+        n_dataset_files = int(dataset2per[dsname] * n_sample_files)
+        _.update({i: indices[i]
+                  for i in flist[:n_dataset_files]})
+      indices = _
+    # ====== * filter out "bad" sample ====== #
+    indices = filter_utterances(X=X, indices=indices, spkid=ds['spkid'],
+                                remove_min_length=True,
+                                remove_min_uttspk=True,
+                                n_speakers=None, ncpu=None,
+                                save_path=path_filtered_data)
+    # ====== all training file name ====== #
+    # modify here to train full dataset
+    all_name = sorted(indices.keys())
+    rand.shuffle(all_name); rand.shuffle(all_name)
+    n_files = len(all_name)
+    print("#Files:", ctext(n_files, 'cyan'))
+    # ====== speaker mapping ====== #
+    name2spk = {name: ds['spkid'][name]
+                for name in all_name}
+    all_speakers = sorted(set(name2spk.values()))
+    spk2label = {spk: i
+                 for i, spk in enumerate(all_speakers)}
+    name2label = {name: spk2label[spk]
+                  for name, spk in name2spk.items()}
+    assert len(name2label) == len(all_name)
+    print("#Speakers:", ctext(len(all_speakers), 'cyan'))
+    # ====== stratify sampling based on speaker ====== #
+    valid_name = []
+    # create speakers' cluster
+    label2name = defaultdict(list)
+    for name, label in name2label.items():
+      label2name[label].append(name)
+    # for each speaker with >= 3 utterance
+    for label, name_list in label2name.items():
+      if len(name_list) < 3:
+        continue
+      n = max(1, int(0.1 * len(name_list))) # 10% for validation
+      valid_name += rand.choice(a=name_list, size=n).tolist()
+    # train list is the rest
+    _ = {name: 1 for name in valid_name}
+    train_name = [i for i in all_name
+                  if i not in _]
+    # ====== split training and validation ====== #
+    train_indices = {name: indices[name] for name in train_name}
+    valid_indices = {name: indices[name] for name in valid_name}
+    # ====== save cached data ====== #
+    with open(path_train_files, 'wb') as fout:
+      pickle.dump({'train': train_indices, 'valid': valid_indices},
+                  fout)
+    with open(path_speaker_info, 'wb') as fout:
+      pickle.dump({'all_speakers': all_speakers,
+                   'name2label': name2label,
+                   'spk2label': spk2label},
+                  fout)
+  # ******************** load cached data ******************** #
   else:
-    indices = {i: j for i, j in ds[ids_name].items()}
-  # ====== down-sampling if necessary ====== #
-  if _args.downsample > 1000:
-    dataset2name = defaultdict(list)
-    # ordering the indices so we sample the same set every time
-    for name in sorted(indices.keys()):
-      dataset2name[ds['dsname'][name]].append(name)
-    n_total_files = len(indices)
-    n_sample_files = int(_args.downsample)
-    # get the percentage of each dataset
-    dataset2per = {i: len(j) / n_total_files
-                   for i, j in dataset2name.items()}
-    # sampling based on percentage
-    _ = {}
-    for dsname, flist in dataset2name.items():
-      rand.shuffle(flist)
-      n_dataset_files = int(dataset2per[dsname] * n_sample_files)
-      _.update({i: indices[i]
-                for i in flist[:n_dataset_files]})
-    indices = _
-  # ====== * filter out "bad" sample ====== #
-  indices = filter_utterances(X=X, indices=indices, spkid=ds['spkid'],
-                              remove_min_length=True,
-                              remove_min_uttspk=True)
-  # ====== all training file name ====== #
-  # modify here to train full dataset
-  all_name = sorted(indices.keys())
-  rand.shuffle(all_name); rand.shuffle(all_name)
-  n_files = len(all_name)
-  print("#Files:", ctext(n_files, 'cyan'))
-  # ====== speaker mapping ====== #
-  name2spk = {name: ds['spkid'][name]
-              for name in all_name}
-  all_speakers = sorted(set(name2spk.values()))
-  spk2label = {spk: i
-               for i, spk in enumerate(all_speakers)}
-  name2label = {name: spk2label[spk]
-                for name, spk in name2spk.items()}
-  assert len(name2label) == len(all_name)
-  print("#Speakers:", ctext(len(all_speakers), 'cyan'))
-  # ====== stratify sampling based on speaker ====== #
-  valid_name = []
-  # create speakers' cluster
-  label2name = defaultdict(list)
-  for name, label in name2label.items():
-    label2name[label].append(name)
-  # for each speaker with >= 3 utterance
-  for label, name_list in label2name.items():
-    if len(name_list) < 3:
-      continue
-    n = max(1, int(0.1 * len(name_list))) # 10% for validation
-    valid_name += rand.choice(a=name_list, size=n).tolist()
-  # train list is the rest
-  _ = {name: 1 for name in valid_name}
-  train_name = [i for i in all_name
-                if i not in _]
-  # ====== split training and validation ====== #
-  train_indices = {name: indices[name]
-                   for name in train_name}
-  valid_indices = {name: indices[name]
-                   for name in valid_name}
-
+    with open(path_train_files, 'rb') as fin:
+      obj = pickle.load(fin)
+      train_indices = obj['train']
+      valid_indices = obj['valid']
+    with open(path_speaker_info, 'rb') as fin:
+      obj = pickle.load(fin)
+      all_speakers = obj['all_speakers']
+      name2label = obj['name2label']
+      spk2label = obj['spk2label']
+  # ******************** print log ******************** #
   print("#Train files:", ctext('%-8d' % len(train_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
                                for name in train_name)), 'cyan'),
@@ -819,6 +894,7 @@ def prepare_dnn_data():
     exit()
   # ====== return ====== #
   return train_feeder, valid_feeder, all_speakers
+
 # ===========================================================================
 # Evaluation and validation helper
 # ===========================================================================
