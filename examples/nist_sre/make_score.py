@@ -116,6 +116,7 @@ acoustic_features = {}
 training_ds = F.Dataset(path=os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE),
                         read_only=True)
 all_training_dataset = set(training_ds['dsname'].values())
+print("All training dataset:", ctext(all_training_dataset, 'cyan'))
 # ====== extract the feature if not exists ====== #
 for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DATASETS.items()),
                                 key=lambda x: x[0]):
@@ -129,10 +130,10 @@ for dsname, file_list in sorted(list(SCORING_DATASETS.items()) + list(BACKEND_DA
                if training_ds['dsname'][name] == dsname}
     # we use everything for PLDA
     indices = filter_utterances(X, indices, training_ds['spkid'],
-                remove_min_length=True if 'voxceleb' in dsname else False,
+                remove_min_length=False,
                 remove_min_uttspk=True if 'voxceleb' in dsname else False,
                 n_speakers=800 if 'voxceleb' in dsname else None,
-                ncpu=8 if 'voxceleb' in dsname else 4)
+                ncpu=4, title=dsname)
     meta = {name: meta
             for name, meta in training_ds['spkid'].items()
             if name in indices}
@@ -335,7 +336,7 @@ print("  #Zeros: %s/%s or %.1f%%" %
   (ctext(n - n_non_zeros, 'lightcyan'),
    ctext(n, 'cyan'),
    (n - n_non_zeros) / n * 100))
-# ====== optional save data to matlab for testing ====== #
+# ******************** optional save data to matlab for testing ******************** #
 with open('/tmp/backend.mat', 'wb') as ftmp:
   savemat(ftmp, {'X': np.array(X_backend.astype('float32'), order='F'),
                  'y': np.array(y_backend.astype('int32'), order='F')})

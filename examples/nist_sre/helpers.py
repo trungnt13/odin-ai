@@ -55,7 +55,7 @@ _args = args_parse(descriptions=[
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
     ('-backend', 'list of dataset for training the backend: '
-                 'PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10,voxceleb2'),
+                 'PLDA, SVM or Cosine', None, 'swb,sre04,sre05,sre06,sre08,sre10,mx6,voxceleb2'),
     ('-lda', 'if > 0, running LDA before training the backend '
              'with given number of components', None, 0),
     ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
@@ -68,7 +68,6 @@ _args = args_parse(descriptions=[
     ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
     ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
     # for DNN
-    ('-utt', 'for x-vector training, maximum utterance length', None, 4),
     ('-batch', 'batch size, for training DNN', None, 64),
     ('-epoch', 'number of epoch, for training DNN', None, 12),
     ('-clip', 'The maximum change in parameters allowed per minibatch, '
@@ -76,14 +75,15 @@ _args = args_parse(descriptions=[
               'will be clipped to this value), kaldi use 2.0', None, 2.0),
     ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.001),
     # others
-    ('-mindur', 'minimum duration of utterance for training (in second)', None, 1.5),
+    ('-mindur', 'minimum duration of utterance for training (in second)', None, 4),
     ('-minutt', 'minimum number of utterance of each speaker for training', None, 8),
     ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
 IS_DEBUGGING = bool(_args.debug)
 IS_OVERRIDE = bool(_args.override)
-MINIMUM_UTT_DURATION = float(_args.mindur) # in seconds
+MINIMUM_UTT_DURATION = int(_args.mindur) # in seconds
+assert MINIMUM_UTT_DURATION > 0, "Minimum utterances duration must be greater than 0"
 MINIMUM_UTT_PER_SPEAKERS = int(_args.minutt) # number of utterances
 # this variable determine which state is running
 CURRENT_STATE = SystemStates.UNKNOWN
@@ -157,6 +157,7 @@ if not os.path.exists(RESULT_DIR):
 # ====== raw data ====== #
 PATH_BASE = select_path(
     '/media/data2/SRE_DATA',
+    '/mnt/sda1/SRE_DATA',
     '/mnt/sdb1/SRE_DATA',
 default='')
 # path to directory contain following folders:
@@ -218,7 +219,7 @@ for k, v in sorted(sre_file_list.items(), key=lambda x: x[0]):
 # ===========================================================================
 # Validate scoring dataset
 # ===========================================================================
-def validate_scoring_dataset(in_path_raw, score_dataset):
+def validate_scoring_dataset(in_path_raw, score_dataset, file_must_exist=True):
   all_files = {}
   for dsname in score_dataset:
     if dsname not in sre_file_list:
@@ -231,7 +232,7 @@ def validate_scoring_dataset(in_path_raw, score_dataset):
     for row in sre_file_list[dsname]:
       path = os.path.join(base_path, row[0])
       # every file must exist
-      if not os.path.exists(path):
+      if bool(file_must_exist) and not os.path.exists(path):
         raise RuntimeError("File not exist at path: %s" % path)
       ds.append([path] + row[1:4].tolist() + [dsname])
     all_files[dsname] = np.array(ds)
@@ -258,7 +259,8 @@ if CURRENT_STATE == SystemStates.SCORING:
   # for training the backend
   BACKEND_DATASETS = validate_scoring_dataset(
       in_path_raw=PATH_RAW_DATA,
-      score_dataset=str(_args.backend).strip().split(','))
+      score_dataset=str(_args.backend).strip().split(','),
+      file_must_exist=False)
   assert len(BACKEND_DATASETS) > 0, \
   "Datasets for training the backend must be provided"
   print("Processed backend dataset:")
@@ -443,10 +445,11 @@ def get_model_path(system_name, logging=True):
   ------
   exp_dir, model_path, log_path
   """
+  args_name = ['mindur']
   if system_name == 'xvec':
-    args_name = ['utt']
+    pass
   elif system_name == 'ivec':
-    args_name = ['nmix', 'tdim']
+    args_name += ['nmix', 'tdim']
   else:
     raise ValueError("No support for system with name: %s" % system_name)
   # ====== prefix ====== #
@@ -482,11 +485,12 @@ def get_model_path(system_name, logging=True):
 # Data helper
 # ===========================================================================
 def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
-  frame_length = float(_args.utt) / Config.STEP_LENGTH
+  frame_length = MINIMUM_UTT_DURATION / Config.STEP_LENGTH
   recipes = [
       F.recipes.Sequencing(frame_length=frame_length,
                            step_length=frame_length,
-                           end='mix', pad_value=0, pad_mode='post',
+                           end='mix' if CURRENT_STATE == SystemStates.SCORING else 'cut',
+                           pad_value=0, pad_mode='post',
                            data_idx=0),
   ]
   if name2label is not None and n_speakers is not None:
@@ -502,7 +506,8 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
 
 def filter_utterances(X, indices, spkid,
                       remove_min_length=True, remove_min_uttspk=True,
-                      n_speakers=None, ncpu=None, save_path=None):
+                      n_speakers=None, ncpu=None, save_path=None,
+                      title=''):
   """
   X : 2-D matrix
     input features
@@ -532,7 +537,7 @@ def filter_utterances(X, indices, spkid,
 
   prog = Progbar(target=len(indices),
                  print_report=True, print_summary=True,
-                 name='Filtering broken utterances')
+                 name='Filtering broken utterances: %s' % title)
   prog.set_summarizer('zero-length', fn=lambda x: x[-1])
   prog.set_summarizer('min-frames', fn=lambda x: x[-1])
   prog.set_summarizer('zero-var', fn=lambda x: x[-1])
@@ -678,19 +683,27 @@ def filter_utterances(X, indices, spkid,
                if name in keep_utt}
   # ====== sample by number of speakers ====== #
   if isinstance(n_speakers, Number) and n_speakers > 0:
-    all_speakers = [spkid[name] for name in indices.keys()]
-    n_org_spk = len(all_speakers)
+    spk2utt = defaultdict(list)
+    for name, (start, end) in indices.items():
+      spk2utt[spkid[name]].append((name, (start, end)))
+    n_org_spk = len(spk2utt)
     n_org_ids = len(indices)
-    rand = np.random.RandomState(seed=Config.SUPER_SEED)
     # only need down-sampling with smaller number of speaker
-    if n_speakers < len(all_speakers):
-      all_speakers = set(rand.choice(a=all_speakers, size=int(n_speakers),
-                                     replace=False).tolist())
-      indices = {name: (start, end)
-                 for name, (start, end) in indices.items()
-                 if name in all_speakers}
+    if n_speakers < n_org_spk:
+      rand = np.random.RandomState(seed=Config.SUPER_SEED)
+      tmp = list(spk2utt.keys())
+      rand.shuffle(tmp)
+      sampled_spk = tmp[:n_speakers]
+
+      indices = []
+      for spk in sampled_spk:
+        indices += spk2utt[spk]
+      indices = dict(indices)
+    else:
+      sampled_spk = spk2utt
+    # print some log
     print("Selected: %s/%s(spk) which have %s/%s(utt)" % (
-        ctext(len(all_speakers), 'lightcyan'), ctext(n_org_spk, 'cyan'),
+        ctext(len(sampled_spk), 'lightcyan'), ctext(n_org_spk, 'cyan'),
         ctext(len(indices), 'lightcyan'), ctext(n_org_ids, 'cyan')
     ))
   # ====== return the new indices ====== #
@@ -704,9 +717,6 @@ def filter_utterances(X, indices, spkid,
   return indices
 
 def prepare_dnn_data(save_dir):
-  assert int(_args.utt) > MINIMUM_UTT_DURATION, \
-      "Training utterances length is: %d(s), must be greater than minimum utterance duration: %d(s)" % \
-      (int(_args.utt), MINIMUM_UTT_DURATION)
   assert os.path.isdir(save_dir), \
       "Path to '%s' is not a directory" % save_dir
   print("Minimum duration: %s(s)" % ctext(MINIMUM_UTT_DURATION, 'cyan'))
