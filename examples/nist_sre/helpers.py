@@ -17,7 +17,8 @@ from odin.preprocessing.signal import anything2wav
 from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
                         mpi, args_parse, select_path, get_logpath,
                         get_script_name, get_script_path, get_module_from_path,
-                        catch_warnings_error, catch_warnings_ignore)
+                        catch_warnings_error, catch_warnings_ignore,
+                        crypto)
 from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
 
@@ -55,7 +56,7 @@ _args = args_parse(descriptions=[
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
     ('-backend', 'list of dataset for training the backend: '
-                 'PLDA, SVM or Cosine', None, 'swb,sre04,sre05,sre06,sre08,sre10,mx6,voxceleb2'),
+                 'PLDA, SVM or Cosine', None, 'swb,sre04,sre05,sre06,sre08,sre10,mx6'),
     ('-lda', 'if > 0, running LDA before training the backend '
              'with given number of components', None, 0),
     ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
@@ -63,7 +64,8 @@ _args = args_parse(descriptions=[
     ('--showllk', 'show LLK during training of PLDA, this will slow thing down', None, False),
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
-    ('-exclude', 'list of excluded dataset not for training, multiple dataset split by ","', None, ''),
+    ('-exclude', 'list of excluded dataset not for training,'
+                 'multiple dataset split by ","', None, 'fisher'),
     # for ivector
     ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
     ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
@@ -612,16 +614,11 @@ def filter_utterances(X, indices, spkid,
                      ncpu=NCPU if ncpu is None else int(ncpu),
                      batch=250):
     name = res[0]
-    if res[1]:
-      zero_len_files[name] = 1
-    if res[2]:
-      min_frame_files[name] = 1
-    if res[3]:
-      zero_var_files[name] = 1
-    if res[4]:
-      small_var_files[name] = 1
-    if res[5]:
-      overflow_files[name] = 1
+    if res[1]: zero_len_files[name] = 1
+    if res[2]: min_frame_files[name] = 1
+    if res[3]: zero_var_files[name] = 1
+    if res[4]: small_var_files[name] = 1
+    if res[5]: overflow_files[name] = 1
     # update progress
     prog['name'] = name[:48]
     prog['zero-length'] = len(zero_len_files)
@@ -799,18 +796,19 @@ def prepare_dnn_data(save_dir):
     valid_name = []
     # create speakers' cluster
     label2name = defaultdict(list)
-    for name, label in name2label.items():
+    for name, label in sorted(name2label.items(),
+                              key=lambda x: x[0]):
       label2name[label].append(name)
     # for each speaker with >= 3 utterance
-    for label, name_list in label2name.items():
+    for label, name_list in sorted(label2name.items(),
+                                   key=lambda x: x[0]):
       if len(name_list) < 3:
         continue
       n = max(1, int(0.1 * len(name_list))) # 10% for validation
       valid_name += rand.choice(a=name_list, size=n, replace=False).tolist()
     # train list is the rest
-    _ = {name: 1 for name in valid_name}
-    train_name = [i for i in all_name
-                  if i not in _]
+    _ = set(valid_name)
+    train_name = [i for i in all_name if i not in _]
     # ====== split training and validation ====== #
     train_indices = {name: indices[name] for name in train_name}
     valid_indices = {name: indices[name] for name in valid_name}
@@ -834,19 +832,38 @@ def prepare_dnn_data(save_dir):
       all_speakers = obj['all_speakers']
       name2label = obj['name2label']
       spk2label = obj['spk2label']
+
   # ******************** print log ******************** #
+  def summary_indices(ids):
+    datasets = defaultdict(int)
+    speakers = defaultdict(list)
+    text = ''
+    for name in sorted(ids.keys()):
+      text += name + str(ids[name])
+      dsname = ds['dsname'][name]
+      datasets[dsname] += 1
+      speakers[dsname].append(ds['spkid'][name])
+    for dsname in sorted(datasets.keys()):
+      print('  %-18s: %s(utt) %s(spk)' % (
+          dsname,
+          ctext('%6d' % datasets[dsname], 'cyan'),
+          ctext(len(set(speakers[dsname])), 'cyan')))
+    print('  MD5 checksum:', ctext(crypto.md5_checksum(text), 'lightcyan'))
+  # ====== training files ====== #
   print("#Train files:", ctext('%-8d' % len(train_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
                                for name in train_name)), 'cyan'),
         "#noise:", ctext(len([name for name in train_name
                               if '/' in name]), 'cyan'))
-
+  summary_indices(ids=train_indices)
+  # ====== valid files ====== #
   print("#Valid files:", ctext('%-8d' % len(valid_indices), 'cyan'),
         "#spk:", ctext(len(set(name2label[name]
                                for name in valid_name)), 'cyan'),
         "#noise:", ctext(len([name for name in valid_name
                               if '/' in name]), 'cyan'))
-  # ====== create the recipe ====== #
+  summary_indices(ids=valid_indices)
+  # ******************** create the recipe ******************** #
   assert all(name in name2label
              for name in train_indices.keys())
   assert all(name in name2label

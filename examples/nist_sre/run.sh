@@ -1,6 +1,8 @@
 # For training: fisher,mx6,sre04,sre05,sre06,sre08,sre10,swb,voxceleb1,voxceleb2
 # For noise   : musan, rirs
 
+python analyze.py mfcc_musan_rirs -mindur 4 -minutt 8 -exclude fisher,sre05,sre06,sre08,sre10,swb,voxceleb1,voxceleb2,noise
+
 python train_xvec.py mfcc_musan_rirs -mindur 4 -minutt 8 --override
 python train_xvec.py mfcc_musan_rirs -exclude voxceleb1,voxceleb2 -mindur 3 -minutt 8 --override
 python train_xvec.py mfcc_musan_rirs -exclude voxceleb1,voxceleb2 -mindur 3 -minutt 8 --override

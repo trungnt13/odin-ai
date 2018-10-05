@@ -188,8 +188,6 @@ class Name2Label(FeederRecipe):
       converter_func = converter_func
     if not hasattr(converter_func, '__call__'):
       raise ValueError('"converter_func" must be call-able.')
-    if not is_pickleable(converter_func):
-      raise ValueError('"converter_func" must be pickle-able.')
     self.converter_func = converter_func
     self.ref_idx = int(ref_idx)
     self.dtype = dtype
