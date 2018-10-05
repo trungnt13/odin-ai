@@ -129,7 +129,7 @@ if _script_name in ('speech_augmentation', 'speech_features_extraction'):
   CURRENT_STATE = SystemStates.EXTRACT_FEATURES
   _check_feature_extraction_requirement()
   _check_recipe_name_for_extraction()
-elif _script_name in ('train_xvec', 'train_ivec', 'train_tvec'):
+elif _script_name in ('train_xvec', 'train_ivec', 'train_tvec', 'analyze'):
   CURRENT_STATE = SystemStates.TRAINING
 elif _script_name in ('make_score'):
   CURRENT_STATE = SystemStates.SCORING
@@ -571,7 +571,7 @@ def filter_utterances(X, indices, spkid,
       # checking length
       if y.shape[0] == 0:
         is_zero_len = True
-      elif y.shape[0] <= minimum_amount_of_frames:
+      elif y.shape[0] < minimum_amount_of_frames:
         is_min_frames = True
       # checking statistics
       else:
@@ -686,6 +686,7 @@ def filter_utterances(X, indices, spkid,
     spk2utt = defaultdict(list)
     for name, (start, end) in indices.items():
       spk2utt[spkid[name]].append((name, (start, end)))
+
     n_org_spk = len(spk2utt)
     n_org_ids = len(indices)
     # only need down-sampling with smaller number of speaker
@@ -805,7 +806,7 @@ def prepare_dnn_data(save_dir):
       if len(name_list) < 3:
         continue
       n = max(1, int(0.1 * len(name_list))) # 10% for validation
-      valid_name += rand.choice(a=name_list, size=n).tolist()
+      valid_name += rand.choice(a=name_list, size=n, replace=False).tolist()
     # train list is the rest
     _ = {name: 1 for name in valid_name}
     train_name = [i for i in all_name
@@ -888,7 +889,7 @@ def prepare_dnn_data(save_dir):
     V.plot_figure(nrow=n_visual, ncol=8)
     for i, (name, X, y) in enumerate(samples):
       is_noise = '/' in name
-      assert name2label[name] == y, "Speaker lable mismatch for file: %s" % name
+      assert name2label[name] == y, "Speaker label mismatch for file: %s" % name
       name = name.split('/')[0]
       dsname = ds['dsname'][name]
       spkid = ds['spkid'][name]

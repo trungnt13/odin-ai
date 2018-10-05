@@ -14,7 +14,6 @@ from collections import OrderedDict, defaultdict
 import numpy as np
 
 from odin.visual.bashplot import print_bar, print_confusion
-from .decorators import functionable
 
 try:
   from tqdm import __version__ as tqdm_version
@@ -248,7 +247,7 @@ class Progbar(object):
     if not hasattr(fn, '__call__'):
       raise ValueError('`fn` must be call-able.')
     key = str(key)
-    self._epoch_summarizer[key] = functionable(func=fn)
+    self._epoch_summarizer[key] = fn
     return self
 
   def set_name(self, name):

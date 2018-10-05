@@ -13,7 +13,6 @@ import numpy as np
 from odin.utils import (one_hot, is_string, ctext, is_number,
                         is_primitives, as_tuple, flatten_list,
                         is_pickleable)
-from odin.utils.decorators import functionable
 
 from .utils import MmapDict
 from .recipe_base import FeederRecipe
@@ -186,7 +185,7 @@ class Name2Label(FeederRecipe):
   def __init__(self, converter_func, dtype=None, ref_idx=0):
     super(Name2Label, self).__init__()
     if inspect.isfunction(converter_func):
-      converter_func = functionable(converter_func)
+      converter_func = converter_func
     if not hasattr(converter_func, '__call__'):
       raise ValueError('"converter_func" must be call-able.')
     if not is_pickleable(converter_func):

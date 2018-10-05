@@ -17,7 +17,6 @@ from odin.fuel import Dataset
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter,
                         get_formatted_datetime)
-from odin.utils.decorators import functionable
 from .signal import delta, mvn, stack_frames
 
 class ExtractorSignal(object):
@@ -399,10 +398,7 @@ class Converter(Extractor):
     not isinstance(converter, Mapping):
       raise ValueError("`converter` must be call-able.")
     # converter can be function or dictionary
-    if inspect.isfunction(converter):
-      self.converter = functionable(converter)
-    else:
-      self.converter = converter
+    self.converter = converter
 
   def _transform(self, feat):
     X = [feat[name] for name in self.input_name]

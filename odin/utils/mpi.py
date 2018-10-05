@@ -125,24 +125,50 @@ def async(func=None, callback=None):
   # roles are specified
   return _decorator_func_
 
+class MTI(object):
+  """ MTI - Multi threading interface
+  This class use round robin to schedule the tasks to each processes
+
+  Parameters
+  ----------
+  jobs: list, tuple, numpy.ndarray
+      list of works.
+  func: call-able
+      take a `list of jobs` as input (i.e. map_func([job1, job2, ...])),
+      the length of this list is determined by `buffer_size`
+      NOTE: the argument of map_func is always a list.
+  ncpu: int
+      number of processes.
+  batch: int
+      the amount of samples grouped into list, and feed to each
+      process each iteration. (i.e. func([job0, job1, ...]))
+      if `batch=1`, each input is feed individually to `func`
+      (i.e. func(job0); func(job1]); ...)
+  hwm: int
+      "high water mark" for SEND socket, is a hard limit on the
+      maximum number of outstanding messages ØMQ shall queue
+      in memory for any single peer that the specified socket
+      is communicating with.
+  chunk_scheduler: bool
+      if `True`, jobs are grouped into small chunks of `batch`, then each
+      chunk will be feed to each process until the jobs are exhausted, hence,
+      this approach guarantee that all processes will run until the end, but
+      the execution speed will be lower since each processes need to
+      continuously receives chunks from main process.
+      if `False`, jobs are splited into equal size for each process at the
+      beginning, do this if you sure all jobs require same processing time.
+
+  """
+
+  def __init__(self, jobs, func,
+               ncpu=1, batch=1, hwm=144):
+    super(MTI, self).__init__()
+    # TODO: add multi-threading interface
+
 # ===========================================================================
-# Helper methods
+# Multi-processing
 # ===========================================================================
-_BACKEND = 'multiprocessing'
-_SUPPORT_BACKEND = ('multiprocessing')
-
-
-def set_backend(backend):
-  if backend not in _SUPPORT_BACKEND:
-    raise ValueError('%s backend is not supported, the list of supported '
-                     'backend is:' % (backend, _SUPPORT_BACKEND))
-  global _BACKEND
-  _BACKEND = backend
-
-
-def get_supported_backend():
-  return _SUPPORT_BACKEND
-
+_SLEEP_TIME = 0.01
 
 def segment_list(l, size=None, n_seg=None):
   '''
@@ -171,7 +197,6 @@ def segment_list(l, size=None, n_seg=None):
     remain_seg -= 1
   return segments
 
-
 class SharedCounter(object):
   """ A multiprocessing syncrhonized counter """
 
@@ -192,15 +217,8 @@ class SharedCounter(object):
     del self.lock
     del self.val
 
-
-# ===========================================================================
-# Main API
-# ===========================================================================
-_SLEEP_TIME = 0.01
-
-
 class MPI(object):
-  """ MPI
+  """ MPI - Multi processing interface
   This class use round robin to schedule the tasks to each processes
 
   Parameters

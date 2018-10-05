@@ -20,7 +20,6 @@ import numpy as np
 
 from odin import backend as K
 from odin.config import randint
-from odin.utils.decorators import functionable
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
                         flatten_list, get_all_files, is_pickleable,
@@ -215,7 +214,7 @@ def nnop_scope(scope, prefix='', reuse=None):
 # ===========================================================================
 def _check_shape(s):
   if hasattr(s, '__call__'):
-    return functionable(s)
+    return s
   if is_number(s) or s is None:
     s = (s,)
   elif isinstance(s, np.ndarray):
@@ -225,7 +224,7 @@ def _check_shape(s):
 
 def _check_dtype(dtype):
   if hasattr(dtype, '__call__'):
-    return functionable(dtype)
+    return dtype
   # ====== check dtype ====== #
   if dtype is None:
     dtype = K.floatX
@@ -1313,7 +1312,6 @@ class Lambda(NNOp):
     if not hasattr(func, '__call__'):
       raise ValueError("func must be call-able for Lambda.")
     if not isinstance(func, FuncDesc):
-      func = func if is_pickleable(func) else functionable(func)
       func = FuncDesc(func)
     if is_transpose:
       self._funcT = func

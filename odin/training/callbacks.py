@@ -17,7 +17,6 @@ import numpy as np
 import scipy as sp
 
 from odin.utils import as_tuple, is_string, add_notification, ctext
-from odin.utils.decorators import functionable
 
 __all__ = [
     'TrainSignal',
@@ -468,7 +467,7 @@ class EarlyStop(Callback):
       get_value = lambda x: x
     elif not hasattr(get_value, '__call__'):
       raise ValueError('get_value must call-able')
-    self._get_value = functionable(get_value)
+    self._get_value = get_value
     # ====== history ====== #
     self._history = []
 

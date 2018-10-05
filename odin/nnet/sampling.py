@@ -6,7 +6,6 @@ import tensorflow as tf
 
 from odin import backend as K
 from odin.utils import is_number, is_string, as_tuple
-from odin.utils.decorators import functionable
 
 from .base import NNOp
 

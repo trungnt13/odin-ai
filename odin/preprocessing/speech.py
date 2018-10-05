@@ -58,7 +58,6 @@ from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable, Progbar, mpi, ctext,
                         is_fileobj, batching)
-from odin.utils.decorators import functionable
 from .base import Extractor, ExtractorSignal
 from .signal import (smooth, pre_emphasis, get_window, get_energy,
                      spectra, vad_energy,

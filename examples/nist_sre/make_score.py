@@ -353,6 +353,26 @@ for dsname in SCORING_DATASETS.keys():
     savemat(ftmp, {'X': np.array(vectors['X'].astype('float32'), order='F'),
                    'y': np.array(y)})
 # ===========================================================================
+# Training the PLDA
+# ===========================================================================
+# ====== training the LDA ====== #
+if N_LDA > 0:
+  print("  Fitting LDA ...")
+  lda = LinearDiscriminantAnalysis(n_components=N_LDA)
+  X_backend = lda.fit_transform(X=X_backend, y=y_backend)
+  lda_transform = lda.transform
+else:
+  lda_transform = lambda x: x
+# ====== training the PLDA ====== #
+plda = PLDA(n_phi=N_PLDA,
+            centering=True, wccn=True, unit_length=True,
+            n_iter=20, random_state=Config.SUPER_SEED,
+            verbose=2 if PLDA_SHOW_LLK else 1)
+if PLDA_MAXIMUM_LIKELIHOOD:
+  print("  Fitting PLDA maximum likelihood ...")
+  plda.fit_maximum_likelihood(X=lda_transform(X_backend), y=y_backend)
+plda.fit(X=lda_transform(X_backend), y=y_backend)
+# ===========================================================================
 # Now scoring
 # ===========================================================================
 for dsname, scores in sorted(all_vectors.items(),
@@ -411,20 +431,9 @@ for dsname, scores in sorted(all_vectors.items(),
     X_trials = np.concatenate([name_2_data[i][None, :] for i in trials[:, 1]],
                               axis=0)
     print("  Trials:", ctext(X_trials.shape, 'cyan'))
-    # ====== training the plda ====== #
-    if N_LDA > 0:
-      print("  Fitting LDA ...")
-      lda = LinearDiscriminantAnalysis(n_components=N_LDA)
-      X_backend = lda.fit_transform(X=X_backend, y=y_backend)
-    plda = PLDA(n_phi=N_PLDA,
-                centering=True, wccn=True, unit_length=True,
-                n_iter=20, random_state=Config.SUPER_SEED,
-                verbose=2 if PLDA_SHOW_LLK else 1)
-    if PLDA_MAXIMUM_LIKELIHOOD:
-      print("  Fitting PLDA maximum likelihood ...")
-      plda.fit_maximum_likelihood(X=X_backend, y=y_backend)
-    plda.fit(X=X_backend, y=y_backend)
-    y_scores = plda.predict_log_proba(X=X_trials, X_model=X_models)
+    # ====== extract scores ====== #
+    y_scores = plda.predict_log_proba(X=lda_transform(X_trials),
+                                      X_model=X_models)
     print("  Scores:", ctext(y_scores.shape, 'cyan'))
     # ====== write the scores to file ====== #
     score_path = os.path.join(RESULT_DIR,

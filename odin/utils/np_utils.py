@@ -16,7 +16,6 @@ import scipy as sp
 from six import string_types
 
 from .cache_utils import cache_memory
-from .decorators import functionable
 
 __all__ = [
     'array2bytes',
@@ -84,7 +83,7 @@ class _LabelsIndexing(object):
 
   def __init__(self, key_func, fast_index, sorted_labels):
     super(_LabelsIndexing, self).__init__()
-    self._key_func = functionable(key_func)
+    self._key_func = key_func
     self._fast_index = fast_index
     self._sorted_labels = sorted_labels
 
