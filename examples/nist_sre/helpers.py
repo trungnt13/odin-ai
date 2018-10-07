@@ -55,7 +55,7 @@ _args = args_parse(descriptions=[
     ('-sysid', 'when a system is saved multiple checkpoint (e.g. sys.0.ai)', None, '-1'),
     ('-score', 'name of dataset for scoring, multiple dataset split by ","', None, 'sre18dev,sre18eval'),
     ('-backend', 'list of dataset for training the backend: '
-                 'PLDA, SVM or Cosine', None, 'swb,sre04,sre05,sre06,sre08,sre10,mx6'),
+                 'PLDA, SVM or Cosine', None, 'sre04,sre05,sre06,sre08,sre10,mx6'),
     ('-lda', 'if > 0, running LDA before training the backend '
              'with given number of components', None, 0),
     ('-plda', 'number of PLDA components, must be > 0 ', None, 150),
@@ -69,15 +69,20 @@ _args = args_parse(descriptions=[
     ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
     ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
     # for DNN
-    ('-batch', 'batch size, for training DNN', None, 64),
-    ('-epoch', 'number of epoch, for training DNN', None, 12),
+    ('-utt', 'maximum length of sequence for training', None, 3),
+    ('-seq', 'sequencing mode for training data, cut or pad', None, 'cut'),
+    ('-batch', 'batch size, for training DNN, kaldi use 64, we use 128', None, 128),
+    ('-epoch', 'number of epoch, for training DNN, kaldi only 3 epochs', None, 12),
     ('-clip', 'The maximum change in parameters allowed per minibatch, '
               'measured in Euclidean norm over the entire model (change '
               'will be clipped to this value), kaldi use 2.0', None, 2.0),
-    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default, we use 0.0001', None, 0.001),
+    ('-lr', 'learning rate for Adam, kaldi use 0.001 by default,'
+            ' we use 0.01', None, 0.01),
     # others
-    ('-mindur', 'minimum duration of utterance for training (in second)', None, 4),
-    ('-minutt', 'minimum number of utterance of each speaker for training', None, 8),
+    ('-mindur', 'for filtering utterances, minimum duration of utterance '
+                'for training (in second)', None, 1),
+    ('-minutt', 'for filtering utterances, minimum number of utterance of '
+                'each speaker for training', None, 3),
     ('--override', 'override previous experiments', None, False),
     ('--debug', 'enable debugging', None, False),
 ])
@@ -130,7 +135,8 @@ if _script_name in ('speech_augmentation', 'speech_features_extraction'):
   CURRENT_STATE = SystemStates.EXTRACT_FEATURES
   _check_feature_extraction_requirement()
   _check_recipe_name_for_extraction()
-elif _script_name in ('train_xvec', 'train_ivec', 'train_tvec', 'analyze'):
+elif _script_name in ('train_xvec', 'train_ivec', 'train_tvec',
+                      'train_evec', 'analyze', 'analyze_data'):
   CURRENT_STATE = SystemStates.TRAINING
 elif _script_name in ('make_score'):
   CURRENT_STATE = SystemStates.SCORING
@@ -155,6 +161,10 @@ if not os.path.exists(VECTORS_DIR):
 RESULT_DIR = os.path.join(EXP_DIR, 'results')
 if not os.path.exists(RESULT_DIR):
   os.mkdir(RESULT_DIR)
+# this folder store the analysis
+ANALYSIS_DIR = os.path.join(EXP_DIR, 'analysis')
+if not os.path.exists(ANALYSIS_DIR):
+  os.mkdir(ANALYSIS_DIR)
 # ====== raw data ====== #
 PATH_BASE = select_path(
     '/media/data2/SRE_DATA',
@@ -446,27 +456,34 @@ def get_model_path(system_name, logging=True):
   ------
   exp_dir, model_path, log_path
   """
-  args_name = ['mindur']
+  args_name = []
   if system_name == 'xvec':
-    pass
+    args_name += ['utt', 'seq']
   elif system_name == 'ivec':
     args_name += ['nmix', 'tdim']
   else:
     raise ValueError("No support for system with name: %s" % system_name)
-  # ====== prefix ====== #
-  name = '_'.join([str(system_name).lower(),
-                   FEATURE_RECIPE.replace('_', ''),
-                   FEATURE_NAME])
+  args_name += ['mindur', 'minutt']
+  # ====== base system and feature identity ====== #
+  name = str(system_name).lower()
+  name += '_' + FEATURE_RECIPE.replace('_', '')
+  name += '.' + FEATURE_NAME
   # ====== concat the attributes ====== #
-  for i in sorted(str(i) for i in args_name):
-    name += '_' + str(int(getattr(_args, i)))
+  attributes = []
+  for i in [str(i) for i in args_name]:
+    attributes.append(str(getattr(_args, i)))
+  attributes = '_'.join(attributes)
+  name += '.' + attributes
   # ====== check the exclude dataset ====== #
   excluded_dataset = str(_args.exclude).strip()
   if len(excluded_dataset) > 0:
+    dataset_str = []
     for excluded in sorted(set(excluded_dataset.split(','))):
       assert excluded in sre_file_list or excluded == 'noise', \
       "Unknown excluded dataset with name: '%s'" % excluded
-      name += '_' + excluded
+      dataset_str.append(excluded)
+    dataset_str = '_'.join(dataset_str)
+    name += '.' + dataset_str
   # ====== check save_path ====== #
   save_path = os.path.join(EXP_DIR, name)
   if os.path.exists(save_path) and IS_OVERRIDE:
@@ -486,11 +503,23 @@ def get_model_path(system_name, logging=True):
 # Data helper
 # ===========================================================================
 def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
-  frame_length = MINIMUM_UTT_DURATION / Config.STEP_LENGTH
+  frame_length = int(float(_args.utt) / Config.STEP_LENGTH)
+  sequencing_mode = str(_args.seq).strip().lower()
+
+  if sequencing_mode == 'cut':
+    seq_train = 'cut'
+    seq_score = 'mix'
+  elif sequencing_mode == 'pad':
+    seq_train = 'pad'
+    seq_score = 'pad'
+  else:
+    raise ValueError("Only support 'cut' or 'pad' sequencing mode")
+
   recipes = [
       F.recipes.Sequencing(frame_length=frame_length,
                            step_length=frame_length,
-                           end='mix' if CURRENT_STATE == SystemStates.SCORING else 'cut',
+                           end=seq_score if CURRENT_STATE == SystemStates.SCORING
+                           else seq_train,
                            pad_value=0, pad_mode='post',
                            data_idx=0),
   ]
@@ -873,10 +902,12 @@ def prepare_dnn_data(save_dir, return_dataset=False):
       data_desc=F.IndexedData(data=X,
                               indices=train_indices),
       batch_mode='batch', ncpu=NCPU, buffer_size=256)
+
   valid_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=valid_indices),
       batch_mode='batch', ncpu=max(2, NCPU // 4), buffer_size=64)
+
   train_feeder.set_recipes(recipes)
   valid_feeder.set_recipes(recipes)
   print(train_feeder)

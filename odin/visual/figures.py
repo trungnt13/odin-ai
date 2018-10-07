@@ -494,7 +494,7 @@ def plot_comparison_track(Xs, legends, tick_labels,
 
 def plot_histogram(x, bins=80, ax=None,
                    normalize=False, range_0_1=False, kde=False, covariance_factor=None,
-                   color='blue', color_kde='red', alpha=0.6, centerlize=True,
+                   color='blue', color_kde='red', alpha=0.6, centerlize=False,
                    linewidth=1.2, fontsize=12, title=None):
   """
   x: histogram
@@ -503,6 +503,8 @@ def plot_histogram(x, bins=80, ax=None,
   """
   # ====== prepare ====== #
   # only 1-D
+  if isinstance(x, (tuple, list)):
+    x = np.array(x)
   x = x.ravel()
   ax = to_axis(ax, is_3D=False)
   # ====== get the bins ====== #

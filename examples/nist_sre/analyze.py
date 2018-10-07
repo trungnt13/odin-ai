@@ -10,19 +10,37 @@ import tensorflow as tf
 
 from odin import fuel as F
 from odin import nnet as N, backend as K
-from odin.utils import ctext, mpi, Progbar, catch_warnings_ignore
+from odin.utils import (ctext, mpi, Progbar, catch_warnings_ignore, stdio,
+                        get_logpath)
 
 from sklearn.metrics import accuracy_score, log_loss, f1_score
 
 from helpers import (FEATURE_RECIPE, FEATURE_NAME, PATH_ACOUSTIC_FEATURES,
-                     MINIMUM_UTT_DURATION,
+                     MINIMUM_UTT_DURATION, ANALYSIS_DIR, EXP_DIR,
                      filter_utterances, prepare_dnn_data)
 
-BASE_DIR = '/home/trung/exp/sre/xvec_mfccmusanrirs_mfcc_4_fisher'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_fisher_mx6_sre04_sre05_sre06_sre08_sre10_swb'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_swb_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher_swb_voxceleb1_voxceleb2'
+# ====== base dir ====== #
+BASE_DIR = os.path.join(EXP_DIR, MODEL_ID)
 assert FEATURE_RECIPE.replace('_', '') in os.path.basename(BASE_DIR)
 assert FEATURE_NAME in os.path.basename(BASE_DIR)
-assert str(MINIMUM_UTT_DURATION) in os.path.basename(BASE_DIR)
-MODEL = 'model.ai.0'
+# ====== get the last model ====== #
+all_model = sorted([name
+                    for name in os.listdir(BASE_DIR)
+                    if 'model.ai.' in name],
+                   key=lambda x: int(x.split('.')[-1]))
+assert len(all_model) > 0, "Cannot find any model.ai. at path: %s" % BASE_DIR
+MODEL = os.path.join(BASE_DIR, all_model[-1])
+# ====== prepare log ====== #
+stdio(get_logpath(name="analyze.log", increasing=True,
+                  odin_base=False, root=ANALYSIS_DIR))
+print(ctext(BASE_DIR, 'lightyellow'))
+print(ctext(MODEL, 'lightyellow'))
 # ===========================================================================
 # Load the data
 # ===========================================================================
@@ -40,8 +58,7 @@ spkid = ds['spkid']
 # Load the model
 # ===========================================================================
 # ====== load the network ====== #
-x_vec = N.deserialize(path=os.path.join(BASE_DIR, MODEL),
-                      force_restore_vars=True)
+x_vec = N.deserialize(path=MODEL, force_restore_vars=True)
 # ====== get output tensors ====== #
 y_logit = x_vec()
 y_proba = tf.nn.softmax(y_logit)
@@ -57,58 +74,62 @@ print('Latent:', ctext(z, 'cyan'))
 # Helper
 # ===========================================================================
 def evaluate_prediction(name_list, y_pred, y_true, title):
-  def _report(y_, y, pad=''):
+  def _report(y_p, y_t, pad=''):
     with catch_warnings_ignore(Warning):
-      print(pad, "#Samples:", ctext(len(y), 'cyan'))
-      print(pad, "Log loss:", log_loss(y_true=y, y_pred=y_, labels=labels))
-      print(pad, "Accuracy:", accuracy_score(y_true=y, y_pred=np.argmax(y_, axis=-1)))
-      print(pad, "F1 score:", f1_score(y_true=y, y_pred=np.argmax(y_, axis=-1),
-                                  labels=labels, average='macro'))
+      z_ = np.concatenate(y_p, axis=0)
+      z = np.concatenate(y_t, axis=0)
+      print(pad, '*** %s ***' % ctext('Frame-level', 'lightcyan'))
+      print(pad, "#Samples:", ctext(len(z), 'cyan'))
+      print(pad, "Log loss:", log_loss(y_true=z, y_pred=z_, labels=labels))
+      print(pad, "Accuracy:", accuracy_score(y_true=z, y_pred=np.argmax(z_, axis=-1)))
+
+      z_ = np.concatenate([np.mean(i, axis=0, keepdims=True) for i in y_p],
+                          axis=0)
+      z = np.array([i[0] for i in y_t])
+      print(pad, '*** %s ***' % ctext('Utterance-level', 'lightcyan'))
+      print(pad, "#Samples:", ctext(len(z), 'cyan'))
+      print(pad, "Log loss:", log_loss(y_true=z, y_pred=z_, labels=labels))
+      print(pad, "Accuracy:", accuracy_score(y_true=z, y_pred=np.argmax(z_, axis=-1)))
 
   datasets_2_samples = defaultdict(list)
-  for name, y_, y in zip(name_list, y_pred, y_true):
+  for name, y_p, y_t in zip(name_list, y_pred, y_true):
     dsname = ds['dsname'][name]
-    datasets_2_samples[dsname].append((name, y_, y))
+    datasets_2_samples[dsname].append((name, y_p, y_t))
 
-  y_pred = np.concatenate(y_pred, axis=0)
-  y_true = np.array(y_true)
   print('=' * 12, ctext(title, 'lightyellow'), '=' * 12)
-  _report(y_=y_pred, y=y_true)
+  _report(y_p=y_pred, y_t=y_true)
 
   for dsname, data in sorted(datasets_2_samples.items(),
                              key=lambda x: x[0]):
-    print(ctext(dsname, 'lightcyan'), ':')
-    name_list = np.array([i[0] for i in data])
-    y_pred = np.concatenate([i[1] for i in data], axis=0)
-    y_true = np.array([i[2] for i in data])
-    _report(y_=y_pred, y=y_true, pad='  ')
-
+    print(ctext(dsname, 'yellow'), ':')
+    y_pred = [i[1] for i in data]
+    y_true = [i[2] for i in data]
+    _report(y_p=y_pred, y_t=y_true, pad='  ')
 # ===========================================================================
 # make prediction
 # ===========================================================================
 def make_prediction(feeder, title):
-  prog = Progbar(target=len(feeder), name=title)
+  prog = Progbar(target=len(feeder), print_summary=True, name=title)
   name_list = []
   y_pred = []
   y_true = []
   for name, idx, X, y in feeder.set_batch(batch_size=100000,
-                                         batch_mode='file',
-                                         seed=None, shuffle_level=0):
+                                          batch_mode='file',
+                                          seed=None, shuffle_level=0):
     name_list.append(name)
 
     y = np.argmax(y, axis=-1)
     assert len(np.unique(y)) == 1, name
     spk = label2spk[y[0]]
     assert spkid[name] == spk, name
-    y_true.append(y[0])
+    y_true.append(y)
 
     y_ = f_prob(X)
-    if y_.shape[0] > 1:
-      y_ = np.mean(y_, axis=0, keepdims=True)
     y_pred.append(y_)
 
+    assert len(y) == len(y_)
     prog.add(X.shape[0])
   evaluate_prediction(name_list, y_pred, y_true, title=title)
 # ====== do it ====== #
-make_prediction(train, title="Train Data")
 make_prediction(valid, title="Valid Data")
+make_prediction(train, title="Train Data")

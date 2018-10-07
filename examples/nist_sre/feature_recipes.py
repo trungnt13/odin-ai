@@ -265,7 +265,7 @@ def mfcc(augmentation=None):
                                remove_first_coef=True, first_coef_energy=True,
                                input_name='mspec', output_name='mfcc'),
       # ====== extract SAD ====== #
-      pp.speech.SADthreshold(energy_threshold=0.55, energy_mean_scale=0.5,
+      pp.speech.SADthreshold(energy_threshold=0.5, energy_mean_scale=0.5,
                              frame_context=2, proportion_threshold=0.12,
                              smooth_window=5,
                              input_name='mfcc_energy', output_name='sad')

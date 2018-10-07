@@ -149,21 +149,49 @@ class MTI(object):
       maximum number of outstanding messages ØMQ shall queue
       in memory for any single peer that the specified socket
       is communicating with.
-  chunk_scheduler: bool
-      if `True`, jobs are grouped into small chunks of `batch`, then each
-      chunk will be feed to each process until the jobs are exhausted, hence,
-      this approach guarantee that all processes will run until the end, but
-      the execution speed will be lower since each processes need to
-      continuously receives chunks from main process.
-      if `False`, jobs are splited into equal size for each process at the
-      beginning, do this if you sure all jobs require same processing time.
 
   """
 
   def __init__(self, jobs, func,
                ncpu=1, batch=1, hwm=144):
     super(MTI, self).__init__()
-    # TODO: add multi-threading interface
+    self._ID = np.random.randint(0, 10e8, dtype=int)
+    # ====== check map_func ====== #
+    if not hasattr(func, '__call__'):
+      raise Exception('"func" must be call-able')
+    self._func = func
+    # ====== MTI parameters ====== #
+    # never use all available CPU
+    if ncpu is None:
+      ncpu = cpu_count() - 1
+    self._ncpu = min(
+        np.clip(int(ncpu), 1, cpu_count() - 1),
+        len(jobs)
+    )
+    self._batch = max(1, int(batch))
+    self._hwm = max(0, int(hwm))
+    # ====== internal states ====== #
+    self._nb_working_cpu = self._ncpu
+    # processes manager
+    self._is_init = False
+    self._is_running = False
+    self._is_finished = False
+    self._terminate_now = False
+    # ====== other queue ====== #
+    if not isinstance(jobs, (tuple, list, np.ndarray)):
+      raise ValueError("`jobs` must be instance of tuple or list.")
+    self._jobs = jobs
+    self._remain_jobs = SharedCounter(len(self._jobs))
+    # Equally split for all processes
+    self._tasks = Queue(maxsize=0)
+    for i in segment_list(np.arange(len(self._jobs), dtype='int32'),
+                          size=self._batch):
+      self._tasks.put_nowait(i)
+    for i in range(self._ncpu): # ending signal
+      self._tasks.put_nowait(None)
+    # ====== only 1 iteration is created ====== #
+    self._current_iter = None
+
 
 # ===========================================================================
 # Multi-processing
