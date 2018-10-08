@@ -19,12 +19,13 @@ from helpers import (FEATURE_RECIPE, FEATURE_NAME, PATH_ACOUSTIC_FEATURES,
                      MINIMUM_UTT_DURATION, ANALYSIS_DIR, EXP_DIR,
                      filter_utterances, prepare_dnn_data)
 
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher'
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher_voxceleb1_voxceleb2'
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_fisher_mx6_sre04_sre05_sre06_sre08_sre10_swb'
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_voxceleb1_voxceleb2'
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_3_swb_voxceleb1_voxceleb2'
-MODEL_ID = 'xvec_mfccmusanrirs_mfcc_4_fisher_swb_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_swb_voxceleb1_voxceleb2'
+
+info = MODEL_ID.split('.')
+feat_name = info[1]
+utt_length, seq_mode, min_dur, min_utt = info[2].split('_')
+exclude_datasets = info[-1].split('_')
 # ====== base dir ====== #
 BASE_DIR = os.path.join(EXP_DIR, MODEL_ID)
 assert FEATURE_RECIPE.replace('_', '') in os.path.basename(BASE_DIR)
@@ -41,11 +42,20 @@ stdio(get_logpath(name="analyze.log", increasing=True,
                   odin_base=False, root=ANALYSIS_DIR))
 print(ctext(BASE_DIR, 'lightyellow'))
 print(ctext(MODEL, 'lightyellow'))
+print("Feature name:", ctext(feat_name, 'lightyellow'))
+print("Utt length  :", ctext(utt_length, 'lightyellow'))
+print("Seq mode    :", ctext(seq_mode, 'lightyellow'))
+print("Min Duration:", ctext(min_dur, 'lightyellow'))
+print("Min #Utt    :", ctext(min_utt, 'lightyellow'))
+print("Excluded    :", ctext(exclude_datasets, 'lightyellow'))
 # ===========================================================================
 # Load the data
 # ===========================================================================
 train, valid, all_speakers, ds = prepare_dnn_data(save_dir=BASE_DIR,
-                                                  return_dataset=True)
+    feat_name=feat_name, utt_length=int(utt_length), seq_mode=str(seq_mode),
+    min_dur=int(min_dur), min_utt=int(min_utt),
+    exclude=exclude_datasets,
+    return_dataset=True)
 print(ds)
 
 label2spk = {i: spk for i, spk in enumerate(all_speakers)}

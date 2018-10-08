@@ -502,14 +502,18 @@ def get_model_path(system_name, logging=True):
 # ===========================================================================
 # Data helper
 # ===========================================================================
-def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
-  frame_length = int(float(_args.utt) / Config.STEP_LENGTH)
-  sequencing_mode = str(_args.seq).strip().lower()
+def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None,
+                              utt_length=None, seq_mode=None):
+  if utt_length is None:
+    utt_length = float(_args.utt)
+  if seq_mode is None:
+    seq_mode = str(_args.seq).strip().lower()
+  frame_length = int(utt_length / Config.STEP_LENGTH)
 
-  if sequencing_mode == 'cut':
+  if seq_mode == 'cut':
     seq_train = 'cut'
     seq_score = 'mix'
-  elif sequencing_mode == 'pad':
+  elif seq_mode == 'pad':
     seq_train = 'pad'
     seq_score = 'pad'
   else:
@@ -535,6 +539,7 @@ def prepare_dnn_feeder_recipe(name2label=None, n_speakers=None):
   return recipes
 
 def filter_utterances(X, indices, spkid,
+                      min_dur=None, min_utt=None,
                       remove_min_length=True, remove_min_uttspk=True,
                       n_speakers=None, ncpu=None, save_path=None,
                       title=''):
@@ -562,7 +567,12 @@ def filter_utterances(X, indices, spkid,
     if given, pickle all filtered files to disk
 
   """
-  minimum_amount_of_frames = MINIMUM_UTT_DURATION / Config.STEP_LENGTH
+  if min_dur is None:
+    min_dur = MINIMUM_UTT_DURATION
+  if min_utt is None:
+    min_utt = MINIMUM_UTT_PER_SPEAKERS
+
+  minimum_amount_of_frames = min_dur / Config.STEP_LENGTH
   save_data = {}
 
   prog = Progbar(target=len(indices),
@@ -686,7 +696,7 @@ def filter_utterances(X, indices, spkid,
     removed_utt = []
     keep_utt = []
     for spk, utt in spk2utt.items():
-      if len(utt) < MINIMUM_UTT_PER_SPEAKERS:
+      if len(utt) < min_utt:
         n_utt_removed += len(utt)
         n_spk_removed += 1
         removed_utt += utt
@@ -742,21 +752,37 @@ def filter_utterances(X, indices, spkid,
         (save_path, str(e)))
   return indices
 
-def prepare_dnn_data(save_dir, return_dataset=False):
+def prepare_dnn_data(save_dir, feat_name=None,
+                     utt_length=None, seq_mode=None,
+                     min_dur=None, min_utt=None,
+                     exclude=None,
+                     return_dataset=False):
   assert os.path.isdir(save_dir), \
       "Path to '%s' is not a directory" % save_dir
-  print("Minimum duration: %s(s)" % ctext(MINIMUM_UTT_DURATION, 'cyan'))
-  print("Minimum utt/spk : %s(utt)" % ctext(MINIMUM_UTT_PER_SPEAKERS, 'cyan'))
+  if feat_name is None:
+    feat_name = FEATURE_NAME
+  if utt_length is None:
+    utt_length = int(_args.utt)
+  if seq_mode is None:
+    seq_mode = str(_args.seq).strip().lower()
+  if min_dur is None:
+    min_dur = MINIMUM_UTT_DURATION
+  if min_utt is None:
+    min_utt = MINIMUM_UTT_PER_SPEAKERS
+  if exclude is None:
+    exclude = str(_args.exclude).strip()
+  print("Minimum duration: %s(s)" % ctext(min_dur, 'cyan'))
+  print("Minimum utt/spk : %s(utt)" % ctext(min_utt, 'cyan'))
   # ******************** prepare dataset ******************** #
   path = os.path.join(PATH_ACOUSTIC_FEATURES, FEATURE_RECIPE)
   assert os.path.exists(path), "Cannot find acoustic dataset at path: %s" % path
   ds = F.Dataset(path=path, read_only=True)
   rand = np.random.RandomState(seed=Config.SUPER_SEED)
   # ====== find the right feature ====== #
-  ids_name = 'indices_%s' % FEATURE_NAME
-  assert FEATURE_NAME in ds, "Cannot find feature with name: %s" % FEATURE_NAME
+  assert feat_name in ds, "Cannot find feature with name: %s" % feat_name
+  X = ds[feat_name]
+  ids_name = 'indices_%s' % feat_name
   assert ids_name in ds, "Cannot find indices with name: %s" % ids_name
-  X = ds[FEATURE_NAME]
   # ====== basic path ====== #
   path_filtered_data = os.path.join(save_dir, 'filtered_files.pkl')
   path_train_files = os.path.join(save_dir, 'train_files.pkl')
@@ -766,8 +792,8 @@ def prepare_dnn_data(save_dir, return_dataset=False):
                                          path_train_files,
                                          path_speaker_info]):
     # ====== exclude some dataset ====== #
-    if len(_args.exclude) > 0:
-      exclude_dataset = {i: 1 for i in str(_args.exclude.strip()).split(',')}
+    if len(exclude) > 0:
+      exclude_dataset = {i: 1 for i in exclude.split(',')}
       print("* Excluded dataset:", ctext(exclude_dataset, 'cyan'))
       indices = {name: (start, end)
                  for name, (start, end) in ds[ids_name].items()
@@ -800,6 +826,7 @@ def prepare_dnn_data(save_dir, return_dataset=False):
       indices = _
     # ====== * filter out "bad" sample ====== #
     indices = filter_utterances(X=X, indices=indices, spkid=ds['spkid'],
+                                min_utt=min_utt, min_dur=min_dur,
                                 remove_min_length=True,
                                 remove_min_uttspk=True,
                                 n_speakers=None, ncpu=None,
@@ -897,7 +924,8 @@ def prepare_dnn_data(save_dir, return_dataset=False):
   assert all(name in name2label
             for name in valid_indices.keys())
   recipes = prepare_dnn_feeder_recipe(name2label=name2label,
-                                      n_speakers=len(all_speakers))
+                                      n_speakers=len(all_speakers),
+                                      utt_length=utt_length, seq_mode=seq_mode)
   train_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=train_indices),
