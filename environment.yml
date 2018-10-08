@@ -1,17 +1,10 @@
 name: odin
 channels:
-  - https://conda.anaconda.org/trung # multiprocessing-logging, pysoundfile, sidekit
   - https://conda.anaconda.org/conda-forge
   - https://conda.anaconda.org/numba # numba
-  - https://conda.anaconda.org/r # r
   - defaults
 dependencies:
   - python=3.5
-  - Cython
-  - pillow
-  - toolz
-  - psutil
-  - pyzmq # extremly fast message passing for multiprocessing
 
   # scienctific computing
   - numpy=1.15.2
@@ -21,48 +14,20 @@ dependencies:
 
   # visualization interactive ipython and notebook
   - matplotlib
-  - seaborn
-  - ipython
-  - jupyter
-  - ipywidgets=5.2.2
 
   # data processing and management
   - pandas
-  - sympy
-  - h5py # create dataset
-  - pytables
-  - pymongo
-  - pyyaml
-  - lxml
-  - openpyxl # read excel
-  - xlwt # create excel
 
   # others
   - nose
   - six
 
-  # natural language processing
-  - nltk
-  - spacy
-
-  # graphic processing
-  - opencv
-
-  # data mining
-  - Scrapy
-  - wikipedia
-
   # networking
-  - paramiko #library for read remote file ssh
-  - html5lib
   - pycrypto
   - requests
-  - Django
 
   # others
-  - numexpr
   - colorama
-  - memory_profiler=0.47
 
   # signal processing
   - resampy
@@ -71,13 +36,6 @@ dependencies:
   - Sphinx
 
   - pip:
-    - emoji
-    - notedown #convert markdown to ipynb
     - soundfile # read sph audio file python
-    - librosa
-    - twython # for twitter
-    - vk # for vk
-    - facebook-sdk # facebook
-    - praw # for reddit
     - tensorflow-gpu
     - tqdm
