@@ -130,9 +130,7 @@ linestyles = ['-', '--', '-.']
 
 def plot_histogram(series, ax, title):
   V.plot_histogram(x=clipping_quartile(series), bins=n_bin, ax=ax,
-                   title=title, fontsize=6)
-  # sns.distplot(clipping_quartile(series), bins=n_bin, rug=True, kde=False,
-  #              ax=ax)
+                   title=title, fontsize=4)
 
 def plot_mean_std(_map, title):
   V.plot_figure(nrow=6, ncol=20)

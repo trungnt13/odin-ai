@@ -165,6 +165,36 @@ class TIDIGITS(DataLoader):
       os.remove(zip_path)
     return ds
 
+class SPEECH_SAMPLES(DataLoader):
+
+  @classmethod
+  def get_dataset(clazz, ext='', override=False):
+    # ====== all path ====== #
+    name = clazz.get_name(ext) + '.zip'
+    path = base64.decodebytes(DataLoader.ORIGIN).decode() + name
+    zip_path = clazz.get_zip_path(ext)
+    out_path = clazz.get_ds_path(ext)
+    # ====== check out_path ====== #
+    if os.path.isfile(out_path):
+      raise RuntimeError("Found a file at path: %s, we need a folder "
+                         "to unzip downloaded files." % out_path)
+    elif os.path.isdir(out_path):
+      if override or len(os.listdir(out_path)) == 0:
+        shutil.rmtree(out_path)
+      else:
+        return Dataset(out_path, read_only=True)
+    # ====== download the file ====== #
+    if os.path.exists(zip_path) and override:
+      os.remove(zip_path)
+    if not os.path.exists(zip_path):
+      get_file(name, path, DataLoader.BASE_DIR)
+    # ====== upzip dataset ====== #
+    unzip_aes(in_path=zip_path, out_path=out_path)
+    ds = Dataset(out_path, read_only=True)
+    if os.path.exists(zip_path):
+      os.remove(zip_path)
+    return ds
+
 class FSDD(object):
   """ Free Spoken Digit Dataset
   A simple audio/speech dataset consisting of recordings of

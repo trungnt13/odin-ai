@@ -71,12 +71,34 @@ def _infer_separator(path):
                        "cannot match separator in known list: `%s`"
                        % (line, str(all_sep)))
 
+_audio_ext = ('.3gp', '.aa', '.aac', '.aax', '.act', '.aiff',
+              '.amr', '.ape', '.au', '.awb', '.dct', '.dss',
+              '.dvf', '.flac', '.gsm', '.ivs', '.m4a', '.m4b',
+              '.m4p', '.mmf', '.mp3', '.mpc', '.msv', '.nsf',
+              '.ogg,', '.opus', '.raw', '.sln', '.tta', '.vox',
+              '.wav', '.wma', '.wv', '.webm', '.sph', '.pcm')
+
+_image_ext = ('.tif', '.tiff', '.gif', '.jpeg', '.jpg', '.jif',
+              '.jfif', '.jp2', '.jpx', '.j2k', '.j2c', '.fpx',
+              '.pcd', '.png', '.pdf')
+
+_ignore_files = ('.DS_Store',)
+
 def _parse_data_descriptor(path, read_only):
   """ Return mapping: name -> (dtype, shape, Data, path) """
   if not os.path.isfile(path):
     return None
-  file_ext = os.path.splitext(path)[-1]
+  file_ext = os.path.splitext(path)[-1].lower()
   file_name = os.path.basename(path)
+  # ====== ignore ====== #
+  if os.path.basename(path) in _ignore_files:
+    return None
+  # ====== audio file ====== #
+  if file_ext in _audio_ext:
+    return [(file_name, ('audio', 'unknown', None, path))]
+  # ====== image file ====== #
+  if file_ext in _image_ext:
+    return [(file_name, ('image', 'unknown', None, path))]
   # ====== text file .txt ====== #
   if file_ext in ('.txt',):
     return [(file_name, ('txt', 'unknown', None, path))]

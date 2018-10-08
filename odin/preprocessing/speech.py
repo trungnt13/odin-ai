@@ -64,7 +64,7 @@ from .signal import (smooth, pre_emphasis, get_window, get_energy,
                      pitch_track, resample, rastafilt, mvn, wmvn,
                      shifted_deltas, stack_frames, stft,
                      power_spectrogram, mels_spectrogram, ceps_spectrogram,
-                     power2db)
+                     power2db, anything2wav)
 # import all OpenSMILE extractor
 from ._opensmile import *
 
@@ -117,28 +117,35 @@ def read(path_or_file, encode=None):
   # ====== check input ====== #
   if is_fileobj(path_or_file):
     f = path_or_file
+    f.seek(0)
     path = f.name
   elif os.path.isfile(path_or_file):
-    f = open(path_or_file, 'rb')
+    f = None
     path = path_or_file
   else:
     raise ValueError("Invalid type of `path_or_file` %s" %
         str(type(path_or_file)))
   # ====== read the audio ====== #
   if '.pcm' in path.lower():
+    f = open(path_or_file, 'rb')
     raw, sr = _read_pcm(f, encode=encode)
   else:
     import soundfile
     try:
+      f = open(path_or_file, 'rb')
       raw, sr = soundfile.read(f)
     except Exception as e:
+      # read special pcm file
       if '.sph' in f.name.lower():
-        f.seek(0)
+        f = open(path_or_file, 'rb')
         raw, sr = _read_pcm(f, encode=encode)
+      # read using external tools
       else:
-        raise e
+        raw, sr = anything2wav(inpath=path, outpath=None,
+                               codec=encode, return_data=True)
   # close file
-  f.close()
+  if f is not None:
+    f.close()
   return raw, sr
 
 def save(file_or_path, s, sr, subtype=None):
@@ -281,6 +288,9 @@ def audio_segmenter(files, outpath, max_duration,
   print("Segment info saved at:", ctext(info_path, 'cyan'))
   return info_path
 
+# ===========================================================================
+# I/O
+# ===========================================================================
 class AudioReader(Extractor):
 
   """ Return a dictionary of
@@ -319,8 +329,7 @@ class AudioReader(Extractor):
   """
 
   def __init__(self, sr=None, sr_new=None, best_resample=True,
-               remove_dc=True, auto_convert_wav=True,
-               dataset=None):
+               remove_dc=True, dataset=None):
     super(AudioReader, self).__init__(is_input_layer=True)
     self.sr = sr
     self.sr_new = sr_new
@@ -340,24 +349,16 @@ class AudioReader(Extractor):
     path = None
     duration = None
     encode = None
-    channel = 0
+    channel = None
     # ====== check path_or_array ====== #
-    # tuple of sr and raw_array
-    if isinstance(path_or_array, (tuple, list)):
-      if len(path_or_array) != 2:
-        raise ValueError("`path_or_array` can be a tuple or list of "
-            "length 2, which contains: (string_path, sr) or "
-            "(sr, string_path) or (raw_array, sr) or (sr, raw_array).")
-      if is_number(path_or_array[0]):
-        sr, raw = path_or_array
-      else:
-        raw, sr = path_or_array
     # mapping of specific data
-    elif isinstance(path_or_array, Mapping):
+    if isinstance(path_or_array, Mapping):
       if 'sr' in path_or_array:
         sr = int(path_or_array['sr'])
       if 'encode' in path_or_array:
         encode = str(path_or_array['encode'])
+      if 'channel' in path_or_array:
+        channel = int(path_or_array['channel'])
       # get raw or path out of the Dictionary
       if 'raw' in path_or_array:
         raw = path_or_array['raw']
@@ -398,8 +399,8 @@ class AudioReader(Extractor):
       pass
     elif raw.ndim == 2:
       if raw.shape[0] == 2:
-        raw = raw[channel, :]
-      elif raw.shape[1] == 2:
+        raw = raw.T
+      if channel is not None:
         raw = raw[:, channel]
     else:
       raise ValueError("No support for %d-D signal from file: %s" %
@@ -409,14 +410,11 @@ class AudioReader(Extractor):
       sr = int(self.sr)
     # resampling if necessary
     if sr is not None and self.sr_new is not None:
-      raw = resample(raw, sr, self.sr_new, best_algorithm=self.best_resample)
+      raw = resample(raw, sr, self.sr_new,
+                     best_algorithm=self.best_resample)
       sr = int(self.sr_new)
-    # ====== normalizing ====== #
-    np.random.seed(8)  # for repeatability
-    # ====== remove DC offset and diterhing ====== #
-    # Approached suggested by:
-    # 'Omid Sadjadi': 'omid.sadjadi@nist.gov'
-    if self.remove_dc: # just remove DC offset
+    # ====== remove DC offset ====== #
+    if self.remove_dc:
       raw = raw - np.mean(raw, 0).astype(raw.dtype)
     # ====== get duration if possible ====== #
     if sr is not None:
@@ -433,6 +431,23 @@ class AudioReader(Extractor):
       ret['name'] = name
     return ret
 
+class AudioAugmentor(Extractor):
+  """ SREAugmentor
+
+  New name for each utterance is:
+    [utt_name]/[noise1_name]/[noise2_name]...
+  """
+
+  def __init__(self, musan_path, rirs_path):
+    super(AudioAugmentor, self).__init__(is_input_layer=False)
+    # TODO: finish this
+
+  def _transform(self, row):
+    pass
+
+# ===========================================================================
+# Pre-processing raw signal
+# ===========================================================================
 class Dithering(Extractor):
   """ Dithering """
 

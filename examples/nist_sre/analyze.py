@@ -19,8 +19,9 @@ from helpers import (FEATURE_RECIPE, FEATURE_NAME, PATH_ACOUSTIC_FEATURES,
                      MINIMUM_UTT_DURATION, ANALYSIS_DIR, EXP_DIR,
                      filter_utterances, prepare_dnn_data)
 
-MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_voxceleb1_voxceleb2'
 MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_swb_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_voxceleb1_voxceleb2'
+MODEL_ID = 'xvec_mfccmusanrirs.mfcc.5_pad_5_8.fisher_sre10_swb_voxceleb1_voxceleb2'
 
 info = MODEL_ID.split('.')
 feat_name = info[1]
@@ -54,7 +55,7 @@ print("Excluded    :", ctext(exclude_datasets, 'lightyellow'))
 train, valid, all_speakers, ds = prepare_dnn_data(save_dir=BASE_DIR,
     feat_name=feat_name, utt_length=int(utt_length), seq_mode=str(seq_mode),
     min_dur=int(min_dur), min_utt=int(min_utt),
-    exclude=exclude_datasets,
+    exclude=exclude_datasets, train_proportion=0.5,
     return_dataset=True)
 print(ds)
 
@@ -141,5 +142,5 @@ def make_prediction(feeder, title):
     prog.add(X.shape[0])
   evaluate_prediction(name_list, y_pred, y_true, title=title)
 # ====== do it ====== #
-make_prediction(valid, title="Valid Data")
 make_prediction(train, title="Train Data")
+make_prediction(valid, title="Valid Data")

@@ -64,7 +64,7 @@ _args = args_parse(descriptions=[
     # for training
     ('-downsample', 'absolute number of files used for training', None, 0),
     ('-exclude', 'list of excluded dataset not for training,'
-                 'multiple dataset split by ","', None, 'fisher'),
+                 'multiple dataset split by ","', None, ''),
     # for ivector
     ('-nmix', 'for i-vector training, number of Gaussian components', None, 2048),
     ('-tdim', 'for i-vector training, number of latent dimension for i-vector', None, 600),
@@ -755,7 +755,7 @@ def filter_utterances(X, indices, spkid,
 def prepare_dnn_data(save_dir, feat_name=None,
                      utt_length=None, seq_mode=None,
                      min_dur=None, min_utt=None,
-                     exclude=None,
+                     exclude=None, train_proportion=None,
                      return_dataset=False):
   assert os.path.isdir(save_dir), \
       "Path to '%s' is not a directory" % save_dir
@@ -926,6 +926,14 @@ def prepare_dnn_data(save_dir, feat_name=None,
   recipes = prepare_dnn_feeder_recipe(name2label=name2label,
                                       n_speakers=len(all_speakers),
                                       utt_length=utt_length, seq_mode=seq_mode)
+  # ====== downsample training set for analyzing if required ====== #
+  if train_proportion is not None:
+    assert 0 < train_proportion < 1
+    n_training = len(train_indices)
+    train_indices = list(train_indices.items())
+    rand.shuffle(train_indices); rand.shuffle(train_indices)
+    train_indices = dict(train_indices[:int(n_training * train_proportion)])
+  # ====== create feeder ====== #
   train_feeder = F.Feeder(
       data_desc=F.IndexedData(data=X,
                               indices=train_indices),
