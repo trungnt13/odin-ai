@@ -607,8 +607,23 @@ class FuncDesc(object):
                         if p.default != inspect.Parameter.empty}
       self._func = func
     else:
-      raise ValueError("`func` must be function, method, or FuncDesc.")
+      raise ValueError("`func` must be function, method, or FuncDesc, "
+                       "but given: %s" % str(type(func)))
     self.__name__ = self._func.__name__
+
+  def __getstate__(self):
+    import dill
+    func_str = dill.dumps(self._func)
+    return (func_str, self.__name__,
+            self._args, self._inc_args,
+            self._inc_kwargs, self._defaults)
+
+  def __setstate__(self, states):
+    import dill
+    (func_str, self.__name__,
+     self._args, self._inc_args,
+     self._inc_kwargs, self._defaults) = states
+    self._func = dill.loads(func_str)
 
   @property
   def args(self):
@@ -626,7 +641,7 @@ class FuncDesc(object):
   def is_kwargs(self):
     return self._inc_kwargs
 
-  def match(self, *args, **kwargs):
+  def _match(self, *args, **kwargs):
     keywords = OrderedDict()
     for name, val in zip(self.args, args):
       keywords[name] = val
@@ -647,7 +662,7 @@ class FuncDesc(object):
     return args, keywords
 
   def __call__(self, *args, **kwargs):
-    args, kwargs = self.match(*args, **kwargs)
+    args, kwargs = self._match(*args, **kwargs)
     return self._func(*args, **kwargs)
 
   def __str__(self):

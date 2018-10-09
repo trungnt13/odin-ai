@@ -17,17 +17,16 @@ dependencies:
 
   # data processing and management
   - pandas
+  - dill # for pickling functions and iteration
 
   # others
   - nose
   - six
+  - colorama
 
   # networking
   - pycrypto
   - requests
-
-  # others
-  - colorama
 
   # signal processing
   - resampy

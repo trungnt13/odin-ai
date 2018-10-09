@@ -468,9 +468,9 @@ class NNOp(NNOpOutput):
     from given `path` with all script have given `prefix`
     """
     # ====== check path ====== #
-    possible_path = ['.', './models', './model', './.models', './.model']
-    script_path = os.path.dirname(sys.argv[0])
     if path is None:
+      possible_path = ['.', './models', './model', './.models', './.model']
+      script_path = os.path.dirname(sys.argv[0])
       path = [os.path.join(script_path, p) for p in possible_path]
       path = [p for p in path if os.path.exists(p) and os.path.isdir(p)]
     elif not isinstance(path, (tuple, list)):
