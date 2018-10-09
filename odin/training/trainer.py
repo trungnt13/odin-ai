@@ -2,9 +2,11 @@
 from __future__ import division, absolute_import, print_function
 
 import os
+import re
 import shutil
+import pickle
 from itertools import chain
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from six.moves import range, zip, cPickle
 
 import numpy as np
@@ -123,6 +125,40 @@ class Task(object):
     self._created_iter = None
     self._stop = False
 
+  def __str__(self):
+    return "<Task:'%s' p:%s bs:%s #ep:%s/%s #it:%s/%s #n:%s/%s cb:%s>" % \
+    (ctext(self.name, 'lightyellow'),
+     ctext(self.probability, 'cyan'),
+     ctext(self.batch_size, 'cyan'),
+     ctext(self.curr_epoch, 'lightcyan'), ctext(self.nb_epoch, 'cyan'),
+     ctext(self.curr_epoch_iter, 'lightcyan'), ctext(self.curr_iter, 'cyan'),
+     ctext(self.curr_epoch_samples, 'lightcyan'), ctext(self.curr_samples, 'cyan'),
+     ','.join([ctext(i.__class__.__name__, 'cyan')
+               for i in self._callback._callbacks]))
+
+  def __getstate__(self):
+    return (self._progbar, self._nb_epoch, self._p, self._name,
+            self._batch_size, self._rng, self._seed,
+            self._shuffle_level, self._verbose)
+
+  def __setstate__(self, states):
+    (self._progbar, self._nb_epoch, self._p, self._name,
+     self._batch_size, self._rng, self._seed,
+     self._shuffle_level, self._verbose) = states
+    # ====== current info ====== #
+    self._curr_epoch = 0
+    self._curr_iter = 0
+    self._curr_samples = 0
+    self._curr_epoch_iter = 0
+    self._curr_epoch_samples = 0
+    self._callback_msg = []
+    # ====== iter tracking ====== #
+    self._created_iter = None
+    self._stop = False
+    # ====== reset value of func and data ====== #
+    self._func = None
+    self._data = None
+
   def set_callbacks(self, callbacks):
     self._callback.set_callbacks(callbacks)
     if self._verbose == 0:
@@ -163,26 +199,6 @@ class Task(object):
       raise ValueError(
           "Only support verbose value: 0, 1, 2, 3, 4; but given: %s" % str(verbose))
 
-  def __getstate__(self):
-    return (self._progbar, self._nb_epoch, self._p, self._name,
-            self._batch_size, self._rng, self._seed,
-            self._shuffle_level, self._verbose)
-
-  def __setstate__(self, states):
-    (self._progbar, self._nb_epoch, self._p, self._name,
-     self._batch_size, self._rng, self._seed,
-     self._shuffle_level, self._verbose) = states
-    # ====== current info ====== #
-    self._curr_epoch = 0
-    self._curr_iter = 0
-    self._curr_samples = 0
-    self._curr_epoch_iter = 0
-    self._curr_epoch_samples = 0
-    self._callback_msg = []
-    # ====== iter tracking ====== #
-    self._created_iter = None
-    self._stop = False
-
   def set_func(self, func, data):
     # ====== check function ====== #
     self._func = func
@@ -217,6 +233,32 @@ class Task(object):
     return self
 
   # ==================== Properties ==================== #
+  @property
+  def history(self):
+    """ Return : dictionary type
+      {epoch_id : {tensor_name0: [batch_return1, batch_return2, ...],
+                   tensor_name1: [batch_return1, batch_return2, ...],
+                   ...},
+       1 : {tensor_name0: [batch_return1, batch_return2, ...],
+                  tensor_name1: [batch_return1, batch_return2, ...],
+                  ...},
+       ... }
+
+    Example
+    -------
+    >>> for task_name, task_hist in task.history.items():
+    >>>   print(task_name)
+    >>>   for epoch_id, values in task_hist.items():
+    >>>     print('  Epoch:', epoch_id)
+    >>>     for tensor_name, v in values.items():
+    >>>       print('  ', tensor_name, len(v))
+    """
+    return self._progbar.history
+
+  @property
+  def progbar(self):
+    return self._progbar
+
   @property
   def name(self):
     return str(self._name)
@@ -532,6 +574,7 @@ class MainLoop(object):
     self._save_obj = None
     self._save_variables = []
     self._best_variables = {}
+    self._save_history = True
     # ====== maximum stored checkpoint ====== #
     self._checkpoint_increasing = True
     self._checkpoint_max = -1
@@ -556,7 +599,8 @@ class MainLoop(object):
 
   # ==================== Signal handling ==================== #
   def set_checkpoint(self, path=None, obj=None, variables=[],
-                     increasing=True, max_checkpoint=-1):
+                     increasing=True, max_checkpoint=-1,
+                     save_history=True):
     """ If `path` and `obj` given, the `obj` will be pickled
     at `path` for every checkpoint, otherwise, store the
     best values of `variables` in RAM
@@ -592,15 +636,25 @@ class MainLoop(object):
     # get the lastest checkpoint count
     saved_files = []
     base_dir = os.path.dirname(self._save_path)
-    for i in os.listdir(base_dir):
-      i = os.path.join(base_dir, i)
-      if self._save_path + '.' in i:
-        saved_files.append(i)
-    saved_files = sorted(saved_files)
+    base_name = os.path.basename(self._save_path)
+    pattern = re.compile('^%s\.\d+$' % re.escape(base_name))
+    for name in os.listdir(base_dir):
+      if not pattern.match(name):
+        continue
+      path = os.path.join(base_dir, name)
+      if self._save_path + '.' in path:
+        saved_files.append(path)
+    saved_files = sorted(saved_files,
+                         key=lambda x: int(x.split('.')[-1]))
     if len(saved_files) == 0:
       self._current_checkpoint_count = 0
     else:
       self._current_checkpoint_count = int(saved_files[-1].split('.')[-1]) + 1
+    add_notification("[%s] Found lastest checkpoint: '.%d'" %
+      (ctext('MainLoop', 'red'),
+       self._current_checkpoint_count))
+    # ====== history ====== #
+    self._save_history = bool(save_history)
     # save first checkpoint
     if self._current_checkpoint_count == 0:
       self._save(is_best=False)
@@ -613,6 +667,31 @@ class MainLoop(object):
   @property
   def batch_size(self):
     return self._batch_size
+
+  @property
+  def history(self):
+    """ Return : dictionary type
+      {
+      task1_name :
+        {epoch_id : {tensor_name0: [batch_return1, batch_return2, ...],
+                     tensor_name1: [batch_return1, batch_return2, ...],
+                     ...},
+         1 : {tensor_name0: [batch_return1, batch_return2, ...],
+                    tensor_name1: [batch_return1, batch_return2, ...],
+                    ...},
+         ... },
+      task2_name : ...
+      }
+
+    Example
+    -------
+    >>> for epoch_id, results in task.history.items():
+    >>>   for tensor_name, values in results.items():
+    >>>     print(tensor_name, len(values))
+    """
+    return OrderedDict([
+        (t.name, t.history)
+        for t in [self._main_task] + self._subtask + self._evaltask])
 
   def set_batch(self, batch_size=None, seed=-1, shuffle_level=None):
     """
@@ -657,9 +736,6 @@ class MainLoop(object):
   @property
   def callback(self):
     return self._callback
-
-  def __str__(self):
-    return 'Task'
 
   def set_callbacks(self, callbacks):
     self._callback.set_callbacks(callbacks)
@@ -741,14 +817,9 @@ class MainLoop(object):
                          TrainSignal.SAVE)
     # ====== save the model to hard drive ====== #
     if self._save_path is not None and self._save_obj is not None:
-      final_save_path = self._save_path
-      # check save path
-      if not os.path.exists(self._save_path):
-        os.mkdir(self._save_path)
-      elif os.path.isfile(self._save_path):
-        raise ValueError("Save path for the model must be a folder.")
       # serialize the best model to disk
       if is_best:
+        final_save_path = self._save_path
         N.serialize(nnops=self._save_obj, path=self._save_path,
                     save_variables=True, variables=self._save_variables,
                     binary_output=False, override=True)
@@ -770,6 +841,13 @@ class MainLoop(object):
           (ctext('MainLoop', 'red'),
            ctext('[best]', 'yellow') if is_best else '',
            final_save_path))
+      # save history
+      if self._save_history:
+        with open(final_save_path + '.hist', 'wb') as f:
+          pickle.dump(self.history, f)
+        add_notification("[%s] Save history at: %s" %
+          (ctext('MainLoop', 'red'),
+           final_save_path + '.hist'))
     # ====== otherwise, store variables directly in RAM ====== #
     elif len(self._save_variables) > 0:
       from odin import backend as K

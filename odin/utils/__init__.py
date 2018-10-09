@@ -585,8 +585,8 @@ class FuncDesc(object):
     if isinstance(func, FuncDesc):
       self._args = func._args
       self._defaults = func._defaults
-      self._inc_args = func._inc_args
-      self._inc_kwargs = func._inc_kwargs
+      self._is_include_args = func._inc_args
+      self._is_include_kwargs = func._inc_kwargs
       self._func = func._func
     # extract information from a function or method
     elif inspect.isfunction(func) or inspect.ismethod(func) or \
@@ -598,9 +598,9 @@ class FuncDesc(object):
       self._args = [n for n, p in sign.parameters.items()
                     if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
                                       inspect.Parameter.VAR_KEYWORD)]
-      self._inc_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
+      self._is_include_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
                            for i in sign.parameters.values())
-      self._inc_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
+      self._is_include_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
                              for i in sign.parameters.values())
       self._defaults = {n: p.default
                         for n, p in sign.parameters.items()
@@ -615,14 +615,14 @@ class FuncDesc(object):
     import dill
     func_str = dill.dumps(self._func)
     return (func_str, self.__name__,
-            self._args, self._inc_args,
-            self._inc_kwargs, self._defaults)
+            self._args, self._is_include_args,
+            self._is_include_kwargs, self._defaults)
 
   def __setstate__(self, states):
     import dill
     (func_str, self.__name__,
-     self._args, self._inc_args,
-     self._inc_kwargs, self._defaults) = states
+     self._args, self._is_include_args,
+     self._is_include_kwargs, self._defaults) = states
     self._func = dill.loads(func_str)
 
   @property
@@ -635,23 +635,23 @@ class FuncDesc(object):
 
   @property
   def is_args(self):
-    return self._inc_args
+    return self._is_include_args
 
   @property
   def is_kwargs(self):
-    return self._inc_kwargs
+    return self._is_include_kwargs
 
   def _match(self, *args, **kwargs):
     keywords = OrderedDict()
     for name, val in zip(self.args, args):
       keywords[name] = val
     # extra args
-    if self._inc_args and len(self.args) < len(args):
+    if self._is_include_args and len(self.args) < len(args):
       args = args[len(self.args):]
     else:
       args = ()
     # remove extra kwargs in inc_kwargs=False
-    if not self._inc_kwargs:
+    if not self._is_include_kwargs:
       kwargs = {name: kwargs[name] for name in self._args
                 if name in kwargs}
     keywords.update(kwargs)
@@ -668,9 +668,8 @@ class FuncDesc(object):
   def __str__(self):
     s = "<%s>args:%s defaults:%s varargs:%s keywords:%s" % \
         (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
-            self._inc_args, self._inc_kwargs)
+            self._is_include_args, self._is_include_kwargs)
     return s
-
 
 # ===========================================================================
 # ArgCOntrol

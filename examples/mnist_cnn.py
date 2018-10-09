@@ -6,12 +6,18 @@ os.environ['ODIN'] = 'float32,gpu,seed=12,log'
 import numpy as np
 import tensorflow as tf
 
-from odin.utils import get_modelpath, ArgController, stdio, get_logpath
+from odin.utils import (get_modelpath, ArgController, stdio,
+                        get_logpath, get_exppath)
 stdio(get_logpath('mnist.log', override=True))
 from odin import backend as K
 from odin import nnet as N
 from odin import fuel as F, training
-from six.moves import cPickle
+# ===========================================================================
+# Basic path
+# ===========================================================================
+EXP_DIR = get_exppath(tag='mnist_cnn', override=True)
+LOG_PATH = get_logpath(name='log.txt', odin_base=False, root=EXP_DIR)
+stdio(LOG_PATH)
 # ===========================================================================
 # Load data
 # ===========================================================================
@@ -67,14 +73,22 @@ task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops,
 task.set_callbacks([
     training.NaNDetector(),
     training.Checkpoint('train', epoch_percent=1.),
-    training.EarlyStopGeneralizationLoss('valid', cost_ce, threshold=5),
-    training.LambdaCallback(fn=lambda epoch, res:print("Training Epoch End:", epoch),
-                            name='train')
+    training.EarlyStopGeneralizationLoss('valid', cost_ce,
+                                         threshold=5, patience=3),
+    training.LambdaCallback(fn=lambda t:print(str(t)),
+                            task_name='train',
+                            signal=training.TaskSignal.EpochEnd),
+    training.LambdaCallback(fn=lambda t:print(str(t)),
+                            task_name='valid',
+                            signal=training.TaskSignal.EpochEnd),
+    training.EpochSummary(task_name=('train', 'valid'),
+                          output_name=cost_ce,
+                          print_plot=True, out_path='/tmp/tmp.pdf')
 ])
-task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=12,
+task.set_train_task(f_train, (ds['X_train'], ds['y_train']), epoch=25,
                     name='train')
 task.set_valid_task(f_test, (ds['X_test'], ds['y_test']),
-                    freq=training.Timer(percentage=0.8), name='valid')
+                    freq=training.Timer(percentage=1.), name='valid')
 task.set_eval_task(f_test, (ds['X_test'], ds['y_test']), name='test')
 task.run()
 # ===========================================================================

@@ -410,6 +410,10 @@ def plot_subplotGrid(shape, loc, colspan=1, rowspan=1):
   from matplotlib import pyplot as plt
   return plt.subplot2grid(shape=shape, loc=loc, colspan=colspan, rowspan=rowspan)
 
+def plot_subplot(*args):
+  from matplotlib import pyplot as plt
+  return plt.subplot(*args)
+
 def set_labels(ax, title=None, xlabel=None, ylabel=None):
   if title is not None:
     ax.set_title(title)
@@ -417,7 +421,6 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
     ax.set_xlabel(xlabel)
   if ylabel is not None:
     ax.set_ylabel(ylabel)
-
 
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
   from matplotlib import pyplot as plt
@@ -1403,12 +1406,14 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
   # axis.tight_layout()
   return ax
 
-def plot_confusion_matrix(cm, labels, ax=None, fontsize=12, colorbar=False,
+def plot_confusion_matrix(cm, labels=None, ax=None, fontsize=12, colorbar=False,
                           title=None):
   # TODO: new style for confusion matrix (using small and big dot)
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
   ax = to_axis(ax, is_3D=False)
+  if labels is None:
+    labels = ['#%d' % i for i in range(max(cm.shape))]
   # calculate F1
   N_row = np.sum(cm, axis=-1)
   N_col = np.sum(cm, axis=0)
@@ -1423,6 +1428,7 @@ def plot_confusion_matrix(cm, labels, ax=None, fontsize=12, colorbar=False,
   # column normalize
   nb_classes = cm.shape[0]
   cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
+  # im = ax.pcolorfast(cm.T, cmap=cmap)
   im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
   # axis.get_figure().colorbar(im)
   tick_marks = np.arange(len(labels))

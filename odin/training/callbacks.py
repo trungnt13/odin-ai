@@ -16,10 +16,12 @@ from six.moves import cPickle
 import numpy as np
 import scipy as sp
 
-from odin.utils import as_tuple, is_string, add_notification, ctext
+from odin.utils import (as_tuple, is_string, add_notification, ctext,
+                        FuncDesc)
 
 __all__ = [
     'TrainSignal',
+    'TaskSignal',
     'Callback',
     'Debug',
     'LambdaCallback',
@@ -30,6 +32,7 @@ __all__ = [
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
     'LRdecay',
+    'EpochSummary'
 ]
 
 # This SIGNAL can terminate running iterator (or generator),
@@ -99,7 +102,7 @@ class Callback(object):
 
   `task` is an instance of `odin.training.trainer.Task`, which
   indicate which Task is running (e.g. Training, Validating, ...)
-  Some accessible properties from `task`:
+  Some accessible properties from `odin.training.Task`:
    - curr_epoch: Total number of epoch finished since the beginning of the Task
    - curr_iter: Total number of iteration finished since the beginning of the Task
    - curr_samples: Total number of samples finished since the beginning of the Task
@@ -268,17 +271,21 @@ class Debug(Callback):
 # Others
 # ===========================================================================
 class LambdaCallback(Callback):
-  """ LambdaCallback
+  """ Some accessible properties from `odin.training.Task`:
+   - curr_epoch: Total number of epoch finished since the beginning of the Task
+   - curr_iter: Total number of iteration finished since the beginning of the Task
+   - curr_samples: Total number of samples finished since the beginning of the Task
+   - curr_epoch_iter: Number of iteration within current epoch
+   - curr_epoch_samples: Number of samples within current epoch
 
   Parameters
   ----------
   fn : function
     a function, must follow one of the option:
       - 0 argument: only the function is called
-      - 1 input argument: only input data for batch_start, epoch_start; or
-        returned results for `batch_end`, `epoch_end`, `task_end` are provided.
-      - 2 arguments: current number of epoch, and input_data/returned_results
-      - 4 arguments: current number of epoch, iteration, samples, and input_data/returned_results
+      - 1 argument: only instance of `odin.training.Task`
+      - 2 arguments: instance of `odin.training.Task`, and
+                     input_data or returned_results
   name : string
     name of the Task when this callback will be activated
   signal : odin.training.callbacks.TaskSignal
@@ -286,60 +293,59 @@ class LambdaCallback(Callback):
 
   """
 
-  def __init__(self, fn, name, signal=TaskSignal.EpochEnd):
+  def __init__(self, fn, task_name,
+               signal=TaskSignal.EpochEnd):
     super(LambdaCallback, self).__init__()
     assert hasattr(fn, '__call__')
     # ====== check function ====== #
     spec = inspect.signature(fn)
-    assert len(spec.parameters) in (0, 1, 2, 4),\
-    "`fn` must accept 0, 1, 2 or 4 input arguments"
+    assert len(spec.parameters) in (0, 1, 2),\
+    "`fn` must accept 0, 1 or 2 arguments"
     self.n_args = len(spec.parameters)
-    self.fn = fn
+    self.fn = FuncDesc(fn)
     # ====== others ====== #
-    self.name = str(name)
+    self.task_name = str(task_name)
     assert isinstance(signal, TaskSignal)
     self.signal = signal
 
-  def _call_fn(self, task, extra):
+  def _call_fn(self, task, data):
     if self.n_args == 0:
       return self.fn()
     elif self.n_args == 1:
-      return self.fn(extra)
+      return self.fn(task)
     elif self.n_args == 2:
-      return self.fn(task.curr_epoch, extra)
-    elif self.n_args == 4:
-      return self.fn(task.curr_epoch, task.curr_iter, task.curr_samples, extra)
+      return self.fn(task, data)
     else:
       raise RuntimeError()
 
   def batch_start(self, task, data):
     if self.signal == TaskSignal.BatchStart and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, data)
 
   def batch_end(self, task, batch_results):
     if self.signal == TaskSignal.BatchEnd and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, batch_results)
 
   def epoch_start(self, task, data):
     if self.signal == TaskSignal.EpochStart and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, data)
 
   def epoch_end(self, task, epoch_results):
     if self.signal == TaskSignal.EpochEnd and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, epoch_results)
 
   def task_start(self, task):
     if self.signal == TaskSignal.TaskStart and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, None)
 
   def task_end(self, task, task_results):
     if self.signal == TaskSignal.TaskEnd and \
-    self.name == task.name:
+    self.task_name == task.name:
       self._call_fn(task, task_results)
 
 # ===========================================================================
@@ -622,3 +628,135 @@ class EarlyStopPatience(EarlyStop):
         shouldStop = 1
       self.wait += 1
     return shouldSave, shouldStop
+
+# ===========================================================================
+# Monitoring
+# ===========================================================================
+class EpochSummary(Callback):
+  """
+  Parameters
+  ----------
+  print_plot : bool (default: False)
+    using bashplot to print out the figure directly in terminal
+
+  out_path : str (default: None)
+    if provided, save pdf figure to given path
+
+  epoch_percent : float (0 < .. < 1)
+    determine the periodic of the summary within single epoch
+
+  repeat_freq : int (.. > 0)
+    determine the repeating frequency (e.g. `repeat_freq=2`
+    is for every 2 epoch)
+
+  fn_reduce : bool (default:False)
+
+
+  """
+
+  def __init__(self, task_name, output_name,
+               fn_reduce=lambda x: (np.mean(x)
+                                    if isinstance(x[0], Number) else
+                                    sum(i for i in x)),
+               print_plot=False, out_path=None,
+               repeat_freq=1,
+               logging=True):
+    super(EpochSummary, self).__init__(logging=logging)
+    self._task_name = as_tuple(task_name, t=str)
+    # ====== scheduling ====== #
+    assert repeat_freq >= 1
+    self._repeat_freq = int(repeat_freq)
+    self._count = self._repeat_freq * len(self._task_name)
+    self._epoch_results = defaultdict(list)
+    # ====== output identity ====== #
+    if is_string(output_name):
+      self.output_name = output_name
+    elif hasattr(output_name, 'name'):
+      self.output_name = output_name.name
+    else:
+      raise ValueError('Invalid `output_name`=%s' % str(output_name))
+    self.fn_reduce = FuncDesc(func=fn_reduce)
+    # ====== how to output ====== #
+    self.print_plot = bool(print_plot)
+    self.out_path = out_path
+
+  def epoch_end(self, task, epoch_results):
+    if task.name in self._task_name:
+      self._count -= 1
+      # ====== processing results ====== #
+      if self.output_name not in epoch_results:
+        raise RuntimeError("Cannot find output with name: '%s' from task: %s"
+          % (self.output_name, str(task)))
+      batch_results = epoch_results[self.output_name]
+      self._epoch_results[task.name].append(self.fn_reduce(batch_results))
+      # ====== start plotting ====== #
+      if self._count == 0:
+        self._count = self._repeat_freq * len(self._task_name)
+        if all(len(i) >= 2 for i in self._epoch_results.values()):
+          from odin import visual as V
+          # ====== print text plot ====== #
+          if self.print_plot:
+            text = []
+            for name in self._task_name:
+              values = self._epoch_results[name]
+              if isinstance(values[0], Number):
+                t = V.print_bar(f=values, height=8, title=name)
+              elif isinstance(values[0], np.ndarray) and values[0].ndim == 2 and \
+              values[0].shape[0] == values[0].shape[1]:
+                t = V.print_confusion(arr=values[-1],
+                                     side_bar=False, inc_stats=True,
+                                     float_precision=2)
+              else:
+                t = ''
+              if len(t) > 0:
+                text.append(t)
+            if len(text) > 1:
+              print(V.merge_text_graph(*text, padding='  '))
+            else:
+              print(text[0])
+          # ====== save pdf ====== #
+          if self.out_path is not None:
+            n_col = len(self._task_name)
+            n_row = max(len(i) for i in self._epoch_results.values())
+            save_figure = True
+            from matplotlib import pyplot as plt
+            for i, name in enumerate(self._task_name):
+              values = self._epoch_results[name]
+              # plotting series
+              if isinstance(values[0], Number):
+                if i == 0:
+                  V.plot_figure(nrow=3, ncol=20)
+                plt.subplot(1, n_col, i + 1)
+                plt.plot(values)
+                plt.xlim((0, len(values) - 1))
+                plt.title('[%s] %s' % (self.output_name, name)
+                          if i == 0 else name)
+              # plotting matrix
+              elif isinstance(values[0], np.ndarray) and values[0].ndim == 2:
+                if i == 0:
+                  V.plot_figure(nrow=n_row * 5, ncol=min(n_col * 5, 20))
+                is_square_matrix = values[0].shape[0] == values[0].shape[1]
+                for j in range(n_row):
+                  if j >= len(values):
+                    continue
+                  ax = plt.subplot(n_row, n_col, j * n_col + i + 1)
+                  if is_square_matrix:
+                    V.plot_confusion_matrix(cm=values[j], fontsize=5)
+                  else:
+                    ax.imshow(values[j], interpolation='nearest',
+                              cmap=plt.cm.Blues)
+                  if j == 0:
+                    ax.set_title(name)
+                  plt.xticks(())
+                  plt.yticks(())
+                  if i == 0:
+                    plt.ylabel('#Epoch: %d' % (j + 1))
+              # no-idea how to plot next
+              else:
+                save_figure = False
+            # save figure to pdf file
+            if save_figure:
+              V.plot_save(self.out_path, tight_plot=False,
+                          clear_all=True, log=False, dpi=88)
+              self.send_notification("Saved summary at: %s" % self.out_path)
+    return None

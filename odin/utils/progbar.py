@@ -6,6 +6,7 @@ from __future__ import print_function, division, absolute_import
 
 import sys
 import time
+import inspect
 from numbers import Number
 from datetime import datetime
 from contextlib import contextmanager
@@ -61,32 +62,68 @@ def add_notification(msg):
       datetime.now().strftime('%d/%b-%H:%M:%S') + _RESET + msg + ''
   _tqdm.write(msg)
 
+class _FuncWrap(object):
+
+  def __init__(self, func, default_func=lambda x: x):
+    super(_FuncWrap, self).__init__()
+    if func is None:
+      func = default_func
+    assert inspect.isfunction(func), \
+    "Invalid function object of type: %s" % str(type(func))
+    self.func = func
+
+  def __call__(self, *args, **kwargs):
+    return self.func(*args, **kwargs)
+
+  def __getstate__(self):
+    import dill
+    return dill.dumps(self.func)
+
+  def __setstate__(self, states):
+    import dill
+    self.func = dill.loads(states)
+
+def _default_dict_list_creator():
+  return defaultdict(list)
+
 # ===========================================================================
-# Progressbar
+# Progress bar
 # ===========================================================================
 class Progbar(object):
 
-  """ Original progress bar is just failed illusion of time and
-  estimation.
+  """ Comprehensive review of any progress, this object is
+  fully pickle-able, and can be used for storing history,
+  summaries and report of the progress as well.
 
   Parameters
   ----------
   target: int
       total number of steps expected
+
   interval: float
       Minimum progress display update interval, in seconds.
+
   keep: bool
       whether to keep the progress bar when the epoch finished
+
   print_report: bool
       print updated report along with the progress bar for each update
+
   print_summary: bool
       print epoch summary after each epoch
+
   count_func: call-able
       a function takes the returned batch and return an integer for upating
       progress.
+
   report_func: call-able
       a function takes the returned batch and a collection of pair
       (key, value) for constructing the report.
+
+  progress_func : call-able
+      for post-processing the return value during processing into
+      a number representing addition in the progress
+
   name: str or None
       specific name for the progress bar
 
@@ -108,7 +145,7 @@ class Progbar(object):
   FP = sys.stderr
 
   def __init__(self, target, interval=0.08, keep=False,
-               print_report=True, print_summary=False,
+               print_progress=True, print_report=True, print_summary=False,
                count_func=None, report_func=None, progress_func=None,
                name=None):
     self.__pb = None # tqdm object
@@ -133,17 +170,17 @@ class Progbar(object):
     # ====== flags ====== #
     self.__interval = float(interval)
     self.__keep = keep
-    self.print_progress = True
-    self.print_report = print_report
-    self.print_summary = print_summary
+    self.print_progress = bool(print_progress)
+    self.print_report = bool(print_report)
+    self.print_summary = bool(print_summary)
     # ====== for history ====== #
     self._report = OrderedDict()
     self._last_report = None
     self._last_print_time = None
-    self._epoch_summarizer = {}
+    self._epoch_summarizer_func = {}
     # ====== recording history ====== #
     # dictonary: {epoch_id: {key: [value1, value2, ...]}}
-    self._epoch_hist = defaultdict(lambda: defaultdict(list))
+    self._epoch_hist = defaultdict(_default_dict_list_creator)
     self._epoch_summary = defaultdict(dict)
     self._epoch_idx = 0
     self._epoch_start_time = None
@@ -153,24 +190,13 @@ class Progbar(object):
       raise RuntimeError("`count_func` and `report_func` can only be used "
                          "when `target` is an iterator with specific length.")
     #
-    if count_func is not None:
-      if not hasattr(count_func, '__call__'):
-        raise ValueError("`count_func` must be call-able or None.")
-      self.__count_func = count_func
-    else:
-      self.__count_func = lambda x: len(x)
-    #
-    if report_func is not None:
-      if not hasattr(report_func, '__call__'):
-        raise ValueError("`report_func` must be call-able or None.")
-      self.__report_func = report_func
-    else:
-      self.__report_func = lambda x: None
+    self.__count_func = _FuncWrap(func=count_func,
+                                  default_func=lambda x: len(x))
+    self.__report_func = _FuncWrap(func=report_func,
+                                   default_func=lambda x: None)
     # ====== check progress function ====== #
-    if progress_func is not None:
-      if not hasattr(progress_func, '__call__'):
-        raise ValueError("`progress_func` must be call-able or None.")
-    self._progress_func = progress_func
+    self._progress_func = _FuncWrap(func=progress_func,
+                                    default_func=lambda x: x)
     # ====== other ====== #
     self._labels = None # labels for printing the confusion matrix
 
@@ -221,12 +247,21 @@ class Progbar(object):
 
   @property
   def history(self):
-    """ Return history recording all add item (timestamp, key, value)
-    to this progress
+    """ Return
+    dictonary:
+      {epoch_id : {tensor_name0: [batch_return1, batch_return2, ...],
+                   tensor_name1: [batch_return1, batch_return2, ...],
+                   ...},
+       1 : {tensor_name0: [batch_return1, batch_return2, ...],
+                  tensor_name1: [batch_return1, batch_return2, ...],
+                  ...},
+       ... }
 
-    Return
-    ------
-    dictonary: {epoch_id: {key: [value1, value2, ...]}}
+    Example
+    -------
+    >>> for epoch_id, results in task.history.items():
+    >>>   for tensor_name, values in results.items():
+    >>>     print(tensor_name, len(values))
     """
     return self._epoch_hist
 
@@ -247,7 +282,7 @@ class Progbar(object):
     if not hasattr(fn, '__call__'):
       raise ValueError('`fn` must be call-able.')
     key = str(key)
-    self._epoch_summarizer[key] = fn
+    self._epoch_summarizer_func[key] = _FuncWrap(func=fn, default_func=None)
     return self
 
   def set_name(self, name):
@@ -381,10 +416,13 @@ class Progbar(object):
     # ====== create epoch summary ====== #
     for key, values in self._epoch_hist[self._epoch_idx].items():
       values = [v for v in values]
-      if key in self._epoch_summarizer: # provided summarizer
-        self._epoch_summary[self._epoch_idx][key] = self._epoch_summarizer[key](values)
+      # provided summarizer function
+      if key in self._epoch_summarizer_func:
+        self._epoch_summary[self._epoch_idx][key] = self._epoch_summarizer_func[key](values)
+      # very heuristic way to deal with sequence of numbers
       elif isinstance(values[0], Number):
         self._epoch_summary[self._epoch_idx][key] = np.mean(values)
+      # numpy array
       elif isinstance(values[0], np.ndarray):
         self._epoch_summary[self._epoch_idx][key] = sum(v for v in values)
     # total epoch time
@@ -439,11 +477,10 @@ class Progbar(object):
 
   def add(self, n=1):
     """ You need to call pause if """
+    n = self._progress_func(n)
     if not isinstance(n, Number):
-      if self._progress_func is None:
-        raise RuntimeError(
-            "`n` is an object, but no given `progress_func` for preprocessing")
-      n = self._progress_func(n)
+      raise RuntimeError(
+          "Progress return an object, but not given `progress_func` for post-processing")
     if n <= 0:
       return self
     fp = Progbar.FP

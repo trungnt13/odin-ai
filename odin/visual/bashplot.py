@@ -107,6 +107,7 @@ def merge_text_graph(*graphs, padding=' '):
              if len(l) < maxlen else l
              for l in lines]
     return lines
+
   graphs = [normalizing_lines(g) for g in graphs]
   maxlen = max(len(i) for i in graphs)
   final_text = ''
@@ -293,17 +294,30 @@ def print_dist(d, height=12, pch="o", show_number=False,
   return fig[:-1]
 
 
-def _float2str(x):
-  return '1.0' if x > 0.99 else ('%.2f' % x)[1:]
+def _float2str(x, fp=2):
+  fmt = '%.' + '%d' % fp + 'f'
+  return '1.' + '0' * (fp - 1) \
+  if x > 0.99 else (fmt % x)[1:]
 
-
-def print_confusion(arr, labels=None, inc_stats=True):
+def print_confusion(arr, labels=None, side_bar=True, inc_stats=True,
+                    float_precision=2):
   """
   Parameters
   ----------
-  inc_stats: bool
-      if True, include Precision, Recall, F1 ,False Alarm
+  side_bar : bool (default: True)
+    if True, include the side bar of precision, recall, F1,
+    false alarm and number of samples
+
+  inc_stats : bool (default: True)
+    if True, include Precision, Recall, F1 ,False Alarm
+
+  float_precision : int (.. > 0)
+    number of floating point precision for printing the entries
   """
+  side_bar = bool(side_bar)
+  inc_stats = bool(inc_stats)
+  float_precision = int(float_precision)
+  assert float_precision > 0
   # ====== preprocessing ====== #
   LABEL_COLOR = 'magenta'
   if arr.ndim != 2:
@@ -323,7 +337,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
   arr_sum_col = arr.sum(0).astype('float64')
   info = {}
   nb_info = 5 # Precision, Recall, F1, FA, Sum
-  if inc_stats:
+  if inc_stats or side_bar:
     for i in range(nb_classes):
       TP = arr[i, i] # True positive
       FN = arr_sum_row[i] - arr[i, i] # False negative
@@ -339,12 +353,13 @@ def print_confusion(arr, labels=None, inc_stats=True):
   with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     arr = np.nan_to_num(arr.astype('float64') / arr_sum_row[:, None])
-  # print title
-  if inc_stats:
-    fig = " " * ((3 + 1) * nb_classes + max_label_length + 2)
+  # print title of the side bar
+  fig = " " * ((3 + 1) * nb_classes + max_label_length + 2)
+  if side_bar:
     fig += ctext('|'.join(['Pre', 'Rec', ' F1', ' FA', 'Sum']), 'red') + '\n'
     longest_line = len(fig) - 1
   else:
+    longest_line = len(fig) - 1
     fig = ""
   # confusion matrix
   for row_id, row in enumerate(arr):
@@ -357,7 +372,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
       most_misclassified = None
     # iterate over each column value
     for col_id, col in enumerate(row):
-      col = _float2str(col)
+      col = _float2str(col, fp=float_precision)
       if col_id == row_id:
         row_text += ctext(col,
                           color='blue' if col == '1.0' else 'cyan') + ' '
@@ -367,7 +382,7 @@ def print_confusion(arr, labels=None, inc_stats=True):
       else:
         row_text += col + ' '
     # new line
-    if inc_stats:
+    if side_bar:
       # print float, except the last one is int
       info_str = [_float2str(val) if i < (nb_info - 1) else
                   ('%d' % np.round(val))
@@ -375,21 +390,24 @@ def print_confusion(arr, labels=None, inc_stats=True):
       fig += row_text + ' ' + '|'.join(info_str) + '\n'
     else:
       fig += row_text + '\n'
-  # draw labels at the bottom
+  # ====== draw labels at the bottom ====== #
   labels = [[c for c in i.replace('-', '|').replace('_', '|')[::-1]]
             for i in labels]
   for i in range(max_label_length):
     fig += ' ' * (max_label_length + 1)
     row = ''
     for l in labels:
-      row += ' ' + (l.pop() if len(l) > 0 else ' ') + '  '
+      row += ' ' + (l.pop() if len(l) > 0 else ' ') + ' ' * float_precision
     fig += ctext(row, 'magenta') + '\n'
-  # Add the average values
+  # ====== Add the average values of stats ====== #
   if inc_stats:
     n = 0
     for i, name in enumerate(['Pre', 'Rec', ' F1', ' FA', '  Sum']):
       avr = np.mean([stats[i] for stats in info.values()])
-      avr = ctext('%s:' % name, 'red') + '%.4f' % avr
+      avr = '%.4g' % avr
+      if avr[0] == '0':
+        avr = avr[1:]
+      avr = ctext('%s:' % name, 'red') + avr
       if n + len(avr) >= longest_line: # new line
         avr += '\n'
         n = 0
