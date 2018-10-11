@@ -132,8 +132,12 @@ def _parse_data_descriptor(path, read_only):
   try: # try with unpickling
     with open(path, 'rb') as f:
       data = cPickle.load(f)
-      return [(file_name,
-      (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
+      shape_info = 0
+      if hasattr(data, 'shape'):
+        shape_info = data.shape
+      elif hasattr(data, '__len__'):
+        shape_info = len(data)
+      return [(file_name, (type(data).__name__, shape_info, data, path))]
   except cPickle.UnpicklingError as e:
     try: # try again with numpy load
       with open(path, 'rb') as f:
@@ -909,7 +913,7 @@ class Dataset(object):
     longest_dtype = 0
     longest_file = 0
     print_info = []
-    for name, (dtype, shape, data, path) in self._data_map.items():
+    for name, (dtype, shape, data, path) in sorted(self._data_map.items()):
       shape = data.shape if hasattr(data, 'shape') else shape
       longest_name = max(len(name), longest_name)
       longest_dtype = max(len(str(dtype)), longest_dtype)

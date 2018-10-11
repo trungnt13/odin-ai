@@ -188,6 +188,17 @@ def calc_white_mat(X):
     W = sp.linalg.cholesky(sp.linalg.inv(X), lower=True)
   return W
 
+def log_norm(X, axis=1, scale_factor=10000):
+  """ Seurat log-normalize """
+  if is_tensor(X):
+    return tf.log1p(X / (tf.reduce_sum(X, axis=axis, keepdims=True) + EPS) * scale_factor)
+  elif isinstance(X, np.ndarray):
+    X = X.astype('float64')
+    return np.log1p(
+        X / (np.sum(X, axis=axis, keepdims=True) + np.finfo(X.dtype).eps) * scale_factor)
+  else:
+    raise ValueError("Only support numpy.ndarray or tensorflow.Tensor")
+
 # ===========================================================================
 # Conversion
 # ===========================================================================

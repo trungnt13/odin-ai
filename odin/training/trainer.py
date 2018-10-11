@@ -689,6 +689,8 @@ class MainLoop(object):
     >>>   for tensor_name, values in results.items():
     >>>     print(tensor_name, len(values))
     """
+    if self._main_task is None:
+      return {}
     return OrderedDict([
         (t.name, t.history)
         for t in [self._main_task] + self._subtask + self._evaltask])

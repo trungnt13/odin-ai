@@ -10,7 +10,7 @@ from collections import defaultdict, Iterator, OrderedDict, Mapping
 import numpy as np
 
 from odin.config import get_rng
-from odin.utils.math_utils import interp
+from odin.maths import interp
 from odin.utils import as_tuple, flatten_list, ctext
 
 def prior2weights(prior, exponential=False,
@@ -386,8 +386,7 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
 # ===========================================================================
 def summary(x, axis=None, shorten=False):
   """ Return string of statistical summary given series `x`
-
-  {#:%d|min:%s|qu1:%s|med:%s|mea:%.8f|qu3:%s|max:%s|std:%.8f}
+    {#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}
   """
   if isinstance(x, Iterator):
     x = list(x)

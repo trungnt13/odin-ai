@@ -10,6 +10,7 @@ from io import BytesIO, StringIO
 from six import string_types
 from Crypto.Cipher import AES
 import numpy as np
+import scipy as sp
 
 # ===========================================================================
 # Helper
@@ -94,6 +95,8 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
     f = file_or_path
   # special case big custom array with shape attribute
   elif hasattr(file_or_path, 'shape'):
+    if isinstance(file_or_path, sp.sparse.coo_matrix):
+      file_or_path = file_or_path.todense()
     itemsize = np.dtype(file_or_path.dtype).itemsize
     batch_size = int(max(chunksize // (itemsize * np.prod(file_or_path.shape[1:])), 8))
     indices = range(0, file_or_path.shape[0] + batch_size, batch_size)

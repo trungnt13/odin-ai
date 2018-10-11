@@ -41,7 +41,6 @@ from .python_utils import *
 from .np_utils import *
 from . import mpi
 from . import shape_calculation
-from . import math_utils
 from . import decorators
 from . import crypto
 from .crypto import md5_checksum
@@ -1074,7 +1073,6 @@ if sys.version_info[0] == 2:
 else:
   from six.moves.urllib.request import urlretrieve
 
-
 def get_file(fname, origin, outdir):
   '''
   Parameters
@@ -1090,7 +1088,8 @@ def get_file(fname, origin, outdir):
       shutil.rmtree(fpath)
   # ====== download package ====== #
   if not os.path.exists(fpath):
-    prog = Progbar(target=-1, name="Downloading: %s" % origin,
+    prog = Progbar(target=-1,
+                   name="Downloading: %s" % os.path.basename(origin),
                    print_report=True, print_summary=True)
 
     def dl_progress(count, block_size, total_size):
@@ -1111,7 +1110,6 @@ def get_file(fname, origin, outdir):
         os.remove(fpath)
       raise
   return fpath
-
 
 # ===========================================================================
 # Python utilities
