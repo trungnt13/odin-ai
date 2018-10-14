@@ -7,6 +7,9 @@ from odin.utils.crypto import md5_checksum
 
 _cached_values = {}
 
+# ===========================================================================
+# auto-select best TSNE
+# ===========================================================================
 def _create_key(kwargs, md5):
   key = dict(kwargs)
   del key['verbose']
@@ -14,7 +17,7 @@ def _create_key(kwargs, md5):
   return str(list(sorted(key.items(), key=lambda x: x[0])))
 
 def fast_tsne(*X, n_components=2, perplexity=30.0,
-              early_exaggeration=12.0, learning_rate=200.0, n_iter=1000,
+              early_exaggeration=8.0, learning_rate=200.0, n_iter=1000,
               n_iter_without_progress=300, min_grad_norm=1e-7,
               metric="euclidean", init="random", verbose=0,
               random_state=5218, method='barnes_hut', angle=0.5,
@@ -28,13 +31,40 @@ def fast_tsne(*X, n_components=2, perplexity=30.0,
   kwargs = dict(locals())
   del kwargs['X']
   # ====== import proper T-SNE ====== #
+  tsne_version = None
   try:
-    from MulticoreTSNE import MulticoreTSNE as TSNE
+    from tsnecuda import TSNE
+    from tsnecuda.NaiveTSNE import NaiveTSNE as _exact_TSNE
+    tsne_version = 'cuda'
   except ImportError:
-    wprint("Install MulticoreTSNE from `https://github.com/DmitryUlyanov/Multicore-TSNE`"
-           ' to accelerate the T-SNE on multiple CPU cores.')
+    wprint("Install CUDA-TSNE from `https://github.com/CannyLab/tsne-cuda` "
+           "for significant speed up.")
+    try:
+      from MulticoreTSNE import MulticoreTSNE as TSNE
+      tsne_version = 'multicore'
+    except ImportError:
+      wprint("Install MulticoreTSNE from `pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git`"
+             ' to accelerate the T-SNE on multiple CPU cores.')
+      try:
+        from sklearn.manifold import TSNE
+        tsne_version = 'sklearn'
+      except Exception as e:
+        raise e
+  # ====== modify kwargs ====== #
+  if tsne_version == 'cuda':
+    kwargs['random_seed'] = kwargs['random_state']
+    kwargs['theta'] = angle
+    if method == 'exact':
+      TSNE = _exact_TSNE
+      del kwargs['theta']
+    del kwargs['random_state']
     del kwargs['n_jobs']
-    from sklearn.manifold import TSNE
+    del kwargs['angle']
+    del kwargs['method']
+  elif tsne_version == 'multicore':
+    pass
+  else:
+    del kwargs['n_jobs']
   # ====== getting cached values ====== #
   results = []
   X_new = []

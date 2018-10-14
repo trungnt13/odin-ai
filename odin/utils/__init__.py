@@ -841,12 +841,11 @@ class ArgController(object):
       max_len = max(len(i) for i in args.keys())
       max_len = '%-' + str(max_len) + 's'
       print('\n******** Parsed arguments ********')
-      for name, val in args.items():
+      for name, val in sorted(args.items()):
         print(max_len % name, ': ', val)
       print('**********************************\n')
     # convert it to struct
     return struct(args)
-
 
 # ===========================================================================
 # Simple math and processing

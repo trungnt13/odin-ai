@@ -781,7 +781,7 @@ def plot_scatter_layers(x_y_val, ax=None,
 def plot_scatter_heatmap(x, y, val, z=None, ax=None,
                          cls_indicator=None, cls_name=None,
                          cls_color=None, cls_marker=None,
-                         size=4.0, elev=None, azim=None,
+                         size=4.0, alpha=None, elev=None, azim=None,
                          ticks_off=True, grid=True,
                          colorbar=False, colorbar_horizontal=False,
                          legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
@@ -793,7 +793,8 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
   y : 1D-array (num_samples,)
   z : 1D-array or None (num_samples,)
     if provided, plot in 3D
-
+  val : 1D-array (num_samples,)
+    float value for the intensity of given class
   """
   from matplotlib import pyplot as plt
   assert len(x) == len(y) == len(val)
@@ -838,7 +839,7 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
         if is_3D_mode:
           z_.append(z[i])
     kwargs = {'c':val_, 's':size[idx], 'marker':cls_marker[idx],
-              'cmap': cls_color[idx]}
+              'alpha': alpha, 'cmap': cls_color[idx]}
     # plot
     if is_3D_mode:
       _ = ax.scatter(x_, y_, z_, **kwargs)
