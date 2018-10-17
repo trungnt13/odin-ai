@@ -163,7 +163,9 @@ class CallbackList(Callback):
     elif isinstance(callbacks, CallbackList):
       callbacks = callbacks._callbacks
     else:
-      callbacks = as_tuple(callbacks, t = Callback)
+      callbacks = as_tuple(callbacks,
+        t=lambda x: isinstance(x, (Callback, type(None))))
+      callbacks = [i for i in callbacks if i is not None]
     self._callbacks = [i for i in set(callbacks)]
     return self
 

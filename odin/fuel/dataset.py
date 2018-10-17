@@ -897,6 +897,16 @@ class Dataset(object):
                              len(value) if hasattr(value, '__len__') else 0,
                              value, path)
 
+  def get_md5_checksum(self, excluded_name=[]):
+    md5_text = ''
+    all_data_items = {i: j
+                      for i, j in self._data_map.items()
+                      if i not in excluded_name}
+    for name, (dtype, shape, data, path) in sorted(all_data_items.items(),
+                                                   key=lambda x: x[0]):
+      md5_text += md5_checksum(path)
+    return md5_text
+
   def __str__(self):
     padding = '  '
     # NOTE: each element in the list is one line
