@@ -202,6 +202,20 @@ def log_norm(X, axis=1, scale_factor=10000):
 # ===========================================================================
 # Conversion
 # ===========================================================================
+def logreduceexp(x, reduction_function=tf.reduce_mean, axis=None,
+                 name="LogReduceExp"):
+  """ log-reduction-exp over axis to avoid overflow and underflow
+
+  Parameters
+  ----------
+  `x` : [nb_sample, feat_dim]
+  `axis` should be features dimension
+  """
+  x_max = tf.reduce_max(x, axis=axis, keepdims=True)
+  y = tf.log(
+      reduction_function(tf.exp(x - x_max), axis = axis, keepdims=True)) + x_max
+  return tf.squeeze(y)
+
 def logsumexp(x, axis=-1, name=None):
   """
   `x` : [nb_sample, feat_dim]

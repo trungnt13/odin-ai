@@ -862,9 +862,9 @@ class MainLoop(object):
             "[%s] Creating checkpoint of %d-variables (%.2f MB) in RAM" %
             (ctext('MainLoop', 'red'), len(self._save_variables), mem_size))
 
-  def _rollback(self):
+  def _rollback(self, is_final=False):
     # TODO: update rollback mechanism
-    if not self._allow_rollback:
+    if not self._allow_rollback and not is_final:
       return
     # trigger event for callbacks
     self._callback.event(TrainSignal.ROLLBACK)
@@ -958,8 +958,8 @@ class MainLoop(object):
     for t in self._task + self._subtask:
       t.stop()
     # ====== Run eval task before finishing ====== #
-    if self._allow_rollback:
-      self._rollback()
+    # rollback to the best check point for final evaluation
+    self._rollback(is_final=True)
     for et in self._evaltask:
       for x in iter(et):
         pass

@@ -437,21 +437,23 @@ class EarlyStop(Callback):
 
   Parameters
   ----------
-  name : string
+  task_name : string
       task name for checking this criterion
+
+  output_name : {Tensor, string}
+      name of the Tensor or the Tensor itself for monitoring
+
   threshold : float
       for example, threshold = 5, if we loss 5% of performance on validation
       set, then stop
+
   patience: int
       how many cross the threshold that still can be rollbacked
+
   get_value : function
       function to process the results of whole epoch (i.e list of results
       returned from batch_end) to return comparable number.
       For example, lambda x: np.mean(x)
-  stop_callback: function
-      will be called when stop signal triggered
-  save_callback: function
-      will be called when save signal triggered
 
   Note
   ----
@@ -462,7 +464,8 @@ class EarlyStop(Callback):
   """
 
   def __init__(self, task_name, output_name, threshold, patience=1,
-               get_value=lambda x: np.mean(x), logging=True):
+               get_value=lambda x: np.mean(x),
+               logging=True):
     super(EarlyStop, self).__init__(logging=logging)
     self._task_name = str(task_name)
     self._output_name = output_name if is_string(output_name) \

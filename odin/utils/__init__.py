@@ -720,12 +720,21 @@ class ArgController(object):
     self.name = []
     self.print_parsed = print_parsed
 
+  def _process_name(self, name):
+    if '--' == name[:2]:
+      name = name[2:]
+    elif '-' == name[0]:
+      name = name[1:]
+    name = name.replace('-', '_')
+    return name
+
   def _is_positional(self, name):
     if name[0] != '-' and name[:2] != '--':
       return True
     return False
 
   def _parse_input(self, key, val):
+    key = self._process_name(key)
     # ====== search if manual preprocessing available ====== #
     for i, preprocess in self.args_preprocessor.items():
       if key in i and preprocess is not None:
@@ -784,14 +793,15 @@ class ArgController(object):
       self.parser.add_argument(name, help=help, type=str, action="store",
           default=str(default), metavar='')
 
-    # store preprocess dictionary
+    # ====== store preprocess dictionary ====== #
+    name = self._process_name(name)
     if not hasattr(preprocess, '__call__'):
       preprocess = None
     self.args_preprocessor[name] = preprocess
     # store the enum values
     if enum is not None and not isinstance(enum, (tuple, list)):
       enum = (enum,)
-    self.args_enum[name.replace('-', '')] = enum
+    self.args_enum[name] = enum
     return self
 
   def parse(self, config_path=None):
@@ -824,7 +834,7 @@ class ArgController(object):
       exit()
     # ====== checking enumerate values ====== #
     for name, val in args.items():
-      enum = self.args_enum[name.replace('-', '')]
+      enum = self.args_enum[self._process_name(name)]
       if enum is None:
         continue
       if val not in enum:
