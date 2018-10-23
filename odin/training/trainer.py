@@ -126,7 +126,7 @@ class Task(object):
     self._stop = False
 
   def __str__(self):
-    return "<Task:'%s' p:%s bs:%s #ep:%s/%s #it:%s/%s #n:%s/%s cb:%s>" % \
+    return "<Task:'%s' p:%s bs:%s #ep:%s/%s #it:%s/%s #n:%s/%s %s>" % \
     (ctext(self.name, 'lightyellow'),
      ctext(self.probability, 'cyan'),
      ctext(self.batch_size, 'cyan'),

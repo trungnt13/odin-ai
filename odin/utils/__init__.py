@@ -737,7 +737,7 @@ class ArgController(object):
     key = self._process_name(key)
     # ====== search if manual preprocessing available ====== #
     for i, preprocess in self.args_preprocessor.items():
-      if key in i and preprocess is not None:
+      if key == i and preprocess is not None:
         return preprocess(val)
     # ====== auto preprocess ====== #
     try:
