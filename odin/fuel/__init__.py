@@ -108,7 +108,16 @@ class DataLoader(object):
 class MNIST(DataLoader):
   pass
 
-class FMNIST(DataLoader):
+class MNIST_original(DataLoader):
+  pass
+
+class FMNIST_original(DataLoader):
+  pass
+
+class MNIST_dropout(DataLoader):
+  pass
+
+class FMNIST_dropout(DataLoader):
   pass
 
 class CIFAR10(DataLoader):

@@ -33,7 +33,7 @@ TRAINING_TF = True
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-ds = F.FMNIST.load()
+ds = F.FMNIST_original.load()
 labels = ds['labels']
 nb_classes = len(labels)
 

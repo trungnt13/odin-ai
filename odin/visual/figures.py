@@ -1924,25 +1924,44 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
       if True, remove all saved figures from current figure list
       in matplotlib
   """
-  try:
-    from matplotlib.backends.backend_pdf import PdfPages
-    import matplotlib.pyplot as plt
-    if tight_plot:
-      plt.tight_layout()
-    if os.path.exists(path) and os.path.isfile(path):
-      os.remove(path)
-    pp = PdfPages(path)
-    if figs is None:
-      figs = [plt.figure(n) for n in plt.get_fignums()]
-    for fig in figs:
-      fig.savefig(pp, format='pdf', bbox_inches="tight")
-    pp.close()
-    if log:
-      sys.stderr.write('Saved pdf figures to:%s \n' % str(path))
-    if clear_all:
-      plt.close('all')
-  except Exception as e:
-    sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
+  import matplotlib.pyplot as plt
+  if tight_plot:
+    plt.tight_layout()
+  if os.path.exists(path) and os.path.isfile(path):
+    os.remove(path)
+  if figs is None:
+    figs = [plt.figure(n) for n in plt.get_fignums()]
+  # ====== saving PDF file ====== #
+  if '.pdf' in path.lower():
+    saved_path = [path]
+    try:
+      from matplotlib.backends.backend_pdf import PdfPages
+      pp = PdfPages(path)
+      for fig in figs:
+        fig.savefig(pp, dpi=dpi, format='pdf', bbox_inches="tight")
+      pp.close()
+    except Exception as e:
+      sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
+  # ====== saving PDF file ====== #
+  else:
+    saved_path = []
+    path = os.path.splitext(path)
+    ext = path[-1][1:].lower()
+    path = path[0]
+    kwargs = dict(dpi=dpi, bbox_inches="tight")
+    for idx, fig in enumerate(figs):
+      if len(figs) > 1:
+        out_path = path + ('.%d.' % idx) + ext
+      else:
+        out_path = path + '.' + ext
+      fig.savefig(out_path, **kwargs)
+
+      saved_path.append(out_path)
+  # ====== clean ====== #
+  if log:
+    sys.stderr.write('Saved figures to:%s \n' % ', '.join(saved_path))
+  if clear_all:
+    plt.close('all')
 
 def plot_save_show(path, figs=None, dpi=180, tight_plot=False,
                    clear_all=True, log=True):

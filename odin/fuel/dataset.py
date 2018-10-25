@@ -137,13 +137,16 @@ def _parse_data_descriptor(path, read_only):
         shape_info = data.shape
       elif hasattr(data, '__len__'):
         shape_info = len(data)
-      return [(file_name, (type(data).__name__, shape_info, data, path))]
+      return [(file_name, (str(data.dtype) if hasattr(data, 'dtype') else
+                           type(data).__name__,
+                           shape_info, data, path))]
   except cPickle.UnpicklingError as e:
     try: # try again with numpy load
       with open(path, 'rb') as f:
         data = np.load(f)
         return [(file_name,
-        (type(data).__name__, len(data) if hasattr(data, '__len__') else 0, data, path))]
+        (str(data.dtype) if hasattr(data, 'dtype') else type(data).__name__,
+         len(data) if hasattr(data, '__len__') else 0, data, path))]
     except Exception as e:
       pass
   # ====== load memmap dict ====== #

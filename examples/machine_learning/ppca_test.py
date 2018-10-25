@@ -24,7 +24,7 @@ mnist = F.MNIST.load()
 X_mnist = mnist['X_test'][:].reshape(-1, 28 * 28)
 y_mnist = mnist['y_test'][:]
 
-fmnist = F.FMNIST.load()
+fmnist = F.FMNIST_original.load()
 X_fmnist = fmnist['X_test'][:].reshape(-1, 28 * 28)
 y_fmnist = fmnist['y_test'][:]
 

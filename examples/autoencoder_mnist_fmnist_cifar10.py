@@ -28,7 +28,7 @@ args = args_parse(descriptions=[
 # ===========================================================================
 is_cifar10 = False
 if args.data == 'fmnist':
-  ds = F.FMNIST.load()
+  ds = F.FMNIST_original.load()
   X_train, y_train = ds['X_train'][:], ds['y_train'][:]
   ids = np.random.permutation(len(X_train))
   X_train, y_train = X_train[ids], y_train[ids]
