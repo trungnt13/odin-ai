@@ -13,8 +13,9 @@ from .rnn import *
 from .time_delayed import *
 
 from . import models
-from odin.utils import uuid, bin2folder, folder2bin
+from . import variational
 
+from odin.utils import uuid, bin2folder, folder2bin
 
 # ===========================================================================
 # Helper method for serialize NNOp

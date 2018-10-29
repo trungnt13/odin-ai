@@ -17,50 +17,31 @@ from odin import (nnet as N, backend as K, fuel as F,
 from odin.utils import args_parse, ctext, batching, Progbar
 
 args = args_parse(descriptions=[
-    ('-dim', 'latent dimension', None, 2),
-    ('-hid', 'number of hidden units', None, 1024),
-    ('-data', 'dataset mnist or fmnist', ('mnist', 'fmnist', 'cifar10'), 'mnist'),
-    ('-loss', 'huber, mse, ce (cross-entropy), lglo (log loss)', ('huber', 'mse', 'ce', 'lglo'), 'ce'),
-    ('-s', 'number of posterior samples', None, 25),
-    ('-batch', 'batch size', None, 128),
-    ('-epoch', 'batch size, if negative stop based on valid loss', None, -1),
-    ('--analytic', 'using Analytic KL or not', None, False)
+    ('-zdim', 'latent dimension', None, 2),
+    ('-hdim', 'number of hidden units', None, 256),
+    ('-xdist', 'distribution of input X', None, 'normal'),
+    ('-zdist', 'distribution of latent Z', None, 'normal'),
+
+    ('-ds', 'dataset', ('mnist_original', 'mnist_dropout',
+                        'fmnist_original', 'fmnist_dropout',
+                        'cifar10', 'iris'), 'mnist_original'),
+
+    ('-nsample', 'number of posterior samples', None, 25),
+    ('-batch', 'batch size', None, 64),
+    ('-epoch', 'number of epoch', None, 120),
+
+    ('--no-batchnorm', 'turn off batch normalization', None, False),
+    ('--analytic', 'using analytic KL or sampling', None, False),
+    ('--iw', 'enable important weights sampling', None, False),
 ])
+
+K.dist.parse_distribution(X=np.random.rand(12, 8), dist_name='normal',
+                          out_dim=8)
+exit()
 # ===========================================================================
 # Load dataset
 # ===========================================================================
-if args.data == 'fmnist':
-  ds = F.FMNIST_original.load()
-  X_train, y_train = ds['X_train'][:], ds['y_train'][:]
-  ids = np.random.permutation(len(X_train))
-  X_train, y_train = X_train[ids], y_train[ids]
-
-  X_valid, y_valid = X_train[50000:], y_train[50000:]
-  X_train, y_train = X_train[:50000], y_train[:50000]
-  X_test, y_test = ds['X_test'][:], ds['y_test'][:]
-  # normalize value to [0, 1]
-  X_train = X_train / 255.
-  X_valid = X_valid / 255.
-  X_test = X_test / 255.
-elif args.data == 'mnist':
-  ds = F.MNIST.load()
-  X_train, y_train = ds['X_train'][:], ds['y_train'][:]
-  X_valid, y_valid = ds['X_valid'][:], ds['y_valid'][:]
-  X_test, y_test = ds['X_test'][:], ds['y_test'][:]
-elif args.data == 'cifar10':
-  ds = F.CIFAR10.load()
-  X_train, y_train = ds['X_train'][:], ds['y_train'][:]
-  X_test, y_test = ds['X_test'][:], ds['y_test'][:]
-
-  ids = np.random.permutation(len(X_train))
-  X_train, y_train = X_train[ids], y_train[ids]
-
-  X_valid, y_valid = X_train[40000:], y_train[40000:]
-  X_train, y_train = X_train[:40000], y_train[:40000]
-  # normalize value to [0, 1]
-  X_train = X_train / 255.
-  X_valid = X_valid / 255.
-  X_test = X_test / 255.
+ds = F.parse_dataset(args.ds)
 print(ds)
 # ====== print data info ====== #
 X_samples, y_samples = X_train[:25], y_train[:25]
@@ -74,7 +55,7 @@ y = K.placeholder(shape=(None,), name='y_input')
 # ===========================================================================
 # Create the network
 # ===========================================================================
-num_units = int(args.hid)
+num_units = int(args.hdim)
 with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
   f_encoder = N.Sequence([
       N.Flatten(outdim=2),
@@ -83,7 +64,7 @@ with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
       N.BatchNorm(axes=0, activation=K.relu),
       N.Dense(num_units),
       N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units=args.dim * 2, activation=K.linear)
+      N.Dense(num_units=args.zdim * 2, activation=K.linear)
   ], debug=True, name='EncoderNetwork')
 
   f_decoder = N.Sequence([
@@ -100,17 +81,17 @@ with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
 # ===========================================================================
 # ====== posterior ====== #
 loc_scale = f_encoder(X)
-loc = loc_scale[:, :args.dim]
-scale = loc_scale[:, args.dim:]
+loc = loc_scale[:, :args.zdim]
+scale = loc_scale[:, args.zdim:]
 qZ_X = tfd.MultivariateNormalDiag(
     loc=loc, scale_diag=tf.nn.softplus(scale + K.softplus_inverse(1.0)),
     name="qZ_X")
-qZ_X_samples = qZ_X.sample(args.s) # [num_samples, batch_size, dim]
+qZ_X_samples = qZ_X.sample(args.nsample) # [num_samples, batch_size, dim]
 # ====== prior ====== #
 pZ = tfd.MultivariateNormalDiag(
-    loc=tf.zeros(shape=(1, args.dim)), scale_identity_multiplier=1.0,
+    loc=tf.zeros(shape=(1, args.zdim)), scale_identity_multiplier=1.0,
     name="pZ")
-pZ_samples = pZ.sample(args.s)
+pZ_samples = pZ.sample(args.nsample)
 # ===========================================================================
 # Generator and Distortion
 # The Independent distribution composed of a collection of
@@ -124,7 +105,7 @@ pZ_samples = pZ.sample(args.s)
 # ===========================================================================
 X_logits_qZ_X = f_decoder(qZ_X_samples) # [num_sample * num_batch, 28, 28]
 X_probas_qZ_X = tf.nn.sigmoid(X_logits_qZ_X)
-X_true = K.repeat(X, n=args.s, axes=0, name='X_true') # [num_batch * num_sample, 28, 28]
+X_true = K.repeat(X, n=args.nsample, axes=0, name='X_true') # [num_batch * num_sample, 28, 28]
 # ====== `distortion` is the negative log likelihood ====== #
 if args.loss == 'ce':
   pX_Z = tfd.Independent(tfd.Bernoulli(logits=X_logits_qZ_X),
@@ -143,14 +124,14 @@ else:
                                     reduction=tf.losses.Reduction.NONE)
   distortion = tf.reduce_mean(distortion, axis=np.arange(1, len(input_shape)))
 # reshape and avg
-distortion = K.reshape(distortion, shape=(args.s, -1)) # [num_sample, num_batch]
+distortion = K.reshape(distortion, shape=(args.nsample, -1)) # [num_sample, num_batch]
 avg_distortion = tf.reduce_mean(distortion) # for monitoring
 # ====== Sampling ====== #
 X_logits_pZ = f_decoder(pZ_samples) # [num_sample, 28, 28]
 X_ = tfd.Independent(tfd.Bernoulli(logits=X_logits_pZ),
                      reinterpreted_batch_ndims=len(input_shape) - 1,
                      name="X_")
-pX_Z_samples = X_.sample(args.s)
+pX_Z_samples = X_.sample(args.nsample)
 pX_Z_mean = X_.mean()
 # ===========================================================================
 # ELBO
@@ -173,7 +154,7 @@ loss = -elbo # minimize loss
 # IWAE
 importance_weighted_elbo = tf.reduce_mean(
     tf.reduce_logsumexp(elbo_local, axis=0) -
-    tf.log(tf.to_float(args.s)))
+    tf.log(tf.to_float(args.nsample)))
 # ===========================================================================
 # Optimizing the network
 # ===========================================================================
@@ -218,7 +199,7 @@ while True:
   record_train_loss.append(train_losses[-1])
   record_valid_loss.append(lo)
   # ====== plotting ====== #
-  if args.dim > 2:
+  if args.zdim > 2:
     code_samples = ml.fast_pca(code_samples, n_components=2,
                                random_state=K.get_rng().randint(10e8))
   samples = K.eval([pX_Z_samples, pX_Z_mean])
@@ -261,7 +242,7 @@ text = V.merge_text_graph(V.print_bar(record_train_loss, title="Train Loss"),
 print(text)
 # ====== testing ====== #
 code_samples, di, ra, lo = calc_loss_and_code(dat=X_test)
-if args.dim > 2:
+if args.zdim > 2:
   code_samples = ml.fast_pca(code_samples, n_components=2,
                              random_state=K.get_rng().randint(10e8))
 print("[Test set]     Distortion: %.4f    Rate: %.4f    Loss: %.4f" % (di, ra, lo))

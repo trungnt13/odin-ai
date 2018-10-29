@@ -1,6 +1,7 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import re
 import inspect
 import warnings
 from contextlib import contextmanager
@@ -30,6 +31,37 @@ def get_all_properties(obj):
       properties.append(key)
   return properties if isinstance(obj, type) else \
   {p: getattr(obj, p) for p in properties}
+
+# ===========================================================================
+# String processing
+# ===========================================================================
+_space_char = re.compile("\s")
+_multiple_spaces = re.compile("\s\s+")
+_non_alphanumeric_char = re.compile("\W")
+
+def string_normalize(text, lower=True,
+                     remove_non_alphanumeric=True,
+                     remove_duplicated_spaces=True,
+                     remove_whitespace=False,
+                     escape_pattern=False):
+  text = str(text).strip()
+  if bool(lower):
+    text = text.lower()
+  if bool(escape_pattern):
+    text = re.escape(text)
+  if bool(remove_non_alphanumeric):
+    text = _non_alphanumeric_char.sub(' ', text)
+    text = text.strip()
+  if bool(remove_duplicated_spaces):
+    text = _multiple_spaces.sub(' ', text)
+  if bool(remove_whitespace):
+    if isinstance(remove_whitespace, string_types):
+      text = _space_char.sub(remove_whitespace, text)
+    else:
+      text = _space_char.sub('', text)
+  return text
+
+text_normalize = string_normalize
 
 # ===========================================================================
 # List utils

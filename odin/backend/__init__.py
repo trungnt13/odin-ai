@@ -23,6 +23,7 @@ from . import losses
 from . import optimizers
 from . import rand
 from . import rnn_cell
+from . import distributions as dist
 
 @contextmanager
 def variable_dtype(dtype):
