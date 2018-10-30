@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ==============================================================================
+
+# ======================================================================== #
 #
 # Copyright (c) 2017 - 2018 scVAE authors
 #
@@ -29,12 +32,17 @@
 # ======================================================================== #
 
 """The ZeroInflated distribution class."""
-from __future__ import absolute_import, division, print_function
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import numpy as np
 
-from tensorflow.python.ops.distributions import distribution
-from tensorflow.python.ops.distributions import util as distribution_util
+from tensorflow_probability.python.distributions import distribution
+from tensorflow_probability.python.internal import distribution_util
+from tensorflow_probability.python.internal import reparameterization
+
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import tensor_util
@@ -95,7 +103,7 @@ class ZeroInflated(distribution.Distribution):
         matching static batch shapes, or all dist do not
         have matching static event shapes.
     """
-    parameters = locals()
+    parameters = dict(locals())
     if not dist:
       raise ValueError("dist must be non-empty")
 
@@ -143,7 +151,7 @@ class ZeroInflated(distribution.Distribution):
 
     super(ZeroInflated, self).__init__(
         dtype=dtype,
-        reparameterization_type=distribution.NOT_REPARAMETERIZED,
+        reparameterization_type=reparameterization.NOT_REPARAMETERIZED,
         validate_args=validate_args,
         allow_nan_stats=allow_nan_stats,
         parameters=parameters,

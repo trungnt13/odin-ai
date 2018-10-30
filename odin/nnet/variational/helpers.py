@@ -5,10 +5,16 @@ import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 
 from odin import backend as K
-from odin.utils import string_normalize
+from odin.utils import string_normalize, ctext
 
+from .distribution_description import get_distribution_description
+
+# ===========================================================================
+# Main
+# ===========================================================================
 def parse_distribution(X, dist_name, out_dim,
-                       name=None, print_log=False):
+                       support = None, name = None,
+                       print_log = True):
   """
   X : Tensor
     output from decoder (not included the output layer)
@@ -20,25 +26,21 @@ def parse_distribution(X, dist_name, out_dim,
   Return
   ------
   """
-  dist_name = string_normalize(dist_name, lower=True,
-                               remove_non_alphanumeric=True,
-                               remove_whitespace='_')
-  out_dim = int(out_dim)
+  dist_desc = get_distribution_description(dist_name)
+  dist_desc.set_print_log(print_log)(X, out_dim)
+  exit()
   with tf.variable_scope(name,
                          default_name='ParseDistribution_%s' % dist_name):
     pass
   if not K.is_tensor(X):
     X = tf.convert_to_tensor(X)
-  exit()
-  out_dim = X.shape.as_list()[-1]
-  assert dist_name in _dist_name, \
-  "Support distribution: %s; given: '%s'" % (', '.join(_dist_name), dist_name)
   # ====== some log ====== #
-  print(ctext("Parsing variable distribution:", 'lightyellow'))
-  print("  Variable    :", ctext(X, 'cyan'))
-  print("  Decoder     :", ctext(D, 'cyan'))
-  print("  name        :", ctext('%s/%s' % (dist_name, name), 'cyan'))
-  print("  independent :", ctext(independent, 'cyan'))
+  if print_log:
+    print(ctext("Parsing variable distribution:", 'lightyellow'))
+    print("  Variable    :", ctext(X, 'cyan'))
+    print("  Name        :", ctext('%s/%s' % (dist_name, name), 'cyan'))
+    print("  #Out dim    :", ctext(out_dim, 'cyan'))
+    print("  Support     :", ctext(str(support), 'cyan'))
   # ******************** create distribution ******************** #
   with tf.variable_scope(name):
     # ====== Bernoulli ====== #

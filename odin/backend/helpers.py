@@ -222,6 +222,25 @@ def set_value(x, value, return_ops=False, name='SetValue'):
   get_session().run(assign_op)
   return x
 
+def get_epsilon(x_or_dtype):
+  """ Return the epsilon given a dtype or dtype of given Tensor
+
+  Parameters
+  ----------
+  x_or_dtype : {numpy.ndarray, tensorflow.Tensor, numpy.dtype, string}
+      anything that contain the given dtype information
+  """
+  if isinstance(x_or_dtype, string_types):
+    dtype = np.dtype(x_or_dtype)
+  elif hasattr(x_or_dtype, 'dtype'):
+    dtype = x_or_dtype.dtype
+    if hasattr(dtype, 'as_numpy_dtype'):
+      dtype = dtype.as_numpy_dtype
+  else:
+    raise ValueError("Cannot infer dtype from: %s" %
+      str(type(x_or_dtype)))
+  return np.finfo(dtype).eps
+
 # ===========================================================================
 # Session helper
 # ===========================================================================

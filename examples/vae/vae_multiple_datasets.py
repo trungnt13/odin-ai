@@ -35,8 +35,9 @@ args = args_parse(descriptions=[
     ('--iw', 'enable important weights sampling', None, False),
 ])
 
-K.dist.parse_distribution(X=np.random.rand(12, 8), dist_name='normal',
-                          out_dim=8)
+N.variational.parse_distribution(X=np.random.rand(12, 8).astype('float32'),
+                                 dist_name='zinb',
+                                 out_dim=8)
 exit()
 # ===========================================================================
 # Load dataset
