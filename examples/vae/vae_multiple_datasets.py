@@ -17,16 +17,22 @@ from odin import (nnet as N, backend as K, fuel as F,
 from odin.utils import args_parse, ctext, batching, Progbar
 
 args = args_parse(descriptions=[
+    ('-ds', 'dataset', None, 'mnist_original'),
+
     ('-zdim', 'latent dimension', None, 2),
     ('-hdim', 'number of hidden units', None, 256),
-    ('-xdist', 'distribution of input X', None, 'normal'),
-    ('-zdist', 'distribution of latent Z', None, 'normal'),
 
-    ('-ds', 'dataset', ('mnist_original', 'mnist_dropout',
-                        'fmnist_original', 'fmnist_dropout',
-                        'cifar10', 'iris'), 'mnist_original'),
+    ('-xdist', 'distribution of input X', None, 'poisson'),
+    ('-zdist', 'posterior distribution of latent Z', None, 'normal'),
+    ('-zprior', 'prior distribution of latent Z', None, 'normal01'),
 
-    ('-nsample', 'number of posterior samples', None, 25),
+    ('-xdrop', 'dropout on input X', None, 0),
+    ('-edrop', 'dropout on the encoder E', None, 0),
+    ('-zdrop', 'dropout on latent Z', None, 0),
+    ('-ddrop', 'dropout on the decoder D', None, 0),
+
+    ('-nsample-train', 'number of posterior samples', None, 16),
+    ('-nsample-test', 'number of posterior samples', None, 1000),
     ('-batch', 'batch size', None, 64),
     ('-epoch', 'number of epoch', None, 120),
 
@@ -35,132 +41,179 @@ args = args_parse(descriptions=[
     ('--iw', 'enable important weights sampling', None, False),
 ])
 
-N.variational.parse_distribution(X=np.random.rand(12, 8).astype('float32'),
-                                 dist_name='zinb',
-                                 out_dim=8)
-exit()
 # ===========================================================================
 # Load dataset
 # ===========================================================================
 ds = F.parse_dataset(args.ds)
 print(ds)
 # ====== print data info ====== #
-X_samples, y_samples = X_train[:25], y_train[:25]
-input_shape = ds['X_train'].shape
+if 'X' in ds and 'y' in ds:
+  X, y = ds['X'], ds['y']
+  rand = np.random.RandomState(seed=5218)
+  n = X.shape[0]
+  perm = rand.permutation(n)
+  X, y = X[perm], y[perm]
+  X_train, y_train = X[:int(0.8 * n)], y[:int(0.8 * n)]
+  X_test, y_test = X[int(0.8 * n):], y[int(0.8 * n):]
+elif 'X_train' in ds and 'X_test' in ds:
+  X_train, y_train = ds['X_train'], ds['y_train']
+  X_test, y_test = ds['X_test'], ds['y_test']
+else:
+  raise RuntimeError('No support for dataset: "%s"' % args.ds)
+# ====== post processing ====== #
+if y_train.ndim > 1:
+  y_train = np.argmax(y_train, axis=-1)
+if y_test.ndim > 1:
+  y_test = np.argmax(y_test, axis=-1)
+input_shape = (None,) + X_train.shape[1:]
 print("Train shape:", ctext(X_train.shape, 'cyan'))
-print("Valid shape:", ctext(X_valid.shape, 'cyan'))
 print("Test  shape:", ctext(X_test.shape, 'cyan'))
 # ====== create basic tensor ====== #
-X = K.placeholder(shape=(None,) + input_shape[1:], name='X_input')
-y = K.placeholder(shape=(None,), name='y_input')
+X = K.placeholder(shape=(None,) + input_shape[1:], name='X')
+W = K.placeholder(shape=(None,) + input_shape[1:], name='W')
+y = K.placeholder(shape=(None,), name='y')
+nsample = K.placeholder(shape=(), dtype='int32', name='nsample')
 # ===========================================================================
 # Create the network
 # ===========================================================================
-num_units = int(args.hdim)
-with N.args_scope([N.Dense, dict(b_init=None, activation=K.linear)]):
-  f_encoder = N.Sequence([
-      N.Flatten(outdim=2),
-      N.Dropout(level=0.3),
-      N.Dense(num_units),
-      N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units),
-      N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units=args.zdim * 2, activation=K.linear)
-  ], debug=True, name='EncoderNetwork')
+index = [0]
+def dense_creator():
+  net = N.Sequence([
+      N.Dense(int(args.hdim),
+              b_init=0 if args.no_batchnorm else None,
+              activation=K.relu if args.no_batchnorm else K.linear),
+      None if args.no_batchnorm else N.BatchNorm(activation=K.relu)
+  ], debug=True, name="DenseBatchNorm%d" % index[0])
+  index[0] += 1
+  return net
 
-  f_decoder = N.Sequence([
-      N.Reshape(shape=(-1, [-1])),
-      N.Dense(num_units, activation=K.relu),
-      N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units, activation=K.relu),
-      N.BatchNorm(axes=0, activation=K.relu),
-      N.Dense(num_units=np.prod(input_shape[1:]), activation=K.linear),
-      N.Reshape(shape=([0],) + input_shape[1:])
-  ], debug=True, name='DecoderNetwork')
+f_encoder = N.Sequence([
+    N.Flatten(outdim=2),
+    N.Dropout(level=args.xdrop) if args.xdrop > 0 else None,
+    dense_creator(),
+    dense_creator(),
+    N.Dropout(level=args.edrop) if args.edrop > 0 else None,
+], debug=True, name='Encoder')
+
+f_decoder = N.Sequence([
+    N.Dropout(level=args.zdrop) if args.zdrop > 0 else None,
+    dense_creator(),
+    dense_creator(),
+    N.Dropout(level=args.ddrop) if args.ddrop > 0 else None,
+], debug=True, name='Decoder')
 # ===========================================================================
 # Create statistical model
 # ===========================================================================
-# ====== posterior ====== #
-loc_scale = f_encoder(X)
-loc = loc_scale[:, :args.zdim]
-scale = loc_scale[:, args.zdim:]
-qZ_X = tfd.MultivariateNormalDiag(
-    loc=loc, scale_diag=tf.nn.softplus(scale + K.softplus_inverse(1.0)),
-    name="qZ_X")
-qZ_X_samples = qZ_X.sample(args.nsample) # [num_samples, batch_size, dim]
-# ====== prior ====== #
-pZ = tfd.MultivariateNormalDiag(
-    loc=tf.zeros(shape=(1, args.zdim)), scale_identity_multiplier=1.0,
-    name="pZ")
-pZ_samples = pZ.sample(args.nsample)
+# ====== encoder ====== #
+E = f_encoder(X)
+# ====== latent ====== #
+q_Z_given_X = N.variational.parse_distribution(
+    args.zdist, E, int(args.zdim),
+    name='Z')
+q_Z_given_X_samples = q_Z_given_X.sample(nsample)
+q_Z_given_X_mean = q_Z_given_X.mean()
+q_Z_given_X_var = q_Z_given_X.variance()
+
+p_Z = N.variational.parse_distribution(
+    dist_name=args.zprior)
+# ====== decoder ====== #
+D = f_decoder(q_Z_given_X_samples)
+# ====== reconstruction ====== #
+p_X_given_Z = N.variational.parse_distribution(
+    args.xdist, D, int(np.prod(input_shape[1:])),
+    n_eventdim=1, name='W')
+p_X_given_Z_samples = p_X_given_Z.sample(nsample)
+p_X_given_Z_mean = p_X_given_Z.mean()
+p_X_given_Z_var = p_X_given_Z.variance()
 # ===========================================================================
-# Generator and Distortion
+# Variational inference (ELBO)
 # The Independent distribution composed of a collection of
 #   Bernoulli distributions might define a distribution over
 #   an image (where each Bernoulli is a distribution over each pixel).
 #   batch: (?, 28, 28); event: () -> batch: (?); event: (28, 28)
 # Rule for broadcasting `log_prob`:
 #  * If omitted batch_shape, add (1,) to the batch_shape places
-#  * Broadcast the n rightmost dimensions of t' against the [batch_shape, event_shape] of the distribution you're computing a log_prob for. In more detail: for the dimensions where t' already matches the distribution, do nothing, and for the dimensions where t' has a singleton, replicate that singleton the appropriate number of times. Any other situation is an error. (For scalar distributions, we only broadcast against batch_shape, since event_shape = [].)
+#  * Broadcast the n rightmost dimensions of t' against the [batch_shape, event_shape]
+#    of the distribution you're computing a log_prob for. In more detail:
+#    for the dimensions where t' already matches the distribution, do nothing,
+#    and for the dimensions where t' has a singleton, replicate that singleton
+#    the appropriate number of times. Any other situation is an error.
+#    (For scalar distributions, we only broadcast against batch_shape,
+#    since event_shape = [].)
 #  * Now we're finally able to compute the log_prob. The resulting tensor will have shape [sample_shape, batch_shape], where sample_shape is defined to be any dimensions of t or t' to the left of the n-rightmost dimensions: sample_shape = shape(t)[:-n].
 # ===========================================================================
-X_logits_qZ_X = f_decoder(qZ_X_samples) # [num_sample * num_batch, 28, 28]
-X_probas_qZ_X = tf.nn.sigmoid(X_logits_qZ_X)
-X_true = K.repeat(X, n=args.nsample, axes=0, name='X_true') # [num_batch * num_sample, 28, 28]
-# ====== `distortion` is the negative log likelihood ====== #
-if args.loss == 'ce':
-  pX_Z = tfd.Independent(tfd.Bernoulli(logits=X_logits_qZ_X),
-                         reinterpreted_batch_ndims=len(input_shape) - 1,
-                         name="pX_Z")
-  distortion = -pX_Z.log_prob(X_true) # [num_sample * num_batch]
-else:
-  if args.loss == 'mse':
-    distortion = tf.losses.mean_squared_error(labels=X_true, predictions=X_probas_qZ_X,
-                                              reduction=tf.losses.Reduction.NONE)
-  elif args.loss == 'huber':
-    distortion = tf.losses.huber_loss(labels=X_true, predictions=X_probas_qZ_X,
-                                      reduction=tf.losses.Reduction.NONE)
-  elif args.loss == 'lglo':
-    distortion = tf.losses.log_loss(labels=X_true, predictions=X_probas_qZ_X,
-                                    reduction=tf.losses.Reduction.NONE)
-  distortion = tf.reduce_mean(distortion, axis=np.arange(1, len(input_shape)))
-# reshape and avg
-distortion = K.reshape(distortion, shape=(args.nsample, -1)) # [num_sample, num_batch]
-avg_distortion = tf.reduce_mean(distortion) # for monitoring
-# ====== Sampling ====== #
-X_logits_pZ = f_decoder(pZ_samples) # [num_sample, 28, 28]
-X_ = tfd.Independent(tfd.Bernoulli(logits=X_logits_pZ),
-                     reinterpreted_batch_ndims=len(input_shape) - 1,
-                     name="X_")
-pX_Z_samples = X_.sample(args.nsample)
-pX_Z_mean = X_.mean()
-# ===========================================================================
-# ELBO
-# ===========================================================================
-# ====== rate is KL objective ====== #
-# Whether or not to use the analytic version of the KL. When set to
-# False the E_{Z~q(Z|X)}[log p(Z)p(X|Z) - log q(Z|X)] form of the ELBO
-# will be used. Otherwise the -KL(q(Z|X) || p(Z)) +
-# E_{Z~q(Z|X)}[log p(X|Z)] form will be used. If analytic_kl is True,
-# then you must also specify `mixture_components=1`.
+print("=" * 48)
+print("Creating ELBO")
+print("=" * 48)
+# ====== KL divergence ====== #
 if args.analytic:
-  rate = tfd.kl_divergence(qZ_X, pZ) # [num_batch]
+  # [n_batch, n_latent]
+  KL = tfd.kl_divergence(q_Z_given_X, p_Z)
+  KL = tf.expand_dims(KL, axis=0)
 else:
-  rate = (qZ_X.log_prob(qZ_X_samples) - pZ.log_prob(qZ_X_samples)) # [num_sample, num_batch]
-avg_rate = tf.reduce_mean(rate)
+  # [n_sample_train, n_batch, n_latent] - [n_sample_train, n_batch, n_latent]
+  KL = (q_Z_given_X.log_prob(q_Z_given_X_mean) -
+        p_Z.log_prob(q_Z_given_X_samples))
+# latent variables are independent
+KL = tf.reduce_sum(KL, axis=-1)
+KL_mean = tf.reduce_mean(KL, name="KL_divergence")
+print("KL  :", ctext(KL, 'cyan'))
+# ====== negative log likelihood ====== #
+W_2D = K.flatten(W, outdim=2)
+NLLK = -p_X_given_Z.log_prob(tf.expand_dims(W_2D, axis=0))
+NLLK_mean = tf.reduce_mean(NLLK, name="Negative_LLK")
+print("NLLK:", ctext(NLLK, 'cyan'))
 # ====== ELBO ====== #
-elbo_local = -(rate + distortion)
-elbo = tf.reduce_mean(elbo_local) # maximize evidence-lower-bound
-loss = -elbo # minimize loss
-# IWAE
-importance_weighted_elbo = tf.reduce_mean(
-    tf.reduce_logsumexp(elbo_local, axis=0) -
-    tf.log(tf.to_float(args.nsample)))
+# we want to maximize the evident lower bound
+ELBO = tf.identity(-NLLK - KL, name="ELBO")
+# but minimize the loss
+loss = tf.identity(tf.reduce_mean(-ELBO), name="loss")
+# important weights ELBO, logsumexp among sampling dimension
+IW_ELBO = tf.identity(
+    tf.reduce_logsumexp(ELBO, axis=0) - tf.log(tf.to_float(nsample)),
+    name="ImportantWeight_ELBO")
+iw_loss = tf.identity(tf.reduce_mean(-IW_ELBO), name="iw_loss")
+print("ELBO:", ctext(ELBO, 'cyan'))
+print("loss:", ctext(loss, 'cyan'))
+print("IW-ELBO :", ctext(IW_ELBO, 'cyan'))
+print("IW-loss:", ctext(iw_loss, 'cyan'))
 # ===========================================================================
-# Optimizing the network
+# Create the optimizer and function
 # ===========================================================================
-update_ops = K.optimizers.Adam(lr=0.001).minimize(-elbo)
+optz = K.optimizers.Adam(lr=0.001)
+updates = optz.minimize(iw_loss if args.iw else loss, verbose=1)
+global_norm = optz.norm
 K.initialize_all_variables()
+# ====== create functions ====== #
+input_plh = [X, W]
+f_train = K.function(inputs=input_plh,
+                     outputs=[loss, KL_mean, NLLK_mean, global_norm],
+                     updates=updates,
+                     defaults={nsample: args.nsample_train},
+                     training=True)
+f_score = K.function(inputs=input_plh,
+                     outputs=[loss, KL_mean, NLLK_mean],
+                     defaults={nsample: args.nsample_test},
+                     training=False)
+f_z = K.function(inputs=X,
+                 outputs=[q_Z_given_X_samples, q_Z_given_X_mean, q_Z_given_X_var],
+                 defaults={nsample: args.nsample_test},
+                 training=False)
+f_w = K.function(inputs=X,
+                 outputs=[p_X_given_Z_samples, p_X_given_Z_mean, p_X_given_Z_var],
+                 defaults={nsample: args.nsample_test},
+                 training=False)
+# ===========================================================================
+# Training
+# ===========================================================================
+runner = T.MainLoop(batch_size=256, seed=5218, shuffle_level=2,
+                    allow_rollback=False, verbose=2)
+runner.set_train_task(func=f_train, data=[X_train, X_train],
+                      name='train')
+runner.set_valid_task(func=f_score, data=[X_test, X_test],
+                      name='valid')
+runner.run()
+exit()
 # ====== helper ====== #
 def calc_loss_and_code(dat):
   losses = []

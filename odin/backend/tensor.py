@@ -494,17 +494,24 @@ def eye(n, m, dtype, name='eye'):
 # ===========================================================================
 def dot(x, y, name='Dot'):
   """ Theano-style dot product
-  When attempting to multiply a ND tensor
-  with a ND tensor, reproduces the Theano behavior
+  For 2-D arrays it is equivalent to matrix multiplication,
+  and for 1-D arrays to inner product of vectors (without complex conjugation).
+  For N dimensions it is a sum product over the last axis of a and
+  the second-to-last of b
+
+  NOTE: this behavior is the same in `numpy.dot` as well
 
   Example
   -------
    (2, 3).(4, 3, 5) => (2, 4, 5)
    (2, 3, 4).(4, 5) => (2, 3, 5)
+   (2, 3, 4).(5, 4, 6) => (2, 3, 5, 6)
   """
   with tf.variable_scope(name):
-    shapeX = x.shape.as_list()
-    shapeY = y.shape.as_list()
+    shapeX = [tf.shape(x)[i] if d is None else d
+              for i, d in enumerate(x.shape.as_list())]
+    shapeY = [tf.shape(y)[i] if d is None else d
+              for i, d in enumerate(y.shape.as_list())]
     ndimX = x.shape.ndims
     ndimY = y.shape.ndims
     if ndimX > 2:
@@ -518,8 +525,7 @@ def dot(x, y, name='Dot'):
     else:
       outshapeY = [shapeY[-1]]
     # calculate dot product and desire shape
-    output_shape = [-1 if i is None else i
-                    for i in shapeX[:-1] + outshapeY]
+    output_shape = shapeX[:-1] + outshapeY
     output = tf.reshape(tf.matmul(x, y), output_shape)
   return output
 

@@ -33,10 +33,18 @@ def _support(y, info, print_log, padding, **kwargs):
     return tf.clip_by_value(y, y_min + eps, y_max - eps)
   return y
 
-def _network(x, out_dim, info, print_log, padding):
+def _network(x, out_dim, name, info,
+             print_log, padding):
   network = info.get('network', Dense)
+  # create the network first
   if isinstance(network, type):
-    network = network(out_dim)
+    params = inspect.signature(network.__init__).parameters
+    if 'name' in params or any(p.kind == inspect.Parameter.VAR_KEYWORD
+                               for p in params.values()):
+      network = network(out_dim, name=name)
+    else:
+      network = network(out_dim)
+  # applying on the input
   if callable(network):
     # print out log
     if print_log:
@@ -71,7 +79,8 @@ def _activate(y, info, print_log, padding, **kwargs):
   y = fn(*args)
   return y
 
-def _parse_parameter(x, out_dim, info,
+def _parse_parameter(x, out_dim,
+                     name, info,
                      print_log, padding,
                      **kwargs):
   # ====== parsing distribution ====== #
@@ -85,7 +94,7 @@ def _parse_parameter(x, out_dim, info,
   elif isinstance(info, dict):
     if print_log:
       print(padding + "   Info:", str(info))
-    y = _network(x, out_dim, info, print_log, padding)
+    y = _network(x, out_dim, name, info, print_log, padding)
     y = _support(y, info, print_log, padding, **kwargs)
     y = _activate(y, info, print_log, padding, **kwargs)
   # ====== just tensor ====== #
@@ -156,9 +165,12 @@ class DistributionDescription(object):
     self._padding = str(padding)
     return self
 
-  def __call__(self, x, out_dim, **kwargs):
-    x = tf.convert_to_tensor(x)
-    out_dim = int(out_dim)
+  def __call__(self, x=None, out_dim=None, n_eventdim=0, **kwargs):
+    n_eventdim = int(n_eventdim)
+    if x is not None:
+      x = tf.convert_to_tensor(x)
+    if out_dim is not None:
+      out_dim = int(out_dim)
     print_log = self._print_log
     padding = self._padding
 
@@ -171,14 +183,22 @@ class DistributionDescription(object):
     for p_name, p_val in self.get_ordered_arguments():
       if print_log:
         print(padding + " Parsing parameter:", ctext(p_name, 'cyan'))
-      p_val = _parse_parameter(x, out_dim, p_val,
+      p_val = _parse_parameter(x, out_dim,
+                               p_name, p_val,
                                print_log=print_log,
                                padding=padding,
                                **kwargs)
       args[p_name] = p_val
 
+    dist = self.distribution(**args)
+    if n_eventdim > 0:
+      dist = tfd.Independent(distribution=dist,
+                             reinterpreted_batch_ndims=n_eventdim)
+    if print_log:
+      print(' Distribution:', ctext(dist, 'cyan'))
     self._print_log = False
-    return self.distribution(**args)
+    self._padding = ''
+    return dist
 
   @property
   def normalized_name(self):
@@ -231,6 +251,8 @@ Normal = DistributionDescription(
                fn=lambda x: tf.nn.softplus(x + softplus_inverse(1.0)))
 )
 Normal1 = Normal.copy(scale=1)
+Normal01 = Normal.copy(loc=tf.zeros(shape=[1]),
+                       scale=tf.ones(shape=[1]))
 # ===========================================================================
 # Bernoulli
 # ===========================================================================
