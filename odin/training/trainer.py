@@ -932,7 +932,10 @@ class MainLoop(object):
             break
         # ====== execute valid and eval task ====== #
         for st in self._subtask:
-          if finished_task[st]: continue
+          if finished_task[self._main_task]:
+            break
+          if finished_task[st]:
+            continue
           if self._task_when[st].check(self._main_task) and \
           self._task_freq[st].update_counter(self._main_task):
             # running 1 epoch of subtask
@@ -942,18 +945,18 @@ class MainLoop(object):
                 if x == 'epoch_end': break
               else: # results
                 pass
-            # process callback msg for subtasks
-            msg = st.callback_msg
-            if TrainSignal.SAVE in msg:
-              self._save(is_best=False)
-            if TrainSignal.SAVE_BEST in msg:
-              self._save(is_best=True)
-            if TrainSignal.ROLLBACK in msg:
-              self._rollback()
-            if TrainSignal.STOP in msg:
-              self._callback.event(TrainSignal.STOP)
-              finished_task[self._main_task] = True
-              break
+              # process callback msg for subtasks
+              msg = st.callback_msg
+              if TrainSignal.SAVE in msg:
+                self._save(is_best=False)
+              if TrainSignal.SAVE_BEST in msg:
+                self._save(is_best=True)
+              if TrainSignal.ROLLBACK in msg:
+                self._rollback()
+              if TrainSignal.STOP in msg:
+                self._callback.event(TrainSignal.STOP)
+                finished_task[self._main_task] = True
+                break
     # ====== end main task ====== #
     for t in self._task + self._subtask:
       t.stop()

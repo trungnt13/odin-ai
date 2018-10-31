@@ -15,6 +15,7 @@ from tensorflow_probability import distributions as tfd, bijectors as tfb
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
 from odin.utils import args_parse, ctext, batching, Progbar
+from odin.stats import describe
 
 args = args_parse(descriptions=[
     ('-ds', 'dataset', None, 'mnist_original'),
@@ -66,8 +67,8 @@ if y_train.ndim > 1:
 if y_test.ndim > 1:
   y_test = np.argmax(y_test, axis=-1)
 input_shape = (None,) + X_train.shape[1:]
-print("Train shape:", ctext(X_train.shape, 'cyan'))
-print("Test  shape:", ctext(X_test.shape, 'cyan'))
+print("Train:", ctext(X_train.shape, 'cyan'), describe(X_train, shorten=True))
+print("Test :", ctext(X_test.shape, 'cyan'), describe(X_test, shorten=True))
 # ====== create basic tensor ====== #
 X = K.placeholder(shape=(None,) + input_shape[1:], name='X')
 W = K.placeholder(shape=(None,) + input_shape[1:], name='W')
@@ -187,12 +188,12 @@ K.initialize_all_variables()
 # ====== create functions ====== #
 input_plh = [X, W]
 f_train = K.function(inputs=input_plh,
-                     outputs=[loss, KL_mean, NLLK_mean, global_norm],
+                     outputs=[loss, iw_loss, KL_mean, NLLK_mean, global_norm],
                      updates=updates,
                      defaults={nsample: args.nsample_train},
                      training=True)
 f_score = K.function(inputs=input_plh,
-                     outputs=[loss, KL_mean, NLLK_mean],
+                     outputs=[loss, iw_loss, KL_mean, NLLK_mean],
                      defaults={nsample: args.nsample_test},
                      training=False)
 f_z = K.function(inputs=X,
@@ -206,9 +207,17 @@ f_w = K.function(inputs=X,
 # ===========================================================================
 # Training
 # ===========================================================================
-runner = T.MainLoop(batch_size=256, seed=5218, shuffle_level=2,
+runner = T.MainLoop(batch_size=args.batch,
+                    seed=5218, shuffle_level=2,
                     allow_rollback=False, verbose=2)
+runner.set_callbacks([
+    T.NaNDetector(task_name=None, patience=-1, detect_inf=True),
+    # T.EpochSummary(task_name=('train', 'valid'),
+    #                output_name=(loss, iw_loss, KL_mean, NLLK_mean),
+    #                print_plot=False, save_path='/tmp/tmp.png')
+])
 runner.set_train_task(func=f_train, data=[X_train, X_train],
+                      epoch=args.epoch,
                       name='train')
 runner.set_valid_task(func=f_score, data=[X_test, X_test],
                       name='valid')

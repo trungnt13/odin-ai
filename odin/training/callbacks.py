@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import division, absolute_import, print_function
 
+import os
 import re
 import sys
 import time
@@ -359,8 +360,8 @@ class NaNDetector(Callback):
   Parameters
   ----------
   task_name : {str, None}
-    name of specific Task will be applied, otherwise, all
-    Tasks are considered
+    name of specific Task will be applied,
+    if `None`, all tasks are considered
 
   patience : {int}
     the Task will be stopped if `patience` < 0, `patience` will
@@ -371,21 +372,28 @@ class NaNDetector(Callback):
 
   """
 
-  def __init__(self, task_name=None, patience=-1, logging=True):
+  def __init__(self, task_name=None, patience=-1,
+               detect_inf=False, logging=True):
     super(NaNDetector, self).__init__(logging=logging)
     self._task_name = task_name
     self._patience = patience
+    self._detect_inf = bool(detect_inf)
 
   def batch_end(self, task, batch_results):
     if self._task_name is not None and task.name != self._task_name:
       return
     # found any NaN values
-    if any(np.any(np.isnan(r)) for r in as_tuple(batch_results)):
+    if self._detect_inf:
+      fn = lambda x: np.logical_or(np.isinf(x), np.isnan(x))
+    else:
+      fn = lambda x: np.isnan(x)
+
+    if any(np.any(fn(r)) for r in as_tuple(batch_results)):
       signal = TrainSignal.ROLLBACK
       self._patience -= 1
       if self._patience <= 0: # but if out of patience, stop
         signal = TrainSignal.STOP
-      self.send_notification('Found NaN value, task:"%s"' % task.name)
+      self.send_notification('Found NaN or Inf value, task:"%s"' % task.name)
       return signal
 
 class Checkpoint(Callback):
@@ -641,10 +649,13 @@ class EpochSummary(Callback):
   """
   Parameters
   ----------
+  output_name : {list of string, list of Tensor}
+    list of outputs for monitoring
+
   print_plot : bool (default: False)
     using bashplot to print out the figure directly in terminal
 
-  out_path : str (default: None)
+  save_path : {str, None} (default: None)
     if provided, save pdf figure to given path
 
   epoch_percent : float (0 < .. < 1)
@@ -663,105 +674,116 @@ class EpochSummary(Callback):
                fn_reduce=lambda x: (np.mean(x)
                                     if isinstance(x[0], Number) else
                                     sum(i for i in x)),
-               print_plot=False, out_path=None,
-               repeat_freq=1,
-               logging=True):
+               print_plot=False, save_path=None,
+               repeat_freq=1, logging=True):
     super(EpochSummary, self).__init__(logging=logging)
     self._task_name = as_tuple(task_name, t=str)
     # ====== scheduling ====== #
     assert repeat_freq >= 1
     self._repeat_freq = int(repeat_freq)
     self._count = self._repeat_freq * len(self._task_name)
-    self._epoch_results = defaultdict(list)
+    self._epoch_results = defaultdict(dict)
     # ====== output identity ====== #
-    if is_string(output_name):
-      self.output_name = output_name
-    elif hasattr(output_name, 'name'):
-      self.output_name = output_name.name
-    else:
-      raise ValueError('Invalid `output_name`=%s' % str(output_name))
+    if not isinstance(output_name, (tuple, list)):
+      output_name = (output_name,)
+    output_name = [i if is_string(i) else i.name
+                   for i in output_name]
+    self.output_name = tuple(output_name)
     self.fn_reduce = FuncDesc(func=fn_reduce)
     # ====== how to output ====== #
     self.print_plot = bool(print_plot)
-    self.out_path = out_path
+    self.save_path = save_path
 
   def epoch_end(self, task, epoch_results):
-    if task.name in self._task_name:
+    output_name = self.output_name
+    task_name = self._task_name
+
+    if task.name in task_name:
       self._count -= 1
       # ====== processing results ====== #
-      if self.output_name not in epoch_results:
-        raise RuntimeError("Cannot find output with name: '%s' from task: %s"
-          % (self.output_name, str(task)))
-      batch_results = epoch_results[self.output_name]
-      self._epoch_results[task.name].append(self.fn_reduce(batch_results))
+      assert all(name in epoch_results for name in output_name),\
+      "Given outputs with name: %s; but task: '%s' results only contain name: %s" % \
+      (', '.join(self.output_name), str(task), ', '.join(tuple(epoch_results.keys())))
+
+      for name in output_name:
+        batch_results = epoch_results[name]
+        if name not in self._epoch_results[task.name]:
+          self._epoch_results[task.name][name] = []
+        self._epoch_results[task.name][name].append(self.fn_reduce(batch_results))
       # ====== start plotting ====== #
       if self._count == 0:
-        self._count = self._repeat_freq * len(self._task_name)
-        if all(len(i) >= 2 for i in self._epoch_results.values()):
-          from odin import visual as V
-          # ====== print text plot ====== #
-          if self.print_plot:
-            text = []
-            for name in self._task_name:
-              values = self._epoch_results[name]
-              if isinstance(values[0], Number):
-                t = V.print_bar(f=values, height=8, title=name)
-              elif isinstance(values[0], np.ndarray) and values[0].ndim == 2 and \
-              values[0].shape[0] == values[0].shape[1]:
-                t = V.print_confusion(arr=values[-1],
-                                     side_bar=False, inc_stats=True,
-                                     float_precision=2)
+        self._count = self._repeat_freq * len(task_name)
+        from odin import visual as V
+        n_col = len(task_name)
+        n_row = len(output_name)
+        if self.save_path is not None:
+          from matplotlib import pyplot as plt
+        save_figures = False
+        override = True
+
+        for o_idx, o_name in enumerate(output_name):
+          results = {task_name: r[o_name]
+                     for task_name, r in self._epoch_results.items()}
+          if all(len(i) >= 2 for i in results.values()):
+            # ====== print text plot ====== #
+            if self.print_plot:
+              text = []
+              for t_name in task_name:
+                values = results[t_name]
+                if isinstance(values[0], Number):
+                  t = V.print_bar(f=values, height=8,
+                                  title=t_name + "/" + o_name)
+                elif isinstance(values[0], np.ndarray) and values[0].ndim == 2 and \
+                values[0].shape[0] == values[0].shape[1]:
+                  t = V.print_confusion(arr=values[-1],
+                                       side_bar=False, inc_stats=True,
+                                       float_precision=2)
+                else:
+                  t = ''
+                if len(t) > 0:
+                  text.append(t)
+              if len(text) > 1:
+                print(V.merge_text_graph(*text, padding='  '))
               else:
-                t = ''
-              if len(t) > 0:
-                text.append(t)
-            if len(text) > 1:
-              print(V.merge_text_graph(*text, padding='  '))
-            else:
-              print(text[0])
-          # ====== save pdf ====== #
-          if self.out_path is not None:
-            n_col = len(self._task_name)
-            n_row = max(len(i) for i in self._epoch_results.values())
-            save_figure = True
-            from matplotlib import pyplot as plt
-            for i, name in enumerate(self._task_name):
-              values = self._epoch_results[name]
-              # plotting series
-              if isinstance(values[0], Number):
-                if i == 0:
-                  V.plot_figure(nrow=3, ncol=20)
-                plt.subplot(1, n_col, i + 1)
-                plt.plot(values)
-                plt.xlim((0, len(values) - 1))
-                plt.title('[%s] %s' % (self.output_name, name)
-                          if i == 0 else name)
-              # plotting matrix
-              elif isinstance(values[0], np.ndarray) and values[0].ndim == 2:
-                if i == 0:
-                  V.plot_figure(nrow=n_row * 5, ncol=min(n_col * 5, 20))
-                is_square_matrix = values[0].shape[0] == values[0].shape[1]
-                for j in range(n_row):
-                  if j >= len(values):
-                    continue
-                  ax = plt.subplot(n_row, n_col, j * n_col + i + 1)
-                  if is_square_matrix:
-                    V.plot_confusion_matrix(cm=values[j], fontsize=5)
-                  else:
-                    ax.imshow(values[j], interpolation='nearest',
-                              cmap=plt.cm.Blues)
-                  if j == 0:
-                    ax.set_title(name)
-                  plt.xticks(())
-                  plt.yticks(())
-                  if i == 0:
-                    plt.ylabel('#Epoch: %d' % (j + 1))
-              # no-idea how to plot next
-              else:
-                save_figure = False
-            # save figure to pdf file
-            if save_figure:
-              V.plot_save(self.out_path, tight_plot=False,
-                          clear_all=True, log=False, dpi=88)
-              self.send_notification("Saved summary at: %s" % self.out_path)
+                print(text[0])
+            # ====== save pdf ====== #
+            if self.save_path is not None:
+              for t_idx, t_name in enumerate(task_name):
+                values = results[t_name]
+                # plotting series
+                if isinstance(values[0], Number):
+                  if not save_figures:
+                    V.plot_figure(nrow=int(n_row * 1.8), ncol=20)
+                  save_figures = True
+
+                  max_epoch = np.argmax(values)
+                  max_val = values[max_epoch]
+                  min_epoch = np.argmin(values)
+                  min_val = values[min_epoch]
+
+                  plt.subplot(n_row, n_col, o_idx * len(task_name) + t_idx + 1)
+                  plt.plot(values)
+                  plt.scatter(max_epoch, max_val, s=180, alpha=0.4, c='r')
+                  plt.scatter(min_epoch, min_val, s=180, alpha=0.4, c='g')
+
+                  plt.xlim((0, len(values) - 1))
+                  if not np.any(np.isinf(values)):
+                    eps = 0.1 * (max_val - min_val)
+                    plt.ylim((min_val - eps, max_val + eps))
+                  plt.xticks(np.linspace(0, len(values) - 1, num=12,
+                                         dtype='int32'))
+                  if o_idx == 0:
+                    plt.title(t_name)
+                  if t_idx == 0:
+                    plt.ylabel(o_name)
+        # save figure to pdf or image files
+        if save_figures:
+          if override:
+            save_path = self.save_path
+          else:
+            path, ext = os.path.splitext(self.save_path)
+            save_path = path + ('.%d' % (task.curr_epoch + 1)) + ext
+          V.plot_save(save_path, tight_plot=True,
+                      clear_all=True, log=False, dpi=180)
+          self.send_notification("Saved summary at: %s" % save_path)
     return None

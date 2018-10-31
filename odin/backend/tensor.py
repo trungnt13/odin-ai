@@ -499,7 +499,8 @@ def dot(x, y, name='Dot'):
   For N dimensions it is a sum product over the last axis of a and
   the second-to-last of b
 
-  NOTE: this behavior is the same in `numpy.dot` as well
+  NOTE: this behavior is the same in `numpy.dot` as well but
+  hasn't replicated in `tensorflow.matmul`
 
   Example
   -------
@@ -535,8 +536,10 @@ def batched_dot(x, y, name='BatchedDot'):
   by iterating over the first dimension.
   """
   with tf.variable_scope(name):
-    shapeX = x.shape.as_list()
-    shapeY = y.shape.as_list()
+    shapeX = [tf.shape(x)[i] if d is None else d
+              for i, d in enumerate(x.shape.as_list())]
+    shapeY = [tf.shape(y)[i] if d is None else d
+              for i, d in enumerate(y.shape.as_list())]
     ndimX = x.shape.ndims
     ndimY = y.shape.ndims
     # same as dot but one more batch dimension
