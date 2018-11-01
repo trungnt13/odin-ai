@@ -17,7 +17,7 @@ from numbers import Number
 from six import string_types
 from six.moves import zip, range
 from contextlib import contextmanager
-from collections import Mapping, OrderedDict
+from collections import Mapping, OrderedDict, defaultdict
 
 import numpy as np
 from scipy import stats
@@ -27,51 +27,39 @@ from scipy import stats
 # except:
 #     pass
 
-# import matplotlib
-# for name, hex in matplotlib.colors.cnames.items():
-#     print(name, hex)
 line_styles = ['-', '--', '-.', ':']
 
-marker_styles = [
-    "o",
-    "^",
-    "s",
-    "p",
-    "|",
-    "d",
-    # ",",
-    # ".",
-    "v",
-    "<",
-    ">",
-    "1",
-    "2",
-    "3",
-    "4",
-    "8",
-    "*",
-    "h",
-    "H",
-    "+",
-    "x",
-    "D",
-    "_",
-]
+# this is shuffled by hand to make sure everything ordered
+# in the most intuitive way
+marker_styles = [".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d",
+                 "v", "H", "<", "8", ">", "X",
+                 "1", "3", "4", "D", "o"]
 
+def get_all_named_colors(to_hsv=False):
+  from matplotlib import colors as mcolors
+  colors = dict(mcolors.BASE_COLORS, **mcolors.CSS4_COLORS)
+  # Sort colors by hue, saturation, value and name.
+  if to_hsv:
+    by_hsv = sorted((tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
+                    for name, color in colors.items())
+    colors = OrderedDict([(name, color) for color, name in by_hsv])
+  return colors
 
 def generate_random_colors(n, seed=5218, return_hex=True):
   if seed is not None:
     np.random.seed(seed)
+  n = int(n)
   colors = []
-  for i in range(n):
-    hue = 0.05 + i / n # we want maximizing hue
-    lightness = 0.4 + np.random.rand(1)[0] / 3  # lightness
-    saturation = 0.5 + np.random.rand(1)[0] / 10 # saturation
+  # we want maximizing the differences in hue
+  all_hue = np.linspace(0., 0.88, num=n)
+  for i, hue in enumerate(all_hue):
+    saturation = 0.6 + np.random.rand(1)[0] / 2.5 # saturation
+    lightness = 0.25 + np.random.rand(1)[0] / 1.4 # lightness
     rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    hex = "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
-                                       int(rgb[1] * 255),
-                                       int(rgb[2] * 255))
-    colors.append(rgb if not return_hex else hex)
+    colors.append(rgb if not return_hex else
+      "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
+                                   int(rgb[1] * 255),
+                                   int(rgb[2] * 255)))
   return colors
 
 def generate_random_marker(n, seed=5218):
@@ -623,64 +611,81 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
 # ===========================================================================
 # Scatter plot
 # ===========================================================================
-def _validate_color_marker_legends(num_samples, color, marker, legend):
+def _validate_color_marker_size_legend(n_samples,
+                                       color, marker, size):
   default_color = 'b'
   default_marker = '.'
-  # ====== color is given create legend and different marker ====== #
+  default_size = 8
+  legend = [[None] * n_samples, # color
+            [None] * n_samples, # marker
+            [None] * n_samples] # size
+  seed = 5218
+  create_label_map = lambda labs, def_val, fn_gen: \
+      ({labs[0]: def_val}
+       if len(labs) == 1 else
+       {i: j for i, j in zip(labs, fn_gen(len(labs), seed=seed))})
+  # ====== check arguments ====== #
   if color is None:
-    color = [default_color] * num_samples
-  elif isinstance(color, string_types):
-    color = [color] * num_samples
-  if len(color) != num_samples:
-    raise ValueError("There are %d colors, but %d data points" %
-                     len(color), num_samples)
-  # ====== check marker ====== #
-  if marker is None:
-    marker = [default_marker] * num_samples
-  elif isinstance(marker, string_types):
-    marker = [marker] * num_samples
-  elif len(marker) != num_samples:
-    raise ValueError("There are %d markers, but %d data points" %
-                     len(marker), num_samples)
-  # ====== check legend ====== #
-  color_marker = set([(i, j) for i, j in zip(color, marker)])
-  if legend is None:
-    legend = {x: '' for x in color_marker}
-  elif isinstance(legend, dict):
-    assert all(isinstance(j, string_types) and
-               isinstance(i, (tuple, list)) and len(i) == 2
-               for i, j in legend.items())
-    if isinstance(legend, OrderedDict):
-      legend = OrderedDict([(i, j)
-                            for i, j in legend.items()
-                            if i in color_marker])
-    else:
-      legend = {x: legend[x] for x in color_marker}
-  elif isinstance(legend, string_types):
-    legend = {x: legend for x in color_marker}
-  elif isinstance(legend, (tuple, list, np.ndarray)):
-    assert len(legend) >= len(color_marker)
-    legend = OrderedDict([(i, str(j)) for i, j in zip(color_marker, legend)])
+    color = [0] * n_samples
   else:
-    raise ValueError("No support for legend value: %s" % str(legend))
-  return color, marker, legend
+    legend[0] = color
+  if marker is None:
+    marker = [0] * n_samples
+  else:
+    legend[1] = marker
+  if isinstance(size, Number):
+    default_size = size
+    size = [0] * n_samples
+  elif size is None:
+    size = [0] * n_samples
+  else:
+    legend[2] = size
+  # ====== validate the length ====== #
+  assert len(color) == n_samples, \
+  "Given %d variable for `color`, but require %d samples" % (len(color), n_samples)
+  assert len(marker) == n_samples, \
+  "Given %d variable for `marker`, but require %d samples" % (len(marker), n_samples)
+  assert len(size) == n_samples, \
+  "Given %d variable for `size`, but require %d samples" % (len(size), n_samples)
+  # ====== labels set ====== #
+  color_labels = np.unique(color)
+  color_map = create_label_map(color_labels, default_color, generate_random_colors)
 
-def plot_density():
-  from matplotlib import pyplot as plt
-  from scipy.stats import kde
+  marker_labels = np.unique(marker)
+  marker_map = create_label_map(marker_labels, default_marker, generate_random_marker)
 
-  nbins = 300
-  def fit_kde(X):
-    x = X[:, 0]
-    y = X[:, 1]
-    k = kde.gaussian_kde([x, y])
-    xi, yi = np.mgrid[x.min():x.max():nbins * 1j, y.min():y.max():nbins * 1j]
-    zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-    zi = zi.reshape(xi.shape)
-    return xi, yi, zi
-  plt.pcolormesh(*fit_kde(X0), cmap=plt.cm.Reds)
-  plt.pcolormesh(*fit_kde(X1), cmap=plt.cm.Greens)
-  plt.pcolormesh(*fit_kde(X2), cmap=plt.cm.Blues)
+  size_labels = np.unique(size)
+  size_map = create_label_map(size_labels, default_size, lambda n, s: [default_size] * n)
+  # ====== prepare legend ====== #
+  legend_name = []
+  legend_style = []
+  for c, m, s in zip(*legend):
+    name = []
+    style = []
+    if c is None:
+      name.append(''); style.append(color_map[0])
+    else:
+      name.append(str(c)); style.append(color_map[c])
+    if m is None:
+      name.append(''); style.append(marker_map[0])
+    else:
+      name.append(str(m)); style.append(marker_map[m])
+    if s is None:
+      name.append(''); style.append(size_map[0])
+    else:
+      name.append(str(s)); style.append(size_map[s])
+    name = tuple(name)
+    style = tuple(style)
+    if name not in legend_name:
+      legend_name.append(name)
+      legend_style.append(style)
+  legend = OrderedDict([(i, j)
+                        for i, j in zip(legend_style, legend_name)])
+  # ====== return ====== #
+  return ([color_map[i] for i in color],
+          [marker_map[i] for i in marker],
+          [size_map[i] for i in size],
+          legend)
 
 def plot_scatter_layers(x_y_val, ax=None,
                         layer_name=None, layer_color=None, layer_marker=None,
@@ -808,7 +813,8 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
     cls_indicator = [0] * num_samples
   else:
     assert len(cls_indicator) == num_samples
-    assert all(isinstance(i, Number) for i in cls_indicator), "`cls_indicator` must be integer."
+    assert all(isinstance(i, Number) for i in cls_indicator), \
+    "`cls_indicator` must be integer."
   cls_indicator = [int(i) for i in cls_indicator]
   num_classes = len(set(cls_indicator))
   # class name
@@ -879,38 +885,40 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
   return ax
 
 def plot_scatter(x, y, z=None,
-                 ax=None, color=None, marker=None, size=4.0,
+                 color=None, marker=None, size=4.0,
+                 ax=None,
                  elev=None, azim=None,
                  ticks_off=True, grid=True,
-                 legend=None, legend_loc='upper center',
-                 legend_ncol=3, legend_colspace=0.4,
-                 fontsize=8, title=None):
+                 legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
+                 n_samples=None, fontsize=8, title=None):
   ''' Plot the amplitude envelope of a waveform.
 
   Parameters
   ----------
-  x : 1D-array (num_samples,)
-  y : 1D-array (num_samples,)
-  z : 1D-array or None (num_samples,)
+  x : 1D-array [n_samples,]
+  y : 1D-array [n_samples,]
+  z : 1D-array or None [n_samples,]
     if provided, plot in 3D
+
   ax : {None, int, tuple of int, Axes object) (default: None)
     if int, `ax` is the location of the subplot (e.g. `111`)
     if tuple, `ax` is tuple of location (e.g. `(1, 1, 1)`)
     if Axes object, `ax` must be `mpl_toolkits.mplot3d.Axes3D` in case `z`
     is given
-  color: array (nb_samples)
+
+  color: array [n_samples,]
       list of colors for each class, check `generate_random_colors`,
       length of color must be equal to `x` and `y`
-  marker: array (nb_samples,)
+
+  marker: array [n_samples,]
       different marker for each color, default marker is '.'
-  legend : dict
-      mapping {[color][marker] -> name, ...}
-      for example: {'r.': 'reddot', 'b^': 'bluetriangle'}
-      you can control the order of legend by using OrderDict
+
   legend_ncol : int (default: 3)
     number of columns for displaying legends
+
   legend_colspace : float (default: 0.4)
     space between columns in the legend
+
   legend_loc : {str, int}
     ‘best’  0
     ‘upper right’ 1
@@ -923,13 +931,16 @@ def plot_scatter(x, y, z=None,
     ‘lower center’  8
     ‘upper center’  9
     ‘center’  10
+
   elev : {None, Number} (default: None or 30 degree)
     stores the elevation angle in the z plane, with `elev=90` is
     looking from top down.
     This can be used to rotate the axes programatically.
+
   azim : {None, Number} (default: None or -60 degree)
     stores the azimuth angle in the x,y plane.
     This can be used to rotate the axes programatically.
+
   title : {None, string} (default: None)
     specific title for the subplot
   '''
@@ -937,34 +948,68 @@ def plot_scatter(x, y, z=None,
   if z is not None:
     assert len(y) == len(z)
   is_3D_mode = False if z is None else True
+  # ====== perform downsample ====== #
+  if n_samples is not None:
+    n_samples = int(n_samples)
+    # downsample all data
+    if n_samples < len(x):
+      rand = np.random.RandomState(seed=5218)
+      ids = rand.permutation(len(x))[:n_samples]
+      x = np.array(x)[ids]
+      y = np.array(y)[ids]
+      if is_3D_mode:
+        z = np.array(z)[ids]
+      if isinstance(color, (tuple, list, np.ndarray)):
+        color = np.array(color)[ids]
+      if isinstance(marker, (tuple, list, np.ndarray)):
+        marker = np.array(marker)[ids]
+      if isinstance(size, (tuple, list, np.ndarray)):
+        size = np.array(size)[ids]
+    # nothing to do
+    else:
+      n_samples = len(x)
+  # no downsampling
+  else:
+    n_samples = len(x)
   # ====== prepare ====== #
-  color, marker, legend = _validate_color_marker_legends(
-      len(x), color, marker, legend)
+  color, marker, size, legend = _validate_color_marker_size_legend(
+      n_samples, color, marker, size)
   # 3D plot
   ax = to_axis(ax, is_3D_mode)
   # ====== plotting ====== #
   # group into color-marker then plot each set
   axes = []
-  legend_ = []
-  # prepare legend
-  legend_iter = legend.items() if isinstance(legend, OrderedDict) else\
-  sorted(legend.items(), key=lambda x: x[-1])
-  # plotting
-  for code, name in legend_iter:
-    c, m = list(code)
-    x_ = [i for i, j, k in zip(x, color, marker) if j == c and k == m]
-    y_ = [i for i, j, k in zip(y, color, marker) if j == c and k == m]
+  legend_name = []
+
+  for style, name in legend.items():
+    x_, y_, z_ = [], [], []
+    # get the right set of data points
+    for i, (c, m, s) in enumerate(zip(color, marker, size)):
+      if c == style[0] and m == style[1] and s == style[2]:
+        x_.append(x[i])
+        y_.append(y[i])
+        if is_3D_mode:
+          z_.append(z[i])
+    # plotting
     if is_3D_mode:
-      z_ = [i for i, j, k in zip(z, color, marker) if j == c and k == m]
-      _ = ax.scatter(x_, y_, z_, color=c, s=size, marker=m)
+      _ = ax.scatter(x_, y_, z_,
+                     color=style[0], marker=style[1], s=style[2])
     else:
-      _ = ax.scatter(x_, y_, color=c, s=size, marker=m)
+      _ = ax.scatter(x_, y_,
+                     color=style[0], marker=style[1], s=style[2])
     axes.append(_)
+    # make the shortest name
+    name = [i for i in name if len(i) > 0]
+    short_name = []
+    for i in name:
+      if i not in short_name:
+        short_name.append(i)
+    name = short_name
     if len(name) > 0:
-      legend_.append(name)
+      legend_name.append(', '.join(name))
   # ====== plot the legend ====== #
-  if len(legend_) > 0:
-    legend = ax.legend(axes, legend_, markerscale=1.5,
+  if len(legend_name) > 0:
+    legend = ax.legend(axes, legend_name, markerscale=1.5,
       scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
       loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
       columnspacing=float(legend_colspace), labelspacing=0.,

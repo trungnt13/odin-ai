@@ -22,7 +22,7 @@ _tf_distribution_types = tuple(_tf_distribution_types)
 from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
-                        decorators, batching)
+                        decorators, batching, Progbar)
 from .role import (has_roles, Auxiliary, Parameter)
 
 # ===========================================================================
@@ -502,28 +502,41 @@ class Function(object):
   Parameters
   ----------
   inputs: list of `tf.placeholder` or `tf.Variable`
+
   outputs: list of `tf.Tensor`
+
   updates: list, or dict
       mapping from `Tensor` to its new value which is `Tensor` or
       real value.
+
   defaults: dict
       mapping from `Variable` or `placeholder` to its default values.
+
   training: None, True, False
       if `training=None`, left the training mode unchanged
       if `training=True`, turn on training mode only when execute this
       function.
       if `training=False`, disable training mode only when execute this
       function.
+
   batch_size : {int, None} (default: None)
       if `batch_size` is not None, auto-split all array into minibatch,
       and return a list of outputs (all array must have equal `shape[0]`)
+
   batch_vars : {Tensor, list of Tensor}
       if `len(batch_vars) == 0`, split mini-batches for all Tensor inputs,
       otherwise, only applying for a selected set of inputs.
+
   strict : bool (default: True)
       if False, remove shape mis-matched inputs when `__call__`
       this `Function`.
       if True, raise RuntimeError.
+
+  Note
+  ----
+  call the function with `show_progress=True` when `batch_size`
+  is specified to show the progress.
+
   """
 
   def __init__(self, inputs, outputs, updates=[], defaults={},
@@ -581,6 +594,7 @@ class Function(object):
     return self._output_shape if self._return_list else self._output_shape[0]
 
   def __call__(self, *inputs, **kwargs):
+    show_progress = kwargs.pop('show_progress', False)
     # dictionary as inputs
     if len(kwargs) == len(self.inputs_name):
       inputs = [kwargs[i] for i in self.inputs_name]
@@ -623,26 +637,53 @@ class Function(object):
     session = get_session()
     # ====== mini-batches ====== #
     if self.batch_size is not None:
-      # TODO: check if mini batch return the right order and same values
-      # as full batch.
       batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
                     if len(self.batch_vars) == 0 else self.batch_vars)
       batch_vars = [i for i in batch_vars
                     if i in feed_dict and hasattr(feed_dict[i], 'shape')]
-      num_samples = list(set(feed_dict[i].shape[0] for i in batch_vars))
-      assert len(num_samples) == 1, \
-      "Data have multiple batching dimension: %s" % str(num_samples)
-      num_samples = num_samples[0]
+      n_samples = list(set(feed_dict[i].shape[0] for i in batch_vars))
+      assert len(n_samples) == 1, \
+      "Data have multiple batching dimension: %s" % str(n_samples)
+      n_samples = n_samples[0]
+      n_output = len(self.outputs)
       outputs = []
-      for s, e in batching(batch_size=self.batch_size, n=num_samples):
-        feed_dict_minibatch = OrderedDict([(k, v[s:e]) if k in batch_vars else (k, v)
+      all_batches = []
+      # (optional) showing progress
+      if show_progress:
+        prog = Progbar(target=n_samples,
+                       print_report=False, print_summary=False,
+                       name='')
+      for s, e in batching(batch_size=int(self.batch_size), n=n_samples):
+        if show_progress:
+          prog.add(e - s)
+        all_batches.append(e - s)
+        feed_dict_minibatch = OrderedDict([(k, v[s:e])
+                                           if k in batch_vars else (k, v)
                                            for k, v in feed_dict.items()])
         updated = session.run(self.outputs + [self.updates_ops],
                               feed_dict=feed_dict_minibatch)
-        updated = updated[:len(self.outputs)]
+        updated = updated[:n_output]
         if not self._return_list:
           updated = updated[0]
         outputs.append(updated)
+      # concatenate all outputs
+      if not self._return_list:
+        for i in range(outputs[0].ndim):
+          all_n = [o.shape[i] for o in outputs]
+          if all_n == all_batches:
+            break
+        outputs = np.concatenate(outputs, axis=i)
+      else:
+        new_outputs = []
+        for _ in range(len(outputs[0])):
+          o = [x[_] for x in outputs]
+          for i in range(o[0].ndim):
+            all_n = [j.shape[i] for j in o]
+            if all_n == all_batches:
+              break
+          o = np.concatenate(o, axis=i)
+          new_outputs.append(o)
+        outputs = new_outputs
     # ====== single batch ====== #
     else:
       updated = session.run(self.outputs + [self.updates_ops],

@@ -15,6 +15,7 @@ from tensorflow_probability import distributions as tfd, bijectors as tfb
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
 from odin.utils import args_parse, ctext, batching, Progbar
+from odin.ml import fast_pca
 from odin.stats import describe
 
 args = args_parse(descriptions=[
@@ -42,6 +43,7 @@ args = args_parse(descriptions=[
     ('--iw', 'enable important weights sampling', None, False),
 ])
 
+FIGURE_PATH = '/tmp'
 # ===========================================================================
 # Load dataset
 # ===========================================================================
@@ -74,6 +76,13 @@ X = K.placeholder(shape=(None,) + input_shape[1:], name='X')
 W = K.placeholder(shape=(None,) + input_shape[1:], name='W')
 y = K.placeholder(shape=(None,), name='y')
 nsample = K.placeholder(shape=(), dtype='int32', name='nsample')
+
+z = fast_pca(X_test, n_components=2, random_state=5218)
+V.plot_scatter(x=z[:, 0], y=z[:, 1],
+               color=y_test, marker=y_test
+)
+V.plot_save('/tmp/tmp.pdf')
+exit()
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -111,10 +120,24 @@ E = f_encoder(X)
 q_Z_given_X = N.variational.parse_distribution(
     args.zdist, E, int(args.zdim),
     name='Z')
+# [n_sample, n_batch, zdim]
 q_Z_given_X_samples = q_Z_given_X.sample(nsample)
-q_Z_given_X_mean = q_Z_given_X.mean()
-q_Z_given_X_var = q_Z_given_X.variance()
 
+Z = [
+    q_Z_given_X.mean(),
+    tf.reduce_mean(q_Z_given_X_samples, axis=0),
+    tf.concat([q_Z_given_X.mean(), tf.sqrt(q_Z_given_X.variance())],
+            axis=-1),
+    K.flatten(tf.transpose(q_Z_given_X_samples, perm=(1, 0, 2)),
+            outdim=2)
+]
+Z_names = [
+    "posterior mean",
+    "mean of MCMC samples",
+    "statistic pooling",
+    "all samples flatten"
+]
+# ====== Z prior ====== #
 p_Z = N.variational.parse_distribution(
     dist_name=args.zprior)
 # ====== decoder ====== #
@@ -123,9 +146,20 @@ D = f_decoder(q_Z_given_X_samples)
 p_X_given_Z = N.variational.parse_distribution(
     args.xdist, D, int(np.prod(input_shape[1:])),
     n_eventdim=1, name='W')
-p_X_given_Z_samples = p_X_given_Z.sample(nsample)
+# [n_sample, n_batch, feat_dim]
 p_X_given_Z_mean = p_X_given_Z.mean()
-p_X_given_Z_var = p_X_given_Z.variance()
+# [n_batch, feat_dim]
+p_X_mean = tf.reduce_mean(p_X_given_Z_mean, axis=0)
+# MCMC variance [n_batch, feat_dim]
+stdev_of_p_X_given_Z_mean = tf.sqrt(
+    tf.reduce_mean(
+        tf.square(p_X_given_Z_mean - tf.expand_dims(p_X_mean, axis=0)),
+        axis=0) / tf.to_float(nsample)
+)
+# analytical variance
+p_X_stdev = tf.sqrt(
+    tf.reduce_mean(p_X_given_Z.variance(), axis=0)
+)
 # ===========================================================================
 # Variational inference (ELBO)
 # The Independent distribution composed of a collection of
@@ -153,7 +187,7 @@ if args.analytic:
   KL = tf.expand_dims(KL, axis=0)
 else:
   # [n_sample_train, n_batch, n_latent] - [n_sample_train, n_batch, n_latent]
-  KL = (q_Z_given_X.log_prob(q_Z_given_X_mean) -
+  KL = (q_Z_given_X.log_prob(q_Z_given_X_samples) -
         p_Z.log_prob(q_Z_given_X_samples))
 # latent variables are independent
 KL = tf.reduce_sum(KL, axis=-1)
@@ -197,24 +231,50 @@ f_score = K.function(inputs=input_plh,
                      defaults={nsample: args.nsample_test},
                      training=False)
 f_z = K.function(inputs=X,
-                 outputs=[q_Z_given_X_samples, q_Z_given_X_mean, q_Z_given_X_var],
+                 outputs=Z,
                  defaults={nsample: args.nsample_test},
+                 batch_size=args.batch,
                  training=False)
 f_w = K.function(inputs=X,
-                 outputs=[p_X_given_Z_samples, p_X_given_Z_mean, p_X_given_Z_var],
+                 outputs=[p_X_mean, stdev_of_p_X_given_Z_mean, p_X_stdev],
                  defaults={nsample: args.nsample_test},
+                 batch_size=args.batch,
                  training=False)
 # ===========================================================================
 # Training
 # ===========================================================================
+# ====== epoch visualization ====== #
+def plot_epoch(task):
+  curr_epoch = task.curr_epoch
+  if not (curr_epoch < 5 or curr_epoch % 5 == 0):
+    return
+  rand = np.random.RandomState(seed=5218)
+
+  X, y = X_test, y_test
+  n = X.shape[0]
+
+  W, W_stdev_mcmc, W_stdev_analytic = f_w(X)
+
+  for i, (z, name) in enumerate(zip(f_z(X), Z_names)):
+    if z.shape[1] > 2:
+      z = fast_pca(z, n_components=2, random_state=rand.randint(10e8))
+    V.subplot(1, 4, i + 1)
+    V.plot_scatter(x=z[:, 0], y=z[:, 1],
+                   color=y, marker=y)
+  exit()
+
+
+# ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
                     allow_rollback=False, verbose=2)
 runner.set_callbacks([
     T.NaNDetector(task_name=None, patience=-1, detect_inf=True),
-    # T.EpochSummary(task_name=('train', 'valid'),
-    #                output_name=(loss, iw_loss, KL_mean, NLLK_mean),
-    #                print_plot=False, save_path='/tmp/tmp.png')
+    T.EpochSummary(task_name=('train', 'valid'),
+                   output_name=(loss, iw_loss, KL_mean, NLLK_mean),
+                   print_plot=False,
+                   save_path=os.path.join(FIGURE_PATH, 'summary.png')),
+    T.LambdaCallback(fn=plot_epoch, task_name='train')
 ])
 runner.set_train_task(func=f_train, data=[X_train, X_train],
                       epoch=args.epoch,

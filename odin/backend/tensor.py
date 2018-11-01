@@ -652,16 +652,19 @@ def dimshuffle(x, pattern, name='Dimshuffle'):
   return x
 
 def flatten(x, outdim=1, name='Flatten'):
+  """ Keep all the original dimension until `outdim - 1`
+  """
   with tf.variable_scope(name):
     if outdim == 1:
       return tf.reshape(x, [-1], name=name)
-    input_shape = x.shape.as_list()
+    input_shape = [tf.shape(x)[i] if d is None else d
+                   for i, d in enumerate(x.shape.as_list())]
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
-    n = np.prod(input_shape[(outdim - 1):])
-    output_shape = [-1 if i is None else i
-                    for i in other_shape + (n,)]
+    n = 1
+    for i in input_shape[(outdim - 1):]:
+      n = n * i
+    output_shape = other_shape + (n,)
     return tf.reshape(x, output_shape)
-
 
 def repeat(x, n, axes=None, name="Repeat"):
   """ Repeat a N-D tensor.
