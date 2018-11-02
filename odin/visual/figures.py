@@ -45,7 +45,8 @@ def get_all_named_colors(to_hsv=False):
     colors = OrderedDict([(name, color) for color, name in by_hsv])
   return colors
 
-def generate_random_colors(n, seed=5218, return_hex=True):
+def generate_random_colors(n, seed=5218, lightness_value=None,
+                           return_hsl=False, return_hex=True):
   if seed is not None:
     np.random.seed(seed)
   n = int(n)
@@ -54,13 +55,47 @@ def generate_random_colors(n, seed=5218, return_hex=True):
   all_hue = np.linspace(0., 0.88, num=n)
   for i, hue in enumerate(all_hue):
     saturation = 0.6 + np.random.rand(1)[0] / 2.5 # saturation
-    lightness = 0.25 + np.random.rand(1)[0] / 1.4 # lightness
-    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    colors.append(rgb if not return_hex else
-      "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
-                                   int(rgb[1] * 255),
-                                   int(rgb[2] * 255)))
+    if lightness_value is None:
+      lightness = 0.25 + np.random.rand(1)[0] / 1.4 # lightness
+    else:
+      lightness = float(lightness_value)
+    # select color scheme to return
+    if return_hsl:
+      colors.append((hue, saturation, lightness))
+    else:
+      rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
+      colors.append(rgb if not return_hex else
+        "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
+                                     int(rgb[1] * 255),
+                                     int(rgb[2] * 255)))
   return colors
+
+def generate_random_colormaps(n, seed=5218, bicolors=False):
+  from matplotlib.colors import LinearSegmentedColormap
+  color_maps = []
+  interpolate_hsl = lambda h, s, l: \
+      [(h, l + 0.49, s),
+       (h, l, s),
+       (h, l - 0.1, min(s + 0.1, 1.))]
+  if bicolors:
+    base_colors = generate_random_colors(n * 2, lightness_value=0.5, seed=seed,
+                                         return_hsl=True)
+    base_colors = list(zip(base_colors[:n], base_colors[n:]))
+  else:
+    base_colors = generate_random_colors(n, lightness_value=0.5, seed=seed,
+                                         return_hsl=True)
+  for i, c in enumerate(base_colors):
+    if bicolors:
+      cA, cB = c
+      colors = [colorsys.hls_to_rgb(*i)
+                for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)]
+    else:
+      hue, saturation, lightness = c
+      colors = [colorsys.hls_to_rgb(*i)
+                for i in interpolate_hsl(*c)]
+    color_maps.append(LinearSegmentedColormap.from_list(
+        name='Colormap%d' % i, colors=colors, N=256, gamma=1))
+  return color_maps
 
 def generate_random_marker(n, seed=5218):
   if n > len(marker_styles):
@@ -394,7 +429,31 @@ def subplot(*arg, **kwargs):
     subplot.set_title(kwargs['title'])
   return subplot
 
-def plot_subplotGrid(shape, loc, colspan=1, rowspan=1):
+@contextmanager
+def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
+  """
+  Example
+  -------
+  grid = plt.GridSpec(2, 3, wspace=0.4, hspace=0.3)
+  plt.subplot(grid[0, 0])
+  plt.subplot(grid[0, 1:])
+  plt.subplot(grid[1, :2])
+  plt.subplot(grid[1, 2])
+  """
+  from matplotlib import pyplot as plt
+  grid = plt.GridSpec(nrows=nrow, ncols=ncol,
+                      wspace=wspace, hspace=hspace)
+  yield grid
+
+def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
+  """
+  Example
+  -------
+  ax1 = plt.subplot2grid((3, 3), (0, 0))
+  ax2 = plt.subplot2grid((3, 3), (0, 1), colspan=2)
+  ax3 = plt.subplot2grid((3, 3), (1, 0), colspan=2, rowspan=2)
+  ax4 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
+  """
   from matplotlib import pyplot as plt
   return plt.subplot2grid(shape=shape, loc=loc, colspan=colspan, rowspan=rowspan)
 
@@ -612,9 +671,18 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
 # Scatter plot
 # ===========================================================================
 def _validate_color_marker_size_legend(n_samples,
-                                       color, marker, size):
+                                       color, marker, size,
+                                       is_colormap=False):
+  """ Return: colors, markers, sizes, legends """
+  from matplotlib.colors import LinearSegmentedColormap
   default_color = 'b'
+  if isinstance(color, (string_types, LinearSegmentedColormap)):
+    default_color = color
+    color = None
   default_marker = '.'
+  if isinstance(marker, string_types):
+    default_marker = marker
+    marker = None
   default_size = 8
   legend = [[None] * n_samples, # color
             [None] * n_samples, # marker
@@ -649,7 +717,10 @@ def _validate_color_marker_size_legend(n_samples,
   "Given %d variable for `size`, but require %d samples" % (len(size), n_samples)
   # ====== labels set ====== #
   color_labels = np.unique(color)
-  color_map = create_label_map(color_labels, default_color, generate_random_colors)
+  color_map = create_label_map(color_labels, default_color,
+                               generate_random_colormaps
+                               if is_colormap else
+                               generate_random_colors)
 
   marker_labels = np.unique(marker)
   marker_map = create_label_map(marker_labels, default_marker, generate_random_marker)
@@ -686,6 +757,23 @@ def _validate_color_marker_size_legend(n_samples,
           [marker_map[i] for i in marker],
           [size_map[i] for i in size],
           legend)
+
+def _downsample_scatter_points(x, y, z, n_samples, *args):
+  args = list(args)
+  # downsample all data
+  if n_samples is not None and n_samples < len(x):
+    n_samples = int(n_samples)
+    rand = np.random.RandomState(seed=5218)
+    ids = rand.permutation(len(x))[:n_samples]
+    x = np.array(x)[ids]
+    y = np.array(y)[ids]
+    if z is not None:
+      z = np.array(z)[ids]
+    args = [np.array(a)[ids]
+            if isinstance(a, (tuple, list, np.ndarray))
+            else a
+            for a in args]
+  return [len(x), x, y, z] + args
 
 def plot_scatter_layers(x_y_val, ax=None,
                         layer_name=None, layer_color=None, layer_marker=None,
@@ -782,15 +870,14 @@ def plot_scatter_layers(x_y_val, ax=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-
 def plot_scatter_heatmap(x, y, val, z=None, ax=None,
-                         cls_indicator=None, cls_name=None,
-                         cls_color=None, cls_marker=None,
-                         size=4.0, alpha=None, elev=None, azim=None,
+                         colormap='bwr', marker='o', size=4.0, alpha=0.8,
+                         elev=None, azim=None,
                          ticks_off=True, grid=True,
                          colorbar=False, colorbar_horizontal=False,
+                         legend_enable=True,
                          legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-                         fontsize=8, title=None):
+                         n_samples=None, fontsize=8, title=None):
   """
   Parameters
   ----------
@@ -802,74 +889,76 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
     float value for the intensity of given class
   """
   from matplotlib import pyplot as plt
+  from matplotlib.colors import LinearSegmentedColormap
+
   assert len(x) == len(y) == len(val)
   if z is not None:
     assert len(y) == len(z)
   is_3D_mode = False if z is None else True
   ax = to_axis(ax, is_3D=is_3D_mode)
-  num_samples = len(x)
-  # ====== prepare classes information ====== #
-  if cls_indicator is None:
-    cls_indicator = [0] * num_samples
-  else:
-    assert len(cls_indicator) == num_samples
-    assert all(isinstance(i, Number) for i in cls_indicator), \
-    "`cls_indicator` must be integer."
-  cls_indicator = [int(i) for i in cls_indicator]
-  num_classes = len(set(cls_indicator))
-  # class name
-  cls_name = _check_arg_length(dat=cls_name, n=num_samples,
-                               dtype=string_types, default='',
-                               converter=lambda x:str(x))
-  # colormap
-  cls_color = _check_arg_length(dat=cls_color, n=num_classes,
-                                dtype=string_types, default='Blues',
-                                converter=lambda x: plt.get_cmap(str(x)))
-  # class marker
-  cls_marker = _check_arg_length(dat=cls_marker, n=num_classes,
-                                 dtype=string_types, default='o',
-                                 converter=lambda x: str(x))
-  # size
-  size = _check_arg_length(dat=size, n=num_classes,
-                           dtype=Number, default=4.0,
-                           converter=lambda x: float(x))
+  min_val = np.min(val)
+  max_val = np.max(val)
+  assert isinstance(colormap, (string_types, LinearSegmentedColormap)), \
+  "`colormap` can be string or instance of matplotlib Colormap, but given: %s" % type(colormap)
+  # ====== downsampling points ====== #
+  n_samples, x, y, z, val, marker, size = \
+      _downsample_scatter_points(x, y, z, n_samples, val, marker, size)
+  colormap, marker, size, legend = _validate_color_marker_size_legend(
+      n_samples, colormap, marker, size)
   # ====== plotting each class ====== #
-  legends = []
-  for idx, clz in enumerate(set(cls_indicator)):
+  axes = []
+  legend_name = []
+  for idx, (style, name) in enumerate(legend.items()):
     x_, y_, z_, val_ = [], [], [], []
-    for i, c in enumerate(cls_indicator):
-      if c == clz:
+    # get the right set of data points
+    for i, (c, m, s) in enumerate(zip(colormap, marker, size)):
+      if c == style[0] and m == style[1] and s == style[2]:
         x_.append(x[i])
         y_.append(y[i])
         val_.append(val[i])
         if is_3D_mode:
           z_.append(z[i])
-    kwargs = {'c':val_, 's':size[idx], 'marker':cls_marker[idx],
-              'alpha': alpha, 'cmap': cls_color[idx]}
     # plot
+    kwargs = {'c':val_, 'vmin': min_val, 'vmax': max_val,
+              'cmap': style[0], 'marker':style[1], 's':style[2],
+              'alpha': alpha}
     if is_3D_mode:
       _ = ax.scatter(x_, y_, z_, **kwargs)
     else:
       _ = ax.scatter(x_, y_, **kwargs)
-    # legend
-    name = cls_name[idx]
+    axes.append(_)
+    # make the shortest name
+    name = [i for i in name if len(i) > 0]
+    short_name = []
+    for i in name:
+      if i not in short_name:
+        short_name.append(i)
+    name = ', '.join(short_name)
     if len(name) > 0:
-      legends.append((name, _))
+      legend_name.append(name)
     # colorbar
-    if colorbar:
-      cba = plt.colorbar(_, shrink=0.5, pad=0.01,
+    if colorbar and idx == 0:
+      cba = plt.colorbar(_, shrink=0.99, pad=0.01,
         orientation='horizontal' if colorbar_horizontal else 'vertical')
-      if len(name) > 0:
-        cba.set_label(name, fontsize=fontsize)
+      cba.set_ticks(np.linspace(min_val, max_val, num=8 - 1))
+      cba.ax.tick_params(labelsize=fontsize)
+      # if len(name) > 0:
+      #   cba.set_label(name, fontsize=fontsize)
   # ====== plot the legend ====== #
-  if len(legends) > 0:
-    legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
-      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+  if len(legend_name) > 0 and bool(legend_enable):
+    legend = ax.legend(axes, legend_name, markerscale=1.5,
+      scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
       loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
       columnspacing=float(legend_colspace), labelspacing=0.,
       fontsize=fontsize, handletextpad=0.1)
-    for i, c in enumerate(cls_color):
-      legends.legendHandles[i].set_color(c(.8))
+  # if len(legend_name) > 0:
+  #   legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
+  #     markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
+  #     loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
+  #     columnspacing=float(legend_colspace), labelspacing=0.,
+  #     fontsize=fontsize, handletextpad=0.1)
+  #   for i, c in enumerate(cls_color):
+  #     legends.legendHandles[i].set_color(c(.8))
   # ====== some configuration ====== #
   if ticks_off:
     ax.set_xticklabels([])
@@ -885,10 +974,11 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
   return ax
 
 def plot_scatter(x, y, z=None,
-                 color=None, marker=None, size=4.0,
+                 color='b', marker='.', size=4.0,
                  ax=None,
                  elev=None, azim=None,
                  ticks_off=True, grid=True,
+                 legend_enable=True,
                  legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
                  n_samples=None, fontsize=8, title=None):
   ''' Plot the amplitude envelope of a waveform.
@@ -948,34 +1038,12 @@ def plot_scatter(x, y, z=None,
   if z is not None:
     assert len(y) == len(z)
   is_3D_mode = False if z is None else True
+  ax = to_axis(ax, is_3D_mode)
   # ====== perform downsample ====== #
-  if n_samples is not None:
-    n_samples = int(n_samples)
-    # downsample all data
-    if n_samples < len(x):
-      rand = np.random.RandomState(seed=5218)
-      ids = rand.permutation(len(x))[:n_samples]
-      x = np.array(x)[ids]
-      y = np.array(y)[ids]
-      if is_3D_mode:
-        z = np.array(z)[ids]
-      if isinstance(color, (tuple, list, np.ndarray)):
-        color = np.array(color)[ids]
-      if isinstance(marker, (tuple, list, np.ndarray)):
-        marker = np.array(marker)[ids]
-      if isinstance(size, (tuple, list, np.ndarray)):
-        size = np.array(size)[ids]
-    # nothing to do
-    else:
-      n_samples = len(x)
-  # no downsampling
-  else:
-    n_samples = len(x)
-  # ====== prepare ====== #
+  n_samples, x, y, z, color, marker, size = _downsample_scatter_points(
+      x, y, z, n_samples, color, marker, size)
   color, marker, size, legend = _validate_color_marker_size_legend(
       n_samples, color, marker, size)
-  # 3D plot
-  ax = to_axis(ax, is_3D_mode)
   # ====== plotting ====== #
   # group into color-marker then plot each set
   axes = []
@@ -1008,7 +1076,7 @@ def plot_scatter(x, y, z=None,
     if len(name) > 0:
       legend_name.append(', '.join(name))
   # ====== plot the legend ====== #
-  if len(legend_name) > 0:
+  if len(legend_name) > 0 and bool(legend_enable):
     legend = ax.legend(axes, legend_name, markerscale=1.5,
       scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
       loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),

@@ -14,7 +14,7 @@ from tensorflow_probability import distributions as tfd, bijectors as tfb
 
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
-from odin.utils import args_parse, ctext, batching, Progbar
+from odin.utils import args_parse, ctext, batching, Progbar, async
 from odin.ml import fast_pca
 from odin.stats import describe
 
@@ -69,6 +69,7 @@ if y_train.ndim > 1:
 if y_test.ndim > 1:
   y_test = np.argmax(y_test, axis=-1)
 input_shape = (None,) + X_train.shape[1:]
+n_classes = len(np.unique(y_train))
 print("Train:", ctext(X_train.shape, 'cyan'), describe(X_train, shorten=True))
 print("Test :", ctext(X_test.shape, 'cyan'), describe(X_test, shorten=True))
 # ====== create basic tensor ====== #
@@ -76,13 +77,6 @@ X = K.placeholder(shape=(None,) + input_shape[1:], name='X')
 W = K.placeholder(shape=(None,) + input_shape[1:], name='W')
 y = K.placeholder(shape=(None,), name='y')
 nsample = K.placeholder(shape=(), dtype='int32', name='nsample')
-
-z = fast_pca(X_test, n_components=2, random_state=5218)
-V.plot_scatter(x=z[:, 0], y=z[:, 1],
-               color=y_test, marker=y_test
-)
-V.plot_save('/tmp/tmp.pdf')
-exit()
 # ===========================================================================
 # Create the network
 # ===========================================================================
@@ -125,7 +119,6 @@ q_Z_given_X_samples = q_Z_given_X.sample(nsample)
 
 Z = [
     q_Z_given_X.mean(),
-    tf.reduce_mean(q_Z_given_X_samples, axis=0),
     tf.concat([q_Z_given_X.mean(), tf.sqrt(q_Z_given_X.variance())],
             axis=-1),
     K.flatten(tf.transpose(q_Z_given_X_samples, perm=(1, 0, 2)),
@@ -133,7 +126,6 @@ Z = [
 ]
 Z_names = [
     "posterior mean",
-    "mean of MCMC samples",
     "statistic pooling",
     "all samples flatten"
 ]
@@ -245,25 +237,61 @@ f_w = K.function(inputs=X,
 # ===========================================================================
 # ====== epoch visualization ====== #
 def plot_epoch(task):
-  curr_epoch = task.curr_epoch
-  if not (curr_epoch < 5 or curr_epoch % 5 == 0):
-    return
+  if task is None:
+    curr_epoch = 0
+  else:
+    curr_epoch = task.curr_epoch
+    if not (curr_epoch < 5 or curr_epoch % 5 == 0):
+      return
   rand = np.random.RandomState(seed=5218)
 
   X, y = X_test, y_test
-  n = X.shape[0]
-
+  nrow = 18
   W, W_stdev_mcmc, W_stdev_analytic = f_w(X)
 
-  for i, (z, name) in enumerate(zip(f_z(X), Z_names)):
-    if z.shape[1] > 2:
-      z = fast_pca(z, n_components=2, random_state=rand.randint(10e8))
-    V.subplot(1, 4, i + 1)
-    V.plot_scatter(x=z[:, 0], y=z[:, 1],
-                   color=y, marker=y)
-  exit()
+  X_pca, W_pca_1 = fast_pca(X, W, n_components=2,
+                            random_state=rand.randint(10e8))
+  W_pca_2 = fast_pca(W, n_components=2,
+                     random_state=rand.randint(10e8))
+  X_count_sum = np.sum(X, axis=tuple(range(1, X.ndim)))
+  W_count_sum = np.sum(W, axis=-1)
 
-
+  V.plot_figure(nrow=int(nrow * 1.8), ncol=18)
+  with V.plot_gridSpec(nrow=nrow + 3, ncol=6, hspace=0.8) as grid:
+    # plot the latent space
+    for i, (z, name) in enumerate(zip(f_z(X), Z_names)):
+      if z.shape[1] > 2:
+        z = fast_pca(z, n_components=2, random_state=rand.randint(10e8))
+      ax = V.subplot(grid[:3, (i * 2):(i * 2 + 2)])
+      V.plot_scatter(x=z[:, 0], y=z[:, 1],
+                     color=y, marker=y, n_samples=4000,
+                     ax=ax, legend_enable=False, legend_ncol=n_classes)
+      ax.set_title(name, fontsize=12)
+    # plot the reconstruction
+    for i, (x, name) in enumerate(zip(
+            [X_pca, W_pca_1, W_pca_2],
+            ['Original data', 'Reconstruction', 'Reconstruction (separated PCA)'])):
+      ax = V.subplot(grid[3:6, (i * 2):(i * 2 + 2)])
+      V.plot_scatter(x=x[:, 0], y=x[:, 1],
+                     color=y, marker=y, n_samples=4000,
+                     ax=ax, legend_enable=i == 1, legend_ncol=n_classes)
+      ax.set_title(name, fontsize=12)
+    # plot the reconstruction count sum
+    for i, (x, count_sum, name) in enumerate(zip(
+            [X_pca, W_pca_1],
+            [X_count_sum, W_count_sum],
+            ['Original data', 'Reconstruction'])):
+      ax = V.subplot(grid[6:9, (i * 3):(i * 3 + 3)])
+      V.plot_scatter_heatmap(x=x[:, 0], y=x[:, 1], val=count_sum,
+                             n_samples=2000, marker=y, ax=ax, size=8,
+                             legend_enable=i == 0, legend_ncol=n_classes,
+                             title=name, colorbar=True, fontsize=10)
+      ax.set_title(name, fontsize=12)
+    # plot the mean and variances
+  V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
+              dpi=200, log=True)
+# just show the first
+plot_epoch(None)
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,

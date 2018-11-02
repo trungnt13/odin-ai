@@ -11,8 +11,10 @@ import time
 import types
 import inspect
 from six import add_metaclass
+from decorator import decorator
 from collections import defaultdict
 from abc import ABCMeta, abstractmethod
+from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_process
 
 import numpy as np
@@ -20,25 +22,22 @@ import numpy as np
 # ===========================================================================
 # Threading
 # ===========================================================================
-from multiprocessing.pool import ThreadPool
-from decorator import decorator
-
 _async_function_counter = defaultdict(int)
-_NB_THREADS = 2
-_thread_pool = None
+_NTHREADS = max(int(cpu_count()) // 2, 2)
+_THREAD_POOL = None
 
-
-def set_nb_threads(n):
-  """ Set number of Threads for the ThreadPool that execute async_task. """
-  global _NB_THREADS
-  if _NB_THREADS != n:
-    _NB_THREADS = n
-    global _thread_pool
-    if _thread_pool is not None:
-      _thread_pool.join()
-      _thread_pool.close()
-    _thread_pool = ThreadPool(processes=_NB_THREADS)
-
+def set_max_threads(n):
+  """ Set the maximum number of Threads for the
+  ThreadPool that execute the async_task.
+  """
+  global _NTHREADS
+  if _NTHREADS != n:
+    _NTHREADS = n
+    global _THREAD_POOL
+    if _THREAD_POOL is not None:
+      _THREAD_POOL.join()
+      _THREAD_POOL.close()
+    _THREAD_POOL = ThreadPool(processes=_NTHREADS)
 
 class _async_task(object):
   """ A class converting blocking functions into asynchronous
@@ -62,15 +61,15 @@ class _async_task(object):
 
   def __init__(self, func, *args, **kw):
     _async_function_counter[func] = _async_function_counter[func] + 1
-    name = '<async_task:[%s]-[%s]>' % (func.__name__, _async_function_counter[func])
+    name = '<async_task:[%s]-[#%s]>' % (func.__name__, _async_function_counter[func])
     self.name = name
     self._callback = lambda r: None
     # check initialized thread pool
-    global _thread_pool
-    if _thread_pool is None:
-      _thread_pool = ThreadPool(processes=_NB_THREADS)
+    global _THREAD_POOL
+    if _THREAD_POOL is None:
+      _THREAD_POOL = ThreadPool(processes=_NTHREADS)
     # create asyn task
-    self._async_task = _thread_pool.apply_async(
+    self._async_task = _THREAD_POOL.apply_async(
         func=func, args=args, kwds=kw,
         callback=lambda result: self.__callback(result))
 
@@ -93,15 +92,22 @@ class _async_task(object):
   def finished(self):
     return self._async_task.ready() and self._async_task.successful()
 
+  @property
+  def finish(self):
+    return self.get()
+
+  @property
+  def result(self):
+    return self.get()
+
   def get(self, timeout=None):
     """Return actual result of the function"""
     if hasattr(self, '_result'):
       return self._result
     return self._async_task.get(timeout=timeout)
 
-
 def async(func=None, callback=None):
-  """ This create and Asynchronized result using Threading instead of
+  """ This create and asynchronized result using Threading instead of
   multiprocessing, you can take advantage from share memory in threading
   for async-IO using this decorator.
 
@@ -110,8 +116,34 @@ def async(func=None, callback=None):
   func: call-able
       main workload executed in this function and return the
       results.
+
   callback: call-able
       a callback function triggered when the task finished
+
+  Example
+  -------
+  >>> from odin.utils import async
+  ...
+  >>> def test_fn(idx):
+  ...   path = '/tmp/tmp%d.txt' % idx
+  ...   with open(path, 'w') as f:
+  ...     for i in range(100000):
+  ...       f.write(str(i))
+  ...     print("FINISH!", path)
+  ...
+  >>> f = async(test_fn)
+  >>> x1 = f(1)
+  >>> x2 = f(2)
+  >>> x3 = f(3)
+  ...
+  >>> count = 0
+  >>> while not x1.finished or not x2.finished or not x3.finished:
+  ...   count += 1
+  ...   print("Iteration:", count)
+  ...   print(x1)
+  ...   print(x2)
+  ...   print(x3)
+
   """
   @decorator
   def _decorator_func_(func, *args, **kwargs):
@@ -124,74 +156,6 @@ def async(func=None, callback=None):
     return _decorator_func_(func)
   # roles are specified
   return _decorator_func_
-
-class MTI(object):
-  """ MTI - Multi threading interface
-  This class use round robin to schedule the tasks to each processes
-
-  Parameters
-  ----------
-  jobs: list, tuple, numpy.ndarray
-      list of works.
-  func: call-able
-      take a `list of jobs` as input (i.e. map_func([job1, job2, ...])),
-      the length of this list is determined by `buffer_size`
-      NOTE: the argument of map_func is always a list.
-  ncpu: int
-      number of processes.
-  batch: int
-      the amount of samples grouped into list, and feed to each
-      process each iteration. (i.e. func([job0, job1, ...]))
-      if `batch=1`, each input is feed individually to `func`
-      (i.e. func(job0); func(job1]); ...)
-  hwm: int
-      "high water mark" for SEND socket, is a hard limit on the
-      maximum number of outstanding messages ØMQ shall queue
-      in memory for any single peer that the specified socket
-      is communicating with.
-
-  """
-
-  def __init__(self, jobs, func,
-               ncpu=1, batch=1, hwm=144):
-    super(MTI, self).__init__()
-    self._ID = np.random.randint(0, 10e8, dtype=int)
-    # ====== check map_func ====== #
-    if not hasattr(func, '__call__'):
-      raise Exception('"func" must be call-able')
-    self._func = func
-    # ====== MTI parameters ====== #
-    # never use all available CPU
-    if ncpu is None:
-      ncpu = cpu_count() - 1
-    self._ncpu = min(
-        np.clip(int(ncpu), 1, cpu_count() - 1),
-        len(jobs)
-    )
-    self._batch = max(1, int(batch))
-    self._hwm = max(0, int(hwm))
-    # ====== internal states ====== #
-    self._nb_working_cpu = self._ncpu
-    # processes manager
-    self._is_init = False
-    self._is_running = False
-    self._is_finished = False
-    self._terminate_now = False
-    # ====== other queue ====== #
-    if not isinstance(jobs, (tuple, list, np.ndarray)):
-      raise ValueError("`jobs` must be instance of tuple or list.")
-    self._jobs = jobs
-    self._remain_jobs = SharedCounter(len(self._jobs))
-    # Equally split for all processes
-    self._tasks = Queue(maxsize=0)
-    for i in segment_list(np.arange(len(self._jobs), dtype='int32'),
-                          size=self._batch):
-      self._tasks.put_nowait(i)
-    for i in range(self._ncpu): # ending signal
-      self._tasks.put_nowait(None)
-    # ====== only 1 iteration is created ====== #
-    self._current_iter = None
-
 
 # ===========================================================================
 # Multi-processing

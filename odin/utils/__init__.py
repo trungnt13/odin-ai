@@ -34,11 +34,11 @@ except:
 import numpy
 
 from .progbar import Progbar, add_notification
-from .mpi import segment_list, SharedCounter, async, MPI
 from .path_utils import *
 from .cache_utils import *
 from .python_utils import *
 from .np_utils import *
+from .mpi import segment_list, SharedCounter, async, MPI
 from . import mpi
 from . import shape_calculation
 from . import decorators
