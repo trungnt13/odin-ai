@@ -14,8 +14,9 @@ from six import add_metaclass
 from decorator import decorator
 from collections import defaultdict
 from abc import ABCMeta, abstractmethod
-from multiprocessing.pool import ThreadPool
-from multiprocessing import cpu_count, Process, Queue, Value, Lock, current_process
+from multiprocessing.pool import ThreadPool, Pool
+from multiprocessing import (cpu_count, Process, Queue, Value, Lock,
+                             current_process)
 
 import numpy as np
 
@@ -25,6 +26,7 @@ import numpy as np
 _async_function_counter = defaultdict(int)
 _NTHREADS = max(int(cpu_count()) // 2, 2)
 _THREAD_POOL = None
+_MPI_POOL = None
 
 def set_max_threads(n):
   """ Set the maximum number of Threads for the
@@ -33,48 +35,64 @@ def set_max_threads(n):
   global _NTHREADS
   if _NTHREADS != n:
     _NTHREADS = n
+    # re-init thread pool
     global _THREAD_POOL
     if _THREAD_POOL is not None:
       _THREAD_POOL.join()
       _THREAD_POOL.close()
     _THREAD_POOL = ThreadPool(processes=_NTHREADS)
+    # re-init mpi pool
+    global _MPI_POOL
+    if _MPI_POOL is not None:
+      _MPI_POOL.join()
+      _MPI_POOL.close()
+    _MPI_POOL = Pool(processes=_NTHREADS)
+
+def _full_func_name(f):
+  return f.__module__ + "." + f.__class__.__qualname__ + '.' + f.__name__
 
 class _async_task(object):
-  """ A class converting blocking functions into asynchronous
-  functions by using threads.
+  """ A class converting blocking functions into
+  asynchronous functions by using threads or processes.
 
-  Example
-  -------
-  >>> def callback(r):
-  ...     print('callback!')
-  >>>
-  >>> @async(callback=callback)
-  >>> def run(x):
-  ...     return x + 2
-  >>> y = run(10)
-  >>> print(y)
-  >>> print(y.get())
-  ... # <odin.utils.mpi._async object at 0x110f76dd0>
-  ... # callback!
-  ... # 12
   """
 
   def __init__(self, func, *args, **kw):
+    self._is_threading = kw.pop('is_threading')
     _async_function_counter[func] = _async_function_counter[func] + 1
-    name = '<async_task:[%s]-[#%s]>' % (func.__name__, _async_function_counter[func])
-    self.name = name
-    self._callback = lambda r: None
-    # check initialized thread pool
-    global _THREAD_POOL
-    if _THREAD_POOL is None:
-      _THREAD_POOL = ThreadPool(processes=_NTHREADS)
+    self._callback = lambda results: None
+    # specific name
+    name = '<async_task:[%s]<%s|#%s>%s Cb:<%s>%s Finished:False>' % \
+    ('Thread' if self._is_threading else 'Process',
+        _full_func_name(func), _async_function_counter[func],
+        '(%s)' % ';'.join(inspect.signature(func).parameters.keys()),
+        _full_func_name(self._callback),
+        '(%s)' % ';'.join(inspect.signature(self._callback).parameters.keys())
+    )
+    self._name = name
+    # check initialized pool
+    the_pool = None
+    if self._is_threading:
+      global _THREAD_POOL
+      if _THREAD_POOL is None:
+        _THREAD_POOL = ThreadPool(processes=_NTHREADS)
+      the_pool = _THREAD_POOL
+    else:
+      global _MPI_POOL
+      if _MPI_POOL is None:
+        _MPI_POOL = Pool(processes=_NTHREADS)
+      the_pool = _MPI_POOL
     # create asyn task
-    self._async_task = _THREAD_POOL.apply_async(
+    self._async_task = the_pool.apply_async(
         func=func, args=args, kwds=kw,
         callback=lambda result: self.__callback(result))
 
+  @property
+  def name(self):
+    return self._name.replace(':False>', ':%s>' % bool(self.finished))
+
   def __str__(self):
-    return self.name + " Finished:%s" % bool(self.finished)
+    return self.name
 
   def __repr__(self):
     return str(self)
@@ -147,6 +165,59 @@ def async(func=None, callback=None):
   """
   @decorator
   def _decorator_func_(func, *args, **kwargs):
+    kwargs['is_threading'] = True
+    task = _async_task(func, *args, **kwargs)
+    if hasattr(callback, '__call__'):
+      task._callback = callback
+    return task
+  # roles are not specified, given function directly
+  if inspect.isfunction(func) or inspect.ismethod(func):
+    return _decorator_func_(func)
+  # roles are specified
+  return _decorator_func_
+
+def async_mpi(func=None, callback=None):
+  """ This create and asynchronized result using multi-Processing
+  Also check: `odin.utils.mpi.async` for multi-Threading
+  decorator
+
+  Parameters
+  ----------
+  func: call-able
+      main workload executed in this function and return the
+      results.
+
+  callback: call-able
+      a callback function triggered when the task finished
+
+  Example
+  -------
+  >>> from odin.utils import async
+  ...
+  >>> def test_fn(idx):
+  ...   path = '/tmp/tmp%d.txt' % idx
+  ...   with open(path, 'w') as f:
+  ...     for i in range(100000):
+  ...       f.write(str(i))
+  ...     print("FINISH!", path)
+  ...
+  >>> f = async(test_fn)
+  >>> x1 = f(1)
+  >>> x2 = f(2)
+  >>> x3 = f(3)
+  ...
+  >>> count = 0
+  >>> while not x1.finished or not x2.finished or not x3.finished:
+  ...   count += 1
+  ...   print("Iteration:", count)
+  ...   print(x1)
+  ...   print(x2)
+  ...   print(x3)
+
+  """
+  @decorator
+  def _decorator_func_(func, *args, **kwargs):
+    kwargs['is_threading'] = False
     task = _async_task(func, *args, **kwargs)
     if hasattr(callback, '__call__'):
       task._callback = callback
@@ -167,9 +238,9 @@ def segment_list(l, size=None, n_seg=None):
   Example
   -------
   >>> segment_list([1,2,3,4,5],2)
-  >>> [[1, 2, 3], [4, 5]]
+  >>> # [[1, 2, 3], [4, 5]]
   >>> segment_list([1,2,3,4,5],4)
-  >>> [[1], [2], [3], [4, 5]]
+  >>> # [[1], [2], [3], [4, 5]]
   '''
   # by floor, make sure and process has it own job
   if n_seg is None:

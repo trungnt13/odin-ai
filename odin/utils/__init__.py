@@ -38,7 +38,7 @@ from .path_utils import *
 from .cache_utils import *
 from .python_utils import *
 from .np_utils import *
-from .mpi import segment_list, SharedCounter, async, MPI
+from .mpi import segment_list, SharedCounter, async, async_mpi, MPI
 from . import mpi
 from . import shape_calculation
 from . import decorators

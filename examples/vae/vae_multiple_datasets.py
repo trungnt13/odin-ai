@@ -14,7 +14,7 @@ from tensorflow_probability import distributions as tfd, bijectors as tfb
 
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
-from odin.utils import args_parse, ctext, batching, Progbar, async
+from odin.utils import args_parse, ctext, batching, Progbar, async_mpi
 from odin.ml import fast_pca
 from odin.stats import describe
 
@@ -247,6 +247,7 @@ def plot_epoch(task):
 
   X, y = X_test, y_test
   nrow = 18
+  Z = f_z(X)
   W, W_stdev_mcmc, W_stdev_analytic = f_w(X)
 
   X_pca, W_pca_1 = fast_pca(X, W, n_components=2,
@@ -259,7 +260,7 @@ def plot_epoch(task):
   V.plot_figure(nrow=int(nrow * 1.8), ncol=18)
   with V.plot_gridSpec(nrow=nrow + 3, ncol=6, hspace=0.8) as grid:
     # plot the latent space
-    for i, (z, name) in enumerate(zip(f_z(X), Z_names)):
+    for i, (z, name) in enumerate(zip(Z, Z_names)):
       if z.shape[1] > 2:
         z = fast_pca(z, n_components=2, random_state=rand.randint(10e8))
       ax = V.subplot(grid[:3, (i * 2):(i * 2 + 2)])
@@ -280,7 +281,7 @@ def plot_epoch(task):
     for i, (x, count_sum, name) in enumerate(zip(
             [X_pca, W_pca_1],
             [X_count_sum, W_count_sum],
-            ['Original data', 'Reconstruction'])):
+            ['Original data (Count-sum)', 'Reconstruction (Count-sum)'])):
       ax = V.subplot(grid[6:9, (i * 3):(i * 3 + 3)])
       V.plot_scatter_heatmap(x=x[:, 0], y=x[:, 1], val=count_sum,
                              n_samples=2000, marker=y, ax=ax, size=8,
@@ -292,6 +293,7 @@ def plot_epoch(task):
               dpi=200, log=True)
 # just show the first
 plot_epoch(None)
+exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,

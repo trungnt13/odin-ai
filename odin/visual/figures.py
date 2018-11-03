@@ -22,6 +22,7 @@ from collections import Mapping, OrderedDict, defaultdict
 import numpy as np
 from scipy import stats
 
+from .stats_plot import *
 # try:
 #     import seaborn # import seaborn for pretty plot
 # except:
