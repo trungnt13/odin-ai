@@ -36,7 +36,7 @@ args = args_parse(descriptions=[
     ('-nsample-train', 'number of posterior samples', None, 16),
     ('-nsample-test', 'number of posterior samples', None, 1000),
     ('-batch', 'batch size', None, 64),
-    ('-epoch', 'number of epoch', None, 120),
+    ('-epoch', 'number of epoch', None, 200),
 
     ('--no-batchnorm', 'turn off batch normalization', None, False),
     ('--analytic', 'using analytic KL or sampling', None, False),
@@ -142,11 +142,11 @@ p_X_given_Z = N.variational.parse_distribution(
 p_X_given_Z_mean = p_X_given_Z.mean()
 # [n_batch, feat_dim]
 p_X_mean = tf.reduce_mean(p_X_given_Z_mean, axis=0)
-# MCMC variance [n_batch, feat_dim]
+# MCMC variance [n_batch, feat_dim] (/ tf.to_float(nsample) ?)
 stdev_of_p_X_given_Z_mean = tf.sqrt(
     tf.reduce_mean(
         tf.square(p_X_given_Z_mean - tf.expand_dims(p_X_mean, axis=0)),
-        axis=0) / tf.to_float(nsample)
+        axis=0)
 )
 # analytical variance
 p_X_stdev = tf.sqrt(
@@ -246,7 +246,7 @@ def plot_epoch(task):
   rand = np.random.RandomState(seed=5218)
 
   X, y = X_test, y_test
-  nrow = 18
+  n_data = X.shape[0]
   Z = f_z(X)
   W, W_stdev_mcmc, W_stdev_analytic = f_w(X)
 
@@ -257,6 +257,8 @@ def plot_epoch(task):
   X_count_sum = np.sum(X, axis=tuple(range(1, X.ndim)))
   W_count_sum = np.sum(W, axis=-1)
 
+  n_visual_samples = 8
+  nrow = 9 + n_visual_samples * 3
   V.plot_figure(nrow=int(nrow * 1.8), ncol=18)
   with V.plot_gridSpec(nrow=nrow + 3, ncol=6, hspace=0.8) as grid:
     # plot the latent space
@@ -289,11 +291,27 @@ def plot_epoch(task):
                              title=name, colorbar=True, fontsize=10)
       ax.set_title(name, fontsize=12)
     # plot the mean and variances
+    curr_grid_index = 9
+    ids = rand.permutation(n_data)
+    ids = ids[:n_visual_samples]
+    for i in ids:
+      observed, expected, stdev_explained, stdev_total = \
+          X[i], W[i], W_stdev_mcmc[i], W_stdev_analytic[i]
+      observed = observed.ravel()
+      for j, kws in enumerate([dict(xscale='linear', yscale='linear', sort_by=None),
+                               dict(xscale='linear', yscale='linear', sort_by='expected'),
+                               dict(xscale='log', yscale='log', sort_by='expected')]):
+        ax = V.subplot(
+            grid[curr_grid_index:curr_grid_index + 3, (j * 2):(j * 2 + 2)])
+        V.plot_series_statistics(observed, expected,
+                explained_stdev=stdev_explained, total_stdev=stdev_total,
+                fontsize=8, title="Test Sample #%d" % i if j == 0 else None,
+                **kws)
+      curr_grid_index += 3
   V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
               dpi=200, log=True)
 # just show the first
 plot_epoch(None)
-exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
