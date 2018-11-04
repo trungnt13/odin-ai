@@ -21,7 +21,7 @@ from odin.stats import describe
 args = args_parse(descriptions=[
     ('-ds', 'dataset', None, 'mnist_original'),
 
-    ('-zdim', 'latent dimension', None, 2),
+    ('-zdim', 'latent dimension', None, 64),
     ('-hdim', 'number of hidden units', None, 256),
 
     ('-xdist', 'distribution of input X', None, 'poisson'),
@@ -38,6 +38,7 @@ args = args_parse(descriptions=[
     ('-batch', 'batch size', None, 64),
     ('-epoch', 'number of epoch', None, 200),
 
+    ('--no-monitor', 'turn off epoch monitoring, significantly faster', None, False),
     ('--no-batchnorm', 'turn off batch normalization', None, False),
     ('--analytic', 'using analytic KL or sampling', None, False),
     ('--iw', 'enable important weights sampling', None, False),
@@ -310,14 +311,13 @@ def plot_epoch(task):
       curr_grid_index += 3
   V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
               dpi=200, log=True)
-# just show the first
-plot_epoch(None)
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
                     allow_rollback=False, verbose=2)
 runner.set_callbacks([
     T.NaNDetector(task_name=None, patience=-1, detect_inf=True),
+    None if args.no_monitor else
     T.EpochSummary(task_name=('train', 'valid'),
                    output_name=(loss, iw_loss, KL_mean, NLLK_mean),
                    print_plot=False,

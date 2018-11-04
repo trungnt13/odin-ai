@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function, division, absolute_import
+import math
 from numbers import Number
 from six import string_types
 
@@ -9,8 +10,11 @@ from scipy import linalg
 from multiprocessing import Value, Array
 
 from sklearn.decomposition import IncrementalPCA, PCA
-from sklearn.utils import check_array, gen_batches
-from sklearn.utils.extmath import svd_flip, _incremental_mean_and_var, fast_dot
+from sklearn.utils import (check_array, gen_batches, check_random_state,
+                           as_float_array)
+from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.extmath import (svd_flip, _incremental_mean_and_var,
+                                   randomized_svd)
 
 from odin.utils.mpi import MPI
 from odin.utils import batching, ctext, flatten_list, Progbar
@@ -25,8 +29,9 @@ __all__ = [
     "SupervisedPPCA",
 ]
 
-def fast_pca(*x, n_components=None, algo='pca', y=None,
-             batch_size=1024, return_model=False, random_state=None):
+def fast_pca(*x, n_components=None, algo='rpca', y=None,
+             batch_size=1024, return_model=False,
+             random_state=5218):
   """ A shortcut for many different PCA algorithms
 
   Parameters
@@ -36,9 +41,13 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
     be used for training
   n_components : {None, int}
     number of PCA components
-  algo : {'pca', 'ipca', 'ppca', 'sppca', 'plda'}
-    different PCA algorithm: 'ipca' - IncrementalPCA, 'ppca' - Probabilistic PCA,
-    'sppca' - Supervised Probabilistic PCA, 'plda' - Probabilistic LDA
+  algo : {'pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'}
+    different PCA algorithm:
+      'ipca' - IncrementalPCA,
+      'ppca' - Probabilistic PCA,
+      'sppca' - Supervised Probabilistic PCA,
+      'plda' - Probabilistic LDA,
+      'rpca' - randomized PCA using randomized SVD
   y : {numpy.ndarray, None}
     required for labels in case of `sppca`
   batch_size : int (default: 1024)
@@ -48,8 +57,9 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   """
   batch_size = int(batch_size)
   algo = str(algo).lower()
-  if algo not in ('pca', 'ipca', 'ppca', 'sppca', 'plda'):
-    raise ValueError("`algo` must be one of the following: 'pca', 'ppca', 'plda' or 'sppca'; but given: '%s'" % algo)
+  if algo not in ('pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'):
+    raise ValueError("`algo` must be one of the following: 'pca', "
+                     "'ppca', 'plda', 'sppca', or 'rpca'; but given: '%s'" % algo)
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
   x = flatten_list(x, level=None)
@@ -77,6 +87,12 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   elif algo == 'pca':
     pca = PCA(n_components=n_components, random_state=random_state)
     pca.fit(x_train)
+  elif algo == 'rpca':
+    # we copy the implementation of RandomizedPCA because
+    # it is significantly faster than PCA(svd_solver='randomize')
+    pca = RandomizedPCA(n_components=n_components, iterated_power=2,
+                        random_state=random_state)
+    pca.fit(x_train)
   elif algo == 'ipca':
     pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
     prog = Progbar(target=x_train.shape[0],
@@ -101,7 +117,7 @@ def fast_pca(*x, n_components=None, algo='pca', y=None,
   return tuple([x_train] + x_test) if not return_model else tuple([pca, x_train] + x_test)
 
 # ===========================================================================
-# helper
+# PPCA
 # ===========================================================================
 class PPCA(BaseEstimator, TransformerMixin):
   """ Probabilistic Principal Components Analysis
@@ -449,6 +465,233 @@ class SupervisedPPCA(PPCA):
                     np.concatenate([X.T, labels], axis=0) -
                     np.concatenate([self.bias_, self.classBias_])[:, np.newaxis])
       return ivec.T
+
+# ===========================================================================
+# PCA
+# ===========================================================================
+class RandomizedPCA(BaseEstimator, TransformerMixin):
+  """Principal component analysis (PCA) using randomized SVD
+
+  Linear dimensionality reduction using approximated Singular Value
+  Decomposition of the data and keeping only the most significant
+  singular vectors to project the data to a lower dimensional space.
+
+  Parameters
+  ----------
+  n_components : int, optional
+      Maximum number of components to keep. When not given or None, this
+      is set to n_features (the second dimension of the training data).
+
+  copy : bool
+      If False, data passed to fit are overwritten and running
+      fit(X).transform(X) will not yield the expected results,
+      use fit_transform(X) instead.
+
+  iterated_power : int, default=2
+      Number of iterations for the power method.
+
+  whiten : bool, optional
+      When True (False by default) the `components_` vectors are multiplied
+      by the square root of (n_samples) and divided by the singular values to
+      ensure uncorrelated outputs with unit component-wise variances.
+
+      Whitening will remove some information from the transformed signal
+      (the relative variance scales of the components) but can sometime
+      improve the predictive accuracy of the downstream estimators by
+      making their data respect some hard-wired assumptions.
+
+  random_state : int, RandomState instance or None, optional, default=None
+      If int, random_state is the seed used by the random number generator;
+      If RandomState instance, random_state is the random number generator;
+      If None, the random number generator is the RandomState instance used
+      by `np.random`.
+
+  Attributes
+  ----------
+  components_ : array, shape (n_components, n_features)
+      Components with maximum variance.
+
+  explained_variance_ratio_ : array, shape (n_components,)
+      Percentage of variance explained by each of the selected components.
+      If k is not set then all components are stored and the sum of explained
+      variances is equal to 1.0.
+
+  singular_values_ : array, shape (n_components,)
+      The singular values corresponding to each of the selected components.
+      The singular values are equal to the 2-norms of the ``n_components``
+      variables in the lower-dimensional space.
+
+  mean_ : array, shape (n_features,)
+      Per-feature empirical mean, estimated from the training set.
+
+  Examples
+  --------
+  >>> import numpy as np
+  >>> from sklearn.decomposition import RandomizedPCA
+  >>> X = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
+  >>> pca = RandomizedPCA(n_components=2)
+  >>> pca.fit(X)                 # doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
+  RandomizedPCA(copy=True, iterated_power=2, n_components=2,
+         random_state=None, whiten=False)
+  >>> print(pca.explained_variance_ratio_)  # doctest: +ELLIPSIS
+  [ 0.99244...  0.00755...]
+  >>> print(pca.singular_values_)  # doctest: +ELLIPSIS
+  [ 6.30061...  0.54980...]
+
+  References
+  ----------
+
+  .. [Halko2009] `Finding structure with randomness: Stochastic algorithms
+    for constructing approximate matrix decompositions Halko, et al., 2009
+    (arXiv:909)`
+
+  .. [MRT] `A randomized algorithm for the decomposition of matrices
+    Per-Gunnar Martinsson, Vladimir Rokhlin and Mark Tygert`
+
+  """
+
+  def __init__(self, n_components=None, copy=True, iterated_power=2,
+               whiten=False, random_state=None):
+    self.n_components = n_components
+    self.copy = copy
+    self.iterated_power = iterated_power
+    self.whiten = whiten
+    self.random_state = random_state
+
+  def fit(self, X, y=None):
+    """Fit the model with X by extracting the first principal components.
+
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        Training data, where n_samples in the number of samples
+        and n_features is the number of features.
+
+    y : Ignored.
+
+    Returns
+    -------
+    self : object
+        Returns the instance itself.
+    """
+    self._fit(check_array(X))
+    return self
+
+  def _fit(self, X):
+    """Fit the model to the data X.
+
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        Training vector, where n_samples in the number of samples and
+        n_features is the number of features.
+
+    Returns
+    -------
+    X : ndarray, shape (n_samples, n_features)
+        The input data, copied, centered and whitened when requested.
+    """
+    random_state = check_random_state(self.random_state)
+    X = np.atleast_2d(as_float_array(X, copy=self.copy))
+
+    n_samples = X.shape[0]
+
+    # Center data
+    self.mean_ = np.mean(X, axis=0)
+    X -= self.mean_
+    if self.n_components is None:
+      n_components = X.shape[1]
+    else:
+      n_components = self.n_components
+
+    U, S, V = randomized_svd(X, n_components,
+                             n_iter=self.iterated_power,
+                             random_state=random_state)
+
+    self.explained_variance_ = exp_var = (S ** 2) / (n_samples - 1)
+    full_var = np.var(X, ddof=1, axis=0).sum()
+    self.explained_variance_ratio_ = exp_var / full_var
+    self.singular_values_ = S  # Store the singular values.
+
+    if self.whiten:
+      self.components_ = V / S[:, np.newaxis] * math.sqrt(n_samples)
+    else:
+      self.components_ = V
+
+    return X
+
+  def transform(self, X):
+    """Apply dimensionality reduction on X.
+
+    X is projected on the first principal components previous extracted
+    from a training set.
+
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        New data, where n_samples in the number of samples
+        and n_features is the number of features.
+
+    Returns
+    -------
+    X_new : array-like, shape (n_samples, n_components)
+
+    """
+    check_is_fitted(self, 'mean_')
+
+    X = check_array(X)
+    if self.mean_ is not None:
+      X = X - self.mean_
+
+    X = np.dot(X, self.components_.T)
+    return X
+
+  def fit_transform(self, X, y=None):
+    """Fit the model with X and apply the dimensionality reduction on X.
+
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        New data, where n_samples in the number of samples
+        and n_features is the number of features.
+
+    y : Ignored.
+
+    Returns
+    -------
+    X_new : array-like, shape (n_samples, n_components)
+
+    """
+    X = check_array(X)
+    X = self._fit(X)
+    return np.dot(X, self.components_.T)
+
+  def inverse_transform(self, X):
+    """Transform data back to its original space.
+
+    Returns an array X_original whose transform would be X.
+
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_components)
+        New data, where n_samples in the number of samples
+        and n_components is the number of components.
+
+    Returns
+    -------
+    X_original array-like, shape (n_samples, n_features)
+
+    Notes
+    -----
+    If whitening is enabled, inverse_transform does not compute the
+    exact inverse operation of transform.
+    """
+    check_is_fitted(self, 'mean_')
+
+    X_original = np.dot(X, self.components_)
+    if self.mean_ is not None:
+      X_original = X_original + self.mean_
+    return X_original
 
 class MiniBatchPCA(IncrementalPCA):
   """ A modified version of IncrementalPCA to effectively

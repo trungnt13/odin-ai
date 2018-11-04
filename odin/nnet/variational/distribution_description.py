@@ -72,9 +72,9 @@ def _activate(y, info, print_log, padding, **kwargs):
       raise RuntimeError("Cannot extract value for argument name: '%s'" % a_name)
   # print out log
   if print_log:
-    print(padding + "   fn: [%s]%s" % (
+    print(padding + "   activation: <%s>(%s)" % (
         fn.__name__,
-        '; '.join([str(i) + ' - ' + str(j)
+        '; '.join([str(i) + ':' + str(j)
                  for i, j in zip(args_name, args)])))
   y = fn(*args)
   return y

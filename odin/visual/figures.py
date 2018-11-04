@@ -671,6 +671,33 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
 # ===========================================================================
 # Scatter plot
 # ===========================================================================
+def _parse_scatterXYZ(x, y, z):
+  assert x is not None, "`x` cannot be None"
+  # remove all `1` dimensions
+  x = np.squeeze(x)
+  if y is not None:
+    y = np.squeeze(y)
+    assert y.ndim == 1
+  if z is not None:
+    z = np.square(z)
+    assert z.ndim == 1
+  # infer y, z from x
+  if x.ndim > 2:
+    x = np.reshape(x, (-1, np.prod(x.shape[1:])))
+  if x.ndim == 1:
+    if y is None:
+      y = x
+      x = np.arange(len(y))
+  elif x.ndim == 2:
+    if x.shape[1] == 2:
+      y = x[:, 1]
+      x = x[:, 0]
+    elif x.shape[1] > 2:
+      z = x[:, 2]
+      y = x[:, 1]
+      x = x[:, 0]
+  return x, y, z
+
 def _validate_color_marker_size_legend(n_samples,
                                        color, marker, size,
                                        is_colormap=False):
@@ -871,7 +898,7 @@ def plot_scatter_layers(x_y_val, ax=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-def plot_scatter_heatmap(x, y, val, z=None, ax=None,
+def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
                          colormap='bwr', marker='o', size=4.0, alpha=0.8,
                          elev=None, azim=None,
                          ticks_off=True, grid=True,
@@ -882,15 +909,16 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
   """
   Parameters
   ----------
-  x : 1D-array (num_samples,)
-  y : 1D-array (num_samples,)
-  z : 1D-array or None (num_samples,)
+  x : {1D, or 2D array} [n_samples,]
+  y : {None, 1D-array} [n_samples,]
+  z : {None, 1D-array} [n_samples,]
     if provided, plot in 3D
   val : 1D-array (num_samples,)
     float value for the intensity of given class
   """
   from matplotlib import pyplot as plt
   from matplotlib.colors import LinearSegmentedColormap
+  x, y, z = _parse_scatterXYZ(x, y, z)
 
   assert len(x) == len(y) == len(val)
   if z is not None:
@@ -974,7 +1002,7 @@ def plot_scatter_heatmap(x, y, val, z=None, ax=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-def plot_scatter(x, y, z=None,
+def plot_scatter(x, y=None, z=None,
                  color='b', marker='.', size=4.0,
                  ax=None,
                  elev=None, azim=None,
@@ -986,9 +1014,9 @@ def plot_scatter(x, y, z=None,
 
   Parameters
   ----------
-  x : 1D-array [n_samples,]
-  y : 1D-array [n_samples,]
-  z : 1D-array or None [n_samples,]
+  x : {1D, or 2D array} [n_samples,]
+  y : {None, 1D-array} [n_samples,]
+  z : {None, 1D-array} [n_samples,]
     if provided, plot in 3D
 
   ax : {None, int, tuple of int, Axes object) (default: None)
@@ -1035,6 +1063,7 @@ def plot_scatter(x, y, z=None,
   title : {None, string} (default: None)
     specific title for the subplot
   '''
+  x, y, z = _parse_scatterXYZ(x, y, z)
   assert len(x) == len(y)
   if z is not None:
     assert len(y) == len(z)
