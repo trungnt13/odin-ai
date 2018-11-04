@@ -129,5 +129,5 @@ def plot_series_statistics(observed, expected,
   ax.tick_params(axis='both', labelsize=fontsize)
   # ====== title ====== #
   if title is not None:
-    ax.set_title(title, fontsize=8)
+    ax.set_title(title, fontsize=fontsize, fontweight='bold')
   return ax

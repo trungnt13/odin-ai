@@ -996,7 +996,7 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
       ax.set_zticklabels([])
   ax.grid(grid)
   if title is not None:
-    ax.set_title(str(title))
+    ax.set_title(str(title), fontsize=fontsize, fontweight='bold')
   if is_3D_mode and (elev is not None or azim is not None):
     ax.view_init(elev=ax.elev if elev is None else elev,
                  azim=ax.azim if azim is None else azim)
@@ -1120,7 +1120,7 @@ def plot_scatter(x, y=None, z=None,
       ax.set_zticklabels([])
   ax.grid(grid)
   if title is not None:
-    ax.set_title(str(title))
+    ax.set_title(str(title), fontsize=fontsize, fontweight='bold')
   if is_3D_mode and (elev is not None or azim is not None):
     ax.view_init(elev=ax.elev if elev is None else elev,
                  azim=ax.azim if azim is None else azim)
@@ -1454,12 +1454,11 @@ def plot_images(X, tile_shape=None, tile_spacing=None,
     subplot = fig.add_subplot(n, n, i + 1)
     subplot.imshow(x, cmap=cmap)
     if t is not None:
-      subplot.set_title(str(t), fontsize=12)
+      subplot.set_title(str(t), fontsize=12, fontweight='bold')
     subplot.axis('off')
 
   fig.tight_layout()
   return fig
-
 
 def plot_images_old(x, fig=None, titles=None, show=False):
   '''

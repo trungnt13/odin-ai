@@ -259,7 +259,7 @@ def plot_epoch(task):
   W_count_sum = np.sum(W, axis=-1)
 
   n_visual_samples = 8
-  nrow = 9 + n_visual_samples * 3
+  nrow = 13 + n_visual_samples * 3
   V.plot_figure(nrow=int(nrow * 1.8), ncol=18)
   with V.plot_gridSpec(nrow=nrow + 3, ncol=6, hspace=0.8) as grid:
     # plot the latent space
@@ -278,21 +278,34 @@ def plot_epoch(task):
       ax = V.subplot(grid[3:6, (i * 2):(i * 2 + 2)])
       V.plot_scatter(x=x[:, 0], y=x[:, 1],
                      color=y, marker=y, n_samples=4000,
-                     ax=ax, legend_enable=i == 1, legend_ncol=n_classes)
-      ax.set_title(name, fontsize=12)
+                     ax=ax, legend_enable=i == 1, legend_ncol=n_classes,
+                     title=name)
     # plot the reconstruction count sum
     for i, (x, count_sum, name) in enumerate(zip(
             [X_pca, W_pca_1],
             [X_count_sum, W_count_sum],
             ['Original data (Count-sum)', 'Reconstruction (Count-sum)'])):
-      ax = V.subplot(grid[6:9, (i * 3):(i * 3 + 3)])
+      ax = V.subplot(grid[6:10, (i * 3):(i * 3 + 3)])
       V.plot_scatter_heatmap(x=x[:, 0], y=x[:, 1], val=count_sum,
                              n_samples=2000, marker=y, ax=ax, size=8,
                              legend_enable=i == 0, legend_ncol=n_classes,
                              title=name, colorbar=True, fontsize=10)
-      ax.set_title(name, fontsize=12)
+    # plot the count-sum series
+    count_sum_observed = np.sum(X, axis=0).ravel()
+    count_sum_expected = np.sum(W, axis=0)
+    count_sum_stdev_explained = np.sum(W_stdev_mcmc, axis=0)
+    count_sum_stdev_total = np.sum(W_stdev_analytic, axis=0)
+    for i, kws in enumerate([dict(xscale='linear', yscale='linear', sort_by=None),
+                             dict(xscale='linear', yscale='linear', sort_by='expected'),
+                             dict(xscale='log', yscale='log', sort_by='expected')]):
+      ax = V.subplot(grid[10:10 + 3, (i * 2):(i * 2 + 2)])
+      V.plot_series_statistics(count_sum_observed, count_sum_expected,
+                               explained_stdev=count_sum_stdev_explained,
+                               total_stdev=count_sum_stdev_total,
+                               fontsize=8, title="Count-sum" if i == 0 else None,
+                               **kws)
     # plot the mean and variances
-    curr_grid_index = 9
+    curr_grid_index = 13
     ids = rand.permutation(n_data)
     ids = ids[:n_visual_samples]
     for i in ids:
@@ -311,6 +324,7 @@ def plot_epoch(task):
       curr_grid_index += 3
   V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
               dpi=200, log=True)
+  exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
