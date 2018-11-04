@@ -315,8 +315,8 @@ def plot_epoch(task):
       for j, kws in enumerate([dict(xscale='linear', yscale='linear', sort_by=None),
                                dict(xscale='linear', yscale='linear', sort_by='expected'),
                                dict(xscale='log', yscale='log', sort_by='expected')]):
-        ax = V.subplot(
-            grid[curr_grid_index:curr_grid_index + 3, (j * 2):(j * 2 + 2)])
+        ax = V.subplot(grid[curr_grid_index:curr_grid_index + 3,
+                            (j * 2):(j * 2 + 2)])
         V.plot_series_statistics(observed, expected,
                 explained_stdev=stdev_explained, total_stdev=stdev_total,
                 fontsize=8, title="Test Sample #%d" % i if j == 0 else None,
@@ -324,7 +324,6 @@ def plot_epoch(task):
       curr_grid_index += 3
   V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
               dpi=200, log=True)
-  exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
