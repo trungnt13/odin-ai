@@ -54,7 +54,7 @@ def copy_dataset2(origin, destination,
   return ds
 
 # ===========================================================================
-# dataset
+# Helper
 # ===========================================================================
 def _infer_separator(path):
   all_sep = ('\t', ' ', ';', ',')
@@ -169,6 +169,9 @@ def _parse_data_descriptor(path, read_only):
   return [(file_name, ('unknown', 'unknown', None, path))]
 
 
+# ===========================================================================
+# Datasets
+# ===========================================================================
 class Dataset(object):
   """ This Dataset can automatically parse memmap (created by MmapData),
   MmapDict, pickled dictionary and hdf5 files and keep tracking the changes.

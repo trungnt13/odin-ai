@@ -74,7 +74,7 @@ def _activate(y, info, print_log, padding, **kwargs):
   if print_log:
     print(padding + "   activation: <%s>(%s)" % (
         fn.__name__,
-        '; '.join([str(i) + ':' + str(j)
+        '; '.join([ctext(i, 'cyan') + ':' + str(j)
                  for i, j in zip(args_name, args)])))
   y = fn(*args)
   return y

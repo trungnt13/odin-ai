@@ -1055,7 +1055,8 @@ class NNOp(NNOpOutput):
       raise ValueError("The input argument for NNOp can be: "
           "`Tensor`, `odin.nnet.VariableDesc`, and primitive types"
           " (string, number, boolean, None, numpy.ndarray, numpy.generic)."
-          " But the given type is: %s" % type(x))
+          " But the given type is: name='%s' : value=`%s`)" %
+          (name, str(x)))
     return (desc, data)
 
   def apply(self, *args, **kwargs):

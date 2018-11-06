@@ -390,7 +390,7 @@ def summary(x, axis=None, shorten=False):
   """
   if isinstance(x, Iterator):
     x = list(x)
-  if isinstance(x, (tuple, list)):
+  if isinstance(x, (tuple, list, set)):
     x = np.array(x)
   mean, std = np.mean(x, axis=axis), np.std(x, axis=axis)
   median = np.median(x, axis=axis)

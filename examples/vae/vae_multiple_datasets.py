@@ -33,7 +33,7 @@ args = args_parse(descriptions=[
     ('-zdrop', 'dropout on latent Z', None, 0),
     ('-ddrop', 'dropout on the decoder D', None, 0),
 
-    ('-nsample-train', 'number of posterior samples', None, 16),
+    ('-nsample-train', 'number of posterior samples', None, 1),
     ('-nsample-test', 'number of posterior samples', None, 1000),
     ('-batch', 'batch size', None, 64),
     ('-epoch', 'number of epoch', None, 200),
@@ -151,8 +151,7 @@ stdev_of_p_X_given_Z_mean = tf.sqrt(
 )
 # analytical variance
 p_X_stdev = tf.sqrt(
-    tf.reduce_mean(p_X_given_Z.variance(), axis=0)
-)
+    tf.reduce_mean(p_X_given_Z.variance(), axis=0))
 # ===========================================================================
 # Variational inference (ELBO)
 # The Independent distribution composed of a collection of
@@ -221,8 +220,9 @@ f_train = K.function(inputs=input_plh,
                      training=True)
 f_score = K.function(inputs=input_plh,
                      outputs=[loss, iw_loss, KL_mean, NLLK_mean],
-                     defaults={nsample: args.nsample_test},
+                     defaults={nsample: args.nsample_train},
                      training=False)
+
 f_z = K.function(inputs=X,
                  outputs=Z,
                  defaults={nsample: args.nsample_test},
@@ -324,6 +324,7 @@ def plot_epoch(task):
       curr_grid_index += 3
   V.plot_save(os.path.join(FIGURE_PATH, 'latent_%d.png' % curr_epoch),
               dpi=200, log=True)
+  exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
                     seed=5218, shuffle_level=2,
@@ -343,99 +344,3 @@ runner.set_train_task(func=f_train, data=[X_train, X_train],
 runner.set_valid_task(func=f_score, data=[X_test, X_test],
                       name='valid')
 runner.run()
-exit()
-# ====== helper ====== #
-def calc_loss_and_code(dat):
-  losses = []
-  for start, end in batching(batch_size=2048, n=dat.shape[0]):
-    losses.append(K.eval([distortion, rate, qZ_X_samples],
-                         feed_dict={X: dat[start:end]}))
-  d = np.concatenate([i[0] for i in losses], axis=1)
-  r = np.concatenate([i[1] for i in losses], axis=0 if args.analytic else 1)
-  code_samples = np.concatenate([i[-1] for i in losses], axis=1).mean(axis=0)
-  return code_samples, np.mean(d), np.mean(r), np.mean(d + r)
-# ====== intitalize ====== #
-record_train_loss = []
-record_valid_loss = []
-patience = 3
-epoch = 0
-# We want the rate to go up but the distortion to go down
-while True:
-  # ====== training ====== #
-  train_losses = []
-  prog = Progbar(target=X_train.shape[0], name='Epoch%d' % epoch)
-  start_time = timeit.default_timer()
-  for start, end in batching(batch_size=args.batch, n=X_train.shape[0],
-                             seed=K.get_rng().randint(10e8)):
-    _ = K.eval([avg_distortion, avg_rate, loss],
-               feed_dict={X: X_train[start:end]},
-               update_after=update_ops)
-    prog.add(end - start)
-    train_losses.append(_)
-  # ====== training log ====== #
-  train_losses = np.mean(np.array(train_losses), axis=0).tolist()
-  print(ctext("[Epoch %d]" % epoch, 'yellow'), '%.2f(s)' % (timeit.default_timer() - start_time))
-  print("[Training set] Distortion: %.4f    Rate: %.4f    Loss: %.4f" % tuple(train_losses))
-  # ====== validation set ====== #
-  code_samples, di, ra, lo = calc_loss_and_code(dat=X_valid)
-  print("[Valid set]    Distortion: %.4f    Rate: %.4f    Loss: %.4f" % (di, ra, lo))
-  # ====== record the history ====== #
-  record_train_loss.append(train_losses[-1])
-  record_valid_loss.append(lo)
-  # ====== plotting ====== #
-  if args.zdim > 2:
-    code_samples = ml.fast_pca(code_samples, n_components=2,
-                               random_state=K.get_rng().randint(10e8))
-  samples = K.eval([pX_Z_samples, pX_Z_mean])
-  img_samples = samples[0]
-  img_mean = samples[1]
-
-  V.plot_figure(nrow=3, ncol=12)
-
-  ax = plt.subplot(1, 4, 1)
-  ax.scatter(code_samples[:, 0], code_samples[:, 1], s=2, c=y_valid, alpha=0.3)
-  ax.set_title('Epoch %d' % epoch)
-  ax.set_aspect('equal', 'box')
-  ax.axis('off')
-
-  ax = plt.subplot(1, 4, 2)
-  ax.imshow(V.tile_raster_images(img_samples.mean(axis=0)), cmap=plt.cm.Greys_r)
-  ax.axis('off')
-
-  ax = plt.subplot(1, 4, 3)
-  ax.imshow(V.tile_raster_images(img_samples[np.random.randint(0, len(img_samples))]), cmap=plt.cm.Greys_r)
-  ax.axis('off')
-
-  ax = plt.subplot(1, 4, 4)
-  ax.imshow(V.tile_raster_images(img_mean), cmap=plt.cm.Greys_r)
-  ax.axis('off')
-  # ====== check exit condition ====== #
-  if args.epoch > 0:
-    if epoch >= args.epoch:
-      break
-  elif len(record_valid_loss) >= 2 and record_valid_loss[-1] > record_valid_loss[-2]:
-    print(ctext("Dropped generalization loss `%.4f` -> `%.4f`" %
-                (record_valid_loss[-2], record_valid_loss[-1]), 'yellow'))
-    patience -= 1
-    if patience == 0:
-      break
-  epoch += 1
-# ====== print summary training ====== #
-text = V.merge_text_graph(V.print_bar(record_train_loss, title="Train Loss"),
-                          V.print_bar(record_valid_loss, title="Valid Loss"))
-print(text)
-# ====== testing ====== #
-code_samples, di, ra, lo = calc_loss_and_code(dat=X_test)
-if args.zdim > 2:
-  code_samples = ml.fast_pca(code_samples, n_components=2,
-                             random_state=K.get_rng().randint(10e8))
-print("[Test set]     Distortion: %.4f    Rate: %.4f    Loss: %.4f" % (di, ra, lo))
-# plot test code samples
-V.plot_figure(nrow=6, ncol=6)
-ax = plt.subplot(1, 1, 1)
-ax.scatter(code_samples[:, 0], code_samples[:, 1], s=2, c=y_valid, alpha=0.5)
-ax.set_title('Test set')
-ax.set_aspect('equal', 'box')
-ax.axis('off')
-
-V.plot_save('/tmp/tmp_vae.pdf')

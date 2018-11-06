@@ -684,7 +684,7 @@ class EpochSummary(Callback):
     self._count = self._repeat_freq * len(self._task_name)
     self._epoch_results = defaultdict(dict)
     # ====== output identity ====== #
-    if not isinstance(output_name, (tuple, list)):
+    if not isinstance(output_name, (tuple, list, set)):
       output_name = (output_name,)
     output_name = [i if is_string(i) else i.name
                    for i in output_name]
@@ -696,6 +696,8 @@ class EpochSummary(Callback):
 
   def epoch_end(self, task, epoch_results):
     output_name = self.output_name
+    if len(output_name) == 0: # nothing to do
+      return
     task_name = self._task_name
 
     if task.name in task_name:
@@ -772,10 +774,11 @@ class EpochSummary(Callback):
                     plt.ylim((min_val - eps, max_val + eps))
                   plt.xticks(np.linspace(0, len(values) - 1, num=12,
                                          dtype='int32'))
-                  if o_idx == 0:
-                    plt.title(t_name)
-                  if t_idx == 0:
-                    plt.ylabel(o_name)
+
+                  title_text = '[%s]' % o_name if t_idx == 0 else ''
+                  title_text += t_name
+                  plt.title('%s' % title_text,
+                            fontsize=8, fontweight='bold')
         # save figure to pdf or image files
         if save_figures:
           if override:

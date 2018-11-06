@@ -6,3 +6,4 @@ from .feeder import *
 from . import recipes
 
 from .loaders import *
+from .synthetic_loaders import *
