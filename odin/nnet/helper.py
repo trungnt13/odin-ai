@@ -10,7 +10,7 @@ import tensorflow as tf
 
 from odin import backend as K
 from odin.utils import (as_tuple, is_number, flatten_list, ctext,
-                        axis_normalize)
+                        axis_normalize, )
 from odin.utils.decorators import functionable
 
 from .base import NNOp, get_nnop_scope
@@ -59,7 +59,8 @@ class Container(NNOp):
   def set_nnops(self, ops):
     if isinstance(ops, (tuple, list)): # remove None values
       ops = [o for o in ops if o is not None]
-    ops = as_tuple(ops, t=NNOp)
+    ops = list(as_tuple(ops, t=NNOp))
+    ops = flatten_list(ops, level=None)
     for o in ops:
       name = o.name.split('/')[-1]
       self.get_variable_nnop(name=name, initializer=o)

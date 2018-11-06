@@ -11,7 +11,7 @@ import numpy as np
 
 from odin.config import get_rng
 from odin.maths import interp
-from odin.utils import as_tuple, flatten_list, ctext
+from odin.utils import as_tuple, flatten_list, ctext, batching
 
 def prior2weights(prior, exponential=False,
                   min_value=0.1, max_value=None,
@@ -384,6 +384,16 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
 # ===========================================================================
 # Others
 # ===========================================================================
+def sparsity_percentage(x, batch_size=5218):
+  n_zeros = 0
+  n_total = np.prod(x.shape)
+  for start, end in batching(batch_size=batch_size, n=x.shape[0],
+                             seed=None):
+    y = x[start:end]
+    n_nonzeros = np.count_nonzero(y)
+    n_zeros += np.prod(y.shape) - n_nonzeros
+  return n_zeros / n_total
+
 def summary(x, axis=None, shorten=False):
   """ Return string of statistical summary given series `x`
     {#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}

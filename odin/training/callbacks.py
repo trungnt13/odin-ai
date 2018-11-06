@@ -748,7 +748,7 @@ class EpochSummary(Callback):
                 print(V.merge_text_graph(*text, padding='  '))
               else:
                 print(text[0])
-            # ====== save pdf ====== #
+            # ====== matplotlib plot and save pdf ====== #
             if self.save_path is not None:
               for t_idx, t_name in enumerate(task_name):
                 values = results[t_name]

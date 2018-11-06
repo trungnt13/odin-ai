@@ -37,7 +37,7 @@ def rand_samples_per_distribution(n_total, n_dist, seed=None):
 # ===========================================================================
 def generate_ZeroInflatedNegativeBinomial(
     n_samples=12000, n_features=8, n_labels=3,
-    n=[3, 8], p_success=[0.1, 0.5], p_drop=[0.2, 0.5],
+    n=[5, 25], p_success=[0.1, 0.5], p_drop=[0.2, 0.5],
     seed=52181208):
   rand = np.random.RandomState(seed)
   n_samples_per_distribution = rand_samples_per_distribution(
@@ -76,7 +76,7 @@ def generate_ZeroInflatedNegativeBinomial(
 
 def generate_ZeroInflatedPoisson(
     n_samples=12000, n_features=8, n_labels=3,
-    mu=[2, 8], theta=[1, 4], p_drop=[0.2, 0.5],
+    mu=[5, 25], theta=[2, 8], p_drop=[0.2, 0.5],
     seed=52181208):
   rand = np.random.RandomState(seed)
   n_samples_per_distribution = rand_samples_per_distribution(
