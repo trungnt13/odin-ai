@@ -59,8 +59,8 @@ class Container(NNOp):
   def set_nnops(self, ops):
     if isinstance(ops, (tuple, list)): # remove None values
       ops = [o for o in ops if o is not None]
+      ops = flatten_list(ops, level=None)
     ops = list(as_tuple(ops, t=NNOp))
-    ops = flatten_list(ops, level=None)
     for o in ops:
       name = o.name.split('/')[-1]
       self.get_variable_nnop(name=name, initializer=o)
