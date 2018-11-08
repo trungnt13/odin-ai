@@ -635,6 +635,7 @@ class Function(object):
     else:
       feed_dict.update({is_training(): False})
     session = get_session()
+    outputs = None
     # ====== mini-batches ====== #
     if self.batch_size is not None:
       batch_vars = ([i for i in feed_dict.keys() if is_tensor(i)]
@@ -645,52 +646,65 @@ class Function(object):
       assert len(n_samples) == 1, \
       "Data have multiple batching dimension: %s" % str(n_samples)
       n_samples = n_samples[0]
-      n_output = len(self.outputs)
-      outputs = []
-      all_batches = []
-      # (optional) showing progress
-      if show_progress:
-        prog = Progbar(target=n_samples,
-                       print_report=False, print_summary=False,
-                       name='')
-      for s, e in batching(batch_size=int(self.batch_size), n=n_samples):
+      # only continue if we have more samples than `batch_size`
+      if n_samples > self.batch_size:
+        n_output = len(self.outputs)
+        outputs = []
+        all_batches = []
+        # (optional) showing progress
         if show_progress:
-          prog.add(e - s)
-        all_batches.append(e - s)
-        feed_dict_minibatch = OrderedDict([(k, v[s:e])
-                                           if k in batch_vars else (k, v)
-                                           for k, v in feed_dict.items()])
-        updated = session.run(self.outputs + [self.updates_ops],
-                              feed_dict=feed_dict_minibatch)
-        updated = updated[:n_output]
+          prog = Progbar(target=n_samples,
+                         print_report=False, print_summary=False,
+                         name='')
+        for s, e in batching(batch_size=int(self.batch_size),
+                             n=n_samples):
+          if show_progress:
+            prog.add(e - s)
+          all_batches.append(e - s)
+          feed_dict_minibatch = OrderedDict([(k, v[s:e])
+                                             if k in batch_vars else (k, v)
+                                             for k, v in feed_dict.items()])
+          updated = session.run(self.outputs + [self.updates_ops],
+                                feed_dict=feed_dict_minibatch)
+          updated = updated[:n_output]
+          if not self._return_list:
+            updated = updated[0]
+          outputs.append(updated)
+        ## concatenate all outputs
         if not self._return_list:
-          updated = updated[0]
-        outputs.append(updated)
-      # concatenate all outputs
-      if not self._return_list:
-        for i in range(outputs[0].ndim):
-          all_n = [o.shape[i] for o in outputs]
-          if all_n == all_batches:
-            break
-        outputs = np.concatenate(outputs, axis=i)
-      else:
-        new_outputs = []
-        for _ in range(len(outputs[0])):
-          o = [x[_] for x in outputs]
-          for i in range(o[0].ndim):
-            all_n = [j.shape[i] for j in o]
-            if all_n == all_batches:
-              break
-          o = np.concatenate(o, axis=i)
-          new_outputs.append(o)
-        outputs = new_outputs
+          o_ndim = outputs[0].ndim
+          if o_ndim == 0: # returned scalars
+            outputs = np.array(outputs)
+          else: # returned array
+            for o_axis in range(o_ndim):
+              all_n = [o.shape[o_axis] for o in outputs]
+              if all_n == all_batches:
+                break
+            outputs = np.concatenate(outputs, axis=o_axis)
+        ## returning a list of outputs
+        else:
+          new_outputs = []
+          for output_idx in range(len(outputs[0])):
+            o = [x[output_idx] for x in outputs]
+            o_ndim = o[0].ndim
+            if o_ndim == 0: # returned scalars
+              o = np.array(o)
+            else: # returned array
+              for o_axis in range(o[0].ndim):
+                all_n = [val.shape[o_axis] for val in o]
+                if all_n == all_batches:
+                  break
+              o = np.concatenate(o, axis=o_axis)
+            new_outputs.append(o)
+          outputs = new_outputs
     # ====== single batch ====== #
-    else:
+    if outputs is None:
       updated = session.run(self.outputs + [self.updates_ops],
                             feed_dict=feed_dict)
       outputs = updated[:len(self.outputs)]
       if not self._return_list:
         outputs = outputs[0]
+    # ====== return final output ====== #
     return outputs
 
 def function(inputs, outputs, updates=[], defaults={},
