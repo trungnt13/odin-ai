@@ -1,5 +1,6 @@
 # Collection of helpers methods for plotting series or
 # image and its statistics
+# ax_1 = ax.twinx()
 from __future__ import print_function, division, absolute_import
 from numbers import Number
 
@@ -21,41 +22,24 @@ def to_axis2D(ax):
 # ===========================================================================
 # Main plotting
 # ===========================================================================
-def plot_series_statistics(observed, expected,
-                           total_stdev=None, explained_stdev=None,
-                           xscale="linear", yscale="linear",
-                           xlabel="feature", ylabel="value",
-                           y_cutoff=None,
-                           sort_by='expected', sort_ascending=True,
-                           ax=None, markersize=1, linewdith=1,
-                           fontsize=8, title=None):
-  """
-  Parameters
-  ----------
-
-  xcale, yscale : {"linear", "log", "symlog", "logit", ...}
-      text or instance in `matplotlib.scale`
-
-  """
-  import seaborn
-  import matplotlib
-
-  ax = to_axis2D(ax)
-  n = len(observed)
-  assert len(expected) == n
+def _preprocess_series(observed, expected, total_stdev, explained_stdev):
+  n = len(observed) if observed is not None else len(expected)
+  if observed is not None:
+    assert len(observed) == n
+  if expected is not None:
+    assert len(expected) == n
   if total_stdev is not None:
+    if np.isscalar(total_stdev):
+      total_stdev = np.array([total_stdev] * n)
     assert len(total_stdev) == n
   if explained_stdev is not None:
+    if np.isscalar(explained_stdev):
+      explained_stdev = np.array([explained_stdev] * n)
     assert len(explained_stdev) == n
-  # ====== color palette ====== #
-  standard_palette = seaborn.color_palette('Set2', 8)
-  observed_color = standard_palette[0]
-  expected_palette = seaborn.light_palette(standard_palette[1], 5)
-  expected_color = expected_palette[-1]
-  expected_total_standard_deviations_color = expected_palette[1]
-  expected_explained_standard_deviations_color = expected_palette[3]
-  # ====== prepare ====== #
-  indices = np.arange(n) + 1
+  return observed, expected, total_stdev, explained_stdev
+
+def _get_sort_indices(observed, expected,
+                      sort_by, sort_ascending):
   if sort_by is not None:
     if 'observed' in str(sort_by).lower():
       sort_indices = np.argsort(observed)
@@ -67,20 +51,76 @@ def plot_series_statistics(observed, expected,
       sort_indices = sort_indices[::-1]
   else:
     sort_indices = slice(None)
-  handles = []
+  return sort_indices
+
+def plot_series_statistics(observed, expected,
+                           total_stdev=None, explained_stdev=None,
+                           color_set='Set2',
+                           xscale="linear", yscale="linear",
+                           xlabel="feature", ylabel="value", y_cutoff=None,
+                           sort_by='expected', sort_ascending=True,
+                           legend_enable=True, legend_title=None, legend_loc='best',
+                           alpha=None, markersize=0.5, linewdith=1.2,
+                           fontsize=8, ax=None, title=None,
+                           return_handles=False, return_indices=False):
+  """ This function can plot 2 comparable series, and the
+  scale are represented in 2 y-axes (major axis - left) and
+  the right one
+
+
+  Parameters
+  ----------
+
+  xcale, yscale : {"linear", "log", "symlog", "logit", ...}
+      text or instance in `matplotlib.scale`
+
+  """
+  import seaborn
+  import matplotlib
+
+  ax = to_axis2D(ax)
+  observed, expected, total_stdev, explained_stdev = _preprocess_series(
+      observed, expected, total_stdev, explained_stdev)
+  # ====== color palette ====== #
+  if isinstance(color_set, (tuple, list)):
+    observed_color, expected_color, \
+    expected_total_standard_deviations_color, \
+    expected_explained_standard_deviations_color = color_set
+  else:
+    standard_palette = seaborn.color_palette(color_set, 8)
+    observed_color = standard_palette[0]
+    expected_palette = seaborn.light_palette(standard_palette[1], 5)
+    expected_color = expected_palette[-1]
+    expected_total_standard_deviations_color = expected_palette[1]
+    expected_explained_standard_deviations_color = expected_palette[3]
+  # ====== prepare ====== #
+  sort_indices = _get_sort_indices(observed, expected,
+                                   sort_by, sort_ascending)
   # ====== plotting expected and observed ====== #
-  _, = ax.plot(indices, observed[sort_indices],
-          label="Observations",
-          color=observed_color,
-          linestyle="", marker="o", zorder=2,
-          markersize=markersize)
-  handles.append(_)
-  _, = ax.plot(indices, expected[sort_indices],
-          label="Expectation",
-          color=expected_color,
-          linestyle="-", marker="", zorder=3,
-          linewidth=linewdith)
-  handles.append(_)
+  indices = np.arange(len(observed)
+                      if observed is not None else
+                      len(expected)) + 1
+  handles = []
+  # ====== series title ====== #
+  if legend_title is not None:
+    _, = ax.plot([], marker='None', linestyle='None',
+                 label="$%s$" % legend_title)
+    handles.append(_)
+  # ====== plotting expected and observed ====== #
+  if observed is not None:
+    _, = ax.plot(indices, observed[sort_indices],
+            label="Observations",
+            color=observed_color,
+            linestyle="", marker="o", zorder=2,
+            markersize=markersize)
+    handles.append(_)
+  if expected is not None:
+    _, = ax.plot(indices, expected[sort_indices],
+            label="Expectation",
+            color=expected_color,
+            linestyle="-", marker="", zorder=3,
+            linewidth=linewdith)
+    handles.append(_)
   # ====== plotting stdev ====== #
   if total_stdev is not None:
     lower = expected - total_stdev
@@ -88,7 +128,8 @@ def plot_series_statistics(observed, expected,
     ax.fill_between(
         indices, lower[sort_indices], upper[sort_indices],
         color=expected_total_standard_deviations_color,
-        zorder=0
+        zorder=0,
+        alpha=alpha,
     )
     _ = matplotlib.patches.Patch(
         label="Stdev(Total)",
@@ -101,7 +142,8 @@ def plot_series_statistics(observed, expected,
     ax.fill_between(
         indices, lower[sort_indices], upper[sort_indices],
         color=expected_explained_standard_deviations_color,
-        zorder=1
+        zorder=1,
+        alpha=alpha,
     )
     _ = matplotlib.patches.Patch(
         label="Stdev(Explained)",
@@ -109,7 +151,9 @@ def plot_series_statistics(observed, expected,
     )
     handles.append(_)
   # ====== legend ====== #
-  ax.legend(handles=handles, loc="best", fontsize=fontsize)
+  if legend_enable:
+    ax.legend(handles=handles, loc=legend_loc, fontsize=fontsize)
+  # ====== adjusting ====== #
   seaborn.despine()
   ax.set_yscale(yscale, nonposy="clip")
   ax.set_ylabel('[%s]%s' % (yscale, ylabel), fontsize=fontsize)
@@ -130,4 +174,9 @@ def plot_series_statistics(observed, expected,
   # ====== title ====== #
   if title is not None:
     ax.set_title(title, fontsize=fontsize, fontweight='bold')
-  return ax
+  ret = [ax]
+  if return_handles:
+    ret.append(handles)
+  if return_indices:
+    ret.append(indices)
+  return ax if len(ret) == 1 else tuple(ret)
