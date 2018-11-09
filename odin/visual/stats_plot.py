@@ -74,6 +74,31 @@ def plot_series_statistics(observed, expected,
   xcale, yscale : {"linear", "log", "symlog", "logit", ...}
       text or instance in `matplotlib.scale`
 
+  Example
+  -------
+  >>> import numpy as np
+  >>> from matplotlib import pyplot as plt
+  >>> np.random.seed(5218)
+  >>> x = np.random.randn(8000)
+  >>> y = np.random.randn(8000)
+  ...
+  >>> z = np.random.rand(8000) + 3
+  >>> w = np.random.rand(8000) + 3
+  ...
+  >>> ax, handles1 = V.plot_series_statistics(observed=x, expected=y,
+  ...                                        explained_stdev=np.std(x),
+  ...                                        total_stdev=np.std(y),
+  ...                                        color_set='Set1',
+  ...                                        legend_enable=False, legend_title="Series_1",
+  ...                                        return_handles=True)
+  >>> _, handles2 = V.plot_series_statistics(observed=z, expected=w,
+  ...                                        explained_stdev=np.std(z),
+  ...                                        total_stdev=np.std(w),
+  ...                                        color_set='Set2',
+  ...                                        legend_enable=False, legend_title="Series_2",
+  ...                                        return_handles=True,
+  ...                                        ax=ax.twinx(), alpha=0.2)
+  >>> plt.legend(handles=handles1 + handles2, loc='best', fontsize=8)
   """
   import seaborn
   import matplotlib
