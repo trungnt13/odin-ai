@@ -8,7 +8,6 @@ from six.moves import zip, range, cPickle
 
 import numpy as np
 
-from odin.utils.mpi import async
 from odin.utils.crypto import md5_checksum
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,

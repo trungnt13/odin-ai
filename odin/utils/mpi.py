@@ -9,6 +9,7 @@ os.environ['OMP_NUM_THREADS'] = '1'
 
 import time
 import types
+import pickle
 import inspect
 from six import add_metaclass
 from decorator import decorator
@@ -16,7 +17,7 @@ from collections import defaultdict
 from abc import ABCMeta, abstractmethod
 from multiprocessing.pool import ThreadPool, Pool
 from multiprocessing import (cpu_count, Process, Queue, Value, Lock,
-                             current_process)
+                             current_process, Pipe)
 
 import numpy as np
 
@@ -26,7 +27,7 @@ import numpy as np
 _async_function_counter = defaultdict(int)
 _NTHREADS = max(int(cpu_count()) // 2, 2)
 _THREAD_POOL = None
-_MPI_POOL = None
+_MAX_PIPE_BLOCK = 8 * 1024 * 1024 # 8MB
 
 def set_max_threads(n):
   """ Set the maximum number of Threads for the
@@ -41,12 +42,6 @@ def set_max_threads(n):
       _THREAD_POOL.join()
       _THREAD_POOL.close()
     _THREAD_POOL = ThreadPool(processes=_NTHREADS)
-    # re-init mpi pool
-    global _MPI_POOL
-    if _MPI_POOL is not None:
-      _MPI_POOL.join()
-      _MPI_POOL.close()
-    _MPI_POOL = Pool(processes=_NTHREADS)
 
 def _full_func_name(f):
   return f.__module__ + "." + f.__class__.__qualname__ + '.' + f.__name__
@@ -58,34 +53,44 @@ class _async_task(object):
   """
 
   def __init__(self, func, *args, **kw):
-    self._is_threading = kw.pop('is_threading')
+    self._is_threading = kw.pop('_is_threading')
     _async_function_counter[func] = _async_function_counter[func] + 1
-    self._callback = lambda results: None
     # specific name
-    name = '<async_task:[%s]<%s|#%s>%s Cb:<%s>%s Finished:False>' % \
+    name = '<async_task:[%s]<%s|#%s>%s Finished:False>' % \
     ('Thread' if self._is_threading else 'Process',
         _full_func_name(func), _async_function_counter[func],
         '(%s)' % ';'.join(inspect.signature(func).parameters.keys()),
-        _full_func_name(self._callback),
-        '(%s)' % ';'.join(inspect.signature(self._callback).parameters.keys())
     )
     self._name = name
+    self._func = func
     # check initialized pool
-    the_pool = None
+    # ====== using threading ====== #
     if self._is_threading:
       global _THREAD_POOL
       if _THREAD_POOL is None:
         _THREAD_POOL = ThreadPool(processes=_NTHREADS)
-      the_pool = _THREAD_POOL
+      self._async_task = _THREAD_POOL.apply_async(
+          func=func, args=args, kwds=kw)
+    # ====== using Multiprocessing ====== #
     else:
-      global _MPI_POOL
-      if _MPI_POOL is None:
-        _MPI_POOL = Pool(processes=_NTHREADS)
-      the_pool = _MPI_POOL
-    # create asyn task
-    self._async_task = the_pool.apply_async(
-        func=func, args=args, kwds=kw,
-        callback=lambda result: self.__callback(result))
+      def wrapped_func(conn, *args, **kwargs):
+        results = self._func(*args, **kwargs)
+        ret_data = pickle.dumps(results,
+                                protocol=pickle.HIGHEST_PROTOCOL)
+        ret_length = len(ret_data)
+        conn.send(ret_length)
+        sent_bytes = 0
+        while sent_bytes < ret_length:
+          data = ret_data[sent_bytes: sent_bytes + _MAX_PIPE_BLOCK]
+          conn.send(data)
+          sent_bytes += _MAX_PIPE_BLOCK
+
+      parent_conn, child_conn = Pipe()
+      self._async_task = Process(target=wrapped_func,
+                                 args=(child_conn,) + tuple(args),
+                                 kwargs=kw)
+      self._async_task.start()
+      self._conn = parent_conn
 
   @property
   def name(self):
@@ -97,18 +102,12 @@ class _async_task(object):
   def __repr__(self):
     return str(self)
 
-  def __callback(self, result):
-    self._result = result
-    sign = inspect.signature(self._callback)
-    if len(sign.parameters) == 1 or any(i.kind == inspect.Parameter.VAR_POSITIONAL
-                                        for i in sign.parameters.values()):
-      self._callback(result)
-    else:
-      self._callback()
-
   @property
   def finished(self):
-    return self._async_task.ready() and self._async_task.successful()
+    if self._is_threading:
+      return self._async_task.ready() and self._async_task.successful()
+    else:
+      return self._async_task.is_alive()
 
   @property
   def finish(self):
@@ -120,11 +119,29 @@ class _async_task(object):
 
   def get(self, timeout=None):
     """Return actual result of the function"""
-    if hasattr(self, '_result'):
-      return self._result
-    return self._async_task.get(timeout=timeout)
+    if not hasattr(self, '_result'):
+      # ====== multi-threading ====== #
+      if self._is_threading:
+        self._result = self._async_task.get(timeout=timeout)
+      # ====== multi-processing ====== #
+      else:
+        while not self._conn.poll(): # waiting for data
+          pass
+        ret_length = self._conn.recv()
+        read_bytes = 0
+        received = []
+        while read_bytes < ret_length:
+          data = self._conn.recv()
+          received.append(data)
+          read_bytes += len(data)
+        received = b"".join(received)
+        self._result = pickle.loads(received)
+        # clean up
+        self._conn.close()
+        self._async_task.join(timeout=timeout)
+    return self._result
 
-def async(func=None, callback=None):
+def async(func=None):
   """ This create and asynchronized result using Threading instead of
   multiprocessing, you can take advantage from share memory in threading
   for async-IO using this decorator.
@@ -165,10 +182,8 @@ def async(func=None, callback=None):
   """
   @decorator
   def _decorator_func_(func, *args, **kwargs):
-    kwargs['is_threading'] = True
+    kwargs['_is_threading'] = True
     task = _async_task(func, *args, **kwargs)
-    if hasattr(callback, '__call__'):
-      task._callback = callback
     return task
   # roles are not specified, given function directly
   if inspect.isfunction(func) or inspect.ismethod(func):
@@ -176,7 +191,7 @@ def async(func=None, callback=None):
   # roles are specified
   return _decorator_func_
 
-def async_mpi(func=None, callback=None):
+def async_mpi(func=None):
   """ This create and asynchronized result using multi-Processing
   Also check: `odin.utils.mpi.async` for multi-Threading
   decorator
@@ -217,10 +232,8 @@ def async_mpi(func=None, callback=None):
   """
   @decorator
   def _decorator_func_(func, *args, **kwargs):
-    kwargs['is_threading'] = False
+    kwargs['_is_threading'] = False
     task = _async_task(func, *args, **kwargs)
-    if hasattr(callback, '__call__'):
-      task._callback = callback
     return task
   # roles are not specified, given function directly
   if inspect.isfunction(func) or inspect.ismethod(func):

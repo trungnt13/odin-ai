@@ -189,9 +189,14 @@ def calc_white_mat(X):
   return W
 
 def log_norm(X, axis=1, scale_factor=10000):
-  """ Seurat log-normalize """
+  """ Seurat log-normalize
+  y = log(X / (sum(X, axis) + epsilon) * scale_factor)
+
+  where `log` is natural logarithm
+  """
   if is_tensor(X):
-    return tf.log1p(X / (tf.reduce_sum(X, axis=axis, keepdims=True) + EPS) * scale_factor)
+    return tf.log1p(
+        X / (tf.reduce_sum(X, axis=axis, keepdims=True) + EPS) * scale_factor)
   elif isinstance(X, np.ndarray):
     X = X.astype('float64')
     return np.log1p(

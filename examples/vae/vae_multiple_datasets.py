@@ -14,7 +14,7 @@ from tensorflow_probability import distributions as tfd, bijectors as tfb
 
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
-from odin.utils import args_parse, ctext, batching, Progbar, async_mpi
+from odin.utils import args_parse, ctext, batching, Progbar
 from odin.ml import fast_pca
 from odin.stats import describe
 

@@ -217,20 +217,22 @@ class Optimizer(object):
         for r in roles:
           role_vars[r.__name__].append(var)
       # print debug info (this is ugly but look nice and fun)
-      max_name_length = str(max(max(len(i.name)
-                                    for i in v)
-                                for v in role_vars.values()))
-      max_shape_length = str(max(max(len(str(i.shape.as_list()))
-                                     for i in v)
-                                 for v in role_vars.values()))
-      for role, var_list in sorted(role_vars.items(),
-                                   key=lambda x: str(x[0])):
-        print('Role:', ctext(role, 'yellow'))
-        for var in sorted(var_list, key=lambda x: x.name):
-          print(' ',
-                ('%-' + max_name_length + 's') % var.name.replace('/', ' '),
-                ctext(('%-' + max_shape_length + 's') % var.shape.as_list(), 'magenta'),
-                ctext(var.dtype.base_dtype.name, 'cyan'))
+      if len(role_vars) > 0:
+        max_name_length = str(max(
+            max(len(i.name) for i in v)
+            for v in role_vars.values()))
+        max_shape_length = str(max(
+            max(len(str(i.shape.as_list())) for i in v)
+            for v in role_vars.values()))
+
+        for role, var_list in sorted(role_vars.items(),
+                                     key=lambda x: str(x[0])):
+          print('Role:', ctext(role, 'yellow'))
+          for var in sorted(var_list, key=lambda x: x.name):
+            print(' ',
+                  ('%-' + max_name_length + 's') % var.name.replace('/', ' '),
+                  ctext(('%-' + max_shape_length + 's') % var.shape.as_list(), 'magenta'),
+                  ctext(var.dtype.base_dtype.name, 'cyan'))
     # ====== get the updates ====== #
     updates = self.get_updates(loss_or_grads=loss, params=trainable)
     # with tf.variable_scope(self.name):

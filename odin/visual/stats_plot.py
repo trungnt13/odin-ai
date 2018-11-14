@@ -23,6 +23,8 @@ def to_axis2D(ax):
 # Main plotting
 # ===========================================================================
 def _preprocess_series(observed, expected, total_stdev, explained_stdev):
+  if observed is None and expected is None:
+    raise ValueError("Either `observed` or `expected` must be not None")
   n = len(observed) if observed is not None else len(expected)
   if observed is not None:
     assert len(observed) == n
@@ -53,14 +55,14 @@ def _get_sort_indices(observed, expected,
     sort_indices = slice(None)
   return sort_indices
 
-def plot_series_statistics(observed, expected,
+def plot_series_statistics(observed=None, expected=None,
                            total_stdev=None, explained_stdev=None,
                            color_set='Set2',
                            xscale="linear", yscale="linear",
                            xlabel="feature", ylabel="value", y_cutoff=None,
-                           sort_by='expected', sort_ascending=True,
+                           sort_by='expected', sort_ascending=True, despine=True,
                            legend_enable=True, legend_title=None, legend_loc='best',
-                           alpha=None, markersize=0.5, linewdith=1.2,
+                           alpha=None, markersize=1.0, linewdith=1.2,
                            fontsize=8, ax=None, title=None,
                            return_handles=False, return_indices=False):
   """ This function can plot 2 comparable series, and the
@@ -70,9 +72,12 @@ def plot_series_statistics(observed, expected,
 
   Parameters
   ----------
-
   xcale, yscale : {"linear", "log", "symlog", "logit", ...}
       text or instance in `matplotlib.scale`
+
+  despine : bool (default: True)
+      if True, remove the top and right spines from plot,
+      otherwise, only remove the top spine
 
   Example
   -------
@@ -179,7 +184,10 @@ def plot_series_statistics(observed, expected,
   if legend_enable:
     ax.legend(handles=handles, loc=legend_loc, fontsize=fontsize)
   # ====== adjusting ====== #
-  seaborn.despine()
+  if bool(despine):
+    seaborn.despine(top=True, right=True)
+  else:
+    seaborn.despine(top=True, right=False)
   ax.set_yscale(yscale, nonposy="clip")
   ax.set_ylabel('[%s]%s' % (yscale, ylabel), fontsize=fontsize)
   ax.set_xscale(xscale)
@@ -203,5 +211,5 @@ def plot_series_statistics(observed, expected,
   if return_handles:
     ret.append(handles)
   if return_indices:
-    ret.append(indices)
+    ret.append(sort_indices)
   return ax if len(ret) == 1 else tuple(ret)
