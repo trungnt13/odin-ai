@@ -57,7 +57,8 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
   file_or_path : object
     One of the following
       - File object
-      - File path
+      - string path to a folder
+      - string path to a file
       - Bytes array
       - Numpy array
       - List or iterator of numpy array
@@ -67,7 +68,7 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
   chunksize = int(chunksize)
   hash_md5 = hashlib.md5()
   own_file = False
-  # numpy array or list of numpy array
+  # ====== numpy array or list of numpy array ====== #
   if isinstance(file_or_path, np.ndarray) or \
   (isinstance(file_or_path, (tuple, list)) and
    all(isinstance(i, np.ndarray) for i in file_or_path)):
@@ -78,12 +79,22 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
       np.save(file=f, arr=arr, allow_pickle=False)
     f.seek(0)
     own_file = True
-  # path to files
+  # ======  path to file or folder ====== #
   elif isinstance(file_or_path, string_types):
-    if os.path.exists(file_or_path):
+    # a file
+    if os.path.isfile(file_or_path):
       f = open(file_or_path, 'rb')
       own_file = True
-    else: # just string or text
+    # a folder (then read all files in order)
+    elif os.path.isdir(file_or_path):
+      for fpath in sorted(os.listdir(file_or_path)):
+        fpath = os.path.join(file_or_path, fpath)
+        with open(fpath, 'rb') as f:
+          for chunk in iter(lambda: f.read(chunksize), b""):
+            hash_md5.update(chunk)
+      return hash_md5.hexdigest()
+    # just string or text
+    else:
       hash_md5.update(file_or_path.encode('utf-8'))
       return hash_md5.hexdigest()
   # bytes object directly
@@ -236,7 +247,8 @@ def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
 # ===========================================================================
 # Zip
 # ===========================================================================
-def zip_aes(in_path, out_path, password=None, verbose=False):
+def zip_aes(in_path, out_path, password=None, compression=True,
+            verbose=False):
   """
   Parameters
   ----------
@@ -257,7 +269,10 @@ def zip_aes(in_path, out_path, password=None, verbose=False):
   # ====== prepare output ====== #
   if not isinstance(out_path, string_types):
     raise ValueError("`out_path` must be string")
-  f = zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_STORED, allowZip64=True)
+  f = zipfile.ZipFile(out_path, 'w',
+        compression=zipfile.ZIP_DEFLATED if bool(compression) else
+                    zipfile.ZIP_STORED,
+        allowZip64=True)
   # ====== compression ====== #
   md5_map = {}
   for path in all_files:
@@ -269,14 +284,17 @@ def zip_aes(in_path, out_path, password=None, verbose=False):
   f.writestr('_MD5_CHECKSUM_', pickle.dumps(md5_map))
   f.close()
 
-def unzip_aes(in_path, out_path, password=None, verbose=False):
+def unzip_aes(in_path, out_path=None, password=None, compression=True,
+              verbose=False):
   """
   Parameters
   ----------
   in_path : string
     path to input zip file
-  out_path : string
-    path to output parent folder
+  out_path : {string, None}
+    if None, return iteration of tuple (name, decompressed data),
+    otherwise, saving the decompressed data to the given folder
+
   """
   if password is None:
     password = input("Your password:")
@@ -286,12 +304,16 @@ def unzip_aes(in_path, out_path, password=None, verbose=False):
   if not os.path.isfile(in_path):
     raise ValueError("`in_path` to %s is not a file" % str(in_path))
   # ====== prepare output ====== #
-  if os.path.isfile(out_path):
-    raise ValueError("`out_path` must be a folder")
-  elif not os.path.exists(out_path):
-    os.mkdir(out_path)
+  if out_path is not None:
+    if os.path.isfile(out_path):
+      raise ValueError("`out_path` must be a folder")
+    elif not os.path.exists(out_path):
+      os.mkdir(out_path)
   # ====== decompress ====== #
-  with zipfile.ZipFile(in_path, 'r', compression=zipfile.ZIP_STORED, allowZip64=True) as fzip:
+  with zipfile.ZipFile(in_path, 'r',
+          compression=zipfile.ZIP_DEFLATED if bool(compression) else
+                      zipfile.ZIP_STORED,
+          allowZip64=True) as fzip:
     md5_map = pickle.loads(fzip.read(name='_MD5_CHECKSUM_'))
     for name in fzip.namelist():
       if '_MD5_CHECKSUM_' == name:
@@ -299,14 +321,20 @@ def unzip_aes(in_path, out_path, password=None, verbose=False):
       data = fzip.read(name=name)
       data = decrypt_aes(data, password=password + name)
       md5 = md5_checksum(data)
-      assert md5 == md5_map[name], "MD5 mismatch for data name: '%s'" % name
-      # save file to disk
-      path = out_path
-      for d in name.split('/')[:-1]:
-        path += '/' + d
-        if os.path.exists(path):
-          os.mkdir(path)
-      with open(os.path.join(path, name.split('/')[-1]), mode='wb') as f:
-        f.write(data)
+      assert md5 == md5_map[name], \
+      "MD5 mismatch for data name: '%s', probably caused by wrong password!" % name
+      # verbose
       if verbose:
         print('Decompressed: "%s"' % name, "(MD5:%s)" % md5)
+      # save file to disk
+      if out_path is not None:
+        path = out_path
+        for d in name.split('/')[:-1]:
+          path += '/' + d
+          if os.path.exists(path):
+            os.mkdir(path)
+        with open(os.path.join(path, name.split('/')[-1]), mode='wb') as f:
+          f.write(data)
+      # return iteration
+      else:
+        yield name, data
