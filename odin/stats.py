@@ -406,10 +406,11 @@ def summary(x, axis=None, shorten=False):
   median = np.median(x, axis=axis)
   qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
   min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
-  samples = ', '.join([str(i)
-             for i in np.random.choice(x.ravel(), size=8, replace=False).tolist()])
   s = ""
   if not shorten:
+    x = x.ravel()
+    samples = ', '.join([str(i)
+           for i in np.random.choice(x, size=min(8, len(x)), replace=False).tolist()])
     s += "***** Summary *****\n"
     s += "    Min : %s\n" % str(min_)
     s += "1st Qu. : %s\n" % str(qu1)

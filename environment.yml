@@ -37,3 +37,5 @@ dependencies:
     - soundfile # read sph audio file python
     - tensorflow-gpu
     - tqdm
+    - daft
+

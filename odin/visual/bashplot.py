@@ -18,6 +18,7 @@ import numpy as np
 
 __all__ = [
     'remove_text_color',
+    'escape_text_color',
     'merge_text_graph',
     'print_dist',
     'print_confusion',
@@ -89,6 +90,9 @@ def ctext(s, color='red'):
 def remove_text_color(s):
   s = re.sub(pattern='\\033\[\d\dm', repl='', string=s)
   return s
+
+def escape_text_color(s):
+  return remove_text_color(s)
 
 def merge_text_graph(*graphs, padding=' '):
   """ To merge multiple graph together, this function
