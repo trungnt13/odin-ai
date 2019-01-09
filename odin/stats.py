@@ -62,32 +62,6 @@ def prior2weights(prior, exponential=False,
 # ===========================================================================
 # Diagnose
 # ===========================================================================
-def classification_report(y_pred, y_true, labels):
-  """
-  Parameters
-  ----------
-  pass
-
-  Return
-  ------
-  Classification report in form of string
-  """
-  from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-  # ====== validate labels ====== #
-  labels = as_tuple(labels)
-  target_names = [str(i) for i in labels]
-  labels = list(range(0, len(labels)))
-  # ====== create report ====== #
-  s = ""
-  s += "Accuracy: %f\n" % accuracy_score(y_true, y_pred, normalize=True)
-  s += "Confusion matrix:\n"
-  s += str(confusion_matrix(y_true, y_pred, labels=labels)) + '\n'
-  s += "Report:\n"
-  s += str(classification_report(y_true, y_pred, labels=labels, digits=3,
-                                 target_names=target_names))
-  return s
-
-
 def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
   # ====== shuffle input ====== #
   if idfunc is not None:
@@ -118,51 +92,6 @@ def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
       "Number of returned data inconsitent from original data, %d != %d" % \
       (sum(len(r) for r in rets), len(x))
   return rets
-
-def classification_diagnose(X, y_true, y_pred,
-                            num_samples=8, return_list=False, top_n=None,
-                            seed=5218):
-  """
-  Return
-  ------
-  OrderedDict: (true_class, pred_class) -> [list of samples from `X`]
-  sorted by most frequence to less frequence
-  """
-  # Mapping from classesID -> [Sample ID]
-  # ====== check argument ====== #
-  if y_true.ndim == 2:
-    y_true = np.argmax(y_true, axis=-1)
-  elif y_true.ndim != 1:
-    raise ValueError("Only support 1-D or 2-D one-hot `y_true`, "
-                     "given `y_true` with shape: %s" % str(y_true.shape))
-  if y_pred.ndim == 2:
-    y_pred = np.argmax(y_pred, axis=-1)
-  elif y_pred.ndim != 1:
-    raise ValueError("Only support 1-D or 2-D one-hot `y_pred`, "
-                     "given `y_pred` with shape: %s" % str(y_pred.shape))
-  assert len(y_true) == len(y_pred) == len(X), "Inconsistent number of samples"
-  # ====== initialize ====== #
-  rand = np.random.RandomState(seed)
-  miss = defaultdict(list)
-  # ====== sampling ====== #
-  for idx, (true, pred) in enumerate(zip(y_true, y_pred)):
-    if true != pred:
-      miss[(true, pred)].append(idx)
-  # sort by the most freq mistake classes
-  outputs = OrderedDict()
-  for (true, pred), samples in sorted(miss.items(),
-                                      key=lambda x: len(x[-1]),
-                                      reverse=True):
-    rand.shuffle(samples)
-    outputs[(true, pred)] = (X[samples[:num_samples]]
-                             if isinstance(X, np.ndarray) else
-                             [X[i] for i in samples])
-  # select top frequence
-  if top_n is not None and isinstance(top_n, Number):
-    top_n = int(top_n)
-    assert top_n >= 1
-    outputs = OrderedDict(list(outputs.items())[:top_n])
-  return list(outputs.items()) if return_list else outputs
 
 def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
                            inc_test=True, seed=None):
@@ -382,7 +311,7 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
   return _sampling() if return_iter else list(_sampling)
 
 # ===========================================================================
-# Others
+# Statistics
 # ===========================================================================
 def sparsity_percentage(x, batch_size=5218):
   n_zeros = 0
@@ -393,6 +322,99 @@ def sparsity_percentage(x, batch_size=5218):
     n_nonzeros = np.count_nonzero(y)
     n_zeros += np.prod(y.shape) - n_nonzeros
   return n_zeros / n_total
+
+def logVMR(x, axis=None, logged_values=False):
+  """ Calculate the variance to mean ratio (VMR) in non-logspace
+  (return answer in log-space)
+
+  VMR (variance-to-mean ratio = index of dispersion) is equal to zero
+  in the case of a constant random variable (not dispersed).
+
+  It is equal to one in a Poisson distribution, higher than one in a
+  negative binomial distribution (over dispersed) and between zero
+  and one in a binomial distribution (under dispersed).
+
+  Reference
+  ---------
+  https://www.quantshare.com/item-1029-index-of-dispersion-variance-to-mean-ratio-vmr
+
+  """
+  if logged_values:
+    x = np.expm1(x)
+  return np.log1p(np.var(x, axis=axis) / np.mean(x, axis=axis))
+
+# ===========================================================================
+# Diagnosis
+# ===========================================================================
+def classification_diagnose(X, y_true, y_pred,
+                            num_samples=8, return_list=False, top_n=None,
+                            seed=5218):
+  """
+  Return
+  ------
+  OrderedDict: (true_class, pred_class) -> [list of samples from `X`]
+  sorted by most frequence to less frequence
+  """
+  # Mapping from classesID -> [Sample ID]
+  # ====== check argument ====== #
+  if y_true.ndim == 2:
+    y_true = np.argmax(y_true, axis=-1)
+  elif y_true.ndim != 1:
+    raise ValueError("Only support 1-D or 2-D one-hot `y_true`, "
+                     "given `y_true` with shape: %s" % str(y_true.shape))
+  if y_pred.ndim == 2:
+    y_pred = np.argmax(y_pred, axis=-1)
+  elif y_pred.ndim != 1:
+    raise ValueError("Only support 1-D or 2-D one-hot `y_pred`, "
+                     "given `y_pred` with shape: %s" % str(y_pred.shape))
+  assert len(y_true) == len(y_pred) == len(X), "Inconsistent number of samples"
+  # ====== initialize ====== #
+  rand = np.random.RandomState(seed)
+  miss = defaultdict(list)
+  # ====== sampling ====== #
+  for idx, (true, pred) in enumerate(zip(y_true, y_pred)):
+    if true != pred:
+      miss[(true, pred)].append(idx)
+  # sort by the most freq mistake classes
+  outputs = OrderedDict()
+  for (true, pred), samples in sorted(miss.items(),
+                                      key=lambda x: len(x[-1]),
+                                      reverse=True):
+    rand.shuffle(samples)
+    outputs[(true, pred)] = (X[samples[:num_samples]]
+                             if isinstance(X, np.ndarray) else
+                             [X[i] for i in samples])
+  # select top frequence
+  if top_n is not None and isinstance(top_n, Number):
+    top_n = int(top_n)
+    assert top_n >= 1
+    outputs = OrderedDict(list(outputs.items())[:top_n])
+  return list(outputs.items()) if return_list else outputs
+
+def classification_report(y_pred, y_true, labels):
+  """
+  Parameters
+  ----------
+  pass
+
+  Return
+  ------
+  Classification report in form of string
+  """
+  from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+  # ====== validate labels ====== #
+  labels = as_tuple(labels)
+  target_names = [str(i) for i in labels]
+  labels = list(range(0, len(labels)))
+  # ====== create report ====== #
+  s = ""
+  s += "Accuracy: %f\n" % accuracy_score(y_true, y_pred, normalize=True)
+  s += "Confusion matrix:\n"
+  s += str(confusion_matrix(y_true, y_pred, labels=labels)) + '\n'
+  s += "Report:\n"
+  s += str(classification_report(y_true, y_pred, labels=labels, digits=3,
+                                 target_names=target_names))
+  return s
 
 def summary(x, axis=None, shorten=False):
   """ Return string of statistical summary given series `x`

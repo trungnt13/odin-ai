@@ -430,6 +430,25 @@ def subplot(*arg, **kwargs):
     subplot.set_title(kwargs['title'])
   return subplot
 
+def plot_aspect(aspect=None, adjustable=None, ax=None):
+  """
+  aspect : {'auto', 'equal'} or num
+    'auto'  automatic; fill the position rectangle with data
+    'equal' same scaling from data to plot units for x and y
+    num a circle will be stretched such that the height is num times
+    the width. aspect=1 is the same as aspect='equal'.
+
+  adjustable : None or {'box', 'datalim'}, optional
+    If not None, this defines which parameter will be adjusted to
+    meet the required aspect. See set_adjustable for further details.
+  """
+  ax = to_axis(ax)
+  if aspect is not None and adjustable is None:
+    ax.axis(aspect)
+  else:
+    ax.set_aspect(aspect, adjustable)
+  return ax
+
 @contextmanager
 def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
   """
