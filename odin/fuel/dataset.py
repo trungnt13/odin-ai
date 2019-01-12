@@ -843,6 +843,11 @@ class Dataset(object):
       return path if data is None else data
     raise ValueError('Only accept key type is string.')
 
+  def get(self, key, default=None):
+    if key in self._data_map:
+      return self.__getitem__(key)
+    return default
+
   def __setitem__(self, key, value):
     """
     Parameters

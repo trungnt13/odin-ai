@@ -110,10 +110,15 @@ def serialize(nnops, path=None, save_variables=True, variables=[],
   return path
 
 
-def deserialize(path, force_restore_vars=True):
+def deserialize(path_or_data, force_restore_vars=True):
   """
   Parameters
   ----------
+  path_or_data : {string, dict}
+      if a path is given (i.e. string types), load dumped model from
+      given folder
+      if a dictionary is given, load binary data directly
+
   force_restore_vars : bool (default=True)
       if `False`, this is special tricks, the unpickled NNOp stay useless
       until its variables are restored,
@@ -135,20 +140,20 @@ def deserialize(path, force_restore_vars=True):
   path_folder = '/tmp/tmp_%s' % uuid(12)
   delete_after = True
   # ====== check path ====== #
-  if is_string(path):
+  if is_string(path_or_data):
     # path to a file
-    if os.path.isfile(path):
-      with open(path, 'rb') as f:
+    if os.path.isfile(path_or_data):
+      with open(path_or_data, 'rb') as f:
         data = cPickle.load(f)
     # path to a folder
-    elif os.path.isdir(path):
-      path_folder = path
+    elif os.path.isdir(path_or_data):
+      path_folder = path_or_data
       delete_after = False
     else: # pickle string
-      data = cPickle.loads(path)
+      data = cPickle.loads(path_or_data)
   # given data
-  elif isinstance(path, dict):
-    data = path
+  elif isinstance(path_or_data, dict):
+    data = path_or_data
   # ====== check data ====== #
   if data is not None:
     bin2folder(data, path=path_folder)

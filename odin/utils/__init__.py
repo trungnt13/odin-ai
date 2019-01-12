@@ -612,17 +612,49 @@ class FuncDesc(object):
 
   def __getstate__(self):
     import dill
+    # check if need to re-load function module during setstate
+    if not is_lambda(self._func):
+      module = inspect.getmodule(self._func)
+      func_module_name = [i for i, j in sys.modules.items()
+                          if j == module][0]
+      func_module_path = inspect.getfile(module)
+    else:
+      func_module_name = None
+      func_module_path = None
+    # using dill to dump function
     func_str = dill.dumps(self._func)
-    return (func_str, self.__name__,
+    return (func_str, func_module_name, func_module_path,
+            self.__name__,
             self._args, self._is_include_args,
             self._is_include_kwargs, self._defaults)
 
   def __setstate__(self, states):
     import dill
-    (func_str, self.__name__,
+    (func_str, func_module_name, func_module_path,
+     self.__name__,
      self._args, self._is_include_args,
      self._is_include_kwargs, self._defaults) = states
+    # iterate through all loaded modules to find module contain given function
+    if func_module_name is not None and func_module_path is not None:
+      found = None
+      for name, module in sys.modules.items():
+        try:
+          if inspect.getfile(module) == func_module_path:
+            found = (name, module)
+        except Exception as e:
+          pass
+      if found is None:
+        import imp
+        imp.load_source(name=func_module_name, pathname=func_module_path)
+      elif found[0] != func_module_name:
+        sys.modules[func_module_name] = sys.modules[found[0]]
+    # load function
     self._func = dill.loads(func_str)
+
+  @property
+  def path(self):
+    """ Return the absolute path to the script contain the function """
+    return inspect.getfile(inspect.getmodule(self._func))
 
   @property
   def args(self):
@@ -1288,8 +1320,10 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
   Notes
   -----
   File with multiple . character my procedure wrong results
+
   If the script run this this function match the searching process, a
   infinite loop may happen!
+
   * This function try to import each modules and find desire function,
   it may mess up something.
 
@@ -1304,31 +1338,36 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
   prefer_flag = 1 if prefer_compiled else -1
   # ====== create pattern and load files ====== #
   pattern = re.compile('^%s.*%s\.pyc?' % (prefix, suffix)) # py or pyc
-  files = os.listdir(path)
-  files = [f for f in files
+  file_name = os.listdir(path)
+  file_name = [f for f in file_name
            if pattern.match(f) and
            sum([i in f for i in exclude]) == 0]
   # ====== remove duplicated pyc files ====== #
-  files = sorted(files, key=lambda x: prefer_flag * len(x)) # pyc is longer
+  file_name = sorted(file_name,
+                     key=lambda x: prefer_flag * len(x)) # pyc is longer
   # .pyc go first get overrided by .py
-  files = sorted({f.split('.')[0]: f for f in files}.values())
+  file_name = sorted({f.split('.')[0]: f for f in file_name}.values())
   # ====== load all modules ====== #
   modules = []
-  for f in files:
+  # NOTE: this will load the module ignore the relative import path
+  # For example: for module A.B.C
+  # `from A.B import C` will result 'A.B.C' -> C
+  # `imp.load_source`, here, will result 'C' -> C
+  for fname in file_name:
     try:
-      if '.pyc' in f:
+      if '.pyc' in fname:
         modules.append(
-            imp.load_compiled(f.split('.')[0],
-                              os.path.join(path, f))
+            imp.load_compiled(fname.split('.')[0],
+                              os.path.join(path, fname))
         )
       else:
         modules.append(
-            imp.load_source(f.split('.')[0],
-                            os.path.join(path, f))
+            imp.load_source(fname.split('.')[0],
+                            os.path.join(path, fname))
         )
     except Exception as e:
       eprint("Cannot loading modules from file: '%s' - %s" %
-        (ctext(f, 'yellow'), ctext(str(e), 'red')))
+        (ctext(fname, 'yellow'), ctext(str(e), 'red')))
   # ====== Find all identifier in modules ====== #
   ids = []
   for m in modules:
