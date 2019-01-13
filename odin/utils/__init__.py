@@ -615,39 +615,58 @@ class FuncDesc(object):
     # check if need to re-load function module during setstate
     if not is_lambda(self._func):
       module = inspect.getmodule(self._func)
-      func_module_name = [i for i, j in sys.modules.items()
-                          if j == module][0]
+      func_module_key = [i for i, j in sys.modules.items()
+                         if j == module][0]
+      func_module_name = module.__name__
       func_module_path = inspect.getfile(module)
     else:
+      func_module_key = None
       func_module_name = None
       func_module_path = None
     # using dill to dump function
     func_str = dill.dumps(self._func)
-    return (func_str, func_module_name, func_module_path,
+    return (func_str,
+            func_module_key, func_module_name, func_module_path,
             self.__name__,
             self._args, self._is_include_args,
             self._is_include_kwargs, self._defaults)
 
   def __setstate__(self, states):
     import dill
-    (func_str, func_module_name, func_module_path,
+    (func_str,
+     func_module_key, func_module_name, func_module_path,
      self.__name__,
      self._args, self._is_include_args,
      self._is_include_kwargs, self._defaults) = states
     # iterate through all loaded modules to find module contain given function
-    if func_module_name is not None and func_module_path is not None:
+    if func_module_key is not None and \
+    func_module_name is not None and \
+    func_module_path is not None:
+
       found = None
       for name, module in sys.modules.items():
         try:
-          if inspect.getfile(module) == func_module_path:
+          if inspect.getfile(module) == func_module_path or \
+          (module.__name__.split('.')[-1] == func_module_name and
+           self.__name__ in dir(module)):
             found = (name, module)
         except Exception as e:
           pass
+
       if found is None:
+        # TODO: search for module in sys.path
         import imp
-        imp.load_source(name=func_module_name, pathname=func_module_path)
+        path = func_module_path
+        script_path = get_script_path()
+        folders = func_module_path.split('/')
+        for i in range(1, len(folders)):
+          if os.path.exists(path) and os.path.isfile(path):
+            break
+          path = os.path.join(script_path, '/'.join(folders[-i:]))
+        imp.load_source(name=func_module_name, pathname=path)
       elif found[0] != func_module_name:
         sys.modules[func_module_name] = sys.modules[found[0]]
+
     # load function
     self._func = dill.loads(func_str)
 
