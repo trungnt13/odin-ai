@@ -28,6 +28,8 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
 from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias,
                                TrainableParameter, NNOpOutput)
 
+from .base_desc import VariableDesc
+
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
@@ -84,6 +86,7 @@ __ARGS_SCOPE_STACK = [defaultdict(dict)]
 _NNOP_SCOPE_STACK = []
 
 def get_nnop_scope():
+  # each element is a list [scope_name, prefix_name, current_id]
   if len(_NNOP_SCOPE_STACK) == 0:
     return ['', '', uuid()]
   return _NNOP_SCOPE_STACK[-1]
@@ -208,172 +211,11 @@ def nnop_scope(scope, prefix='', reuse=None):
   # ====== reset everything ====== #
   _NNOP_SCOPE_STACK.pop()
 
-
-# ===========================================================================
-# Helper
-# ===========================================================================
-def _check_shape(s):
-  if hasattr(s, '__call__'):
-    return s
-  if is_number(s) or s is None:
-    s = (s,)
-  elif isinstance(s, np.ndarray):
-    s = s.tolist()
-  return tuple([int(i) if is_number(i) else None for i in s])
-
-
-def _check_dtype(dtype):
-  if hasattr(dtype, '__call__'):
-    return dtype
-  # ====== check dtype ====== #
-  if dtype is None:
-    dtype = K.floatX
-  elif isinstance(dtype, np.dtype) or is_string(dtype):
-    dtype = str(dtype)
-  elif isinstance(dtype, VariableDesc):
-    dtype = dtype.dtype
-  elif isinstance(dtype, tf.DType):
-    dtype = dtype.base_dtype.name
-  return dtype
-
-
-def _shape_compare(shape1, shape2):
-  """Return True if shape1 == shape2"""
-  if len(shape1) != len(shape2): # different ndim
-    return False
-  for s1, s2 in zip(shape1, shape2):
-    if s1 is None or s2 is None or s1 == -1 or s2 == -1:
-      continue
-    if s1 != s2:
-      return False
-  return True
-
-
-# ===========================================================================
-# Input descriptor
-# ===========================================================================
-class VariableDesc(object):
-  """ VariableDesc
-  Store all the necessary information to create placeholder as input
-  to any ComputationalGraph.
-
-  Parameters
-  ----------
-  shape: tuple, list, TensorVariable, call-able
-      if TensorVariable is given, shape and dtype will be taken from
-      given variable. if a call-able object is given, the object must
-      return shape information when called without any argument.
-  dtype: str, numpy.dtype, call-able
-      dtype of input variable
-  name: str, None, call-able
-      specific name for the variable
-
-  Note
-  ----
-  This object is pickle-able and comparable
-  """
-
-  def __init__(self, shape, dtype=None, name=None):
-    super(VariableDesc, self).__init__()
-    # ====== placeholder ====== #
-    self.__placeholder = None
-    self._name = name if name is None else str(name)
-    # Given a TensorVariabe, we don't want to pickle TensorVariable,
-    # so copy all necessary information
-    if K.is_tensor(shape):
-      if dtype is None:
-        self._dtype = _check_dtype(shape.dtype)
-      self._shape = shape.shape.as_list()
-      # store the placeholder so don't have to create it again
-      self.__placeholder = shape
-    # input the VariableDesc directly
-    elif isinstance(shape, VariableDesc):
-      self._shape = shape.shape
-      self._dtype = shape.dtype if dtype is None \
-          else _check_dtype(dtype)
-      if shape.__placeholder is not None:
-        self.__placeholder = shape.__placeholder
-    # input regular information flow
-    else:
-      self._shape = _check_shape(shape)
-      self._dtype = _check_dtype(dtype)
-
-  # ==================== pickle ==================== #
-  def __getstate__(self):
-    return (self._shape, self._dtype, self._name)
-
-  def __setstate__(self, states):
-    (self._shape, self._dtype, self._name) = states
-    self.__placeholder = None
-
-  # ==================== properties ==================== #
-  def set_placeholder(self, plh):
-    if not K.is_placeholder(plh):
-      raise ValueError("a placholder must be specified.")
-    if plh.shape.as_list() == self.shape and \
-    _check_dtype(plh.dtype) == self.dtype:
-      self.__placeholder = plh
-    else:
-      raise ValueError("This VariableDesc require input with shape=%s,"
-                       "and dtype=%s, but given a placholder with shape=%s, "
-                       "dtype=%s." % (str(self.shape), self.dtype,
-                      str(plh.shape.as_list()), _check_dtype(plh.dtype)))
-    return self
-
-  @property
-  def placeholder(self):
-    if self.__placeholder is None:
-      self.__placeholder = K.placeholder(
-          shape=self.shape, dtype=self.dtype, name=self.name)
-    return self.__placeholder
-
-  @property
-  def name(self):
-    return self._name
-
-  @property
-  def shape(self):
-    s = self._shape() if hasattr(self._shape, '__call__') \
-        else self._shape
-    return tuple(s)
-
-  @property
-  def dtype(self):
-    return self._dtype() if hasattr(self._dtype, '__call__') \
-        else self._dtype
-
-  # ==================== override ==================== #
-  def __str__(self):
-    return "<%s - name:%s shape:%s dtype:%s init:%s>" % \
-    (ctext('VarDesc', 'cyan'), ctext(str(self.name), 'yellow'),
-        str(self.shape), str(self.dtype),
-     False if self.__placeholder is None else True)
-
-  def __repr__(self):
-    return self.__str__()
-
-  def is_equal(self, other):
-    # ====== compare to a TensorVariable ====== #
-    if K.is_tensor(other):
-      other = VariableDesc(
-          shape=other.shape.as_list(),
-          dtype=_check_dtype(other.dtype))
-    # ====== compare to a VariableDesc ====== #
-    if isinstance(other, VariableDesc):
-      if _shape_compare(self.shape, other.shape) \
-      and self.dtype == other.dtype:
-        return True
-    # ====== compare to a shape tuple (ignore the dtype) ====== #
-    elif isinstance(other, (tuple, list)):
-      return True if _shape_compare(self.shape, other) else False
-    return False
-
-
 # ===========================================================================
 # Main Ops
 # ===========================================================================
 class _NNOp_Meta(ABCMeta):
-  """ arguments scope for the NNOp
+  """ This meta-class ensure the NNOp argument scope is applied
 
   Note
   ----
@@ -383,17 +225,19 @@ class _NNOp_Meta(ABCMeta):
   def __new__(mcs, name, bases, class_dict):
     private = {'T', 'apply', '__call__', '__getstate__', '__setstate__',
                '__getnewargs__', 'get', 'get_variable_nnop', '__setattr__',
-               'input_shape', 'placeholders', 'last_output'}
+               'input_shape', 'placeholders', 'last_output', 'apply'}
     if name != 'NNOp':
       for attr in private:
         if attr in class_dict:
-          raise RuntimeError("[Class:%s]The behaviour of NNOp is "
+          raise RuntimeError("[Class:%s]The behavior of NNOp is "
               "restricted to ensure properly operations, the following "
-              "methods or properties cannot be overrided: '%s'" %
+              "methods or properties cannot be override: '%s'" %
               (ctext(name, 'red'), ctext(attr, 'yellow')))
     return super().__new__(mcs, name, bases, class_dict)
 
   def __call__(clazz, *args, **kwargs):
+    assert issubclass(clazz, NNOp), \
+    "NNOpMeta should only be used for NNOp subclass"
     # getting the default arguments to check user intentionally override
     # default argument.
     sign = inspect.signature(clazz.__init__)
@@ -403,7 +247,7 @@ class _NNOp_Meta(ABCMeta):
                                 if i > 0 and
                                 p.kind not in (inspect.Parameter.VAR_POSITIONAL,
                                                inspect.Parameter.VAR_KEYWORD)])
-    # ====== upate the current argument scope ====== #
+    # ====== update the current argument scope ====== #
     # get current scope
     key_name = [clazz, str(clazz), clazz.__name__]
     current_scope = get_args_scope()
@@ -417,6 +261,9 @@ class _NNOp_Meta(ABCMeta):
         for i, (name, default) in enumerate(default_args.items())])
     new_kwargs.update(kwargs)
     # ====== create new instance and __init__ if necessary ====== #
+    # This will call NNOp.__new__ to create an instance of NNOP,
+    # if it found a duplicated NNOp pre-defined, it will return
+    # the defined NNOp instead.
     op = clazz.__new__(clazz, *[], **new_kwargs)
     if not hasattr(op, '_name'):
       raise ValueError("NNOp must be given a name when initialized.")
@@ -488,6 +335,9 @@ class NNOp(NNOpOutput):
     return model_func[0]
 
   def __new__(clazz, *args, **kwargs):
+    """ This __new__ ensures no NNOp with duplicated name and type is
+    created, hence, if it found a duplicated one, it will return the
+    duplicated """
     # ====== cPickle call __new__ ====== #
     if len(args) == 1 and len(kwargs) == 0 and \
     (is_string(args[0]) and '[__name__]' in args[0]):
@@ -502,8 +352,8 @@ class NNOp(NNOpOutput):
         return instance
       # just create new instance
       return super(NNOp, clazz).__new__(clazz)
-    # New for first time create instance
-    # ====== update Op name if it is None ====== #
+    # ====== For first time create instance ====== #
+    # update Op name if it is None
     name = kwargs.get('name', None)
     op_scope = get_nnop_scope()
     # automatic generate name
@@ -516,7 +366,7 @@ class NNOp(NNOpOutput):
     else:
       raise ValueError("name for NNOp must be string, but given name "
                        "has type: %s" % name)
-    # ====== add scope to name ====== #
+    # add scope to name
     if len(op_scope[0]) > 0:
       name = op_scope[0] + '/' + name
       op_scope[-1] += 1
@@ -532,10 +382,9 @@ class NNOp(NNOpOutput):
     new_op = super(NNOp, clazz).__new__(clazz)
     new_op._name = name
     new_op._timestamp = created_time
-    # this store spontanious args and kwargs feeded to apply()
+    # this store spontaneous args and kwargs feed to apply()
     new_op._current_args = ()
     new_op._current_kwargs = {}
-    new_op._device = None
     # all save-able attributes of NNOp store here
     new_op._save_states = {'_name': name,
                            '_timestamp': created_time}
@@ -577,7 +426,7 @@ class NNOp(NNOpOutput):
       folder_path = os.path.dirname(self._restore_vars_path)
       if os.path.exists(folder_path):
         K.restore_variables(self._restore_vars_path)
-        # delte cached folder if necessary
+        # delete cached folder if necessary
         if self._delete_vars_folder:
           shutil.rmtree(folder_path)
       else:
@@ -821,9 +670,10 @@ class NNOp(NNOpOutput):
   @property
   def variables(self):
     """ Get all variables related to this Op, which include:
+
      - Initialized Variables
      - Variables belong to related NNOp within this Op.
-     - Variables belone to related Tensor within this Op.
+     - Variables belong to related Tensor within this Op.
      - Variables within the scope of this NNOp.
 
     Note
@@ -1066,7 +916,7 @@ class NNOp(NNOpOutput):
     # remove the scope here  ====== #
     op_name = self.name.split('/')[-1]
     with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
-      # ====== special case, Op name mis match variable scope ====== #
+      # ====== special case, Op name mis-match variable scope ====== #
       if not self._is_initialized and \
       self.name != tf.get_variable_scope().name:
         # check Op name match variable scope

@@ -319,7 +319,8 @@ def vad_energy(log_energy, distrib_nb=3, nb_train_it=25):
       world.fit(log_energy)
   except (ValueError, IndexError): # index error because of float32 cumsum
     if distrib_nb - 1 >= 2:
-      return vad_energy(log_energy, distrib_nb=distrib_nb - 1,
+      return vad_energy(log_energy,
+                        distrib_nb=distrib_nb - 1,
                         nb_train_it=nb_train_it)
     return np.zeros(shape=(log_energy.shape[0],)), 0
   # Compute threshold
