@@ -79,17 +79,9 @@ def _assign_new_nnop(nnop):
   NNOp._ALL_NNOPS[name] = nnop
 
 # ===========================================================================
-# Context manager
+# Arguments scope
 # ===========================================================================
 __ARGS_SCOPE_STACK = [defaultdict(dict)]
-# each element is a list [scope_name, prefix_name, current_id]
-_NNOP_SCOPE_STACK = []
-
-def get_nnop_scope():
-  # each element is a list [scope_name, prefix_name, current_id]
-  if len(_NNOP_SCOPE_STACK) == 0:
-    return ['', '', uuid()]
-  return _NNOP_SCOPE_STACK[-1]
 
 def get_args_scope():
   return __ARGS_SCOPE_STACK[-1].copy()
@@ -153,16 +145,28 @@ def args_scope(*ops_kwargs, **kwargs):
   # ====== reset everything ====== #
   __ARGS_SCOPE_STACK.pop()
 
+# ===========================================================================
+# NNOp scope
+# ===========================================================================
+# each element is a list [scope_name, current_id]
+_NNOP_SCOPE_STACK = []
+
+def get_nnop_scope():
+  # each element is a list [scope_name, current_id]
+  if len(_NNOP_SCOPE_STACK) == 0:
+    return ['', uuid()]
+  return _NNOP_SCOPE_STACK[-1]
+
 @contextmanager
-def nnop_scope(scope, prefix='', reuse=None):
-  """
+def nnop_context(scope, reuse=None):
+  """ A more generalized version of `tensorflow.variable_scope`,
+  this function will also set the NNOp scope so any NNOp created within
+  given scope will be affected
+
   Parameters
   ----------
   scope: string
       the name of current scope, new NNOp will be created as "scope/name"
-  prefix: string
-      prefix for NNOp name, just in case a name is not given when NNOp is
-      initialized
   reuse: bool
       whether reuse variables for tensorflow.variable_scope
 
@@ -190,16 +194,14 @@ def nnop_scope(scope, prefix='', reuse=None):
   """
   if not is_string(scope) or len(scope) == 0:
     raise ValueError("`scope` must be string type, length > 0.")
-  if not is_string(prefix):
-    raise ValueError("`prefix` must be string type.")
   # ====== prepare Name Scope ====== #object
-  curr_scope, curr_prefix, curr_opID = get_nnop_scope()
+  curr_scope, curr_opID = get_nnop_scope()
   # NO duplicate scope
   if scope not in curr_scope:
     curr_scope = scope if len(curr_scope) == 0 else \
         curr_scope + '/' + scope
   # name scope
-  _NNOP_SCOPE_STACK.append([curr_scope, prefix, 0])
+  _NNOP_SCOPE_STACK.append([curr_scope, 0])
   # ====== return the scope ====== #
   var_scope = tf.get_variable_scope().name
   # NO repeating the scope in variable scope
@@ -358,7 +360,7 @@ class NNOp(NNOpOutput):
     op_scope = get_nnop_scope()
     # automatic generate name
     if name is None:
-      name = clazz.__name__ + '_' + str(op_scope[1]) + str(op_scope[2])
+      name = clazz.__name__ + '_' + str(op_scope[1])
     # regulation for the NNOp name
     elif is_string(name):
       if '/' in name or ':' in name:
@@ -369,7 +371,7 @@ class NNOp(NNOpOutput):
     # add scope to name
     if len(op_scope[0]) > 0:
       name = op_scope[0] + '/' + name
-      op_scope[-1] += 1
+      op_scope[1] += 1
     # ====== check duplicated Op name ====== #
     if name in NNOp._ALL_NNOPS:
       old_clazz = NNOp._ALL_NNOPS[name].__class__
@@ -915,14 +917,9 @@ class NNOp(NNOpOutput):
     # ====== self.name can contain Model varable scope, hence,
     # remove the scope here  ====== #
     op_name = self.name.split('/')[-1]
-    with nnop_scope(scope=op_name, prefix='', reuse=self.is_initialized):
-      # ====== special case, Op name mis-match variable scope ====== #
-      if not self._is_initialized and \
-      self.name != tf.get_variable_scope().name:
-        # check Op name match variable scope
-        self._name = tf.get_variable_scope().name
+    with nnop_context(scope=op_name, reuse=self.is_initialized):
       # ====== processing argument information ====== #
-      # auto ommit `self` argument
+      # auto omit `self` argument
       sign = inspect.signature(self._apply)
       arg_name = []
       default_kwargs = {}
@@ -1115,10 +1112,107 @@ _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
                     types.FunctionType, numbers.Number, type(None),
                     init_ops.Initializer, NNOp, VariableDesc, type)
 
-
 # ===========================================================================
 # Helper
 # ===========================================================================
+def _prepend_scope_nnop_tree(scope, op, parent=None):
+  """ Add scope to the left of all uninitialized NNOp and its children
+  """
+  _ = op.name.split('/')
+  op_name = _[-1]
+  op_scope = _[:-1]
+  op_children = op.nnops
+  # ====== merge the scope ====== #
+  scope = scope.split('/')
+  # no duplicated scope
+  for s in scope[::-1]:
+    if s not in op_scope:
+      # add scope to the left (most outer)
+      op_scope = [s] + op_scope
+  # no empty scope
+  op_scope = '/'.join([i for i in op_scope if len(i) > 0])
+  # ====== modification is possible ====== #
+  if not op.is_initialized:
+    new_name = op_scope + '/' + op_name
+    # check duplicated NNOp already defined and initialized
+    if new_name in NNOp._ALL_NNOPS:
+      new_op = NNOp._ALL_NNOPS[new_name]
+      if type(new_op) != type(op):
+        raise RuntimeError("NNOp of type %s with name '%s' already defined,"
+          "but given new NNOp with type %s" % (type(new_op), new_name, op))
+      op = new_op
+      # if parent is provided, modify parents NNOp list as well
+      if parent is not None:
+        parent._variable_info[op_name] = (new_op, 'nnop')
+    # otherwise, just modify the name of newly created NNOp
+    else:
+      op._name = new_name
+  # ====== no change ====== #
+  else:
+    pass
+  # ====== modify the children NNOp as well ====== #
+  for o in op_children:
+    _prepend_scope_nnop_tree(op_scope, o, parent=op)
+  return op
+
+class Container(NNOp):
+  """ Container is NNOp that contain other NNOp """
+
+  def __init__(self, **kwargs):
+    super(Container, self).__init__(**kwargs)
+    self.debug = 0
+
+  def set_nnops(self, ops):
+    # remove None values
+    if isinstance(ops, (tuple, list)):
+      ops = [o for o in ops if o is not None]
+      ops = flatten_list(ops, level=None)
+    ops = list(as_tuple(ops, t=NNOp))
+
+    # add new NNOp using it name and ignore the scope
+    for o in ops:
+      o = _prepend_scope_nnop_tree(scope=self.name, op=o)
+      self.get_variable_nnop(name=o.name.split('/')[-1],
+                             initializer=o)
+    # final assignment
+    self._apply_ops = ops
+    return self
+
+  @contextmanager
+  def _debug_mode(self, *args, **kwargs):
+    args_desc = [tuple(x.shape.as_list()) if hasattr(x, 'get_shape') else str(x)
+                 for x in self._current_args]
+    kwargs_desc = {
+        k: tuple(v.shape.as_list()) if hasattr(v, 'get_shape') else str(v)
+        for k, v in self._current_kwargs.items()}
+    # ====== print debug ====== #
+    if self.debug > 0:
+      print('**************** Start: %s ****************' %
+          ctext(self.name, 'cyan'))
+      print("First input:", ctext(str(args_desc) + ' ' + str(kwargs_desc), 'yellow'))
+    # ====== running ====== #
+    self._debug_ops = []
+    yield
+    # ====== print each op ====== #
+    if len(self._debug_ops) > 0:
+      type_format = '%-' + str(max(len(type(o).__name__) for o in self._debug_ops)) + 's'
+      name_format = '%-' + str(max(len(o.name) for o in self._debug_ops)) + 's'
+      for op in self._debug_ops:
+        if self.debug == 1:
+          print('[' + type_format % op.__class__.__name__ + ']',
+                ctext(name_format % op.name, 'cyan'),
+                "out:%s" % ctext(op.output_shape, 'yellow'))
+        elif self.debug >= 2:
+          print(str(op))
+    # ====== ending and return ====== #
+    if self.debug > 0:
+      print('**************** End: %s ****************' %
+            ctext(self.name, 'cyan'))
+
+  def _print_op(self, op):
+    # print after finish the op at each step
+    self._debug_ops.append(op)
+
 class Lambda(NNOp):
 
   """
@@ -1158,6 +1252,9 @@ class Lambda(NNOp):
     self.set_function(funcT, is_transpose=True)
     # check vars
     self.var_init = {str(k): v for k, v in var_init.items()}
+    # re_modify the name to match the func
+    new_name = self._func.name
+    self._name = new_name
 
   def set_function(self, func, is_transpose=False):
     if not hasattr(func, '__call__'):
@@ -1190,7 +1287,6 @@ class Lambda(NNOp):
     return Lambda(func=self._funcT, funcT=self._func,
                   var_init={name: var
                             for name, (var, vtype) in self._variable_info.items()})
-
 
 class NNSliceOp(NNOp):
 

@@ -13,98 +13,14 @@ from odin.utils import (as_tuple, is_number, flatten_list, ctext,
                         axis_normalize, )
 from odin.utils.decorators import functionable
 
-from .base import NNOp, get_nnop_scope
-
-
-def _shrink_kwargs(op, kwargs):
-  """ Return a subset of kwargs that given op can accept """
-  if hasattr(op, '_apply'): #NNOp
-    op = op._apply
-  elif isinstance(op, functionable): # functionable
-    op = op.function
-  elif not isinstance(op, types.FunctionType): # call-able object
-    op = op.__call__
-  sign = inspect.signature(op)
-  if any(i.kind == inspect.Parameter.VAR_KEYWORD
-         for i in sign.parameters.values()):
-    return kwargs
-  return {n: kwargs[n] if n in kwargs else p.default
-          for n, p in sign.parameters.items()
-          if (n in kwargs or p.default != inspect.Parameter.empty) and
-             (p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                             inspect.Parameter.VAR_KEYWORD))}
-
-class Residual(NNOp):
-
-  def __init__(self, ops, **kwargs):
-    super(Residual, self).__init__(ops, **kwargs)
-
-  def _initialize(self, **kwargs):
-    print(self.input_shape, kwargs)
-    exit()
-
-  def _apply(self, X, **kwargs):
-    pass
-
-# ===========================================================================
-# Base class
-# ===========================================================================
-class Container(NNOp):
-  """ Container """
-
-  def __init__(self, **kwargs):
-    super(Container, self).__init__(**kwargs)
-    self.debug = 0
-
-  def set_nnops(self, ops):
-    if isinstance(ops, (tuple, list)): # remove None values
-      ops = [o for o in ops if o is not None]
-      ops = flatten_list(ops, level=None)
-    ops = list(as_tuple(ops, t=NNOp))
-    for o in ops:
-      name = o.name.split('/')[-1]
-      self.get_variable_nnop(name=name, initializer=o)
-    self._apply_ops = ops
-    return self
-
-  @contextmanager
-  def _debug_mode(self, *args, **kwargs):
-    args_desc = [tuple(x.shape.as_list()) if hasattr(x, 'get_shape') else str(x)
-                 for x in self._current_args]
-    kwargs_desc = {
-        k: tuple(v.shape.as_list()) if hasattr(v, 'get_shape') else str(v)
-        for k, v in self._current_kwargs.items()}
-    # ====== print debug ====== #
-    if self.debug > 0:
-      print('**************** Start: %s ****************' %
-          ctext(self.name, 'cyan'))
-      print("First input:", ctext(str(args_desc) + ' ' + str(kwargs_desc), 'yellow'))
-    # ====== running ====== #
-    self._debug_ops = []
-    yield
-    # ====== print each op ====== #
-    if len(self._debug_ops) > 0:
-      type_format = '%-' + str(max(len(type(o).__name__) for o in self._debug_ops)) + 's'
-      name_format = '%-' + str(max(len(o.name) for o in self._debug_ops)) + 's'
-      for op in self._debug_ops:
-        if self.debug == 1:
-          print('[' + type_format % op.__class__.__name__ + ']',
-                ctext(name_format % op.name, 'cyan'),
-                "out:%s" % ctext(op.output_shape, 'yellow'))
-        elif self.debug >= 2:
-          print(str(op))
-    # ====== ending and return ====== #
-    if self.debug > 0:
-      print('**************** End: %s ****************' %
-            ctext(self.name, 'cyan'))
-
-  def _print_op(self, op):
-    # print after finish the op at each step
-    self._debug_ops.append(op)
+from .base import NNOp, Container
 
 # ===========================================================================
 # Implementation
 # ===========================================================================
+class Residual(Container):
+  pass
+
 class StochasticDepth(Container):
   pass
 

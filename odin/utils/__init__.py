@@ -671,6 +671,10 @@ class FuncDesc(object):
     self._func = dill.loads(func_str)
 
   @property
+  def name(self):
+    return self.__name__
+
+  @property
   def path(self):
     """ Return the absolute path to the script contain the function """
     return inspect.getfile(inspect.getmodule(self._func))
