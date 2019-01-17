@@ -28,7 +28,8 @@ __all__ = [
     'LambdaCallback',
     'CallbackList',
     'NaNDetector',
-    'Checkpoint',
+    'CheckpointEpoch',
+    'CheckpointGeneralization',
     'EarlyStop',
     'EarlyStopGeneralizationLoss',
     'EarlyStopPatience',
@@ -396,12 +397,23 @@ class NaNDetector(Callback):
       self.send_notification('Found NaN or Inf value, task:"%s"' % task.name)
       return signal
 
-class Checkpoint(Callback):
-  """ Checkpoint """
+# ===========================================================================
+# Checkpoint technique
+# ===========================================================================
+class CheckpointEpoch(Callback):
+  """ CheckpointEpoch
+
+  Periodically saving the model after fixed percents of epoch have
+  passed (using the estimated number of iteration to calculate current
+  epoch percents)
+
+  """
 
   def __init__(self, task_name, epoch_percent=1., logging=True):
-    super(Checkpoint, self).__init__(logging=logging)
+    super(CheckpointEpoch, self).__init__(logging=logging)
     self._task_name = task_name
+
+    epoch_percent = float(epoch_percent)
     self._epoch_percent = epoch_percent
 
   def batch_end(self, task, batch_results):
@@ -409,6 +421,54 @@ class Checkpoint(Callback):
       if task.curr_epoch_iter % int(self._epoch_percent * task.iter_per_epoch) == 0:
         return TrainSignal.SAVE
     return None
+
+class CheckpointGeneralization(Callback):
+  """ Save the model when improvement on generalization score
+
+  Parameters
+  ----------
+  task_name : string
+      task name for checking this criterion
+
+  output_name : {Tensor, string}
+      name of the Tensor or the Tensor itself for monitoring
+
+  improvement_margin : float (>= 0)
+      improvement in percentage that will be accepted,
+      default, 0% mean that any number is smaller will trigger
+      the checkpoint.
+  """
+
+  def __init__(self, task_name, output_name,
+               lower_better=True, improvement_margin=0, logging=True):
+    super(CheckpointGeneralization, self).__init__(logging=logging)
+    self._task_name = str(task_name)
+    self._output_name = output_name if is_string(output_name) \
+        else output_name.name
+    self._lower_better = bool(lower_better)
+    self._improvement_margin = float(improvement_margin)
+    assert self._improvement_margin >= 0
+    self._best_score = None
+
+  def epoch_end(self, task, epoch_results):
+    if task.name != self._task_name:
+      return None
+    if self._output_name not in epoch_results:
+      return None
+    # get the score
+    score = np.mean(epoch_results[self._output_name])
+    if not self._lower_better:
+      score *= -1
+    epsilon = 1e-8
+    # first time, nothing to do
+    if self._best_score is None:
+      self._best_score = score
+      return None
+
+    gl_t = score / (self._best_score + epsilon)
+    if gl_t < 1 - (self._improvement_margin / 100):
+      self._best_score = score
+      return TrainSignal.SAVE_BEST
 
 # ===========================================================================
 # Learning rate manipulation
@@ -514,7 +574,6 @@ class EarlyStop(Callback):
     """ Any algorithm return: shouldSave, shouldStop """
     pass
 
-
 class EarlyStopGeneralizationLoss(EarlyStop):
   """ Early Stopping algorithm based on Generalization Loss criterion,
   this is strict measure on validation
@@ -577,7 +636,6 @@ class EarlyStopGeneralizationLoss(EarlyStop):
       if remain_detected >= longest_remain_performance:
         shouldStop = 1
     return shouldSave, shouldStop
-
 
 class EarlyStopPatience(EarlyStop):
   """

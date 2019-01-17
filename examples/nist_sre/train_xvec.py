@@ -121,7 +121,7 @@ task.set_checkpoint(path=MODEL_PATH, obj=x_vec,
                     increasing=True, max_checkpoint=-1)
 task.set_callbacks([
     training.NaNDetector(task_name='train', patience=-1),
-    training.Checkpoint(task_name='train', epoch_percent=0.5),
+    training.CheckpointEpoch(task_name='train', epoch_percent=0.5),
     # training.EarlyStopGeneralizationLoss('valid', ce,
     #                                      threshold=5, patience=3)
 ])

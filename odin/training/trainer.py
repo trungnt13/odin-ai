@@ -573,7 +573,7 @@ class MainLoop(object):
     self._save_path = None
     self._save_obj = None
     self._save_variables = []
-    self._best_variables = {}
+    self._best_object = None
     self._save_history = True
     # ====== maximum stored checkpoint ====== #
     self._checkpoint_increasing = True
@@ -600,7 +600,7 @@ class MainLoop(object):
   # ==================== Signal handling ==================== #
   def set_checkpoint(self, path=None, obj=None, variables=[],
                      increasing=True, max_checkpoint=-1,
-                     save_history=True):
+                     save_history=None):
     """ If `path` and `obj` given, the `obj` will be pickled
     at `path` for every checkpoint, otherwise, store the
     best values of `variables` in RAM
@@ -633,28 +633,30 @@ class MainLoop(object):
     # other
     self._checkpoint_increasing = bool(increasing)
     self._checkpoint_max = int(max_checkpoint)
-    # get the lastest checkpoint count
-    saved_files = []
-    base_dir = os.path.dirname(self._save_path)
-    base_name = os.path.basename(self._save_path)
-    pattern = re.compile('^%s\.\d+$' % re.escape(base_name))
-    for name in os.listdir(base_dir):
-      if not pattern.match(name):
-        continue
-      path = os.path.join(base_dir, name)
-      if self._save_path + '.' in path:
-        saved_files.append(path)
-    saved_files = sorted(saved_files,
-                         key=lambda x: int(x.split('.')[-1]))
-    if len(saved_files) == 0:
-      self._current_checkpoint_count = 0
-    else:
-      self._current_checkpoint_count = int(saved_files[-1].split('.')[-1]) + 1
-    add_notification("[%s] Found lastest checkpoint: '.%d'" %
-      (ctext('MainLoop', 'red'),
-       self._current_checkpoint_count))
+    # ====== get the latest checkpoint count ====== #
+    if path is not None:
+      saved_files = []
+      base_dir = os.path.dirname(self._save_path)
+      base_name = os.path.basename(self._save_path)
+      pattern = re.compile('^%s\.\d+$' % re.escape(base_name))
+      for name in os.listdir(base_dir):
+        if not pattern.match(name):
+          continue
+        path = os.path.join(base_dir, name)
+        if self._save_path + '.' in path:
+          saved_files.append(path)
+      saved_files = sorted(saved_files,
+                           key=lambda x: int(x.split('.')[-1]))
+      if len(saved_files) == 0:
+        self._current_checkpoint_count = 0
+      else:
+        self._current_checkpoint_count = int(saved_files[-1].split('.')[-1]) + 1
+      add_notification("[%s] Found lastest checkpoint: '.%d'" %
+        (ctext('MainLoop', 'red'),
+         self._current_checkpoint_count))
     # ====== history ====== #
-    self._save_history = bool(save_history)
+    if save_history is not None:
+      self._save_history = bool(save_history)
     # save first checkpoint
     if self._current_checkpoint_count == 0:
       self._save(is_best=False)
@@ -818,7 +820,7 @@ class MainLoop(object):
                          if is_best else
                          TrainSignal.SAVE)
     # ====== save the model to hard drive ====== #
-    if self._save_path is not None and self._save_obj is not None:
+    if self._save_path is not None:
       # serialize the best model to disk
       if is_best:
         final_save_path = self._save_path
@@ -850,17 +852,18 @@ class MainLoop(object):
         add_notification("[%s] Save history at: %s" %
           (ctext('MainLoop', 'red'),
            final_save_path + '.hist'))
-    # ====== otherwise, store variables directly in RAM ====== #
-    elif len(self._save_variables) > 0:
-      from odin import backend as K
-      self._best_variables = {v.name: K.get_value(v)
-                              for v in self._save_variables}
-      mem_size = sum(array_size(v)
-                     for v in self._best_variables.values()) / 1024 / 1024
+    # ====== store the object directly in RAM (only for the best) ====== #
+    elif bool(is_best) and \
+    (self._save_obj is not None or len(self._save_variables) > 0):
+      del self._best_object
+      self._best_object = N.serialize(
+          self._save_obj, path=None, save_variables=True,
+          variables=self._save_variables, binary_output=True)
+      mem_size = sum(len(v) for k, v in self._best_object.items()) / 1024 / 1024
       if self._verbose >= 1:
         add_notification(
-            "[%s] Creating checkpoint of %d-variables (%.2f MB) in RAM" %
-            (ctext('MainLoop', 'red'), len(self._save_variables), mem_size))
+            "[%s] Creating dynamic checkpoint in RAM using %.2f (megabytes)" %
+            (ctext('MainLoop', 'red'), mem_size))
 
   def _rollback(self, is_final=False):
     # TODO: update rollback mechanism
@@ -876,20 +879,12 @@ class MainLoop(object):
       # restore previous checkpoint immediately
       N.deserialize(self._save_path, force_restore_vars=True)
     # otherwise, load stored variables from RAM
-    elif len(self._best_variables) > 0:
+    elif self._best_object is not None:
       if self._verbose >= 1:
-        add_notification("[%s] Rollback %d-variables from RAM" %
-                         (ctext('MainLoop', 'red'), len(self._best_variables)))
-      from odin import backend as K
-      import tensorflow as tf
-      rollback_ops = []
-      for k, val in self._best_variables.items():
-        var = K.get_all_variables(full_name=k)
-        if len(var) == 0:
-          raise RuntimeError("[Rollback] Cannot find variable with name: '%s'" % k)
-        var = var[0]
-        rollback_ops.append(K.set_value(var, val, return_ops=True))
-      K.eval(tf.group(*rollback_ops))
+        add_notification("[%s] Rollback to the best stored object from RAM" %
+                         (ctext('MainLoop', 'red')))
+      N.deserialize(path_or_data=self._best_object,
+                    force_restore_vars=True)
 
   def _run(self):
     if self._main_task is None and len(self._evaltask) == 0:
@@ -940,11 +935,6 @@ class MainLoop(object):
           self._task_freq[st].update_counter(self._main_task):
             # running 1 epoch of subtask
             for x in task_iter[st]:
-              if isinstance(x, str): # signal
-                if x == 'task_end': finished_task[st] = True
-                if x == 'epoch_end': break
-              else: # results
-                pass
               # process callback msg for subtasks
               msg = st.callback_msg
               if TrainSignal.SAVE in msg:
@@ -957,6 +947,13 @@ class MainLoop(object):
                 self._callback.event(TrainSignal.STOP)
                 finished_task[self._main_task] = True
                 break
+
+              # signal
+              if isinstance(x, str):
+                if x == 'task_end': finished_task[st] = True
+                if x == 'epoch_end': break
+              else: # results
+                pass
     # ====== end main task ====== #
     for t in self._task + self._subtask:
       t.stop()

@@ -72,7 +72,7 @@ task.set_checkpoint(get_modelpath(name='mnist_ai', override=True), ops,
                     max_checkpoint=-1)
 task.set_callbacks([
     training.NaNDetector(),
-    training.Checkpoint('train', epoch_percent=1.),
+    training.CheckpointEpoch('train', epoch_percent=1.),
     training.EarlyStopGeneralizationLoss('valid', cost_ce,
                                          threshold=5, patience=3),
     training.LambdaCallback(fn=lambda t:print(str(t)),
