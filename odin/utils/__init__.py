@@ -675,6 +675,17 @@ class FuncDesc(object):
     return self.__name__
 
   @property
+  def qualname(self):
+    """ The qualified name of the class, function, method, descriptor,
+    or generator instance.
+
+    New in version 3.3.
+    """
+    assert hasattr(self._func, '__qualname__'), \
+    "The attribute `__qualname__` only be introduced from python 3.3"
+    return self._func.__qualname__
+
+  @property
   def path(self):
     """ Return the absolute path to the script contain the function """
     return inspect.getfile(inspect.getmodule(self._func))

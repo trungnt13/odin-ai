@@ -117,7 +117,7 @@ def args_scope(*ops_kwargs, **kwargs):
 
   Note
   ----
-  if the name scope is given, an increasement ID is generated for
+  if the name scope is given, an incremental ID is generated for
   duplicated NNOp instead of UUID.
   """
   new_scope = defaultdict(dict)
@@ -365,9 +365,20 @@ class NNOp(NNOpOutput):
     elif is_string(name):
       if '/' in name or ':' in name:
         raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
+    # special case, a function is given (Lambda NNOp)
+    elif inspect.isfunction(name):
+      assert clazz == Lambda, \
+      "Only support `name` function type in case of odin.nnet.base.Lambda"
+      full_path = [i
+                   for i in name.__qualname__.split('.')
+                   if '<locals>' not in i]
+      func_scope = full_path[:-1]
+      func_name = full_path[-1]
+      name = func_name
+    # exception no support for given type
     else:
-      raise ValueError("name for NNOp must be string, but given name "
-                       "has type: %s" % name)
+      raise ValueError("`name` for NNOp must be string, function, but given "
+                       "`name` with type: %s" % name)
     # add scope to name
     if len(op_scope[0]) > 0:
       name = op_scope[0] + '/' + name
@@ -1117,6 +1128,8 @@ _PRIMITIVE_TYPES = (tuple, list, dict, string_types, type(True),
 # ===========================================================================
 def _prepend_scope_nnop_tree(scope, op, parent=None):
   """ Add scope to the left of all uninitialized NNOp and its children
+
+  This must be called at initialization, not during applying the NNOp
   """
   _ = op.name.split('/')
   op_name = _[-1]
@@ -1141,7 +1154,7 @@ def _prepend_scope_nnop_tree(scope, op, parent=None):
         raise RuntimeError("NNOp of type %s with name '%s' already defined,"
           "but given new NNOp with type %s" % (type(new_op), new_name, op))
       op = new_op
-      # if parent is provided, modify parents NNOp list as well
+      # if `parent` is provided, modify parent NNOp list as well
       if parent is not None:
         parent._variable_info[op_name] = (new_op, 'nnop')
     # otherwise, just modify the name of newly created NNOp
@@ -1242,19 +1255,11 @@ class Lambda(NNOp):
    >>> f()
   """
 
-  def __init__(self, func, funcT=None, var_init={}, **kwargs):
-    super(Lambda, self).__init__(**kwargs)
+  def __init__(self, name):
+    super(Lambda, self).__init__()
     # check main function
-    self.set_function(func, is_transpose=False)
-    # check transpose function
-    if funcT is None:
-      funcT = func
-    self.set_function(funcT, is_transpose=True)
-    # check vars
-    self.var_init = {str(k): v for k, v in var_init.items()}
-    # re_modify the name to match the func
-    new_name = self._func.name
-    self._name = new_name
+    self.set_function(name, is_transpose=False)
+    self.set_function(name, is_transpose=True)
 
   def set_function(self, func, is_transpose=False):
     if not hasattr(func, '__call__'):
@@ -1268,13 +1273,7 @@ class Lambda(NNOp):
     return self
 
   def _initialize(self):
-    for name, info in self.var_init.items():
-      if isinstance(info, (tuple, list)) and len(info) == 2:
-        init, roles = info
-      else:
-        init = info
-        roles = []
-      self.get_variable_nnop(name=name, initializer=init, roles=roles)
+    pass
 
   def _apply(self, *args, **kwargs):
     # ====== update additional specialized variable for this NNOp ====== #
@@ -1284,9 +1283,7 @@ class Lambda(NNOp):
     return self._func(*args, **kwargs)
 
   def _transpose(self):
-    return Lambda(func=self._funcT, funcT=self._func,
-                  var_init={name: var
-                            for name, (var, vtype) in self._variable_info.items()})
+    return Lambda(name=self._funcT)
 
 class NNSliceOp(NNOp):
 
