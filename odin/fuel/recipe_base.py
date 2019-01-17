@@ -10,7 +10,6 @@ import numpy as np
 from odin.utils import (flatten_list, is_string, as_tuple,
                         ctext, is_number, is_primitives)
 
-
 # ===========================================================================
 # Recipes
 # ===========================================================================

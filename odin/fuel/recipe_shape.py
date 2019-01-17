@@ -5,12 +5,11 @@ from collections import Counter, Mapping
 
 import numpy as np
 
-from .recipe_base import FeederRecipe
+from odin.fuel.recipe_base import FeederRecipe
 from odin.preprocessing.signal import (segment_axis, stack_frames,
                                        mvn as _mvn, wmvn as _wmvn)
 from odin.utils import (axis_normalize, is_pickleable, as_tuple, is_number,
                         is_string)
-
 
 # ===========================================================================
 # Helper

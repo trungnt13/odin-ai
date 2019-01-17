@@ -16,11 +16,10 @@ from tensorflow.python.ops import init_ops
 from odin.config import (get_session, get_ngpu, get_ncpu, get_ncpu_native,
                          get_floatX, get_random_state, randint)
 from odin.utils import as_tuple, uuid, is_number, is_string, is_same_shape
-
-from . import role
-from .helpers import (set_shape, is_tensor, is_training, cond_training,
-                      get_all_variables, get_all_variables_or_tensors,
-                      get_all_tensors, is_variable, set_value)
+from odin.backend import role
+from odin.backend.helpers import (set_shape, is_tensor, is_training, cond_training,
+                                  get_all_variables, get_all_variables_or_tensors,
+                                  get_all_tensors, is_variable, set_value)
 
 floatX = get_floatX()
 EPS = np.finfo(floatX).eps

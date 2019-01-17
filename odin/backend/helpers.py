@@ -23,7 +23,7 @@ from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
                         decorators, batching, Progbar)
-from .role import (has_roles, Auxiliary, Parameter)
+from odin.backend.role import (has_roles, Auxiliary, Parameter)
 
 # ===========================================================================
 # Helper

@@ -14,10 +14,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
 
 from odin.fuel import Dataset
+from odin.preprocessing.signal import delta, mvn, stack_frames
 from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
                         ctext, flatten_list, dummy_formatter,
                         get_formatted_datetime)
-from .signal import delta, mvn, stack_frames
 
 class ExtractorSignal(object):
   """ ExtractorSignal """

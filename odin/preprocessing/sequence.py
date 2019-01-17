@@ -5,7 +5,7 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from .base import Extractor
+from odin.preprocessing.base import Extractor
 
 class _SequenceExtractor(Extractor):
   pass

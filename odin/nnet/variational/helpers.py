@@ -7,7 +7,7 @@ from tensorflow_probability import distributions as tfd
 from odin import backend as K
 from odin.utils import string_normalize, ctext
 
-from .distribution_description import get_distribution_description
+from odin.nnet.variational.distribution_description import get_distribution_description
 
 # ===========================================================================
 # Main

@@ -8,7 +8,7 @@ from sklearn.svm import SVC
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
 from odin.backend import length_norm, calc_white_mat
-from .base import BaseEstimator, TransformerMixin, Evaluable
+from odin.ml.base import BaseEstimator, TransformerMixin, Evaluable
 
 # ===========================================================================
 # Cosine Scoring

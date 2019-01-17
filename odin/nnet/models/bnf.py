@@ -5,8 +5,7 @@ from abc import ABCMeta, abstractproperty
 from odin import backend as K
 from odin.utils import flatten_list
 from odin.nnet.base import Dense
-
-from .base import Model
+from odin.nnet.models.base import Model
 
 @add_metaclass(ABCMeta)
 class _BNFbase(Model):

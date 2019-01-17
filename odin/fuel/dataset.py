@@ -12,11 +12,10 @@ from odin.utils.crypto import md5_checksum
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
                         is_callable, flatten_list, UnitTimer)
-
-from .data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
-                   MAX_OPEN_MMAP, Data, as_data)
-from .utils import MmapDict, SQLiteDict, NoSQL
-from .recipe_base import FeederRecipe, RecipeList
+from odin.fuel.data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
+                            MAX_OPEN_MMAP, Data, as_data)
+from odin.fuel.utils import MmapDict, SQLiteDict, NoSQL
+from odin.fuel.recipe_base import FeederRecipe, RecipeList
 
 
 __all__ = [
@@ -568,7 +567,7 @@ class Dataset(object):
     using the method `set_multiprocessing(ncpu=None, buffer_size=None,
     maximum_queue_size=None)` for changing this information.
     """
-    from .feeder import Feeder, IndexedData
+    from odin.fuel.feeder import Feeder, IndexedData
     # check data
     data = [self.__getitem__(dat) if is_string(dat) else
             as_data(dat)

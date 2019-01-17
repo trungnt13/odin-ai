@@ -6,13 +6,11 @@ from tensorflow.python.ops import init_ops
 
 from odin.utils import uuid, as_tuple, flatten_list, is_string, is_number
 from odin.config import get_rng, CONFIG, randint
-
-from .helpers import is_training
-from .tensor import variable
-from .role import add_roles, Weight, Bias, Parameter
+from odin.backend.helpers import is_training
+from odin.backend.tensor import variable
+from odin.backend.role import add_roles, Weight, Bias, Parameter
 
 floatX = CONFIG.floatX
-
 
 def random_binomial(shape, p, dtype=floatX, seed=None, name="RandomBinomal"):
   with tf.variable_scope(name):

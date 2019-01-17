@@ -12,17 +12,15 @@ from odin.config import (auto_config, get_floatX, get_session,
 auto_config()
 floatX = get_floatX()
 # ==================== import utilities modules ==================== #
-# from .basic_ops import *
-# from .advance_ops import *
-from .helpers import *
-from .tensor import *
-from .activations import *
-from . import role
-from . import metrics
-from . import losses
-from . import optimizers
-from . import rand
-from . import rnn_cell
+from odin.backend.helpers import *
+from odin.backend.tensor import *
+from odin.backend.activations import *
+from odin.backend import role
+from odin.backend import metrics
+from odin.backend import losses
+from odin.backend import optimizers
+from odin.backend import rand
+from odin.backend import rnn_cell
 
 @contextmanager
 def variable_dtype(dtype):

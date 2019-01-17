@@ -58,15 +58,15 @@ from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable, Progbar, mpi, ctext,
                         is_fileobj, batching)
-from .base import Extractor, ExtractorSignal
-from .signal import (smooth, pre_emphasis, get_window, get_energy,
-                     spectra, vad_energy,
-                     pitch_track, resample, rastafilt, mvn, wmvn,
-                     shifted_deltas, stack_frames, stft,
-                     power_spectrogram, mels_spectrogram, ceps_spectrogram,
-                     power2db, anything2wav)
+from odin.preprocessing.base import Extractor, ExtractorSignal
+from odin.preprocessing.signal import (smooth, pre_emphasis, get_window, get_energy,
+                                       spectra, vad_energy,
+                                       pitch_track, resample, rastafilt, mvn, wmvn,
+                                       shifted_deltas, stack_frames, stft,
+                                       power_spectrogram, mels_spectrogram, ceps_spectrogram,
+                                       power2db, anything2wav)
 # import all OpenSMILE extractor
-from ._opensmile import *
+from odin.preprocessing._opensmile import *
 
 # ===========================================================================
 # Predefined variables of speech datasets

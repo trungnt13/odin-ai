@@ -33,17 +33,18 @@ except:
   pass
 import numpy
 
-from .progbar import Progbar, add_notification
-from .path_utils import *
-from .cache_utils import *
-from .python_utils import *
-from .np_utils import *
-from .mpi import segment_list, SharedCounter, async, async_mpi, MPI
-from . import mpi
-from . import shape_calculation
-from . import decorators
-from . import crypto
-from .crypto import md5_checksum
+from odin.utils.progbar import Progbar, add_notification
+from odin.utils.path_utils import *
+from odin.utils.cache_utils import *
+from odin.utils.python_utils import *
+from odin.utils.np_utils import *
+from odin.utils.mpi import segment_list, SharedCounter, async, async_mpi, MPI
+from odin.utils.crypto import md5_checksum
+
+from odin.utils import mpi
+from odin.utils import shape_calculation
+from odin.utils import decorators
+from odin.utils import crypto
 
 def array_size(arr):
   """ Return size of an numpy.ndarray in bytes """

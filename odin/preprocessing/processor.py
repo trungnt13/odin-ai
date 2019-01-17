@@ -33,10 +33,9 @@ from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
                         add_notification, flatten_list,
                         get_formatted_datetime)
 from odin.fuel import Dataset, MmapDict, MmapData
+from odin.preprocessing.base import Extractor, ExtractorSignal
 
-from .base import Extractor, ExtractorSignal
 _default_module = re.compile('__.*__')
-
 
 # ===========================================================================
 # PCA calculation
@@ -131,16 +130,16 @@ def _escape_file_name(file_name):
 def _special_cases(X, feat_name, file_name, ds, path):
   """ Same special for checking the integrity of the features """
   if feat_name == 'raw':
-    from .speech import save
+    from odin.preprocessing.speech import save
     sr = ds['sr'][file_name]
     if '.wav' not in file_name:
       file_name += '.wav'
     save(os.path.join(path, _escape_file_name(file_name)),
          X.astype('float32'), sr=sr)
   elif feat_name == 'spec':
-    from .speech import (SpectraExtractor, STFTExtractor, Power2Db,
-                         _extract_frame_step_length, save)
-    from .signal import ispec
+    from odin.preprocessing.speech import (SpectraExtractor, STFTExtractor, Power2Db,
+                                          _extract_frame_step_length, save)
+    from odin.preprocessing.signal import ispec
     sr = ds['sr'][file_name]
     extractor = [i for _, i in ds['pipeline'].steps
                  if isinstance(i, SpectraExtractor) or isinstance(i, STFTExtractor)][0]

@@ -24,8 +24,7 @@ from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         wprint, eprint, segment_list, defaultdictkey,
                         array_size)
 from odin.config import EPS, get_ngpu
-
-from .base import DensityMixin, BaseEstimator, TransformerMixin
+from odin.ml.base import DensityMixin, BaseEstimator, TransformerMixin
 
 # minimum batch size that will be optimal to transfer
 # the data to GPU for calculation (tested on Titan X)

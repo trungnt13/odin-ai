@@ -7,8 +7,8 @@ import tensorflow as tf
 from odin.utils import (as_tuple, is_string, is_number,
                         wprint, one_hot, ctext)
 
-from .trainer import Timer, MainLoop
-from .callbacks import *
+from odin.training.trainer import Timer, MainLoop
+from odin.training.callbacks import *
 
 # ===========================================================================
 # Helper

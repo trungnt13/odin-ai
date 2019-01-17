@@ -13,11 +13,10 @@ import numpy as np
 from odin.utils import (one_hot, is_string, ctext, is_number,
                         is_primitives, as_tuple, flatten_list,
                         is_pickleable)
-
-from .utils import MmapDict
-from .recipe_base import FeederRecipe
-from .recipe_shape import *
-from .recipe_norm import *
+from odin.fuel.utils import MmapDict
+from odin.fuel.recipe_base import FeederRecipe
+from odin.fuel.recipe_shape import *
+from odin.fuel.recipe_norm import *
 
 
 # ===========================================================================

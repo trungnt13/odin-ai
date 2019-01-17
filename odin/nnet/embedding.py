@@ -5,7 +5,7 @@ from tensorflow.python.ops import init_ops
 
 from odin import backend as K
 from odin.config import randint
-from .base import NNOp
+from odin.nnet.base import NNOp
 
 
 class Embedding(NNOp):

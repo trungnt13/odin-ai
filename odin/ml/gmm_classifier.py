@@ -7,8 +7,8 @@ from sklearn.mixture import GaussianMixture
 from sklearn.utils.extmath import softmax
 
 from odin.utils import as_tuple
-from .base import BaseEstimator, ClassifierMixin, Evaluable
-from .scoring import VectorNormalizer
+from odin.ml.base import BaseEstimator, ClassifierMixin, Evaluable
+from odin.ml.scoring import VectorNormalizer
 
 class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
   """ GMMclassifier

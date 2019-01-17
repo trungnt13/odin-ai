@@ -20,7 +20,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 
-from .helpers import get_all_variables, get_value
+from odin.backend.helpers import get_all_variables, get_value
 from odin.config import get_session
 
 

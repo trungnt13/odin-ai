@@ -5,11 +5,10 @@ import tensorflow as tf
 
 from odin.utils import is_number, as_tuple
 from odin.config import EPS
-
-from .role import (AccuracyValue, return_roles, DifferentialLoss,
-                   ConfusionMatrix, add_roles)
-from .tensor import argsort, dimshuffle, to_nonzeros, to_llr
-from .helpers import is_tensor
+from odin.backend.role import (AccuracyValue, return_roles, DifferentialLoss,
+                               ConfusionMatrix, add_roles)
+from odin.backend.tensor import argsort, dimshuffle, to_nonzeros, to_llr
+from odin.backend.helpers import is_tensor
 
 # ===========================================================================
 # Losses

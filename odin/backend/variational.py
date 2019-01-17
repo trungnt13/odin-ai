@@ -5,14 +5,13 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
 
 from odin.config import get_rng, CONFIG
-from . import tensor as K
+from odin.backend import tensor as K
 
 FLOATX = CONFIG.floatX
 EPSILON = CONFIG.epsilon
 PI = np.pi
 C = -0.5 * np.log(2 * PI)
 _RNG = RandomStreams(seed=get_rng().randint(10e8))
-
 
 # ===========================================================================
 # Variational OPERATIONS

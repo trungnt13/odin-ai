@@ -12,15 +12,14 @@ from tensorflow.python.ops import init_ops
 
 from odin import backend as K
 from odin.config import randint
+from odin.nnet.base import NNOp
+from odin.nnet.normalization import BatchNorm
 from odin.backend.role import (InitialState, Weight, Bias, Parameter,
                                has_roles, BatchNormShiftParameter,
                                BatchNormScaleParameter,
                                BatchNormPopulationMean,
                                BatchNormPopulationInvStd)
 from odin.utils import (as_tuple, is_string, is_number, wprint)
-
-from .base import NNOp
-from .normalization import BatchNorm
 
 # ===========================================================================
 # Helper

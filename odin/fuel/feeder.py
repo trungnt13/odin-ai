@@ -34,10 +34,8 @@ from odin.utils import (segment_list, one_hot, is_string, Progbar, batching,
                         as_tuple, ctext, is_number, is_primitives,
                         defaultdictkey)
 from odin.utils.mpi import MPI, async
-
-from .data import Data, as_data
-from .recipe_base import RecipeList
-
+from odin.fuel.data import Data, as_data
+from odin.fuel.recipe_base import RecipeList
 
 # ===========================================================================
 # Helper for grouping
@@ -595,7 +593,7 @@ class Feeder(Data):
     ----
     Only returned `numpy.ndarray` are saved
     """
-    from .dataset import Dataset
+    from odin.fuel.dataset import Dataset
     if not is_string(path):
       raise ValueError("`path` must be string path to a folder.")
     if os.path.exists(path) and os.path.isfile(path):

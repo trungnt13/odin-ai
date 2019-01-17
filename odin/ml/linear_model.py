@@ -7,12 +7,11 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
+from odin.ml.base import BaseEstimator, Evaluable
+from odin.backend.role import has_roles, Weight, Bias
+from odin import (backend as K, nnet as N, fuel as F, visual as V)
 from odin.utils import (is_number, uuid, batching, as_tuple, Progbar,
                         one_hot, wprint, ctext, is_string)
-from odin import (backend as K, nnet as N, fuel as F, visual as V)
-from odin.backend.role import has_roles, Weight, Bias
-
-from .base import BaseEstimator, Evaluable
 
 # ===========================================================================
 # Helper

@@ -13,9 +13,9 @@ from scipy.linalg import eigh, cholesky, inv, svd, solve
 
 from odin.backend import length_norm, calc_white_mat
 from odin.utils import unique
-from .base import BaseEstimator, TransformerMixin, Evaluable
-from .scoring import (compute_within_cov, compute_class_avg,
-                      VectorNormalizer)
+from odin.ml.base import BaseEstimator, TransformerMixin, Evaluable
+from odin.ml.scoring import (compute_within_cov, compute_class_avg,
+                             VectorNormalizer)
 
 def logdet(A):
   u = cholesky(A)

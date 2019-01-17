@@ -1,9 +1,8 @@
 from __future__ import print_function, division, absolute_import
 
-from .base import NNOp
 
 from odin import backend as K
-from odin.config import randint
+from odin.nnet.base import NNOp
 from odin.utils import as_tuple
 from odin.backend.role import (BatchNormPopulationMean, BatchNormScaleParameter,
                         BatchNormPopulationInvStd, BatchNormShiftParameter)

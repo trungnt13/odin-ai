@@ -1,19 +1,19 @@
 from __future__ import print_function, absolute_import, division
 
-from .base import *
-from .math_utils import *
-from .conv import *
-from .noise import *
-from .shape import *
-from .sampling import *
-from .normalization import *
-from .embedding import *
-from .helper import *
-from .rnn import *
-from .time_delayed import *
+from odin.nnet.base import *
+from odin.nnet.math_utils import *
+from odin.nnet.conv import *
+from odin.nnet.noise import *
+from odin.nnet.shape import *
+from odin.nnet.sampling import *
+from odin.nnet.normalization import *
+from odin.nnet.embedding import *
+from odin.nnet.helper import *
+from odin.nnet.rnn import *
+from odin.nnet.time_delayed import *
 
-from . import models
-from . import variational
+from odin.nnet import models
+from odin.nnet import variational
 
 from odin.utils import uuid, bin2folder, folder2bin
 

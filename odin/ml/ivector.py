@@ -4,12 +4,11 @@ import pickle
 
 import numpy as np
 
-from odin.utils import (mpi, batching, Progbar, crypto,
-                        is_primitives, ctext, uuid, UnitTimer)
 from odin.fuel import MmapData
-
-from .base import BaseEstimator, TransformerMixin, DensityMixin
-from .gmm_tmat import GMM, Tmatrix, _split_jobs
+from odin.ml.gmm_tmat import GMM, Tmatrix, _split_jobs
+from odin.ml.base import BaseEstimator, TransformerMixin, DensityMixin
+from odin.utils import (mpi, batching, Progbar, crypto, is_primitives, ctext,
+                        uuid, UnitTimer)
 
 # ===========================================================================
 # Helper

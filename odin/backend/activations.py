@@ -5,7 +5,7 @@ from six.moves import builtins
 import tensorflow as tf
 
 from odin.config import randint
-from .helpers import *
+from odin.backend.helpers import *
 
 def softplus_inverse(x):
   """Helper which computes the function inverse of `tf.nn.softplus`."""

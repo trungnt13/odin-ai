@@ -5,9 +5,8 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
+from odin.nnet.base import NNOp
 from odin.utils import is_number, is_string, as_tuple
-
-from .base import NNOp
 
 def _preprocess_windows(window, ndims):
   if len(window) == ndims - 2:

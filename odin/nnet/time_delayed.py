@@ -26,9 +26,9 @@ from tensorflow.python.ops import init_ops
 
 from odin import backend as K
 from odin.config import randint
+from odin.nnet.base import NNOp
 from odin.utils import as_tuple, is_string
 from odin.backend.role import Weight, Bias, ConvKernel
-from .base import NNOp
 
 _allow_time_pool = ('min', 'max', 'avg', 'sum', 'stat', 'none')
 

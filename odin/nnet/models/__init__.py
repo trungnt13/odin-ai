@@ -30,6 +30,6 @@ Example
 
 """
 
-from .base import Model
-from .bnf import *
-from .imagenet import *
+from odin.nnet.models.base import Model
+from odin.nnet.models.bnf import *
+from odin.nnet.models.imagenet import *

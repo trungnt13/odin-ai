@@ -16,11 +16,10 @@ from sklearn.utils.validation import check_is_fitted
 from sklearn.utils.extmath import (svd_flip, _incremental_mean_and_var,
                                    randomized_svd)
 
-from odin.utils.mpi import MPI
-from odin.utils import batching, ctext, flatten_list, Progbar
 from odin.fuel import Data
-
-from .base import TransformerMixin, BaseEstimator
+from odin.utils.mpi import MPI
+from odin.ml.base import TransformerMixin, BaseEstimator
+from odin.utils import batching, ctext, flatten_list, Progbar
 
 __all__ = [
     "fast_pca",

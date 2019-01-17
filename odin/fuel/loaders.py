@@ -13,8 +13,7 @@ import numpy as np
 from odin.utils.crypto import unzip_aes
 from odin.utils import (get_file, get_script_path, ctext, get_datasetpath,
                         string_normalize)
-
-from .dataset import Dataset
+from odin.fuel.dataset import Dataset
 
 # ===========================================================================
 # Helper

@@ -3,10 +3,9 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from .recipe_base import FeederRecipe
+from odin.fuel.recipe_base import FeederRecipe
 from odin.utils import (axis_normalize, as_tuple)
 from odin.preprocessing.signal import delta
-
 
 # ===========================================================================
 # Features preprocessing

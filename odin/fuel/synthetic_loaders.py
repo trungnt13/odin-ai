@@ -3,7 +3,7 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 
-from .dataset import Dataset
+from odin.fuel.dataset import Dataset
 
 # ===========================================================================
 # Helpers

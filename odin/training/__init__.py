@@ -1,3 +1,3 @@
-from .trainer import Task, Timer, MainLoop
-from .callbacks import *
-from .scenarios import train
+from odin.training.trainer import Task, Timer, MainLoop
+from odin.training.callbacks import *
+from odin.training.scenarios import train

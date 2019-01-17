@@ -10,8 +10,7 @@ from odin.utils import (is_number, uuid, batching, as_tuple, Progbar,
                         one_hot, wprint, ctext, is_string, uuid)
 from odin import (backend as K, nnet as N, fuel as F, visual as V)
 from odin.backend.role import has_roles, Weight, Bias
-
-from .base import BaseEstimator, Evaluable
+from odin.ml.base import BaseEstimator, Evaluable
 
 __all__ = [
     'NeuralClassifier',

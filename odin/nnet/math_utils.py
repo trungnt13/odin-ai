@@ -4,10 +4,8 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
+from odin.nnet.base import NNOp
 from odin.utils import is_callable, is_pickleable
-
-from .base import NNOp
-
 
 _SUPPORT_REDUCE_FUNCTION = [
     tf.reduce_sum,

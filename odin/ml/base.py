@@ -5,8 +5,8 @@ from six import add_metaclass
 
 import numpy as np
 
-from odin.utils import ctext, is_number, one_hot
 from odin.fuel import Data
+from odin.utils import ctext, is_number, one_hot
 from odin.visual import (print_confusion, plot_detection_curve,
                          plot_confusion_matrix, plot_save, figure,
                          plot_Cnorm)

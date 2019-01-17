@@ -5,10 +5,10 @@ import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
 from odin import backend as K
+from odin.nnet.base import NNOp
 from odin.config import randint
 from odin.utils import as_tuple, is_string
 from odin.backend.role import ConvKernel, Bias
-from .base import NNOp
 
 # ===========================================================================
 # Helper

@@ -16,17 +16,15 @@ import tensorflow as tf
 from odin.config import CONFIG, get_session
 from odin.utils import as_tuple, is_number, uuid, ctext
 from odin.utils.cache_utils import cache_memory
-
-from .role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
-                   GradientsNorm, GraidentsClippingNorm, GraidentsClippingValue,
-                   has_roles, get_roles,
-                   Role, Parameter, Weight, Bias, TrainableParameter,
-                   Variable as _Variable, OptimizerVariable)
-from .helpers import (is_tensor, get_value, ComputationGraph, is_variable,
-                      get_all_variables, set_value)
+from odin.backend.role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,
+                               GradientsNorm, GraidentsClippingNorm, GraidentsClippingValue,
+                               has_roles, get_roles,
+                               Role, Parameter, Weight, Bias, TrainableParameter,
+                               Variable as _Variable, OptimizerVariable)
+from odin.backend.helpers import (is_tensor, get_value, ComputationGraph, is_variable,
+                                  get_all_variables, set_value)
 
 floatX = CONFIG.floatX
-
 
 __all__ = [
     "Optimizer",

@@ -1,4 +1,4 @@
-from .base import Model
+from odin.nnet.models.base import Model
 
 import numpy as np
 import tensorflow as tf

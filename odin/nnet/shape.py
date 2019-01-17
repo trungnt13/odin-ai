@@ -3,9 +3,7 @@ from __future__ import division, absolute_import
 import tensorflow as tf
 
 from odin import backend as K
-
-from .base import NNOp
-
+from odin.nnet.base import NNOp
 
 # ===========================================================================
 # Flatten

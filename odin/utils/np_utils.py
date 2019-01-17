@@ -15,8 +15,6 @@ import scipy as sp
 
 from six import string_types
 
-from .cache_utils import cache_memory
-
 __all__ = [
     'array2bytes',
     'bytes2array',

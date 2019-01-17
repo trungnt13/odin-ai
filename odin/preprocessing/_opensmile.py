@@ -19,10 +19,9 @@ from abc import abstractproperty, ABCMeta, abstractmethod
 
 import numpy as np
 
+from odin.preprocessing.base import Extractor
 from odin.utils import (is_string, get_script_path, ctext, is_number,
                         get_logpath, uuid)
-
-from .base import Extractor
 
 __all__ = [
     'openSMILEloudness',

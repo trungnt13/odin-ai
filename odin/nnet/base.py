@@ -27,8 +27,7 @@ from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         get_module_from_path, wprint)
 from odin.backend.role import (add_roles, has_roles, Parameter, Weight, Bias,
                                TrainableParameter, NNOpOutput)
-
-from .base_desc import VariableDesc
+from odin.nnet.base_desc import VariableDesc
 
 import tensorflow as tf
 from tensorflow.python.ops import init_ops

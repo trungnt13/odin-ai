@@ -12,11 +12,12 @@ from six.moves import range, zip, cPickle
 import numpy as np
 
 from odin.config import get_rng
-from odin import fuel, backend as K, nnet as N
+from odin.training.callbacks import *
 from odin.fuel import Dataset, as_data
+from odin import fuel, backend as K, nnet as N
 from odin.utils import (struct, as_tuple, is_number, Progbar,
                         add_notification, array_size, ctext)
-from .callbacks import *
+
 # ===========================================================================
 # Helper
 # ===========================================================================

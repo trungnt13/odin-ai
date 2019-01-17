@@ -21,7 +21,7 @@ from odin.utils import as_tuple, Progbar, is_string, is_number
 from odin.stats import freqcount
 from multiprocessing import Pool, cpu_count
 
-from .signal import pad_sequences
+from odin.preprocessing.signal import pad_sequences
 
 _nlp = {}
 _stopword_list = []

@@ -9,11 +9,9 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K
+from odin.nnet.base import Container
 from odin.utils import (as_tuple, is_number, flatten_list, ctext,
-                        axis_normalize, )
-from odin.utils.decorators import functionable
-
-from .base import NNOp, Container
+                        axis_normalize)
 
 # ===========================================================================
 # Implementation

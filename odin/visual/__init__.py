@@ -1,2 +1,2 @@
-from .bashplot import *
-from .figures import *
+from odin.visual.bashplot import *
+from odin.visual.figures import *

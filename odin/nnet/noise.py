@@ -1,8 +1,7 @@
 from __future__ import division, absolute_import
 
-from .base import NNOp
-
 from odin import backend as K
+from odin.nnet.base import NNOp
 
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
