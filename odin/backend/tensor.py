@@ -187,19 +187,30 @@ def calc_white_mat(X):
     W = sp.linalg.cholesky(sp.linalg.inv(X), lower=True)
   return W
 
-def log_norm(X, axis=1, scale_factor=10000):
+def log_norm(x, axis=1, scale_factor=10000):
   """ Seurat log-normalize
   y = log(X / (sum(X, axis) + epsilon) * scale_factor)
 
   where `log` is natural logarithm
   """
-  if is_tensor(X):
-    return tf.log1p(
-        X / (tf.reduce_sum(X, axis=axis, keepdims=True) + EPS) * scale_factor)
-  elif isinstance(X, np.ndarray):
-    X = X.astype('float64')
+  if is_tensor(x):
+    return tf.logvariable1p(
+        x / (tf.reduce_sum(x, axis=axis, keepdims=True) + EPS) * scale_factor)
+  elif isinstance(x, np.ndarray):
+    x = x.astype('float64')
     return np.log1p(
-        X / (np.sum(X, axis=axis, keepdims=True) + np.finfo(X.dtype).eps) * scale_factor)
+        x / (np.sum(x, axis=axis, keepdims=True) + np.finfo(x.dtype).eps) * scale_factor)
+  else:
+    raise ValueError("Only support numpy.ndarray or tensorflow.Tensor")
+
+def delog_norm(x, x_sum=1, scale_factor=10000):
+  """ This perform de-log normalization of `log_norm` values
+  if `x_sum` is not given (i.e. default value 1), then all the
+  """
+  if is_tensor(x):
+    return (tf.exp(x) - 1) / scale_factor * (x_sum + EPS)
+  elif isinstance(x, np.ndarray):
+    return (np.exp(x) - 1) / scale_factor * (x_sum + EPS)
   else:
     raise ValueError("Only support numpy.ndarray or tensorflow.Tensor")
 
