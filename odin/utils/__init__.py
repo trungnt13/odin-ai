@@ -80,6 +80,7 @@ def ctext(s, color='red'):
   * ctext(x + y + z) is BETTER than ctext(x) + ctext(y) + ctext(z)
   because it save more space.
   """
+  s = str(s)
   try:
     from colorama import Fore
     color = str(color).strip()
@@ -88,7 +89,7 @@ def ctext(s, color='red'):
     if 'LIGHT' == color[:5] and '_EX' != color[-3:]:
       color = color + '_EX'
     color = getattr(Fore, color, '')
-    return color + str(s) + Fore.RESET
+    return color + s + Fore.RESET
   except ImportError:
     pass
   return s

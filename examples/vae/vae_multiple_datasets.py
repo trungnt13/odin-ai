@@ -12,7 +12,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd, bijectors as tfb
 
-from odin import (nnet as N, backend as K, fuel as F,
+from odin import (nnet as N, bay as B, backend as K, fuel as F,
                   visual as V, training as T, ml)
 from odin.utils import args_parse, ctext, batching, Progbar
 from odin.ml import fast_pca
@@ -112,7 +112,7 @@ f_decoder = N.Sequence([
 # ====== encoder ====== #
 E = f_encoder(X)
 # ====== latent ====== #
-q_Z_given_X = N.variational.parse_distribution(
+q_Z_given_X = B.parse_distribution(
     args.zdist, E, int(args.zdim),
     name='Z')
 # [n_sample, n_batch, zdim]
@@ -131,12 +131,11 @@ Z_names = [
     "all samples flatten"
 ]
 # ====== Z prior ====== #
-p_Z = N.variational.parse_distribution(
-    dist_name=args.zprior)
+p_Z = B.parse_distribution(dist_name=args.zprior)
 # ====== decoder ====== #
 D = f_decoder(q_Z_given_X_samples)
 # ====== reconstruction ====== #
-p_X_given_Z = N.variational.parse_distribution(
+p_X_given_Z = B.parse_distribution(
     args.xdist, D, int(np.prod(input_shape[1:])),
     n_eventdim=1, name='W')
 # [n_sample, n_batch, feat_dim]

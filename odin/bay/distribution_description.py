@@ -14,7 +14,7 @@ from odin.nnet.base import Dense
 from odin.utils import string_normalize, ctext
 from odin.backend.activations import softplus_inverse
 from odin.backend.helpers import is_tensor, get_epsilon
-from odin.nnet.variational.zero_inflated import ZeroInflated
+from odin.bay.zero_inflated import ZeroInflated
 # ===========================================================================
 # Helpers
 # ===========================================================================

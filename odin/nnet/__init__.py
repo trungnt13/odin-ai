@@ -13,7 +13,6 @@ from odin.nnet.rnn import *
 from odin.nnet.time_delayed import *
 
 from odin.nnet import models
-from odin.nnet import variational
 
 from odin.utils import uuid, bin2folder, folder2bin
 

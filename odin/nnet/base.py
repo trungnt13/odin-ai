@@ -1213,7 +1213,7 @@ class Container(NNOp):
         if self.debug == 1:
           print('[' + type_format % op.__class__.__name__ + ']',
                 ctext(name_format % op.name, 'cyan'),
-                "out:%s" % ctext(op.output_shape, 'yellow'))
+                "-> %s" % ctext(op.output_shape, 'yellow'))
         elif self.debug >= 2:
           print(str(op))
     # ====== ending and return ====== #

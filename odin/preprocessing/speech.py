@@ -49,7 +49,6 @@ from six import string_types
 from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
-import numba as nb
 import tensorflow as tf
 from scipy.signal import lfilter
 
@@ -1132,7 +1131,6 @@ class PitchExtractor(Extractor):
 # ===========================================================================
 # SAD
 # ===========================================================================
-@nb.jit(nopython=True, nogil=True)
 def _numba_thresholding(energy,
                         energy_threshold, energy_mean_scale,
                         frame_context, proportion_threshold):
@@ -1161,6 +1159,13 @@ def _numba_thresholding(energy,
     else:
       sad[t] = 0
   return sad, energy_threshold
+
+try:
+  import numba as nb
+  _numba_thresholding = nb.jit(nopython=True, nogil=True)(_numba_thresholding)
+except ImportError as e:
+  pass
+
 
 class SADthreshold(Extractor):
 

@@ -9,15 +9,28 @@ from collections import OrderedDict, defaultdict, Mapping
 import numpy as np
 
 import tensorflow as tf
+
 # ====== probability package ====== #
-from tensorflow.contrib import distributions as tfd
-_tf_distribution_types = [tfd.Distribution]
+_tf_distribution_types = []
+
+try:
+  from tensorflow.contrib import distributions as tfd
+  _tf_distribution_types.append(tfd.Distribution)
+except ImportError:
+  pass
+except AttributeError:
+  pass
+
 try:
   from tensorflow_probability import distributions as _tfd
   _tf_distribution_types.append(_tfd.Distribution)
 except ImportError:
   pass
+except AttributeError:
+  pass
+
 _tf_distribution_types = tuple(_tf_distribution_types)
+
 # ====== O.D.I.N stuffs ====== #
 from odin.config import get_session
 from odin.utils.cache_utils import cache_memory
