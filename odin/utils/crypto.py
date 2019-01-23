@@ -8,7 +8,6 @@ import hashlib
 import zipfile
 from io import BytesIO, StringIO
 from six import string_types
-from Crypto.Cipher import AES
 import numpy as np
 import scipy as sp
 
@@ -129,7 +128,7 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
 # Encryption
 # ===========================================================================
 def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
-                mode=AES.MODE_CBC, chunksize=512 * 1024):
+                mode=None, chunksize=512 * 1024):
   """ Flexible implementaiton of AES encryption
 
   Parameters
@@ -145,9 +144,17 @@ def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
   salt : {None, string, bytes}
     salt for password Hashing
   mode : Cipher.AES.MODE_*
+    default `None` is converted to `Crypto.Cipher.AES.MODE_CBC`
   chunksize : int
     encryption chunk, multiple of 16.
   """
+  try:
+    from Crypto.Cipher import AES
+  except ImportError as e:
+    raise ImportError("Require 'pycrypto' to run this function")
+  if mode is None:
+    mode = AES.MODE_CBC
+
   if password is None:
     password = input("Your password: ")
   assert len(password) > 0, "Password length must be greater than 0"
@@ -190,7 +197,7 @@ def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
     return data
 
 def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
-                mode=AES.MODE_CBC, chunksize=512 * 1024):
+                mode=None, chunksize=512 * 1024):
   """ Flexible implementaiton of AES decryption
 
   Parameters
@@ -207,6 +214,13 @@ def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
   chunksize : int
     encryption chunk, multiple of 16.
   """
+  try:
+    from Crypto.Cipher import AES
+  except ImportError as e:
+    raise ImportError("Require 'pycrypto' to run this function")
+  if mode is None:
+    mode = AES.MODE_CBC
+
   if password is None:
     password = input("Your password: ")
   assert len(password) > 0, "Password length must be greater than 0"

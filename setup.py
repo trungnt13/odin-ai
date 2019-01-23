@@ -45,8 +45,7 @@ setup(
                       'six>=1.9.0',
                       'scikit-learn>=0.20.0',
                       'tqdm',
-                      'dill',
-                      'pycrypto'],
+                      'dill'],
     extras_require={
         'visualize': ['pydot>=1.2.4',
                       'colorama',

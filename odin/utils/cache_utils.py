@@ -4,7 +4,6 @@ import os
 import shutil
 import inspect
 
-from joblib import Memory
 from functools import wraps
 from six import string_types
 from six.moves import builtins
@@ -20,9 +19,20 @@ if not os.path.exists(__cache_dir):
   os.mkdir(__cache_dir)
 elif os.path.isfile(__cache_dir):
   raise ValueError("Invalid cache directory at path:" + __cache_dir)
+
 # Don't use memmap anymore, carefull when cache big numpy ndarray results
-__memory = Memory(cachedir=__cache_dir,
-                  mmap_mode=None, compress=False, verbose=0)
+_memory = None
+
+def get_cache_memory():
+  try:
+    from joblib import Memory
+  except ImportError as e:
+    raise ImportError("Require 'joblib' to run cache utilities")
+  if _memory is None:
+    global _memory
+    _memory = Memory(cachedir=__cache_dir,
+                     mmap_mode=None, compress=False, verbose=0)
+  return _memory
 
 
 def get_cache_path():
@@ -66,7 +76,7 @@ def cache_disk(function):
     return FunctionMaker.create(
         func, 'return decorated(%(signature)s)',
         dict(decorated=dec(func)), __wrapped__=func)
-  return decorator_apply(__memory.cache, function)
+  return decorator_apply(get_cache_memory().cache, function)
 
 
 # ===========================================================================
