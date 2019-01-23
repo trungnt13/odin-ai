@@ -28,6 +28,9 @@ _async_function_counter = defaultdict(int)
 _NTHREADS = max(int(cpu_count()) // 2, 2)
 _THREAD_POOL = None
 _MAX_PIPE_BLOCK = 8 * 1024 * 1024 # 8MB
+# this keep track all the running async-tasks that haven't
+# finished
+_RUNNING_ASYNC_TASKS = []
 
 def set_max_threads(n):
   """ Set the maximum number of Threads for the
