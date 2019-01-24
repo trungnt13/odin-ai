@@ -11,11 +11,11 @@ of organized networks.
 '''
 
 setup(
-    name='odin',
+    name='odin-ai',
     version='0.1',
     description="Deep learning for research and production",
     long_description=long_description,
-    url='https://github.com/imito/odin',
+    url='https://github.com/imito/odin-ai',
     author='Trung Ngo Trong',
     author_email='trung@imito.ai',
     license='MIT',
@@ -38,7 +38,7 @@ setup(
         'Operating System :: POSIX :: Linux',
     ],
     keywords='tensorflow pytorch machine learning neural networks deep learning bayesian',
-    packages=find_packages(exclude=['examples', 'docs', 'tests']),
+    packages=find_packages(exclude=['examples', 'examples/*', 'docs', 'tests']),
     # scripts=['bin/speech-augmentation', 'bin/speech-test'],
     install_requires=['numpy>=1.9.1',
                       'scipy>=0.14',
