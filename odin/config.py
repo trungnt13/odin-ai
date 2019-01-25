@@ -194,8 +194,8 @@ def auto_config(config=None):
         'existed, and cannot be re-configured.')
     return CONFIG
   # ====== specific pattern ====== #
-  valid_cnmem_name = re.compile('(cnmem)[=]?[10]?\.\d*')
-  valid_seed = re.compile('seed\D?(\d*)')
+  valid_cnmem_name = re.compile(r"(cnmem)[=]?[10]?\.\d*")
+  valid_seed = re.compile(r"seed\D?(\d*)")
 
   floatX = 'float32'
   epsilon = 1e-8

@@ -350,6 +350,10 @@ class Dataset(object):
 
   # ==================== properties ==================== #
   @property
+  def basename(self):
+    return os.path.basename(self.path)
+
+  @property
   def path(self):
     return self._path
 

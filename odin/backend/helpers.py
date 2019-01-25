@@ -42,7 +42,7 @@ from odin.backend.role import (has_roles, Auxiliary, Parameter)
 # Helper
 # ===========================================================================
 _TF_SCOPE_PATTERN = lambda scope, begin: \
-re.compile('%s%s(_\d+)?\/' % ('^' if bool(begin) else '', scope))
+re.compile(r"%s%s(_\d+)?\/" % ('^' if bool(begin) else '', scope))
 
 # ===========================================================================
 # Basic query
@@ -267,7 +267,7 @@ def _filter_string(criterion, x):
   raise ValueError("Unknown criterion for filtering.")
 
 _ops_ID = {}
-_name_pattern = re.compile('.*_\d+')
+_name_pattern = re.compile(r".*_\d+")
 
 def get_normalized_name(var, shape=True, dtype=True):
   """Get normalized name of `Tensor`, `Variable` or `Op` in tensorflow

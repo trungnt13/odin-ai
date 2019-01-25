@@ -92,9 +92,9 @@ def savetxt(fname, X, fmt='%g', delimiter=' ', newline='\n',
 # ===========================================================================
 # String processing
 # ===========================================================================
-_space_char = re.compile("\s")
-_multiple_spaces = re.compile("\s\s+")
-_non_alphanumeric_char = re.compile("\W")
+_space_char = re.compile(r"\s")
+_multiple_spaces = re.compile(r"\s\s+")
+_non_alphanumeric_char = re.compile(r"\W")
 
 def string_normalize(text, lower=True,
                      remove_non_alphanumeric=True,

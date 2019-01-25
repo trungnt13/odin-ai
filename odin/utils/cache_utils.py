@@ -14,6 +14,7 @@ import numpy as np
 
 # to set the cache dir, set the environment CACHE_DIR
 __cache_dir = os.environ.get("CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
+_memory = None
 # check cache_dir
 if not os.path.exists(__cache_dir):
   os.mkdir(__cache_dir)
@@ -21,15 +22,14 @@ elif os.path.isfile(__cache_dir):
   raise ValueError("Invalid cache directory at path:" + __cache_dir)
 
 # Don't use memmap anymore, carefull when cache big numpy ndarray results
-_memory = None
 
 def get_cache_memory():
   try:
     from joblib import Memory
   except ImportError as e:
     raise ImportError("Require 'joblib' to run cache utilities")
+  global _memory
   if _memory is None:
-    global _memory
     _memory = Memory(cachedir=__cache_dir,
                      mmap_mode=None, compress=False, verbose=0)
   return _memory

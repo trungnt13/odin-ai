@@ -88,7 +88,7 @@ def ctext(s, color='red'):
   return s
 
 def remove_text_color(s):
-  s = re.sub(pattern='\\033\[\d\dm', repl='', string=s)
+  s = re.sub(pattern=r"\\033\[\d\dm", repl='', string=s)
   return s
 
 def escape_text_color(s):

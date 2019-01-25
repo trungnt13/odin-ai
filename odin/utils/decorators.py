@@ -288,7 +288,7 @@ def _serialize_function_sandbox(function, source):
   dictionary : cPickle dumps-able dictionary to store as text
   '''
   import re
-  sys_module = re.compile('__\w+__')
+  sys_module = re.compile(r"__\w+__")
 
   environment = function.__globals__
   func_module = function.__module__

@@ -1324,8 +1324,9 @@ def package_list(include_version=False):
   return all_packages
 
 
-def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
-                         prefer_compiled=False):
+def get_module_from_path(identifier, path='.',
+                         prefix='', suffix='', exclude='',
+                         prefer_compiled=False, return_error=False):
   ''' Algorithms:
    - Search all files in the `path` matched `prefix` and `suffix`
    - Exclude all files contain any str in `exclude`
@@ -1337,16 +1338,24 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
   ----------
   identifier : str
       identifier of object, function or anything in script files
+
   prefix : str
       prefix of file to search in the `path`
+
   suffix : str
       suffix of file to search in the `path`
+
   path : str
       searching path of script files
+
   exclude : str, list(str)
       any files contain str in this list will be excluded
+
   prefer_compiled : bool
       True mean prefer .pyc file, otherwise prefer .py
+
+  return_error : bool (default: False)
+      return all the error happened during loading the modules
 
   Returns
   -------
@@ -1373,7 +1382,7 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
     exclude = [exclude]
   prefer_flag = 1 if prefer_compiled else -1
   # ====== create pattern and load files ====== #
-  pattern = re.compile('^%s.*%s\.pyc?' % (prefix, suffix)) # py or pyc
+  pattern = re.compile(r"^%s.*%s\.pyc?" % (prefix, suffix)) # py or pyc
   file_name = os.listdir(path)
   file_name = [f for f in file_name
            if pattern.match(f) and
@@ -1385,6 +1394,7 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
   file_name = sorted({f.split('.')[0]: f for f in file_name}.values())
   # ====== load all modules ====== #
   modules = []
+  modules_error = {}
   # NOTE: this will load the module ignore the relative import path
   # For example: for module A.B.C
   # `from A.B import C` will result 'A.B.C' -> C
@@ -1402,6 +1412,7 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
                             os.path.join(path, fname))
         )
     except Exception as e:
+      modules_error[fname] == str(e)
       eprint("Cannot loading modules from file: '%s' - %s" %
         (ctext(fname, 'yellow'), ctext(str(e), 'red')))
   # ====== Find all identifier in modules ====== #
@@ -1411,6 +1422,8 @@ def get_module_from_path(identifier, path='.', prefix='', suffix='', exclude='',
       if identifier in i:
         ids.append(i[1])
   # remove duplicate py
+  if bool(return_error):
+    return ids, modules_error
   return ids
 
 

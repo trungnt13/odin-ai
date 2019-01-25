@@ -35,7 +35,7 @@ from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
 from odin.fuel import Dataset, MmapDict, MmapData
 from odin.preprocessing.base import Extractor, ExtractorSignal
 
-_default_module = re.compile('__.*__')
+_default_module = re.compile(r"__.*__")
 
 # ===========================================================================
 # PCA calculation

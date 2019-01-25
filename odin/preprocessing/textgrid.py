@@ -211,7 +211,7 @@ class TextGrid(object):
     Figures out the TextGrid format.
     """
 
-    m = re.match("(.*)[\r\n](.*)[\r\n](.*)[\r\n](.*)", self.read_file)
+    m = re.match(r"(.*)[\r\n](.*)[\r\n](.*)[\r\n](.*)", self.read_file)
     try:
       type_id = m.group(1).strip()
     except AttributeError:

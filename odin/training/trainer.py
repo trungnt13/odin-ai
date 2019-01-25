@@ -639,7 +639,7 @@ class MainLoop(object):
       saved_files = []
       base_dir = os.path.dirname(self._save_path)
       base_name = os.path.basename(self._save_path)
-      pattern = re.compile('^%s\.\d+$' % re.escape(base_name))
+      pattern = re.compile(r"^%s\.\d+$" % re.escape(base_name))
       for name in os.listdir(base_dir):
         if not pattern.match(name):
           continue
