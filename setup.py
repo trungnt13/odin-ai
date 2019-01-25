@@ -25,7 +25,7 @@ of organized networks.
 
 setup(
     name='odin-ai',
-    version='0.1.2',
+    version='0.1.3',
     description="Deep learning for research and production",
     long_description=long_description,
     url='https://github.com/imito/odin-ai',
