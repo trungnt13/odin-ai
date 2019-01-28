@@ -1,13 +1,14 @@
 from __future__ import print_function, division, absolute_import
 
 import os
+import base64
 import struct
-import random
 import pickle
 import hashlib
 import zipfile
-from io import BytesIO, StringIO
+from io import BytesIO
 from six import string_types
+
 import numpy as np
 import scipy as sp
 
@@ -15,13 +16,15 @@ import scipy as sp
 # Helper
 # ===========================================================================
 def to_password(password, salt=None):
+  """ This function return the byte data of hashed password """
   if isinstance(password, string_types):
     password = password.encode('utf-8')
   password += str(salt).encode('utf-8')
   return hashlib.sha256(password).digest()
 
-def _data_to_io(file_or_data):
+def _data_to_iobuffer(file_or_data):
   own_file = True
+  # ====== string object ====== #
   if isinstance(file_or_data, string_types):
     # path to file
     if os.path.exists(file_or_data):
@@ -30,17 +33,17 @@ def _data_to_io(file_or_data):
     # string object
     else:
       filesize = len(file_or_data)
-      infile = StringIO(file_or_data)
-  # bytes object
+      infile = BytesIO(file_or_data.encode())
+  # ======  bytes object ====== #
   elif isinstance(file_or_data, bytes):
     filesize = len(file_or_data)
     infile = BytesIO(file_or_data)
-  # opened file
+  # ====== opened file ====== #
   elif hasattr(file_or_data, 'read'):
     filesize = os.fstat(file_or_data.fileno()).st_size
     infile = file_or_data
     own_file = False
-  # error input data
+  # ====== error ====== #
   else:
     raise ValueError("No support for MD5 of input type: %s" % str(file_or_data))
   return infile, filesize, own_file
@@ -128,7 +131,7 @@ def md5_checksum(file_or_path, chunksize=512 * 1024):
 # Encryption
 # ===========================================================================
 def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
-                mode=None, chunksize=512 * 1024):
+                mode=None, base64encode=False, chunksize=512 * 1024):
   """ Flexible implementaiton of AES encryption
 
   Parameters
@@ -161,13 +164,14 @@ def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
   password = to_password(password, salt=salt)
   # Initialization vector
   if iv is None:
-    iv = bytes(bytearray(random.randint(0, 0xFF) for i in range(16)))
+    iv = os.urandom(16)
   encryptor = AES.new(password, mode, IV=iv)
   # ====== check read stream ====== #
-  infile, filesize, own_file = _data_to_io(file_or_data)
+  infile, filesize, own_file = _data_to_iobuffer(file_or_data)
   # ====== check out stream ====== #
   close_file = False
-  if isinstance(outfile, string_types) and os.path.exists(os.path.dirname(outfile)):
+  if isinstance(outfile, string_types) and \
+  os.path.exists(os.path.dirname(outfile)):
     outfile = open(str(outfile), 'wb')
     close_file = True
   elif hasattr(outfile, 'write') and hasattr(outfile, 'flush'):
@@ -179,8 +183,12 @@ def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
   outfile.write(iv)
   while True:
     chunk = infile.read(chunksize)
+    if bool(base64encode):
+      chunk = base64.encodebytes(chunk)
+    # EOF
     if len(chunk) == 0:
       break
+    # doing padding to match chunk size
     elif len(chunk) % 16 != 0:
       chunk += b' ' * (16 - len(chunk) % 16)
     outfile.write(encryptor.encrypt(chunk))
@@ -197,7 +205,7 @@ def encrypt_aes(file_or_data, password=None, outfile=None, iv=None, salt=None,
     return data
 
 def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
-                mode=None, chunksize=512 * 1024):
+                mode=None, base64encode=False, chunksize=512 * 1024):
   """ Flexible implementaiton of AES decryption
 
   Parameters
@@ -226,7 +234,7 @@ def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
   assert len(password) > 0, "Password length must be greater than 0"
   password = to_password(password, salt)
   # ====== read header ====== #
-  infile, filesize, own_file = _data_to_io(file_or_data)
+  infile, filesize, own_file = _data_to_iobuffer(file_or_data)
   origsize = struct.unpack('<Q', infile.read(struct.calcsize('Q')))[0]
   iv = infile.read(16)
   decryptor = AES.new(password, mode=AES.MODE_CBC, IV=iv)
@@ -244,7 +252,10 @@ def decrypt_aes(file_or_data, password=None, outfile=None, salt=None,
     chunk = infile.read(chunksize)
     if len(chunk) == 0:
       break
-    outfile.write(decryptor.decrypt(chunk))
+    chunk = decryptor.decrypt(chunk)
+    if bool(base64encode):
+      chunk = base64.decodebytes(chunk)
+    outfile.write(chunk)
   outfile.truncate(origsize)
   # ====== clean and return ====== #
   if own_file:

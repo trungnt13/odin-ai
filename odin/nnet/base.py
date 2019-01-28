@@ -327,10 +327,19 @@ class NNOp(NNOpOutput):
       raise ValueError("Cannot find any available directory that contain the "
                        "model script.")
     # ====== search for model ====== #
+    all_errors = {}
     for p in path:
-      model_func = get_module_from_path(name, path=p, prefix=prefix)
-      model_func = [f for f in model_func if isinstance(f, clazz)]
+      model_func, errors = get_module_from_path(name, path=p, prefix=prefix,
+                                               return_error=True)
+      all_errors.update(errors)
+      model_func = [f for f in model_func
+                    if isinstance(f, clazz)]
     if len(model_func) == 0:
+      print(
+          ctext("The following Exception happened during loading the modules:",
+            'lightred'))
+      for fpath, error in all_errors.items():
+        print(" ", fpath, ":", ctext(error, 'red'))
       raise ValueError("Cannot find any model creator function with name='%s' "
                        "at paths='%s'" % (name, '; '.join(path)))
     return model_func[0]

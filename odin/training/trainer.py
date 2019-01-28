@@ -89,8 +89,9 @@ class Task(object):
       0 - Turn off all log
       1 - progress off, only notification
       2 - progress off, notification and summary
-      3 - progress on, notification and summary
-      4 - progress on, notification, summary and report
+      3 - progress on, nothing else
+      4 - progress on, notification and summary
+      5 - progress on, notification, summary and batch report
   """
 
   def __init__(self, func, data, epoch=1, p=1.0,
@@ -186,19 +187,24 @@ class Task(object):
       self._progbar.print_progress = False
       self._progbar.print_summary = True
       self._progbar.print_report = False
-    elif verbose == 3: # progress on, notification + summary
+    elif verbose == 3: # progress on, nothing else
+      self._callback.set_notification(False)
+      self._progbar.print_progress = True
+      self._progbar.print_summary = False
+      self._progbar.print_report = False
+    elif verbose == 4: # progress on, notification + summary
       self._callback.set_notification(True)
       self._progbar.print_progress = True
       self._progbar.print_summary = True
       self._progbar.print_report = False
-    elif verbose == 4: # progress on, notification, report, summary
+    elif verbose == 5: # progress on, notification, report, summary
       self._callback.set_notification(True)
       self._progbar.print_progress = True
       self._progbar.print_summary = True
       self._progbar.print_report = True
     else:
       raise ValueError(
-          "Only support verbose value: 0, 1, 2, 3, 4; but given: %s" % str(verbose))
+          "Only support verbose value: 0, 1, 2, 3, 4, 5; but given: %s" % str(verbose))
 
   def set_func(self, func, data):
     # ====== check function ====== #
@@ -434,7 +440,7 @@ class Task(object):
               self, self._progbar.history)
           yield 'task_end'
           # showing notification
-          if self._verbose >= 1:
+          if self._verbose >= 1 and self._verbose != 3:
             self._progbar.add_notification('Task "%s" ended!' % str(self.name))
           break
     # ====== end of iteration ====== #
@@ -546,8 +552,9 @@ class MainLoop(object):
       0 - Turn off all log
       1 - progress off, only notification
       2 - progress off, notification and summary
-      3 - progress on, notification and summary
-      4 - progress on, notification, summary and report
+      3 - progress on, nothing else
+      4 - progress on, notification and summary
+      5 - progress on, notification, summary and batch report
   """
 
   def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
@@ -599,6 +606,10 @@ class MainLoop(object):
             self._callback, self._allow_rollback)
 
   # ==================== Signal handling ==================== #
+  def _show_noti(self, msg):
+    if self._verbose > 1 and self._verbose != 3:
+      add_notification(msg)
+
   def set_checkpoint(self, path=None, obj=None, variables=[],
                      increasing=True, max_checkpoint=-1,
                      save_history=None):
@@ -652,9 +663,8 @@ class MainLoop(object):
         self._current_checkpoint_count = 0
       else:
         self._current_checkpoint_count = int(saved_files[-1].split('.')[-1]) + 1
-      add_notification("[%s] Found lastest checkpoint: '.%d'" %
-        (ctext('MainLoop', 'red'),
-         self._current_checkpoint_count))
+      self._show_noti("[%s] Found lastest checkpoint: '.%d'" %
+                      (ctext('MainLoop', 'red'), self._current_checkpoint_count))
     # ====== history ====== #
     if save_history is not None:
       self._save_history = bool(save_history)
@@ -841,18 +851,17 @@ class MainLoop(object):
               self._save_path + '.%d' %
               (self._current_checkpoint_count - self._checkpoint_max - 1))
       # print the log
-      if self._verbose >= 1:
-        add_notification("[%s] Creating %scheckpoint at: %s" %
-          (ctext('MainLoop', 'red'),
-           ctext('[best]', 'yellow') if is_best else '',
-           final_save_path))
+      self._show_noti("[%s] Creating %scheckpoint at: %s" %
+                      (ctext('MainLoop', 'red'),
+                       ctext('[best]', 'yellow') if is_best else '',
+                       final_save_path))
       # save history
       if self._save_history:
         with open(final_save_path + '.hist', 'wb') as f:
           pickle.dump(self.history, f)
-        add_notification("[%s] Save history at: %s" %
-          (ctext('MainLoop', 'red'),
-           final_save_path + '.hist'))
+        self._show_noti("[%s] Save history at: %s" %
+                        (ctext('MainLoop', 'red'),
+                         final_save_path + '.hist'))
     # ====== store the object directly in RAM (only for the best) ====== #
     elif bool(is_best) and \
     (self._save_obj is not None or len(self._save_variables) > 0):
@@ -861,10 +870,9 @@ class MainLoop(object):
           self._save_obj, path=None, save_variables=True,
           variables=self._save_variables, binary_output=True)
       mem_size = sum(len(v) for k, v in self._best_object.items()) / 1024 / 1024
-      if self._verbose >= 1:
-        add_notification(
-            "[%s] Creating dynamic checkpoint in RAM using %.2f (megabytes)" %
-            (ctext('MainLoop', 'red'), mem_size))
+      self._show_noti(
+          "[%s] Creating dynamic checkpoint in RAM using %.2f (megabytes)" %
+          (ctext('MainLoop', 'red'), mem_size))
 
   def _rollback(self, is_final=False):
     # TODO: update rollback mechanism
@@ -874,16 +882,14 @@ class MainLoop(object):
     self._callback.event(TrainSignal.ROLLBACK)
     # default rollback procedure
     if self._save_path is not None and os.path.exists(self._save_path):
-      if self._verbose >= 1:
-        add_notification("[%s] Rollback from: %s" %
-          (ctext('MainLoop', 'red'), self._save_path))
+      self._show_noti("[%s] Rollback from: %s" %
+                      (ctext('MainLoop', 'red'), self._save_path))
       # restore previous checkpoint immediately
       N.deserialize(self._save_path, force_restore_vars=True)
     # otherwise, load stored variables from RAM
     elif self._best_object is not None:
-      if self._verbose >= 1:
-        add_notification("[%s] Rollback to the best stored object from RAM" %
-                         (ctext('MainLoop', 'red')))
+      self._show_noti("[%s] Rollback to the best stored object from RAM" %
+                      (ctext('MainLoop', 'red')))
       N.deserialize(path_or_data=self._best_object,
                     force_restore_vars=True)
 
