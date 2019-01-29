@@ -144,8 +144,8 @@ def fast_tsne(*X, n_components=2, n_samples=None, perplexity=30.0,
     from tsnecuda.NaiveTSNE import NaiveTSNE as _exact_TSNE
     tsne_version = 'cuda'
   except ImportError:
-    wprint("Install CUDA-TSNE from `https://github.com/CannyLab/tsne-cuda` "
-           "for significant speed up.")
+    # wprint("Install CUDA-TSNE from `https://github.com/CannyLab/tsne-cuda` "
+    #        "for significant speed up.")
     try:
       from MulticoreTSNE import MulticoreTSNE as TSNE
       tsne_version = 'multicore'
