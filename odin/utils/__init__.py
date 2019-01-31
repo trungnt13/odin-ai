@@ -617,7 +617,8 @@ class FuncDesc(object):
     # check if need to re-load function module during setstate
     if not is_lambda(self._func):
       module = inspect.getmodule(self._func)
-      func_module_key = [i for i, j in sys.modules.items()
+      func_module_key = [i
+                         for i, j in list(sys.modules.items())
                          if j == module][0]
       func_module_name = module.__name__
       func_module_path = inspect.getfile(module)
@@ -646,7 +647,7 @@ class FuncDesc(object):
     func_module_path is not None:
 
       found = None
-      for name, module in sys.modules.items():
+      for name, module in list(sys.modules.items()):
         try:
           if inspect.getfile(module) == func_module_path or \
           (module.__name__.split('.')[-1] == func_module_name and

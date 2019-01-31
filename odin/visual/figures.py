@@ -2070,7 +2070,69 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
 # ===========================================================================
-# Header
+# Micro-control
+# ===========================================================================
+def plot_colorbar(colormap, vmin=0, vmax=1,
+                  ax=None, orientation='vertical',
+                  tick_location=None, tick_labels=None,
+                  label=None):
+  """
+
+  Parameters
+  ----------
+  colormap : string, ColorMap type
+  vmin : float
+  vmax : float
+  ax : {None, matplotlib.figure.Figure or matplotlib.axes.Axes}
+    if `Figure` is given, show the color bar in the right hand side or
+    top side of the figure based on the `orientation`
+  orientation : {'vertical', 'horizontal'}
+  ticks : None
+  label : text label
+  fig : figure instance matplotlib
+  """
+  import matplotlib as mpl
+  from matplotlib import pyplot as plt
+
+  if isinstance(colormap, string_types):
+    cmap = mpl.cm.get_cmap(name=colormap)
+  else:
+    cmap = colormap
+  norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+
+  # ====== add colorbar for the whole figure ====== #
+  if ax is None or isinstance(ax, mpl.figure.Figure):
+    fig = plt.gcf() if ax is None else ax
+    if orientation == 'vertical':
+      cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    else:
+      cbar_ax = fig.add_axes([0.15, 0.92, 0.7, 0.02])
+    cb1 = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap,
+                                    norm=norm,
+                                    orientation=orientation)
+  # ====== add colorbar for only 1 Axes ====== #
+  elif isinstance(ax, mpl.axes.Axes):
+    mappable = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    mappable.set_array([]) # no idea why we need this
+    cb1 = plt.colorbar(mappable, ax=ax,
+                       pad=0.03 if orientation == 'vertical' else 0.1,
+                       shrink=0.7, aspect=25)
+  # ====== no idea ====== #
+  else:
+    raise ValueError("No support for `ax` type: %s" % str(type(ax)))
+
+  # ====== final configuration ====== #
+  if tick_location is not None:
+    cb1.set_ticks(tick_location)
+  if tick_labels is not None:
+    cb1.set_ticklabels(tick_labels)
+  if label is not None:
+    cb1.set_label(str(label))
+
+  return cb1
+
+# ===========================================================================
+# Shortcut
 # ===========================================================================
 def plot_close():
   from matplotlib import pyplot as plt
