@@ -61,7 +61,7 @@ setup(
                       'scikit-learn>=0.20.0',
                       'matplotlib>=3.0.0',
                       'tqdm',
-                      'dill'
+                      'dill',
                       'pycrypto'],
     extras_require={
         'visualize': ['pydot>=1.2.4',
