@@ -8,6 +8,7 @@ import os
 import sys
 import inspect
 import marshal
+import warnings
 from array import array
 from six.moves import builtins
 
@@ -356,7 +357,9 @@ def _deserialize_function_sandbox(sandbox):
       create by `serialize_sandbox`
   '''
   import marshal
-  import importlib
+  with warnings.catch_warnings():
+    warnings.filterwarnings(action='ignore', category=ImportWarning)
+    import importlib
 
   environment = {}
   defined_function = []

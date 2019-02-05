@@ -2,34 +2,37 @@
 from __future__ import print_function, absolute_import, division
 
 import re
+import warnings
 from six import string_types
 from contextlib import contextmanager
 from collections import OrderedDict, defaultdict, Mapping
 
 import numpy as np
 
-import tensorflow as tf
+# ====== tensorflow and tensorflow-probability package ====== #
+# I am sick of ImportWarning
+with warnings.catch_warnings():
+  import tensorflow as tf
 
-# ====== probability package ====== #
-_tf_distribution_types = []
+  _tf_distribution_types = []
+  warnings.filterwarnings('ignore', category=ImportWarning)
+  try:
+    from tensorflow.contrib import distributions as tfd
+    _tf_distribution_types.append(tfd.Distribution)
+  except ImportError:
+    pass
+  except AttributeError:
+    pass
 
-try:
-  from tensorflow.contrib import distributions as tfd
-  _tf_distribution_types.append(tfd.Distribution)
-except ImportError:
-  pass
-except AttributeError:
-  pass
+  try:
+    from tensorflow_probability import distributions as _tfd
+    _tf_distribution_types.append(_tfd.Distribution)
+  except ImportError:
+    pass
+  except AttributeError:
+    pass
 
-try:
-  from tensorflow_probability import distributions as _tfd
-  _tf_distribution_types.append(_tfd.Distribution)
-except ImportError:
-  pass
-except AttributeError:
-  pass
-
-_tf_distribution_types = tuple(_tf_distribution_types)
+  _tf_distribution_types = tuple(_tf_distribution_types)
 
 # ====== O.D.I.N stuffs ====== #
 from odin.config import get_session

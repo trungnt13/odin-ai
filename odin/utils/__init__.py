@@ -1413,7 +1413,7 @@ def get_module_from_path(identifier, path='.',
                             os.path.join(path, fname))
         )
     except Exception as e:
-      modules_error[fname] == str(e)
+      modules_error[fname] = str(e)
       eprint("Cannot loading modules from file: '%s' - %s" %
         (ctext(fname, 'yellow'), ctext(str(e), 'red')))
   # ====== Find all identifier in modules ====== #

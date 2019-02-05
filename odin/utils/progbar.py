@@ -408,7 +408,8 @@ class Progbar(object):
     else: # clear everything
       for i in range(nlines):
         Progbar.FP.write('\r')
-        Progbar.FP.write(' ' * _environ_cols_wrapper()(Progbar.FP))
+        console_width = _environ_cols_wrapper()(Progbar.FP)
+        Progbar.FP.write(' ' * (79 if console_width is None else console_width))
         Progbar.FP.write('\r')  # place cursor back at the beginning of line
         self.__pb.moveto(1)
       self.__pb.moveto(-(nlines * 2))
@@ -459,7 +460,8 @@ class Progbar(object):
       self.__pb.moveto(-nlines)
       for i in range(nlines):
         Progbar.FP.write('\r')
-        Progbar.FP.write(' ' * _environ_cols_wrapper()(Progbar.FP))
+        console_width = _environ_cols_wrapper()(Progbar.FP)
+        Progbar.FP.write(' ' * (79 if console_width is None else console_width))
         Progbar.FP.write('\r')  # place cursor back at the beginning of line
         self.__pb.moveto(1)
     else:

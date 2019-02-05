@@ -325,7 +325,9 @@ def auto_config(config=None):
       'debug': debug
   })
   _RNG_GENERATOR = np.random.RandomState(seed=seed)
-  import tensorflow as tf
+  with warnings.catch_warnings():
+    warnings.filterwarnings(action='ignore', category=ImportWarning)
+    import tensorflow as tf
   tf.set_random_seed(seed=_RNG_GENERATOR.randint(0, 10e8))
   # tensorflow log level
   os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
