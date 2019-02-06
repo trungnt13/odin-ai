@@ -72,8 +72,8 @@ def _assign_new_nnop(nnop):
     raise RuntimeError("Given NNOp with name: '%s' has not been initialized"
                        % name)
   if name in NNOp._ALL_NNOPS:
-    raise RuntimeError("Another NNOp of type: '%s', and name: '%s' has "
-                       "already existed." %
+    raise RuntimeError("Cannot created NNOp with duplicated name, another NNOp "
+                       "of type: %s, and name: '%s' has already existed" %
                        (type(NNOp._ALL_NNOPS[name]), name))
   NNOp._ALL_NNOPS[name] = nnop
 
@@ -282,9 +282,11 @@ class NNOp(NNOpOutput):
   name: str
       identity of the operator, this name is the scope for its operator
       and should be unique.
+
   T: NNOp
       transpose operator of this one (NOTE: some ops does not support
       transpose and raise NotImplementedError)
+
   parameters: list of variables
       list of all parameters associated with this operator scope
 
@@ -314,6 +316,18 @@ class NNOp(NNOpOutput):
     """ This method search for any objects decorated or instance
     of given NNOp
     from given `path` with all script have given `prefix`
+
+    Parameters
+    ----------
+    name : string
+        specific name of finding object
+
+    path : {string, list of string}
+        single folder or list of folder (or file) to search
+        for the desire module
+
+    prefix : string
+        prefix for filtering .py file
     """
     # ====== check path ====== #
     if path is None:
@@ -366,27 +380,34 @@ class NNOp(NNOpOutput):
     # update Op name if it is None
     name = kwargs.get('name', None)
     op_scope = get_nnop_scope()
-    # automatic generate name
-    if name is None:
-      name = clazz.__name__ + '_' + str(op_scope[1])
-    # regulation for the NNOp name
-    elif is_string(name):
-      if '/' in name or ':' in name:
-        raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
-    # special case, a function is given (Lambda NNOp)
-    elif inspect.isfunction(name):
-      assert clazz == Lambda, \
-      "Only support `name` function type in case of odin.nnet.base.Lambda"
+    # ====== special case Lambda op ====== #
+    if clazz == Lambda:
+      func = kwargs['func']
+      assert inspect.isfunction(func) or inspect.ismethod(func),\
+      "func for odin.nnop.base.Lambda must be a callable function or method"
       full_path = [i
-                   for i in name.__qualname__.split('.')
+                   for i in func.__qualname__.split('.')
                    if '<locals>' not in i]
       func_scope = full_path[:-1]
       func_name = full_path[-1]
-      name = func_name
-    # exception no support for given type
+      if name is None:
+        name = func_name + '_' + str(op_scope[1])
+      else:
+        name = name
+    # ====== general case ====== #
     else:
-      raise ValueError("`name` for NNOp must be string, function, but given "
-                       "`name` with type: %s" % name)
+      # automatic generate name
+      if name is None:
+        name = clazz.__name__ + '_' + str(op_scope[1])
+      # regulation for the NNOp name
+      elif is_string(name):
+        if '/' in name or ':' in name:
+          raise ValueError("NNOp cannot contain '\\' or ':', given name is: %s" % name)
+      # exception no support for given type
+      else:
+        raise ValueError("`name` for NNOp must be string, function, but given "
+                         "`name` with type: %s" % name)
+    # ====== add the scope ====== #
     # add scope to name
     if len(op_scope[0]) > 0:
       name = op_scope[0] + '/' + name
@@ -1239,35 +1260,16 @@ class Lambda(NNOp):
   """
   Parameters
   ----------
-  func: callable
-      must be picklable, main lambda function
-  funcT: callable, None
-      function used in transpose, if None, if the original `func`
-  var_init: dict
-      mapping from name (string) to variable initialization
-      information.
-      the initialization information can be given in 2 forms:
-      - initializer: callable, ndarray, shape, Tensor, Variable, or
-      string (name of Variable)
-      - (initializer, roles): same as the first one but created
-      variable will be assigned given roles
+  func : callable
+      main lambda function
 
-  Note
-  ----
-  There are 2 ways to feed argument for `func`:
-   - by calling this Lambda
-   >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z)
-   >>> f(1, z=3)
-   - predefine the variable using `var_init`
-   >>> f = Lambda(func=lambda x, y=1, z=2: x + y + z, var_init={'x': 1})
-   >>> f()
   """
 
-  def __init__(self, name):
+  def __init__(self, func, name=None):
     super(Lambda, self).__init__()
     # check main function
-    self.set_function(name, is_transpose=False)
-    self.set_function(name, is_transpose=True)
+    self.set_function(func, is_transpose=False)
+    self.set_function(func, is_transpose=True)
 
   def set_function(self, func, is_transpose=False):
     if not hasattr(func, '__call__'):

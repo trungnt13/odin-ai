@@ -67,8 +67,8 @@ def _query_gpu_info():
   in your path
   """
   dev = {'ngpu': 1,
-     # deviceName: [cardName, computeCapability, mem(MB)]
-     'dev0': ['Unknown', 3.0, 1024]}
+         # deviceName: [cardName, computeCapability, mem(MB)]
+         'dev0': ['Unknown', 3.0, 1024]}
   temp_dir = tempfile.mkdtemp()
   p = os.path.join(temp_dir, 'tmp.txt')
   queried = subprocess.call('deviceQuery > ' + p,
@@ -92,7 +92,7 @@ def _query_gpu_info():
     for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
       dev['dev%d' % i] = [name, com, mem]
   else:
-    _warning('Cannot use "deviceQuery" to get GPU information for configuration.')
+    # _warning('Cannot use "deviceQuery" to get GPU information for configuration.')
     from tensorflow.python.client import device_lib
     local_device_protos = device_lib.list_local_devices()
     dev['ngpu'] = 0
@@ -204,7 +204,7 @@ def auto_config(config=None):
   debug = False
   # number of devices
   ncpu = 0
-  ngpu = 0
+  ngpu = 1 # default try to get the GPU
   nthread = 0
   log_level = '3'
   # ====== parsing the config ====== #
