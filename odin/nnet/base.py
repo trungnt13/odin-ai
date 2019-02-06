@@ -1166,13 +1166,15 @@ def _prepend_scope_nnop_tree(scope, op, parent=None):
   op_children = op.nnops
   # ====== merge the scope ====== #
   scope = scope.split('/')
-  # no duplicated scope
-  for s in scope[::-1]:
-    if s not in op_scope:
-      # add scope to the left (most outer)
-      op_scope = [s] + op_scope
+  final_scope = []
+  # re-organize the scope of the new NNOp
+  # - No duplicate scope
+  # - prioritize scope of parent NNOp appeared first
+  for s in scope + op_scope:
+    if s not in final_scope:
+      final_scope += [s]
   # no empty scope
-  op_scope = '/'.join([i for i in op_scope if len(i) > 0])
+  op_scope = '/'.join([i for i in final_scope if len(i) > 0])
   # ====== modification is possible ====== #
   if not op.is_initialized:
     new_name = op_scope + '/' + op_name
@@ -1189,7 +1191,7 @@ def _prepend_scope_nnop_tree(scope, op, parent=None):
     # otherwise, just modify the name of newly created NNOp
     else:
       op._name = new_name
-  # ====== no change ====== #
+  # ====== NNOp already initialized, no change ====== #
   else:
     pass
   # ====== modify the children NNOp as well ====== #
@@ -1213,9 +1215,10 @@ class Container(NNOp):
 
     # add new NNOp using it name and ignore the scope
     for o in ops:
+      # modify the name and scope
       o = _prepend_scope_nnop_tree(scope=self.name, op=o)
-      self.get_variable_nnop(name=o.name.split('/')[-1],
-                             initializer=o)
+      # store the new NNOp
+      self.get_variable_nnop(name=o.name.split('/')[-1], initializer=o)
     # final assignment
     self._apply_ops = ops
     return self
