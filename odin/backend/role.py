@@ -29,6 +29,9 @@ class Variable(Role):
   """Base class for all variable roles."""
   pass
 
+class variables(Variable):
+  pass
+
 # ==================== NNOp related ==================== #
 class NNOpOutput(Role):
   """Base class for all Output of NNOp."""
@@ -57,7 +60,7 @@ class GraidentsClippingNorm(GraidentsClipping):
 class GraidentsClippingValue(GraidentsClipping):
   pass
 
-# ==================== Role for Cost and Objective ==================== #
+# ******************** Role for Cost and Objective ******************** #
 class Auxiliary(Variable):
   """ Variables added to the graph as annotations """
   pass
@@ -85,7 +88,7 @@ class ConfusionMatrix(MonitoringLoss):
 class EarlyStop(MonitoringLoss):
   pass
 
-# ==================== Variational ==================== #
+# ******************** Role for Variational ******************** #
 class Variational(Variable):
   """ All role related to variational inference """
   pass
@@ -96,13 +99,18 @@ class VariationalMean(Variational):
 class VariationalLogsigma(Variational):
   pass
 
-# ==================== Role for Trainable Variable ==================== #
+# ******************** Role for Parameters ******************** #
 class Parameter(Variable):
   pass
 
+# ====== anything trainable ====== #
 class TrainableParameter(Parameter):
   pass
 
+class trainable_variables(TrainableParameter):
+  pass
+
+# ====== others trainable ====== #
 class ActivationParameter(Parameter):
   pass
 
@@ -225,17 +233,26 @@ def add_roles(variables, roles):
       _add_to_collection_no_duplication(r.__name__, var)
   return variables
 
-def _cmp_role(r1, r2, exact):
+def _compare_role(var_role, match_role, exact):
   """ check if r1 is subclass of r2, or
   if r1 or r2 is string, r1 is equal r2
+
+  Return
+  ------
+  True if matching
+  False otherwise
   """
   # String types role
-  if isinstance(r1, string_types) or isinstance(r2, string_types):
-    if inspect.isclass(r1): r1 = r1.__name__
-    if inspect.isclass(r2): r2 = r2.__name__
-    return r1 == r2
+  if isinstance(var_role, string_types) or \
+  isinstance(match_role, string_types):
+    if inspect.isclass(var_role):
+      var_role = var_role.__name__
+    if inspect.isclass(match_role):
+      match_role = match_role.__name__
+    return var_role == match_role
   # subclass of Role
-  return r1 == r2 if exact else issubclass(r1, r2)
+  return var_role == match_role if exact else \
+  issubclass(var_role, match_role)
 
 def has_roles(var, roles, match_all=False, exact=False):
   r"""Test if a variable has given roles taking subroles into account.
@@ -261,7 +278,8 @@ def has_roles(var, roles, match_all=False, exact=False):
            for r in as_tuple(roles)
            if isinstance(r, string_types) or issubclass(r, Role)]
   var_roles = get_roles(var, return_string=False)
-  matches = [any(_cmp_role(var_role, match_role, exact) for var_role in var_roles)
+  matches = [any(_compare_role(var_role, match_role, exact)
+             for var_role in var_roles)
              for match_role in roles]
   return all(matches) if match_all else any(matches)
 

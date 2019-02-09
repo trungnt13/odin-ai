@@ -1206,6 +1206,18 @@ class Container(NNOp):
     super(Container, self).__init__(**kwargs)
     self.debug = 0
 
+  def set_debug(self, debug_mode):
+    """
+    Parameters
+    ----------
+    debug_mode : {0, 1, 2}
+        0 - turn of logging
+        1 - print minimal logging
+        2 - print detail logging of each NNOp
+    """
+    self.debug = int(debug_mode)
+    return self
+
   def set_nnops(self, ops):
     # remove None values
     if isinstance(ops, (tuple, list)):

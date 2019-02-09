@@ -761,6 +761,40 @@ def function(inputs, outputs, updates=[], defaults={},
 # ===========================================================================
 # Computational graph
 # ===========================================================================
+def get_intermediate_tensors(outputs, scope=None, name=None, full_name=None,
+                             roles=None, match_all=False, exact=False,
+                             beginning_scope=False):
+  """ Return all variables and tensor within the computational
+  graph of the `outputs` that are satisfied the given conditions
+
+  Parameters
+  ----------
+  scope : {None, string}
+    name of variable scope, any of the scope that match given name
+    will be selected
+  name : {None, string}
+    the name of tensor without the output indexing ":0" and the scope
+  full_name : {None, string}
+    the full name includes both scope and tensor name without the
+    output indexing ":0"
+  roles : {None, odin.backend.role}
+    specific roles of the tensor
+  match_all : bool (default: False)
+    If ``True``, checks if the variable has all given roles.
+    If ``False``, any of the roles is sufficient.
+  exact : bool (default: False)
+    If ``True``, use ``==`` for comparison to get exactly same roles.
+    If ``False``, use `issubclass` for comparison, hence, also match the
+    descendant roles.
+  beginning_scope : bool (default: False)
+    if True, the provide scope must be the beginning scope,
+    otherwise, it could be in the middle of multiple scopes
+  """
+  graph = ComputationGraph(outputs)
+  return graph.get(scope=scope, name=name, full_name=full_name,
+                   roles=roles, match_all=match_all, exact=exact,
+                   beginning_scope=beginning_scope)
+
 @decorators.singleton
 class ComputationGraph(object):
   r"""Encapsulates a managed Theano computation graph.
@@ -1033,7 +1067,7 @@ class ComputationGraph(object):
 
   def get(self, scope=None, name=None, full_name=None,
           roles=None, match_all=False, exact=False,
-          beginning_scope=True):
+          beginning_scope=False):
     """ Return all variables and tensor with given roles
 
     Parameters
@@ -1075,12 +1109,14 @@ class ComputationGraph(object):
         scope_name_pattern = _TF_SCOPE_PATTERN(scope, beginning_scope)
         alltensors = [t for t in alltensors
                       if len(scope_name_pattern.findall(t.name))]
+    # ====== filter by name ====== #
     if name is not None:
       name = as_tuple(name, t=string_types)
       alltensors = [t for t in alltensors
                     if any((n == t.name.split('/')[-1] or
                             n.split(':')[0] == t.name.split('/')[-1].split(':')[0])
                            for n in name)]
+    # ====== full name ====== #
     if full_name is not None:
       full_name = as_tuple(full_name, t=string_types)
       alltensors = [t for t in alltensors
