@@ -61,6 +61,7 @@ setup(
                       'six>=1.9.0',
                       'scikit-learn>=0.20.0',
                       'matplotlib>=3.0.0',
+                      'decorator',
                       'tqdm',
                       'dill',
                       'pycrypto'],
@@ -73,6 +74,6 @@ setup(
                   'requests'],
         'audio': ['soundfile',
                   'resampy'],
-        'docs': ['sphinx', 'sphinx-rtd-theme']
+        'docs': ['sphinx', 'sphinx_rtd_theme']
     },
     zip_safe=False)
