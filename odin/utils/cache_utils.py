@@ -7,8 +7,8 @@ import inspect
 from functools import wraps
 from six import string_types
 from six.moves import builtins
-from decorator import FunctionMaker, decorator
-from collections import defaultdict, OrderedDict, Hashable
+from decorator import FunctionMaker
+from collections import defaultdict, OrderedDict
 
 import numpy as np
 
