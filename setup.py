@@ -9,10 +9,10 @@ def get_tensorflow_version():
                             stderr=subprocess.PIPE)
     out = task.stdout.read()
     if "release 9.0" in str(out, 'utf-8'):
-      return "tensorflow-gpu==1.12.0"
+      return "tensorflow-gpu==1.13.1"
   except FileNotFoundError as e:
     pass
-  return "tensorflow==1.12.0"
+  return "tensorflow==1.13.1"
 
 here = path.abspath(path.dirname(__file__))
 
@@ -56,7 +56,8 @@ setup(
     setup_requires=['pip>=19.0'],
     install_requires=['numpy>=1.9.1',
                       get_tensorflow_version(),
-                      'tensorflow-probability==0.5.0',
+                      'tensorflow-probability==0.6.0',
+                      'tensorflow-datasets',
                       'six>=1.9.0',
                       'scikit-learn>=0.20.0',
                       'matplotlib>=3.0.0',

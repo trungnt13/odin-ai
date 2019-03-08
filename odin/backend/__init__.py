@@ -288,7 +288,7 @@ def restore_variables(path, session=None):
     saver = _saver[name]
   else:
     saver = tf.train.Saver(var_list=var_list, restore_sequentially=False,
-        allow_empty=False)
+                           allow_empty=False)
   saver.restore(session, path)
   # ====== restore the collections ====== #
   for v in var_list:
