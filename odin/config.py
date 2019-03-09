@@ -56,53 +56,62 @@ def _check_package_available(name):
       return True
   return False
 
-def _query_gpu_info():
-  """ This function query GPU information:
-  ngpu
-  [device_name, device_compute_capability, device_total_memory]
-
-  Note
-  ----
-  this function use deviceQuery command, so you better have it
-  in your path
+def get_gpu_info():
+  """ Example of return
+  [
+    {'name': 'Titan TITAN V', 'id': 0,
+     'fan': 53,
+     'mem_total': 12028, 'mem_used': 4295,
+     'graphics_clock': 1200, 'mem_clock': 850
+    },
+    {'name': 'GeForce TITAN Xp', 'id': 1,
+    'fan': 23,
+    'mem_total': 12196, 'mem_used': 0,
+    'graphics_clock': 1404, 'mem_clock': 5705
+    }
+  ]
   """
-  dev = {'ngpu': 1,
-         # deviceName: [cardName, computeCapability, mem(MB)]
-         'dev0': ['Unknown', 3.0, 1024]}
   temp_dir = tempfile.mkdtemp()
   p = os.path.join(temp_dir, 'tmp.txt')
-  queried = subprocess.call('deviceQuery > ' + p,
+  queried = subprocess.call('nvidia-smi -q -x > ' + p,
           shell=True,
           stdout=subprocess.PIPE,
           stderr=subprocess.PIPE) == 0
-  dev = {}
-  if queried: # found deviceQuery
-    info = open(p, 'r').read()
-    devNames = re.compile(r'Device \d: ".*"').findall(info)
-    devNames = [i.strip().split(':')[-1].replace('"', '') for i in devNames]
-    ngpu = len(devNames)
-    comCap = re.compile(
-        r'CUDA Capability Major\/Minor version number:\s*.*').findall(info)
-    comCap = [float(i.strip().split(':')[-1]) for i in comCap]
-    totalMems = re.compile(
-        r'Total amount of global memory:\s*\d*').findall(info)
-    totalMems = [int(i.strip().split(':')[-1]) for i in totalMems]
-    # ====== create dev ====== #
-    dev['ngpu'] = ngpu
-    for i, (name, com, mem) in enumerate(zip(devNames, comCap, totalMems)):
-      dev['dev%d' % i] = [name, com, mem]
-  else:
-    # _warning('Cannot use "deviceQuery" to get GPU information for configuration.')
-    from tensorflow.python.client import device_lib
-    local_device_protos = device_lib.list_local_devices()
-    dev['ngpu'] = 0
-    for i, name in (x.name for x in local_device_protos
-        if x.device_type == 'GPU'):
-      dev['dev%d' % i] = [name, None, None]
-      dev['ngpu'] += 1
+  devices = []
+  if queried: # found nvidia-smi
+    from xml.etree import ElementTree as ET
+    tree = ET.parse(p)
+    root = tree.getroot()
+    for child in root:
+      if child.tag.lower() != 'gpu':
+        continue
+      gpu = {}
+      brand = ''
+      for i in child:
+        tag = i.tag.lower()
+        if tag == 'product_name':
+          gpu['name'] = i.text
+        elif tag == 'product_brand':
+          brand = i.text
+        elif tag == 'minor_number':
+          gpu['id'] = int(i.text)
+        elif tag == 'fan_speed':
+          gpu['fan'] = int(i.text.split(' ')[0])
+        elif tag == 'fb_memory_usage':
+          gpu['mem_total'] = int(i.findall('total')[0].text.split(' ')[0])
+          gpu['mem_used'] = int(i.findall('used')[0].text.split(' ')[0])
+        elif tag == 'applications_clocks':
+          for j in i:
+            gpu[j.tag] = int(j.text.split(' ')[0])
+      gpu['name'] = brand + ' ' + gpu['name']
+      devices.append(gpu)
+    # sort by minor number
+    devices = sorted(devices, key=lambda x: x['id'])
+  else: # NO GPU devices
+    pass
   # remove temp-dir
   shutil.rmtree(temp_dir)
-  return dev
+  return devices
 
 class AttributeDict(dict):
   __getattr__ = dict.__getitem__
@@ -141,8 +150,7 @@ def get_session_config():
           per_process_gpu_memory_fraction=CONFIG['cnmem'],
           allow_growth=False)
     else:
-      session_args['gpu_options'] = tf.GPUOptions(
-          allow_growth=True)
+      session_args['gpu_options'] = tf.GPUOptions(allow_growth=True)
   return session_args
 
 def get_session(graph=None):
@@ -277,10 +285,13 @@ def auto_config(config=None):
   EPS = np.finfo(np.dtype(floatX)).eps
   # devices
   dev = {}
+  gpu_info = get_gpu_info()
   if ngpu > 0:
-    dev.update(_query_gpu_info())
+    dev['ngpu'] = len(gpu_info)
   else:
     dev['ngpu'] = 0
+  dev['gpu'] = gpu_info
+
   dev['ncpu'] = ncpu
   dev['nthread'] = nthread
 
@@ -293,6 +304,7 @@ def auto_config(config=None):
     s += _ctext(tag, 'yellow') + ' : '
     s += _ctext(value, 'cyan') + '\n'
     sys.stderr.write(s)
+
   print_log('#CPU', 'auto' if dev['ncpu'] == 0 else dev['ncpu'])
   print_log('#CPU-native', str(cpu_count()))
   print_log('#Thread/core',
@@ -300,8 +312,8 @@ def auto_config(config=None):
       nested=True)
   print_log('#GPU', dev['ngpu'])
   if dev['ngpu'] > 0:
-    for i in range(dev['ngpu']):
-      print_log('GPU-dev%d' % i, dev['dev%d' % i], nested=True)
+    for i in dev['gpu']:
+      print_log('[%d]' % i['id'], i['name'], nested=True)
   print_log('FloatX', floatX)
   print_log('Epsilon', epsilon)
   print_log('CNMEM', cnmem)
@@ -325,12 +337,12 @@ def auto_config(config=None):
       'debug': debug
   })
   _RNG_GENERATOR = np.random.RandomState(seed=seed)
+  os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
   with warnings.catch_warnings():
     warnings.filterwarnings(action='ignore', category=ImportWarning)
     import tensorflow as tf
   tf.set_random_seed(seed=_RNG_GENERATOR.randint(0, 10e8))
   # tensorflow log level
-  os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
   return CONFIG
 
 # ===========================================================================

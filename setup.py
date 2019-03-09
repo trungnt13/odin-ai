@@ -64,6 +64,7 @@ setup(
                       'decorator',
                       'tqdm',
                       'dill',
+                      'pyyaml',
                       'pycrypto'],
     extras_require={
         'visualize': ['pydot>=1.2.4',

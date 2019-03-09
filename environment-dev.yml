@@ -19,6 +19,7 @@ dependencies:
     - decorator
     - tqdm
     - dill
+    - pyyaml
     - pycrypto
     - colorama
     - pydot>=1.2.4

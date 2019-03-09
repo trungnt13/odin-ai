@@ -11,6 +11,7 @@ from odin.config import (auto_config, get_floatX, get_session,
                          get_rng, randint)
 auto_config()
 floatX = get_floatX()
+
 # ==================== import utilities modules ==================== #
 from odin.backend.helpers import *
 from odin.backend.tensor import *
