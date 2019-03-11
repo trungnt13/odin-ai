@@ -212,14 +212,23 @@ def auto_config(config=None):
   debug = False
   # number of devices
   ncpu = 0
-  ngpu = 1 # default try to get the GPU
   nthread = 0
   log_level = '3'
+
+  # Handling GPU devices
+  #  * Nothing => "0" => use first GPU found
+  #  * "gpu" => "-1" => use all available GPU devices
+  #  * "gpu=" => "" => remove all GPU devices
+  #  * "gpu=0_1" => "0,1" => use 0-th and 1-st GPU
+  #  * "gpu=0_1_-1" => "-1" => use all available GPU devices
+  ngpu = "0"
   # ====== parsing the config ====== #
   if config is None: # load config from flags
     odin_flags = os.getenv("ODIN", "")
     for c in (';', ':', '.', '*'):
       odin_flags.replace(c, ',')
+    for c in ('+', '_'):
+      odin_flags.replace(c, '_')
     s = odin_flags.split(',')
     # ====== processing each tag ====== #
     for i in s:
@@ -228,18 +237,27 @@ def auto_config(config=None):
       if 'float' in i or 'int' in i:
         floatX = i
       # ====== Devices ====== #
-      elif 'cpu' in i:
+      elif 'cpu' in i: # CPU devices
         if '=' not in i:
           _warning("Found `cpu` tag, but number of CPU is not "
              "specified, auto select all %d CPU-cores " %
              cpu_count())
         else:
           ncpu = min(int(i.split('=')[-1]), cpu_count())
-      elif 'gpu' in i:
+      elif 'gpu' in i: # GPU devices
+        # given a set of GPU devices, multiple devices specified by 0,1,2,3
         if '=' in i:
-          ngpu = int(i.split('=')[-1])
+          ngpu = i.split('=')[-1]
+          if len(ngpu) > 0:
+            try:
+              [int(_) for _ in ngpu.split('_')]
+            except Exception as e:
+              raise RuntimeError("Invalid input for GPU configuration")
+            if any(int(_) < 0 for _ in ngpu.split('_')):
+              ngpu = "-1"
+        # use all available GPU devices
         else:
-          ngpu = 1
+          ngpu = "-1"
       # ====== number thread ====== #
       elif 'thread' in i:
         if '=' not in i:
@@ -285,15 +303,33 @@ def auto_config(config=None):
   EPS = np.finfo(np.dtype(floatX)).eps
   # devices
   dev = {}
-  gpu_info = get_gpu_info()
-  if ngpu > 0:
-    dev['ngpu'] = len(gpu_info)
-  else:
-    dev['ngpu'] = 0
-  dev['gpu'] = gpu_info
 
   dev['ncpu'] = ncpu
   dev['nthread'] = nthread
+
+  # ==================== processing GPU devices ==================== #
+  gpu_info = get_gpu_info()
+  if len(ngpu) > 0:
+    if ngpu == '-1':
+      dev['ngpu'] = len(gpu_info)
+    else:
+      dev['ngpu'] = min(len(gpu_info), len(ngpu.split('_')))
+  else:
+    dev['ngpu'] = 0
+
+  if dev['ngpu'] == 0:
+    os.environ['CUDA_VISIBLE_DEVICES'] = ""
+    gpu_info = []
+  elif ngpu == '-1':
+    os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(
+        [str(i) for i in range(len(gpu_info))])
+  else:
+    all_gpu = sorted([_
+                      for _ in ngpu.split('_')
+                      if int(_) < len(gpu_info)])
+    os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(all_gpu)
+    gpu_info = [gpu_info[int(i)] for i in all_gpu]
+  dev['gpu'] = gpu_info
 
   # ====== Log the configuration ====== #
   def print_log(tag, value, nested=False):
@@ -320,9 +356,6 @@ def auto_config(config=None):
   print_log('SEED', seed)
   print_log('Debug', debug)
   print_log('Log-level', log_level)
-  # ==================== create theano flags ==================== #
-  if dev['ngpu'] == 0:
-    os.environ['CUDA_VISIBLE_DEVICES'] = ""
   # ====== Return global objects ====== #
   CONFIG = AttributeDict()
   CONFIG.update({
