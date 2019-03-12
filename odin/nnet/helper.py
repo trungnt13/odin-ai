@@ -69,10 +69,12 @@ class Parallel(Container):
 
   Parameters
   ----------
-  mode : {None, 'concat', 'max', 'min'}
+  mode : {None, 'concat', 'max', 'min', 'sum', 'mean'}
     None - no post-processing is performed, return the outputs from all NNOp
     'concat' - concatenate the outputs along given `axis`
     'min', 'max' - take the min or max values of the outputs along given `axis`
+    'sum' - take sum of the outputs
+    'mean' - take mean of the outputs
   """
 
   def __init__(self, ops, mode='concat', axis=-1,
@@ -80,8 +82,9 @@ class Parallel(Container):
     super(Parallel, self).__init__(**kwargs)
     self.set_nnops(ops)
     mode = str(mode).lower()
-    assert mode in ('none', 'concat', 'min', 'max'),\
-    "Support `mode` includes: 'none', 'concat', 'min', 'max'; but given: %s" % mode
+    assert mode in ('none', 'concat', 'min', 'max', 'sum', 'mean'),\
+    "Support `mode` includes: 'none', 'concat', 'min', 'max', 'sum', 'mean';" +\
+    " but given: %s" % mode
     self.mode = mode
     self.axis = axis
     self.debug = int(debug)
@@ -103,6 +106,12 @@ class Parallel(Container):
         ret = outputs[0]
         for o in outputs[1:]:
           ret = tf.minimum(ret, o)
+      elif self.mode == 'sum' or self.mode == 'mean':
+        outputs[0]
+        for o in outputs[1:]:
+          ret = ret + o
+        if self.mode == 'mean':
+          ret = ret / len(outputs)
       else:
         ret = outputs
     return ret

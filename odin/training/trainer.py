@@ -557,7 +557,7 @@ class MainLoop(object):
       5 - progress on, notification, summary and batch report
   """
 
-  def __init__(self, batch_size=256, seed=-1, shuffle_level=0,
+  def __init__(self, batch_size=256, seed=-1, shuffle_level=2,
                allow_rollback=True, labels=None,
                log_path=None, verbose=3):
     super(MainLoop, self).__init__()

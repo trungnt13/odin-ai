@@ -15,9 +15,16 @@ class Flatten(NNOp):
 
   def __init__(self, outdim=2, **kwargs):
     super(Flatten, self).__init__(**kwargs)
-    self.outdim = outdim
+    self.outdim = int(outdim)
 
   def _apply(self, X):
+    ndims = X.get_shape().ndims
+    if ndims is not None:
+      if ndims == self.outdim:
+        return X
+      elif ndims < self.outdim:
+        raise RuntimeError("Input shape: %s, cannot be flatten to %d-D"
+          % (str(X.get_shape()), self.outdim))
     return K.flatten(X, outdim=self.outdim)
 
   def _transpose(self):
