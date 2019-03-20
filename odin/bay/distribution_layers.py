@@ -24,6 +24,8 @@ __all__ = [
     'Normal',
     'LogNormal',
     'Logistic',
+    'ZeroInflatedPoisson',
+    'ZeroInflatedNegativeBinomial',
 ]
 
 Bernoulli = tfl.IndependentBernoulli
@@ -59,7 +61,7 @@ class LogNormal(tfl.DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               softplus_scale=False,
+               softplus_scale=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                activity_regularizer=None,
@@ -71,7 +73,7 @@ class LogNormal(tfl.DistributionLambda):
         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), softplus_scale=False,
+  def new(params, event_shape=(), softplus_scale=True,
           validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'LogNormal',
@@ -179,6 +181,9 @@ class NegativeBinomial(tfl.DistributionLambda):
   event_shape: integer vector `Tensor` representing the shape of single
     draw from this distribution.
 
+  given_log_count : boolean
+    is the input representing log count values or the count itself
+
   convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
     instance and returns a `tf.Tensor`-like object.
     Default value: `tfd.Distribution.sample`.
@@ -195,7 +200,7 @@ class NegativeBinomial(tfl.DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               given_log_count=False,
+               given_log_count=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                activity_regularizer=None,
@@ -207,7 +212,7 @@ class NegativeBinomial(tfl.DistributionLambda):
         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), given_log_count=False,
+  def new(params, event_shape=(), given_log_count=True,
           validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'NegativeBinomial',
@@ -287,7 +292,7 @@ class MultivariateNormal(tfl.DistributionLambda):
   def __init__(self,
                event_size,
                covariance_type='diag',
-               softplus_scale=False,
+               softplus_scale=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                activity_regularizer=None,
@@ -352,3 +357,81 @@ class MultivariateNormal(tfl.DistributionLambda):
 # ===========================================================================
 # Complex distributions
 # ===========================================================================
+class ZeroInflatedPoisson(tfl.DistributionLambda):
+  """A Independent zero-inflated Poisson keras layer
+  """
+  pass
+
+class ZeroInflatedNegativeBinomial(tfl.DistributionLambda):
+  """A Independent zero-inflated negative binomial keras layer
+
+  Parameters
+  ----------
+  event_shape: integer vector `Tensor` representing the shape of single
+    draw from this distribution.
+
+  given_log_count : boolean
+    is the input representing log count values or the count itself
+
+  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+    instance and returns a `tf.Tensor`-like object.
+    Default value: `tfd.Distribution.sample`.
+
+  validate_args: Python `bool`, default `False`. When `True` distribution
+    parameters are checked for validity despite possibly degrading runtime
+    performance. When `False` invalid inputs may silently render incorrect
+    outputs.
+    Default value: `False`.
+
+  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+
+  """
+
+  def __init__(self,
+               event_shape=(),
+               given_log_count=True,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               validate_args=False,
+               activity_regularizer=None,
+               **kwargs):
+    super(ZeroInflatedNegativeBinomial, self).__init__(
+        lambda t: type(self).new(t, event_shape, given_log_count, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
+
+  @staticmethod
+  def new(params, event_shape=(), given_log_count=True,
+          validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomial',
+                                 [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
+      event_shape = dist_util.expand_to_vector(
+          tf.convert_to_tensor(
+              value=event_shape, name='event_shape', dtype=tf.int32),
+          tensor_name='event_shape')
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ], axis=0)
+      total_count_params, logits_params, pi_params = tf.split(params, 3, axis=-1)
+      if given_log_count:
+        total_count_params = tf.exp(total_count_params, name='total_count')
+      return tfd.Independent(
+          tfd.NegativeBinomial(
+              total_count=tf.reshape(total_count_params, output_shape),
+              logits=tf.reshape(logits_params, output_shape),
+              validate_args=validate_args),
+          reinterpreted_batch_ndims=tf.size(input=event_shape),
+          validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_shape=(), name=None):
+    """The number of `params` needed to create a single distribution."""
+    with tf.compat.v1.name_scope(name, 'NegativeBinomial_params_size',
+                                 [event_shape]):
+      event_shape = tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32)
+      return 2 * _event_size(event_shape,
+                             name=name or 'NegativeBinomial_params_size')
