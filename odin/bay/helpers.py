@@ -32,3 +32,39 @@ def parse_distribution(dist_name,
     y = dist_desc.set_print_log(print_log)(X, out_dim, n_eventdim,
                                            **kwargs)
   return y
+
+# ===========================================================================
+# Objectives
+# ===========================================================================
+def kl_divergence(q, p,
+                  use_analytic_kl=False,
+                  q_sample=tf.convert_to_tensor,
+                  reduce_axis=()):
+  """ Calculating KL(q(x)||p(x))
+
+  Parameters
+  ----------
+  q : the first distribution
+  p : the second distribution
+
+  use_analytic_kl : boolean
+    if True, use the close-form solution  for
+
+  q_sample : {callable, Tensor}
+    callable for extracting sample from `q(x)` (takes q distribution
+    as input argument)
+
+  reudce_axis : {None, int, tuple}
+    reduce axis when use MCMC to estimate KL divergence
+
+  """
+  if bool(use_analytic_kl):
+    return tfd.kl_divergence(q, p)
+  else:
+    if callable(q_sample):
+      z = q_sample(q)
+    else:
+      z = q_sample
+    return tf.reduce_mean(
+        input_tensor=q.log_prob(z) - p.log_prob(z),
+        axis=reduce_axis)
