@@ -17,6 +17,7 @@ from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 from odin.bay.distributions import ZeroInflated
 
 __all__ = [
+    'DistributionLambda',
     'MultivariateNormal',
     'Bernoulli',
     'OneHotCategorical',
@@ -30,6 +31,7 @@ __all__ = [
     'ZeroInflatedNegativeBinomial',
 ]
 
+DistributionLambda = tfl.DistributionLambda
 Bernoulli = tfl.IndependentBernoulli
 OneHotCategorical = tfl.OneHotCategorical
 Poisson = tfl.IndependentPoisson
@@ -39,7 +41,7 @@ Logistic = tfl.IndependentLogistic
 # ===========================================================================
 # Simple distribution
 # ===========================================================================
-class LogNormal(tfl.DistributionLambda):
+class LogNormal(DistributionLambda):
   """An independent LogNormal Keras layer.
 
   Parameters
@@ -109,7 +111,7 @@ class LogNormal(tfl.DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'LogNormal_params_size')
 
-class Gamma(tfl.DistributionLambda):
+class Gamma(DistributionLambda):
   """An independent Gamma Keras layer.
 
   Parameters
@@ -175,7 +177,7 @@ class Gamma(tfl.DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'Gamma_params_size')
 
-class NegativeBinomial(tfl.DistributionLambda):
+class NegativeBinomial(DistributionLambda):
   """An independent NegativeBinomial Keras layer.
 
   Parameters
@@ -252,7 +254,7 @@ class NegativeBinomial(tfl.DistributionLambda):
 # ===========================================================================
 # Multivariate distribution
 # ===========================================================================
-class MultivariateNormal(tfl.DistributionLambda):
+class MultivariateNormal(DistributionLambda):
   """A `d`-variate Multivariate Normal distribution Keras layer:
 
   Different covariance mode:
@@ -359,7 +361,7 @@ class MultivariateNormal(tfl.DistributionLambda):
 # ===========================================================================
 # Complex distributions
 # ===========================================================================
-class ZeroInflatedPoisson(tfl.DistributionLambda):
+class ZeroInflatedPoisson(DistributionLambda):
   """A Independent zero-inflated Poisson keras layer
   """
 
@@ -412,7 +414,7 @@ class ZeroInflatedPoisson(tfl.DistributionLambda):
       return 2 * _event_size(event_shape,
                   name=name or 'ZeroInflatedNegativeBinomial_params_size')
 
-class ZeroInflatedNegativeBinomial(tfl.DistributionLambda):
+class ZeroInflatedNegativeBinomial(DistributionLambda):
   """A Independent zero-inflated negative binomial keras layer
 
   Parameters

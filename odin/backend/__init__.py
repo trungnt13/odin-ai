@@ -13,7 +13,7 @@ auto_config()
 floatX = get_floatX()
 
 # ==================== import utilities modules ==================== #
-from odin.backend.keras_helpers import *
+from odin.backend import keras_helpers
 from odin.backend.helpers import *
 from odin.backend.tensor import *
 from odin.backend.activations import *
