@@ -15,19 +15,15 @@
 # limitations under the License.
 #
 # ======================================================================== #
-
 """The ZeroInflated distribution class."""
-
 from __future__ import absolute_import, division, print_function
 
-import numpy as np
 import tensorflow as tf
 
 from tensorflow_probability.python.distributions import (distribution,
   Bernoulli, Independent)
 from tensorflow_probability.python.distributions import seed_stream
 from tensorflow_probability.python.internal import reparameterization
-from tensorflow_probability.python.internal import distribution_util as util
 
 __all__ = [
     'ZeroInflated'
@@ -72,7 +68,8 @@ class ZeroInflated(distribution.Distribution):
                name="ZeroInflated"):
     """Initialize a zero-inflated distribution.
 
-    A `ZeroInflated` is defined by a zero-inflation rate (`pi`, representing the probabilities of excess zeroes) and a `Distribution` object
+    A `ZeroInflated` is defined by a zero-inflation rate (`inflated_distribution`,
+    representing the probabilities of excess zeros) and a `Distribution` object
     having matching dtype, batch shape, event shape, and continuity
     properties (the dist).
 
@@ -83,10 +80,9 @@ class ZeroInflated(distribution.Distribution):
       distribution.
 
     inflated_distribution: `tfp.distributions.Bernoulli`-like instance.
-      Manages the probability of excess zeros, the zero-inflated rate
-      The distribution must match the rightmost batch dimension of the
-      `count_distribution`. Must have either scalar `batch_shape` or
-      `batch_shape` matching `count_distribution.batch_shape[:-1]`.
+      Manages the probability of excess zeros, the zero-inflated rate.
+      Must have either scalar `batch_shape` or `batch_shape` matching
+      `count_distribution.batch_shape`.
 
     logits: An N-D `Tensor` representing the log-odds of a excess zeros
       A zero-inflation rate, where the probability of excess zeros is

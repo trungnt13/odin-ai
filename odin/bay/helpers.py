@@ -38,8 +38,9 @@ def parse_distribution(dist_name,
 # ===========================================================================
 def kl_divergence(q, p,
                   use_analytic_kl=False,
-                  q_sample=tf.convert_to_tensor,
-                  reduce_axis=()):
+                  q_sample=lambda q: q.sample(),
+                  reduce_axis=(),
+                  name=None):
   """ Calculating KL(q(x)||p(x))
 
   Parameters
@@ -58,13 +59,16 @@ def kl_divergence(q, p,
     reduce axis when use MCMC to estimate KL divergence
 
   """
-  if bool(use_analytic_kl):
-    return tfd.kl_divergence(q, p)
-  else:
-    if callable(q_sample):
-      z = q_sample(q)
+  q_name = [i for i in q.name.split('/') if len(i) > 0][-1]
+  p_name = [i for i in p.name.split('/') if len(i) > 0][-1]
+  with tf.compat.v1.name_scope(name, "KL_q%s_p%s" % (q_name, p_name)):
+    if bool(use_analytic_kl):
+      return tfd.kl_divergence(q, p)
     else:
-      z = q_sample
-    return tf.reduce_mean(
-        input_tensor=q.log_prob(z) - p.log_prob(z),
-        axis=reduce_axis)
+      if callable(q_sample):
+        z = q_sample(q)
+      else:
+        z = q_sample
+      return tf.reduce_mean(
+          input_tensor=q.log_prob(z) - p.log_prob(z),
+          axis=reduce_axis)
