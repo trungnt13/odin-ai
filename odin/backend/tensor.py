@@ -194,7 +194,7 @@ def log_norm(x, axis=1, scale_factor=10000):
   where `log` is natural logarithm
   """
   if is_tensor(x):
-    return tf.logvariable1p(
+    return tf.log1p(
         x / (tf.reduce_sum(x, axis=axis, keepdims=True) + EPS) * scale_factor)
   elif isinstance(x, np.ndarray):
     x = x.astype('float64')

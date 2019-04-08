@@ -56,7 +56,8 @@ def kl_divergence(q, p,
     as input argument)
 
   reudce_axis : {None, int, tuple}
-    reduce axis when use MCMC to estimate KL divergence
+    reduce axis when use MCMC to estimate KL divergence, default
+    `()` mean keep all original dimensions
 
   """
   q_name = [i for i in q.name.split('/') if len(i) > 0][-1]
@@ -69,6 +70,7 @@ def kl_divergence(q, p,
         z = q_sample(q)
       else:
         z = q_sample
-      return tf.reduce_mean(
-          input_tensor=q.log_prob(z) - p.log_prob(z),
-          axis=reduce_axis)
+      # calculate the output, then perform reduction
+      kl = q.log_prob(z) - p.log_prob(z)
+      kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
+      return kl

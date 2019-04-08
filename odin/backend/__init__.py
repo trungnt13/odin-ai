@@ -24,6 +24,10 @@ from odin.backend import optimizers
 from odin.backend import rand
 from odin.backend import rnn_cell
 
+# This is a bit of an "evil" approach but tie the ODIN Session and
+# keras session right when initialize ODIN
+keras_helpers.tied_session()
+
 @contextmanager
 def variable_dtype(dtype):
   """Temporary change the default dtype for creating variable using ODIN"""

@@ -1362,6 +1362,8 @@ def get_module_from_path(identifier, path='.',
   -------
   list(object, function, ..) :
       any thing match given identifier in all found script file
+  errors (optional) :
+      error while loading any of the script
 
   Notes
   -----

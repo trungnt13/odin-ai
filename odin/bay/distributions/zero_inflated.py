@@ -63,7 +63,7 @@ class ZeroInflated(distribution.Distribution):
                inflated_distribution=None,
                logits=None,
                probs=None,
-               validate_args=True,
+               validate_args=False,
                allow_nan_stats=True,
                name="ZeroInflated"):
     """Initialize a zero-inflated distribution.

@@ -29,21 +29,29 @@ class PLDA(BaseEstimator, TransformerMixin, Evaluable):
   ----------
   n_phi : int
     number of dimension for the latent space
+
   centering : bool (default: True)
     mean normalization the data before EM
+
   wccn : bool (default: True)
     within class covariance normalization before EM
+
   unit_length : bool (default: True)
     normalize vector length of each sample to 1 before EM
+
   n_iter : {integer, 'auto'}
     if 'auto', keep iterating until no more improvement (i.e. reduction in `sigma` value)
     compared to the `improve_threshold`
+
   improve_threshold : scalar
     Only used in case `n_iter='auto'`
+
   labels : {list of string, or None} (default: None)
     labels information for `evaluate` method
+
   seed : int
     random seed for reproducibility
+
   verbose : int (default: 0)
     verbose level, 0 for turning off all logging activities,
     1 for basics notification, 2 for fitting progress.

@@ -14,8 +14,6 @@ from tensorflow_probability.python.internal import distribution_util as dist_uti
 from tensorflow_probability.python.layers.internal import distribution_tensor_coercible as dtc
 from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 
-from odin.bay.distributions import ZeroInflated
-
 __all__ = [
     'DistributionLambda',
     'MultivariateNormal',
@@ -35,12 +33,85 @@ DistributionLambda = tfl.DistributionLambda
 Bernoulli = tfl.IndependentBernoulli
 OneHotCategorical = tfl.OneHotCategorical
 Poisson = tfl.IndependentPoisson
-Normal = tfl.IndependentNormal
 Logistic = tfl.IndependentLogistic
 
 # ===========================================================================
 # Simple distribution
 # ===========================================================================
+class Normal(DistributionLambda):
+  """An independent normal Keras layer.
+
+  Parameters
+  ----------
+  event_shape: integer vector `Tensor` representing the shape of single
+    draw from this distribution.
+
+  softplus_scale : bool
+    if True, `scale = softplus(params) + softplus_inverse(1.0)`
+
+  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+    instance and returns a `tf.Tensor`-like object.
+    Default value: `tfd.Distribution.sample`.
+
+  validate_args: Python `bool`, default `False`. When `True` distribution
+    parameters are checked for validity despite possibly degrading runtime
+    performance. When `False` invalid inputs may silently render incorrect
+    outputs.
+    Default value: `False`.
+
+  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+
+  """
+
+  def __init__(self,
+               event_shape=(),
+               softplus_scale=True,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               activity_regularizer=None,
+               validate_args=False,
+               **kwargs):
+    super(Normal, self).__init__(
+        lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
+
+  @staticmethod
+  def new(params, event_shape=(), softplus_scale=True,
+          validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    with tf.compat.v1.name_scope(name, 'Normal',
+                                 [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
+      event_shape = dist_util.expand_to_vector(
+          tf.convert_to_tensor(
+              value=event_shape, name='event_shape', dtype=tf.int32),
+          tensor_name='event_shape')
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ], axis=0)
+      loc_params, scale_params = tf.split(params, 2, axis=-1)
+      if softplus_scale:
+        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(1.0)
+      return tfd.Independent(
+          tfd.Normal(
+              loc=tf.reshape(loc_params, output_shape),
+              scale=tf.reshape(scale_params, output_shape),
+              validate_args=validate_args),
+          reinterpreted_batch_ndims=tf.size(input=event_shape),
+          validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_shape=(), name=None):
+    """The number of `params` needed to create a single distribution."""
+    with tf.compat.v1.name_scope(name, 'Normal_params_size',
+                                 [event_shape]):
+      event_shape = tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32)
+      return 2 * _event_size(
+          event_shape, name=name or 'Normal_params_size')
+
 class LogNormal(DistributionLambda):
   """An independent LogNormal Keras layer.
 
@@ -48,6 +119,9 @@ class LogNormal(DistributionLambda):
   ----------
   event_shape: integer vector `Tensor` representing the shape of single
     draw from this distribution.
+
+  softplus_scale : bool
+    if True, `scale = softplus(params) + softplus_inverse(1.0)`
 
   convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
     instance and returns a `tf.Tensor`-like object.
@@ -380,6 +454,8 @@ class ZeroInflatedPoisson(DistributionLambda):
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
+    from odin.bay.distributions import ZeroInflated
+
     with tf.compat.v1.name_scope(name, 'ZeroInflatedPoisson',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
@@ -456,6 +532,8 @@ class ZeroInflatedNegativeBinomial(DistributionLambda):
   def new(params, event_shape=(), given_log_count=True,
           validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
+    from odin.bay.distributions import ZeroInflated
+
     with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomial',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
