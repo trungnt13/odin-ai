@@ -303,10 +303,8 @@ def auto_config(config=None):
   EPS = np.finfo(np.dtype(floatX)).eps
   # devices
   dev = {}
-
   dev['ncpu'] = ncpu
   dev['nthread'] = nthread
-
   # ==================== processing GPU devices ==================== #
   gpu_info = get_gpu_info()
   if len(ngpu) > 0:
@@ -316,7 +314,7 @@ def auto_config(config=None):
       dev['ngpu'] = min(len(gpu_info), len(ngpu.split('_')))
   else:
     dev['ngpu'] = 0
-
+  #
   if dev['ngpu'] == 0:
     os.environ['CUDA_VISIBLE_DEVICES'] = ""
     gpu_info = []
@@ -377,8 +375,11 @@ def auto_config(config=None):
   with warnings.catch_warnings():
     warnings.filterwarnings(action='ignore', category=ImportWarning)
     import tensorflow as tf
-  tf.set_random_seed(seed=_RNG_GENERATOR.randint(0, 10e8))
-  # tensorflow log level
+    import numpy as np
+    the_seed = _RNG_GENERATOR.randint(0, 10e8)
+    tf.set_random_seed(seed=the_seed)
+    np.random.seed(seed=the_seed)
+  # ====== set the random seed for everything ====== #
   return CONFIG
 
 # ===========================================================================
@@ -462,6 +463,6 @@ def get_backend():
   __validate_config()
   return CONFIG['backend']
 
-def get_seed():
+def get_random_seed():
   __validate_config()
   return CONFIG['seed']

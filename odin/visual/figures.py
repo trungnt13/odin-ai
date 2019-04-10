@@ -49,15 +49,15 @@ def get_all_named_colors(to_hsv=False):
 def generate_random_colors(n, seed=5218, lightness_value=None,
                            return_hsl=False, return_hex=True):
   if seed is not None:
-    np.random.seed(seed)
+    rand = np.random.RandomState(seed)
   n = int(n)
   colors = []
   # we want maximizing the differences in hue
   all_hue = np.linspace(0., 0.88, num=n)
   for i, hue in enumerate(all_hue):
-    saturation = 0.6 + np.random.rand(1)[0] / 2.5 # saturation
+    saturation = 0.6 + rand.rand(1)[0] / 2.5 # saturation
     if lightness_value is None:
-      lightness = 0.25 + np.random.rand(1)[0] / 1.4 # lightness
+      lightness = 0.25 + rand.rand(1)[0] / 1.4 # lightness
     else:
       lightness = float(lightness_value)
     # select color scheme to return

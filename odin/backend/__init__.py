@@ -8,10 +8,9 @@ from six.moves import cPickle, builtins
 
 from odin.utils import is_string, is_path, as_tuple
 from odin.config import (auto_config, get_floatX, get_session,
-                         get_rng, randint)
+                         get_rng, randint, get_random_seed)
 auto_config()
 floatX = get_floatX()
-
 # ==================== import utilities modules ==================== #
 from odin.backend import keras_helpers
 from odin.backend.helpers import *

@@ -319,8 +319,8 @@ def batching(batch_size, n=None, start=0, end=None, seed=None):
             for i in range(start, end + batch_size, batch_size)
             if i < end)
   batches = list(range(start, end + batch_size, batch_size))
-  np.random.seed(seed)
-  np.random.shuffle(batches)
+  rand = np.random.RandomState(seed)
+  rand.shuffle(batches)
   return (((i, min(i + batch_size, end)))
           for i in batches
           if i < end)
@@ -1619,11 +1619,22 @@ def get_exppath(tag, name=None, override=False, prompt=False,
 # ===========================================================================
 def run_script(s, wait=True, path='/tmp'):
   """
+  Parameters
+  ----------
+  s : string
+    python script
+
+  wait : bool (default: True)
+    blocking the current process until finishing the script
+
+  path : string (default: '/tmp')
+    saving the script to a temporary path before running
+
   Return
   ------
   status: of executed command, if `wait`=True else return Popen object
-  out: stdout message
-  err: stderr, message
+  out: (string, utf-8) - stdout message
+  err: (string, utf-8) - stderr message
   """
   # ====== path preprocessing ====== #
   if path is None:
