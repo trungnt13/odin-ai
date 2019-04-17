@@ -375,7 +375,6 @@ def auto_config(config=None):
   with warnings.catch_warnings():
     warnings.filterwarnings(action='ignore', category=ImportWarning)
     import tensorflow as tf
-    import numpy as np
     the_seed = _RNG_GENERATOR.randint(0, 10e8)
     tf.set_random_seed(seed=the_seed)
     np.random.seed(seed=the_seed)

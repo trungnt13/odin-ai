@@ -27,6 +27,7 @@ __all__ = [
     'Logistic',
     'ZeroInflatedPoisson',
     'ZeroInflatedNegativeBinomial',
+    'update_convert_to_tensor_fn'
 ]
 
 DistributionLambda = tfl.DistributionLambda
@@ -34,6 +35,19 @@ Bernoulli = tfl.IndependentBernoulli
 OneHotCategorical = tfl.OneHotCategorical
 Poisson = tfl.IndependentPoisson
 Logistic = tfl.IndependentLogistic
+
+# ===========================================================================
+# Helper
+# ===========================================================================
+def update_convert_to_tensor_fn(dist, fn):
+  assert isinstance(dist, dtc._TensorCoercible), \
+  "dist must be output from tfd.DistributionLambda"
+  assert callable(fn), "fn must be callable"
+  if isinstance(fn, property):
+    fn = fn.fget
+  dist._concrete_value = None
+  dist._convert_to_tensor_fn = fn
+  return dist
 
 # ===========================================================================
 # Simple distribution

@@ -1015,7 +1015,7 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
       ax.set_zticklabels([])
   ax.grid(grid)
   if title is not None:
-    ax.set_title(str(title), fontsize=fontsize, fontweight='bold')
+    ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
   if is_3D_mode and (elev is not None or azim is not None):
     ax.view_init(elev=ax.elev if elev is None else elev,
                  azim=ax.azim if azim is None else azim)
@@ -1139,7 +1139,7 @@ def plot_scatter(x, y=None, z=None,
       ax.set_zticklabels([])
   ax.grid(grid)
   if title is not None:
-    ax.set_title(str(title), fontsize=fontsize, fontweight='bold')
+    ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
   if is_3D_mode and (elev is not None or azim is not None):
     ax.view_init(elev=ax.elev if elev is None else elev,
                  azim=ax.azim if azim is None else azim)
@@ -2165,7 +2165,7 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
       pp.close()
     except Exception as e:
       sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
-  # ====== saving PDF file ====== #
+  # ====== saving PNG file ====== #
   else:
     saved_path = []
     path = os.path.splitext(path)

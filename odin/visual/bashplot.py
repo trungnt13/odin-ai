@@ -57,12 +57,10 @@ def get_colour(colour):
   """
   return bcolours.get(colour, bcolours['ENDC'])
 
-
 def print_return_str(text, end='\n'):
   # if not return_str:
         # print(text, end=end)
   return text + end
-
 
 def printcolour(text, sameline=False, colour=get_colour("ENDC")):
   """
@@ -75,7 +73,6 @@ def printcolour(text, sameline=False, colour=get_colour("ENDC")):
   if colour == 'default' or colour == 'ENDC' or colour is None:
     return print_return_str(text, sep)
   return print_return_str(get_colour(colour) + text + bcolours["ENDC"], sep)
-
 
 def ctext(s, color='red'):
   try:
@@ -166,7 +163,6 @@ def get_scale(series, is_y=False, steps=20):
     scaled_series.reverse()
   return scaled_series
 
-
 def calc_bins(n, min_val, max_val, h=None, binwidth=None):
   """
   Calculate number of bins for the histogram
@@ -183,7 +179,6 @@ def calc_bins(n, min_val, max_val, h=None, binwidth=None):
     else:
       yield b
 
-
 def read_numbers(numbers):
   """
   Read the input data in the most optimal way
@@ -194,7 +189,6 @@ def read_numbers(numbers):
   else:
     for number in open(numbers):
       yield float(number.strip())
-
 
 # ===========================================================================
 # Main
@@ -296,7 +290,6 @@ def print_dist(d, height=12, pch="o", show_number=False,
     n = (maximum_fig_length - len(title) // 2) // 2 - len(padding) * 3
     fig = '=' * n + padding + title + padding + '=' * n + '\n' + fig
   return fig[:-1]
-
 
 def _float2str(x, fp=2):
   fmt = '%.' + '%d' % fp + 'f'
@@ -420,7 +413,6 @@ def print_confusion(arr, labels=None, side_bar=True, inc_stats=True,
       n += len(avr) + len('\t')
       fig += avr
   return fig[:-1]
-
 
 def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
     colour="default", title="", xlab=True, showSummary=False,
@@ -578,7 +570,6 @@ def print_hist(f, height=20.0, bincount=None, binwidth=None, pch="o",
     summary += "-" * (2 + center)
     splot += print_return_str(summary)
   return splot
-
 
 def print_bar(f, height=20.0, bincount=None, binwidth=None, pch="o",
     colour="default", title="", xlab=None, showSummary=False,

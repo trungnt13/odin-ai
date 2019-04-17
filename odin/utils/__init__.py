@@ -349,8 +349,9 @@ _CURRENT_STDIO = None
 
 class _LogWrapper():
 
-  def __init__(self, stream):
+  def __init__(self, stream, own_buffer):
     self.stream = stream
+    self.own_buffer = bool(own_buffer)
 
   def write(self, message):
     # no backtrack for writing to file
@@ -361,14 +362,70 @@ class _LogWrapper():
     self.stream.flush()
     sys.__stdout__.flush()
 
-  def close(self):
-    try:
-      self.stream.close()
-    except Exception:
-      pass
+  def end(self):
+    self.stream.flush()
+    sys.__stdout__.flush()
+    if self.own_buffer:
+      try:
+        self.stream.close()
+      except Exception:
+        pass
 
 def get_stdio_path():
   return _CURRENT_STDIO
+
+def stdio(path=None, suppress=False, stderr=True):
+  """
+  Parameters
+  ----------
+  path: {None, str, io.StringIO}
+      if str or StringIO, specified path for saving all stdout (and stderr)
+      if None, reset to the system default stdout and stderr
+  suppress: boolean
+      totally turn-off all stdout (and stdeer)
+  stderr:
+      apply output file with stderr also
+
+  NOTE
+  ----
+  Redirect the system logging can slightly decrease the
+  performance in logging intensive application.
+  """
+  # turn off stdio
+  if suppress:
+    f = open(os.devnull, "w")
+    path = None
+  # reset
+  elif path is None:
+    f = None
+  # redirect to a file
+  elif is_string(path):
+    f = _LogWrapper(open(path, "w"), own_buffer=True)
+  # redirect to a buffer
+  elif is_fileobj(path):
+    f = _LogWrapper(path, own_buffer=False)
+    if hasattr(path, 'name'):
+      path = f.name
+    else:
+      path = str(path)
+  else:
+    raise ValueError("Unsupport for path=`%s` in `stdio`." %
+        str(type(path)))
+  # ====== set current stdio path ====== #
+  global _CURRENT_STDIO
+  _CURRENT_STDIO = path
+  # ====== assign stdio ====== #
+  if f is None: # reset
+    if isinstance(sys.stdout, _LogWrapper):
+      sys.stdout.end()
+    if isinstance(sys.stderr, _LogWrapper):
+      sys.stderr.end()
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+  else: # redirect to file
+    sys.stdout = f
+    if stderr:
+      sys.stderr = f
 
 def auto_logging(log_dir=None, prefix='', num_max=None):
   """
@@ -402,65 +459,13 @@ def auto_logging(log_dir=None, prefix='', num_max=None):
         os.remove(os.path.join(log_dir, name))
   return stdio(path=path, suppress=False, stderr=True)
 
-def stdio(path=None, suppress=False, stderr=True):
-  """
-  Parameters
-  ----------
-  path: None, str
-      if str, specified path for saving all stdout (and stderr)
-      if None, reset stdout and stderr back to normal
-  suppress: boolean
-      totally turn-off all stdout (and stdeer)
-  stderr:
-      apply output file with stderr also
-
-  NOTE
-  ----
-  Redirect the system logging can slightly decrease the
-  performance in logging intensive application.
-  """
-  # turn off stdio
-  if suppress:
-    f = open(os.devnull, "w")
-    path = None
-  # reset
-  elif path is None:
-    f = None
-  # redirect to a file
-  elif is_string(path):
-    f = _LogWrapper(open(path, "w"))
-  elif is_fileobj(path):
-    f = path
-    path = f.name
-  else:
-    raise ValueError("Unsupport for path=`%s` in `stdio`." %
-        str(type(path)))
-  # ====== set current stdio path ====== #
-  global _CURRENT_STDIO
-  _CURRENT_STDIO = path
-  # ====== assign stdio ====== #
-  if f is None: # reset
-    if isinstance(sys.stdout, _LogWrapper):
-      sys.stdout.close()
-    if isinstance(sys.stderr, _LogWrapper):
-      sys.stderr.close()
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-  else: # redirect to file
-    sys.stdout = f
-    if stderr:
-      sys.stderr = f
-
-
 def eprint(text):
   """Print ERROR message to stderr"""
   print(ctext('[Error]', 'red') + str(text), file=sys.stderr)
 
-
 def wprint(text):
   """Print WARNING message to stderr"""
   print(ctext('[Warning]', 'yellow') + str(text), file=sys.stderr)
-
 
 # ===========================================================================
 # Universal ID
