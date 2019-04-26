@@ -299,6 +299,14 @@ def auto_config(config=None):
     cnmem = config['cnmem']
     seed = config['seed']
     debug = config['debug']
+  # ====== set log level ====== #
+  # This only worked if I put the os.environ before tensorflow was imported
+  # 0 = all messages are logged (default behavior)
+  # 1 = INFO messages are not printed
+  # 2 = INFO and WARNING messages are not printed
+  # 3 = INFO, WARNING, and ERROR messages are not printed
+  os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
+  # ====== get device info ====== #
   # epsilon
   EPS = np.finfo(np.dtype(floatX)).eps
   # devices
@@ -354,8 +362,8 @@ def auto_config(config=None):
   print_log('Epsilon', epsilon)
   print_log('CNMEM', cnmem)
   print_log('SEED', seed)
-  print_log('Debug', debug)
-  print_log('Log-level', log_level)
+  print_log('Log-devices', debug)
+  print_log('TF-log-level', log_level)
   # ====== Return global objects ====== #
   CONFIG = AttributeDict()
   CONFIG.update({
@@ -371,7 +379,6 @@ def auto_config(config=None):
       'debug': debug
   })
   _RNG_GENERATOR = np.random.RandomState(seed=seed)
-  os.environ['TF_CPP_MIN_LOG_LEVEL'] = log_level
   with warnings.catch_warnings():
     warnings.filterwarnings(action='ignore', category=ImportWarning)
     import tensorflow as tf

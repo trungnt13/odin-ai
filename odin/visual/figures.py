@@ -414,6 +414,24 @@ def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
   if show:
     plot_show(block=True, tight_layout=tight_layout)
 
+def merge_figures(nrow, ncol):
+  pass
+
+def fig2data(fig):
+  """w, h, 4"""
+  fig.canvas.draw()
+  w, h = fig.canvas.get_width_height()
+  buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
+  buf.shape = (w, h, 4)
+  buf = np.roll(buf, 3, axis=2)
+  return buf
+
+def data2fig(data):
+  from matplotlib import pyplot as plt
+  fig = plt.figure()
+  plt.imshow(data)
+  return fig
+
 def plot_figure(nrow=8, ncol=8, dpi=180):
   from matplotlib import pyplot as plt
   fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)

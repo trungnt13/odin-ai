@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
 from odin.utils import uuid, as_tuple, flatten_list, is_string, is_number
-from odin.config import get_rng, CONFIG, randint
+from odin.autoconfig import get_rng, CONFIG, randint
 from odin.backend.helpers import is_training
 from odin.backend.tensor import variable
 from odin.backend.role import add_roles, Weight, Bias, Parameter

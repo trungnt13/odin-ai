@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
 from odin import backend as K
-from odin.config import randint
+from odin.autoconfig import randint
 from odin.nnet.base import NNOp
 
 

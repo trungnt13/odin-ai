@@ -11,7 +11,7 @@ __all__ = [
 def tied_session():
   """ Tied the tensorflow Session and keras Session together
   """
-  from odin.config import get_session
+  from odin.autoconfig import get_session
   from tensorflow.python.keras.backend import set_session
   set_session(get_session())
 

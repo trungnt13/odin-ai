@@ -9,7 +9,7 @@ from collections import defaultdict, Iterator, OrderedDict, Mapping
 
 import numpy as np
 
-from odin.config import get_rng
+from odin.autoconfig import get_rng
 from odin.maths import interp
 from odin.utils import as_tuple, flatten_list, ctext, batching
 

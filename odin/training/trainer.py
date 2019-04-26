@@ -11,7 +11,7 @@ from six.moves import range, zip, cPickle
 
 import numpy as np
 
-from odin.config import get_rng
+from odin.autoconfig import get_rng
 from odin.training.callbacks import *
 from odin.fuel import Dataset, as_data
 from odin import fuel, backend as K, nnet as N

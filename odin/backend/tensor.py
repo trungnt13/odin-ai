@@ -13,7 +13,7 @@ import scipy as sp
 import tensorflow as tf
 from tensorflow.python.ops import init_ops
 
-from odin.config import (get_session, get_ngpu, get_ncpu, get_ncpu_native,
+from odin.autoconfig import (get_session, get_ngpu, get_ncpu, get_ncpu_native,
                          get_floatX, get_random_state, randint)
 from odin.utils import as_tuple, uuid, is_number, is_string, is_same_shape
 from odin.backend import role

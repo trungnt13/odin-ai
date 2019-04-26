@@ -23,7 +23,7 @@ from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid,
                         wprint, eprint, segment_list, defaultdictkey,
                         array_size)
-from odin.config import EPS, get_ngpu
+from odin.autoconfig import EPS, get_ngpu
 from odin.ml.base import DensityMixin, BaseEstimator, TransformerMixin
 
 # minimum batch size that will be optimal to transfer

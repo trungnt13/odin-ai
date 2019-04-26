@@ -14,7 +14,7 @@ from collections import OrderedDict, Iterator, defaultdict, MutableMapping, Mapp
 
 import numpy as np
 
-from odin.config import get_rng
+from odin.autoconfig import get_rng
 from odin.utils import async, is_string, ctext, as_tuple
 
 # ===========================================================================

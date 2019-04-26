@@ -52,7 +52,6 @@ import numpy as np
 import tensorflow as tf
 from scipy.signal import lfilter
 
-from odin import config
 from odin.fuel import Dataset, MmapData, MmapDict
 from odin.utils import (is_number, cache_memory, is_string, as_tuple,
                         get_all_files, is_pickleable, Progbar, mpi, ctext,

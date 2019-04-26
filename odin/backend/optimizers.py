@@ -13,7 +13,7 @@ from collections import OrderedDict, defaultdict
 import numpy as np
 import tensorflow as tf
 
-from odin.config import CONFIG, get_session
+from odin.autoconfig import CONFIG, get_session
 from odin.utils import as_tuple, is_number, uuid, ctext
 from odin.utils.cache_utils import cache_memory
 from odin.backend.role import (add_roles, Auxiliary, LearningRate, OptimizerHyperParameter,

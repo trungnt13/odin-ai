@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from six.moves import cPickle, builtins
 
 from odin.utils import is_string, is_path, as_tuple
-from odin.config import (auto_config, get_floatX, get_session,
+from odin.autoconfig import (auto_config, get_floatX, get_session,
                          get_rng, randint, get_random_seed)
 auto_config()
 floatX = get_floatX()

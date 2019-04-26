@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin.utils import is_number, as_tuple
-from odin.config import EPS
+from odin.autoconfig import EPS
 from odin.backend.role import (AccuracyValue, return_roles, DifferentialLoss,
                                ConfusionMatrix, add_roles)
 from odin.backend.tensor import argsort, dimshuffle, to_nonzeros, to_llr

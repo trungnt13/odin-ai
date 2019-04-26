@@ -4,7 +4,7 @@ from six.moves import builtins
 
 import tensorflow as tf
 
-from odin.config import randint
+from odin.autoconfig import randint
 from odin.backend.helpers import *
 
 def softplus_inverse(x):

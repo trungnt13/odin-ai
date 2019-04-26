@@ -21,7 +21,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 
 from odin.backend.helpers import get_all_variables, get_value
-from odin.config import get_session
+from odin.autoconfig import get_session
 
 
 class BasicRNNCell(RNNCell):

@@ -35,7 +35,7 @@ with warnings.catch_warnings():
   _tf_distribution_types = tuple(_tf_distribution_types)
 
 # ====== O.D.I.N stuffs ====== #
-from odin.config import get_session
+from odin.autoconfig import get_session
 from odin.utils.cache_utils import cache_memory
 from odin.utils import (dict_union, as_list, flatten_list, as_tuple, is_string,
                         decorators, batching, Progbar)

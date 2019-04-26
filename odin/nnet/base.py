@@ -19,7 +19,7 @@ from six import add_metaclass, types, string_types
 import numpy as np
 
 from odin import backend as K
-from odin.config import randint
+from odin.autoconfig import randint
 from odin.utils import (as_tuple, as_list, uuid, cache_memory, is_number,
                         is_string, is_path, is_primitives, ctext,
                         flatten_list, get_all_files, is_pickleable,
