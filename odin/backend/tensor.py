@@ -201,7 +201,8 @@ def log_norm(x, axis=1, scale_factor=10000):
     return np.log1p(
         x / (np.sum(x, axis=axis, keepdims=True) + np.finfo(x.dtype).eps) * scale_factor)
   else:
-    raise ValueError("Only support numpy.ndarray or tensorflow.Tensor")
+    raise ValueError(
+        "Only support numpy.ndarray or tensorflow.Tensor, but given: %s" % str(type(x)))
 
 def delog_norm(x, x_sum=1, scale_factor=10000):
   """ This perform de-log normalization of `log_norm` values

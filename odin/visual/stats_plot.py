@@ -213,3 +213,67 @@ def plot_series_statistics(observed=None, expected=None,
   if return_indices:
     ret.append(sort_indices)
   return ax if len(ret) == 1 else tuple(ret)
+
+# ===========================================================================
+# Others
+# ===========================================================================
+def plot_relative_series(X, row_name=None, col_name=None,
+                         linestyle='--', linewidth=1,
+                         markerstyle='o', markersize=32,
+                         grid=True, fontsize=12, text_rotation=0,
+                         ax=None):
+  """ First row in X will be used as baseline
+
+  """
+  import seaborn
+  X = np.asarray(X)
+  assert X.ndim == 2, \
+  "Matrix must be provided for X, for example, each system in row, " + \
+  "and different score type in column"
+  n_row, n_col = X.shape
+  if row_name is None:
+    row_name = ["Row#%d" % i for i in range(n_row)]
+  if col_name is None:
+    col_name = ["Col#%d" % i for i in range(n_col)]
+  assert n_row == len(row_name)
+  assert n_col == len(col_name)
+
+  colors = seaborn.color_palette(n_colors=n_col)
+
+  # ====== normalize X to relative different to the first row ====== #
+  min_ = np.min(X)
+  max_ = np.max(X)
+
+  baseline = X[:1, :]
+  X = X - baseline
+  y_min = 0
+  y_max = np.max(X)
+
+  ids = np.arange(n_row)
+
+  ax = to_axis2D(ax)
+  for col_idx in range(n_col):
+    ax.plot(X[:, col_idx], color=colors[col_idx],
+            linestyle='--', linewidth=1, alpha=0.5,
+            label=col_name[col_idx])
+    ax.scatter(ids, X[:, col_idx],
+               color=colors[col_idx], s=markersize, marker=markerstyle,
+               alpha=0.8)
+
+  ax.set_xticks(ids)
+  ax.set_xticklabels(row_name, fontsize=fontsize, rotation=text_rotation)
+
+  ax.set_yticks(np.linspace(y_min, y_max, 5))
+  ax.set_yticklabels(['%.2f' % i for i in np.linspace(min_, max_, 5)],
+                     fontsize=fontsize)
+
+  if bool(grid):
+    ax.set_axisbelow(True)
+    ax.grid(True, linewidth=0.5, alpha=0.5)
+
+  lg = ax.legend(fontsize=fontsize + 2)
+  for line in lg.get_lines():
+    line.set_linewidth(3)
+    line.set_alpha(0.8)
+
+  return ax

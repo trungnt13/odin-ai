@@ -448,6 +448,19 @@ def subplot(*arg, **kwargs):
     subplot.set_title(kwargs['title'])
   return subplot
 
+def plot_frame(ax=None, left=None, right=None, top=None, bottom=None):
+  """ Turn on, off the frame (i.e. the bounding box of an axis) """
+  ax = to_axis(ax)
+  if top is not None:
+    ax.spines['top'].set_visible(bool(top))
+  if right is not None:
+    ax.spines['right'].set_visible(bool(right))
+  if bottom is not None:
+    ax.spines['bottom'].set_visible(bool(bottom))
+  if left is not None:
+    ax.spines['left'].set_visible(bool(left))
+  return ax
+
 def plot_aspect(aspect=None, adjustable=None, ax=None):
   """
   aspect : {'auto', 'equal'} or num
@@ -936,13 +949,13 @@ def plot_scatter_layers(x_y_val, ax=None,
   return ax
 
 def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
-                         colormap='bwr', marker='o', size=4.0, alpha=0.8,
-                         elev=None, azim=None,
-                         ticks_off=True, grid=True,
-                         colorbar=False, colorbar_horizontal=False,
-                         legend_enable=True,
-                         legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-                         n_samples=None, fontsize=8, title=None):
+              colormap='bwr', marker='o', size=4.0, alpha=0.8,
+              elev=None, azim=None,
+              ticks_off=True, grid=True,
+              colorbar=False, colorbar_horizontal=False, colorbar_ticks=None,
+              legend_enable=True,
+              legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
+              n_samples=None, fontsize=8, title=None):
   """
   Parameters
   ----------
@@ -1006,7 +1019,12 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
     if colorbar and idx == 0:
       cba = plt.colorbar(_, shrink=0.99, pad=0.01,
         orientation='horizontal' if colorbar_horizontal else 'vertical')
-      cba.set_ticks(np.linspace(min_val, max_val, num=8 - 1))
+      if colorbar_ticks is not None:
+        cba.set_ticks(np.linspace(min_val, max_val,
+                      num=len(colorbar_ticks)))
+        cba.set_ticklabels(colorbar_ticks)
+      else:
+        cba.set_ticks(np.linspace(min_val, max_val, num=8 - 1))
       cba.ax.tick_params(labelsize=fontsize)
       # if len(name) > 0:
       #   cba.set_label(name, fontsize=fontsize)

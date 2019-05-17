@@ -444,6 +444,7 @@ def summary(x, axis=None, shorten=False):
     s += "    Std : %g\n" % std
     s += "#Samples: %d\n" % len(x)
     s += "Samples : %s\n" % samples
+    s += "Sparsity: %.4f\n" % sparsity_percentage(x)
   else:
     s += "{#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}" %\
     (ctext(len(x), 'cyan'),
