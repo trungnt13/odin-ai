@@ -337,7 +337,9 @@ def auto_config(config=None):
     gpu_info = [gpu_info[int(i)] for i in all_gpu]
   dev['gpu'] = gpu_info
   dev['gpu_indices'] = [
-      int(i) for i in str(os.environ['CUDA_VISIBLE_DEVICES']).split(',')]
+      int(i)
+      for i in str(os.environ['CUDA_VISIBLE_DEVICES']).split(',')
+      if len(i) > 0 and i.isdigit()]
 
   # ====== Log the configuration ====== #
   def print_log(tag, value, nested=False):
