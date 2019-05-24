@@ -75,6 +75,7 @@ setup(
                   'requests'],
         'audio': ['soundfile',
                   'resampy'],
-        'docs': ['sphinx', 'sphinx_rtd_theme']
+        'docs': ['sphinx',
+                 'sphinx_rtd_theme']
     },
     zip_safe=False)
