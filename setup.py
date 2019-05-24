@@ -1,6 +1,8 @@
 from os import path
 from setuptools import find_packages, setup
 
+_ODIN_VERSION_ = '0.2.0'
+
 def get_tensorflow_version():
   import subprocess
   try:
@@ -25,7 +27,7 @@ of organized networks.
 
 setup(
     name='odin-ai',
-    version='0.1.6',
+    version=_ODIN_VERSION_,
     description="Deep learning for research and production",
     long_description=long_description,
     url='https://github.com/imito/odin-ai',
