@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import os
-import io
+import re
 import sys
 # import uuid
 import time
@@ -12,7 +12,6 @@ import shutil
 import timeit
 import inspect
 import tarfile
-import numbers
 import tempfile
 import platform
 import argparse
@@ -22,8 +21,6 @@ from multiprocessing import cpu_count, Lock, current_process
 from collections import OrderedDict, deque, Iterable, Iterator, Mapping
 from itertools import islice, tee, chain
 
-from six import string_types
-from six.moves import cPickle
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import URLError, HTTPError
 
@@ -137,7 +134,6 @@ def UnitTimer(factor=1, name=None):
       ctext((end - start) / factor, 'cyan'),
       '(sec)')
 
-
 # ===========================================================================
 # Basics
 # ===========================================================================
@@ -173,83 +169,9 @@ def is_same_shape(shape1, shape2):
       return False
   return True
 
-def is_fileobj(f):
-  """ Check if an object `f` is intance of FileIO object created
-  by `open()`"""
-  return isinstance(f, io.TextIOBase) or \
-      isinstance(f, io.BufferedIOBase) or \
-      isinstance(f, io.RawIOBase) or \
-      isinstance(f, io.IOBase)
-
-def is_callable(x):
-  return hasattr(x, '__call__')
-
-def is_string(s):
-  return isinstance(s, string_types)
-
-def is_path(path):
-  if is_string(path):
-    try:
-      os.path.exists(path)
-      return True
-    except Exception as e:
-      return False
-  return False
-
-
-def is_number(i):
-  return isinstance(i, numbers.Number)
-
-
-def is_bool(b):
-  return isinstance(b, type(True))
-
-
-def is_primitives(x, inc_ndarray=True, exception_types=[]):
-  """Primitive types include: number, string, boolean, None
-  and numpy.ndarray (optional) and numpy.generic (optional)
-
-  Parameters
-  ----------
-  inc_ndarray: bool
-      if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
-  """
-  # complex list or Mapping
-  if isinstance(x, (tuple, list)):
-    return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types)
-               for i in x)
-  elif isinstance(x, Mapping):
-    return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types) and
-               is_primitives(j, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types)
-               for i, j in x.items())
-  # check for number, string, bool, and numpy array
-  if is_number(x) or is_string(x) or is_bool(x) or x is None or \
-  (any(isinstance(x, t) for t in exception_types)) or \
-  (inc_ndarray and isinstance(x, (numpy.ndarray, numpy.generic))):
-    return True
-  return False
-
-
 def type_path(obj):
   clazz = type(obj)
   return clazz.__module__ + "." + clazz.__name__
-
-
-def is_lambda(v):
-  LAMBDA = lambda: 0
-  return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
-
-
-def is_pickleable(x):
-  try:
-    cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
-    return True
-  except cPickle.PickleError:
-    return False
-
 
 def iter_chunk(it, n):
   """ Chunking an iterator into small chunk of size `n`
@@ -261,28 +183,6 @@ def iter_chunk(it, n):
   while obj:
     yield obj
     obj = list(islice(it, n))
-
-
-def to_bytes(x, nbytes=None, order='little'):
-  """ Convert some python object to bytes array, support type:
-  * string, unicode
-  * integer
-  * numpy.ndarray
-
-  Note
-  ----
-  This method is SLOW
-  """
-  if is_string(x):
-    return x.encode()
-  elif isinstance(x, int):
-    return x.to_bytes(nbytes, order, signed=False)
-  elif isinstance(x, np.ndarray):
-    return x.tobytes()
-  else:
-    raise ValueError("Not support bytes conversion for type: %s" %
-        type(x).__name__)
-
 
 def batching(batch_size, n=None, start=0, end=None, seed=None):
   """
@@ -336,16 +236,13 @@ def read_lines(file_path):
       lines.append(i[:-1] if i[-1] == '\n' else i)
   return lines
 
-
 # ===========================================================================
 # Others
 # ===========================================================================
 def raise_return(e):
   raise e
 
-
 _CURRENT_STDIO = None
-
 
 class _LogWrapper():
 
@@ -934,75 +831,12 @@ class ArgController(object):
 # ===========================================================================
 # Simple math and processing
 # ===========================================================================
-def as_tuple(x, N=None, t=None):
-  """
-  Coerce a value to a tuple of given length (and possibly given type).
-
-  Parameters
-  ----------
-  x : {value, iterable}
-  N : {integer}
-      length of the desired tuple
-  t : {type, call-able, optional}
-      required type for all elements
-
-  Returns
-  -------
-  tuple
-      ``tuple(x)`` if `x` is iterable, ``(x,) * N`` otherwise.
-
-  Raises
-  ------
-  TypeError
-      if `type` is given and `x` or any of its elements do not match it
-  ValueError
-      if `x` is iterable, but does not have exactly `N` elements
-
-  Note
-  ----
-  This function is adpated from Lasagne
-  Original work Copyright (c) 2014-2015 lasagne contributors
-  All rights reserved.
-
-  LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE
-  """
-  # special case numpy array
-  if not isinstance(x, tuple):
-    if isinstance(x, (types.GeneratorType, list)):
-      x = tuple(x)
-    else:
-      x = (x,)
-  # ====== check length ====== #
-  if is_number(N):
-    N = int(N)
-    if len(x) == 1:
-      x = x * N
-    elif len(x) != N:
-      raise ValueError('x has length=%d, but required length N=%d' %
-                       (len(x), N))
-  # ====== check type ====== #
-  if t is None:
-    filter_func = lambda o: True
-  elif isinstance(t, type) or isinstance(t, (tuple, list)):
-    filter_func = lambda o: isinstance(o, t)
-  elif hasattr(t, '__call__'):
-    filter_func = t
-  else:
-    raise ValueError("Invalid value for `t`: %s" % str(t))
-  if not all(filter_func(v) for v in x):
-    raise TypeError("expected a single value or an iterable "
-                    "of {0}, got {1} instead".format(t.__name__, x))
-  return x
-
 def as_tuple_of_shape(x):
   if not isinstance(x, (tuple, list)):
     x = (x,)
   if is_number(x[0]):
     x = (x,)
   return x
-
-def as_list(x, N=None, t=None):
-  return list(as_tuple(x, N, t))
 
 def axis_normalize(axis, ndim,
                    return_tuple=False):
