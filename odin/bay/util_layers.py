@@ -18,6 +18,22 @@ class ReduceMean(Layer):
     if isinstance(x, (tuple, list)) else \
     tf.reduce_mean(x, axis=self.axis, keepdims=self.keepdims)
 
+class Sampling(Layer):
+  """ Sample the output from tensorflow-probability
+  distribution layers """
+
+  def __init__(self, n_samples=None, **kwargs):
+    super(Sampling, self).__init__(**kwargs)
+    self.n_samples = n_samples
+
+  def call(self, x):
+    assert isinstance(x, Distribution) and hasattr(x, '_keras_history'), \
+    "Input to this layer must be instance of tensorflow_probability Distribution"
+    if self.n_samples is not None:
+      return x.sample(self.n_samples)
+    else:
+      return tf.convert_to_tensor(x)
+
 class Moments(Layer):
   """ Moments """
 
