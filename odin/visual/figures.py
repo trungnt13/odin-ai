@@ -1058,13 +1058,15 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
   return ax
 
 def plot_scatter(x, y=None, z=None,
-                 color='b', marker='.', size=4.0,
-                 ax=None,
+                 color='b', marker='.', size=4.0, alpha=1,
+                 linewidths=None, linestyle='-',
+                 facecolors=None, edgecolors=None,
                  elev=None, azim=None,
                  ticks_off=True, grid=True,
                  legend_enable=True,
                  legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-                 n_samples=None, fontsize=8, title=None):
+                 n_samples=None, fontsize=8,
+                 ax=None, title=None):
   ''' Plot the amplitude envelope of a waveform.
 
   Parameters
@@ -1146,10 +1148,16 @@ def plot_scatter(x, y=None, z=None,
     # plotting
     if is_3D_mode:
       _ = ax.scatter(x_, y_, z_,
-                     color=style[0], marker=style[1], s=style[2])
+                     color=style[0], marker=style[1], s=style[2],
+                     alpha=alpha, linewidths=linewidths,
+                     edgecolors=edgecolors, facecolors=facecolors,
+                     linestyle=linestyle)
     else:
       _ = ax.scatter(x_, y_,
-                     color=style[0], marker=style[1], s=style[2])
+                     color=style[0], marker=style[1], s=style[2],
+                     alpha=alpha, linewidths=linewidths,
+                     edgecolors=edgecolors, facecolors=facecolors,
+                     linestyle=linestyle)
     axes.append(_)
     # make the shortest name
     name = [i for i in name if len(i) > 0]
@@ -2175,7 +2183,7 @@ def plot_close():
   plt.close('all')
 
 def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
-              tight_plot=False, clear_all=True, log=True):
+              tight_plot=False, clear_all=True, log=False):
   """
   Parameters
   ----------
