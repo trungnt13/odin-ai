@@ -1,7 +1,6 @@
 from numbers import Number
 
 import numpy as np
-import scipy as sp
 
 from sklearn.mixture import GaussianMixture
 from sklearn.utils.extmath import softmax

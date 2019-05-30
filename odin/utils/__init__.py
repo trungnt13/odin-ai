@@ -990,7 +990,7 @@ if sys.version_info[0] == 2:
 else:
   from six.moves.urllib.request import urlretrieve
 
-def get_file(fname, origin, outdir):
+def get_file(fname, origin, outdir, verbose=False):
   '''
   Parameters
   ----------
@@ -1005,15 +1005,18 @@ def get_file(fname, origin, outdir):
       shutil.rmtree(fpath)
   # ====== download package ====== #
   if not os.path.exists(fpath):
-    prog = Progbar(target=-1,
-                   name="Downloading: %s" % os.path.basename(origin),
-                   print_report=True, print_summary=True)
+    if verbose:
+      prog = Progbar(target=-1,
+                     name="Downloading: %s" % os.path.basename(origin),
+                     print_report=True, print_summary=True)
 
     def dl_progress(count, block_size, total_size):
-      if prog.target < 0:
-        prog.target = total_size
-      else:
-        prog.add(count * block_size - prog.seen_so_far)
+      if verbose:
+        if prog.target < 0:
+          prog.target = total_size
+        else:
+          prog.add(count * block_size - prog.seen_so_far)
+    ###
     error_msg = 'URL fetch failure on {}: {} -- {}'
     try:
       try:
