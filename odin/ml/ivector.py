@@ -70,7 +70,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                allow_rollback=True, exit_on_error=False,
                downsample=1, stochastic_downsample=True,
                device='gpu', ncpu=1, gpu_factor_gmm=80, gpu_factor_tmat=3,
-               dtype='float32', seed=5218, name=None):
+               dtype='float32', seed=1234, name=None):
     super(Ivector, self).__init__()
     # ====== auto store arguments ====== #
     for key, val in locals().items():
@@ -105,7 +105,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                         stochastic_downsample=self.stochastic_downsample,
                         device=self.device,
                         ncpu=self.ncpu, gpu_factor=self.gpu_factor_gmm,
-                        seed=5218,
+                        seed=1234,
                         path=self.gmm_path,
                         name="IvecGMM_%s" % (self.name if self.name is not None else
                                              str(self._rand.randint(10e8))))
@@ -125,7 +125,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
                              niter=self.niter_tmat, dtype=self.dtype,
                              device=self.device,
                              ncpu=self.ncpu, gpu_factor=self.gpu_factor_tmat,
-                             cache_path='/tmp', seed=5218,
+                             cache_path='/tmp', seed=1234,
                              path=self.tmat_path,
                              name='IvecTmat_%s' % (self.name if self.name is not None else
                                                    str(self._rand.randint(10e8))))

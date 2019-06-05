@@ -309,7 +309,7 @@ def bnf(augmentation=None):
                              network=bnf_network,
                              remove_non_speech=True,
                              stack_context=10, pre_mvn=True,
-                             batch_size=5218),
+                             batch_size=1234),
       # ====== normalization ====== #
       pp.speech.AcousticNorm(input_name=('bnf',),
                              mean_var_norm=True,

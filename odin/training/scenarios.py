@@ -121,7 +121,7 @@ def train(X, y_true, y_pred, train_data,
           prior_weights=None, sample_weights=None,
           batch_size=256, epochs=8, shuffle=True,
           optimizer='rmsprop', optz_kwargs={'lr': 0.001}, updates=None,
-          init_vars=True, labels=None, seed=5218, verbose=2):
+          init_vars=True, labels=None, seed=1234, verbose=2):
   """
 
   Parameters

@@ -18,7 +18,7 @@ from odin.utils import uuid, run_script
 from odin import backend as K, nnet as N
 from odin.autoconfig import get_ngpu, get_floatX, get_backend
 
-np.random.seed(12082518)
+np.random.seed(1234)
 
 
 def random(*shape):
@@ -208,8 +208,8 @@ class RNNTest(unittest.TestCase):
                    dtype='float32', name='X')
     for rnn_mode in ('lstm', 'rnn_relu', 'gru'):
       for num_layers in [1, 2]:
-        for W_init in [init_ops.glorot_uniform_initializer(seed=5218),
-                       init_ops.random_normal_initializer(seed=5218)]:
+        for W_init in [init_ops.glorot_uniform_initializer(seed=1234),
+                       init_ops.random_normal_initializer(seed=1234)]:
           for b_init in [0, 1]:
             for bidirectional in (True, False):
               for skip_input in (False,):
@@ -293,7 +293,7 @@ class RNNTest(unittest.TestCase):
                 assert y1 == s1
 
   def test_save_cudnn_rnn(self):
-    np.random.seed(5218)
+    np.random.seed(1234)
     X = K.variable(np.random.rand(25, 12, 8))
     num_layers = 2
     num_gates = 'lstm'
@@ -318,14 +318,14 @@ class RNNTest(unittest.TestCase):
     test_script = r"""
     from __future__ import print_function, division, absolute_import
     import os
-    os.environ['ODIN'] = 'gpu,float32,seed=5218'
+    os.environ['ODIN'] = 'gpu,float32,seed=1234'
     import pickle
     import numpy as np
     import tensorflow as tf
     from tensorflow.python.ops import init_ops
     from odin.autoconfig import randint
     from odin import backend as K, nnet as N
-    np.random.seed(5218)
+    np.random.seed(1234)
     X = K.variable(np.random.rand(25, 12, 8))
     rnn = N.deserialize("%s", force_restore_vars=True)
     y = rnn(X)
@@ -352,7 +352,7 @@ class RNNTest(unittest.TestCase):
     assert np.allclose(float(s2), (y**2).sum())
 
   def test_simple_rnn(self):
-    np.random.seed(12082518)
+    np.random.seed(1234)
     x = np.random.rand(128, 8, 32)
     #
     X = K.placeholder(shape=(None, 8, 32))

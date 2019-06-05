@@ -346,8 +346,8 @@ def _serialize_function_sandbox(function, source):
       sandbox[name] = (typ, val)
   # ====== not seen the main function ====== #
   if not seen_main_function: # mark the main function with "_main"
-    sandbox['random_name_12082518'] = ('defined_function_main',
-                                       func_to_str(function))
+    sandbox['random_name_1234'] = ('defined_function_main',
+                                   func_to_str(function))
   return sandbox
 
 

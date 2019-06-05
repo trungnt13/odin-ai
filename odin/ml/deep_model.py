@@ -39,7 +39,7 @@ class NeuralClassifier(_NeuralEstimator):
                tol=1e-4, patience=3, rollback=True,
                batch_size=256, max_epoch=100, max_iter=None,
                optimizer='adadelta', learning_rate=1.0, class_weights=None,
-               dtype='float32', seed=5218, verbose=False,
+               dtype='float32', seed=1234, verbose=False,
                path=None, name=None):
     super(NeuralNetworkClassifier, self).__init__()
     if not isinstance(network, N.NNOp):

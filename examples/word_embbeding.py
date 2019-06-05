@@ -78,7 +78,7 @@ y = [labels_set.index(i) for i in labels]
 y = one_hot(np.array(y, dtype='int32'), nb_classes=nb_labels)
 
 n = X.shape[0]
-np.random.seed(1208)
+np.random.seed(1234)
 idx = np.random.permutation(n)
 X = X[idx]
 y = y[idx]
@@ -138,7 +138,7 @@ f_train = K.function([X, y], cost_train, updates)
 print('Build scoring function ...')
 f_score = K.function([X, y], cost_score)
 
-trainer = training.MainLoop(batch_size=128, seed=1208, shuffle_level=2)
+trainer = training.MainLoop(batch_size=128, seed=1234, shuffle_level=2)
 trainer.set_task(f_train, (X_train, y_train), epoch=args['epoch'], name='train')
 trainer.set_subtask(f_score, (X_valid, y_valid), freq=1., name='valid')
 trainer.set_callback([

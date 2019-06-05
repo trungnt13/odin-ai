@@ -224,7 +224,7 @@ def KL_divergence(P, Q):
 # ===========================================================================
 # Sampler
 # ===========================================================================
-def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
+def sampling_iter(it, k, p=None, return_iter=True, seed=1234,
                   progress_bar=None):
   """ Reservoir sampling, randomly choosing a sample of k items from a
   list S containing n items, where n is either a very large or unknown number.
@@ -243,7 +243,7 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
     probability (recommended in case `k` does not fit in the memory)
   return_iter : bool (default: True)
     if True, return an iteration of results instead of extracted list
-  seed : int (default: 5218)
+  seed : int (default: 1234)
     random seed for reproducibility
   progress_bar : {None, odin.utils.Progbar.ProgBar}
   """
@@ -313,7 +313,7 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=5218,
 # ===========================================================================
 # Statistics
 # ===========================================================================
-def sparsity_percentage(x, batch_size=5218):
+def sparsity_percentage(x, batch_size=1234):
   n_zeros = 0
   n_total = np.prod(x.shape)
   for start, end in batching(batch_size=batch_size, n=x.shape[0],
@@ -348,7 +348,7 @@ def logVMR(x, axis=None, logged_values=False):
 # ===========================================================================
 def classification_diagnose(X, y_true, y_pred,
                             num_samples=8, return_list=False, top_n=None,
-                            seed=5218):
+                            seed=1234):
   """
   Return
   ------

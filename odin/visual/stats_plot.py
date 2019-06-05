@@ -83,7 +83,7 @@ def plot_series_statistics(observed=None, expected=None,
   -------
   >>> import numpy as np
   >>> from matplotlib import pyplot as plt
-  >>> np.random.seed(5218)
+  >>> np.random.seed(1234)
   >>> x = np.random.randn(8000)
   >>> y = np.random.randn(8000)
   ...

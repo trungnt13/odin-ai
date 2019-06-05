@@ -4,7 +4,7 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=5218'
+os.environ['ODIN'] = 'float32,gpu,seed=1234'
 import timeit
 
 import numpy as np
@@ -53,7 +53,7 @@ print(ds)
 # ====== print data info ====== #
 if 'X' in ds and 'y' in ds:
   X, y = ds['X'], ds['y']
-  rand = np.random.RandomState(seed=5218)
+  rand = np.random.RandomState(seed=1234)
   n = X.shape[0]
   perm = rand.permutation(n)
   X, y = X[perm], y[perm]
@@ -243,7 +243,7 @@ def plot_epoch(task):
     curr_epoch = task.curr_epoch
     if not (curr_epoch < 5 or curr_epoch % 5 == 0):
       return
-  rand = np.random.RandomState(seed=5218)
+  rand = np.random.RandomState(seed=1234)
 
   X, y = X_test, y_test
   n_data = X.shape[0]
@@ -326,7 +326,7 @@ def plot_epoch(task):
   exit()
 # ====== training ====== #
 runner = T.MainLoop(batch_size=args.batch,
-                    seed=5218, shuffle_level=2,
+                    seed=1234, shuffle_level=2,
                     allow_rollback=False, verbose=2)
 runner.set_callbacks([
     T.NaNDetector(task_name=None, patience=-1, detect_inf=True),

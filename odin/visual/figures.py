@@ -46,7 +46,7 @@ def get_all_named_colors(to_hsv=False):
     colors = OrderedDict([(name, color) for color, name in by_hsv])
   return colors
 
-def generate_random_colors(n, seed=5218, lightness_value=None,
+def generate_random_colors(n, seed=1234, lightness_value=None,
                            return_hsl=False, return_hex=True):
   if seed is not None:
     rand = np.random.RandomState(seed)
@@ -71,7 +71,7 @@ def generate_random_colors(n, seed=5218, lightness_value=None,
                                      int(rgb[2] * 255)))
   return colors
 
-def generate_random_colormaps(n, seed=5218, bicolors=False):
+def generate_random_colormaps(n, seed=1234, bicolors=False):
   from matplotlib.colors import LinearSegmentedColormap
   color_maps = []
   interpolate_hsl = lambda h, s, l: \
@@ -98,7 +98,7 @@ def generate_random_colormaps(n, seed=5218, bicolors=False):
         name='Colormap%d' % i, colors=colors, N=256, gamma=1))
   return color_maps
 
-def generate_random_marker(n, seed=5218):
+def generate_random_marker(n, seed=1234):
   if n > len(marker_styles):
     raise ValueError("There are %d different marker styles, but need %d" %
       (len(marker_styles), n))
@@ -765,7 +765,7 @@ def _validate_color_marker_size_legend(n_samples,
   legend = [[None] * n_samples, # color
             [None] * n_samples, # marker
             [None] * n_samples] # size
-  seed = 5218
+  seed = 1234
   create_label_map = lambda labs, def_val, fn_gen: \
       ({labs[0]: def_val}
        if len(labs) == 1 else
@@ -841,7 +841,7 @@ def _downsample_scatter_points(x, y, z, n_samples, *args):
   # downsample all data
   if n_samples is not None and n_samples < len(x):
     n_samples = int(n_samples)
-    rand = np.random.RandomState(seed=5218)
+    rand = np.random.RandomState(seed=1234)
     ids = rand.permutation(len(x))[:n_samples]
     x = np.array(x)[ids]
     y = np.array(y)[ids]

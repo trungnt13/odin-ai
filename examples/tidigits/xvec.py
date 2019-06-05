@@ -5,7 +5,7 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 import os
-os.environ['ODIN'] = 'gpu,float32,seed=12082518'
+os.environ['ODIN'] = 'gpu,float32,seed=1234'
 from collections import defaultdict
 
 import numpy as np
@@ -105,7 +105,7 @@ f_z2 = K.function(inputs=X, outputs=z2, training=False)
 # Training
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
+task = training.MainLoop(batch_size=args.batch, seed=1234, shuffle_level=2,
                          allow_rollback=True, labels=labels)
 task.set_checkpoint(MODEL_PATH, f)
 task.set_callbacks([

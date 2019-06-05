@@ -1515,7 +1515,7 @@ def cudnn_rnn(X, num_units, rnn_mode,
         'input_mode': input_mode,
         'direction': direction,
         'dropout': dropout,
-        'seed': get_random_state().randint(low=0, high=5218, dtype='int32'),
+        'seed': get_random_state().randint(low=0, high=1234, dtype='int32'),
         'name': name
     }
     if is_training is None:

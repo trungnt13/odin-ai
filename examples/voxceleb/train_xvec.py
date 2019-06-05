@@ -112,7 +112,7 @@ f_z = K.function(inputs=X, outputs=z, training=False)
 # ===========================================================================
 if TRAIN_MODEL:
   print('Start training ...')
-  task = training.MainLoop(batch_size=args.batch, seed=120825, shuffle_level=2,
+  task = training.MainLoop(batch_size=args.batch, seed=1234, shuffle_level=2,
                            allow_rollback=True)
   task.set_checkpoint(MODEL_PATH, x_vec)
   task.set_callbacks([
@@ -167,7 +167,7 @@ csv2mat(exp_dir=EXP_DIR)
 # ===========================================================================
 # Evaluate and save the log
 # ===========================================================================
-np.random.seed(52181208)
+np.random.seed(87654321)
 shape = inputs[0].shape
 X = np.random.rand(64, shape[1].value, shape[2].value).astype('float32')
 Z = f_z(X)

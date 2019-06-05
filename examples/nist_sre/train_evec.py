@@ -114,7 +114,7 @@ f_z = K.function(inputs=X, outputs=z,
 # Create trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=BATCH_SIZE, seed=120825,
+task = training.MainLoop(batch_size=BATCH_SIZE, seed=1234,
                          shuffle_level=2, allow_rollback=False,
                          verbose=4)
 task.set_checkpoint(path=MODEL_PATH, obj=x_vec,

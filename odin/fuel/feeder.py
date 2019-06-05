@@ -311,7 +311,7 @@ class Feeder(Data):
   >>>     F.recipes.TransLoader(ds['transcription.dict'], dtype='int32'),
   >>>     F.recipes.CreateBatch()
   >>> ])
-  >>> for i, j in feeder.set_batch(12, seed=1208251813, shuffle_level=2):
+  >>> for i, j in feeder.set_batch(12, seed=1234, shuffle_level=2):
   >>>     for x, y in zip(i, j):
   >>>         print(transcription_test[str(x.tolist())] == y)
 

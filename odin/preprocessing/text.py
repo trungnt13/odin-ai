@@ -552,7 +552,7 @@ class Tokenizer(object):
     elif self.__engine == 'odin':
       processor = self._preprocess_docs_odin
     # ====== start processing ====== #
-    prog = Progbar(target=1208, name="Fitting tokenizer",
+    prog = Progbar(target=1234, name="Fitting tokenizer",
                    print_report=True, print_summary=True)
     start_time = timeit.default_timer()
     for nb_docs, doc in processor(texts, vocabulary, keep_order=False):
@@ -642,7 +642,7 @@ class Tokenizer(object):
       target_len = len(texts)
       auto_adjust_len = False
     else:
-      target_len = 1208
+      target_len = 1234
       auto_adjust_len = True
     prog = Progbar(target=target_len, name="Tokenize Transform",
                    print_report=True, print_summary=True)

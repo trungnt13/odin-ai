@@ -142,7 +142,7 @@ class LogisticRegression(BaseEstimator, Evaluable):
                tol=1e-4, patience=3, rollback=True,
                batch_size=1024, max_epoch=100, max_iter=None,
                optimizer='adadelta', learning_rate=1.0, class_weight=None,
-               dtype='float32', seed=5218,
+               dtype='float32', seed=1234,
                verbose=False, path=None, name=None):
     super(LogisticRegression, self).__init__()
     # ====== basic dimensions ====== #

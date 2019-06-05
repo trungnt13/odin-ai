@@ -10,7 +10,7 @@ from odin import ml
 
 from sklearn.decomposition import PCA
 
-random_state = 5218
+random_state = 1234
 np.random.seed(random_state)
 path = '/tmp/tmp.pdf'
 # ===========================================================================

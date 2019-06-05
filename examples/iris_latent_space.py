@@ -4,7 +4,7 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=5218'
+os.environ['ODIN'] = 'float32,gpu,seed=1234'
 
 import numpy as np
 import tensorflow as tf

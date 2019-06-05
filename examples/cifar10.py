@@ -9,7 +9,7 @@ args = ArgController(
 ).parse()
 
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=12082518,log'
+os.environ['ODIN'] = 'float32,gpu,seed=87654321,log'
 
 import numpy as np
 import tensorflow as tf
@@ -69,7 +69,7 @@ f_pred = K.function(inputs[0], outputs['prob'], training=False)
 # ====== spliting the data ====== #
 idx = np.arange(len(X_train), dtype='int32')
 idx_train, idx_valid = train_valid_test_split(idx, train=0.8,
-                                              inc_test=False, seed=5218)
+                                              inc_test=False, seed=1234)
 X_valid = X_train[idx_valid]
 y_valid = y_train[idx_valid]
 X_train = X_train[idx_train]
@@ -79,7 +79,7 @@ print("#Valid:", X_valid.shape, y_valid.shape)
 print("#Test:", X_test.shape, y_test.shape)
 # ====== trainign ====== #
 print('Start training ...')
-task = training.MainLoop(batch_size=128, seed=120825, shuffle_level=2,
+task = training.MainLoop(batch_size=128, seed=1234, shuffle_level=2,
                          allow_rollback=True)
 task.set_checkpoint(MODEL_PATH, model)
 task.set_callbacks([
@@ -104,7 +104,7 @@ task.run()
 # ===========================================================================
 script = r"""
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=12082518'
+os.environ['ODIN'] = 'float32,gpu,seed=87654321'
 import pickle
 
 import numpy as np

@@ -20,7 +20,7 @@ def fast_tsne(*X, n_components=2, n_samples=None, perplexity=30.0,
               early_exaggeration=8.0, learning_rate=200.0, n_iter=1000,
               n_iter_without_progress=300, min_grad_norm=1e-7,
               metric="euclidean", init="random", verbose=0,
-              random_state=5218, method='barnes_hut', angle=0.5,
+              random_state=1234, method='barnes_hut', angle=0.5,
               n_jobs=4):
   """
   Parameters

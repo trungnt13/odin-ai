@@ -280,7 +280,7 @@ def visualize_latent_space(X_org, X_latent, name, labels, title):
   V.plot_figure(nrow=n_row + 1, ncol=16)
   # only select 3 random sample
   for i, idx in enumerate(
-      sampling_iter(it=range(n_samples), k= n_col, seed=5218)):
+      sampling_iter(it=range(n_samples), k= n_col, seed=1234)):
     x = X_org[idx]
     # latent tensor can be 3D or 4D
     z = X_latent[idx]

@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = 'gpu,float32,seed=12082518'
+os.environ['ODIN'] = 'gpu,float32,seed=1234'
 import shutil
 import pickle
 
@@ -193,7 +193,7 @@ if not os.path.exists(GMM_PATH) or args.gmm:
                downsample=GMM_DOWNSAMPLE,
                stochastic_downsample=GMM_STOCHASTIC,
                device='gpu',
-               seed=5218, path=GMM_PATH)
+               seed=1234, path=GMM_PATH)
   gmm.fit((ds[FEAT], train_files))
 else:
   with open(GMM_PATH, 'rb') as f:
@@ -293,7 +293,7 @@ with np.warnings.catch_warnings():
   print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
   scorer = ml.PLDA(n_phi=TV_DIM // 2, n_iter=12,
                    centering=True, wccn=True, unit_length=True,
-                   random_state=5218)
+                   random_state=1234)
   scorer.fit(X=X_train, y=y_true['train'])
   scorer.evaluate(X_test, y_true['test'], labels=labels)
   # ====== svm scoring ====== #
@@ -307,7 +307,7 @@ with np.warnings.catch_warnings():
   X_train = stats['train'][1]
   X_test = stats['test'][1]
   X_train, X_test = ml.fast_pca(X_train, X_test, n_components=args.tdim,
-                                algo='ppca', random_state=5218)
+                                algo='ppca', random_state=1234)
   # ====== GMM scoring ====== #
   print(ctext("==== '%s'" % "Super-Vector GMM-scoring-ova", 'cyan'))
   scorer = ml.GMMclassifier(strategy="ova",
@@ -320,7 +320,7 @@ with np.warnings.catch_warnings():
   print(ctext("==== '%s'" % "Super-Vector PLDA-scoring", 'cyan'))
   scorer = ml.PLDA(n_phi=TV_DIM // 2, n_iter=12,
                    centering=True, wccn=True, unit_length=True,
-                   random_state=5218)
+                   random_state=1234)
   scorer.fit(X=X_train, y=y_true['train'])
   scorer.evaluate(X_test, y_true['test'], labels=labels)
   # ====== svm scoring ====== #

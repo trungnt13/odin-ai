@@ -343,7 +343,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                batch_size_cpu='auto', batch_size_gpu='auto',
                downsample=1, stochastic_downsample=True,
                device='cpu', ncpu=1, gpu_factor=80,
-               seed=5218, path=None, name=None):
+               seed=1234, path=None, name=None):
     super(GMM, self).__init__()
     self._path = path if isinstance(path, string_types) else None
     # ====== set number of mixtures ====== #
@@ -1416,7 +1416,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
   def __init__(self, tv_dim, gmm, niter=16, dtype='float64',
                batch_size_cpu='auto', batch_size_gpu='auto',
                device='mix', ncpu=1, gpu_factor=3,
-               cache_path='/tmp', seed=5218,
+               cache_path='/tmp', seed=1234,
                path=None, name=None):
     super(Tmatrix, self).__init__()
     if not (isinstance(gmm, GMM) and gmm.is_initialized and gmm.is_fitted):

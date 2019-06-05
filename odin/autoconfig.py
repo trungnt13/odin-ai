@@ -208,7 +208,7 @@ def auto_config(config=None):
   floatX = 'float32'
   epsilon = 1e-8
   cnmem = 0.
-  seed = 1208251813
+  seed = 1234
   debug = False
   # number of devices
   ncpu = 0
@@ -405,7 +405,7 @@ def get_rng():
   """
   global _RNG_GENERATOR
   if _RNG_GENERATOR is None:
-    _RNG_GENERATOR = np.random.RandomState(seed=120825)
+    _RNG_GENERATOR = np.random.RandomState(seed=1234)
   return _RNG_GENERATOR
 
 get_random_state = get_rng

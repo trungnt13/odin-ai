@@ -12,7 +12,7 @@ import numpy as np
 from odin.ml import GMM
 from odin import visual as V
 
-np.random.seed(5218)
+np.random.seed(1234)
 nmix = 8
 pdf_path = '/tmp/tmp.pdf'
 

@@ -30,7 +30,7 @@ __all__ = [
 
 def fast_pca(*x, n_components=None, algo='rpca', y=None,
              batch_size=1024, return_model=False,
-             random_state=5218):
+             random_state=1234):
   """ A shortcut for many different PCA algorithms
 
   Parameters
@@ -97,7 +97,7 @@ def fast_pca(*x, n_components=None, algo='rpca', y=None,
     prog = Progbar(target=x_train.shape[0],
                    print_report=False, print_summary=False, name="Fitting PCA")
     for start, end in batching(batch_size=batch_size, n=x_train.shape[0],
-                               seed=5218):
+                               seed=1234):
       pca.partial_fit(x_train[start:end], check_input=False)
       prog.add(end - start)
   elif algo == 'ppca':

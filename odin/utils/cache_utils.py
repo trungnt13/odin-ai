@@ -61,7 +61,7 @@ def cache_disk(function):
   >>> import numpy as np
   >>> @cache_memory
   >>> def doit(x):
-  ...     y = np.random.rand(1208, 1208)
+  ...     y = np.random.rand(1234, 1234)
   ...     print("Function called:", np.sum(y))
   ...     return y
   >>> for _ in range(12):

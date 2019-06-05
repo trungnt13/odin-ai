@@ -43,7 +43,7 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
                max_iter=100, n_init=1,
                init_params='kmeans', n_components=1,
                centering=False, wccn=False, unit_length=False,
-               lda=False, concat=False, labels=None, seed=5218):
+               lda=False, concat=False, labels=None, seed=1234):
     super(GMMclassifier, self).__init__()
     self._strategy = str(strategy)
     self._n_components = int(n_components)
@@ -51,7 +51,7 @@ class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
     self._max_iter = int(max_iter)
     self._n_init = int(n_init)
     self._init_params = str(init_params)
-    self._seed = 5218 if not isinstance(seed, Number) else int(seed)
+    self._seed = 1234 if not isinstance(seed, Number) else int(seed)
     # ====== default attribute ====== #
     self._labels = labels
     self._feat_dim = None

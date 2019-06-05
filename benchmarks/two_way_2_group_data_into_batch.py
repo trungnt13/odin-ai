@@ -43,7 +43,7 @@ def group(batch):
     We assume the shape[0] (or length) of all "data" and "others" are
     the same
     """
-    rng = np.random.RandomState(1208)
+    rng = np.random.RandomState(1234)
     batch_size = 64
     indices = [range((b[1][0].shape[0] - 1) // batch_size + 1)
                for b in batch]
@@ -79,7 +79,7 @@ def group(batch):
 
 
 def group2(batch):
-    rng = np.random.RandomState(1208)
+    rng = np.random.RandomState(1234)
     batch_size = 64
     length = len(batch[0]) # size of 1 batch
     nb_data = len(batch[0][1])

@@ -24,7 +24,7 @@ class BackendTest(unittest.TestCase):
     pass
 
   def test_variable_creation(self):
-    np.random.seed(5218)
+    np.random.seed(1234)
     # ====== create by numpy array ====== #
     tmp = np.random.rand(12, 8).astype('float32')
     K.variable(value=tmp, dtype='float32', name='x', initialize=True)
@@ -40,8 +40,8 @@ class BackendTest(unittest.TestCase):
                    dtype='float32', name='y', initialize=True)
     self.assertTrue(np.all(K.eval(y) == np.full(shape=(12, 18), fill_value=8)))
     # ====== create by initializer ====== #
-    tmp = K.eval(init_ops.orthogonal_initializer(seed=5218)(shape=(8, 8)))
-    w = K.variable(value=init_ops.orthogonal_initializer(seed=5218),
+    tmp = K.eval(init_ops.orthogonal_initializer(seed=1234)(shape=(8, 8)))
+    w = K.variable(value=init_ops.orthogonal_initializer(seed=1234),
                shape=(8, 8),
                dtype='float32', name='w', initialize=True)
     self.assertTrue(np.all(K.eval(w) == tmp))
@@ -152,7 +152,7 @@ class BackendTest(unittest.TestCase):
                       K.eval(K.argsort(x)).shape)
 
   def test_basic_ops_value(self):
-    np.random.seed(12082518)
+    np.random.seed(1234)
     x = K.variable(np.random.randn(8, 8))
     y = K.variable(np.random.randn(8, 8))
     z = K.variable(np.random.randint(0, 2, size=(8, 8)),
@@ -191,7 +191,7 @@ class BackendTest(unittest.TestCase):
     self.assertEqual(round(np.sum(K.eval(K.switch(z, x, y))) * 100000), 139884)
 
   def test_linear_algebra_value(self):
-    np.random.seed(1208)
+    np.random.seed(1234)
     x = K.variable(np.random.randn(2, 4, 3))
     y = K.variable(np.random.rand(1, 2, 3, 5))
 
@@ -200,7 +200,7 @@ class BackendTest(unittest.TestCase):
     self.assertEqual(repr(np.sum(K.eval(z)))[:8],
                      "-1.0198305134529524"[:8])
 
-    np.random.seed(1208)
+    np.random.seed(1234)
     x = K.variable(np.random.randn(100, 3, 4, 5))
     y = K.variable(np.random.rand(100, 12, 5, 6))
     z = K.batched_dot(x, y)
@@ -288,7 +288,7 @@ class BackendTest(unittest.TestCase):
     self.assertEqual(K.ComputationGraph(y), tmp)
 
   def test_computational_graph2(self):
-    np.random.seed(1208)
+    np.random.seed(1234)
 
     X = K.variable(np.zeros((8, 12)), name='X')
     Y = K.variable(np.random.rand(12, 8), name='Y')
@@ -361,7 +361,7 @@ class BackendTest(unittest.TestCase):
     self.assertEqual(f()[0].shape, (25, 12, 18, 8))
 
   def test_segments_list(self):
-    for i in np.random.randint(120, 12082518, size=12):
+    for i in np.random.randint(120, 12342518, size=12):
       tmp = segment_list(list(range(i)), n_seg=12)
       # must be 12 segments
       self.assertEqual(len(tmp), 12)

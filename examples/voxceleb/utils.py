@@ -39,7 +39,7 @@ for path, channel, name in ds[FILE_LIST]:
 # some sampled files for testing
 SAMPLED_WAV_FILE = sampling_iter(it=sorted(WAV_FILES.items(),
                                            key=lambda x: x[0]),
-                                 k=8, seed=52181208)
+                                 k=8, seed=87654321)
 # ====== extract the list of all train files ====== #
 # mapping from name of training file to speaker label
 TRAIN_DATA = {}
@@ -75,7 +75,7 @@ def get_model_path(system_name, args):
 # ===========================================================================
 FRAME_SHIFT = 0.005
 
-def prepare_dnn_data(recipe, feat, utt_length, seed=52181208):
+def prepare_dnn_data(recipe, feat, utt_length, seed=87654321):
   """
   Return
   ------
@@ -163,7 +163,7 @@ def prepare_dnn_data(recipe, feat, utt_length, seed=52181208):
                              'test_%s_%d.pdf' % (feat, int(utt_length)))
   V.plot_figure(nrow=9, ncol=6)
   for i, (name, (start, end)) in enumerate(
-      sampling_iter(it=sorted(ids.items(), key=lambda x: x[0]), k=12, seed=52181208)):
+      sampling_iter(it=sorted(ids.items(), key=lambda x: x[0]), k=12, seed=87654321)):
     x = dat[start:end][:].astype('float32')
     ax = V.plot_spectrogram(x[np.random.randint(0, len(x))].T,
                             ax=(12, 1, i + 1), title='')

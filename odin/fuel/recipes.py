@@ -164,7 +164,7 @@ class Name2Label(FeederRecipe):
   converter_func: callbale (1 input arguments)
       for example, lambda name: 1 if 'true' in name else 0
       the return label then is duplicated for all data points in 1 file.
-      (e.g. X.shape = (1208, 13), then, transcription=[ret] * 1208)
+      (e.g. X.shape = (1234, 13), then, transcription=[ret] * 1234)
   ref_idx: int
       the new label will be duplicated based on the length of data
       at given idx

@@ -148,7 +148,7 @@ class FuelTest(unittest.TestCase):
 
     def test_feeders(self):
         with utils.TemporaryDirectory() as temppath:
-            np.random.seed(1208251813)
+            np.random.seed(1234)
             transcription_test = {}
             # ====== create fake dataset ====== #
             ds = F.Dataset(os.path.join(temppath, 'ds'))
@@ -228,7 +228,7 @@ class FuelTest(unittest.TestCase):
             ])
             n = 0
             X = []
-            for i, j in feeder.set_batch(12, seed=1208251813, shuffle_level=2):
+            for i, j in feeder.set_batch(12, seed=1234, shuffle_level=2):
                 X += i.ravel().tolist()
                 n += i.shape[0]
                 for x, y in zip(i, j):

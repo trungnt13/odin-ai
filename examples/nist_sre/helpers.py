@@ -32,7 +32,7 @@ class Config(object):
   WINDOW = 'hamm'
   NFFT = 512
   # Random seed for reproducibility
-  SUPER_SEED = 52181208
+  SUPER_SEED = 87654321
 
 class SystemStates(Enum):
   """ SystemStates """

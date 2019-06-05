@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = 'gpu,float32,seed=12082518'
+os.environ['ODIN'] = 'gpu,float32,seed=1234'
 import shutil
 import pickle
 
@@ -72,7 +72,7 @@ ivec = ml.Ivector(path=EXP_DIR, nmix=NMIX, tv_dim=TV_DIM,
                   allow_rollback=True, exit_on_error=False,
                   downsample=GMM_DOWNSAMPLE, stochastic_downsample=GMM_STOCHASTIC,
                   device='gpu', ncpu=1, gpu_factor_gmm=80, gpu_factor_tmat=3,
-                  dtype=DTYPE, seed=5218, name=None)
+                  dtype=DTYPE, seed=1234, name=None)
 ivec.fit(X=X, indices=train,
          extract_ivecs=True, keep_stats=True)
 ivec.transform(X=X, indices=test,
@@ -99,7 +99,7 @@ scorer.evaluate(X_test, y_test, labels=labels)
 print(ctext("==== '%s'" % "Ivec PLDA-scoring", 'cyan'))
 scorer = ml.PLDA(n_phi=100, n_iter=12,
                  centering=True, wccn=True, unit_length=True,
-                 random_state=5218)
+                 random_state=1234)
 scorer.fit(X=X_train, y=y_train)
 scorer.evaluate(X_test, y_test, labels=labels)
 # ====== svm scoring ====== #

@@ -27,7 +27,7 @@ for feat in ('bnf', 'mspec', 'spec', 'mfcc'):
   y = np.asarray(y)
   with UnitTimer(name="TSNE: feat='%s' N=%d" % (feat, X_pca.shape[0])):
     X_tsne = TSNE(n_components=2).fit_transform(X_pca)
-  colors = V.generate_random_colors(len(labels), seed=12082518)
+  colors = V.generate_random_colors(len(labels), seed=1234)
   # conver y to appropriate color
   y = [colors[labels.index(i)] for i in y]
   legend = {c: str(i) for i, c in enumerate(colors)}

@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import os
-os.environ['ODIN'] = 'gpu,float32,seed=12082518'
+os.environ['ODIN'] = 'gpu,float32,seed=1234'
 from collections import OrderedDict
 
 import numpy as np
@@ -218,7 +218,7 @@ f_d = K.function(inputs=inputs, outputs=D_infer, training=False)
 # ===========================================================================
 print('Start training ...')
 task = training.MainLoop(batch_size=BATCH_SIZE,
-                         seed=120825,
+                         seed=1234,
                          shuffle_level=2,
                          allow_rollback=True,
                          labels=digits)

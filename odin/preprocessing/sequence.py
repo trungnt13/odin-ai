@@ -13,7 +13,7 @@ class _SequenceExtractor(Extractor):
 class MaxLength(_SequenceExtractor):
   """ Sequences longer than this will be filtered out. """
 
-  def __init__(self, max_len=5218,
+  def __init__(self, max_len=1234,
                input_name=None):
     super(MaxLength, self).__init__()
     self.max_len = int(max_len)

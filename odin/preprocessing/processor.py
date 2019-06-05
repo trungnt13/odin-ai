@@ -40,7 +40,7 @@ _default_module = re.compile(r"__.*__")
 # ===========================================================================
 # PCA calculation
 # ===========================================================================
-def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
+def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
   """ Using parallel MiniBatchPCA to do PCA for multiple features
   at once.
 
@@ -98,7 +98,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=5218, override=False):
     # finish return feature name
     yield name
   mpi = MPI(jobs=feat_name, func=map_pca,
-            ncpu=None, batch=1, hwm=12082518,
+            ncpu=None, batch=1, hwm=1234,
             backend='python')
   # ====== running the MPI ====== #
   remain_features = list(feat_name)
@@ -156,7 +156,7 @@ def _special_cases(X, feat_name, file_name, ds, path):
 
 
 def validate_features(ds_or_processor, path, nb_samples=25,
-                      override=False, seed=12082518, fig_width=4):
+                      override=False, seed=1234, fig_width=4):
   # TODO: add PCA visualization
   # TODO: update to match new indices style
   def logger(title, tag, check):

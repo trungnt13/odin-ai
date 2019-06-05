@@ -11,7 +11,7 @@ from odin.utils import one_hot
 from odin import backend as K, fuel as F, visual as V
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_curve, classification_report, precision_recall_curve
-np.random.seed(5218)
+np.random.seed(1234)
 
 
 # ===========================================================================
