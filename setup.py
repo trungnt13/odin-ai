@@ -3,6 +3,9 @@ from setuptools import find_packages, setup
 
 _ODIN_VERSION_ = '0.2.0'
 
+# ===========================================================================
+# Packages check
+# ===========================================================================
 def get_tensorflow_version():
   import subprocess
   try:
@@ -16,6 +19,9 @@ def get_tensorflow_version():
     pass
   return "tensorflow==1.13.1"
 
+# ===========================================================================
+# Description
+# ===========================================================================
 here = path.abspath(path.dirname(__file__))
 
 long_description = \
@@ -25,6 +31,9 @@ and fast prototyping of machine learning algorithm in form
 of organized networks.
 '''
 
+# ===========================================================================
+# Setup
+# ===========================================================================
 setup(
     name='odin-ai',
     version=_ODIN_VERSION_,

@@ -1,4 +1,5 @@
 sftp-config*
+.vscode
 .DS_Store
 .sync
 Icon*

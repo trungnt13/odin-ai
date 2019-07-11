@@ -351,21 +351,22 @@ def auto_config(config=None):
     s += _ctext(value, 'cyan') + '\n'
     sys.stderr.write(s)
 
-  print_log('#CPU', 'auto' if dev['ncpu'] == 0 else dev['ncpu'])
-  print_log('#CPU-native', str(cpu_count()))
-  print_log('#Thread/core',
-      'auto' if dev['nthread'] == 0 else dev['nthread'],
-      nested=True)
-  print_log('#GPU', dev['ngpu'])
-  if dev['ngpu'] > 0:
-    for i in dev['gpu']:
-      print_log('[%d]' % i['id'], i['name'], nested=True)
-  print_log('FloatX', floatX)
-  print_log('Epsilon', epsilon)
-  print_log('CNMEM', cnmem)
-  print_log('SEED', seed)
-  print_log('Log-devices', debug)
-  print_log('TF-log-level', log_level)
+  if False:
+    print_log('#CPU', 'auto' if dev['ncpu'] == 0 else dev['ncpu'])
+    print_log('#CPU-native', str(cpu_count()))
+    print_log('#Thread/core',
+        'auto' if dev['nthread'] == 0 else dev['nthread'],
+        nested=True)
+    print_log('#GPU', dev['ngpu'])
+    if dev['ngpu'] > 0:
+      for i in dev['gpu']:
+        print_log('[%d]' % i['id'], i['name'], nested=True)
+    print_log('FloatX', floatX)
+    print_log('Epsilon', epsilon)
+    print_log('CNMEM', cnmem)
+    print_log('SEED', seed)
+    print_log('Log-devices', debug)
+    print_log('TF-log-level', log_level)
   # ====== Return global objects ====== #
   CONFIG = AttributeDict()
   CONFIG.update({

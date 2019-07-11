@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+from six import string_types
+
 # Dependency imports
 import numpy as np
 import tensorflow as tf
@@ -22,6 +24,7 @@ __all__ = [
     'Poisson',
     'NegativeBinomial',
     'Gamma',
+    'Dirichlet',
     'Normal',
     'LogNormal',
     'Logistic',
@@ -32,7 +35,6 @@ __all__ = [
 
 DistributionLambda = tfl.DistributionLambda
 Bernoulli = tfl.IndependentBernoulli
-OneHotCategorical = tfl.OneHotCategorical
 Poisson = tfl.IndependentPoisson
 Logistic = tfl.IndependentLogistic
 
@@ -49,9 +51,140 @@ def update_convert_to_tensor_fn(dist, fn):
   dist._convert_to_tensor_fn = fn
   return dist
 
+def _preprocess_eventshape(params, event_shape, n_dims=1):
+  if isinstance(event_shape, string_types):
+    if event_shape.lower().strip() == 'auto':
+      event_shape = params.shape[-n_dims:]
+    else:
+      raise ValueError("Not support for event_shape='%s'" % event_shape)
+  return event_shape
+
 # ===========================================================================
 # Simple distribution
 # ===========================================================================
+class OneHotCategorical(DistributionLambda):
+  """ A `d`-variate OneHotCategorical Keras layer from `d` params.
+
+  Parameters
+  ----------
+  convert_to_tensor_fn: callable
+    that takes a `tfd.Distribution` instance and returns a
+    `tf.Tensor`-like object. For examples, see `class` docstring.
+    Default value: `tfd.Distribution.sample`.
+
+  sample_dtype: `dtype`
+    Type of samples produced by this distribution.
+    Default value: `None` (i.e., previous layer's `dtype`).
+
+  validate_args: `bool` (default `False`)
+    When `True` distribution parameters are checked for validity
+    despite possibly degrading runtime performance.
+    When `False` invalid inputs may silently render incorrect outputs.
+    Default value: `False`.
+
+  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+
+  Note
+  ----
+  If input as probability values is given, it will be clipped by value
+  [1e-8, 1 - 1e-8]
+
+  """
+
+  def __init__(self,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               probs_input=False,
+               sample_dtype=None,
+               activity_regularizer=None,
+               validate_args=False,
+               **kwargs):
+    super(OneHotCategorical, self).__init__(
+        lambda t: OneHotCategorical.new(t, probs_input, sample_dtype, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
+
+  @staticmethod
+  def new(params, probs_input=False, dtype=None, validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    with tf.compat.v1.name_scope(name, 'OneHotCategorical', [params]):
+      return tfd.OneHotCategorical(
+          logits=params if not probs_input else None,
+          probs=tf.clip_by_value(params, 1e-8, 1 - 1e-8) if probs_input else None,
+          dtype=dtype or params.dtype.base_dtype,
+          validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_size, name=None):
+    """The number of `params` needed to create a single distribution."""
+    return event_size
+
+class Dirichlet(DistributionLambda):
+
+  """
+  Parameters
+  ----------
+  pre_softplus : bool (default: False)
+    applying softplus activation on the parameters before parameterizing
+
+  clip_for_stable : bool (default: True)
+    clipping the concentration into range [1e-3, 1e3] for stability
+
+  """
+
+  def __init__(self,
+               event_shape='auto',
+               pre_softplus=False,
+               clip_for_stable=True,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               activity_regularizer=None,
+               validate_args=False,
+               **kwargs):
+    super(Dirichlet, self).__init__(
+        lambda t: type(self).new(
+          t, event_shape, pre_softplus, clip_for_stable, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
+
+  @staticmethod
+  def new(params, event_shape='auto',
+          pre_softplus=False, clip_for_stable=True,
+          validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    event_shape = _preprocess_eventshape(params, event_shape)
+    with tf.compat.v1.name_scope(name, 'Dirichlet',
+                                 [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
+      event_shape = dist_util.expand_to_vector(
+          tf.convert_to_tensor(
+              value=event_shape, name='event_shape', dtype=tf.int32),
+          tensor_name='event_shape')
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ], axis=0)
+      # Clips the Dirichlet parameters to the numerically stable KL region
+      if pre_softplus:
+        params = tf.nn.softplus(params)
+      if clip_for_stable:
+        params = tf.clip_by_value(params, 1e-3, 1e3)
+      return tfd.Independent(
+          tfd.Dirichlet(
+              concentration=tf.reshape(params, output_shape),
+              validate_args=validate_args),
+          reinterpreted_batch_ndims=tf.size(input=event_shape),
+          validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_shape=(), name=None):
+    """The number of `params` needed to create a single distribution."""
+    with tf.compat.v1.name_scope(name, 'Dirichlet_params_size',
+                                 [event_shape]):
+      event_shape = tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32)
+      return _event_size(event_shape, name=name or 'Dirichlet_params_size')
+
 class Normal(DistributionLambda):
   """An independent normal Keras layer.
 

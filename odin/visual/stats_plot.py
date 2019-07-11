@@ -254,7 +254,7 @@ def plot_relative_series(X, row_name=None, col_name=None,
   ax = to_axis2D(ax)
   for col_idx in range(n_col):
     ax.plot(X[:, col_idx], color=colors[col_idx],
-            linestyle='--', linewidth=1, alpha=0.5,
+            linestyle='--', linewidth=linewidth, alpha=0.5,
             label=col_name[col_idx])
     ax.scatter(ids, X[:, col_idx],
                color=colors[col_idx], s=markersize, marker=markerstyle,

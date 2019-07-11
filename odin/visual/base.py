@@ -8,6 +8,20 @@ _FIGURE_LIST = defaultdict(dict)
 class Visualizer(object):
   """ Visualizer """
 
+  def assert_figure(self, fig):
+    from matplotlib import pyplot as plt
+    assert isinstance(fig, plt.Figure), \
+    'fig must be instance of matplotlib.Figure, but given: %s' % str(type(fig))
+    return fig
+
+  def assert_axis(self, ax):
+    from matplotlib import pyplot as plt
+    from odin.visual.figures import to_axis
+    ax = to_axis(ax)
+    assert isinstance(ax, plt.Axes), \
+    'ax must be instance of matplotlib.Axes, but given: %s' % str(type(ax))
+    return ax
+
   def add_figure(self, name, fig):
     from matplotlib import pyplot as plt
     assert isinstance(fig, plt.Figure), \
