@@ -1,7 +1,7 @@
 from os import path
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '0.2.0'
+_ODIN_VERSION_ = '0.3.0'
 
 # ===========================================================================
 # Packages check
