@@ -9,7 +9,6 @@ from collections import defaultdict, Iterator, OrderedDict, Mapping
 
 import numpy as np
 
-from odin.autoconfig import get_rng
 from odin.maths import interp
 from odin.utils import as_tuple, flatten_list, ctext, batching
 
@@ -116,10 +115,7 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
   seed: int
       random seed to produce a re-producible results.
   """
-  if seed is not None:
-    rng = np.random.RandomState(seed)
-  else:
-    rng = get_rng()
+  rng = np.random.RandomState(seed)
   # ====== check input ====== #
   if isinstance(x, Mapping):
     x = x.items()

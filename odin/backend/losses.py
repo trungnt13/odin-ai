@@ -1,42 +1,33 @@
 import numpy as np
 import tensorflow as tf
 
-from odin.autoconfig import EPS
 from odin.utils import is_number
-from odin.backend.role import (return_roles, DifferentialLoss, add_roles)
-from odin.backend.tensor import is_tensor, to_nonzeros, dimshuffle
+from odin.backend.tensor import to_nonzeros, dimshuffle
 
 # ===========================================================================
 # Similarity measurement
 # ===========================================================================
-@return_roles(roles=DifferentialLoss)
 def contrastive_loss(y_true, y_pred, margin=1, name=None):
   """
   Reference
   ---------
   [1] http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
   """
-  # ====== tensorflow Tensor ====== #
-  if is_tensor(y_true) and is_tensor(y_pred):
-    with tf.name_scope(name, 'contrastive_loss', [y_true, y_pred]):
-      loss = tf.reduce_mean(
-          y_true * tf.square(y_pred) +
-          (1 - y_true) * tf.square(tf.maximum(margin - y_pred, 0)))
-  # ====== ndarray or similar ====== #
-  else:
-    loss = np.mean(y_true * np.square(y_pred) +
-                  (1 - y_true) * np.square(np.maximum(margin - y_pred, 0)))
+  with tf.name_scope(name, 'contrastive_loss', [y_true, y_pred]):
+    loss = tf.reduce_mean(
+        y_true * tf.square(y_pred) +
+        (1 - y_true) * tf.square(tf.maximum(margin - y_pred, 0)))
   return loss
 
-@return_roles(roles=DifferentialLoss)
 def triplet_loss(y_true, y_pred):
+  # TODO
   pass
 
 def contrastive_loss_andre(left_feature, right_feature, label, margin):
   """
   Compute the contrastive loss as in
   https://gitlab.idiap.ch/biometric/xfacereclib.cnn/blob/master/xfacereclib/cnn/scripts/experiment.py#L156
-  With Y = [-1 +1] --> [POSITIVE_PAIR NEGATIVE_PAIR]
+  With Y = [-1 +1] --  > [POSITIVE_PAIR NEGATIVE_PAIR]
   L = log( m + exp( Y * d^2)) / N
   **Parameters**
    left_feature: First element of the pair
@@ -65,7 +56,6 @@ def contrastive_loss_andre(left_feature, right_feature, label, margin):
     # first_part = tf.mul(one - label, tf.square(d))  # (Y-1)*(d^2)
     return loss, between_class, within_class
 
-@return_roles(DifferentialLoss)
 def cosine_similarity(y_true, y_pred, weights=1.0,
                       unit_norm=True, one_vs_all=True,
                       name=None):
@@ -90,36 +80,23 @@ def cosine_similarity(y_true, y_pred, weights=1.0,
       comparing all models against all tests
 
   """
-  # ====== tensorflow Tensor ====== #
-  if is_tensor(y_true) and is_tensor(y_pred):
-    with tf.name_scope(name, "cosine_similarity", (y_true, y_pred, weights)):
-      y_pred.shape.assert_is_compatible_with(y_true.shape)
-      if unit_norm:
-        y_true /= to_nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True), 1.)
-        y_pred /= to_nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True), 1.)
-      if one_vs_all:
-        scores = tf.matmul(tf.transpose(y_true), y_pred)
-      else:
-        scores = 1 - tf.reduce_sum(tf.multiply(y_true, y_pred),
-                                   axis=(-1,), keep_dims=True)
-  # ====== ndarray or similar ====== #
-  else:
-    assert y_true.shape == y_pred.shape
+  with tf.name_scope(name, "cosine_similarity", (y_true, y_pred, weights)):
+    y_pred.shape.assert_is_compatible_with(y_true.shape)
     if unit_norm:
-      y_true /= to_nonzeros(np.linalg.norm(y_true, ord=2, axis=-1, keepdims=True), 1.)
-      y_pred /= to_nonzeros(np.linalg.norm(y_pred, ord=2, axis=-1, keepdims=True), 1.)
+      y_true /= to_nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True), 1.)
+      y_pred /= to_nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True), 1.)
     if one_vs_all:
-      scores = np.dot(y_true.T, y_pred)
+      scores = tf.matmul(tf.transpose(y_true), y_pred)
     else:
-      scores = np.sum(y_true * y_pred,
-                      axis=(-1,), keepdims=True)
+      scores = 1 - tf.reduce_sum(tf.multiply(y_true, y_pred),
+                                 axis=(-1,), keep_dims=True)
   return scores
 
 # ===========================================================================
 # Cross-entropy variations
 # ===========================================================================
-@return_roles(DifferentialLoss)
-def bayes_crossentropy(y_true, y_pred, nb_classes=None, reduction=tf.reduce_mean,
+def bayes_crossentropy(y_true, y_pred,
+                       nb_classes=None, reduction=tf.reduce_mean,
                        name=None):
   with tf.name_scope(name, "bayes_crossentropy", [y_true, y_pred]):
     y_pred_shape = y_pred.shape
@@ -151,12 +128,10 @@ def bayes_crossentropy(y_true, y_pred, nb_classes=None, reduction=tf.reduce_mean
     loss = - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
     return reduction(loss)
 
-@return_roles(DifferentialLoss)
 def bayes_binary_crossentropy(y_true, y_pred):
   y_pred = tf.concat([1 - y_pred, y_pred], axis=-1)
   y_true = tf.one_hot(tf.cast(y_true, 'int32'), depth=2)
   return bayes_crossentropy(y_pred, y_true, nb_classes=2)
-
 
 # ===========================================================================
 # Variational
@@ -172,7 +147,6 @@ def jacobian_regularize(hidden, params):
   L = tf.reduce_sum(tf.pow(L, 2)) / hidden.shape[0]
   return tf.reduce_mean(L)
 
-
 def correntropy_regularize(x, sigma=1.):
   """
   Note
@@ -181,42 +155,8 @@ def correntropy_regularize(x, sigma=1.):
   https://github.com/EderSantana/seya/blob/master/seya/regularizers.py
   Copyright (c) EderSantana
   """
-  return -tf.reduce_sum(tf.reduce_mean(tf.exp(x**2 / sigma), axis=0)) / tf.sqrt(2 * np.pi * sigma)
+  return -tf.reduce_sum(
+    tf.reduce_mean(tf.exp(x**2 / sigma), axis=0)
+  ) / \
+  tf.sqrt(2 * np.pi * sigma)
 
-
-def kl_gaussian(mu, logsigma,
-                prior_mu=0., prior_logsigma=0.):
-  """ KL-divergence between two gaussians.
-  Useful for Variational AutoEncoders. Use this as an activation regularizer
-
-  For taking kl_gaussian as variational regularization, you can take mean of
-  the return matrix
-
-  Parameters:
-  -----------
-  mean, logsigma: parameters of the input distributions
-  prior_mean, prior_logsigma: paramaters of the desired distribution (note the
-      log on logsigma)
-
-
-  Return
-  ------
-  matrix: (n_samples, n_features)
-
-  Note
-  ----
-  origin implementation from:
-  https://github.com/Philip-Bachman/ICML-2015/blob/master/LogPDFs.py
-  Copyright (c) Philip Bachman
-  """
-  if is_number(prior_mu):
-    prior_mu = tf.convert_to_tensor(prior_mu, name='prior_mu',
-        dtype=mu.dtype.base_dtype)
-  if is_number(prior_logsigma):
-    prior_logsigma = tf.convert_to_tensor(
-        prior_logsigma, name='prior_logsigma',
-        dtype=logsigma.dtype.base_dtype)
-  gauss_klds = 0.5 * (2 * (prior_logsigma - logsigma) +
-          (tf.exp(2 * logsigma) / tf.exp(2 * prior_logsigma)) +
-          (tf.pow((mu - prior_mu), 2.0) / tf.exp(2 * prior_logsigma)) - 1.0)
-  return gauss_klds

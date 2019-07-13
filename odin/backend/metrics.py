@@ -2,18 +2,14 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.math import confusion_matrix as tf_cm
 
 from odin.utils import is_number, as_tuple
-from odin.autoconfig import EPS
-from odin.backend.role import (AccuracyValue, return_roles, DifferentialLoss,
-                               ConfusionMatrix, add_roles)
-from odin.backend.tensor import argsort, dimshuffle, to_nonzeros, to_llr
-from odin.backend.helpers import is_tensor
+from odin.backend.tensor import dimshuffle, to_nonzeros, to_llr
 
 # ===========================================================================
 # Losses
 # ===========================================================================
-@return_roles(AccuracyValue)
 def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
                     name=None):
   """ Non-differentiable """
@@ -29,7 +25,6 @@ def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
     return reduction(match_values)
 
 
-@return_roles(AccuracyValue)
 def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
                          name=None):
   """ Non-differentiable """
@@ -48,7 +43,6 @@ def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
                                     k=top_k)
     match_values = tf.cast(match_values, dtype='float32')
     return reduction(match_values)
-
 
 def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
                      name=None):
@@ -76,30 +70,7 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
   confusion matrix, set `normalize=False`
 
   """
-  # ====== numpy ndarray ====== #
-  if isinstance(y_true, np.ndarray) or isinstance(y_pred, np.ndarray):
-    from sklearn.metrics import confusion_matrix as sk_cm
-    nb_classes = None
-    if y_true.ndim > 1:
-      nb_classes = y_true.shape[1]
-      y_true = np.argmax(y_true, axis=-1)
-    if y_pred.ndim > 1:
-      nb_classes = y_pred.shape[1]
-      y_pred = np.argmax(y_pred, axis=-1)
-    # get number of classes
-    if labels is None:
-      if nb_classes is None:
-        raise RuntimeError("Cannot infer the number of classes for confusion matrix")
-      labels = int(nb_classes)
-    elif is_number(labels):
-      labels = list(range(labels))
-    cm = sk_cm(y_true=y_true, y_pred=y_pred, labels=labels)
-    if normalize:
-      cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
-    return cm
-  # ====== tensorflow tensor ====== #
   with tf.name_scope(name, 'confusion_matrix', [y_true, y_pred]):
-    from tensorflow.contrib.metrics import confusion_matrix as tf_cm
     nb_classes = None
     if y_true.shape.ndims == 2:
       nb_classes = y_true.shape.as_list()[-1]
@@ -121,15 +92,14 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
     elif hasattr(labels, '__len__'):
       labels = len(labels)
     # transpose to match the format of sklearn
-    cm = tf_cm(labels=y_true, predictions=y_pred,
-               num_classes=labels)
+    cm = tf_cm(labels=y_true, predictions=y_pred, num_classes=labels)
     if normalize:
       cm = tf.cast(cm, dtype='float32')
       cm = cm / tf.reduce_sum(cm, axis=1, keep_dims=True)
-    return add_roles(cm, ConfusionMatrix)
-
+    return cm
 
 def detection_matrix(y_true, y_pred):
+  # TODO
   pass
 
 # ===========================================================================
@@ -169,63 +139,32 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
       An average percentage cost over all clusters.
 
   '''
-  # ====== For tensorflow ====== #
-  if is_tensor(y_llr) and is_tensor(y_true):
-    if probability_input:
-      y_llr = to_llr(y_llr)
-    thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
-    nb_classes = y_llr.shape[1].value
-    if isinstance(y_true, (list, tuple)):
-      y_true = np.asarray(y_true)
-    if y_true.shape.ndims == 1:
-      y_true = tf.one_hot(y_true, depth=nb_classes, axis=-1)
-    y_true = tf.cast(y_true, y_llr.dtype.base_dtype)
-    # ====== statistics ====== #
-    # invert of y_true, False Negative mask
-    y_false = 1. - y_true
-    y_positive = tf.cast(tf.greater_equal(y_llr, thresh),
-                         y_llr.dtype.base_dtype)
-    # invert of y_positive
-    y_negative = tf.cast(tf.less(y_llr, thresh), y_llr.dtype.base_dtype)
-    distribution = tf.clip_by_value(
-        tf.reduce_sum(y_true, axis=0), 10e-8, 10e8) # no zero values
-    # ====== Pmiss ====== #
-    miss = tf.reduce_sum(y_true * y_negative, axis=0)
-    Pmiss = 100 * (Cmiss * Ptrue * miss) / distribution
-    # ====== Pfa ====== # This calculation give different results
-    fa = tf.reduce_sum(y_false * y_positive, axis=0)
-    Pfa = 100 * (Cfa * (1 - Ptrue) * fa) / distribution
-    Cavg = tf.reduce_mean(Pmiss) + tf.reduce_mean(Pfa) / (nb_classes - 1)
-    return Cavg
-  # ====== for numpy ====== #
   if probability_input:
     y_llr = to_llr(y_llr)
-  if cluster_idx is None:
-    cluster_idx = [list(range(0, y_llr.shape[-1]))]
-  # ensure everything is numpy ndarray
-  y_true = np.asarray(y_true)
-  y_llr = np.asarray(y_llr)
-  # threshold
   thresh = np.log(Cfa / Cmiss) - np.log(Ptrue / (1 - Ptrue))
-  cluster_cost = np.zeros(len(cluster_idx))
-  for k, cluster in enumerate(cluster_idx):
-    L = len(cluster) # number of languages in a cluster
-    fa = 0
-    fr = 0
-    for lang_i in cluster:
-      N = np.sum(y_true == lang_i, dtype='float32') # number of samples for lang_i
-      N = max(N, 1.) # prevent divide by 0, which give NaN return
-      for lang_j in cluster:
-        if lang_i == lang_j:
-          err = np.sum(y_llr[y_true == lang_i, lang_i] < thresh) / N
-          fr += err
-        else:
-          err = np.sum(y_llr[y_true == lang_i, lang_j] >= thresh) / N
-          fa += err
-    # Calculate procentage
-    cluster_cost[k] = 100 * (Cmiss * Ptrue * fr + Cfa * (1 - Ptrue) * fa / (L - 1)) / L
-  total_cost = np.mean(cluster_cost)
-  return cluster_cost, total_cost
+  nb_classes = y_llr.shape[1].value
+  if isinstance(y_true, (list, tuple)):
+    y_true = np.asarray(y_true)
+  if y_true.shape.ndims == 1:
+    y_true = tf.one_hot(y_true, depth=nb_classes, axis=-1)
+  y_true = tf.cast(y_true, y_llr.dtype.base_dtype)
+  # ====== statistics ====== #
+  # invert of y_true, False Negative mask
+  y_false = 1. - y_true
+  y_positive = tf.cast(tf.greater_equal(y_llr, thresh),
+                       y_llr.dtype.base_dtype)
+  # invert of y_positive
+  y_negative = tf.cast(tf.less(y_llr, thresh), y_llr.dtype.base_dtype)
+  distribution = tf.clip_by_value(
+      tf.reduce_sum(y_true, axis=0), 10e-8, 10e8) # no zero values
+  # ====== Pmiss ====== #
+  miss = tf.reduce_sum(y_true * y_negative, axis=0)
+  Pmiss = 100 * (Cmiss * Ptrue * miss) / distribution
+  # ====== Pfa ====== # This calculation give different results
+  fa = tf.reduce_sum(y_false * y_positive, axis=0)
+  Pfa = 100 * (Cfa * (1 - Ptrue) * fa) / distribution
+  Cavg = tf.reduce_mean(Pmiss) + tf.reduce_mean(Pfa) / (nb_classes - 1)
+  return Cavg
 
 
 def compute_Cnorm(y_true, y_score,

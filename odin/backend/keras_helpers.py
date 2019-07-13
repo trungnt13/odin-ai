@@ -8,26 +8,6 @@ __all__ = [
     'add_trainable_weights'
 ]
 
-def tied_session():
-  """ Tied the tensorflow Session and keras Session together
-  """
-  from odin.autoconfig import get_session
-  from tensorflow.python.keras.backend import set_session
-  set_session(get_session())
-
-def to_keras_objective(tensor, name=None):
-  """ Convert any tensor to an objective function
-  (i.e. loss or metric function) for keras fit Model
-  """
-  if name is None:
-    name = tensor.name
-  name = name.strip()
-  if ':' in name:
-    name = name.split(':')[0]
-  fn = lambda *args: tensor
-  fn.__name__ = str(name)
-  return fn
-
 def has_keras_meta(tensor):
   return hasattr(tensor, '_keras_history') and hasattr(tensor, '_keras_mask')
 

@@ -1,7 +1,11 @@
 from os import path
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '0.3.0'
+_ODIN_VERSION_ = '1.0.0'
+
+_TENSORFLOW_VERSION = '2.0.0b1'
+_TENSORFLOW_PROBABILITY_VERSION = '0.7.0'
+_PYTORCH_VERSION = '1.1.0'
 
 # ===========================================================================
 # Packages check
@@ -14,10 +18,10 @@ def get_tensorflow_version():
                             stderr=subprocess.PIPE)
     out = task.stdout.read()
     if "release 9.0" in str(out, 'utf-8'):
-      return "tensorflow-gpu==1.13.1"
-  except FileNotFoundError as e:
+      return "tensorflow-gpu==%s" % _TENSORFLOW_VERSION
+  except FileNotFoundError:
     pass
-  return "tensorflow==1.13.1"
+  return "tensorflow==%s" % _TENSORFLOW_VERSION
 
 # ===========================================================================
 # Description
@@ -69,8 +73,9 @@ setup(
     setup_requires=['pip>=19.0'],
     install_requires=['numpy>=1.0.0',
                       get_tensorflow_version(),
-                      'tensorflow-probability==0.6.0',
+                      'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
                       'tensorflow-datasets',
+                      'torch==%s' % _PYTORCH_VERSION,
                       'six>=1.9.0',
                       'scikit-learn>=0.18.0',
                       'matplotlib>=3.0.0',
