@@ -18,8 +18,11 @@ def kl_divergence(q, p,
 
   Parameters
   ----------
-  q : the first distribution
-  p : the second distribution
+  q : tensorflow_probability.Distribution
+    the posterior distribution
+
+  p : tensorflow_probability.Distribution
+    the prior distribution
 
   use_analytic_kl : bool (default: False)
     if True, use the close-form solution  for
@@ -46,20 +49,19 @@ def kl_divergence(q, p,
       q = q.distribution
     if isinstance(p, tfd.Independent):
       p = p.distribution
-
   q_name = [i for i in q.name.split('/') if len(i) > 0][-1]
   p_name = [i for i in p.name.split('/') if len(i) > 0][-1]
   with tf.compat.v1.name_scope(name, "KL_q%s_p%s" % (q_name, p_name)):
     if bool(use_analytic_kl):
       return tfd.kl_divergence(q, p)
+    # using MCMC sampling for estimating the KL
+    if callable(q_sample):
+      z = q_sample(q)
+    elif isinstance(q_sample, Number):
+      z = q.sample(int(q_sample))
     else:
-      if callable(q_sample):
-        z = q_sample(q)
-      elif isinstance(q_sample, Number):
-        z = q.sample(int(q_sample))
-      else:
-        z = q_sample
-      # calculate the output, then perform reduction
-      kl = q.log_prob(z) - p.log_prob(z)
-      kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
-      return kl
+      z = q_sample
+    # calculate the output, then perform reduction
+    kl = q.log_prob(z) - p.log_prob(z)
+    kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
+    return kl

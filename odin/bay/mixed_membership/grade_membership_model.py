@@ -11,7 +11,7 @@ from  tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import (
   softplus_inverse, Dirichlet)
 
-from odin.bay.distribution_layers import Dirichlet as DirichletLayer, OneHotCategorical
+from odin.bay.distribution_layers import DirichletLayer, OneHotCategoricalLayer
 
 __all__ = [
     'GradeMembershipModel'
@@ -74,7 +74,7 @@ class GradeMembershipModel(Model):
       # The observations are bag of words and therefore not one-hot. However,
       # log_prob of OneHotCategorical computes the probability correctly in
       # this case.
-      decoder = OneHotCategorical(probs_input=True,
+      decoder = OneHotCategoricalLayer(probs_input=True,
                                   name="AnswerSheetQ%d" % question_idx)
       # this is a must for the Model store Layer parameters
       setattr(self, 'decoder%d' % question_idx, decoder)

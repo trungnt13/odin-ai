@@ -315,7 +315,10 @@ def sparsity_percentage(x, batch_size=1234):
   for start, end in batching(batch_size=batch_size, n=x.shape[0],
                              seed=None):
     y = x[start:end]
-    n_nonzeros = np.count_nonzero(y)
+    if hasattr(y, 'count_nonzero'):
+      n_nonzeros = y.count_nonzero()
+    else:
+      n_nonzeros = np.count_nonzero(y)
     n_zeros += np.prod(y.shape) - n_nonzeros
   return n_zeros / n_total
 

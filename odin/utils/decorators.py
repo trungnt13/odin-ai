@@ -614,6 +614,3 @@ class Singleton(type):
     setattr(obj, '__del__',
             types.MethodType(Singleton._dispose, obj))
     return obj
-
-# Override the module's __call__ attribute
-# sys.modules[__name__] = cache

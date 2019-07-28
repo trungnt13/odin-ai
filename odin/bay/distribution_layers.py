@@ -16,27 +16,31 @@ from tensorflow_probability.python.internal import distribution_util as dist_uti
 from tensorflow_probability.python.layers.internal import distribution_tensor_coercible as dtc
 from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 
+from odin.bay.distribution_util_layers import *
+from odin.bay.distributions import ZeroInflated
+
+
 __all__ = [
     'DistributionLambda',
-    'MultivariateNormal',
-    'Bernoulli',
-    'OneHotCategorical',
-    'Poisson',
-    'NegativeBinomial',
-    'Gamma',
-    'Dirichlet',
-    'Normal',
-    'LogNormal',
-    'Logistic',
-    'ZeroInflatedPoisson',
-    'ZeroInflatedNegativeBinomial',
+    'MultivariateNormalLayer',
+    'BernoulliLayer',
+    'OneHotCategoricalLayer',
+    'GammaLayer',
+    'DirichletLayer',
+    'GaussianLayer', 'NormalLayer',
+    'LogNormalLayer',
+    'LogisticLayer',
+    'PoissonLayer',
+    'NegativeBinomialLayer',
+    'ZeroInflatedPoissonLayer',
+    'ZeroInflatedNegativeBinomialLayer',
     'update_convert_to_tensor_fn'
 ]
 
 DistributionLambda = tfl.DistributionLambda
-Bernoulli = tfl.IndependentBernoulli
-Poisson = tfl.IndependentPoisson
-Logistic = tfl.IndependentLogistic
+BernoulliLayer = tfl.IndependentBernoulli
+PoissonLayer = tfl.IndependentPoisson
+LogisticLayer = tfl.IndependentLogistic
 
 # ===========================================================================
 # Helper
@@ -62,7 +66,7 @@ def _preprocess_eventshape(params, event_shape, n_dims=1):
 # ===========================================================================
 # Simple distribution
 # ===========================================================================
-class OneHotCategorical(DistributionLambda):
+class OneHotCategoricalLayer(DistributionLambda):
   """ A `d`-variate OneHotCategorical Keras layer from `d` params.
 
   Parameters
@@ -98,8 +102,9 @@ class OneHotCategorical(DistributionLambda):
                activity_regularizer=None,
                validate_args=False,
                **kwargs):
-    super(OneHotCategorical, self).__init__(
-        lambda t: OneHotCategorical.new(t, probs_input, sample_dtype, validate_args),
+    super(OneHotCategoricalLayer, self).__init__(
+        lambda t: type(self).new(
+          t, probs_input, sample_dtype, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
         **kwargs)
@@ -119,7 +124,7 @@ class OneHotCategorical(DistributionLambda):
     """The number of `params` needed to create a single distribution."""
     return event_size
 
-class Dirichlet(DistributionLambda):
+class DirichletLayer(DistributionLambda):
 
   """
   Parameters
@@ -140,7 +145,7 @@ class Dirichlet(DistributionLambda):
                activity_regularizer=None,
                validate_args=False,
                **kwargs):
-    super(Dirichlet, self).__init__(
+    super(DirichletLayer, self).__init__(
         lambda t: type(self).new(
           t, event_shape, pre_softplus, clip_for_stable, validate_args),
         convert_to_tensor_fn,
@@ -185,7 +190,7 @@ class Dirichlet(DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return _event_size(event_shape, name=name or 'Dirichlet_params_size')
 
-class Normal(DistributionLambda):
+class GaussianLayer(DistributionLambda):
   """An independent normal Keras layer.
 
   Parameters
@@ -217,7 +222,7 @@ class Normal(DistributionLambda):
                activity_regularizer=None,
                validate_args=False,
                **kwargs):
-    super(Normal, self).__init__(
+    super(GaussianLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -259,7 +264,7 @@ class Normal(DistributionLambda):
       return 2 * _event_size(
           event_shape, name=name or 'Normal_params_size')
 
-class LogNormal(DistributionLambda):
+class LogNormalLayer(DistributionLambda):
   """An independent LogNormal Keras layer.
 
   Parameters
@@ -291,7 +296,7 @@ class LogNormal(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(LogNormal, self).__init__(
+    super(LogNormalLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -332,7 +337,7 @@ class LogNormal(DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'LogNormal_params_size')
 
-class Gamma(DistributionLambda):
+class GammaLayer(DistributionLambda):
   """An independent Gamma Keras layer.
 
   Parameters
@@ -360,7 +365,7 @@ class Gamma(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(Gamma, self).__init__(
+    super(GammaLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -398,7 +403,7 @@ class Gamma(DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'Gamma_params_size')
 
-class NegativeBinomial(DistributionLambda):
+class NegativeBinomialLayer(DistributionLambda):
   """An independent NegativeBinomial Keras layer.
 
   Parameters
@@ -430,7 +435,7 @@ class NegativeBinomial(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(NegativeBinomial, self).__init__(
+    super(NegativeBinomialLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, given_log_count, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -475,7 +480,7 @@ class NegativeBinomial(DistributionLambda):
 # ===========================================================================
 # Multivariate distribution
 # ===========================================================================
-class MultivariateNormal(DistributionLambda):
+class MultivariateNormalLayer(DistributionLambda):
   """A `d`-variate Multivariate Normal distribution Keras layer:
 
   Different covariance mode:
@@ -522,8 +527,9 @@ class MultivariateNormal(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(MultivariateNormal, self).__init__(
-        lambda t: type(self).new(t, event_size, covariance_type, softplus_scale, validate_args),
+    super(MultivariateNormalLayer, self).__init__(
+        lambda t: type(self).new(
+          t, event_size, covariance_type, softplus_scale, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
         **kwargs)
@@ -564,7 +570,7 @@ class MultivariateNormal(DistributionLambda):
                                          (event_size, event_size)))
 
   @staticmethod
-  def params_size(event_size, covariance_type, name=None):
+  def params_size(event_size, covariance_type='diag', name=None):
     """The number of `params` needed to create a single distribution."""
     covariance_type = str(covariance_type).lower().strip()
     assert covariance_type in ('full', 'tril', 'diag'), \
@@ -582,7 +588,7 @@ class MultivariateNormal(DistributionLambda):
 # ===========================================================================
 # Complex distributions
 # ===========================================================================
-class ZeroInflatedPoisson(DistributionLambda):
+class ZeroInflatedPoissonLayer(DistributionLambda):
   """A Independent zero-inflated Poisson keras layer
   """
 
@@ -592,7 +598,7 @@ class ZeroInflatedPoisson(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(ZeroInflatedPoisson, self).__init__(
+    super(ZeroInflatedPoissonLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -601,8 +607,6 @@ class ZeroInflatedPoisson(DistributionLambda):
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    from odin.bay.distributions import ZeroInflated
-
     with tf.compat.v1.name_scope(name, 'ZeroInflatedPoisson',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
@@ -637,7 +641,7 @@ class ZeroInflatedPoisson(DistributionLambda):
       return 2 * _event_size(event_shape,
                   name=name or 'ZeroInflatedNegativeBinomial_params_size')
 
-class ZeroInflatedNegativeBinomial(DistributionLambda):
+class ZeroInflatedNegativeBinomialLayer(DistributionLambda):
   """A Independent zero-inflated negative binomial keras layer
 
   Parameters
@@ -669,7 +673,7 @@ class ZeroInflatedNegativeBinomial(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(ZeroInflatedNegativeBinomial, self).__init__(
+    super(ZeroInflatedNegativeBinomialLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, given_log_count, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
@@ -679,8 +683,6 @@ class ZeroInflatedNegativeBinomial(DistributionLambda):
   def new(params, event_shape=(), given_log_count=True,
           validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    from odin.bay.distributions import ZeroInflated
-
     with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomial',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
@@ -718,3 +720,8 @@ class ZeroInflatedNegativeBinomial(DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 3 * _event_size(event_shape,
                   name=name or 'ZeroInflatedNegativeBinomial_params_size')
+
+# ===========================================================================
+# Shortcut
+# ===========================================================================
+NormalLayer = GaussianLayer

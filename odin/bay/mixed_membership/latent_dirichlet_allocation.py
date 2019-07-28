@@ -10,7 +10,7 @@ from tensorflow.python.keras.layers import Dense, Layer
 from tensorflow_probability.python.distributions import (
   softplus_inverse, Dirichlet)
 
-from odin.bay.distribution_layers import Dirichlet as DirichletLayer, OneHotCategorical
+from odin.bay.distribution_layers import DirichletLayer, OneHotCategoricalLayer
 from odin.bay.helpers import kl_divergence
 
 __all__ = [
@@ -83,7 +83,8 @@ class LatentDirichletAllocation(Model):
     # The observations are bag of words and therefore not one-hot. However,
     # log_prob of OneHotCategorical computes the probability correctly in
     # this case.
-    self.decoder = OneHotCategorical(probs_input=True, name="bag_of_words")
+    self.decoder = OneHotCategoricalLayer(
+      probs_input=True, name="bag_of_words")
 
   def build(self, input_shape):
     n_features = input_shape[1]

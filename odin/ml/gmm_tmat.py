@@ -23,9 +23,9 @@ from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
                         is_number, as_tuple, uuid,
                         wprint, eprint, segment_list, defaultdictkey,
                         array_size)
-from odin.autoconfig import EPS, get_ngpu
 from odin.ml.base import DensityMixin, BaseEstimator, TransformerMixin
 
+EPS = 1e-6
 # minimum batch size that will be optimal to transfer
 # the data to GPU for calculation (tested on Titan X)
 # NOTE: tensorflow has a lagging effect, it will be
@@ -103,6 +103,7 @@ def logsumexp(X, axis):
 def _split_jobs(n_samples, ncpu, device, gpu_factor):
   """ Return: jobs_cpu, jobs_gpu"""
   # number of GPU
+  # TODO: fix `get_ngpu` here
   ngpu = get_ngpu()
   if ngpu == 0:
     device = 'cpu'

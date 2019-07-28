@@ -4,52 +4,22 @@ import os
 import shutil
 import pickle
 from collections import OrderedDict, Mapping
+from typing import Text, Any
+from six import string_types
 from six.moves import zip, range, cPickle
 
 import numpy as np
 
-from odin.utils.crypto import md5_checksum
 from odin.utils import (get_file, Progbar, is_string,
                         ctext, as_tuple, eprint, wprint,
                         is_callable, flatten_list, UnitTimer)
-from odin.fuel.data import (MmapData, Hdf5Data, open_hdf5, get_all_hdf_dataset,
-                            MAX_OPEN_MMAP, Data, as_data)
-from odin.fuel.utils import MmapDict, SQLiteDict, NoSQL
-from odin.fuel.recipe_base import FeederRecipe, RecipeList
-
+from odin.fuel.databases import MmapDict, SQLiteDict
+from odin.fuel.mmap_array import (
+  read_mmaparray_header, MmapArray, MmapArrayWriter)
 
 __all__ = [
     'Dataset',
-    'copy_dataset2',
-    'h5_to_ds'
 ]
-
-# ===========================================================================
-# Utilities
-# ===========================================================================
-def h5_to_ds(inpath, outpath):
-  """ Convert a folder contains hdf5 files to a Dataset
-  """
-  pass
-
-def copy_dataset2(origin, destination,
-                  indices_filter=None, data_filter=None,
-                  override=False):
-  # ====== prepare input ====== #
-  if is_string(origin):
-    origin = Dataset(origin, read_only=True)
-    own_ds = True
-  elif isinstance(origin, Dataset):
-    own_ds = False
-  # ====== pass ====== #
-  ds = origin.copy(destination,
-                   indices_filter=indices_filter,
-                   data_filter=data_filter,
-                   override=override)
-  # ====== end and return ====== #
-  if own_ds:
-    origin.close()
-  return ds
 
 # ===========================================================================
 # Helper
@@ -114,18 +84,13 @@ def _parse_data_descriptor(path, read_only):
              ('csv', data.shape, data, path))]
   # ====== check if a file is Data ====== #
   try:
-    dtype, shape = MmapData.read_header(path, read_only=True,
-                                        return_file=False)
-    # shape[1:], because first dimension can be resize afterward
-    return [(file_name, (dtype, shape, None, path))]
-  except Exception as e: # cannot read the header of MmapData, maybe Hdf5
-    try:
-      f = open_hdf5(path, read_only=read_only)
-      ds = get_all_hdf_dataset(f)
-      data = [Hdf5Data(dataset=i, hdf=f) for i in ds]
-      return [(str(i.name), (str(i.dtype), i.shape, i, i.path)) for i in data]
-    except Exception as e:
-      pass
+    dtype, shape = read_mmaparray_header(path)
+    data = MmapArray(path)
+    assert np.dtype(dtype) == data.dtype and shape == data.shape, \
+      "Metadata mismatch for MmapArray"
+    return [(file_name, (data.dtype, data.shape, data, path))]
+  except Exception: # cannot read the header of MmapArray
+    pass
   # ====== try to load pickle file if possible ====== #
   try: # try with unpickling
     with open(path, 'rb') as f:
@@ -138,14 +103,14 @@ def _parse_data_descriptor(path, read_only):
       return [(file_name, (str(data.dtype) if hasattr(data, 'dtype') else
                            type(data).__name__,
                            shape_info, data, path))]
-  except cPickle.UnpicklingError as e:
+  except cPickle.UnpicklingError:
     try: # try again with numpy load
       with open(path, 'rb') as f:
         data = np.load(f)
         return [(file_name,
         (str(data.dtype) if hasattr(data, 'dtype') else type(data).__name__,
          len(data) if hasattr(data, '__len__') else 0, data, path))]
-    except Exception as e:
+    except Exception:
       pass
   # ====== load memmap dict ====== #
   try:
@@ -190,7 +155,7 @@ class Dataset(object):
 
   __INSTANCES = {}
 
-  def __new__(clazz, *args, **kwargs):
+  def __new__(cls, *args, **kwargs):
     path = kwargs.get('path', None)
     if path is None:
       path = args[0]
@@ -202,7 +167,7 @@ class Dataset(object):
     if path in Dataset.__INSTANCES:
       return Dataset.__INSTANCES[path]
     # new Dataset
-    new_instance = super(Dataset, clazz).__new__(clazz)
+    new_instance = super(Dataset, cls).__new__(cls)
     Dataset.__INSTANCES[path] = new_instance
     return new_instance
 
@@ -222,7 +187,8 @@ class Dataset(object):
         print('Overrided old dataset at path:', path)
       if os.path.isfile(path) and '.zip' in os.path.basename(path):
         self._load_archive(path,
-            extract_path=path.replace(os.path.basename(path), ''))
+            extract_path=path.replace(os.path.basename(path), ''),
+            read_only=read_only)
       else:
         self._set_path(path, self.read_only)
     else:
@@ -268,33 +234,6 @@ class Dataset(object):
                            '{}'.format(key))
         else:
           self._data_map[key] = d
-    # ====== Load stored recipes ====== #
-    # check recipes path
-    if os.path.exists(self.recipe_path) and os.path.isfile(self.recipe_path):
-      raise RuntimeError("Found a file at path: '%s', which supposed to "
-                         "be a folder used for saving `recipe`"
-                         % self.recipe_path)
-    if not os.path.exists(self.recipe_path):
-      os.mkdir(self.recipe_path)
-    # all recipes is pickle-able
-    for recipe_name in os.listdir(self.recipe_path):
-      with open(os.path.join(self.recipe_path, recipe_name), 'rb') as f:
-        recipe = cPickle.load(f)
-        self._saved_recipes[recipe_name] = recipe
-    # ====== load stored indices ====== #
-    # check indices path
-    if os.path.exists(self.recipe_path) and os.path.isfile(self.recipe_path):
-      raise RuntimeError("Found a file at path: '%s', which supposed to "
-                         "be a folder used for saving `index`"
-                         % self.recipe_path)
-    if not os.path.exists(self.index_path):
-      os.mkdir(self.index_path)
-    # load all saved indices
-    for index_name in os.listdir(self.index_path):
-      path = os.path.join(self.index_path, index_name)
-      index = MmapDict(path=path, read_only=True)
-      # remove extension from the name
-      self._saved_indices[index_name] = index
 
   # ==================== Pickle ==================== #
   def __getstate__(self):
@@ -315,7 +254,7 @@ class Dataset(object):
     return (self.path,)
 
   # ==================== archive loading ==================== #
-  def _load_archive(self, path, extract_path):
+  def _load_archive(self, path, extract_path, read_only):
     from zipfile import ZipFile, ZIP_DEFLATED
     try:
       zfile = ZipFile(path, mode='r', compression=ZIP_DEFLATED)
@@ -329,7 +268,7 @@ class Dataset(object):
       # found the extracted dir, use it
       if os.path.isdir(extract_path) and \
          set(os.listdir(extract_path)) == set(allfile):
-        self._set_path(extract_path)
+        self._set_path(extract_path, read_only=read_only)
         return
       # decompress everything
       if not os.path.exists(extract_path):
@@ -342,7 +281,7 @@ class Dataset(object):
         pb['File'] = ('Unarchiving: %-' + str(maxlen) + 's') % f
         pb.add(1)
       # ====== finally set path ====== #
-      self._set_path(extract_path)
+      self._set_path(extract_path, read_only=read_only)
     except IOError as e:
       raise IOError('Error loading archived dataset, path:{}, error:{}'
                     '.'.format(path, e))
@@ -374,12 +313,8 @@ class Dataset(object):
     return os.path.join(self._path, '..', name + '.zip')
 
   @property
-  def md5(self):
-    md5_text = ''
-    for name, (dtype, shape, data, path) in sorted(self._data_map.items(),
-                                                   key=lambda x: x[0]):
-      md5_text += md5_checksum(path)
-    return md5_text
+  def md5_checksum(self):
+    return self.get_md5_checksum()
 
   @property
   def size(self):
@@ -392,14 +327,6 @@ class Dataset(object):
         eprint("Cannot acquire file size information, file: %s; error: %s"
                % (str(name), str(e)))
     return size_bytes / 1024. / 1024.
-
-  def recipes(self):
-    return {name: rcp
-            for name, rcp in self._saved_recipes.items()}
-
-  def indices(self):
-    return {name: ids
-            for name, ids in self._saved_indices.items()}
 
   def __len__(self):
     """ Return total number of data """
@@ -452,154 +379,6 @@ class Dataset(object):
     zfile.close()
     return path
 
-  # ==================== Feeder management ==================== #
-  def add_indices(self, indices, name, override=False):
-    # ====== validate name ====== #
-    if not is_string(name):
-      raise ValueError("`name` must be string, but given: %s" % str(type(name)))
-    if name in self._saved_indices and not override:
-      raise ValueError("Cannot override pre-defined INDEX with name: '%s'"
-                      % name)
-    # ====== validate indices ====== #
-    path = os.path.join(self.index_path, name)
-    ids = MmapDict(path)
-    # predefined mapping, save or copy everything to a
-    # MmapDict
-    if isinstance(indices, Mapping):
-      for name, (start, end) in indices.items():
-        ids[name] = (start, end)
-    # list of name, or (name, (start, end))
-    elif isinstance(indices, (tuple, list, np.ndarray)):
-      for i in indices:
-        if is_string(i): # only name
-          ids[i] = self['indices'][i]
-        elif len(i) == 2: # name, (start, end)
-          name, (start, end) = i
-          ids[name] = (int(start), int(end))
-        elif len(i) == 3: # name, start, end
-          name, start, end = i
-          ids[name] = (int(start), int(end))
-        else:
-          raise ValueError("Unsupport index parsing (name, start, end)"
-                           "for: %s" % str(i))
-    # flush everything to disk
-    ids.flush(save_all=True)
-    ids.close()
-    # ====== assign new index ====== #
-    self._saved_indices[name] = MmapDict(path, read_only=True)
-    return self
-
-  def remove_indices(self, name):
-    if name is None: # remove all recipes
-      for name in self._saved_indices.keys():
-        self.remove_indices(name)
-    # remove only a selected
-    elif name in self._saved_indices:
-      self._saved_indices[name].close()
-      del self._saved_indices[name]
-      os.remove(os.path.join(self.index_path, name))
-    return self
-
-  def add_recipes(self, recipes, name, override=False):
-    """
-    Parameters
-    ----------
-    """
-    # ====== validate arguments ====== #
-    if not is_string(name):
-      raise ValueError("`name` must be string, but given: %s" % str(type(name)))
-    if name in self._saved_recipes and not override:
-      raise ValueError("Cannot override pre-defined RECIPE with name: '%s'"
-                      % name)
-    # ====== validate recipes list ====== #
-    if isinstance(recipes, RecipeList):
-      recipes = tuple(recipes._recipes)
-    else:
-      tmp = []
-      for rcp in as_tuple(recipes, t=FeederRecipe):
-        if isinstance(rcp, RecipeList):
-          tmp += list(rcp._recipes)
-        else:
-          tmp.append(rcp)
-      recipes = tuple(tmp)
-    # ====== store the recipes to disk ====== #
-    path = os.path.join(self.recipe_path, name)
-    with open(path, 'wb') as f:
-      cPickle.dump(recipes, f, protocol=cPickle.HIGHEST_PROTOCOL)
-    # ====== update local recipes list ====== #
-    self._saved_recipes[name] = recipes
-    return self
-
-  def remove_recipes(self, name):
-    if name is None: # remove all recipes
-      for name in self._saved_recipes.keys():
-        self.remove_recipes(name)
-    # remove only a selected
-    elif name in self._saved_recipes:
-      del self._saved_recipes[name]
-      os.remove(os.path.join(self.recipe_path, name))
-    return self
-
-  def create_feeder(self, data, recipes, indices=None,
-                    batch_filter=None, batch_mode='batch',
-                    name=None, override=False):
-    """
-    Parameters
-    ----------
-    data: list of str
-        list of name for all data used, the order of this
-        list is the order of returned data.
-    recipes: list or single odin.fuel.FeederRecipe
-        the list of recipes defining the rule of transforming
-        the data
-    indices: None, string, dict, list
-        list of (name, (start, end)) for iterating over files in Feeder
-    batch_filter: call-able
-        must be a function has take a list of np.ndarray as first arguments
-        ([X]) or ([X, y]), you can return None to ignore given batch, return the
-        data for accepting the batch
-    batch_mode: 'batch' or 'file' (string type)
-        'batch' mode return shuffling and return everything in small batches
-        'file' mode return [(file_name, order_index, data...), ...]
-    name: None, or string
-        if name is provided, the feeder information will be saved,
-        which include the `indices`, `recipes`
-
-    Note
-    ----
-    by defaults, the Feeder is created using only 1 CPU with `buffer_size=1`
-    using the method `set_multiprocessing(ncpu=None, buffer_size=None,
-    maximum_queue_size=None)` for changing this information.
-    """
-    from odin.fuel.feeder import Feeder, IndexedData
-    # check data
-    data = [self.__getitem__(dat) if is_string(dat) else
-            as_data(dat)
-            for dat in as_tuple(data)]
-    # check recipes
-    if is_string(recipes):
-      recipes = self._saved_recipes[recipes]
-    else:
-      recipes = as_tuple(recipes, t=FeederRecipe)
-    # check indices
-    if indices is None:
-      indices = self.__getitem__('indices')
-    elif is_string(indices):
-      indices = self._saved_indices[indices]
-    elif isinstance(indices, (Mapping, tuple, list, np.ndarray)):
-      pass
-    # ====== saving recipes and indices, if name is not None ====== #
-    if is_string(name):
-      if name not in self._saved_indices or override:
-        self.add_indices(indices, name, override=True)
-      if name not in self._saved_recipes or override:
-        self.add_recipes(recipes, name, override=True)
-    # ====== create Feeder ====== #
-    feeder = Feeder(IndexedData(data=data, indices=indices),
-                    batch_filter=batch_filter, batch_mode=batch_mode,
-                    ncpu=1, buffer_size=1)
-    return feeder.set_recipes(recipes)
-
   # ==================== Data management ==================== #
   def copy(self, destination,
            indices_filter=None, data_filter=None,
@@ -610,159 +389,7 @@ class Dataset(object):
     """
     from distutils.dir_util import copy_tree
     read_only = self.read_only
-    # indices
-    if indices_filter is not None and \
-    not is_callable(indices_filter) and \
-    not isinstance(indices_filter, (tuple, list)):
-      raise ValueError('`indices_filter` must be callable, tuple, list or None')
-    if isinstance(indices_filter, (tuple, list)):
-      tmp = tuple(indices_filter)
-      indices_filter = lambda x: x in tmp
-    # data name
-    if data_filter is not None and \
-    not is_callable(data_filter) and \
-    not isinstance(data_filter, (tuple, list)):
-      raise ValueError('`data_filter` must be callable, tuple, list or None')
-    if isinstance(data_filter, (tuple, list)):
-      tmp = tuple(data_filter)
-      data_filter = lambda x: x in tmp
-    # ====== other files which are not Data ====== #
-    other_files = [i for i in os.listdir(self.path)
-                   if i not in self]
-    # ====== preprocessing ====== #
-    destination = os.path.abspath(str(destination))
-    if not os.path.exists(destination):
-      os.mkdir(destination)
-    elif not os.path.isdir(destination):
-      raise ValueError('path at "%s" must be a folder' % destination)
-    elif override:
-      shutil.rmtree(destination)
-      os.mkdir(destination)
-    else:
-      raise ValueError("A folder exist at path: '%s', cannot be overrided." %
-                       destination)
-    # ====== copy everything ====== #
-    if indices_filter is None and data_filter is None:
-      print("Copying %s files from '%s' to '%s' ..." %
-        (ctext(len(self), 'cyan'),
-         ctext(self.path, 'yellow'),
-         ctext(destination, 'yellow')))
-      copy_tree(self.path, destination)
-    # ====== only data_filter ====== #
-    elif indices_filter is None:
-      data_list = [i for i in self.keys() if data_filter(i)]
-      # copy all the data
-      for name in data_list:
-        org_path = os.path.join(self.path, name)
-        dst_path = os.path.join(destination, name)
-        print("Copying from '%s' to '%s' ..." %
-              (ctext(org_path, 'yellow'),
-               ctext(dst_path, 'yellow')))
-        shutil.copy2(org_path, dst_path)
-      # copy all the related indices
-      for name in self.keys():
-        org_path = os.path.join(self.path, name)
-        dst_path = os.path.join(destination, name)
-        if not os.path.exists(dst_path) and \
-        ('indices' == name or any(i in data_list for i in name.split('_')[1:])):
-          print("Copying Indices from '%s' to '%s'" % (ctext(org_path, 'cyan'),
-                                                       ctext(dst_path, 'cyan')))
-          shutil.copy2(org_path, dst_path)
-    # ====== use indices_filter and data_filter ====== #
-    else:
-      if data_filter is None:
-        all_data = list(self.keys())
-      else:
-        all_data = [i for i in self.keys()
-                    if data_filter(i)]
-      # list of data with separated indices
-      separated_data = flatten_list(
-          [k.split('_')[1:] for k in self.keys()
-         if 'indices_' == k[:8]])
-      # iterate over indices and copy one by one data
-      for ids_name in [k for k in self.keys() if 'indices' == k[:7]]:
-        indices = [(n, (s, e))
-                   for n, (s, e) in self[ids_name]
-                   if indices_filter(n)]
-        # no match indices, skip
-        if len(indices) == 0:
-          continue
-        nb_samples = sum(e - s for n, (s, e) in indices)
-        # get all data assigned to given indices
-        data = ids_name.split('_')[1:]
-        if len(data) == 0:
-          data = [i for i in all_data if i not in separated_data]
-        else:
-          data = [i for i in data if i in all_data]
-        # if still no data found, skip
-        if len(data) == 0:
-          continue
-        # copy each data
-        for data_name in data:
-          X = self[data_name]
-          # copy big MmapDict
-          if isinstance(X, MmapDict) and len(X) == len(self[ids_name]):
-            new_path = os.path.join(destination, os.path.basename(X.path))
-            print("Copying MmapDict from '%s' to '%s'" % (
-                ctext(X.path, 'cyan'),
-                ctext(new_path, 'cyan')))
-            new_dict = MmapDict(new_path, cache_size=80000, read_only=False)
-            for n, (s, e) in indices:
-              new_dict[n] = X[n]
-            new_dict.flush(save_all=True)
-            new_dict.close()
-          # copy MmapData
-          elif isinstance(X, MmapData):
-            Y = MmapData(path=os.path.join(destination, data_name),
-                         dtype=X.dtype, shape=(0,) + X.shape[1:],
-                         read_only=False)
-            prog = Progbar(target=nb_samples,
-                           print_report=True, print_summary=True,
-                           name="Copying data: '%s' to path:'%s'" %
-                           (ctext(data_name, 'yellow'),
-                            ctext(Y.data_info, 'cyan')))
-            for n, (s, e) in indices:
-              Y.append(X[s:e])
-              prog.add(e - s)
-          # unknown data-type
-          else:
-            org_path = os.path.join(self.path, data_name)
-            new_path = os.path.join(destination, data_name)
-            # just copy directly the files
-            if os.path.isfile(org_path) or \
-            not os.path.exists(new_path):
-              shutil.copy2(org_path, new_path)
-              print("Copying '%s' to '%s' ..." %
-                (ctext(org_path, 'cyan'), ctext(new_path, 'yellow')))
-            else:
-              wprint("Cannot copy: '%s' - %s" %
-                (ctext(data_name, 'cyan'),
-                 ctext(type(self[data_name]), 'yellow')))
-        # copy the indices
-        new_indices = MmapDict(os.path.join(destination, ids_name),
-                               cache_size=80000, read_only=False)
-        start = 0
-        for n, (s, e) in indices:
-          size = e - s
-          new_indices[n] = (start, start + size)
-          start += size
-        new_indices.flush(save_all=True)
-        new_indices.close()
-    # ====== copy others files ====== #
-    for f in other_files:
-      org_path = os.path.join(self.path, f)
-      dst_path = os.path.join(destination, f)
-      if not os.path.exists(dst_path):
-        if os.path.isdir(org_path): # directory
-          copy_tree(org_path, dst_path)
-        else: # single file
-          shutil.copy2(org_path, dst_path)
-    # ====== readme ====== #
-    readme_name = os.path.basename(self._readme_path)
-    dst_path = os.path.join(destination, readme_name)
-    if not os.path.exists(dst_path):
-      shutil.copy2(self._readme_path, dst_path)
-    return Dataset(destination, read_only=read_only)
+    raise NotImplementedError
 
   def flush(self):
     for dtype, shape, data, path in self._data_map.values():
@@ -801,15 +428,6 @@ class Dataset(object):
       del self._data_map[name]
 
   # ==================== Some info ==================== #
-  def _validate_memmap_max_open(self, name):
-    # ====== check if MmapData excess limit, close 1 files ====== #
-    if len(MmapData._INSTANCES) + 1 >= MAX_OPEN_MMAP:
-      for i, (_dtype, _shape, _data, _path) in self._data_map.items():
-        if isinstance(_data, MmapData) and i != name:
-          self.close(name=i)
-          self._data_map[i] = (_dtype, _shape, _path)
-          break
-
   def __contains__(self, key):
     return key in self._data_map
 
@@ -837,12 +455,6 @@ class Dataset(object):
       if key not in self._data_map:
         raise KeyError('%s not found in this dataset' % key)
       dtype, shape, data, path = self._data_map[key]
-      # return type is just a descriptor, create MmapData for it
-      if data is None and \
-      dtype is not 'unknown' and shape is not 'unknown':
-        data = MmapData(path, read_only=self.read_only)
-        self._data_map[key] = (data.dtype, data.shape, data, path)
-        self._validate_memmap_max_open(key)
       return path if data is None else data
     raise ValueError('Only accept key type is string.')
 
@@ -851,7 +463,7 @@ class Dataset(object):
       return self.__getitem__(key)
     return default
 
-  def __setitem__(self, key, value):
+  def __setitem__(self, name: Text, value: Any):
     """
     Parameters
     ----------
@@ -860,57 +472,19 @@ class Dataset(object):
         which must be "memmap", "hdf5"
         for example: ds[('X', 'hdf5')] = numpy.ones((8, 12))
     """
-    if not is_string(key) and not isinstance(key, (tuple, list)):
-      raise ValueError('"key" is the name for Data and must be String or '
-                       'tuple specified the name and datatype (memmap, hdf5).')
-    # ====== check datatype ====== #
-    datatype = 'memmap' # default datatype
-    if isinstance(key, (tuple, list)):
-      key, datatype = key
-      datatype = str(datatype).lower()
-      if datatype not in ('memmap', 'hdf5'):
-        raise ValueError('datatype can only be "memmap" or "hdf5", but '
-                         'the given data type is "%s"' % datatype)
-    # ====== do nothing ====== #
-    if key in self._data_map:
-      return
-    # ====== dict ====== #
-    path = os.path.join(self.path, key)
-    if isinstance(value, Mapping):
-      if os.path.exists(path):
-        raise Exception('File with path=%s already exist.' % path)
-      d = MmapDict(path)
-      for i, j in value.items():
-        d[i] = j
-      d.flush()
-      # store new dict
-      self._data_map[key] = (type(d).__name__, len(d), d, path)
-    # ====== ndarray ====== #
-    elif isinstance(value, np.ndarray):
-      dtype, shape = value.dtype, value.shape
-      if datatype == 'memmap':
-        data = MmapData(path, dtype=dtype, shape=shape)
-      else:
-        path = os.path.join(self.path, self._default_hdf5)
-        f = open_hdf5(path)
-        data = Hdf5Data(key, hdf=f, dtype=dtype, shape=shape)
-      # store new key
-      self._data_map[key] = (data.dtype, data.shape, data, path)
-      data[:shape[0]] = value
-      # check maximum opened memmap
-      self._validate_memmap_max_open(key)
-    # ====== other types ====== #
-    else:
-      if os.path.exists(path):
-        raise Exception('File with path=%s already exist.' % path)
-      with open(path, 'wb') as f:
-        cPickle.dump(value, f, protocol=cPickle.HIGHEST_PROTOCOL)
-      # store new dict
-      self._data_map[key] = (type(value).__name__,
-                             len(value) if hasattr(value, '__len__') else 0,
-                             value, path)
+    assert isinstance(name, string_types), \
+      "name must be given as string types."
+    path = os.path.join(self.path, name)
+    with open(path, 'wb') as f:
+      pickle.dump(value, f)
+    self._data_map[name] = (
+      value.dtype if hasattr(value, 'dtype') else str(type(value)),
+      value.shape if hasattr(value, 'shape') else 'unknown',
+      value, path)
+
 
   def get_md5_checksum(self, excluded_name=[]):
+    from odin.utils.crypto import md5_checksum
     md5_text = ''
     all_data_items = {i: j
                       for i, j in self._data_map.items()

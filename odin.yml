@@ -12,6 +12,7 @@ dependencies:
   - tqdm
 
   - pip:
+    - pycrypto==2.6.1
     - tensorflow-gpu==2.0.0-beta1
     - tensorflow-probability==0.7
     - torch==1.1

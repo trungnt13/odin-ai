@@ -16,7 +16,6 @@ from tensorflow.python.ops import init_ops
 
 from odin.utils import uuid, run_script
 from odin import backend as K, nnet as N
-from odin.autoconfig import get_ngpu, get_floatX, get_backend
 
 np.random.seed(1234)
 
@@ -323,7 +322,6 @@ class RNNTest(unittest.TestCase):
     import numpy as np
     import tensorflow as tf
     from tensorflow.python.ops import init_ops
-    from odin.autoconfig import randint
     from odin import backend as K, nnet as N
     np.random.seed(1234)
     X = K.variable(np.random.rand(25, 12, 8))

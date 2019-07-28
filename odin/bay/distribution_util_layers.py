@@ -6,7 +6,8 @@ from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers.internal import distribution_tensor_coercible as dtc
 
 class ReduceMean(Layer):
-  """ ReduceMean """
+  """ ReduceMean
+  """
 
   def __init__(self, axis=None, keepdims=None, **kwargs):
     super(ReduceMean, self).__init__(**kwargs)
@@ -26,13 +27,12 @@ class Sampling(Layer):
     super(Sampling, self).__init__(**kwargs)
     self.n_samples = n_samples
 
-  def call(self, x):
-    assert isinstance(x, Distribution) and hasattr(x, '_keras_history'), \
+  def call(self, x, n_samples=-1):
+    assert isinstance(x, Distribution), \
     "Input to this layer must be instance of tensorflow_probability Distribution"
-    if self.n_samples is not None:
-      return x.sample(self.n_samples)
-    else:
-      return tf.convert_to_tensor(x)
+    if n_samples < 0:
+      n_samples = self.n_samples
+    return  x.sample() if n_samples is None else x.sample(n_samples)
 
 class Moments(Layer):
   """ Moments """
