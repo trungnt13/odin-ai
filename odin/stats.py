@@ -415,7 +415,7 @@ def classification_report(y_pred, y_true, labels):
                                  target_names=target_names))
   return s
 
-def summary(x, axis=None, shorten=False):
+def summary(x, axis=None, shorten=False, float_precision=2):
   """ Return string of statistical summary given series `x`
     {#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}
   """
@@ -428,32 +428,33 @@ def summary(x, axis=None, shorten=False):
   qu1, qu3 = np.percentile(x, [25, 75], axis=axis)
   min_, max_ = np.min(x, axis=axis), np.max(x, axis=axis)
   s = ""
+  fmt = '%.' + str(int(float_precision)) + 'f'
   if not shorten:
     x = x.ravel()
     samples = ', '.join([str(i)
            for i in np.random.choice(x, size=min(8, len(x)), replace=False).tolist()])
     s += "***** Summary *****\n"
-    s += "    Min : %s\n" % str(min_)
-    s += "1st Qu. : %s\n" % str(qu1)
-    s += " Median : %s\n" % str(median)
-    s += "   Mean : %g\n" % mean
-    s += "3rd Qu. : %s\n" % str(qu3)
-    s += "    Max : %s\n" % str(max_)
+    s += "    Min : %s\n" % (fmt % min_)
+    s += "1st Qu. : %s\n" % (fmt % qu1)
+    s += " Median : %s\n" % (fmt % median)
+    s += "   Mean : %s\n" % (fmt % mean)
+    s += "3rd Qu. : %s\n" % (fmt % qu3)
+    s += "    Max : %s\n" % (fmt % max_)
     s += "-------------------\n"
-    s += "    Std : %g\n" % std
+    s += "    Std : %s\n" % (fmt % std)
     s += "#Samples: %d\n" % len(x)
     s += "Samples : %s\n" % samples
-    s += "Sparsity: %.4f\n" % sparsity_percentage(x)
+    s += "Sparsity: %s\n" % (fmt % sparsity_percentage(x))
   else:
     s += "{#:%s|mi:%s|q1:%s|md:%s|mn:%s|q3:%s|ma:%s|sd:%s}" %\
     (ctext(len(x), 'cyan'),
-     ctext('%g' % min_, 'cyan'),
-     ctext('%g' % qu1, 'cyan'),
-     ctext('%g' % median, 'cyan'),
-     ctext('%g' % mean, 'cyan'),
-     ctext('%g' % qu3, 'cyan'),
-     ctext('%g' % max_, 'cyan'),
-     ctext('%g' % std, 'cyan'))
+     ctext(fmt % min_, 'cyan'),
+     ctext(fmt % qu1, 'cyan'),
+     ctext(fmt % median, 'cyan'),
+     ctext(fmt % mean, 'cyan'),
+     ctext(fmt % qu3, 'cyan'),
+     ctext(fmt % max_, 'cyan'),
+     ctext(fmt % std, 'cyan'))
   return s
 
 describe = summary
