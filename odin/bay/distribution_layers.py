@@ -34,6 +34,7 @@ __all__ = [
     'NegativeBinomialLayer',
     'ZeroInflatedPoissonLayer',
     'ZeroInflatedNegativeBinomialLayer',
+    'ZeroInflatedBernoulliLayer',
     'update_convert_to_tensor_fn'
 ]
 
@@ -720,6 +721,84 @@ class ZeroInflatedNegativeBinomialLayer(DistributionLambda):
           value=event_shape, name='event_shape', dtype=tf.int32)
       return 3 * _event_size(event_shape,
                   name=name or 'ZeroInflatedNegativeBinomial_params_size')
+
+class ZeroInflatedBernoulliLayer(DistributionLambda):
+  """A Independent zero-inflated bernoulli keras layer
+
+  Parameters
+  ----------
+  event_shape: integer vector `Tensor` representing the shape of single
+    draw from this distribution.
+
+  given_log_count : boolean
+    is the input representing log count values or the count itself
+
+  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+    instance and returns a `tf.Tensor`-like object.
+    Default value: `tfd.Distribution.sample`.
+
+  validate_args: Python `bool`, default `False`. When `True` distribution
+    parameters are checked for validity despite possibly degrading runtime
+    performance. When `False` invalid inputs may silently render incorrect
+    outputs.
+    Default value: `False`.
+
+  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+
+  """
+
+  def __init__(self,
+               event_shape=(),
+               given_logits=True,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               validate_args=False,
+               activity_regularizer=None,
+               **kwargs):
+    super(ZeroInflatedBernoulliLayer, self).__init__(
+        lambda t: type(self).new(t, event_shape, given_logits, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
+
+  @staticmethod
+  def new(params, event_shape=(), given_logits=True,
+          validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli',
+                                 [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
+      event_shape = dist_util.expand_to_vector(
+          tf.convert_to_tensor(
+              value=event_shape, name='event_shape', dtype=tf.int32),
+          tensor_name='event_shape')
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ], axis=0)
+      (bernoulli_params, rate_params) = tf.split(params, 2, axis=-1)
+      bernoulli_params = tf.reshape(bernoulli_params, output_shape)
+      bern = tfd.Bernoulli(
+          logits=bernoulli_params if given_logits else None,
+          probs=bernoulli_params if not given_logits else None,
+          validate_args=validate_args)
+      zibern = ZeroInflated(count_distribution=bern,
+                            logits=tf.reshape(rate_params, output_shape),
+                            validate_args=validate_args)
+      return tfd.Independent(zibern,
+          reinterpreted_batch_ndims=tf.size(input=event_shape),
+          validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_shape=(), tied_inflation_rate=False,
+                  name=None):
+    """The number of `params` needed to create a single distribution."""
+    with tf.compat.v1.name_scope(name,
+                                 'ZeroInflatedBernoulli_params_size',
+                                 [event_shape]):
+      event_shape = tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32)
+      return 2 * _event_size(event_shape,
+                  name=name or 'ZeroInflatedBernoulli_params_size')
 
 # ===========================================================================
 # Shortcut
