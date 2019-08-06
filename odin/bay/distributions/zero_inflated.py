@@ -19,15 +19,13 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-
-from tensorflow_probability.python.distributions import (distribution,
-  Bernoulli, Independent)
-from tensorflow_probability.python.distributions import seed_stream
+from tensorflow_probability.python.distributions import (Bernoulli, Independent,
+                                                         distribution,
+                                                         seed_stream)
 from tensorflow_probability.python.internal import reparameterization
 
-__all__ = [
-    'ZeroInflated'
-]
+__all__ = ['ZeroInflated']
+
 
 def _broadcast_rate(probs, *others):
   # make the shape broadcast-able
@@ -40,12 +38,12 @@ def _broadcast_rate(probs, *others):
 
   if others_ndims < probs_ndims:
     for i in range(probs_ndims - others_ndims):
-      others = [tf.expand_dims(o, -1)
-                for o in others]
+      others = [tf.expand_dims(o, -1) for o in others]
   elif others_ndims > probs_ndims:
     for i in range(others_ndims - probs_ndims):
       probs = tf.expand_dims(probs, -1)
   return [probs] + others
+
 
 class ZeroInflated(distribution.Distribution):
   """zero-inflated distribution.
@@ -123,13 +121,12 @@ class ZeroInflated(distribution.Distribution):
       self._count_distribution = count_distribution
 
       if inflated_distribution is None:
-        inflated_distribution = Bernoulli(
-            logits=logits,
-            probs=probs,
-            dtype=tf.int32,
-            validate_args=validate_args,
-            allow_nan_stats=allow_nan_stats,
-            name="ZeroInflatedRate")
+        inflated_distribution = Bernoulli(logits=logits,
+                                          probs=probs,
+                                          dtype=tf.int32,
+                                          validate_args=validate_args,
+                                          allow_nan_stats=allow_nan_stats,
+                                          name="ZeroInflatedRate")
       elif not isinstance(inflated_distribution, distribution.Distribution):
         raise TypeError("inflated_distribution must be a Distribution instance"
                         " but saw: %s" % inflated_distribution)
@@ -152,9 +149,10 @@ class ZeroInflated(distribution.Distribution):
             reinterpreted_batch_ndims=inflated_batch_ndims - count_batch_ndims,
             name="ZeroInflatedRate")
       elif count_batch_ndims > inflated_batch_ndims:
-        raise ValueError("count_distribution has %d-D batch_shape, which smaller"
-          "than %d-D batch_shape of inflated_distribution" %
-          (count_batch_ndims, inflated_batch_ndims))
+        raise ValueError(
+            "count_distribution has %d-D batch_shape, which smaller"
+            "than %d-D batch_shape of inflated_distribution" %
+            (count_batch_ndims, inflated_batch_ndims))
 
       # Ensure that all batch and event ndims are consistent.
       if validate_args:
@@ -162,29 +160,30 @@ class ZeroInflated(distribution.Distribution):
             tf.assert_equal(
                 self._count_distribution.batch_shape_tensor(),
                 self._inflated_distribution.batch_shape_tensor(),
-                message=("dist batch shape must match logits|probs batch shape"))
-        )
+                message=(
+                    "dist batch shape must match logits|probs batch shape")))
 
     # We let the zero-inflated distribution access _graph_parents since its arguably
     # more like a baseclass.
     reparameterization_type = [
         self._count_distribution.reparameterization_type,
-        self._inflated_distribution.reparameterization_type]
+        self._inflated_distribution.reparameterization_type
+    ]
     if any(i == reparameterization.NOT_REPARAMETERIZED
            for i in reparameterization_type):
       reparameterization_type = reparameterization.NOT_REPARAMETERIZED
     else:
       reparameterization_type = reparameterization.FULLY_REPARAMETERIZED
 
-    super(ZeroInflated, self).__init__(
-        dtype=self._count_distribution.dtype,
-        reparameterization_type=reparameterization_type,
-        validate_args=validate_args,
-        allow_nan_stats=allow_nan_stats,
-        parameters=parameters,
-        graph_parents=self._count_distribution._graph_parents +
-        self._inflated_distribution._graph_parents,
-        name=name)
+    super(ZeroInflated,
+          self).__init__(dtype=self._count_distribution.dtype,
+                         reparameterization_type=reparameterization_type,
+                         validate_args=validate_args,
+                         allow_nan_stats=allow_nan_stats,
+                         parameters=parameters,
+                         graph_parents=self._count_distribution._graph_parents +
+                         self._inflated_distribution._graph_parents,
+                         name=name)
 
   @property
   def logits(self):
@@ -224,7 +223,8 @@ class ZeroInflated(distribution.Distribution):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
       # These should all be the same shape by virtue of matching
       # batch_shape and event_shape.
-      probs, d_mean = _broadcast_rate(self.probs, self._count_distribution.mean())
+      probs, d_mean = _broadcast_rate(self.probs,
+                                      self._count_distribution.mean())
       return (1 - probs) * d_mean
 
   def _variance(self):
@@ -241,11 +241,11 @@ class ZeroInflated(distribution.Distribution):
       # batch_shape and event_shape.
       d = self._count_distribution
 
-      probs, d_mean, d_variance = _broadcast_rate(
-          self.probs, d.mean(), d.variance())
+      probs, d_mean, d_variance = _broadcast_rate(self.probs, d.mean(),
+                                                  d.variance())
       return (1 - probs) * \
       (d_variance + tf.square(d_mean)) - \
-      tf.square(self._mean())
+      tf.math.square(self._mean())
 
   def _log_prob(self, x):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
@@ -262,12 +262,12 @@ class ZeroInflated(distribution.Distribution):
 
       # This equation is validated
       # Equation (13) reference: u_{ij} = 1 - pi_{ij}
-      y_0 = tf.log(pi + (1 - pi) * d_prob)
-      y_1 = tf.log(1 - pi) + d_log_prob
+      y_0 = tf.math.log(pi + (1 - pi) * d_prob)
+      y_1 = tf.math.log(1 - pi) + d_log_prob
       return tf.where(x == 0, y_0, y_1)
 
   def _prob(self, x):
-    return tf.exp(self._log_prob(x))
+    return tf.math.exp(self._log_prob(x))
 
   def _sample_n(self, n, seed):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):

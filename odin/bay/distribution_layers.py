@@ -1,40 +1,30 @@
 from __future__ import absolute_import, division, print_function
 
-from six import string_types
-
 # Dependency imports
 import numpy as np
 import tensorflow as tf
-
+from six import string_types
+from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 # By importing `distributions` as `tfd`, docstrings will show
 # `tfd.Distribution`. We import `bijectors` the same way, for consistency.
 from tensorflow_probability.python import bijectors as tfb
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
+from tensorflow_probability.python.internal import \
+    distribution_util as dist_util
 from tensorflow_probability.python.layers.distribution_layer import _event_size
-from tensorflow_probability.python.internal import distribution_util as dist_util
-from tensorflow_probability.python.layers.internal import distribution_tensor_coercible as dtc
-from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
+from tensorflow_probability.python.layers.internal import \
+    distribution_tensor_coercible as dtc
 
 from odin.bay.distribution_util_layers import *
 from odin.bay.distributions import ZeroInflated
 
-
 __all__ = [
-    'DistributionLambda',
-    'MultivariateNormalLayer',
-    'BernoulliLayer',
-    'OneHotCategoricalLayer',
-    'GammaLayer',
-    'DirichletLayer',
-    'GaussianLayer', 'NormalLayer',
-    'LogNormalLayer',
-    'LogisticLayer',
-    'PoissonLayer',
-    'NegativeBinomialLayer',
-    'ZeroInflatedPoissonLayer',
-    'ZeroInflatedNegativeBinomialLayer',
-    'ZeroInflatedBernoulliLayer',
+    'DistributionLambda', 'MultivariateNormalLayer', 'BernoulliLayer',
+    'OneHotCategoricalLayer', 'GammaLayer', 'DirichletLayer', 'GaussianLayer',
+    'NormalLayer', 'LogNormalLayer', 'LogisticLayer', 'PoissonLayer',
+    'NegativeBinomialLayer', 'ZeroInflatedPoissonLayer',
+    'ZeroInflatedNegativeBinomialLayer', 'ZeroInflatedBernoulliLayer',
     'update_convert_to_tensor_fn'
 ]
 
@@ -42,6 +32,7 @@ DistributionLambda = tfl.DistributionLambda
 BernoulliLayer = tfl.IndependentBernoulli
 PoissonLayer = tfl.IndependentPoisson
 LogisticLayer = tfl.IndependentLogistic
+
 
 # ===========================================================================
 # Helper
@@ -56,6 +47,7 @@ def update_convert_to_tensor_fn(dist, fn):
   dist._convert_to_tensor_fn = fn
   return dist
 
+
 def _preprocess_eventshape(params, event_shape, n_dims=1):
   if isinstance(event_shape, string_types):
     if event_shape.lower().strip() == 'auto':
@@ -63,6 +55,7 @@ def _preprocess_eventshape(params, event_shape, n_dims=1):
     else:
       raise ValueError("Not support for event_shape='%s'" % event_shape)
   return event_shape
+
 
 # ===========================================================================
 # Simple distribution
@@ -104,19 +97,20 @@ class OneHotCategoricalLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     super(OneHotCategoricalLayer, self).__init__(
-        lambda t: type(self).new(
-          t, probs_input, sample_dtype, validate_args),
+        lambda t: type(self).new(t, probs_input, sample_dtype, validate_args),
         convert_to_tensor_fn,
         activity_regularizer=activity_regularizer,
         **kwargs)
 
   @staticmethod
-  def new(params, probs_input=False, dtype=None, validate_args=False, name=None):
+  def new(params, probs_input=False, dtype=None, validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'OneHotCategorical', [params]):
       return tfd.OneHotCategorical(
           logits=params if not probs_input else None,
-          probs=tf.clip_by_value(params, 1e-8, 1 - 1e-8) if probs_input else None,
+          probs=tf.clip_by_value(params, 1e-8, 1 -
+                                 1e-8) if probs_input else None,
           dtype=dtype or params.dtype.base_dtype,
           validate_args=validate_args)
 
@@ -125,8 +119,8 @@ class OneHotCategoricalLayer(DistributionLambda):
     """The number of `params` needed to create a single distribution."""
     return event_size
 
-class DirichletLayer(DistributionLambda):
 
+class DirichletLayer(DistributionLambda):
   """
   Parameters
   ----------
@@ -146,50 +140,52 @@ class DirichletLayer(DistributionLambda):
                activity_regularizer=None,
                validate_args=False,
                **kwargs):
-    super(DirichletLayer, self).__init__(
-        lambda t: type(self).new(
-          t, event_shape, pre_softplus, clip_for_stable, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+    super(DirichletLayer,
+          self).__init__(lambda t: type(self).new(
+              t, event_shape, pre_softplus, clip_for_stable, validate_args),
+                         convert_to_tensor_fn,
+                         activity_regularizer=activity_regularizer,
+                         **kwargs)
 
   @staticmethod
-  def new(params, event_shape='auto',
-          pre_softplus=False, clip_for_stable=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape='auto',
+          pre_softplus=False,
+          clip_for_stable=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     event_shape = _preprocess_eventshape(params, event_shape)
-    with tf.compat.v1.name_scope(name, 'Dirichlet',
-                                 [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'Dirichlet', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       # Clips the Dirichlet parameters to the numerically stable KL region
       if pre_softplus:
         params = tf.nn.softplus(params)
       if clip_for_stable:
         params = tf.clip_by_value(params, 1e-3, 1e3)
       return tfd.Independent(
-          tfd.Dirichlet(
-              concentration=tf.reshape(params, output_shape),
-              validate_args=validate_args),
+          tfd.Dirichlet(concentration=tf.reshape(params, output_shape),
+                        validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Dirichlet_params_size',
-                                 [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
+    with tf.compat.v1.name_scope(name, 'Dirichlet_params_size', [event_shape]):
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
       return _event_size(event_shape, name=name or 'Dirichlet_params_size')
+
 
 class GaussianLayer(DistributionLambda):
   """An independent normal Keras layer.
@@ -230,40 +226,42 @@ class GaussianLayer(DistributionLambda):
         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), softplus_scale=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          softplus_scale=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'Normal',
-                                 [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'Normal', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       if softplus_scale:
-        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(1.0)
+        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(
+            1.0)
       return tfd.Independent(
-          tfd.Normal(
-              loc=tf.reshape(loc_params, output_shape),
-              scale=tf.reshape(scale_params, output_shape),
-              validate_args=validate_args),
+          tfd.Normal(loc=tf.reshape(loc_params, output_shape),
+                     scale=tf.reshape(scale_params, output_shape),
+                     validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Normal_params_size',
-                                 [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
-      return 2 * _event_size(
-          event_shape, name=name or 'Normal_params_size')
+    with tf.compat.v1.name_scope(name, 'Normal_params_size', [event_shape]):
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
+      return 2 * _event_size(event_shape, name=name or 'Normal_params_size')
+
 
 class LogNormalLayer(DistributionLambda):
   """An independent LogNormal Keras layer.
@@ -304,39 +302,42 @@ class LogNormalLayer(DistributionLambda):
         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), softplus_scale=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          softplus_scale=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'LogNormal',
-                                 [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'LogNormal', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       if softplus_scale:
-        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(1.0)
+        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(
+            1.0)
       return tfd.Independent(
-          tfd.LogNormal(
-              loc=tf.reshape(loc_params, output_shape),
-              scale=tf.reshape(scale_params, output_shape),
-              validate_args=validate_args),
+          tfd.LogNormal(loc=tf.reshape(loc_params, output_shape),
+                        scale=tf.reshape(scale_params, output_shape),
+                        validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'LogNormal_params_size',
-                                 [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
+    with tf.compat.v1.name_scope(name, 'LogNormal_params_size', [event_shape]):
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'LogNormal_params_size')
+
 
 class GammaLayer(DistributionLambda):
   """An independent Gamma Keras layer.
@@ -375,34 +376,34 @@ class GammaLayer(DistributionLambda):
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'Gamma',
-                                 [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'Gamma', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       concentration_params, rate_params = tf.split(params, 2, axis=-1)
       return tfd.Independent(
-          tfd.Gamma(
-              concentration=tf.reshape(concentration_params, output_shape),
-              rate=tf.reshape(rate_params, output_shape),
-              validate_args=validate_args),
+          tfd.Gamma(concentration=tf.reshape(concentration_params,
+                                             output_shape),
+                    rate=tf.reshape(rate_params, output_shape),
+                    validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Gamma_params_size',
-                                 [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
+    with tf.compat.v1.name_scope(name, 'Gamma_params_size', [event_shape]):
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
       return 2 * _event_size(event_shape, name=name or 'Gamma_params_size')
+
 
 class NegativeBinomialLayer(DistributionLambda):
   """An independent NegativeBinomial Keras layer.
@@ -436,35 +437,39 @@ class NegativeBinomialLayer(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(NegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, given_log_count, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+    super(NegativeBinomialLayer,
+          self).__init__(lambda t: type(self).new(
+              t, event_shape, given_log_count, validate_args),
+                         convert_to_tensor_fn,
+                         activity_regularizer=activity_regularizer,
+                         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), given_log_count=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          given_log_count=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'NegativeBinomial',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       total_count_params, logits_params = tf.split(params, 2, axis=-1)
       if given_log_count:
         total_count_params = tf.exp(total_count_params, name='total_count')
       return tfd.Independent(
-          tfd.NegativeBinomial(
-              total_count=tf.reshape(total_count_params, output_shape),
-              logits=tf.reshape(logits_params, output_shape),
-              validate_args=validate_args),
+          tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
+                                                      output_shape),
+                               logits=tf.reshape(logits_params, output_shape),
+                               validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
@@ -473,10 +478,12 @@ class NegativeBinomialLayer(DistributionLambda):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name, 'NegativeBinomial_params_size',
                                  [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
       return 2 * _event_size(event_shape,
                              name=name or 'NegativeBinomial_params_size')
+
 
 # ===========================================================================
 # Multivariate distribution
@@ -528,16 +535,20 @@ class MultivariateNormalLayer(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(
-          t, event_size, covariance_type, softplus_scale, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+    super(MultivariateNormalLayer,
+          self).__init__(lambda t: type(self).new(
+              t, event_size, covariance_type, softplus_scale, validate_args),
+                         convert_to_tensor_fn,
+                         activity_regularizer=activity_regularizer,
+                         **kwargs)
 
   @staticmethod
-  def new(params, event_size, covariance_type, softplus_scale,
-          validate_args=False, name=None):
+  def new(params,
+          event_size,
+          covariance_type,
+          softplus_scale,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     covariance_type = str(covariance_type).lower().strip()
     assert covariance_type in ('full', 'tril', 'diag'), \
@@ -551,18 +562,18 @@ class MultivariateNormalLayer(DistributionLambda):
       params = tf.convert_to_tensor(value=params, name='params')
 
       if covariance_type == 'tril':
-        scale_tril = tfb.ScaleTriL(
-            diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()),
-            validate_args=validate_args)
+        scale_tril = tfb.ScaleTriL(diag_shift=np.array(
+            1e-5, params.dtype.as_numpy_dtype()),
+                                   validate_args=validate_args)
         return tfd.MultivariateNormalTriL(
             loc=params[..., :event_size],
             scale_tril=scale_tril(scale_fn(params[..., event_size:])),
             validate_args=validate_args)
 
       elif covariance_type == 'diag':
-        return tfd.MultivariateNormalDiag(
-            loc=params[..., :event_size],
-            scale_diag=scale_fn(params[..., event_size:]))
+        return tfd.MultivariateNormalDiag(loc=params[..., :event_size],
+                                          scale_diag=scale_fn(
+                                              params[..., event_size:]))
 
       elif covariance_type == 'full':
         return tfd.MultivariateNormalFullCovariance(
@@ -585,6 +596,7 @@ class MultivariateNormalLayer(DistributionLambda):
         return event_size + event_size
       elif covariance_type == 'full':
         return event_size + event_size * event_size
+
 
 # ===========================================================================
 # Complex distributions
@@ -611,36 +623,37 @@ class ZeroInflatedPoissonLayer(DistributionLambda):
     with tf.compat.v1.name_scope(name, 'ZeroInflatedPoisson',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       (log_rate_params, logits_params) = tf.split(params, 2, axis=-1)
-      zip = ZeroInflated(
-          count_distribution=tfd.Poisson(
-              log_rate=tf.reshape(log_rate_params, output_shape),
-              validate_args=validate_args),
-          logits=tf.reshape(logits_params, output_shape),
-          validate_args=validate_args)
-      return tfd.Independent(zip,
+      zip = ZeroInflated(count_distribution=tfd.Poisson(
+          log_rate=tf.reshape(log_rate_params, output_shape),
+          validate_args=validate_args),
+                         logits=tf.reshape(logits_params, output_shape),
+                         validate_args=validate_args)
+      return tfd.Independent(
+          zip,
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False,
-                  name=None):
+  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name,
                                  'ZeroInflatedNegativeBinomial_params_size',
                                  [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
-      return 2 * _event_size(event_shape,
-                  name=name or 'ZeroInflatedNegativeBinomial_params_size')
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
+      return 2 * _event_size(
+          event_shape, name=name or 'ZeroInflatedNegativeBinomial_params_size')
+
 
 class ZeroInflatedNegativeBinomialLayer(DistributionLambda):
   """A Independent zero-inflated negative binomial keras layer
@@ -674,53 +687,60 @@ class ZeroInflatedNegativeBinomialLayer(DistributionLambda):
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(ZeroInflatedNegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, given_log_count, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+    super(ZeroInflatedNegativeBinomialLayer,
+          self).__init__(lambda t: type(self).new(
+              t, event_shape, given_log_count, validate_args),
+                         convert_to_tensor_fn,
+                         activity_regularizer=activity_regularizer,
+                         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), given_log_count=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          given_log_count=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomial',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
-      (total_count_params, logits_params,
-       rate_params) = tf.split(params, 3, axis=-1)
+      ],
+                               axis=0)
+      (total_count_params, logits_params, rate_params) = tf.split(params,
+                                                                  3,
+                                                                  axis=-1)
       if given_log_count:
         total_count_params = tf.exp(total_count_params, name='total_count')
-      nb = tfd.NegativeBinomial(
-          total_count=tf.reshape(total_count_params, output_shape),
-          logits=tf.reshape(logits_params, output_shape),
-          validate_args=validate_args)
+      nb = tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
+                                                       output_shape),
+                                logits=tf.reshape(logits_params, output_shape),
+                                validate_args=validate_args)
       zinb = ZeroInflated(count_distribution=nb,
                           logits=tf.reshape(rate_params, output_shape),
                           validate_args=validate_args)
-      return tfd.Independent(zinb,
+      return tfd.Independent(
+          zinb,
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False,
-                  name=None):
+  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name,
                                  'ZeroInflatedNegativeBinomial_params_size',
                                  [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
-      return 3 * _event_size(event_shape,
-                  name=name or 'ZeroInflatedNegativeBinomial_params_size')
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
+      return 3 * _event_size(
+          event_shape, name=name or 'ZeroInflatedNegativeBinomial_params_size')
+
 
 class ZeroInflatedBernoulliLayer(DistributionLambda):
   """A Independent zero-inflated bernoulli keras layer
@@ -761,44 +781,47 @@ class ZeroInflatedBernoulliLayer(DistributionLambda):
         **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), given_logits=True,
-          validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          given_logits=True,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(
-          tf.convert_to_tensor(
-              value=event_shape, name='event_shape', dtype=tf.int32),
-          tensor_name='event_shape')
+      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+          value=event_shape, name='event_shape', dtype=tf.int32),
+                                               tensor_name='event_shape')
       output_shape = tf.concat([
           tf.shape(input=params)[:-1],
           event_shape,
-      ], axis=0)
+      ],
+                               axis=0)
       (bernoulli_params, rate_params) = tf.split(params, 2, axis=-1)
       bernoulli_params = tf.reshape(bernoulli_params, output_shape)
-      bern = tfd.Bernoulli(
-          logits=bernoulli_params if given_logits else None,
-          probs=bernoulli_params if not given_logits else None,
-          validate_args=validate_args)
+      bern = tfd.Bernoulli(logits=bernoulli_params if given_logits else None,
+                           probs=bernoulli_params if not given_logits else None,
+                           validate_args=validate_args)
       zibern = ZeroInflated(count_distribution=bern,
                             logits=tf.reshape(rate_params, output_shape),
                             validate_args=validate_args)
-      return tfd.Independent(zibern,
+      return tfd.Independent(
+          zibern,
           reinterpreted_batch_ndims=tf.size(input=event_shape),
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False,
-                  name=None):
+  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name,
-                                 'ZeroInflatedBernoulli_params_size',
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli_params_size',
                                  [event_shape]):
-      event_shape = tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32)
+      event_shape = tf.convert_to_tensor(value=event_shape,
+                                         name='event_shape',
+                                         dtype=tf.int32)
       return 2 * _event_size(event_shape,
-                  name=name or 'ZeroInflatedBernoulli_params_size')
+                             name=name or 'ZeroInflatedBernoulli_params_size')
+
 
 # ===========================================================================
 # Shortcut

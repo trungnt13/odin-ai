@@ -313,7 +313,6 @@ class defaultdictkey(defaultdict):
       ret = self[key] = self.default_factory(key)
       return ret
 
-
 class abstractclassmethod(classmethod):
 
   __isabstractmethod__ = True
@@ -322,6 +321,16 @@ class abstractclassmethod(classmethod):
     method.__isabstractmethod__ = True
     super(abstractclassmethod, self).__init__(method)
 
+def multikeysdict(d):
+  assert isinstance(d, dict)
+  new_d = d.__class__()
+  for i, j in d.items():
+    if isinstance(i, tuple):
+      for k in i:
+        new_d[k] = j
+    else:
+      new_d[i] = j
+  return new_d
 # ===========================================================================
 # Path utils
 # ===========================================================================

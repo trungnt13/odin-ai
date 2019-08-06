@@ -1,14 +1,58 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
+from enum import Flag, auto
 from numbers import Number
+
 import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 
+from odin.bay import distributions as obd
+
+
+# ===========================================================================
+# enum
+# ===========================================================================
+class Statistic(Flag):
+  SAMPLE = auto()
+  MEAN = auto()
+  VAR = auto()
+  STDDEV = auto()
+  DIST = auto()
+
+
+# ===========================================================================
+# Logging
+# ===========================================================================
+def _dist2text(dist):
+  return '[%s]%s batch:%s event:%s' % (dist.__class__.__name__, dist.dtype.name,
+                                       dist.batch_shape, dist.event_shape)
+
+
+def _extract_desc(dist, name, pad):
+  text = pad + (name + ':' if len(name) > 0 else '') + _dist2text(dist) + '\n'
+  obj_type = type(dist)
+  for key in dir(dist):
+    val = getattr(dist, key)
+    if isinstance(val, tfd.Distribution) and \
+      not isinstance(getattr(obj_type, key, None), property):
+      text += _extract_desc(val, key, pad + ' ')
+  return text
+
+
+def print_dist(dist, return_text=False):
+  assert isinstance(dist, tfd.Distribution)
+  text = _extract_desc(dist, '', '')
+  if return_text:
+    return text[:-1]
+  print(text)
+
+
 # ===========================================================================
 # Objectives
 # ===========================================================================
-def kl_divergence(q, p,
+def kl_divergence(q,
+                  p,
                   use_analytic_kl=False,
                   q_sample=lambda q: q.sample(),
                   reduce_axis=(),
