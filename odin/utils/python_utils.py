@@ -1,27 +1,26 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
+import inspect
+import io
+import numbers
 import os
 import re
-import io
 import types
-import inspect
-import numbers
 import warnings
-from six import string_types
-from six.moves import cPickle
+from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
+                         deque)
 from contextlib import contextmanager
-from collections import OrderedDict, deque, Iterable, Iterator, Mapping
-
 from datetime import datetime
-from collections import defaultdict
-from six import string_types, add_metaclass
 
 import numpy as np
+from six import add_metaclass, string_types
+from six.moves import cPickle
 
 # ===========================================================================
 # Regular expression
 # ===========================================================================
 RE_NUMBER = re.compile(r'^[+-]*((\d*\.\d+)|(\d+))$')
+
 
 # ===========================================================================
 # Getter
@@ -30,6 +29,7 @@ def get_formatted_datetime(only_number=True):
   if only_number:
     return "{:%H%M%S%d%m%y}".format(datetime.now())
   return "{:%H:%M:%S-%d%b%y}".format(datetime.now())
+
 
 def get_all_properties(obj):
   """ Return all attributes which are properties of given Object
@@ -44,6 +44,7 @@ def get_all_properties(obj):
       properties.append(key)
   return properties if isinstance(obj, type) else \
   {p: getattr(obj, p) for p in properties}
+
 
 # ===========================================================================
 # Data converter
@@ -108,8 +109,10 @@ def as_tuple(x, N=None, t=None):
                     "of {0}, got {1} instead".format(t.__name__, x))
   return x
 
+
 def as_list(x, N=None, t=None):
   return list(as_tuple(x, N, t))
+
 
 def as_bytes(x, nbytes=None, order='little'):
   """ Convert some python object to bytes array, support type:
@@ -129,7 +132,8 @@ def as_bytes(x, nbytes=None, order='little'):
     return x.tobytes()
   else:
     raise ValueError("Not support bytes conversion for type: %s" %
-        type(x).__name__)
+                     type(x).__name__)
+
 
 # ===========================================================================
 # Types check
@@ -138,12 +142,14 @@ def is_lambda(v):
   LAMBDA = lambda: 0
   return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
 
+
 def is_pickleable(x):
   try:
     cPickle.dumps(x, protocol=cPickle.HIGHEST_PROTOCOL)
     return True
   except cPickle.PickleError:
     return False
+
 
 def is_fileobj(f):
   """ Check if an object `f` is intance of FileIO object created
@@ -153,11 +159,14 @@ def is_fileobj(f):
       isinstance(f, io.RawIOBase) or \
       isinstance(f, io.IOBase)
 
+
 def is_callable(x):
   return hasattr(x, '__call__')
 
+
 def is_string(s):
   return isinstance(s, string_types)
+
 
 def is_path(path):
   if is_string(path):
@@ -168,13 +177,16 @@ def is_path(path):
       return False
   return False
 
+
 def is_number(i, string_number=False):
   if isinstance(i, string_types) and string_number:
     return RE_NUMBER.match(i) is not None
   return isinstance(i, numbers.Number)
 
+
 def is_bool(b):
   return isinstance(b, type(True))
+
 
 def is_primitives(x, inc_ndarray=True, exception_types=[]):
   """Primitive types include: number, string, boolean, None
@@ -187,15 +199,17 @@ def is_primitives(x, inc_ndarray=True, exception_types=[]):
   """
   # complex list or Mapping
   if isinstance(x, (tuple, list)):
-    return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types)
-               for i in x)
+    return all(
+        is_primitives(
+            i, inc_ndarray=inc_ndarray, exception_types=exception_types)
+        for i in x)
   elif isinstance(x, Mapping):
-    return all(is_primitives(i, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types) and
-               is_primitives(j, inc_ndarray=inc_ndarray,
-                             exception_types=exception_types)
-               for i, j in x.items())
+    return all(
+        is_primitives(
+            i, inc_ndarray=inc_ndarray, exception_types=exception_types) and
+        is_primitives(
+            j, inc_ndarray=inc_ndarray, exception_types=exception_types)
+        for i, j in x.items())
   # check for number, string, bool, and numpy array
   if is_number(x) or is_string(x) or is_bool(x) or x is None or \
   (any(isinstance(x, t) for t in exception_types)) or \
@@ -203,12 +217,20 @@ def is_primitives(x, inc_ndarray=True, exception_types=[]):
     return True
   return False
 
+
 # ===========================================================================
 # IO utilities
 # ===========================================================================
-def savetxt(fname, X, fmt='%g', delimiter=' ', newline='\n',
-            header='', footer='', index=None,
-            comments='# ', encoding=None,
+def savetxt(fname,
+            X,
+            fmt='%g',
+            delimiter=' ',
+            newline='\n',
+            header='',
+            footer='',
+            index=None,
+            comments='# ',
+            encoding=None,
             async_backend='thread'):
   """ Save an array to a text file.
 
@@ -260,6 +282,7 @@ def savetxt(fname, X, fmt='%g', delimiter=' ', newline='\n',
   """
   pass
 
+
 # ===========================================================================
 # String processing
 # ===========================================================================
@@ -267,7 +290,9 @@ _space_char = re.compile(r"\s")
 _multiple_spaces = re.compile(r"\s\s+")
 _non_alphanumeric_char = re.compile(r"\W")
 
-def string_normalize(text, lower=True,
+
+def string_normalize(text,
+                     lower=True,
                      remove_non_alphanumeric=True,
                      remove_duplicated_spaces=True,
                      remove_whitespace=False,
@@ -289,7 +314,9 @@ def string_normalize(text, lower=True,
       text = _space_char.sub('', text)
   return text
 
+
 text_normalize = string_normalize
+
 
 # ===========================================================================
 # List utils
@@ -302,10 +329,22 @@ def unique(seq, keep_order=False):
   else:
     return list(set(seq))
 
+
 # ===========================================================================
 # Async file IO
 # ===========================================================================
 class defaultdictkey(defaultdict):
+  """ Enhanced version of `defaultdict`, instead of return a
+  default value, return an "improvised" default value based on
+  the given key.
+
+  Example
+  -------
+  >>> from odin.utils.python_utils import defaultdictkey
+  >>> d = defaultdictkey(lambda x: str(x))
+  >>> print(d['123']) # '123'
+  """
+
   def __missing__(self, key):
     if self.default_factory is None:
       raise KeyError(key)
@@ -313,13 +352,6 @@ class defaultdictkey(defaultdict):
       ret = self[key] = self.default_factory(key)
       return ret
 
-class abstractclassmethod(classmethod):
-
-  __isabstractmethod__ = True
-
-  def __init__(self, method):
-    method.__isabstractmethod__ = True
-    super(abstractclassmethod, self).__init__(method)
 
 def multikeysdict(d):
   assert isinstance(d, dict)
@@ -331,6 +363,30 @@ def multikeysdict(d):
     else:
       new_d[i] = j
   return new_d
+
+
+# ===========================================================================
+# Object and class attributes
+# ===========================================================================
+class abstractclassmethod(classmethod):
+
+  __isabstractmethod__ = True
+
+  def __init__(self, method):
+    method.__isabstractmethod__ = True
+    super(abstractclassmethod, self).__init__(method)
+
+
+class classproperty(object):
+
+  def __init__(self, fn):
+    super(classproperty, self).__init__()
+    self.fn = fn
+
+  def __get__(self, obj, owner):
+    return self.fn(owner)
+
+
 # ===========================================================================
 # Path utils
 # ===========================================================================
@@ -373,7 +429,8 @@ def select_path(*paths, default=None, create_new=False):
     raise ValueError("Cannot create new folder from list: %s" % str(paths))
   # ====== raise exception ====== #
   raise RuntimeError("Cannot find any exists path from list: %s" %
-    '; '.join(all_paths))
+                     '; '.join(all_paths))
+
 
 # ===========================================================================
 # Warnings and Exception
@@ -395,6 +452,7 @@ def catch_warnings_error(w):
   with warnings.catch_warnings():
     warnings.filterwarnings(action='error', category=w)
     yield
+
 
 @contextmanager
 def catch_warnings_ignore(w):

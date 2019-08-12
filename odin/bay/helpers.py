@@ -89,9 +89,10 @@ def kl_divergence(q,
   -------
   """
   if auto_remove_independent:
-    if isinstance(q, tfd.Independent):
+    # only remove Independent if one is Indepedent and another is not.
+    if isinstance(q, tfd.Independent) and not isinstance(p, tfd.Independent):
       q = q.distribution
-    if isinstance(p, tfd.Independent):
+    if not isinstance(q, tfd.Independent) and isinstance(p, tfd.Independent):
       p = p.distribution
   q_name = [i for i in q.name.split('/') if len(i) > 0][-1]
   p_name = [i for i in p.name.split('/') if len(i) > 0][-1]

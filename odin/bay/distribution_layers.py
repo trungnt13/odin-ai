@@ -21,11 +21,11 @@ from odin.bay.distributions import ZeroInflated
 
 __all__ = [
     'DistributionLambda', 'MultivariateNormalLayer', 'BernoulliLayer',
-    'OneHotCategoricalLayer', 'GammaLayer', 'DirichletLayer', 'GaussianLayer',
-    'NormalLayer', 'LogNormalLayer', 'LogisticLayer', 'PoissonLayer',
-    'NegativeBinomialLayer', 'ZeroInflatedPoissonLayer',
-    'ZeroInflatedNegativeBinomialLayer', 'ZeroInflatedBernoulliLayer',
-    'update_convert_to_tensor_fn'
+    'DeterministicLayer', 'OneHotCategoricalLayer', 'GammaLayer',
+    'DirichletLayer', 'GaussianLayer', 'NormalLayer', 'LogNormalLayer',
+    'LogisticLayer', 'PoissonLayer', 'NegativeBinomialLayer',
+    'ZeroInflatedPoissonLayer', 'ZeroInflatedNegativeBinomialLayer',
+    'ZeroInflatedBernoulliLayer', 'update_convert_to_tensor_fn'
 ]
 
 DistributionLambda = tfl.DistributionLambda
@@ -60,6 +60,69 @@ def _preprocess_eventshape(params, event_shape, n_dims=1):
 # ===========================================================================
 # Simple distribution
 # ===========================================================================
+class DeterministicLayer(DistributionLambda):
+  """Scalar `Deterministic` distribution on the real line.
+
+  The scalar `Deterministic` distribution is parameterized by a [batch] point
+  `loc` on the real line.  The distribution is supported at this point only,
+  and corresponds to a random variable that is constant, equal to `loc`.
+
+  See [Degenerate rv](https://en.wikipedia.org/wiki/Degenerate_distribution).
+
+  #### Mathematical Details
+
+  The probability mass function (pmf) and cumulative distribution function (cdf)
+  are
+
+  ```none
+  pmf(x; loc) = 1, if x == loc, else 0
+  cdf(x; loc) = 1, if x >= loc, else 0
+  ```
+
+  For vectorized version, the probability mass function (pmf) is
+
+  ```none
+  pmf(x; loc)
+    = 1, if All[Abs(x - loc) <= atol + rtol * Abs(loc)],
+    = 0, otherwise.
+  ```
+
+  Parameters
+  ----------
+  vectorized : `bool` (default=False)
+    The `VectorDeterministic` distribution is parameterized by a [batch] point
+    `loc in R^k`.  The distribution is supported at this point only,
+    and corresponds to a random variable that is constant, equal to `loc`.
+
+  """
+
+  def __init__(self,
+               vectorized=False,
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               activity_regularizer=None,
+               validate_args=False,
+               **kwargs):
+    super(DeterministicLayer,
+          self).__init__(lambda t: type(self).new(t, vectorized, validate_args),
+                         convert_to_tensor_fn,
+                         activity_regularizer=activity_regularizer,
+                         **kwargs)
+
+  @staticmethod
+  def new(params, vectorized, validate_args=False, name=None):
+    """Create the distribution instance from a `params` vector."""
+    with tf.compat.v1.name_scope(name, 'DeterministicLayer', [params]):
+      if vectorized:
+        return tfd.VectorDeterministic(loc=params, validate_args=validate_args)
+      else:
+        return tfd.Deterministic(loc=params, validate_args=validate_args)
+
+  @staticmethod
+  def params_size(event_size, name=None):
+    """ The number of `params` needed to create a single distribution. """
+    return event_size
+
+
 class OneHotCategoricalLayer(DistributionLambda):
   """ A `d`-variate OneHotCategorical Keras layer from `d` params.
 
@@ -106,7 +169,7 @@ class OneHotCategoricalLayer(DistributionLambda):
   def new(params, probs_input=False, dtype=None, validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'OneHotCategorical', [params]):
+    with tf.compat.v1.name_scope(name, 'OneHotCategoricalLayer', [params]):
       return tfd.OneHotCategorical(
           logits=params if not probs_input else None,
           probs=tf.clip_by_value(params, 1e-8, 1 -
@@ -156,7 +219,7 @@ class DirichletLayer(DistributionLambda):
           name=None):
     """Create the distribution instance from a `params` vector."""
     event_shape = _preprocess_eventshape(params, event_shape)
-    with tf.compat.v1.name_scope(name, 'Dirichlet', [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'DirichletLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -232,7 +295,7 @@ class GaussianLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'Normal', [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'NormalLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -308,7 +371,7 @@ class LogNormalLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'LogNormal', [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'LogNormalLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -376,7 +439,7 @@ class GammaLayer(DistributionLambda):
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'Gamma', [params, event_shape]):
+    with tf.compat.v1.name_scope(name, 'GammaLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -451,7 +514,7 @@ class NegativeBinomialLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'NegativeBinomial',
+    with tf.compat.v1.name_scope(name, 'NegativeBinomialLayer',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -557,7 +620,7 @@ class MultivariateNormalLayer(DistributionLambda):
     scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0) \
     if bool(softplus_scale) else x
 
-    with tf.compat.v1.name_scope(name, 'MultivariateNormal',
+    with tf.compat.v1.name_scope(name, 'MultivariateNormalLayer',
                                  [params, event_size]):
       params = tf.convert_to_tensor(value=params, name='params')
 
@@ -620,7 +683,7 @@ class ZeroInflatedPoissonLayer(DistributionLambda):
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'ZeroInflatedPoisson',
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedPoissonLayer',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -701,7 +764,7 @@ class ZeroInflatedNegativeBinomialLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomial',
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedNegativeBinomialLayer',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -787,7 +850,7 @@ class ZeroInflatedBernoulliLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli',
+    with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulliLayer',
                                  [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(

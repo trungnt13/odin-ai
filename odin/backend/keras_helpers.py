@@ -1,15 +1,16 @@
-from tensorflow.python.util import nest
+from tensorflow.python.keras import Model
 from tensorflow.python.keras.layers import Layer
+from tensorflow.python.util import nest
 
 __all__ = [
-    'to_keras_objective',
-    'copy_keras_metadata',
-    'has_keras_meta',
+    'to_keras_objective', 'copy_keras_metadata', 'has_keras_meta',
     'add_trainable_weights'
 ]
 
+
 def has_keras_meta(tensor):
   return hasattr(tensor, '_keras_history') and hasattr(tensor, '_keras_mask')
+
 
 def copy_keras_metadata(keras_tensor, *new_tensors):
   if not hasattr(keras_tensor, '_keras_history') or \
@@ -24,6 +25,7 @@ def copy_keras_metadata(keras_tensor, *new_tensors):
       setattr(t, '_keras_mask', mask)
   return new_tensors[0] if len(new_tensors) == 1 else new_tensors
 
+
 def add_trainable_weights(layer, *variables):
   from odin.backend import is_variable
   variables = nest.flatten(variables)
@@ -33,7 +35,6 @@ def add_trainable_weights(layer, *variables):
   assert isinstance(layer, Layer), \
   "layer must be instance of tensorflow.python.keras.layers.Layer"
 
-  variables = [v for v in variables
-               if v not in layer._trainable_weights]
+  variables = [v for v in variables if v not in layer._trainable_weights]
   layer._trainable_weights = layer._trainable_weights + variables
   return layer

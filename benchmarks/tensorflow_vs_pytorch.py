@@ -184,6 +184,6 @@ def tfautograph_benchmark():
 #   p = mpi.Process(target=fn)
 #   p.start()
 #   p.join()
-pytorch_benchmark()
+# pytorch_benchmark()
 # tfeager_benchmark()
 # tfautograph_benchmark()
