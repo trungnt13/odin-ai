@@ -16,6 +16,12 @@ class ReduceMean(Layer):
     self.axis = axis
     self.keepdims = keepdims
 
+  def get_config(self):
+    config = super(Moments, self).get_config()
+    config['axis'] = self.axis
+    config['keepdims'] = self.keepdims
+    return config
+
   def call(self, x):
     return [tf.reduce_mean(i, axis=self.axis, keepdims=self.keepdims) for i in x] \
     if isinstance(x, (tuple, list)) else \
@@ -29,6 +35,11 @@ class Sampling(Layer):
   def __init__(self, n_samples=None, **kwargs):
     super(Sampling, self).__init__(**kwargs)
     self.n_samples = n_samples
+
+  def get_config(self):
+    config = super(Moments, self).get_config()
+    config['n_samples'] = self.n_samples
+    return config
 
   def call(self, x, n_samples=-1):
     assert isinstance(x, Distribution), \
@@ -57,9 +68,15 @@ class Moments(Layer):
       outputs.append(x.variance())
     return outputs[0] if len(outputs) == 1 else tuple(outputs)
 
+  def get_config(self):
+    config = super(Moments, self).get_config()
+    config['mean'] = self.mean
+    config['variance'] = self.variance
+    return config
+
   def compute_output_shape(self, input_shape):
-    return [input_shape, input_shape
-           ] if self.mean and self.variance else input_shape
+    return [input_shape, input_shape] \
+      if self.mean and self.variance else input_shape
 
 
 class Stddev(Layer):
@@ -88,6 +105,12 @@ class GetDistributionAttr(Layer):
     if isinstance(convert_to_tensor_fn, property):
       convert_to_tensor_fn = convert_to_tensor_fn.fget
     self.convert_to_tensor_fn = convert_to_tensor_fn
+
+  def get_config(self):
+    config = super(Moments, self).get_config()
+    config['attr_name'] = self.attr_name
+    config['convert_to_tensor_fn'] = self.convert_to_tensor_fn
+    return config
 
   def call(self, x):
     attrs = self.attr_name.split('.')

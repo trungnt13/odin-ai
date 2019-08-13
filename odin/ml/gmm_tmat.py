@@ -6,24 +6,23 @@ __email__ = 'omid.sadjadi@nist.gov'
 Modification and GPU-implementation by TrungNT
 """
 import os
-import time
-import random
 import pickle
+import random
 import threading
-from six import string_types
-from collections import OrderedDict, defaultdict, Mapping
+import time
+from collections import Mapping, OrderedDict, defaultdict
 
 import numpy as np
-from scipy import linalg
 import tensorflow as tf
+from scipy import linalg
+from six import string_types
 
 from odin import backend as K
-from odin.fuel import Data, Feeder, MmapData
-from odin.utils import (MPI, batching, ctext, cpu_count, Progbar,
-                        is_number, as_tuple, uuid,
-                        wprint, eprint, segment_list, defaultdictkey,
-                        array_size)
-from odin.ml.base import DensityMixin, BaseEstimator, TransformerMixin
+from odin.fuel import MmapArray
+from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
+from odin.utils import (MPI, Progbar, array_size, as_tuple, batching, cpu_count,
+                        ctext, defaultdictkey, eprint, is_number, segment_list,
+                        uuid, wprint)
 
 EPS = 1e-6
 # minimum batch size that will be optimal to transfer
@@ -567,10 +566,8 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       indices = [i for i in X if i != tmp][0]
       X = tmp
     # ====== check X ====== #
-    if not isinstance(X, (Data, np.ndarray)):
-      raise ValueError("`X` must be numpy.ndarray or instance of odin.fuel.Data.")
-    if isinstance(X, Feeder):
-      raise ValueError("No support for fitting GMM on odin.fuel.Feeder")
+    if not isinstance(X, np.ndarray):
+      raise ValueError("`X` must be numpy.ndarray")
     # ====== check indices ====== #
     if isinstance(indices, Mapping):
       indices = list(indices.items())
@@ -774,7 +771,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                         dtype='float32', device='cpu', ncpu=None,
                         override=True):
     """ Same as `transform`, however, save the transformed statistics
-    to file using `odin.fuel.MmapData`
+    to file using `odin.fuel.MmapArray`
 
     Return
     ------
@@ -810,7 +807,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       if os.path.exists(pathZ):
         if override:
           os.remove(pathZ)
-      z_dat = MmapData(path=pathZ, dtype=dtype,
+      z_dat = MmapArray(path=pathZ, dtype=dtype,
                        shape=(None, self.nmix))
     else:
       z_dat = None
@@ -818,7 +815,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
       if os.path.exists(pathF):
         if override:
           os.remove(pathF)
-      f_dat = MmapData(path=pathF, dtype=dtype,
+      f_dat = MmapArray(path=pathF, dtype=dtype,
                        shape=(None, self.nmix * self.feat_dim))
     else:
       f_dat = None
@@ -999,8 +996,6 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
 
   def _fast_expectation(self, X, zero=True, first=True, second=True,
                         llk=True, on_gpu=False):
-    if isinstance(X, Data):
-      X = X.array
     # ====== run on GPU ====== #
     if on_gpu:
       Z, F, S, L = [self.__expressions_gpu[name]
@@ -1699,10 +1694,6 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
   def _fast_expectation(self, Z, F, on_gpu):
     nframes = np.ceil(Z.sum())
     nfiles = F.shape[0]
-    if isinstance(Z, Data):
-      Z = Z.array
-    if isinstance(F, Data):
-      F = F.array
     # ====== GPU ====== #
     if on_gpu:
       LU, RU, llk = K.eval(self._gpu_e_outputs,
@@ -1909,7 +1900,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    X : {tuple, list, numpy.ndarray, odin.fuel.data.MmapData}
+    X : {tuple, list, numpy.ndarray, odin.fuel.data.MmapArray}
       if tuple or list is given, the inputs include:
       Z-[1, nmix]; F-[1, nmix*feat_dim]
       if numpy.ndarray is given, shape must be [n_samples, feat_dim]
@@ -1954,13 +1945,13 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
                         dtype='float32', device='gpu', ncpu=None,
                         override=True):
     """ Same as `transform`, however, save the transformed statistics
-    to file using `odin.fuel.MmapData`
+    to file using `odin.fuel.MmapArray`
 
     Parameters
     ----------
-    Z : {None, numpy.ndarray, odin.fuel.data.MmapData}
+    Z : {None, numpy.ndarray, odin.fuel.data.MmapArray}
       array of zero-th order statistic [n_samples, nmix]
-    F : {None, numpy.ndarray, odin.fuel.data.MmapData}
+    F : {None, numpy.ndarray, odin.fuel.data.MmapArray}
       array of first-th order statistic [n_samples, nmix * feat_dim]
     path : {str, None}
       if str, saving path for extracted i-vector, otherwise,
@@ -1998,7 +1989,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     if path is not None:
       if os.path.exists(path) and override:
         os.remove(path)
-      dat = MmapData(path=path, dtype=dtype,
+      dat = MmapArray(path=path, dtype=dtype,
                      shape=(n_samples, self.tv_dim),
                      read_only=False)
     else:
@@ -2047,7 +2038,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     if path is not None:
       dat.flush()
       dat.close()
-      return MmapData(path=path, read_only=True)
+      return MmapArray(path=path, read_only=True)
     return dat
 
   def fit(self, X, y=None):
@@ -2079,8 +2070,8 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
         self.gmm.transform_to_disk(X, indices, pathZ=cache_Z, pathF=cache_F,
                                    dtype='float32', device=None,
                                    override=True)
-        Z = MmapData(cache_Z, read_only=True)
-        F = MmapData(cache_F, read_only=True)
+        Z = MmapArray(cache_Z, read_only=True)
+        F = MmapArray(cache_F, read_only=True)
       ### given Z and F
       elif any(i.shape[1] == self.nmix for i in X) and \
       any(i.shape[1] == self.feat_dim * self.nmix for i in X):

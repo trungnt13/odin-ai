@@ -4,6 +4,7 @@ from typing import Optional, Type, Union
 
 import tensorflow as tf
 from tensorflow.python.keras import Model, Sequential
+from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers import DistributionLambda
@@ -47,7 +48,17 @@ class DistributionLayer(Model):
     assert isinstance(posterior, DistributionLambda) or\
        (isinstance(posterior, type) and issubclass(posterior, DistributionLambda)),\
          "posterior must be instance or subclass of DistributionLambda"
+    assert prior is None or isinstance(prior, Distribution), \
+     "prior can be None or instance of tensorflow_probability.Distribution"
+    assert isinstance(call_mode, Statistic), \
+      "call_mode must be instance of odin.bay.helpers.Statistic"
+
     self._units = int(units)
+    self._use_bias = bool(use_bias)
+    self._posterior = posterior
+    self._prior = prior
+    self._call_mode = call_mode
+
     layers = [
         Dense(posterior.params_size(self.units),
               activation='linear',
@@ -63,17 +74,29 @@ class DistributionLayer(Model):
                                     name="%s%s" %
                                     (name, distribution_type.__name__))
     self._last_distribution = None
-    # check the prior, this could be given later
-    assert prior is None or isinstance(prior, Distribution), \
-      "prior can be None or instance of tensorflow_probability.Distribution"
-    self._prior = prior
     # statistics extraction layers
     self._fn_mean = Moments(mean=True, variance=False)
     self._fn_var = Moments(mean=False, variance=True)
-    # call mode decide what to return in `Layer.call` method
-    assert isinstance(call_mode, Statistic), \
-      "call_mode must be instance of odin.bay.helpers.Statistic"
-    self._call_mode = call_mode
+
+  def get_config(self):
+    config = {
+        'name': self.name,
+        'units': self._units,
+        'posterior': self._posterior,
+        'prior': self._prior,
+        'use_bias': self._use_bias,
+        'call_mode': self._call_mode,
+        'build_input_shape': self._distribution._build_input_shape
+    }
+    return config
+
+  @classmethod
+  def from_config(cls, config, custom_objects=None):
+    build_input_shape = config.pop('build_input_shape')
+    model = cls(**config)
+    if not model.inputs and build_input_shape is not None:
+      model.build(build_input_shape)
+    return model
 
   @property
   def prior(self):
@@ -81,6 +104,8 @@ class DistributionLayer(Model):
 
   @property
   def posterior(self):
+    """ Return the last parametrized distribution, i.e. the result from `call`
+    """
     return self._last_distribution
 
   @property
@@ -174,10 +199,14 @@ class DistributionLayer(Model):
       results.append(results[0]._distribution)
     return results[0] if len(results) == 1 else tuple(results)
 
-  def kl_divergence(self, prior=None, analytic_kl=True, n_samples=1):
+  def kl_divergence(self, x=None, prior=None, analytic_kl=True, n_samples=1):
     """
     Parameters
     ---------
+    x : `Tensor`
+      optional input for parametrizing the distribution, if not given,
+      used the last result from `call`
+
     prior : instance of `tensorflow_probability.Distribution`
       prior distribution of the latent
 
@@ -197,6 +226,8 @@ class DistributionLayer(Model):
     if prior is None:
       prior = self._prior
     assert isinstance(prior, Distribution), "prior is not given!"
+    if x is not None:
+      self(x, mode=Statistic.DIST)
     if self.posterior is None:
       raise RuntimeError(
           "DistributionLayer must be called to create the distribution before "

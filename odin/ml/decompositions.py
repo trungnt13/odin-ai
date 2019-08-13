@@ -1,25 +1,23 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
+
 import math
+from multiprocessing import Array, Value
 from numbers import Number
-from six import string_types
 
 import numpy as np
 from scipy import linalg
-
-from multiprocessing import Value, Array
-
-from sklearn.decomposition import IncrementalPCA, PCA
-from sklearn.utils import (check_array, gen_batches, check_random_state,
-                           as_float_array)
+from six import string_types
+from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.utils import (as_float_array, check_array, check_random_state,
+                           gen_batches)
+from sklearn.utils.extmath import (_incremental_mean_and_var, randomized_svd,
+                                   svd_flip)
 from sklearn.utils.validation import check_is_fitted
-from sklearn.utils.extmath import (svd_flip, _incremental_mean_and_var,
-                                   randomized_svd)
 
-from odin.fuel import Data
+from odin.ml.base import BaseEstimator, TransformerMixin
+from odin.utils import Progbar, batching, ctext, flatten_list
 from odin.utils.mpi import MPI
-from odin.ml.base import TransformerMixin, BaseEstimator
-from odin.utils import batching, ctext, flatten_list, Progbar
 
 __all__ = [
     "fast_pca",
@@ -62,8 +60,6 @@ def fast_pca(*x, n_components=None, algo='rpca', y=None,
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
   x = flatten_list(x, level=None)
-  x = [i[:] if i.__class__.__name__ == 'MmapData' else i
-       for i in x]
   # ====== check input ====== #
   x_train = x[0]
   x_test = x[1:]
@@ -878,8 +874,6 @@ class MiniBatchPCA(IncrementalPCA):
     self: object
         Returns the instance itself.
     """
-    if isinstance(X, Data):
-      X = X[:]
     X = check_array(X, copy=self.copy, dtype=[np.float64, np.float32])
     n_samples, n_features = X.shape
 
@@ -908,8 +902,6 @@ class MiniBatchPCA(IncrementalPCA):
         Returns the instance itself.
     """
     # ====== check the samples and cahces ====== #
-    if isinstance(X, Data):
-      X = X[:]
     if check_input:
       X = check_array(X, copy=self.copy, dtype=[np.float64, np.float32])
     n_samples, n_features = X.shape
@@ -1010,8 +1002,6 @@ class MiniBatchPCA(IncrementalPCA):
     return np.concatenate(X_transformed, axis=0)
 
   def invert_transform(self, X):
-    if isinstance(X, Data):
-      X = X[:]
     return super(MiniBatchPCA, self).inverse_transform(X=X)
 
   def transform_mpi(self, X, keep_order=True, ncpu=4,

@@ -5,7 +5,6 @@ from six import add_metaclass
 
 import numpy as np
 
-from odin.fuel import Data
 from odin.utils import ctext, is_number, one_hot
 from odin.visual import (print_confusion, plot_detection_curve,
                          plot_confusion_matrix, plot_save, figure,
@@ -35,8 +34,6 @@ def evaluate(y_true, y_pred_proba=None, y_pred_log_proba=None,
   nb_classes = y_pred_llr.shape[1]
   y_pred = np.argmax(y_pred_llr, axis=-1)
   # ====== check y_true ====== #
-  if isinstance(y_true, Data):
-    y_true = y_true.array
   if isinstance(y_true, (tuple, list)):
     y_true = np.array(y_true)
   if y_true.ndim == 2: # convert one-hot to labels
@@ -146,8 +143,6 @@ class Evaluable(object):
     # ====== check inputs ====== #
     if labels is None:
       labels = self.labels
-    if isinstance(y, Data):
-      y = y.array
     if isinstance(y, (tuple, list)):
       y = np.array(y)
     if y.ndim == 2: # convert one-hot to labels

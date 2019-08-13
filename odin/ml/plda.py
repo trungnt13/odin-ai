@@ -6,16 +6,17 @@ email: 'omid.sadjadi@nist.gov'
 import time
 import warnings
 from numbers import Number
-from six import string_types
 
 import numpy as np
-from scipy.linalg import eigh, cholesky, inv, svd, solve
+from scipy.linalg import cholesky, eigh, inv, solve, svd
+from six import string_types
 
-from odin.backend import length_norm, calc_white_mat
+from odin.backend import calc_white_mat, length_norm
+from odin.ml.base import BaseEstimator, Evaluable, TransformerMixin
+from odin.ml.scoring import (VectorNormalizer, compute_class_avg,
+                             compute_within_cov)
 from odin.utils import unique
-from odin.ml.base import BaseEstimator, TransformerMixin, Evaluable
-from odin.ml.scoring import (compute_within_cov, compute_class_avg,
-                             VectorNormalizer)
+
 
 def logdet(A):
   u = cholesky(A)

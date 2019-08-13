@@ -1,19 +1,22 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
+
 import os
 import pickle
 
 import numpy as np
 
-from odin.fuel import MmapData
+from odin.fuel import MmapArray, MmapArrayWriter
+from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
 from odin.ml.gmm_tmat import GMM, Tmatrix, _split_jobs
-from odin.ml.base import BaseEstimator, TransformerMixin, DensityMixin
-from odin.utils import (mpi, batching, Progbar, crypto, is_primitives, ctext,
-                        uuid, UnitTimer)
+from odin.utils import (Progbar, UnitTimer, batching, crypto, ctext,
+                        is_primitives, mpi, uuid)
+
 
 # ===========================================================================
 # Helper
 # ===========================================================================
-def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path, name_path):
+def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path,
+                                  name_path):
   n_samples = X.shape[0]
   # indices is None, every row is single sample (utterance or image ...)
   if indices is None:
@@ -21,13 +24,18 @@ def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path, name_pat
       os.remove(z_path)
     if os.path.exists(f_path):
       os.remove(f_path)
-    Z = MmapData(path=z_path, dtype='float32',
-                 shape=(n_samples, gmm.nmix), read_only=False)
-    F = MmapData(path=f_path, dtype='float32',
-                 shape=(n_samples, gmm.feat_dim * gmm.nmix),
-                 read_only=False)
-    jobs, _ = _split_jobs(n_samples, ncpu=mpi.cpu_count(),
-                       device='cpu', gpu_factor=1)
+    Z = MmapArrayWriter(path=z_path,
+                        dtype='float32',
+                        shape=(n_samples, gmm.nmix),
+                        remove_exist=True)
+    F = MmapArrayWriter(path=f_path,
+                        dtype='float32',
+                        shape=(n_samples, gmm.feat_dim * gmm.nmix),
+                        remove_exist=True)
+    jobs, _ = _split_jobs(n_samples,
+                          ncpu=mpi.cpu_count(),
+                          device='cpu',
+                          gpu_factor=1)
 
     def map_transform(start_end):
       start, end = start_end
@@ -37,27 +45,37 @@ def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path, name_pat
           yield None, None, None
         else:
           z, f = gmm.transform(X[i][np.newaxis, :],
-                               zero=True, first=True, device='cpu')
+                               zero=True,
+                               first=True,
+                               device='cpu')
           yield i, z, f
+
     prog = Progbar(target=n_samples,
-                   print_report=True, print_summary=False,
+                   print_report=True,
+                   print_summary=False,
                    name="Extracting zero and first order statistics")
-    for i, z, f in mpi.MPI(jobs, map_transform,
-                           ncpu=None, batch=1):
-      if i is not None: # i None means removed by SAD
+    for i, z, f in mpi.MPI(jobs, map_transform, ncpu=None, batch=1):
+      if i is not None:  # i None means removed by SAD
         Z[i] = z
         F[i] = f
       prog.add(1)
-    Z.flush(); Z.close()
-    F.flush(); F.close()
+    Z.flush()
+    F.flush()
+    Z.close()
+    F.close()
   # use directly the transform_to_disk function
   else:
-    gmm.transform_to_disk(X, indices=indices, sad=sad,
+    gmm.transform_to_disk(X,
+                          indices=indices,
+                          sad=sad,
                           pathZ=z_path,
                           pathF=f_path,
                           name_path=name_path,
-                          dtype='float32', device=None, ncpu=None,
+                          dtype='float32',
+                          device=None,
+                          ncpu=None,
                           override=True)
+
 
 # ===========================================================================
 # Fast combined GMM-Tmatrix training for I-vector extraction
@@ -65,12 +83,24 @@ def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path, name_pat
 class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
   """ Ivector extraction using GMM and T-matrix """
 
-  def __init__(self, path, nmix=None, tv_dim=None,
-               nmix_start=1, niter_gmm=16, niter_tmat=16,
-               allow_rollback=True, exit_on_error=False,
-               downsample=1, stochastic_downsample=True,
-               device='gpu', ncpu=1, gpu_factor_gmm=80, gpu_factor_tmat=3,
-               dtype='float32', seed=1234, name=None):
+  def __init__(self,
+               path,
+               nmix=None,
+               tv_dim=None,
+               nmix_start=1,
+               niter_gmm=16,
+               niter_tmat=16,
+               allow_rollback=True,
+               exit_on_error=False,
+               downsample=1,
+               stochastic_downsample=True,
+               device='gpu',
+               ncpu=1,
+               gpu_factor_gmm=80,
+               gpu_factor_tmat=3,
+               dtype='float32',
+               seed=1234,
+               name=None):
     super(Ivector, self).__init__()
     # ====== auto store arguments ====== #
     for key, val in locals().items():
@@ -100,15 +130,19 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         "Require GMM with %d components, but found %s, at path: '%s'" % \
         (self.nmix, str(self._gmm), self.gmm_path)
       else:
-        self._gmm = GMM(nmix=self.nmix, niter=self.niter_gmm, dtype=self.dtype,
+        self._gmm = GMM(nmix=self.nmix,
+                        niter=self.niter_gmm,
+                        dtype=self.dtype,
                         downsample=self.downsample,
                         stochastic_downsample=self.stochastic_downsample,
                         device=self.device,
-                        ncpu=self.ncpu, gpu_factor=self.gpu_factor_gmm,
+                        ncpu=self.ncpu,
+                        gpu_factor=self.gpu_factor_gmm,
                         seed=1234,
                         path=self.gmm_path,
-                        name="IvecGMM_%s" % (self.name if self.name is not None else
-                                             str(self._rand.randint(10e8))))
+                        name="IvecGMM_%s" %
+                        (self.name if self.name is not None else str(
+                            self._rand.randint(10e8))))
     return self._gmm
 
   @property
@@ -121,14 +155,19 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         "Require T-matrix with %d dimensions, but found %s, at path: '%s'" % \
         (self.tv_dim, str(self._tmat), self.tmat_path)
       else:
-        self._tmat = Tmatrix(tv_dim=self.tv_dim, gmm=self.gmm,
-                             niter=self.niter_tmat, dtype=self.dtype,
+        self._tmat = Tmatrix(tv_dim=self.tv_dim,
+                             gmm=self.gmm,
+                             niter=self.niter_tmat,
+                             dtype=self.dtype,
                              device=self.device,
-                             ncpu=self.ncpu, gpu_factor=self.gpu_factor_tmat,
-                             cache_path='/tmp', seed=1234,
+                             ncpu=self.ncpu,
+                             gpu_factor=self.gpu_factor_tmat,
+                             cache_path='/tmp',
+                             seed=1234,
                              path=self.tmat_path,
-                             name='IvecTmat_%s' % (self.name if self.name is not None else
-                                                   str(self._rand.randint(10e8))))
+                             name='IvecTmat_%s' %
+                             (self.name if self.name is not None else str(
+                                 self._rand.randint(10e8))))
     return self._tmat
 
   @property
@@ -223,9 +262,14 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     return os.path.join(self.path, 'name_%s' % name)
 
   # ==================== sklearn methods ==================== #
-  def fit(self, X, indices=None, sad=None,
-          refit_gmm=False, refit_tmat=False,
-          extract_ivecs=False, keep_stats=False):
+  def fit(self,
+          X,
+          indices=None,
+          sad=None,
+          refit_gmm=False,
+          refit_tmat=False,
+          extract_ivecs=False,
+          keep_stats=False):
     """
     Parameters
     ----------
@@ -263,18 +307,18 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     new_gmm = (not self.gmm.is_fitted or refit_gmm)
     # ====== clean error files ====== #
     if os.path.exists(self.z_path):
-      Z = MmapData(self.z_path, read_only=True)
-      if Z.shape[0] == 0: # empty file
+      Z = MmapArray(self.z_path)
+      if Z.shape[0] == 0:  # empty file
         os.remove(self.z_path)
       Z.close()
     if os.path.exists(self.f_path):
-      F = MmapData(self.f_path, read_only=True)
-      if F.shape[0] == 0: # empty file
+      F = MmapArray(self.f_path)
+      if F.shape[0] == 0:  # empty file
         os.remove(self.f_path)
       F.close()
     if os.path.exists(self.ivec_path):
-      ivec = MmapData(self.ivec_path, read_only=True)
-      if ivec.shape[0] == 0: # empty file
+      ivec = MmapArray(self.ivec_path)
+      if ivec.shape[0] == 0:  # empty file
         os.remove(self.ivec_path)
       ivec.close()
     # ====== Training the GMM first ====== #
@@ -304,18 +348,25 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       new_stats = new_gmm or new_tmat or new_ivec
     # ====== extract the statistics ====== #
     if new_stats:
-      _extract_zero_and_first_stats(X=X, sad=sad, indices=indices, gmm=self.gmm,
-                                    z_path=self.z_path, f_path=self.f_path,
+      _extract_zero_and_first_stats(X=X,
+                                    sad=sad,
+                                    indices=indices,
+                                    gmm=self.gmm,
+                                    z_path=self.z_path,
+                                    f_path=self.f_path,
                                     name_path=self.name_path)
     # ====== Training the T-matrix and extract i-vector ====== #
     if new_tmat or new_ivec:
-      Z = MmapData(path=self.z_path, read_only=True)
-      F = MmapData(path=self.f_path, read_only=True)
+      Z = MmapArray(path=self.z_path)
+      F = MmapArray(path=self.f_path)
       if new_tmat:
         self.tmat.fit((Z, F))
       if new_ivec:
-        self.tmat.transform_to_disk(path=self.ivec_path, Z=Z, F=F,
-                                    dtype='float32', device='gpu',
+        self.tmat.transform_to_disk(path=self.ivec_path,
+                                    Z=Z,
+                                    F=F,
+                                    dtype='float32',
+                                    device='gpu',
                                     override=True)
       Z.close()
       F.close()
@@ -327,8 +378,13 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         os.remove(self.f_path)
     return self
 
-  def transform(self, X, indices=None, sad=None,
-                save_ivecs=False, keep_stats=False, name=None):
+  def transform(self,
+                X,
+                indices=None,
+                sad=None,
+                save_ivecs=False,
+                keep_stats=False,
+                name=None):
     """
     Parameters
     ----------
@@ -357,7 +413,8 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       If None, a random name is used
     """
     if not self.is_fitted:
-      raise ValueError("Ivector has not been fitted, call Ivector.fit(...) first")
+      raise ValueError(
+          "Ivector has not been fitted, call Ivector.fit(...) first")
     n_files = X.shape[0] if indices is None else len(indices)
     if name is None:
       name = uuid(length=8)
@@ -373,7 +430,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     name_path = self.get_name_path(name)
     # ====== check exist i-vector file ====== #
     if i_path is not None and os.path.exists(i_path):
-      ivec = MmapData(path=i_path, read_only=True)
+      ivec = MmapArray(path=i_path)
       assert ivec.shape[0] == n_files and ivec.shape[1] == self.tv_dim,\
       "Need i-vectors for %d files, found exists data at path:'%s' with shape:%s" % \
       (n_files, i_path, ivec.shape)
@@ -388,10 +445,15 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
         os.remove(f_path)
       if os.path.exists(name_path):
         os.remove(name_path)
-      _extract_zero_and_first_stats(X=X, sad=sad, indices=indices, gmm=self.gmm,
-                                    z_path=z_path, f_path=f_path, name_path=name_path)
-    Z = MmapData(path=z_path, read_only=True)
-    F = MmapData(path=f_path, read_only=True)
+      _extract_zero_and_first_stats(X=X,
+                                    sad=sad,
+                                    indices=indices,
+                                    gmm=self.gmm,
+                                    z_path=z_path,
+                                    f_path=f_path,
+                                    name_path=name_path)
+    Z = MmapArray(path=z_path)
+    F = MmapArray(path=f_path)
     # ====== extract I-vec ====== #
     ivec = self.tmat.transform_to_disk(path=i_path, Z=Z, F=F, dtype='float32')
     # ====== clean ====== #
@@ -415,34 +477,32 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
     if os.path.exists(self.path) and len(os.listdir(self.path)) > 0:
       # list all model files
       s += "  %s: " % ctext('model', 'cyan')
-      s += ', '.join(['"%s"' % f
-                      for f in sorted(os.listdir(self.path))
-                      if 'zstat' not in f and 'fstat' not in f and
-                      'ivec' not in f and 'name_' not in f])
+      s += ', '.join([
+          '"%s"' % f
+          for f in sorted(os.listdir(self.path))
+          if 'zstat' not in f and 'fstat' not in f and 'ivec' not in f and
+          'name_' not in f
+      ])
       s += '\n'
       # list all Zero-stats files
       s += "  %s: " % ctext('Z-stats', 'cyan')
-      s += ', '.join(['"%s"' % f
-                      for f in sorted(os.listdir(self.path))
-                      if 'zstat' in f])
+      s += ', '.join(
+          ['"%s"' % f for f in sorted(os.listdir(self.path)) if 'zstat' in f])
       s += '\n'
       # list all First-stats files
       s += "  %s: " % ctext('F-stats', 'cyan')
-      s += ', '.join(['"%s"' % f
-                      for f in sorted(os.listdir(self.path))
-                      if 'fstat' in f])
+      s += ', '.join(
+          ['"%s"' % f for f in sorted(os.listdir(self.path)) if 'fstat' in f])
       s += '\n'
       # list all Ivec-stats files
       s += "  %s: " % ctext('ivec', 'cyan')
-      s += ', '.join(['"%s"' % f
-                      for f in sorted(os.listdir(self.path))
-                      if 'ivec' in f])
+      s += ', '.join(
+          ['"%s"' % f for f in sorted(os.listdir(self.path)) if 'ivec' in f])
       s += '\n'
       # list all Name path files
       s += "  %s: " % ctext('name-list', 'cyan')
-      s += ', '.join(['"%s"' % f
-                      for f in sorted(os.listdir(self.path))
-                      if 'name_' in f])
+      s += ', '.join(
+          ['"%s"' % f for f in sorted(os.listdir(self.path)) if 'name_' in f])
       s += '\n'
     # list all attributes
     for k, v in sorted(self.__dict__.items(), key=lambda x: x[0]):
