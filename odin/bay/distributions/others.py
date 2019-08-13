@@ -71,11 +71,13 @@ def stack_distributions(dists: List[tfd.Distribution]) -> tfd.Distribution:
 
   for key, val in params.items():
     # another nested distribution
-    if isinstance(val, tfd.Distribution):
+    if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
       new_params[key] = stack_distributions([getattr(d, key) for d in dists])
     # Tensor
     elif tf.is_tensor(val):
-      val = tf.concat([getattr(d, key) for d in dists], axis=axis)
+      if val.shape.rank > 0:
+        # only concatenate vector or tensor, not scalar value
+        val = tf.concat([getattr(d, key) for d in dists], axis=axis)
       new_params[key] = val
     # primitive values
     else:
