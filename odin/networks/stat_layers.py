@@ -9,12 +9,59 @@ from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers import DistributionLambda
 
+from odin.bay.distribution_layers import DeterministicLayer
 from odin.bay.distribution_util_layers import Moments, Sampling
 from odin.bay.helpers import Statistic, kl_divergence
 
+__all__ = ['DeterministicDense', 'DistributionDense']
 
-class DistributionLayer(Model):
-  """ DistributionLayer
+
+class DeterministicDense(Sequential):
+
+  def __init__(self,
+               units,
+               activation=None,
+               use_bias=True,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               kernel_regularizer=None,
+               bias_regularizer=None,
+               activity_regularizer=None,
+               kernel_constraint=None,
+               bias_constraint=None,
+               name=None):
+    layers = [
+        Dense(
+            units,
+            activation=activation,
+            use_bias=use_bias,
+            kernel_initializer=kernel_initializer,
+            bias_initializer=bias_initializer,
+            kernel_regularizer=kernel_regularizer,
+            bias_regularizer=bias_regularizer,
+            activity_regularizer=activity_regularizer,
+            kernel_constraint=kernel_constraint,
+            bias_constraint=bias_constraint,
+        ),
+        DeterministicLayer(vectorized=True)
+    ]
+    super(DeterministicDense, self).__init__(layers=layers, name=name)
+    self._config = dict(locals())
+    del self._config['self']
+    del self._config['__class__']
+    del self._config['layers']
+    self._config['name'] = self.name
+
+  def get_config(self):
+    return self._config
+
+  @classmethod
+  def from_config(cls, config, custom_objects=None):
+    return cls(**config)
+
+
+class DistributionDense(Model):
+  """ DistributionDense
 
   Parameters
   ----------
@@ -29,7 +76,7 @@ class DistributionLayer(Model):
 
   call_mode : `odin.bay.helpers.Statistic` (default=Statistic.SAMPLE)
 
-  name : `str` (default='DistributionLayer')
+  name : `str` (default='DistributionDense')
 
   Return
   ------
@@ -43,8 +90,8 @@ class DistributionLayer(Model):
                prior: Optional[Distribution] = None,
                use_bias=True,
                call_mode: Statistic = Statistic.SAMPLE,
-               name="DistributionLayer"):
-    super(DistributionLayer, self).__init__(name=name)
+               name="DistributionDense"):
+    super(DistributionDense, self).__init__(name=name)
     assert isinstance(posterior, DistributionLambda) or\
        (isinstance(posterior, type) and issubclass(posterior, DistributionLambda)),\
          "posterior must be instance or subclass of DistributionLambda"
@@ -151,7 +198,7 @@ class DistributionLayer(Model):
 
   def build(self, input_shape):
     self._distribution.build(input_shape)
-    return super(DistributionLayer, self).build(input_shape)
+    return super(DistributionDense, self).build(input_shape)
 
   def call(self, x, training=None, n_samples=1, mode=None):
     """
@@ -230,7 +277,7 @@ class DistributionLayer(Model):
       self(x, mode=Statistic.DIST)
     if self.posterior is None:
       raise RuntimeError(
-          "DistributionLayer must be called to create the distribution before "
+          "DistributionDense must be called to create the distribution before "
           "calculating the kl-divergence.")
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
@@ -245,12 +292,11 @@ class DistributionLayer(Model):
     return kullback_div
 
   def log_prob(self, x):
+    """ Calculating the log probability (i.e. log likelihood) """
     assert self.units == x.shape[-1], \
       "Number of features mismatch, units=%d  input_shape=%s" % \
         (self.units, str(x.shape))
-    if self._last_distribution is None:
+    if self.posterior is None:
       raise RuntimeError(
-          "DistributionLayer must be called to create the distribution before "
+          "DistributionDense must be called to create the distribution before "
           "calculating the log-likelihood.")
-    dist = self._last_distribution
-    return dist.log_prob(x)

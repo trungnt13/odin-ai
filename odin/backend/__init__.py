@@ -8,6 +8,5 @@ from contextlib import contextmanager
 from six.moves import builtins, cPickle
 
 from odin.backend import keras_helpers, losses, metrics
-from odin.backend.layers import *
 from odin.backend.tensor import *
 from odin.utils import as_tuple, is_path, is_string
