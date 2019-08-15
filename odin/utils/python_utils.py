@@ -5,6 +5,7 @@ import io
 import numbers
 import os
 import re
+import string
 import types
 import warnings
 from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
@@ -44,6 +45,15 @@ def get_all_properties(obj):
       properties.append(key)
   return properties if isinstance(obj, type) else \
   {p: getattr(obj, p) for p in properties}
+
+
+def get_string_placeholders(s):
+  assert isinstance(s, string_types)
+  fmt = []
+  for (_, key, spec, _) in string.Formatter().parse(save_path):
+    if spec is not None:
+      fmt.append(key)
+  return tuple(fmt)
 
 
 # ===========================================================================
