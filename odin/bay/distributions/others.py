@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from typing import List
+from typing import List, Optional
 
 import tensorflow as tf
 from tensorflow_probability.python import distributions as tfd
@@ -12,8 +12,11 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible
 
 
-def _find_axis_for_stack(dists):
+def _find_axis_for_stack(dists, given_axis):
   # check event shape is consistent
+  if given_axis is not None:
+    return int(given_axis)
+
   event_shape = dists[0].event_shape
   batch_shape = dists[0].batch_shape
 
@@ -29,13 +32,16 @@ def _find_axis_for_stack(dists):
       for ax, (i, j) in enumerate(zip(batch_shape, shape)):
         if i != j:
           axis.append(ax)
+    if len(axis) == 0:
+      return 0
     assert len(set(axis)) == 1, \
       "Multiple dimensions are found to be different among the distributions, "\
         "expect only 1 different dimension."
     return axis[0]
 
 
-def stack_distributions(dists: List[tfd.Distribution]) -> tfd.Distribution:
+def stack_distributions(dists: List[tfd.Distribution],
+                        axis: Optional[int] = None) -> tfd.Distribution:
   """ Automatically and recursively stack multiple distribution of the
   same type and same `event_shape` into single distribution with
   concatenated `batch_shape`
@@ -43,6 +49,10 @@ def stack_distributions(dists: List[tfd.Distribution]) -> tfd.Distribution:
   Parameters
   ----------
   dists : List of `tensorflow_probability.Distribution`
+  axis : {`int`, `None`}
+    the batch dimension for merging the distribution, if `None`,
+    by default the first dimension, or the dimension that is different
+    among batches.
 
   Note
   ----
@@ -50,6 +60,10 @@ def stack_distributions(dists: List[tfd.Distribution]) -> tfd.Distribution:
   """
   if not isinstance(dists, (tuple, list)):
     dists = [dists]
+  if len(dists) == 1:
+    return dists[0]
+  if len(dists) == 0:
+    raise ValueError("No distributions were given")
   t = type(dists[0])
 
   # _TensorCoercible will messing up with the parameters of the
@@ -66,7 +80,7 @@ def stack_distributions(dists: List[tfd.Distribution]) -> tfd.Distribution:
       if val != '__NO_ARGUMENT_FOUND__':
         params[key] = val
 
-  axis = _find_axis_for_stack(dists)
+  axis = _find_axis_for_stack(dists, given_axis=axis)
   new_params = {}
 
   for key, val in params.items():

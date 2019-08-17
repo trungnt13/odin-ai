@@ -1,9 +1,11 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import os
 from collections import defaultdict
+from typing import Dict, Text
 
 _FIGURE_LIST = defaultdict(dict)
+
 
 class Visualizer(object):
   """ Visualizer """
@@ -22,6 +24,9 @@ class Visualizer(object):
     'ax must be instance of matplotlib.Axes, but given: %s' % str(type(ax))
     return ax
 
+  def get_figures(self) -> Dict[Text, 'Figure']:
+    return _FIGURE_LIST[id(self)]
+
   def add_figure(self, name, fig):
     from matplotlib import pyplot as plt
     assert isinstance(fig, plt.Figure), \
@@ -29,8 +34,11 @@ class Visualizer(object):
     _FIGURE_LIST[id(self)][name] = fig
     return self
 
-  def save_figures(self, path, dpi=None,
-                   separate_files=True, clear_figures=True,
+  def save_figures(self,
+                   path,
+                   dpi=None,
+                   separate_files=True,
+                   clear_figures=True,
                    verbose=False):
     from odin.utils import ctext
     if os.path.isfile(path) or '.pdf' == path[-4:].lower():
@@ -77,7 +85,7 @@ class Visualizer(object):
           fig.savefig(out_path, **kwargs)
           if verbose:
             print(" - Saved '%s' to %s" %
-              (ctext(key, 'cyan'), ctext(out_path, 'yellow')))
+                  (ctext(key, 'cyan'), ctext(out_path, 'yellow')))
         except Exception as e:
           if verbose:
             print(" - Error '%s'" % ctext(key, 'cyan'))
