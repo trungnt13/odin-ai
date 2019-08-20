@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional, Type, Union
+from typing import Callable, Optional, Type, Union
 
 import tensorflow as tf
 from tensorflow.python.keras import Model, Sequential
@@ -67,9 +67,9 @@ class DistributionDense(Model):
   ----------
   units : int
     number of output units.
-  posterior : `tensorflow_probability.DistributionLambda`
-    posterior distribution, the class is given for later
-    initialization
+  posterior : {`DistributionLambda`, `callable`, `type`}
+    posterior distribution, the class or a callable can be given for later
+    initialization.
   prior : {`None`, `tensorflow_probability.Distribution`}
     prior distribution, used for calculating KL divergence later.
   use_bias : `bool` (default=`True`)
@@ -88,13 +88,11 @@ class DistributionDense(Model):
                units,
                posterior: Union[DistributionLambda, Type[DistributionLambda]],
                prior: Optional[Distribution] = None,
+               activation='linear',
                use_bias=True,
                call_mode: Statistic = Statistic.SAMPLE,
                name="DistributionDense"):
     super(DistributionDense, self).__init__(name=name)
-    assert isinstance(posterior, DistributionLambda) or\
-       (isinstance(posterior, type) and issubclass(posterior, DistributionLambda)),\
-         "posterior must be instance or subclass of DistributionLambda"
     assert prior is None or isinstance(prior, Distribution), \
      "prior can be None or instance of tensorflow_probability.Distribution"
     assert isinstance(call_mode, Statistic), \
@@ -106,12 +104,24 @@ class DistributionDense(Model):
     self._prior = prior
     self._call_mode = call_mode
 
+    if isinstance(posterior, DistributionLambda):
+      pass
+    elif isinstance(posterior, type) and issubclass(posterior,
+                                                    DistributionLambda):
+      posterior = posterior(self.units)
+    elif isinstance(posterior, Callable):
+      posterior = posterior(self.units)
+      assert isinstance(posterior, DistributionLambda), \
+        "The callable must return instance of DistributionLambda, but given: %s" \
+          % (str(type(posterior)))
+    else:
+      raise ValueError("No support for posterior of type: %s" %
+                       str(type(posterior)))
+
+    params_size = posterior.params_size(self.units)
     layers = [
-        Dense(posterior.params_size(self.units),
-              activation='linear',
-              use_bias=bool(use_bias)),
+        Dense(params_size, activation=activation, use_bias=bool(use_bias)),
         posterior
-        if isinstance(posterior, DistributionLambda) else posterior(self.units),
     ]
     if isinstance(posterior, DistributionLambda):
       distribution_type = type(posterior)

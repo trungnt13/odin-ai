@@ -11,6 +11,8 @@ from tensorflow_probability.python.internal import (assert_util, prefer_static,
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible
 
+__all__ = ['stack_distributions']
+
 
 def _find_axis_for_stack(dists, given_axis):
   # check event shape is consistent

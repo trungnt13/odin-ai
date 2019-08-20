@@ -12,16 +12,20 @@ from odin.utils.python_utils import multikeysdict
 _dist_mapping = multikeysdict({
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):
-        (obl.ZeroInflatedBernoulliLayer, tfd.Bernoulli),
+        (obl.ZIBernoulliLayer, tfd.Bernoulli),
     ('normal', 'gaussian'): (obl.NormalLayer, tfd.Normal),
     'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
     ('nb', 'negativebinomial'):
         (obl.NegativeBinomialLayer, tfd.NegativeBinomial),
     ('zinb', 'zinegativebinomial', 'zeroinflatednegativebinomial'):
-        (obl.ZeroInflatedNegativeBinomialLayer, tfd.NegativeBinomial),
+        (obl.ZINegativeBinomialLayer, tfd.NegativeBinomial),
+    ('nbd', 'negativebinomialdisp'):
+        (obl.NegativeBinomialDispLayer, obd.NegativeBinomialDisp),
+    ('zinbd', 'zinegativebinomialdisp', 'zeroinflatednegativebinomialdisp'):
+        (obl.ZINegativeBinomialDispLayer, obd.NegativeBinomialDisp),
     ('pois', 'poisson'): (obl.PoissonLayer, tfd.Poisson),
     ('zipois', 'zipoisson', 'zeroinflatedpoisson'):
-        (obl.ZeroInflatedPoissonLayer, tfd.Poisson),
+        (obl.ZIPoissonLayer, tfd.Poisson),
     'dirichlet': (obl.DirichletLayer, tfd.Dirichlet),
     'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
     'deterministic': (obl.DeterministicLayer, tfd.Deterministic)

@@ -41,6 +41,8 @@ class Visualizer(object):
                    clear_figures=True,
                    verbose=False):
     from odin.utils import ctext
+    from matplotlib import pyplot as plt
+    # checking arguments
     if os.path.isfile(path) or '.pdf' == path[-4:].lower():
       separate_files = False
       assert '.pdf' == path[-4:].lower(), \
@@ -92,5 +94,7 @@ class Visualizer(object):
             print("  ", e)
     # ====== clear figures ====== #
     if clear_figures:
+      for fig in figures.values():
+        plt.close(fig)
       figures.clear()
     return self

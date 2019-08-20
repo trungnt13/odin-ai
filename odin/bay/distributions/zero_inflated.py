@@ -249,22 +249,23 @@ class ZeroInflated(distribution.Distribution):
 
   def _log_prob(self, x):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
+      eps = tf.cast(1e-8, x.dtype)
       x = tf.convert_to_tensor(x, name="x")
       d = self._count_distribution
       pi = self.probs
 
-      d_prob = d.prob(x)
-      d_log_prob = d.log_prob(x)
+      log_prob = d.log_prob(x)
+      prob = tf.math.exp(log_prob)
 
       # make pi and anything come out of count_distribution
       # broadcast-able
-      pi, d_prob, d_log_prob = _broadcast_rate(pi, d_prob, d_log_prob)
+      pi, prob, log_prob = _broadcast_rate(pi, prob, log_prob)
 
       # This equation is validated
       # Equation (13) reference: u_{ij} = 1 - pi_{ij}
-      y_0 = tf.math.log(pi + (1 - pi) * d_prob)
-      y_1 = tf.math.log(1 - pi) + d_log_prob
-      return tf.where(x == 0, y_0, y_1)
+      y_0 = tf.math.log(pi + (1 - pi) * prob)
+      y_1 = tf.math.log(1 - pi) + log_prob
+      return tf.where(x <= eps, y_0, y_1)
 
   def _prob(self, x):
     return tf.math.exp(self._log_prob(x))
