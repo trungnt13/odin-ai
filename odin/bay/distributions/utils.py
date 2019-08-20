@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 from typing import List, Optional
 
+import numpy as np
 import tensorflow as tf
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.distributions import kullback_leibler
@@ -48,6 +49,9 @@ def stack_distributions(dists: List[tfd.Distribution],
   same type and same `event_shape` into single distribution with
   concatenated `batch_shape`
 
+  The stacking is done recursively done for any distribution contained in
+  `Independent`, `ZeroInflated` or any complex distribution
+
   Parameters
   ----------
   dists : List of `tensorflow_probability.Distribution`
@@ -58,7 +62,9 @@ def stack_distributions(dists: List[tfd.Distribution],
 
   Note
   ----
-  This function is only stacking the mismatch batch dimension
+  This function is only stacking the mismatch batch dimension,
+  and due to many detail involves broadcasting the shape of the parameters,
+  this function only applied in eager mode.
   """
   if not isinstance(dists, (tuple, list)):
     dists = [dists]
@@ -66,7 +72,12 @@ def stack_distributions(dists: List[tfd.Distribution],
     return dists[0]
   if len(dists) == 0:
     raise ValueError("No distributions were given")
+  # already assume all the distribution has the same type
   t = type(dists[0])
+  try:
+    all_params = set(t._params_event_ndims().keys())
+  except NotImplementedError:
+    all_params = set()
 
   # _TensorCoercible will messing up with the parameters of the
   # distribution
@@ -89,11 +100,19 @@ def stack_distributions(dists: List[tfd.Distribution],
     # another nested distribution
     if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
       new_params[key] = stack_distributions([getattr(d, key) for d in dists])
-    # Tensor
-    elif tf.is_tensor(val):
-      if val.shape.rank > 0:
-        # only concatenate vector or tensor, not scalar value
-        val = tf.concat([getattr(d, key) for d in dists], axis=axis)
+    # Tensor parameters
+    elif key in all_params:
+      all_x = []
+      for d in dists:
+        full_shape = tf.concat([d.batch_shape, d.event_shape], axis=0)
+        x = getattr(d, key)
+        for _ in range(len(full_shape) - len(x.shape)):
+          x = tf.expand_dims(x, axis=0)
+        repeats = [i / j for i, j in zip(full_shape, x.shape)]
+        if any(i > 1 for i in repeats):
+          x = tf.tile(x, multiples=repeats)
+        all_x.append(x)
+      val = tf.concat(all_x, axis=axis)
       new_params[key] = val
     # primitive values
     else:

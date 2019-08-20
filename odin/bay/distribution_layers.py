@@ -827,7 +827,7 @@ class ZIPoissonLayer(DistributionLambda):
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
+  def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name,
                                  'ZeroInflatedNegativeBinomial_params_size',
@@ -927,7 +927,7 @@ class ZINegativeBinomialLayer(DistributionLambda):
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
+  def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name,
                                  'ZeroInflatedNegativeBinomial_params_size',
@@ -1029,7 +1029,7 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
+  def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name, 'ZINegativeBinomialDisp_params_size',
                                  [event_shape]):
@@ -1110,7 +1110,7 @@ class ZIBernoulliLayer(DistributionLambda):
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_shape=(), tied_inflation_rate=False, name=None):
+  def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
     with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli_params_size',
                                  [event_shape]):
