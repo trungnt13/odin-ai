@@ -93,6 +93,7 @@ def stack_distributions(dists: List[tfd.Distribution],
       val = getattr(dists[0], key, '__NO_ARGUMENT_FOUND__')
       if val != '__NO_ARGUMENT_FOUND__':
         params[key] = val
+  # some argument might not be given at the initialization
   params = {k: getattr(dists[0], k, v) for k, v in params.items()}
 
   # prefer logits
@@ -102,8 +103,8 @@ def stack_distributions(dists: List[tfd.Distribution],
   axis = _find_axis_for_stack(dists, given_axis=axis)
   new_params = {}
   for key, val in params.items():
-    # another nested distribution
-    if isinstance(val, tfd.Distribution):
+    # another nested distribution, the check hasattr is important
+    if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
       new_params[key] = stack_distributions([getattr(d, key) for d in dists])
     # Tensor parameters
     elif key in all_params:
