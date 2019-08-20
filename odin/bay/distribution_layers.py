@@ -846,14 +846,15 @@ class ZINegativeBinomialLayer(DistributionLambda):
   ----------
   event_shape: integer vector `Tensor` representing the shape of single
     draw from this distribution.
-
   given_log_count : boolean
     is the input representing log count values or the count itself
-
+  dispersion : {'full', 'share', 'single'}
+    'full' creates a dispersion value for each individual data point,
+    'share' creates a single vector of dispersion for all examples, and
+    'single' uses a single value as dispersion for all data points.
   convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
     instance and returns a `tf.Tensor`-like object.
     Default value: `tfd.Distribution.sample`.
-
   validate_args: Python `bool`, default `False`. When `True` distribution
     parameters are checked for validity despite possibly degrading runtime
     performance. When `False` invalid inputs may silently render incorrect
@@ -867,13 +868,14 @@ class ZINegativeBinomialLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                given_log_count=True,
+               dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
     super(ZINegativeBinomialLayer,
           self).__init__(lambda t: type(self).new(
-              t, event_shape, given_log_count, validate_args),
+              t, event_shape, given_log_count, dispersion, validate_args),
                          convert_to_tensor_fn,
                          activity_regularizer=activity_regularizer,
                          **kwargs)
@@ -882,6 +884,7 @@ class ZINegativeBinomialLayer(DistributionLambda):
   def new(params,
           event_shape=(),
           given_log_count=True,
+          dispersion='full',
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
@@ -896,14 +899,24 @@ class ZINegativeBinomialLayer(DistributionLambda):
           event_shape,
       ],
                                axis=0)
+      ndims = output_shape.shape[0]
       (total_count_params, logits_params, rate_params) = tf.split(params,
                                                                   3,
                                                                   axis=-1)
+      if dispersion == 'single':
+        logits_params = tf.reduce_mean(logits_params)
+      elif dispersion == 'share':
+        logits_params = tf.reduce_mean(logits_params,
+                                       axis=tf.range(0,
+                                                     ndims - 1,
+                                                     dtype='int32'),
+                                       keepdims=True)
       if given_log_count:
         total_count_params = tf.exp(total_count_params, name='total_count')
       nb = tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
                                                        output_shape),
-                                logits=tf.reshape(logits_params, output_shape),
+                                logits=tf.reshape(logits_params, output_shape)
+                                if dispersion == 'full' else logits_params,
                                 validate_args=validate_args)
       zinb = ZeroInflated(count_distribution=nb,
                           logits=tf.reshape(rate_params, output_shape),
@@ -934,14 +947,17 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
   ----------
   event_shape: integer vector `Tensor` representing the shape of single
     draw from this distribution.
-
   given_log_mean : boolean
     is the input representing log count values or the count itself
-
+  given_log_disp : boolean
+    is the input representing log dispersion values
+  dispersion : {'full', 'share', 'single'}
+    'full' creates a dispersion value for each individual data point,
+    'share' creates a single vector of dispersion for all examples, and
+    'single' uses a single value as dispersion for all data points.
   convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
     instance and returns a `tf.Tensor`-like object.
     Default value: `tfd.Distribution.sample`.
-
   validate_args: Python `bool`, default `False`. When `True` distribution
     parameters are checked for validity despite possibly degrading runtime
     performance. When `False` invalid inputs may silently render incorrect
@@ -956,22 +972,24 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                event_shape=(),
                given_log_mean=True,
                given_log_disp=True,
+               dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                activity_regularizer=None,
                **kwargs):
-    super(ZINegativeBinomialDispLayer,
-          self).__init__(lambda t: type(self).new(
-              t, event_shape, given_log_mean, given_log_disp, validate_args),
-                         convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
-                         **kwargs)
+    super(ZINegativeBinomialDispLayer, self).__init__(
+        lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
+                                 dispersion, validate_args),
+        convert_to_tensor_fn,
+        activity_regularizer=activity_regularizer,
+        **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
           given_log_mean=True,
           given_log_disp=True,
+          dispersion='full',
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
@@ -986,13 +1004,21 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
           event_shape,
       ],
                                axis=0)
+      ndims = output_shape.shape[0]
       (loc_params, disp_params, rate_params) = tf.split(params, 3, axis=-1)
+      if dispersion == 'single':
+        disp_params = tf.reduce_mean(disp_params)
+      elif dispersion == 'share':
+        disp_params = tf.reduce_mean(disp_params,
+                                     axis=tf.range(0, ndims - 1, dtype='int32'),
+                                     keepdims=True)
       if given_log_mean:
         loc_params = tf.exp(loc_params, name='loc')
       if given_log_disp:
         disp_params = tf.exp(disp_params, name='disp')
       nb = NegativeBinomialDisp(loc=tf.reshape(loc_params, output_shape),
-                                disp=tf.reshape(disp_params, output_shape),
+                                disp=tf.reshape(disp_params, output_shape)
+                                if dispersion == 'full' else disp_params,
                                 validate_args=validate_args)
       zinb = ZeroInflated(count_distribution=nb,
                           logits=tf.reshape(rate_params, output_shape),
