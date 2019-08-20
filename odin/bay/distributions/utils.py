@@ -86,19 +86,24 @@ def stack_distributions(dists: List[tfd.Distribution],
     assert issubclass(t, tfd.Distribution) and not issubclass(
         t, distribution_tensor_coercible._TensorCoercible)
 
+  # params is arguments of the __init__ function
   params = dists[0].parameters
   for key in inspect.getfullargspec(t.__init__).args:
     if key not in params:
       val = getattr(dists[0], key, '__NO_ARGUMENT_FOUND__')
       if val != '__NO_ARGUMENT_FOUND__':
         params[key] = val
+  params = {k: getattr(dists[0], k, v) for k, v in params.items()}
+
+  # prefer logits
+  if 'probs' in params and 'logits' in params:
+    del params['probs']
 
   axis = _find_axis_for_stack(dists, given_axis=axis)
   new_params = {}
-
   for key, val in params.items():
     # another nested distribution
-    if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
+    if isinstance(val, tfd.Distribution):
       new_params[key] = stack_distributions([getattr(d, key) for d in dists])
     # Tensor parameters
     elif key in all_params:
