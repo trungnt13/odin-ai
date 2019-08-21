@@ -1,8 +1,14 @@
 from __future__ import absolute_import, division, print_function
 
+import tensorflow as tf
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
+from tensorflow_probability.python.internal import \
+    distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
+from tensorflow_probability.python.layers.distribution_layer import _event_size
+
+from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
     'PoissonLayer', 'NegativeBinomialDispLayer', 'NegativeBinomialLayer',
