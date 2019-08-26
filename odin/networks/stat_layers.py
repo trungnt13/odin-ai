@@ -10,8 +10,8 @@ from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers import DistributionLambda
 
 from odin.bay.distribution_layers import DeterministicLayer
-from odin.bay.distribution_util_layers import Moments, Sampling
 from odin.bay.helpers import Statistic, kl_divergence
+from odin.networks.distribution_util_layers import Moments, Sampling
 
 __all__ = ['DeterministicDense', 'DistributionDense']
 
@@ -123,17 +123,8 @@ class DistributionDense(Model):
         Dense(params_size, activation=activation, use_bias=bool(use_bias)),
         posterior
     ]
-    if isinstance(posterior, DistributionLambda):
-      distribution_type = type(posterior)
-    else:
-      distribution_type = posterior
-    self._distribution = Sequential(layers,
-                                    name="%s%s" %
-                                    (name, distribution_type.__name__))
+    self._distribution = Sequential(layers, name="Sequential")
     self._last_distribution = None
-    # statistics extraction layers
-    self._fn_mean = Moments(mean=True, variance=False)
-    self._fn_var = Moments(mean=False, variance=True)
 
   def get_config(self):
     config = {
@@ -169,7 +160,7 @@ class DistributionDense(Model):
   def units(self):
     return self._units
 
-  def __apply_distribution(self, x):
+  def _apply_distribution(self, x):
     if hasattr(x, '_distribution') and \
       x._distribution == self._last_distribution:
       dist = x._distribution
@@ -178,15 +169,15 @@ class DistributionDense(Model):
     return dist
 
   def mean(self, x):
-    dist = self.__apply_distribution(x)
-    y = self._fn_mean(dist)
+    dist = self._apply_distribution(x)
+    y = Moments(mean=True, variance=False)(dist)
     setattr(y, '_distribution', dist)
     self._last_distribution = y._distribution
     return y
 
   def variance(self, x):
-    dist = self.__apply_distribution(x)
-    y = self._fn_var(dist)
+    dist = self._apply_distribution(x)
+    y = Moments(mean=False, variance=True)(dist)
     setattr(y, '_distribution', dist)
     self._last_distribution = y._distribution
     return y
@@ -200,7 +191,7 @@ class DistributionDense(Model):
   def sample(self, x, n_samples=1):
     if n_samples is None or n_samples <= 0:
       n_samples = 1
-    dist = self.__apply_distribution(x)
+    dist = self._apply_distribution(x)
     y = Sampling(n_samples=n_samples)(dist)
     setattr(y, '_distribution', dist)
     self._last_distribution = y._distribution

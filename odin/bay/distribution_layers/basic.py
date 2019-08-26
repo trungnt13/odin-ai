@@ -16,7 +16,6 @@ from tensorflow_probability.python.layers.distribution_layer import _event_size
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
 
-from odin.bay.distribution_util_layers import *
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
