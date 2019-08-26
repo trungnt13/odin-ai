@@ -1,3 +1,5 @@
+from odin.networks.distribution_util_layers import *
+from odin.networks.math import *
 from odin.networks.stat_layers import *
 from odin.networks.util_layers import *
 

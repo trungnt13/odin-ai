@@ -13,10 +13,14 @@ from odin.bay.distribution_layers import DeterministicLayer
 from odin.bay.helpers import Statistic, kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
-__all__ = ['DeterministicDense', 'DistributionDense']
+__all__ = ['DenseDeterministic', 'DistributionDense']
 
 
-class DeterministicDense(Sequential):
+class DenseDeterministic(Dense):
+  """ Similar to `keras.Dense` layer but return a
+  `tensorflow_probability.Deterministic` distribution to represent the output,
+  hence, make it compatible to probabilistic frameworks
+  """
 
   def __init__(self,
                units,
@@ -29,35 +33,23 @@ class DeterministicDense(Sequential):
                activity_regularizer=None,
                kernel_constraint=None,
                bias_constraint=None,
-               name=None):
-    layers = [
-        Dense(
-            units,
-            activation=activation,
-            use_bias=use_bias,
-            kernel_initializer=kernel_initializer,
-            bias_initializer=bias_initializer,
-            kernel_regularizer=kernel_regularizer,
-            bias_regularizer=bias_regularizer,
-            activity_regularizer=activity_regularizer,
-            kernel_constraint=kernel_constraint,
-            bias_constraint=bias_constraint,
-        ),
-        DeterministicLayer(vectorized=True)
-    ]
-    super(DeterministicDense, self).__init__(layers=layers, name=name)
-    self._config = dict(locals())
-    del self._config['self']
-    del self._config['__class__']
-    del self._config['layers']
-    self._config['name'] = self.name
+               **kwargs):
+    super(DenseDeterministic,
+          self).__init__(units=units,
+                         activation=activation,
+                         use_bias=use_bias,
+                         kernel_initializer=kernel_initializer,
+                         bias_initializer=bias_initializer,
+                         kernel_regularizer=kernel_regularizer,
+                         bias_regularizer=bias_regularizer,
+                         activity_regularizer=activity_regularizer,
+                         kernel_constraint=kernel_constraint,
+                         bias_constraint=bias_constraint,
+                         **kwargs)
 
-  def get_config(self):
-    return self._config
-
-  @classmethod
-  def from_config(cls, config, custom_objects=None):
-    return cls(**config)
+  def call(self, inputs, **kwargs):
+    outputs = super(DenseDeterministic, self).call(inputs)
+    return DeterministicLayer(vectorized=True)(outputs)
 
 
 class DistributionDense(Model):

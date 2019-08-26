@@ -2,10 +2,15 @@ from __future__ import absolute_import, division, print_function
 
 import copy
 import inspect
+import os
+import shutil
+from tempfile import mkdtemp
 from types import ModuleType
 from typing import Callable
 
+import dill
 from six import string_types
+from tensorflow.python import saved_model
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.engine import base_layer_utils
@@ -13,6 +18,8 @@ from tensorflow.python.keras.layers import Activation, Dense, Layer
 from tensorflow.python.keras.utils import tf_utils
 from tensorflow.python.util import nest
 from tensorflow.python.util.tf_export import keras_export
+
+from odin.utils import get_all_files
 
 __all__ = ['AdvanceModel', 'Identity', 'Parallel']
 
@@ -45,6 +52,40 @@ class AdvanceModel(Model):
     parameters.pop('parameters', None)
     self._parameters = parameters
 
+  def __getstate__(self):
+    configs = dill.dumps(self.get_config())
+    weights = dill.dumps(self.get_weights())
+    optimizer = self.optimizer
+    if optimizer is not None:
+      path = mkdtemp()
+      saved_model.save(optimizer, path)
+      optimizer = {}
+      for p in get_all_files(path):
+        name = p.replace(path, '')[1:]
+        with open(p, 'rb') as f:
+          optimizer[name] = f.read()
+      shutil.rmtree(path)
+    return configs, weights, optimizer
+
+  def __setstate__(self, states):
+    configs, weights, optimizer = states
+    configs = dill.loads(configs)
+    weights = dill.loads(weights)
+    clone = self.__class__.from_config(configs)
+    self.__dict__.update(clone.__dict__)
+    self.set_weights(weights)
+    if optimizer is not None:
+      path = mkdtemp()
+      os.mkdir(os.path.join(path, 'assets'))
+      os.mkdir(os.path.join(path, 'variables'))
+      for name, dat in optimizer.items():
+        with open(os.path.join(path, name), 'wb') as f:
+          f.write(dat)
+      optimizer = saved_model.load(path)
+      shutil.rmtree(path)
+      self.compile
+      self.optimizer = optimizer
+
   @property
   def custom_objects(self):
     """ This property could be overrided to provide custom Layer class
@@ -57,10 +98,10 @@ class AdvanceModel(Model):
   def parameters(self):
     return dict(self._parameters)
 
-  # if default is enable, it mean the build method is not overrided
-  # and won't be called during __call__
   @base_layer_utils.default
   def build(self, input_shape=None):
+    # if default is enable, it mean the build method is not overrided
+    # and won't be called during __call__
     if self._is_graph_network:
       self._init_graph_network(self.inputs, self.outputs, name=self.name)
     else:
@@ -169,7 +210,8 @@ class AdvanceModel(Model):
             "Class %s should return custom_objects of type dictionary or list,"
             " but the returned value is %s" %
             (str(cls), str(type(model_objects))))
-    # deserialize all layers
+    # deserialize all layers (NOTE: this no created layer is assigned
+    # to our model, just to check all serialization go OK)
     layers = []
     for layer_config in layer_configs:
       attr = layer_config.pop('attribute')

@@ -1,47 +1,46 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
-import os
-import re
-import sys
-# import uuid
-import time
-import math
-import types
-import signal
-import shutil
-import timeit
+
+import argparse
+import contextlib
 import inspect
+import math
+import os
+import platform
+import re
+import shutil
+import signal
+import subprocess
+import sys
 import tarfile
 import tempfile
-import platform
-import argparse
-import subprocess
-import contextlib
-from multiprocessing import cpu_count, Lock, current_process
-from collections import OrderedDict, deque, Iterable, Iterator, Mapping
-from itertools import islice, tee, chain
+# import uuid
+import time
+import timeit
+import types
+from collections import Iterable, Iterator, Mapping, OrderedDict, deque
+from itertools import chain, islice, tee
+from multiprocessing import Lock, cpu_count, current_process
 
+import numpy
+from six.moves.urllib.error import HTTPError, URLError
 from six.moves.urllib.request import urlopen
-from six.moves.urllib.error import URLError, HTTPError
+
+from odin.utils import crypto, decorators, mpi
+from odin.utils.cache_utils import *
+from odin.utils.crypto import md5_checksum
+from odin.utils.mpi import MPI, SharedCounter, async, async_mpi, segment_list
+from odin.utils.np_utils import *
+from odin.utils.path_utils import *
+from odin.utils.progbar import Progbar, add_notification
+from odin.utils.python_utils import *
 
 try:
   from numba import jit, autojit, vectorize, guvectorize
 except:
   pass
-import numpy
 
-from odin.utils.progbar import Progbar, add_notification
-from odin.utils.path_utils import *
-from odin.utils.cache_utils import *
-from odin.utils.python_utils import *
-from odin.utils.np_utils import *
-from odin.utils.mpi import segment_list, SharedCounter, async, async_mpi, MPI
-from odin.utils.crypto import md5_checksum
 
-from odin.utils import mpi
-from odin.utils import shape_calculation
-from odin.utils import decorators
-from odin.utils import crypto
 
 def array_size(arr):
   """ Return size of an numpy.ndarray in bytes """
