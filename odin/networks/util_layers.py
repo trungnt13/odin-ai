@@ -51,20 +51,33 @@ class AdvanceModel(Model):
     # tricky recursive reference of overriding classes
     parameters.pop('parameters', None)
     self._parameters = parameters
+    self._optimizer_weights = None
+
+  @property
+  def optimizer(self):
+    if self._optimizer_weights is not None and \
+      self._optimizer is not None and \
+        len(self._optimizer.weights) == len(self._optimizer_weights):
+      # TODO: this is bad solution to resume the training
+      self._optimizer.set_weights(self._optimizer_weights)
+      self._optimizer_weights = None
+    return self._optimizer
+
+  @optimizer.setter
+  def optimizer(self, optz):
+    self._optimizer = optz
 
   def __getstate__(self):
     configs = dill.dumps(self.get_config())
     weights = dill.dumps(self.get_weights())
     optimizer = self.optimizer
     if optimizer is not None:
-      path = mkdtemp()
-      saved_model.save(optimizer, path)
-      optimizer = {}
-      for p in get_all_files(path):
-        name = p.replace(path, '')[1:]
-        with open(p, 'rb') as f:
-          optimizer[name] = f.read()
-      shutil.rmtree(path)
+      optimizer = [
+          optimizer.__class__,
+          optimizer.get_config(),
+          optimizer.get_weights(),
+      ]
+      optimizer = dill.dumps(optimizer)
     return configs, weights, optimizer
 
   def __setstate__(self, states):
@@ -75,16 +88,10 @@ class AdvanceModel(Model):
     self.__dict__.update(clone.__dict__)
     self.set_weights(weights)
     if optimizer is not None:
-      path = mkdtemp()
-      os.mkdir(os.path.join(path, 'assets'))
-      os.mkdir(os.path.join(path, 'variables'))
-      for name, dat in optimizer.items():
-        with open(os.path.join(path, name), 'wb') as f:
-          f.write(dat)
-      optimizer = saved_model.load(path)
-      shutil.rmtree(path)
-      self.compile
-      self.optimizer = optimizer
+      cls, configs, weights = dill.loads(optimizer)
+      optimizer = cls.from_config(configs)
+      self.compile(optimizer)
+      self._optimizer_weights = weights
 
   @property
   def custom_objects(self):

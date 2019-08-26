@@ -1,11 +1,14 @@
 from os import path
+
 from setuptools import find_packages, setup
 
 _ODIN_VERSION_ = '1.0.0'
 
-_TENSORFLOW_VERSION = '2.0.0-rc0'
+# 2.0.0-rc0
+_TENSORFLOW_VERSION = '2.0.0b1'
 _TENSORFLOW_PROBABILITY_VERSION = '0.7.0'
 _PYTORCH_VERSION = '1.1.0'
+
 
 # ===========================================================================
 # Packages check
@@ -22,6 +25,7 @@ def get_tensorflow_version():
   except FileNotFoundError:
     pass
   return "tensorflow==%s" % _TENSORFLOW_VERSION
+
 
 # ===========================================================================
 # Description
@@ -67,33 +71,23 @@ setup(
         'Operating System :: Microsoft :: Windows',
         'Operating System :: POSIX :: Linux',
     ],
-    keywords='tensorflow pytorch machine learning neural networks deep learning bayesian',
+    keywords=
+    'tensorflow pytorch machine learning neural networks deep learning bayesian',
     packages=find_packages(exclude=['examples', 'examples/*', 'docs', 'tests']),
     # scripts=['bin/speech-augmentation', 'bin/speech-test'],
     setup_requires=['pip>=19.0'],
-    install_requires=['numpy>=1.0.0',
-                      get_tensorflow_version(),
-                      'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
-                      'tensorflow-datasets',
-                      'torch==%s' % _PYTORCH_VERSION,
-                      'six>=1.9.0',
-                      'scikit-learn>=0.18.0',
-                      'matplotlib>=3.0.0',
-                      'decorator',
-                      'tqdm',
-                      'dill',
-                      'pyyaml',
-                      'pycrypto'],
+    install_requires=[
+        'numpy>=1.0.0',
+        get_tensorflow_version(),
+        'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
+        'tensorflow-datasets',
+        'torch==%s' % _PYTORCH_VERSION, 'six>=1.9.0', 'scikit-learn>=0.18.0',
+        'matplotlib>=3.0.0', 'decorator', 'tqdm', 'dill', 'pyyaml', 'pycrypto'
+    ],
     extras_require={
-        'visualize': ['pydot>=1.2.4',
-                      'colorama',
-                      'seaborn'],
-        'tests': ['pytest',
-                  'pandas',
-                  'requests'],
-        'audio': ['soundfile',
-                  'resampy'],
-        'docs': ['sphinx',
-                 'sphinx_rtd_theme']
+        'visualize': ['pydot>=1.2.4', 'colorama', 'seaborn'],
+        'tests': ['pytest', 'pandas', 'requests'],
+        'audio': ['soundfile', 'resampy'],
+        'docs': ['sphinx', 'sphinx_rtd_theme']
     },
     zip_safe=False)
