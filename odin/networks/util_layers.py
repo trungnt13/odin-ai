@@ -9,6 +9,7 @@ from types import ModuleType
 from typing import Callable
 
 import dill
+import tensorflow as tf
 from six import string_types
 from tensorflow.python import saved_model
 from tensorflow.python.keras import Model, Sequential
@@ -52,6 +53,7 @@ class AdvanceModel(Model):
     parameters.pop('parameters', None)
     self._parameters = parameters
     self._optimizer_weights = None
+    self._optimizer = None
 
   @property
   def optimizer(self):
@@ -75,7 +77,8 @@ class AdvanceModel(Model):
       optimizer = [
           optimizer.__class__,
           optimizer.get_config(),
-          optimizer.get_weights(),
+          optimizer.get_weights()
+          if self._optimizer_weights is None else self._optimizer_weights,
       ]
       optimizer = dill.dumps(optimizer)
     return configs, weights, optimizer
@@ -117,7 +120,8 @@ class AdvanceModel(Model):
           raise ValueError('You must provide an `input_shape` argument.')
         else:
           input_shape = self._build_input_shape
-      input_shape = tuple(input_shape)
+      # do not convert input_shape to tuple, multiple inputs
+      # will create a ListWrapper of multiple TensorShape.
       self._build_input_shape = input_shape
       super(AdvanceModel, self).build(input_shape)
     self.built = True
@@ -133,17 +137,41 @@ class AdvanceModel(Model):
     return super(AdvanceModel, self).__call__(inputs, *args, **kwargs)
 
   def get_config(self):
-    source = inspect.getsource(self.__class__)
-    default_keys = []
+    subclass_types = []
     for t in type.mro(type(self)):
+      if t == AdvanceModel:
+        break
+      subclass_types.append(t)
+    default_types = [t for t in type.mro(type(self)) if t not in subclass_types]
+
+    default_keys = []
+    default_source = ''
+    for t in default_types:
       default_keys += dir(t)
+      # some class is builtin, so impossible to get the source code
+      try:
+        default_source += inspect.getsource(t)
+      except:
+        pass
+
+    source = ''
+    for t in subclass_types:
+      source += inspect.getsource(t)
 
     attributes = {}
-    layer_attributes = {}
+    layer_attributes = {}  # mapping attribute_name -> Layer
     for key, val in self.__dict__.items():
+      # TODO: not a good solution here, history make recursive reference
+      # but couldn't found in Model soruce code where it is setted
+      if key in ('_parameters', 'history') or key in self.parameters:
+        continue
       if isinstance(val, Layer):
         layer_attributes[id(val)] = key
-      elif 'self.' + key in source and key not in default_keys:
+      elif isinstance(val, tf.Variable):
+        pass
+      elif key not in default_keys and \
+        'self.' + key not in default_source and \
+          'self.' + key in source:
         try:
           attr = getattr(self, key)
           if not inspect.ismethod(attr) and \
