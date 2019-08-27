@@ -1,23 +1,33 @@
 # Collection of helpers methods for plotting series or
 # image and its statistics
 # ax_1 = ax.twinx()
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
+
 from numbers import Number
 
 import numpy as np
 
+
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def to_axis2D(ax):
+def to_axis2D(ax, fig=None):
   from matplotlib import pyplot as plt
+  if fig is None:
+    fig = plt.gcf()
+  elif isinstance(fig, (tuple, list)):
+    fig = plt.figure(figsize=[float(i) for i in fig])
+  elif not isinstance(fig, plt.Figure):
+    raise ValueError(
+        "fig could be tuple of figsize, None or instance of Figure.")
   if isinstance(ax, Number):
-    ax = plt.gcf().add_subplot(ax)
+    ax = fig.add_subplot(ax)
   elif isinstance(ax, (tuple, list)):
-    ax = plt.gcf().add_subplot(*ax)
+    ax = fig.add_subplot(*ax)
   elif ax is None:
-    ax = plt.gca()
+    ax = fig.gca()
   return ax
+
 
 # ===========================================================================
 # Main plotting
@@ -40,8 +50,8 @@ def _preprocess_series(observed, expected, total_stdev, explained_stdev):
     assert len(explained_stdev) == n
   return observed, expected, total_stdev, explained_stdev
 
-def _get_sort_indices(observed, expected,
-                      sort_by, sort_ascending):
+
+def _get_sort_indices(observed, expected, sort_by, sort_ascending):
   if sort_by is not None:
     if 'observed' in str(sort_by).lower():
       sort_indices = np.argsort(observed)
@@ -55,16 +65,31 @@ def _get_sort_indices(observed, expected,
     sort_indices = slice(None)
   return sort_indices
 
-def plot_series_statistics(observed=None, expected=None,
-                           total_stdev=None, explained_stdev=None,
+
+def plot_series_statistics(observed=None,
+                           expected=None,
+                           total_stdev=None,
+                           explained_stdev=None,
                            color_set='Set2',
-                           xscale="linear", yscale="linear",
-                           xlabel="feature", ylabel="value", y_cutoff=None,
-                           sort_by='expected', sort_ascending=True, despine=True,
-                           legend_enable=True, legend_title=None, legend_loc='best',
-                           alpha=None, markersize=1.0, linewdith=1.2,
-                           fontsize=8, ax=None, title=None,
-                           return_handles=False, return_indices=False):
+                           xscale="linear",
+                           yscale="linear",
+                           xlabel="feature",
+                           ylabel="value",
+                           y_cutoff=None,
+                           sort_by='expected',
+                           sort_ascending=True,
+                           despine=True,
+                           legend_enable=True,
+                           legend_title=None,
+                           legend_loc='best',
+                           alpha=None,
+                           markersize=1.0,
+                           linewdith=1.2,
+                           fontsize=8,
+                           ax=None,
+                           title=None,
+                           return_handles=False,
+                           return_indices=False):
   """ This function can plot 2 comparable series, and the
   scale are represented in 2 y-axes (major axis - left) and
   the right one
@@ -124,61 +149,68 @@ def plot_series_statistics(observed=None, expected=None,
     expected_total_standard_deviations_color = expected_palette[1]
     expected_explained_standard_deviations_color = expected_palette[3]
   # ====== prepare ====== #
-  sort_indices = _get_sort_indices(observed, expected,
-                                   sort_by, sort_ascending)
+  sort_indices = _get_sort_indices(observed, expected, sort_by, sort_ascending)
   # ====== plotting expected and observed ====== #
-  indices = np.arange(len(observed)
-                      if observed is not None else
-                      len(expected)) + 1
+  indices = np.arange(
+      len(observed) if observed is not None else len(expected)) + 1
   handles = []
   # ====== series title ====== #
   if legend_title is not None:
-    _, = ax.plot([], marker='None', linestyle='None',
+    _, = ax.plot([],
+                 marker='None',
+                 linestyle='None',
                  label="$%s$" % legend_title)
     handles.append(_)
   # ====== plotting expected and observed ====== #
   if observed is not None:
-    _, = ax.plot(indices, observed[sort_indices],
-            label="Observations",
-            color=observed_color,
-            linestyle="", marker="o", zorder=2,
-            markersize=markersize)
+    _, = ax.plot(indices,
+                 observed[sort_indices],
+                 label="Observations",
+                 color=observed_color,
+                 linestyle="",
+                 marker="o",
+                 zorder=2,
+                 markersize=markersize)
     handles.append(_)
   if expected is not None:
-    _, = ax.plot(indices, expected[sort_indices],
-            label="Expectation",
-            color=expected_color,
-            linestyle="-", marker="", zorder=3,
-            linewidth=linewdith)
+    _, = ax.plot(indices,
+                 expected[sort_indices],
+                 label="Expectation",
+                 color=expected_color,
+                 linestyle="-",
+                 marker="",
+                 zorder=3,
+                 linewidth=linewdith)
     handles.append(_)
   # ====== plotting stdev ====== #
   if total_stdev is not None:
     lower = expected - total_stdev
     upper = expected + total_stdev
     ax.fill_between(
-        indices, lower[sort_indices], upper[sort_indices],
+        indices,
+        lower[sort_indices],
+        upper[sort_indices],
         color=expected_total_standard_deviations_color,
         zorder=0,
         alpha=alpha,
     )
-    _ = matplotlib.patches.Patch(
-        label="Stdev(Total)",
-        color=expected_total_standard_deviations_color
-    )
+    _ = matplotlib.patches.Patch(label="Stdev(Total)",
+                                 color=expected_total_standard_deviations_color)
     handles.append(_)
   if explained_stdev is not None:
     lower = expected - explained_stdev
     upper = expected + explained_stdev
     ax.fill_between(
-        indices, lower[sort_indices], upper[sort_indices],
+        indices,
+        lower[sort_indices],
+        upper[sort_indices],
         color=expected_explained_standard_deviations_color,
         zorder=1,
         alpha=alpha,
     )
     _ = matplotlib.patches.Patch(
         label="Stdev(Explained)",
-        color=expected_explained_standard_deviations_color
-    )
+        color=expected_explained_standard_deviations_color)
     handles.append(_)
   # ====== legend ====== #
   if legend_enable:
@@ -192,9 +224,9 @@ def plot_series_statistics(observed=None, expected=None,
   ax.set_ylabel('[%s]%s' % (yscale, ylabel), fontsize=fontsize)
   ax.set_xscale(xscale)
   ax.set_xlabel('[%s]%s%s' %
-    (xscale, xlabel,
-     ' (sorted by "%s")' % str(sort_by).lower() if sort_by is not None else ''),
-      fontsize=fontsize)
+                (xscale, xlabel, ' (sorted by "%s")' %
+                 str(sort_by).lower() if sort_by is not None else ''),
+                fontsize=fontsize)
   # ====== set y-cutoff ====== #
   y_min, y_max = ax.get_ylim()
   if y_cutoff is not None:
@@ -214,13 +246,20 @@ def plot_series_statistics(observed=None, expected=None,
     ret.append(sort_indices)
   return ax if len(ret) == 1 else tuple(ret)
 
+
 # ===========================================================================
 # Others
 # ===========================================================================
-def plot_relative_series(X, row_name=None, col_name=None,
-                         linestyle='--', linewidth=1,
-                         markerstyle='o', markersize=32,
-                         grid=True, fontsize=12, text_rotation=0,
+def plot_relative_series(X,
+                         row_name=None,
+                         col_name=None,
+                         linestyle='--',
+                         linewidth=1,
+                         markerstyle='o',
+                         markersize=32,
+                         grid=True,
+                         fontsize=12,
+                         text_rotation=0,
                          ax=None):
   """ First row in X will be used as baseline
 
@@ -253,11 +292,17 @@ def plot_relative_series(X, row_name=None, col_name=None,
 
   ax = to_axis2D(ax)
   for col_idx in range(n_col):
-    ax.plot(X[:, col_idx], color=colors[col_idx],
-            linestyle='--', linewidth=linewidth, alpha=0.5,
+    ax.plot(X[:, col_idx],
+            color=colors[col_idx],
+            linestyle='--',
+            linewidth=linewidth,
+            alpha=0.5,
             label=col_name[col_idx])
-    ax.scatter(ids, X[:, col_idx],
-               color=colors[col_idx], s=markersize, marker=markerstyle,
+    ax.scatter(ids,
+               X[:, col_idx],
+               color=colors[col_idx],
+               s=markersize,
+               marker=markerstyle,
                alpha=0.8)
 
   ax.set_xticks(ids)

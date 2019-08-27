@@ -35,7 +35,7 @@ class Visualizer(object):
     return self
 
   def save_figures(self,
-                   path,
+                   path='/tmp/tmp.pdf',
                    dpi=None,
                    separate_files=True,
                    clear_figures=True,
