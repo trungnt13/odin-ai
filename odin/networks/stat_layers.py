@@ -85,6 +85,7 @@ class DenseDistribution(Sequential):
       activation='linear',
       use_bias=True,
       call_mode: Statistic = Statistic.DIST,
+      posterior_kwargs={},
       name="DenseDistribution"):
     assert prior is None or isinstance(prior, Distribution), \
      "prior can be None or instance of tensorflow_probability.Distribution"
@@ -95,17 +96,21 @@ class DenseDistribution(Sequential):
     # process the posterior
     if isinstance(posterior, DistributionLambda):
       layer = posterior
-    elif isinstance(posterior, type) and issubclass(posterior,
-                                                    DistributionLambda):
-      layer = posterior(units)
-    elif isinstance(posterior, Callable):
-      layer = posterior(units)
-      assert isinstance(layer, DistributionLambda), \
-        "The callable must return instance of DistributionLambda, but given: %s" \
-          % (str(type(layer)))
+    elif (isinstance(posterior, type) and
+          issubclass(posterior, DistributionLambda)) or \
+          isinstance(posterior, Callable):
+      args = inspect.getfullargspec(posterior).args
+      posterior_kwargs = {
+          i: j for i, j in posterior_kwargs.items() if i in args
+      }
+      layer = posterior(units, **posterior_kwargs)
     else:
       raise ValueError("No support for posterior of type: %s" %
                        str(type(layer)))
+    # layer must be DistributionLambda
+    assert isinstance(layer, DistributionLambda), \
+      "The callable must return instance of DistributionLambda, but given: %s" \
+        % (str(type(layer)))
     # create layers
     params_size = layer.params_size(units)
     layers = [
@@ -120,6 +125,7 @@ class DenseDistribution(Sequential):
     self._use_bias = bool(use_bias)
     self._call_mode = call_mode
     self._last_distribution = None
+    self._posterior_kwargs = posterior_kwargs
     # check class init
     for arg in inspect.getfullargspec(self.__init__).args:
       if arg not in locals():
@@ -136,7 +142,8 @@ class DenseDistribution(Sequential):
             'prior': self._prior,
             'activation': self._activation,
             'use_bias': self._use_bias,
-            'call_mode': self._call_mode
+            'call_mode': self._call_mode,
+            'posterior_kwargs': self._posterior_kwargs
         }
     }
     if self._build_input_shape:
