@@ -1,19 +1,19 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import copy
-import numbers
 import inspect
-from functools import wraps
-from six.moves import builtins
+import numbers
 from collections import defaultdict
+from functools import wraps
 
 import numpy as np
 import scipy as sp
-
 import tensorflow as tf
+from six.moves import builtins
 from tensorflow.python.ops import init_ops
 
-from odin.utils import as_tuple, uuid, is_number, is_string, is_same_shape
+from odin.utils import as_tuple, is_number, is_same_shape, is_string, uuid
+
 
 # ===========================================================================
 # Helper
@@ -55,14 +55,15 @@ def calc_white_mat(X):
   """
   return tf.linalg.cholesky(tf.linalg.inv(X))
 
-def log_norm(x, axis=1, scale_factor=10000):
+def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
   """ Seurat log-normalize
   y = log(X / (sum(X, axis) + epsilon) * scale_factor)
 
   where `log` is natural logarithm
   """
-  return tf.log1p(
-      x / (tf.reduce_sum(x, axis=axis, keepdims=True) + EPS) * scale_factor)
+  eps = tf.cast(eps, x.dtype)
+  return tf.math.log1p(
+      x / (tf.reduce_sum(x, axis=axis, keepdims=True) + eps) * scale_factor)
 
 def delog_norm(x, x_sum=1, scale_factor=10000):
   """ This perform de-log normalization of `log_norm` values

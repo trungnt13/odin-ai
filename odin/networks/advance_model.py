@@ -332,7 +332,7 @@ class AdvanceModel(Model):
     for key, val in history.history.items():
       if key not in self._history:
         self._history[key] = []
-      self._history[key] += val
+      self._history[key] += list(val)
     return history
 
   def get_config(self):

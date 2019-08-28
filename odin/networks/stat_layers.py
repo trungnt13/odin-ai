@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import inspect
 from typing import Callable, Optional, Type, Union
 
 import tensorflow as tf
@@ -13,7 +14,7 @@ from odin.bay.distribution_layers import DeterministicLayer
 from odin.bay.helpers import Statistic, kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
-__all__ = ['DenseDeterministic', 'DistributionDense']
+__all__ = ['DenseDeterministic', 'DenseDistribution']
 
 
 class DenseDeterministic(Dense):
@@ -52,12 +53,12 @@ class DenseDeterministic(Dense):
     return DeterministicLayer(vectorized=True)(outputs)
 
 
-class DistributionDense(Model):
-  """ DistributionDense
+class DenseDistribution(Sequential):
+  """ using `Dense` layer to parameterize tensorflow_probability `Distribution`
 
   Parameters
   ----------
-  units : int
+  units : `int`
     number of output units.
   posterior : {`DistributionLambda`, `callable`, `type`}
     posterior distribution, the class or a callable can be given for later
@@ -66,9 +67,9 @@ class DistributionDense(Model):
     prior distribution, used for calculating KL divergence later.
   use_bias : `bool` (default=`True`)
 
-  call_mode : `odin.bay.helpers.Statistic` (default=Statistic.SAMPLE)
+  call_mode : `odin.bay.helpers.Statistic` (default=`Statistic.SAMPLE`)
 
-  name : `str` (default='DistributionDense')
+  name : `str` (default='DenseDistribution')
 
   Return
   ------
@@ -76,65 +77,87 @@ class DistributionDense(Model):
     depend on the `call_mode`, multiple statistics could be returned
   """
 
-  def __init__(self,
-               units,
-               posterior: Union[DistributionLambda, Type[DistributionLambda]],
-               prior: Optional[Distribution] = None,
-               activation='linear',
-               use_bias=True,
-               call_mode: Statistic = Statistic.SAMPLE,
-               name="DistributionDense"):
-    super(DistributionDense, self).__init__(name=name)
+  def __init__(
+      self,
+      units,
+      posterior: Union[DistributionLambda, Type[DistributionLambda], Callable],
+      prior: Optional[Distribution] = None,
+      activation='linear',
+      use_bias=True,
+      call_mode: Statistic = Statistic.DIST,
+      name="DenseDistribution"):
     assert prior is None or isinstance(prior, Distribution), \
      "prior can be None or instance of tensorflow_probability.Distribution"
     assert isinstance(call_mode, Statistic), \
       "call_mode must be instance of odin.bay.helpers.Statistic"
-
-    self._units = int(units)
-    self._use_bias = bool(use_bias)
-    self._posterior = posterior
-    self._prior = prior
-    self._call_mode = call_mode
-
+    units = int(units)
+    use_bias = bool(use_bias)
+    # process the posterior
     if isinstance(posterior, DistributionLambda):
-      pass
+      layer = posterior
     elif isinstance(posterior, type) and issubclass(posterior,
                                                     DistributionLambda):
-      posterior = posterior(self.units)
+      layer = posterior(units)
     elif isinstance(posterior, Callable):
-      posterior = posterior(self.units)
-      assert isinstance(posterior, DistributionLambda), \
+      layer = posterior(units)
+      assert isinstance(layer, DistributionLambda), \
         "The callable must return instance of DistributionLambda, but given: %s" \
-          % (str(type(posterior)))
+          % (str(type(layer)))
     else:
       raise ValueError("No support for posterior of type: %s" %
-                       str(type(posterior)))
-
-    params_size = posterior.params_size(self.units)
+                       str(type(layer)))
+    # create layers
+    params_size = posterior.params_size(units)
     layers = [
-        Dense(params_size, activation=activation, use_bias=bool(use_bias)),
-        posterior
+        Dense(params_size, activation=activation, use_bias=use_bias), layer
     ]
-    self._distribution = Sequential(layers, name="Sequential")
+    super(DenseDistribution, self).__init__(layers=layers, name=name)
+    # basics
+    self._units = units
+    self._posterior = posterior
+    self._prior = prior
+    self._activation = activation
+    self._use_bias = bool(use_bias)
+    self._call_mode = call_mode
     self._last_distribution = None
+    # check class init
+    for arg in inspect.getfullargspec(self.__init__).args:
+      if arg not in locals():
+        raise ValueError("Invalid subclassing %s, the arguments to __init__ "
+                         "must contain DenseDistribution arguments." %
+                         str(self.__class__))
 
   def get_config(self):
     config = {
         'name': self.name,
-        'units': self._units,
-        'posterior': self._posterior,
-        'prior': self._prior,
-        'use_bias': self._use_bias,
-        'call_mode': self._call_mode,
-        'build_input_shape': self._distribution._build_input_shape
+        'configs': {
+            'units': self._units,
+            'posterior': self._posterior,
+            'prior': self._prior,
+            'activation': self._activation,
+            'use_bias': self._use_bias,
+            'call_mode': self._call_mode
+        }
     }
+    if self._build_input_shape:
+      config['build_input_shape'] = self._build_input_shape
     return config
 
   @classmethod
   def from_config(cls, config, custom_objects=None):
-    build_input_shape = config.pop('build_input_shape')
-    model = cls(**config)
-    if not model.inputs and build_input_shape is not None:
+    if 'name' in config:
+      name = config['name']
+      build_input_shape = config.get('build_input_shape')
+    else:
+      name = None
+      build_input_shape = None
+    kw = {
+        i: config['configs'][i]
+        for i in inspect.getfullargspec(cls.__init__).args
+        if i in config['configs']
+    }
+    model = cls(name=name, **kw)
+    if not model.inputs and build_input_shape:
       model.build(build_input_shape)
     return model
 
@@ -157,7 +180,7 @@ class DistributionDense(Model):
       x._distribution == self._last_distribution:
       dist = x._distribution
     else:
-      dist = self._distribution(x)
+      dist = super(DenseDistribution, self).call(x)
     return dist
 
   def mean(self, x):
@@ -189,10 +212,6 @@ class DistributionDense(Model):
     self._last_distribution = y._distribution
     return y
 
-  def build(self, input_shape):
-    self._distribution.build(input_shape)
-    return super(DistributionDense, self).build(input_shape)
-
   def call(self, x, training=None, n_samples=1, mode=None):
     """
     Parameters
@@ -207,21 +226,15 @@ class DistributionDense(Model):
       decide which of the statistics will be return from the distribution,
       this value will overide the default value of the class
     """
-    dtype = tuple(set([w.dtype for w in self._distribution.weights]))[0]
-    if x.dtype != dtype:
-      raise RuntimeError(
-          "Given input with %s, but the layers were created with %s" %
-          (str(x.dtype), str(dtype)))
-
     results = []
     variance = None
     call_mode = self._call_mode if not isinstance(mode, Statistic) else mode
     # special case only need the distribution
     if Statistic.DIST == call_mode:
-      dist = self._distribution(x)
+      dist = super(DenseDistribution, self).call(x)
       self._last_distribution = dist
       return dist
-
+    # convert to tensor modes
     if Statistic.SAMPLE in call_mode:
       results.append(self.sample(x, n_samples=n_samples))
     if Statistic.MEAN in call_mode:
@@ -270,7 +283,7 @@ class DistributionDense(Model):
       self(x, mode=Statistic.DIST)
     if self.posterior is None:
       raise RuntimeError(
-          "DistributionDense must be called to create the distribution before "
+          "DenseDistribution must be called to create the distribution before "
           "calculating the kl-divergence.")
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
@@ -291,5 +304,6 @@ class DistributionDense(Model):
         (self.units, str(x.shape))
     if self.posterior is None:
       raise RuntimeError(
-          "DistributionDense must be called to create the distribution before "
+          "DenseDistribution must be called to create the distribution before "
           "calculating the log-likelihood.")
+    return self.posterior.log_prob(x)
