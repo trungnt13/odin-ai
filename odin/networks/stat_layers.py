@@ -107,7 +107,7 @@ class DenseDistribution(Sequential):
       raise ValueError("No support for posterior of type: %s" %
                        str(type(layer)))
     # create layers
-    params_size = posterior.params_size(units)
+    params_size = layer.params_size(units)
     layers = [
         Dense(params_size, activation=activation, use_bias=use_bias), layer
     ]
