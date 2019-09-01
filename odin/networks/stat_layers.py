@@ -10,7 +10,7 @@ from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers import DistributionLambda
 
-from odin.bay.distribution_layers import DeterministicLayer
+from odin.bay.distribution_layers import VectorDeterministicLayer
 from odin.bay.helpers import Statistic, kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
@@ -50,7 +50,7 @@ class DenseDeterministic(Dense):
 
   def call(self, inputs, **kwargs):
     outputs = super(DenseDeterministic, self).call(inputs)
-    return DeterministicLayer(vectorized=True)(outputs)
+    return VectorDeterministicLayer()(outputs)
 
 
 class DenseDistribution(Sequential):
@@ -119,6 +119,7 @@ class DenseDistribution(Sequential):
     super(DenseDistribution, self).__init__(layers=layers, name=name)
     # basics
     self._units = units
+    self._params_size = params_size
     self._posterior = posterior
     self._prior = prior
     self._activation = activation
@@ -171,6 +172,10 @@ class DenseDistribution(Sequential):
   @property
   def prior(self):
     return self._prior
+
+  @property
+  def distribution_layer(self):
+    return self.layers[-1]
 
   @property
   def posterior(self):
@@ -285,13 +290,17 @@ class DenseDistribution(Sequential):
       n_samples = 1
     if prior is None:
       prior = self._prior
+    elif self._prior is None:
+      self._prior = prior
     assert isinstance(prior, Distribution), "prior is not given!"
+
     if x is not None:
       self(x, mode=Statistic.DIST)
     if self.posterior is None:
       raise RuntimeError(
           "DenseDistribution must be called to create the distribution before "
           "calculating the kl-divergence.")
+
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
                                  use_analytic_kl=bool(analytic_kl),
@@ -314,3 +323,12 @@ class DenseDistribution(Sequential):
           "DenseDistribution must be called to create the distribution before "
           "calculating the log-likelihood.")
     return self.posterior.log_prob(x)
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return '<DenseDistribution units:%d #params:%g posterior:%s prior:%s>' %\
+      (self.units, self._params_size / self.units,
+       self.layers[-1].__class__.__name__,
+       self.prior.__class__.__name__)

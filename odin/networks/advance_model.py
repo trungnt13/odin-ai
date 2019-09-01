@@ -19,6 +19,16 @@ from tensorflow.python.keras.layers import Layer
 from tensorflow.python.util import nest
 
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _is_list_of_layers(obj):
+  pass
+
+
+# ===========================================================================
+# Main
+# ===========================================================================
 class AdvanceModel(Model):
   """ The advance model improving the serialization and deserialization of
   complex Model
@@ -32,7 +42,6 @@ class AdvanceModel(Model):
 
   def __init__(self, parameters=None, name=None):
     super(AdvanceModel, self).__init__(name=name)
-    from tensorflow.python.keras.callbacks import History
     self.supports_masking = True
     self._build_input_shape = None
 

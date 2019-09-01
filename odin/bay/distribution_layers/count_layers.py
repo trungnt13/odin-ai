@@ -176,32 +176,24 @@ class NegativeBinomialDispLayer(DistributionLambda):
     """ Create the distribution instance from a `params` vector. """
     with tf.compat.v1.name_scope(name, 'NegativeBinomialDispLayer',
                                  [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
                                                tensor_name='event_shape')
-      if isinstance(params, (tuple, list)):
-        loc_params, disp_params = params
-        output_shape = tf.concat([
-            tf.shape(input=loc_params)[:-1],
-            event_shape,
-        ],
-                                 axis=0)
-      else:
-        params = tf.convert_to_tensor(value=params, name='params')
-        output_shape = tf.concat([
-            tf.shape(input=params)[:-1],
-            event_shape,
-        ],
-                                 axis=0)
-        loc_params, disp_params = tf.split(params, 2, axis=-1)
-        if dispersion == 'single':
-          disp_params = tf.reduce_mean(disp_params)
-        elif dispersion == 'share':
-          disp_params = tf.reduce_mean(disp_params,
-                                       axis=tf.range(0,
-                                                     output_shape.shape[0] - 1,
-                                                     dtype='int32'),
-                                       keepdims=True)
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ],
+                               axis=0)
+      loc_params, disp_params = tf.split(params, 2, axis=-1)
+      if dispersion == 'single':
+        disp_params = tf.reduce_mean(disp_params)
+      elif dispersion == 'share':
+        disp_params = tf.reduce_mean(disp_params,
+                                     axis=tf.range(0,
+                                                   output_shape.shape[0] - 1,
+                                                   dtype='int32'),
+                                     keepdims=True)
       if given_log_mean:
         loc_params = tf.exp(loc_params, name='loc')
       if given_log_disp:
@@ -228,9 +220,6 @@ class NegativeBinomialDispLayer(DistributionLambda):
 
 # ===========================================================================
 # Zero inflated
-# ===========================================================================
-# ===========================================================================
-# Complex distributions
 # ===========================================================================
 class ZIPoissonLayer(DistributionLambda):
   """A Independent zero-inflated Poisson keras layer
@@ -441,38 +430,31 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
     """Create the distribution instance from a `params` vector."""
     with tf.compat.v1.name_scope(name, 'ZINegativeBinomialDispLayer',
                                  [params, event_shape]):
+      params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
                                                tensor_name='event_shape')
-      # all parameters are given directly
-      if isinstance(params, (tuple, list)):
-        (loc_params, disp_params, rate_params) = params
-        output_shape = tf.concat([
-            tf.shape(input=loc_params)[:-1],
-            event_shape,
-        ],
-                                 axis=0)
-      # split single vector into three parameters
-      else:
-        params = tf.convert_to_tensor(value=params, name='params')
-        output_shape = tf.concat([
-            tf.shape(input=params)[:-1],
-            event_shape,
-        ],
-                                 axis=0)
-        (loc_params, disp_params, rate_params) = tf.split(params, 3, axis=-1)
-        if dispersion == 'single':
-          disp_params = tf.reduce_mean(disp_params)
-        elif dispersion == 'share':
-          disp_params = tf.reduce_mean(disp_params,
-                                       axis=tf.range(0,
-                                                     output_shape.shape[0] - 1,
-                                                     dtype='int32'),
-                                       keepdims=True)
+      output_shape = tf.concat([
+          tf.shape(input=params)[:-1],
+          event_shape,
+      ],
+                               axis=0)
+      # splitting the parameters
+      (loc_params, disp_params, rate_params) = tf.split(params, 3, axis=-1)
+      if dispersion == 'single':
+        disp_params = tf.reduce_mean(disp_params)
+      elif dispersion == 'share':
+        disp_params = tf.reduce_mean(disp_params,
+                                     axis=tf.range(0,
+                                                   output_shape.shape[0] - 1,
+                                                   dtype='int32'),
+                                     keepdims=True)
+      # as count value, do exp if necessary
       if given_log_mean:
         loc_params = tf.exp(loc_params, name='loc')
       if given_log_disp:
         disp_params = tf.exp(disp_params, name='disp')
+      # create the distribution
       nb = NegativeBinomialDisp(loc=tf.reshape(loc_params, output_shape),
                                 disp=tf.reshape(disp_params, output_shape)
                                 if dispersion == 'full' else disp_params,

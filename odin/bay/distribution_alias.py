@@ -28,7 +28,8 @@ _dist_mapping = multikeysdict({
         (obl.ZIPoissonLayer, tfd.Poisson),
     'dirichlet': (obl.DirichletLayer, tfd.Dirichlet),
     'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
-    'deterministic': (obl.DeterministicLayer, tfd.Deterministic)
+    'deterministic': (obl.DeterministicLayer, tfd.Deterministic),
+    'vdeterministic': (obl.VectorDeterministicLayer, tfd.VectorDeterministic),
     # 'beta': (obl),
 })
 
