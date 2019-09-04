@@ -540,8 +540,10 @@ class MultivariateNormalLayer(DistributionLambda):
     assert covariance_type in ('full', 'tril', 'diag'), \
     "No support for given covariance_type: '%s'" % covariance_type
 
-    scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0) \
-    if bool(softplus_scale) else x
+    if bool(softplus_scale):
+      scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0)
+    else:
+      scale_fn = lambda x: x
 
     with tf.compat.v1.name_scope(name, 'MultivariateNormalLayer',
                                  [params, event_size]):
@@ -559,13 +561,15 @@ class MultivariateNormalLayer(DistributionLambda):
       elif covariance_type == 'diag':
         return tfd.MultivariateNormalDiag(loc=params[..., :event_size],
                                           scale_diag=scale_fn(
-                                              params[..., event_size:]))
+                                              params[..., event_size:]),
+                                          validate_args=validate_args)
 
       elif covariance_type == 'full':
         return tfd.MultivariateNormalFullCovariance(
             loc=params[..., :event_size],
             covariance_matrix=tf.reshape(scale_fn(params[..., event_size:]),
-                                         (event_size, event_size)))
+                                         (event_size, event_size)),
+            validate_args=validate_args)
 
   @staticmethod
   def params_size(event_size, covariance_type='diag', name=None):
