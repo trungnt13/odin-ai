@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# TODO: NotImplementedError: <class 'odin.bay.distributions.zero_inflated.ZeroInflated'> does not support batch slicing; must implement _params_event_ndims.
 # ======================================================================== #
 """The ZeroInflated distribution class."""
 from __future__ import absolute_import, division, print_function

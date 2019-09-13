@@ -4,6 +4,7 @@ import collections
 
 import numpy as np
 import tensorflow as tf
+from sklearn.mixture import GaussianMixture
 from tensorflow.python import keras
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.keras.layers import Dense
@@ -27,12 +28,23 @@ class MixtureDensityNetwork(Dense):
 
   Parameters
   ----------
+  units : `int`
+    number of output features for each component.
+  num_components : `int` (default=`2`)
+    The number of mixture components.
+  covariance_type : {'none', 'diag', 'full', 'tril'}
+    String describing the type of covariance parameters to use.
+    Must be one of:
+      'none' (each component has its own single variance).
+      'diag' (each component has its own diagonal covariance matrix),
+      'tril' (lower triangle matrix),
+      'full' (each component has its own general covariance matrix),
 
   """
 
   def __init__(self,
                units,
-               num_components,
+               num_components=2,
                covariance_type='none',
                convert_to_tensor_fn=tfd.Distribution.sample,
                softplus_scale=True,
