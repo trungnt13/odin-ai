@@ -6,6 +6,7 @@ import numbers
 import os
 import re
 import string
+import tarfile
 import types
 import warnings
 from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
@@ -16,6 +17,36 @@ from datetime import datetime
 import numpy as np
 from six import add_metaclass, string_types
 from six.moves import cPickle
+
+# ===========================================================================
+# File type check
+# ===========================================================================
+GZIP_MAGIC_NUMBER = "1f8b"
+
+
+def is_gzip_file(path):
+  """ Credit:
+  https://kite.com/python/examples/4945/gzip-check-if-a-file-is-gzip-compressed
+  """
+  if isinstance(path, string_types) and os.path.isfile(path):
+    with open(path, 'rb') as f:
+      return f.read(2).encode("hex") == GZIP_MAGIC_NUMBER
+  elif hasattr(path, 'read') and hasattr(path, 'tell'):
+    last_pos = path.tell()
+    path.seek(0)
+    indicator = path.read(2)
+    indicator = (indicator.encode("hex")
+                 if isinstance(indicator, string_types) else indicator.hex())
+    path.seek(last_pos)
+    return indicator == GZIP_MAGIC_NUMBER
+  return False
+
+
+def is_tar_file(path):
+  if not os.path.isfile(path):
+    return False
+  return tarfile.is_tarfile(path)
+
 
 # ===========================================================================
 # Regular expression
