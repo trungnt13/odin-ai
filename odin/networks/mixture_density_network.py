@@ -30,7 +30,7 @@ class MixtureDensityNetwork(Dense):
   ----------
   units : `int`
     number of output features for each component.
-  num_components : `int` (default=`2`)
+  n_components : `int` (default=`2`)
     The number of mixture components.
   covariance_type : {'none', 'diag', 'full', 'tril'}
     String describing the type of covariance parameters to use.
@@ -44,7 +44,7 @@ class MixtureDensityNetwork(Dense):
 
   def __init__(self,
                units,
-               num_components=2,
+               n_components=2,
                covariance_type='none',
                convert_to_tensor_fn=tfd.Distribution.sample,
                softplus_scale=True,
@@ -64,7 +64,7 @@ class MixtureDensityNetwork(Dense):
     "No support for covariance_type: '%s', the support value are: %s" % \
       (covariance_type, ', '.join(_COV_TYPES))
     self._covariance_type = covariance_type
-    self._num_components = int(num_components)
+    self._n_components = int(n_components)
     self._validate_args = bool(validate_args)
     self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
     self._softplus_scale = bool(softplus_scale)
@@ -84,7 +84,7 @@ class MixtureDensityNetwork(Dense):
     else:
       raise NotImplementedError
     self._component_params_size = component_params_size
-    params_size = self.num_components + self.num_components * component_params_size
+    params_size = self.n_components + self.n_components * component_params_size
     self._event_size = units
 
     super(MixtureDensityNetwork,
@@ -109,8 +109,8 @@ class MixtureDensityNetwork(Dense):
     return self._covariance_type
 
   @property
-  def num_components(self):
-    return self._num_components
+  def n_components(self):
+    return self._n_components
 
   @property
   def component_params_size(self):
@@ -125,18 +125,18 @@ class MixtureDensityNetwork(Dense):
 
   def call(self, inputs, *args, **kwargs):
     params = super(MixtureDensityNetwork, self).call(inputs, *args, **kwargs)
-    num_components = tf.convert_to_tensor(value=self.num_components,
-                                          name='num_components',
+    n_components = tf.convert_to_tensor(value=self.n_components,
+                                          name='n_components',
                                           dtype_hint=tf.int32)
     # ====== mixture weights ====== #
-    mixture_coefficients = params[..., :num_components]
+    mixture_coefficients = params[..., :n_components]
     mixture_dist = tfd.Categorical(logits=mixture_coefficients,
                                    validate_args=self._validate_args,
                                    name="MixtureWeights")
     # ====== initialize the components ====== #
     params = tf.reshape(
-        params[..., num_components:],
-        tf.concat([tf.shape(input=params)[:-1], [num_components, -1]], axis=0))
+        params[..., n_components:],
+        tf.concat([tf.shape(input=params)[:-1], [n_components, -1]], axis=0))
     if bool(self._softplus_scale):
       scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0)
     else:
@@ -234,7 +234,7 @@ class MixtureDensityNetwork(Dense):
         'convert_to_tensor_fn': _serialize(self._convert_to_tensor_fn),
         'covariance_type': self._covariance_type,
         'validate_args': self._validate_args,
-        'num_components': self._num_components,
+        'n_components': self._n_components,
         'softplus_scale': self._softplus_scale,
     }
     base_config = super(MixtureDensityNetwork, self).get_config()

@@ -45,7 +45,7 @@ def fn_loss(y_true, y_pred):
 
 
 mdn = MixtureDensityNetwork(1,
-                            num_components=n_components,
+                            n_components=n_components,
                             covariance_type='none')
 model = Sequential([mdn])
 model.compile(optimizer='adam', loss=fn_loss)
