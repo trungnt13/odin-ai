@@ -1,6 +1,5 @@
 from tensorflow_probability.python.distributions import *
 
-from odin.bay.distributions.complex_distributions import *
 from odin.bay.distributions.logarizmed import *
 from odin.bay.distributions.negative_binomial_disp import NegativeBinomialDisp
 from odin.bay.distributions.normal_gamma import NormalGamma

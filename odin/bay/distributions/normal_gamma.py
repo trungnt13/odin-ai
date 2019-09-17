@@ -1,24 +1,24 @@
 """The NormalGamma distribution class."""
 from __future__ import absolute_import, division, print_function
 
-import math
 import functools
+import math
+
 # Dependency imports
 import numpy as np
 import tensorflow as tf
-
-from tensorflow_probability.python.distributions import distribution
-from tensorflow_probability.python.distributions import seed_stream
-
-from tensorflow_probability.python.internal import distribution_util
-from tensorflow_probability.python.internal import dtype_util
-from tensorflow_probability.python.internal import reparameterization
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.ops import control_flow_ops
+from tensorflow_probability.python.distributions import distribution
+from tensorflow_probability.python.internal import (distribution_util,
+                                                    dtype_util,
+                                                    reparameterization)
+from tensorflow_probability.python.util.seed_stream import SeedStream
 
 __all__ = [
     "NormalGamma",
 ]
+
 
 class NormalGamma(distribution.Distribution):
   """Normal-Gamma distribution.
@@ -68,16 +68,14 @@ class NormalGamma(distribution.Distribution):
       TypeError: if `concentration` and `rate` are different dtypes.
     """
     parameters = dict(locals())
-    with tf.name_scope(
-        name, values=[loc, scale, concentration, rate]):
-      dtype = dtype_util.common_dtype(
-          [loc, scale, concentration, rate],
-          preferred_dtype=tf.float32)
+    with tf.name_scope(name, values=[loc, scale, concentration, rate]):
+      dtype = dtype_util.common_dtype([loc, scale, concentration, rate],
+                                      dtype_hint=tf.float32)
       loc = tf.convert_to_tensor(loc, name="loc", dtype=dtype)
-      scale = tf.convert_to_tensor(
-          scale, name="scale", dtype=dtype)
-      concentration = tf.convert_to_tensor(
-          concentration, name="concentration", dtype=dtype)
+      scale = tf.convert_to_tensor(scale, name="scale", dtype=dtype)
+      concentration = tf.convert_to_tensor(concentration,
+                                           name="concentration",
+                                           dtype=dtype)
       rate = tf.convert_to_tensor(rate, name="rate", dtype=dtype)
 
       with tf.control_dependencies([
@@ -90,8 +88,7 @@ class NormalGamma(distribution.Distribution):
         self._concentration = tf.identity(concentration)
         self._rate = tf.identity(rate)
         tf.assert_same_float_dtype(
-            [self._loc, self._scale,
-             self._concentration, self._rate])
+            [self._loc, self._scale, self._concentration, self._rate])
       # the coefficient for the precision
       self._lambda = tf.square(self._scale)
     super(NormalGamma, self).__init__(
@@ -100,8 +97,7 @@ class NormalGamma(distribution.Distribution):
         allow_nan_stats=allow_nan_stats,
         reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
         parameters=parameters,
-        graph_parents=[self._loc, self._scale,
-                       self._concentration, self._rate],
+        graph_parents=[self._loc, self._scale, self._concentration, self._rate],
         name=name)
 
   @property
@@ -127,14 +123,12 @@ class NormalGamma(distribution.Distribution):
   # ******************** Shape and sampling ******************** #
 
   def _batch_shape_tensor(self):
-    tensors = [self.loc, self.scale,
-               self.concentration, self.rate]
+    tensors = [self.loc, self.scale, self.concentration, self.rate]
     return functools.reduce(tf.broadcast_dynamic_shape,
                             [tf.shape(tensor) for tensor in tensors])
 
   def _batch_shape(self):
-    tensors = [self.loc, self.scale,
-               self.concentration, self.rate]
+    tensors = [self.loc, self.scale, self.concentration, self.rate]
     return functools.reduce(tf.broadcast_static_shape,
                             [tensor.shape for tensor in tensors])
 
@@ -145,23 +139,26 @@ class NormalGamma(distribution.Distribution):
     return tensor_shape.vector(2)
 
   def _sample_n(self, n, seed=None):
-    seed = seed_stream.SeedStream(seed, "normal_gamma")
+    seed = SeedStream(seed, "normal_gamma")
     shape = tf.concat([[n], self.batch_shape_tensor()], 0)
 
-    precision = tf.random_gamma(
-        shape=shape,
-        alpha=self.concentration,
-        beta=self.rate,
-        dtype=self.dtype,
-        seed=seed())
+    precision = tf.random_gamma(shape=shape,
+                                alpha=self.concentration,
+                                beta=self.rate,
+                                dtype=self.dtype,
+                                seed=seed())
 
     scale = tf.sqrt(1 / (self._lambda * precision))
-    mean = tf.random_normal(
-        shape=shape, mean=0., stddev=1., dtype=self.loc.dtype, seed=seed())
+    mean = tf.random_normal(shape=shape,
+                            mean=0.,
+                            stddev=1.,
+                            dtype=self.loc.dtype,
+                            seed=seed())
     mean = mean * scale + self.loc
 
-    return tf.concat((tf.expand_dims(mean, axis=-1),
-                      tf.expand_dims(precision, axis=-1)), axis=-1)
+    return tf.concat(
+        (tf.expand_dims(mean, axis=-1), tf.expand_dims(precision, axis=-1)),
+        axis=-1)
 
   # ******************** Log probability ******************** #
 
@@ -172,22 +169,22 @@ class NormalGamma(distribution.Distribution):
     mean = tf.squeeze(tf.gather(x, [0], axis=-1), axis=-1)
     precision = self._maybe_assert_valid_sample(
         tf.squeeze(tf.gather(x, [1], axis=-1), axis=-1))
-    return (tf.math.xlogy(self.concentration - 0.5, precision)
-            - self.rate * precision
-            - 0.5 * self._lambda * precision * tf.square(mean - self.loc))
+    return (tf.math.xlogy(self.concentration - 0.5, precision) -
+            self.rate * precision -
+            0.5 * self._lambda * precision * tf.square(mean - self.loc))
 
   def _log_normalization(self):
-    return (tf.lgamma(self.concentration) + 0.5 * math.log(2. * math.pi)
-            - self.concentration * tf.log(self.rate)
-            - 0.5 * tf.log(self._lambda))
+    return (tf.lgamma(self.concentration) + 0.5 * math.log(2. * math.pi) -
+            self.concentration * tf.log(self.rate) - 0.5 * tf.log(self._lambda))
 
   # ******************** Moments ******************** #
 
   def _mean(self):
     mean = self.loc * tf.ones_like(self.scale)
     precision = (self.concentration / self.rate) * tf.ones_like(mean)
-    return tf.concat((tf.expand_dims(mean, axis=-1),
-                      tf.expand_dims(precision, axis=-1)), axis=-1)
+    return tf.concat(
+        (tf.expand_dims(mean, axis=-1), tf.expand_dims(precision, axis=-1)),
+        axis=-1)
 
   def _maybe_assert_valid_sample(self, x):
     tf.assert_same_float_dtype(tensors=[x], dtype=self.dtype)

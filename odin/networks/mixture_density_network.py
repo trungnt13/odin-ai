@@ -124,10 +124,13 @@ class MixtureDensityNetwork(Dense):
     return distribution
 
   def call(self, inputs, *args, **kwargs):
-    params = super(MixtureDensityNetwork, self).call(inputs, *args, **kwargs)
+    dense_kwargs = dict(kwargs)
+    dense_kwargs.pop('training', None)
+    params = super(MixtureDensityNetwork, self).call(inputs, *args,
+                                                     **dense_kwargs)
     n_components = tf.convert_to_tensor(value=self.n_components,
-                                          name='n_components',
-                                          dtype_hint=tf.int32)
+                                        name='n_components',
+                                        dtype_hint=tf.int32)
     # ====== mixture weights ====== #
     mixture_coefficients = params[..., :n_components]
     mixture_dist = tfd.Categorical(logits=mixture_coefficients,

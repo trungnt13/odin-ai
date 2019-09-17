@@ -1,16 +1,20 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.math import confusion_matrix as tf_cm
+from tensorflow.python.ops import confusion_matrix as tf_cm
 
-from odin.utils import is_number, as_tuple
-from odin.backend.tensor import dimshuffle, to_nonzeros, to_llr
+from odin.backend.tensor import dimshuffle, to_llr, to_nonzeros
+from odin.utils import as_tuple, is_number
+
 
 # ===========================================================================
 # Losses
 # ===========================================================================
-def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
+def binary_accuracy(y_true,
+                    y_pred,
+                    threshold=0.5,
+                    reduction=tf.reduce_mean,
                     name=None):
   """ Non-differentiable """
   with tf.name_scope(name, "binary_accuracy", [y_pred, y_true, threshold]):
@@ -25,7 +29,10 @@ def binary_accuracy(y_true, y_pred, threshold=0.5, reduction=tf.reduce_mean,
     return reduction(match_values)
 
 
-def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
+def categorical_accuracy(y_true,
+                         y_pred,
+                         top_k=1,
+                         reduction=tf.reduce_mean,
                          name=None):
   """ Non-differentiable """
   with tf.name_scope(name, "categorical_accuracy", [y_true, y_pred]):
@@ -39,13 +46,12 @@ def categorical_accuracy(y_true, y_pred, top_k=1, reduction=tf.reduce_mean,
       y_true = tf.cast(y_true, top.dtype.base_dtype)
       match_values = tf.equal(top, y_true)
     else:
-      match_values = tf.nn.in_top_k(y_pred, tf.cast(y_true, 'int32'),
-                                    k=top_k)
+      match_values = tf.nn.in_top_k(y_pred, tf.cast(y_true, 'int32'), k=top_k)
     match_values = tf.cast(match_values, dtype='float32')
     return reduction(match_values)
 
-def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
-                     name=None):
+
+def confusion_matrix(y_true, y_pred, labels=None, normalize=False, name=None):
   """
   Computes the confusion matrix of given vectors containing
   actual observations and predicted observations.
@@ -85,7 +91,8 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
     # check valid labels
     if labels is None:
       if nb_classes is None:
-        raise RuntimeError("Cannot infer the number of classes for confusion matrix")
+        raise RuntimeError(
+            "Cannot infer the number of classes for confusion matrix")
       labels = int(nb_classes)
     elif is_number(labels):
       labels = int(labels)
@@ -98,15 +105,21 @@ def confusion_matrix(y_true, y_pred, labels=None, normalize=False,
       cm = cm / tf.reduce_sum(cm, axis=1, keep_dims=True)
     return cm
 
+
 def detection_matrix(y_true, y_pred):
   # TODO
   pass
 
+
 # ===========================================================================
 # Speech task metrics
 # ===========================================================================
-def compute_Cavg(y_llr, y_true, cluster_idx=None,
-                 Ptrue=0.5, Cfa=1., Cmiss=1.,
+def compute_Cavg(y_llr,
+                 y_true,
+                 cluster_idx=None,
+                 Ptrue=0.5,
+                 Cfa=1.,
+                 Cmiss=1.,
                  probability_input=False):
   ''' Fast calculation of Cavg (for only 1 clusters)
 
@@ -151,12 +164,11 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
   # ====== statistics ====== #
   # invert of y_true, False Negative mask
   y_false = 1. - y_true
-  y_positive = tf.cast(tf.greater_equal(y_llr, thresh),
-                       y_llr.dtype.base_dtype)
+  y_positive = tf.cast(tf.greater_equal(y_llr, thresh), y_llr.dtype.base_dtype)
   # invert of y_positive
   y_negative = tf.cast(tf.less(y_llr, thresh), y_llr.dtype.base_dtype)
-  distribution = tf.clip_by_value(
-      tf.reduce_sum(y_true, axis=0), 10e-8, 10e8) # no zero values
+  distribution = tf.clip_by_value(tf.reduce_sum(y_true, axis=0), 10e-8,
+                                  10e8)  # no zero values
   # ====== Pmiss ====== #
   miss = tf.reduce_sum(y_true * y_negative, axis=0)
   Pmiss = 100 * (Cmiss * Ptrue * miss) / distribution
@@ -167,8 +179,11 @@ def compute_Cavg(y_llr, y_true, cluster_idx=None,
   return Cavg
 
 
-def compute_Cnorm(y_true, y_score,
-                  Ptrue=[0.1, 0.5], Cfa=1., Cmiss=1.,
+def compute_Cnorm(y_true,
+                  y_score,
+                  Ptrue=[0.1, 0.5],
+                  Cfa=1.,
+                  Cmiss=1.,
                   probability_input=False):
   """ Computes normalized detection cost function (DCF) given
     the costs for false accepts and false rejects as well as a priori
@@ -214,11 +229,11 @@ def compute_Cnorm(y_true, y_score,
     raise ValueError("There are %d partitions for `y_true`, but %d "
                      "partitions for `y_score`." % (len(y_true), len(y_score)))
   if len(set(i.shape[1] for i in y_score)) != 1:
-    raise ValueError("The number of classes among scores array is inconsistent.")
+    raise ValueError(
+        "The number of classes among scores array is inconsistent.")
   nb_partitions = len(y_true)
   # ====== preprocessing ====== #
-  y_true = [np.argmax(i, axis=-1) if i.ndim >= 2 else i
-            for i in y_true]
+  y_true = [np.argmax(i, axis=-1) if i.ndim >= 2 else i for i in y_true]
   nb_classes = y_score[0].shape[1]
   # threshold
   Ptrue = np.asarray(as_tuple(Ptrue), dtype=float)
@@ -231,9 +246,9 @@ def compute_Cnorm(y_true, y_score,
   global_cm_array = np.zeros(shape=(nb_threshold, nb_classes, nb_classes))
   # Apply threshold on the scores and compute the confusion matrix
   for scores, labels in zip(y_score, y_true):
-    actual_TP_per_class = np.lib.arraysetops.unique(
-        ar=labels, return_counts=True)[1]
-    if probability_input: # special case input is probability values
+    actual_TP_per_class = np.lib.arraysetops.unique(ar=labels,
+                                                    return_counts=True)[1]
+    if probability_input:  # special case input is probability values
       scores = to_llr(scores)
     for theta_ix, theta in enumerate(np.log(beta)):
       thresholded_scores = (scores > theta).astype(int)
@@ -359,7 +374,10 @@ def compute_AUC(x, y, reorder=False):
   return auc(x, y, reorder)
 
 
-def roc_curve(y_true, y_score, pos_label=None, sample_weight=None,
+def roc_curve(y_true,
+              y_score,
+              pos_label=None,
+              sample_weight=None,
               drop_intermediate=True):
   """Compute Receiver operating characteristic (ROC)
 
@@ -426,12 +444,10 @@ def roc_curve(y_true, y_score, pos_label=None, sample_weight=None,
 
   """
   from sklearn.metrics import roc_curve
-  return roc_curve(y_true, y_score, pos_label,
-                   sample_weight, drop_intermediate)
+  return roc_curve(y_true, y_score, pos_label, sample_weight, drop_intermediate)
 
 
-def prc_curve(y_true, y_probas, pos_label=None,
-              sample_weight=None):
+def prc_curve(y_true, y_probas, pos_label=None, sample_weight=None):
   """Compute precision-recall pairs for different probability thresholds
 
   Note: this implementation is restricted to the binary classification task.
@@ -491,8 +507,7 @@ def prc_curve(y_true, y_probas, pos_label=None,
 
   """
   from sklearn.metrics import precision_recall_curve
-  return precision_recall_curve(y_true, y_probas,
-                                pos_label, sample_weight)
+  return precision_recall_curve(y_true, y_probas, pos_label, sample_weight)
 
 
 def det_curve(y_true, y_score, pos_label=None, sample_weight=None):

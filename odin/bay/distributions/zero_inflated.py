@@ -21,9 +21,9 @@ from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
 from tensorflow_probability.python.distributions import (Bernoulli, Independent,
-                                                         distribution,
-                                                         seed_stream)
+                                                         distribution)
 from tensorflow_probability.python.internal import reparameterization
+from tensorflow_probability.python.util.seed_stream import SeedStream
 
 __all__ = ['ZeroInflated']
 
@@ -190,15 +190,15 @@ class ZeroInflated(distribution.Distribution):
   def logits(self):
     """Log-odds of a `1` outcome (vs `0`)."""
     if isinstance(self._inflated_distribution, Independent):
-      return self._inflated_distribution.distribution.logits
-    return self._inflated_distribution.logits
+      return self._inflated_distribution.distribution.logits_parameter()
+    return self._inflated_distribution.logits_parameter()
 
   @property
   def probs(self):
     """Probability of a `1` outcome (vs `0`)."""
     if isinstance(self._inflated_distribution, Independent):
-      return self._inflated_distribution.distribution.probs
-    return self._inflated_distribution.probs
+      return self._inflated_distribution.distribution.probs_parameter()
+    return self._inflated_distribution.probs_parameter()
 
   @property
   def count_distribution(self):
@@ -273,7 +273,7 @@ class ZeroInflated(distribution.Distribution):
 
   def _sample_n(self, n, seed):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      seed = seed_stream.SeedStream(seed, salt="ZeroInflated")
+      seed = SeedStream(seed, salt="ZeroInflated")
       mask = self.inflated_distribution.sample(n, seed())
       samples = self.count_distribution.sample(n, seed())
       mask, samples = _broadcast_rate(mask, samples)

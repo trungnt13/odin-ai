@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 # Dependency imports
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 from six import string_types
 from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 # By importing `distributions` as `tfd`, docstrings will show
@@ -310,8 +311,8 @@ class GaussianLayer(DistributionLambda):
                                axis=0)
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       if softplus_scale:
-        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(
-            1.0)
+        scale_params = tf.math.softplus(
+            scale_params) + tfp.math.softplus_inverse(1.0)
       return tfd.Independent(
           tfd.Normal(loc=tf.reshape(loc_params, output_shape),
                      scale=tf.reshape(scale_params, output_shape),
@@ -386,8 +387,8 @@ class LogNormalLayer(DistributionLambda):
                                axis=0)
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       if softplus_scale:
-        scale_params = tf.math.softplus(scale_params) + tfd.softplus_inverse(
-            1.0)
+        scale_params = tf.math.softplus(
+            scale_params) + tfp.math.softplus_inverse(1.0)
       return tfd.Independent(
           tfd.LogNormal(loc=tf.reshape(loc_params, output_shape),
                         scale=tf.reshape(scale_params, output_shape),
@@ -541,7 +542,7 @@ class MultivariateNormalLayer(DistributionLambda):
     "No support for given covariance_type: '%s'" % covariance_type
 
     if bool(softplus_scale):
-      scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0)
+      scale_fn = lambda x: tf.math.softplus(x) + tfp.math.softplus_inverse(1.0)
     else:
       scale_fn = lambda x: x
 

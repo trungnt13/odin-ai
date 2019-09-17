@@ -5,6 +5,7 @@ from typing import List, Optional
 
 import numpy as np
 import tensorflow as tf
+from six import string_types
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.distributions import kullback_leibler
 from tensorflow_probability.python.internal import (assert_util, prefer_static,
@@ -12,9 +13,32 @@ from tensorflow_probability.python.internal import (assert_util, prefer_static,
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible
 
-__all__ = ['stack_distributions']
+from odin.bay import distributions as obd
+
+__all__ = ['concat_distributions']
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+dist_params = {
+    obd.Independent: ['distribution'],
+    obd.ZeroInflated: ['count_distribution', 'inflated_distribution']
+}
+
+for dist_type, attr_names in dist_params.items():
+  assert isinstance(attr_names, (tuple, list)) and all(
+      isinstance(name, string_types) for name in attr_names), \
+        "Error defining parameters of distributions"
+  assert isinstance(dist_type, type) and issubclass(dist_type, obd.Distribution),\
+        "Error defining parameters of distributions"
+  assert all(hasattr(dist_type, name) for name in attr_names), \
+        "Error defining parameters of distributions"
+exit()
 
 
+# ===========================================================================
+# Main code
+# ===========================================================================
 def _find_axis_for_stack(dists, given_axis):
   # check event shape is consistent
   if given_axis is not None:
@@ -41,6 +65,17 @@ def _find_axis_for_stack(dists, given_axis):
       "Multiple dimensions are found to be different among the distributions, "\
         "expect only 1 different dimension."
     return axis[0]
+
+
+def concat_distributions(dists: List[tfd.Distribution],
+                         axis: Optional[int] = None) -> tfd.Distribution:
+  all_concat_utils = [
+      name for name in globals().keys()
+      if 'concat_' == name[:7] and name != 'concat_distributions'
+  ]
+  print(all_concat_utils)
+  exit()
+  return dists[0]
 
 
 def stack_distributions(dists: List[tfd.Distribution],
@@ -89,10 +124,8 @@ def stack_distributions(dists: List[tfd.Distribution],
   # params is arguments of the __init__ function
   params = dists[0].parameters
   for key in inspect.getfullargspec(t.__init__).args:
-    if key not in params:
-      val = getattr(dists[0], key, '__NO_ARGUMENT_FOUND__')
-      if val != '__NO_ARGUMENT_FOUND__':
-        params[key] = val
+    if key not in params and hasattr(dists[0], key):
+      params[key] = getattr(dists[0], key)
   # some argument might not be given at the initialization
   params = {k: getattr(dists[0], k, v) for k, v in params.items()}
 
@@ -105,7 +138,7 @@ def stack_distributions(dists: List[tfd.Distribution],
   for key, val in params.items():
     # another nested distribution, the check hasattr is important
     if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
-      new_params[key] = stack_distributions([getattr(d, key) for d in dists])
+      new_params[key] = concat_distributions([getattr(d, key) for d in dists])
     # Tensor parameters
     elif key in all_params:
       all_x = []

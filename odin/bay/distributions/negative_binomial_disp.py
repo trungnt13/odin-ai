@@ -2,12 +2,12 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-from tensorflow_probability.python.distributions import (distribution,
-                                                         seed_stream)
+from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.internal import (assert_util,
                                                     distribution_util,
                                                     dtype_util,
                                                     reparameterization)
+from tensorflow_probability.python.util.seed_stream import SeedStream
 
 
 class NegativeBinomialDisp(distribution.Distribution):
@@ -68,7 +68,7 @@ class NegativeBinomialDisp(distribution.Distribution):
 
     parameters = dict(locals())
     with tf.name_scope(name) as name:
-      dtype = dtype_util.common_dtype([loc, disp], preferred_dtype=tf.float32)
+      dtype = dtype_util.common_dtype([loc, disp], dtype_hint=tf.float32)
       loc = tf.convert_to_tensor(value=loc, name="loc", dtype=dtype)
       disp = tf.convert_to_tensor(value=disp, name="disp", dtype=dtype)
       with tf.control_dependencies(
@@ -120,7 +120,7 @@ class NegativeBinomialDisp(distribution.Distribution):
     # rate = (1-p)/p
     # lam ~ Gamma(concentration, rate
     # then X ~ Poisson(lam) is Negative Binomially distributed.
-    stream = seed_stream.SeedStream(seed, salt="NegativeBinomialDisp")
+    stream = SeedStream(seed, salt="NegativeBinomialDisp")
     p = self.loc / (self.loc + self.disp)
     r = self.disp
     concentration = r
@@ -141,7 +141,7 @@ class NegativeBinomialDisp(distribution.Distribution):
     raise NotImplementedError()
 
   def _log_prob(self, x):
-    return (self._log_unnormalized_prob(x) - self._log_normalization(x))
+    return self._log_unnormalized_prob(x) - self._log_normalization(x)
 
   def _log_unnormalized_prob(self, x, eps=1e-8):
     if self.validate_args:
