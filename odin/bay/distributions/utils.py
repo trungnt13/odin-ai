@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from typing import List, Optional
+from typing import List, Optional, Text
 
 import numpy as np
 import tensorflow as tf
@@ -14,15 +14,48 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible
 
 from odin.bay import distributions as obd
+from odin.bay.distributions.negative_binomial_disp import NegativeBinomialDisp
+from odin.bay.distributions.zero_inflated import ZeroInflated
 
 __all__ = ['concat_distributions']
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+# must hand define all the parameters here
+# TODO: this list is to be updated, or a smarter solution for automatically
+# mining all the parameters
 dist_params = {
-    obd.Independent: ['distribution'],
-    obd.ZeroInflated: ['count_distribution', 'inflated_distribution']
+    # complex
+    obd.Independent: ['distribution', 'reinterpreted_batch_ndims'],
+    ZeroInflated: ['count_distribution', 'inflated_distribution'],
+    obd.MixtureSameFamily: ['mixture_distribution', 'components_distribution'],
+    # Exponential
+    obd.Gamma: ['concentration', 'rate'],
+    # Gaussians
+    obd.Normal: ['loc', 'scale'],
+    obd.LogNormal: ['loc', 'scale'],
+    obd.MultivariateNormalDiag: ['loc', 'scale'],
+    obd.MultivariateNormalTriL: ['loc', 'scale'],
+    obd.MultivariateNormalFullCovariance: ['loc', 'scale'],
+    # Count
+    NegativeBinomialDisp: ['loc', 'disp'],
+    obd.NegativeBinomial: ['total_count', 'logits_parameter'],
+    obd.Poisson: ['log_rate_parameter'],
+    # Binary and probability
+    obd.Gumbel: ['loc', 'scale'],
+    obd.Bernoulli: ['logits_parameter'],
+    obd.Dirichlet: ['concentration'],
+    obd.Beta: ['concentration1', 'concentration0'],
+    obd.OneHotCategorical: ['logits_parameter'],
+    obd.Categorical: ['logits_parameter'],
+    # others
+    obd.Laplace: ['loc', 'scale'],
+    obd.Wishart: ['df', 'scale'],
+    obd.Uniform: ['low', 'high'],
+    obd.Multinomial: ['total_count', 'logits_parameter'],
+    obd.Deterministic: ['loc', 'atol', 'rtol'],
+    obd.VectorDeterministic: ['loc', 'atol', 'rtol'],
 }
 
 for dist_type, attr_names in dist_params.items():
@@ -33,7 +66,6 @@ for dist_type, attr_names in dist_params.items():
         "Error defining parameters of distributions"
   assert all(hasattr(dist_type, name) for name in attr_names), \
         "Error defining parameters of distributions"
-exit()
 
 
 # ===========================================================================
@@ -68,52 +100,19 @@ def _find_axis_for_stack(dists, given_axis):
 
 
 def concat_distributions(dists: List[tfd.Distribution],
-                         axis: Optional[int] = None) -> tfd.Distribution:
-  all_concat_utils = [
-      name for name in globals().keys()
-      if 'concat_' == name[:7] and name != 'concat_distributions'
-  ]
-  print(all_concat_utils)
-  exit()
-  return dists[0]
-
-
-def stack_distributions(dists: List[tfd.Distribution],
-                        axis: Optional[int] = None) -> tfd.Distribution:
-  """ Automatically and recursively stack multiple distribution of the
-  same type and same `event_shape` into single distribution with
-  concatenated `batch_shape`
-
-  The stacking is done recursively done for any distribution contained in
-  `Independent`, `ZeroInflated` or any complex distribution
-
-  Parameters
-  ----------
-  dists : List of `tensorflow_probability.Distribution`
-  axis : {`int`, `None`}
-    the batch dimension for merging the distribution, if `None`,
-    by default the first dimension, or the dimension that is different
-    among batches.
-
-  Note
-  ----
-  This function is only stacking the mismatch batch dimension,
-  and due to many detail involves broadcasting the shape of the parameters,
-  this function only applied in eager mode.
-  """
+                         axis: Optional[int] = None,
+                         validate_args: bool = False,
+                         allow_nan_stats: bool = True,
+                         name: Optional[Text] = None) -> tfd.Distribution:
   if not isinstance(dists, (tuple, list)):
     dists = [dists]
   if len(dists) == 1:
     return dists[0]
   if len(dists) == 0:
     raise ValueError("No distributions were given")
-  # already assume all the distribution has the same type
-  t = type(dists[0])
-  try:
-    all_params = set(t._params_event_ndims().keys())
-  except NotImplementedError:
-    all_params = set()
+  axis = _find_axis_for_stack(dists, given_axis=axis)
 
+  t = type(dists[0])
   # _TensorCoercible will messing up with the parameters of the
   # distribution
   if issubclass(t, distribution_tensor_coercible._TensorCoercible):
@@ -121,48 +120,45 @@ def stack_distributions(dists: List[tfd.Distribution],
     assert issubclass(t, tfd.Distribution) and not issubclass(
         t, distribution_tensor_coercible._TensorCoercible)
 
-  # params is arguments of the __init__ function
-  params = dists[0].parameters
-  for key in inspect.getfullargspec(t.__init__).args:
-    if key not in params and hasattr(dists[0], key):
-      params[key] = getattr(dists[0], key)
-  # some argument might not be given at the initialization
-  params = {k: getattr(dists[0], k, v) for k, v in params.items()}
+  # no more distribution, tensor of parameters is return during the
+  # recursive operator
+  if issubclass(t, tf.Tensor):
+    if dists[0].shape.ndims == 0:
+      return dists[0]  # TODO: better solution here
+    return tf.concat(dists, axis=axis)
+  elif issubclass(t, obd.Distribution):
+    pass  # continue with all distribution parameters
+  else:
+    return dists[0]
 
-  # prefer logits
-  if 'probs' in params and 'logits' in params:
-    del params['probs']
+  # get all params for concatenate
+  if t not in dist_params:
+    raise RuntimeError("Unknown distribution of type '%s' for concatenation" %
+                       str(t))
+  params_name = dist_params[t]
 
-  axis = _find_axis_for_stack(dists, given_axis=axis)
-  new_params = {}
-  for key, val in params.items():
-    # another nested distribution, the check hasattr is important
-    if isinstance(val, tfd.Distribution) and hasattr(dists[0], key):
-      new_params[key] = concat_distributions([getattr(d, key) for d in dists])
-    # Tensor parameters
-    elif key in all_params:
-      all_x = []
-      for d in dists:
-        full_shape = tf.concat([d.batch_shape, d.event_shape], axis=0)
-        x = getattr(d, key)
-        for _ in range(len(full_shape) - len(x.shape)):
-          x = tf.expand_dims(x, axis=0)
-        repeats = [i / j for i, j in zip(full_shape, x.shape)]
-        if any(i > 1 for i in repeats):
-          x = tf.tile(x, multiples=repeats)
-        all_x.append(x)
-      val = tf.concat(all_x, axis=axis)
-      new_params[key] = val
-    # primitive values
-    else:
-      if key in new_params:
-        tf.assert_equal(val, new_params[key])
-      new_params[key] = val
+  # start concat the params
+  params = {}
+  for p in params_name:
+    attrs = [getattr(d, p) for d in dists]
+    is_method = False
+    if inspect.ismethod(attrs[0]):
+      attrs = [a() for a in attrs]
+      is_method = True
+    if is_method and '_parameter' == p[-10:]:
+      p = p[:-10]
 
-  specs = inspect.getfullargspec(t.__init__)
-  for key in list(new_params.keys()):
-    if key not in specs.args:
-      del new_params[key]
+    params[p] = concat_distributions(attrs, axis=axis)
 
-  new_dist = t(**new_params)
-  return new_dist
+  # extra arguments
+  if name is not None:
+    params['name'] = name
+  args = inspect.getfullargspec(t.__init__).args
+  if 'allow_nan_stats' in args:
+    params['allow_nan_stats'] = allow_nan_stats
+  if 'validate_args' in args:
+    params['validate_args'] = validate_args
+  dist = t(**params)
+
+  # TODO: copy keras DistributionLambda metadata
+  return dist
