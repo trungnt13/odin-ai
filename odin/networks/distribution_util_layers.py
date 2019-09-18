@@ -1,17 +1,46 @@
 from __future__ import absolute_import, division, print_function
 
+import collections
+
 import tensorflow as tf
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.layers.distribution_layer import (
+    DistributionLambda, _get_convert_to_tensor_fn, _serialize)
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
+from tensorflow_probability.python.layers.internal import \
+    tensor_tuple as tensor_tuple
 
-__all__ = ['Sampling', 'Moments', 'Stddev', 'DistributionAttr']
+__all__ = [
+    'ConcatDistribution', 'Sampling', 'Moments', 'Stddev', 'DistributionAttr'
+]
 
 
 def _check_distribution(x):
   assert isinstance(x, Distribution), \
   "Input to this layer must be instance of tensorflow_probability Distribution"
+
+
+class ConcatDistribution(DistributionLambda):
+  """ This layer create a new `Distribution` by concatenate parameters of
+  multiple distributions of the same type along given `axis`
+  """
+
+  def __init__(self,
+               axis=None,
+               convert_to_tensor_fn=Distribution.sample,
+               **kwargs):
+    from odin.bay.distributions.utils import concat_distribution
+    super(ConcatDistribution, self).__init__(
+        lambda dists: concat_distribution(dists=dists, axis=axis),
+        convert_to_tensor_fn, **kwargs)
+    self.axis = axis
+
+  def get_config(self):
+    config = super(ConcatDistribution, self).get_config()
+    config['axis'] = self.axis
+    return config
 
 
 class Sampling(Layer):

@@ -17,13 +17,13 @@ from odin.bay import distributions as obd
 from odin.bay.distributions.negative_binomial_disp import NegativeBinomialDisp
 from odin.bay.distributions.zero_inflated import ZeroInflated
 
-__all__ = ['concat_distributions']
+__all__ = ['concat_distribution']
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
 # must hand define all the parameters here
-# TODO: this list is to be updated, or a smarter solution for automatically
+# NOTE: this list is to be updated, or a smarter solution for automatically
 # mining all the parameters
 dist_params = {
     # complex
@@ -99,11 +99,21 @@ def _find_axis_for_stack(dists, given_axis):
     return axis[0]
 
 
-def concat_distributions(dists: List[tfd.Distribution],
-                         axis: Optional[int] = None,
-                         validate_args: bool = False,
-                         allow_nan_stats: bool = True,
-                         name: Optional[Text] = None) -> tfd.Distribution:
+def concat_distribution(dists: List[tfd.Distribution],
+                        axis: Optional[int] = None,
+                        validate_args: bool = False,
+                        allow_nan_stats: bool = True,
+                        name: Optional[Text] = None) -> tfd.Distribution:
+  """ This layer create a new `Distribution` by concatenate parameters of
+  multiple distributions of the same type along given `axis`
+
+  Note
+  ----
+  If your distribution is the output from
+  `tensorflow_probability.DistributionLambda`, this function will remove all
+  the keras tracking ultilities, for better solution checkout
+  `odin.networks.distribution_util_layer.ConcatDistribution`
+  """
   if not isinstance(dists, (tuple, list)):
     dists = [dists]
   if len(dists) == 1:
@@ -113,9 +123,11 @@ def concat_distributions(dists: List[tfd.Distribution],
   axis = _find_axis_for_stack(dists, given_axis=axis)
 
   t = type(dists[0])
+  is_keras_output = False
   # _TensorCoercible will messing up with the parameters of the
   # distribution
   if issubclass(t, distribution_tensor_coercible._TensorCoercible):
+    is_keras_output = True
     t = type.mro(t)[2]
     assert issubclass(t, tfd.Distribution) and not issubclass(
         t, distribution_tensor_coercible._TensorCoercible)
@@ -148,7 +160,7 @@ def concat_distributions(dists: List[tfd.Distribution],
     if is_method and '_parameter' == p[-10:]:
       p = p[:-10]
 
-    params[p] = concat_distributions(attrs, axis=axis)
+    params[p] = concat_distribution(attrs, axis=axis)
 
   # extra arguments
   if name is not None:
@@ -160,5 +172,4 @@ def concat_distributions(dists: List[tfd.Distribution],
     params['validate_args'] = validate_args
   dist = t(**params)
 
-  # TODO: copy keras DistributionLambda metadata
   return dist

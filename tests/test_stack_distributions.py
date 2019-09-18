@@ -10,7 +10,7 @@ from tensorflow_probability.python.distributions import (Bernoulli, Independent,
                                                          VectorDeterministic)
 
 from odin.bay.distributions import (NegativeBinomialDisp, ZeroInflated,
-                                    concat_distributions)
+                                    concat_distribution)
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -20,7 +20,7 @@ np.random.seed(8)
 
 
 def assert_consistent_statistics(d1, d2):
-  d = concat_distributions((d1, d2))
+  d = concat_distribution((d1, d2))
 
   m1 = d1.mean()
   m2 = d2.mean()
