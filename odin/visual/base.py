@@ -29,8 +29,7 @@ class Visualizer(object):
 
   def add_figure(self, name, fig):
     from matplotlib import pyplot as plt
-    assert isinstance(fig, plt.Figure), \
-    'fig must be instance of matplotlib.Figure'
+    self.assert_figure(fig)
     _FIGURE_LIST[id(self)][name] = fig
     return self
 

@@ -1,25 +1,25 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import os
-import shutil
 import pickle
+import shutil
 import warnings
+from collections import OrderedDict, defaultdict
 from enum import Enum
 from numbers import Number
-from collections import defaultdict, OrderedDict
 
-import numpy as np
 import numba as nb
+import numpy as np
 from scipy.io import wavfile
 
-from odin import visual as V
-from odin.utils import (Progbar, get_exppath, cache_disk, ctext,
-                        mpi, args_parse, select_path, get_logpath,
-                        get_script_name, get_script_path, get_module_from_path,
-                        catch_warnings_error, catch_warnings_ignore,
-                        crypto)
-from odin.stats import freqcount, sampling_iter
 from odin import fuel as F
+from odin import visual as V
+from odin.stats import freqcount, sampling_iter
+from odin.utils import (Progbar, args_parse, cache_disk, catch_warnings_error,
+                        catch_warnings_ignore, crypto, ctext, get_exppath,
+                        get_logpath, get_module_from_path, get_script_name,
+                        get_script_path, mpi, select_path)
+
 
 # ===========================================================================
 # Configuration

@@ -10,9 +10,10 @@ dependencies:
   - scikit-learn
   - seaborn
   - tqdm
+  - dill
 
   - pip:
     - pycrypto==2.6.1
-    - tensorflow-gpu==2.0.0-beta1
-    - tensorflow-probability==0.7
-    - torch==1.1
+    - tensorflow-gpu==2.0.0-rc1
+    - tensorflow-probability==0.8.0-rc0
+    - torch==1.1.0
