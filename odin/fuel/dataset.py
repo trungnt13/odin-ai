@@ -1,21 +1,20 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import os
-import shutil
 import pickle
-from collections import OrderedDict, Mapping
-from typing import Text, Any
-from six import string_types
-from six.moves import zip, range, cPickle
+import shutil
+from collections import Mapping, OrderedDict
+from typing import Any, Text
 
 import numpy as np
+from six import string_types
+from six.moves import cPickle, range, zip
 
-from odin.utils import (get_file, Progbar, is_string,
-                        ctext, as_tuple, eprint, wprint,
-                        is_callable, flatten_list, UnitTimer)
 from odin.fuel.databases import MmapDict, SQLiteDict
-from odin.fuel.mmap_array import (
-  read_mmaparray_header, MmapArray, MmapArrayWriter)
+from odin.fuel.mmap_array import (MmapArray, MmapArrayWriter,
+                                  read_mmaparray_header)
+from odin.utils import (Progbar, UnitTimer, as_tuple, ctext, eprint,
+                        flatten_list, get_file, is_callable, is_string, wprint)
 
 __all__ = [
     'Dataset',
@@ -77,7 +76,7 @@ def _parse_data_descriptor(path, read_only):
     # read by manually open file much faster than numpy.genfromtxt
     with open(path, 'r') as f:
       for line in f:
-        line = line.strip()
+        line = line[:-1]
         data.append(line.split(sep))
       data = np.array(data, dtype=str)
     return [('.'.join(file_name.split('.')[:-1]),
