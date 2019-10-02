@@ -1,18 +1,20 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import os
 import subprocess
-from io import BytesIO
-from six import string_types
 from collections import defaultdict
+from io import BytesIO
 
 import numpy as np
 import soundfile as sf
+from six import string_types
 
+from helpers import CURRENT_STATE, PATH_ACOUSTIC_FEATURES, Config, SystemStates
+from odin import fuel as F
 from odin import nnet as N
-from odin import fuel as F, preprocessing as pp
+from odin import preprocessing as pp
 
-from helpers import Config, PATH_ACOUSTIC_FEATURES, CURRENT_STATE, SystemStates
+
 # ===========================================================================
 # Customized Audio Reader Extractor
 # `row`:
@@ -127,8 +129,11 @@ class SREAugmentor(pp.base.Extractor):
       if noise_type == 'noise':
         # duration until start the next noise audio
         noise_interval = 1 # in second
-        noise = []; noise_start = []; noise_snrs = []
-        curr_dur = 0; indices = np.arange(len(noise_data))
+        noise = []
+        noise_start = []
+        noise_snrs = []
+        curr_dur = 0
+        indices = np.arange(len(noise_data))
         # adding noise until the end of the utterance
         while curr_dur < duration:
           idx = self.rand.choice(indices, size=1)[0]

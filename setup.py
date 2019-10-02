@@ -2,11 +2,11 @@ from os import path
 
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '1.1.1'
+_ODIN_VERSION_ = '1.2.0'
 
-_TENSORFLOW_VERSION = '2.0.0-rc1'
-_TENSORFLOW_PROBABILITY_VERSION = '0.8.0-rc0'
-_PYTORCH_VERSION = '1.1.0'
+_TENSORFLOW_VERSION = '2.0.0'
+_TENSORFLOW_PROBABILITY_VERSION = '0.8.0'
+_PYTORCH_VERSION = '1.2.0'
 
 
 # ===========================================================================
