@@ -590,7 +590,7 @@ def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
   if pos_label is not None:
     y_true = (y_true == pos_label).astype(np.int)
   # ====== start ====== #
-  sorted_ndx = np.argsort(y_score)
+  sorted_ndx = np.argsort(y_score, kind='mergesort')
   y_true = y_true[sorted_ndx]
   # sort the weights also, dont forget this
   sample_weight = sample_weight[sorted_ndx]

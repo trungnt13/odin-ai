@@ -16,4 +16,5 @@ dependencies:
     - pycrypto==2.6.1
     - tensorflow-gpu==2.0.0
     - tensorflow-probability==0.8.0
+    - tensorflow-addons==0.5.2
     - torch==1.2.0

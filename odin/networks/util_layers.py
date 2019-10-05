@@ -1,10 +1,68 @@
 from __future__ import absolute_import, division, print_function
 
 from tensorflow.python.keras import Sequential
-from tensorflow.python.keras.layers import Activation, Dense, Layer
+from tensorflow.python.keras.layers import (Activation, BatchNormalization,
+                                            Dense, Layer)
 from tensorflow.python.util.tf_export import keras_export
 
-__all__ = ['Identity', 'Parallel']
+__all__ = ['Identity', 'Parallel', 'BatchRenormalization']
+
+
+class BatchRenormalization(BatchNormalization):
+  """ Shortcut for batch renormalization
+
+  References
+  ----------
+  [1] S. Ioffe, “Batch Renormalization: Towards Reducing Minibatch Dependence in
+  Batch-Normalized Models,” arXiv:1702.03275 [cs], Feb. 2017.
+
+  """
+
+  def __init__(self,
+               axis=-1,
+               momentum=0.99,
+               epsilon=1e-3,
+               center=True,
+               scale=True,
+               beta_initializer='zeros',
+               gamma_initializer='ones',
+               moving_mean_initializer='zeros',
+               moving_variance_initializer='ones',
+               beta_regularizer=None,
+               gamma_regularizer=None,
+               beta_constraint=None,
+               gamma_constraint=None,
+               renorm_clipping=None,
+               renorm_momentum=0.99,
+               fused=None,
+               trainable=True,
+               virtual_batch_size=None,
+               adjustment=None,
+               name=None,
+               **kwargs):
+    super(BatchRenormalization, self).__init__(
+        name=name,
+        axis=axis,
+        momentum=momentum,
+        epsilon=epsilon,
+        center=center,
+        scale=scale,
+        beta_initializer=beta_initializer,
+        gamma_initializer=gamma_initializer,
+        moving_mean_initializer=moving_mean_initializer,
+        moving_variance_initializer=moving_variance_initializer,
+        beta_regularizer=beta_regularizer,
+        gamma_regularizer=gamma_regularizer,
+        beta_constraint=beta_constraint,
+        gamma_constraint=gamma_constraint,
+        renorm=True,
+        renorm_clipping=renorm_clipping,
+        renorm_momentum=renorm_momentum,
+        fused=fused,
+        trainable=trainable,
+        virtual_batch_size=virtual_batch_size,
+        adjustment=adjustment,
+        **kwargs)
 
 
 class Identity(Layer):

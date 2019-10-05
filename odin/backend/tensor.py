@@ -9,6 +9,7 @@ from functools import wraps
 import numpy as np
 import scipy as sp
 import tensorflow as tf
+import torch
 from six.moves import builtins
 from tensorflow.python.ops import init_ops
 
@@ -22,9 +23,9 @@ def _normalize_axis(axis, ndim):
   if axis is None:
     return None
   if isinstance(axis, (tuple, list)):
-    return tuple([a % ndim if a is not None else a
-            for a in axis])
+    return tuple([a % ndim if a is not None else a for a in axis])
   return axis % ndim
+
 
 # ===========================================================================
 # Normalization
@@ -41,19 +42,22 @@ def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
   """
   ord = int(ord)
   if ord not in (1, 2):
-    raise ValueError("only support `ord`: 1 for L1-norm; 2 for Frobenius or Euclidean")
+    raise ValueError(
+        "only support `ord`: 1 for L1-norm; 2 for Frobenius or Euclidean")
   if ord == 2:
-    x_norm = tf.sqrt(tf.maximum(tf.reduce_sum(x ** 2, axis=axis, keepdims=True),
-                                epsilon))
+    x_norm = tf.sqrt(
+        tf.maximum(tf.reduce_sum(x**2, axis=axis, keepdims=True), epsilon))
   else:
     x_norm = tf.maximum(tf.reduce_sum(tf.abs(x), axis=axis, keepdims=True),
                         epsilon)
   return x / x_norm
 
+
 def calc_white_mat(X):
   """ calculates the whitening transformation for cov matrix X
   """
   return tf.linalg.cholesky(tf.linalg.inv(X))
+
 
 def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
   """ Seurat log-normalize
@@ -62,8 +66,9 @@ def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
   where `log` is natural logarithm
   """
   eps = tf.cast(eps, x.dtype)
-  return tf.math.log1p(
-      x / (tf.reduce_sum(x, axis=axis, keepdims=True) + eps) * scale_factor)
+  return tf.math.log1p(x / (tf.reduce_sum(x, axis=axis, keepdims=True) + eps) *
+                       scale_factor)
+
 
 def delog_norm(x, x_sum=1, scale_factor=10000):
   """ This perform de-log normalization of `log_norm` values
@@ -71,11 +76,11 @@ def delog_norm(x, x_sum=1, scale_factor=10000):
   """
   return (tf.exp(x) - 1) / scale_factor * (x_sum + EPS)
 
+
 # ===========================================================================
 # Conversion
 # ===========================================================================
-def logreduceexp(x, reduction_function=tf.reduce_mean, axis=None,
-                 name=None):
+def logreduceexp(x, reduction_function=tf.reduce_mean, axis=None, name=None):
   """ log-reduction-exp over axis to avoid overflow and underflow
 
   Parameters
@@ -85,9 +90,10 @@ def logreduceexp(x, reduction_function=tf.reduce_mean, axis=None,
   """
   with tf.name_scope(name, "logreduceexp"):
     x_max = tf.reduce_max(x, axis=axis, keepdims=True)
-    y = tf.log(
-        reduction_function(tf.exp(x - x_max), axis = axis, keepdims=True)) + x_max
+    y = tf.log(reduction_function(tf.exp(x - x_max), axis=axis,
+                                  keepdims=True)) + x_max
     return tf.squeeze(y)
+
 
 def logsumexp(x, axis=-1, name=None):
   """
@@ -100,6 +106,7 @@ def logsumexp(x, axis=-1, name=None):
     y = xmax + tf.log(tf.reduce_sum(tf.exp(x - xmax), axis=axis, keepdims=True))
   return y
 
+
 def to_llh(x, name=None):
   ''' Convert a matrix of probabilities into log-likelihood
   :math:`LLH = log(prob(data|target))`
@@ -109,6 +116,7 @@ def to_llh(x, name=None):
     x = tf.clip_by_value(x, EPS, 1 - EPS)
     return tf.log(x)
 
+
 def to_llr(x, name=None):
   ''' Convert a matrix of probabilities into log-likelihood ratio
   :math:`LLR = log(\\frac{prob(data|target)}{prob(data|non-target)})`
@@ -117,15 +125,17 @@ def to_llr(x, name=None):
     nb_classes = x.shape.as_list()[-1]
     new_arr = []
     for j in range(nb_classes):
-      scores_copy = tf.transpose(tf.gather(tf.transpose(x),
-                                 [i for i in range(nb_classes) if i != j]))
+      scores_copy = tf.transpose(
+          tf.gather(tf.transpose(x), [i for i in range(nb_classes) if i != j]))
       scores_copy -= tf.expand_dims(x[:, j], axis=-1)
       new_arr.append(-logsumexp(scores_copy, 1))
     return tf.concat(new_arr, axis=-1) + np.log(13)
 
+
 def to_nonzeros(x, value):
   x = tf.where(tf.equal(x, 0.), tf.zeros_like(x) + value, x)
   return x
+
 
 def to_sample_weights(indices, weights, name=None):
   """ Convert indices or one-hot matrix and
@@ -133,17 +143,17 @@ def to_sample_weights(indices, weights, name=None):
   with tf.name_scope(name, "to_sample_weights", [indices]):
     # ====== preprocess indices ====== #
     ndim = len(indices.shape)
-    if ndim <= 1: # indices vector
+    if ndim <= 1:  # indices vector
       indices = tf.cast(indices, dtype=tf.int64)
     else:
       indices = tf.argmax(indices, axis=-1)
     # ====== prior weights ====== #
     if isinstance(weights, (tuple, list, np.ndarray)):
-      prior_weights = tf.constant(weights, dtype=floatX,
-                            name="prior_weights")
+      prior_weights = tf.constant(weights, dtype=floatX, name="prior_weights")
     # ====== sample weights ====== #
     weights = tf.gather(prior_weights, indices)
   return weights
+
 
 # ===========================================================================
 # Allocation
@@ -172,10 +182,13 @@ def tril(m, k=0, name=None):
       return tf.matrix_band_part(input=m, num_lower=-1, num_upper=0, name=name)
     if k < 0:
       return tf.subtract(m,
-        tf.matrix_band_part(input=m, num_lower=np.abs(k) - 1, num_upper=-1),
-        name=name)
+                         tf.matrix_band_part(input=m,
+                                             num_lower=np.abs(k) - 1,
+                                             num_upper=-1),
+                         name=name)
     # k > 0
     return tf.matrix_band_part(input=m, num_lower=-1, num_upper=k, name=name)
+
 
 def tril_indices(n, k=0, name=None):
   """ Similar as `numpy.tril_indices`
@@ -208,8 +221,11 @@ def tril_indices(n, k=0, name=None):
     ix2 = tf.boolean_mask(M1, mask)
     return ix1, ix2
 
-def prior2weights(prior, exponential=False,
-                  min_value=0.1, max_value=None,
+
+def prior2weights(prior,
+                  exponential=False,
+                  min_value=0.1,
+                  max_value=None,
                   norm=False):
   """ TODO: finish this
 
@@ -231,7 +247,8 @@ def prior2weights(prior, exponential=False,
   # print(prior)
   if exponential:
     prior = sorted([(i, p) for i, p in enumerate(prior)],
-                   key=lambda x: x[-1], reverse=False)
+                   key=lambda x: x[-1],
+                   reverse=False)
     alpha = interp.expIn(n=len(prior), power=10)
     prior = {i: a * p for a, (i, p) in zip(alpha, prior)}
     prior = np.array([prior[i] for i in range(len(prior))]) + 1
@@ -246,10 +263,12 @@ def prior2weights(prior, exponential=False,
     prior = prior / np.sum(prior)
   return prior
 
+
 def entropy(p, name=None):
   """Return simple calculation of discrete Shanon entropy"""
   with tf.name_scope(name, "entropy"):
     return -tf.reduce_sum(p * tf.log(p))
+
 
 def upsample(x, scale, axes, method='nn', name=None):
   """
@@ -287,7 +306,8 @@ def upsample(x, scale, axes, method='nn', name=None):
     if method == 'nn':
       # tensorflow only support for tile <= 6-D tensor
       if ndims >= 6:
-        raise ValueError('upsample with NN mode does not support rank >= 6 tensor.')
+        raise ValueError(
+            'upsample with NN mode does not support rank >= 6 tensor.')
       elif ndims + len(axes) > 6:
         for a in axes:
           x = upsample(x, scale_map[a], axes=a, method='nn')
@@ -307,10 +327,10 @@ def upsample(x, scale, axes, method='nn', name=None):
         x = reshape(x, output_shape)
     # ====== pading_margin ====== #
     elif method.lower() == 'pad_margin':
-      paddings = [[0, 0] if i not in axes else
-          [tf.cast(tf.ceil(input_shape[i] * (scale_map[i] - 1) / 2), 'int32'),
-           tf.cast(tf.floor(input_shape[i] * (scale_map[i] - 1) / 2), 'int32')]
-          for i in range(ndims)]
+      paddings = [[0, 0] if i not in axes else [
+          tf.cast(tf.ceil(input_shape[i] * (scale_map[i] - 1) / 2), 'int32'),
+          tf.cast(tf.floor(input_shape[i] * (scale_map[i] - 1) / 2), 'int32')
+      ] for i in range(ndims)]
       x = tf.pad(x, paddings=paddings, mode='CONSTANT')
     # ====== pading ====== #
     elif method == 'pad':
@@ -323,9 +343,12 @@ def upsample(x, scale, axes, method='nn', name=None):
     else:
       raise ValueError("No support for method='%s'" % method)
     # ====== add_shape ====== #
-    return set_shape(x, shape=[
-        s * scale_map[i] if is_number(s) else None
-        for i, s in enumerate(input_shape_int)])
+    return set_shape(x,
+                     shape=[
+                         s * scale_map[i] if is_number(s) else None
+                         for i, s in enumerate(input_shape_int)
+                     ])
+
 
 # ===========================================================================
 # Linear Algebra
@@ -347,10 +370,14 @@ def dot(x, y, name=None):
    (2, 3, 4).(5, 4, 6) => (2, 3, 5, 6)
   """
   with tf.name_scope(name, "DotProduct"):
-    shapeX = [tf.shape(x)[i] if d is None else d
-              for i, d in enumerate(x.shape.as_list())]
-    shapeY = [tf.shape(y)[i] if d is None else d
-              for i, d in enumerate(y.shape.as_list())]
+    shapeX = [
+        tf.shape(x)[i] if d is None else d
+        for i, d in enumerate(x.shape.as_list())
+    ]
+    shapeY = [
+        tf.shape(y)[i] if d is None else d
+        for i, d in enumerate(y.shape.as_list())
+    ]
     ndimX = x.shape.ndims
     ndimY = y.shape.ndims
     if ndimX > 2:
@@ -368,16 +395,21 @@ def dot(x, y, name=None):
     output = tf.reshape(tf.matmul(x, y), output_shape)
   return output
 
+
 def batched_dot(x, y, name=None):
   """Batchwise dot product.
   This function computes the dot product between the two tensors,
   by iterating over the first dimension.
   """
   with tf.name_scope(name, "BatchedDot"):
-    shapeX = [tf.shape(x)[i] if d is None else d
-              for i, d in enumerate(x.shape.as_list())]
-    shapeY = [tf.shape(y)[i] if d is None else d
-              for i, d in enumerate(y.shape.as_list())]
+    shapeX = [
+        tf.shape(x)[i] if d is None else d
+        for i, d in enumerate(x.shape.as_list())
+    ]
+    shapeY = [
+        tf.shape(y)[i] if d is None else d
+        for i, d in enumerate(y.shape.as_list())
+    ]
     ndimX = x.shape.ndims
     ndimY = y.shape.ndims
     # same as dot but one more batch dimension
@@ -398,6 +430,7 @@ def batched_dot(x, y, name=None):
                         name=name)
     return output
 
+
 def switch(condition, then_expression, else_expression, name=None):
   with tf.name_scope(name, 'switch'):
     if condition.dtype != tf.bool:
@@ -409,10 +442,11 @@ def switch(condition, then_expression, else_expression, name=None):
     if cond_ndims > 1 and condition.shape[-1] != x_shape[-1]:
       cond_shape = tf.shape(condition)
       condition = tf.reshape(condition,
-          [cond_shape[i] for i in range(cond_ndims - 1)])
+                             [cond_shape[i] for i in range(cond_ndims - 1)])
     x = tf.where(condition, then_expression, else_expression)
     x.set_shape(x_shape)
     return x
+
 
 def apply_mask(x, mask, name="ApplyMask"):
   """
@@ -449,23 +483,30 @@ def reshape(x, shape, name='Reshape'):
       new_shape.append(input_shape[i[0]])
     else:
       new_shape.append(i)
-  new_shape = tuple([-1 if i is None else i
-                     for i in new_shape])
+  new_shape = tuple([-1 if i is None else i for i in new_shape])
   return tf.reshape(x, new_shape, name=name)
 
+
 def dimshuffle(x, pattern, name='Dimshuffle'):
-  """Transpose dimensions.
+  """ Transpose (or permute, or shuffle) the dimensions.
+  Support: `tensorflow`, `pytorch` and `numpy`
 
   pattern should be a tuple or list of
   dimension indices, e.g. [0, 2, 1].
   """
-  with tf.name_scope(name):
-    x = tf.transpose(x, perm=[i for i in pattern if i != 'x'])
-    # insert new dimension
-    for i, p in enumerate(pattern):
-      if p == 'x':
-        x = tf.expand_dims(x, i)
+  if isinstance(x, np.ndarray):
+    pass
+  elif tf.is_tensor(x):
+    with tf.name_scope(name):
+      x = tf.transpose(x, perm=[i for i in pattern if i != 'x'])
+      # insert new dimension
+      for i, p in enumerate(pattern):
+        if p == 'x':
+          x = tf.expand_dims(x, i)
+  elif torch.is_tensor(x):
+    pass
   return x
+
 
 def flatten(x, outdim=1, name='Flatten'):
   """ Keep all the original dimension until `outdim - 1`
@@ -473,14 +514,17 @@ def flatten(x, outdim=1, name='Flatten'):
   with tf.name_scope(name):
     if outdim == 1:
       return tf.reshape(x, [-1], name=name)
-    input_shape = [tf.shape(x)[i] if d is None else d
-                   for i, d in enumerate(x.shape.as_list())]
+    input_shape = [
+        tf.shape(x)[i] if d is None else d
+        for i, d in enumerate(x.shape.as_list())
+    ]
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
     n = 1
     for i in input_shape[(outdim - 1):]:
       n = n * i
     output_shape = other_shape + (n,)
     return tf.reshape(x, output_shape)
+
 
 def repeat(x, n, axes=None, name="Repeat"):
   """ Repeat a N-D tensor.
@@ -501,13 +545,13 @@ def repeat(x, n, axes=None, name="Repeat"):
       axes = (axes,)
     axes = _normalize_axis(axes, ndim)
     n = as_tuple(n, len(axes))
-    return tf.tile(x, multiples=[n[axes.index(i)] if i in axes else 1
-                                 for i in range(ndim)],
-                   name=name)
+    return tf.tile(
+        x,
+        multiples=[n[axes.index(i)] if i in axes else 1 for i in range(ndim)],
+        name=name)
   else:
     n = int(n)
-    return tf.tile(x, multiples=[n for i in range(ndim)],
-                   name=name)
+    return tf.tile(x, multiples=[n for i in range(ndim)], name=name)
 
 
 # ===========================================================================
@@ -537,7 +581,7 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
   """
   with tf.name_scope(name):
     D = tf.sqrt(tf.cast(tf.shape(X)[axis], X.dtype.base_dtype))
-    l2norm = tf.sqrt(tf.reduce_sum(X ** 2, axis=axis, keepdims=True))
+    l2norm = tf.sqrt(tf.reduce_sum(X**2, axis=axis, keepdims=True))
     X_rms = l2norm / D
     X_rms = tf.where(tf.equal(X_rms, 0.),
                      x=tf.ones_like(X_rms, dtype=X_rms.dtype.base_dtype),
