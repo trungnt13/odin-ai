@@ -465,7 +465,7 @@ def apply_mask(x, mask, name="ApplyMask"):
 # ===========================================================================
 # Shape manipulation
 # ===========================================================================
-def reshape(x, shape, name='Reshape'):
+def reshape(x, shape):
   """ More flexible version of reshape operation
 
   Example
@@ -474,7 +474,14 @@ def reshape(x, shape, name='Reshape'):
   reshape(shape=([1], [2], [0]))
   => x.shape = (08, 12, 25)
   """
-  input_shape = x.shape.as_list()
+  if tf.is_tensor(x):
+    fn_reshape = tf.reshape
+  elif torch.is_tensor(x):
+    fn_reshape = lambda _, shape: _.view(shape)
+  else:
+    fn_reshape = np.reshape
+  # start reshaping
+  input_shape = x.shape
   new_shape = []
   for i in shape:
     if i is None:
@@ -484,7 +491,31 @@ def reshape(x, shape, name='Reshape'):
     else:
       new_shape.append(i)
   new_shape = tuple([-1 if i is None else i for i in new_shape])
-  return tf.reshape(x, new_shape, name=name)
+  return fn_reshape(x, new_shape)
+
+
+def expand_dims(x, axis):
+  if tf.is_tensor(x):
+    return tf.expand_dims(x, axis)
+  if torch.is_tensor(x):
+    return torch.unsqueeze(x, axis)
+  return np.expand_dims(x, axis)
+
+
+def squeeze(x, axis):
+  if tf.is_tensor(x):
+    return tf.squeeze(x, axis)
+  if torch.is_tensor(x):
+    return torch.squeeze(x, axis)
+  return np.squeeze(x, axis)
+
+
+def concatenate(x, axis):
+  if tf.is_tensor(x[0]):
+    return tf.concat(x, axis)
+  if torch.is_tensor(x[0]):
+    return torch.cat(x, axis)
+  return np.concatenate(x, axis)
 
 
 def dimshuffle(x, pattern, name='Dimshuffle'):
@@ -494,9 +525,7 @@ def dimshuffle(x, pattern, name='Dimshuffle'):
   pattern should be a tuple or list of
   dimension indices, e.g. [0, 2, 1].
   """
-  if isinstance(x, np.ndarray):
-    pass
-  elif tf.is_tensor(x):
+  if tf.is_tensor(x):
     with tf.name_scope(name):
       x = tf.transpose(x, perm=[i for i in pattern if i != 'x'])
       # insert new dimension
@@ -504,6 +533,8 @@ def dimshuffle(x, pattern, name='Dimshuffle'):
         if p == 'x':
           x = tf.expand_dims(x, i)
   elif torch.is_tensor(x):
+    pass
+  else:
     pass
   return x
 
@@ -539,6 +570,7 @@ def repeat(x, n, axes=None, name="Repeat"):
   axes : {int, list or int}
     all axes for repeating
   """
+  # TODO
   if axes is not None:
     ndim = x.shape.ndims
     if not isinstance(axes, (tuple, list)):
@@ -557,6 +589,23 @@ def repeat(x, n, axes=None, name="Repeat"):
 # ===========================================================================
 # Statistics
 # ===========================================================================
+def moments(x, axis=None, keepdims=False):
+  """ Calculates the mean and variance of `x`.
+
+  The mean and variance are calculated by aggregating the contents of `x`
+  across `axes`.  If `x` is 1-D and `axes = [0]` this is just the mean
+  and variance of a vector.
+  """
+  if tf.is_tensor(x):
+    mean, variance = tf.nn.moments(x, axes=axis, keepdims=keepdims)
+  elif torch.is_tensor(x):
+    pass
+  else:
+    mean = np.mean(x, axis=axis, keepdims=keepdims)
+    variance = np.var(x, axis=axis, keepdims=keepdims)
+  return mean, variance
+
+
 def var(x, axes=None, keepdims=False, name="Variance"):
   with tf.name_scope(name):
     axes = _normalize_axis(axes, x.shape.ndims)
@@ -569,6 +618,14 @@ def var(x, axes=None, keepdims=False, name="Variance"):
 def std(x, axes=None, keepdims=False, name="Std"):
   with tf.name_scope(name):
     return tf.sqrt(var(x, axes=axes, keepdims=keepdims), name=name)
+
+
+def sqrt(x):
+  if tf.is_tensor(x):
+    return tf.math.sqrt(x)
+  if torch.is_tensor(x):
+    return torch.sqrt(x)
+  return np.sqrt(x)
 
 
 def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
@@ -587,3 +644,35 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
                      x=tf.ones_like(X_rms, dtype=X_rms.dtype.base_dtype),
                      y=X_rms)
     return target_rms * X / X_rms
+
+
+def reduce_min(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_min(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.min(dim=axis, keepdim=keepdims)
+  return np.min(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_max(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_max(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.max(dim=axis, keepdim=keepdims)
+  return np.max(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_mean(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_mean(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.mean(dim=axis, keepdim=keepdims)
+  return np.mean(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_sum(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_sum(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.sum(dim=axis, keepdim=keepdims)
+  return np.sum(x, axis=axis, keepdims=keepdims)

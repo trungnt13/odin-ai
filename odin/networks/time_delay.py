@@ -75,13 +75,15 @@ class TimeDelay(Model):
 
     self.fn_layer_creator = fn_layer_creator
     # no duplicated frame index
-    delay_context = as_tuple(delay_context, t=int)
-    self.delay_context = np.array(sorted(set(delay_context)))
+    self.delay_context = np.array(sorted(set(int(i) for i in delay_context)))
     self.context_length = self.delay_context[-1] - self.delay_context[0] + 1
+
+    self.delays = self.delay_context + max(0, -self.delay_context[0])
+    self.min_delay = max(0, min(self.delays))
 
     # pooling function for aggrevate the time outputs
     self.pooling = 'none' if pooling is None else pooling
-    self.fn_pooling = parse_reduction(pooling, 'tf')
+    self.fn_pooling = parse_reduction(pooling)
 
     all_layers = []
     for time_id in range(len(self.delay_context)):
@@ -100,15 +102,13 @@ class TimeDelay(Model):
   def call(self, inputs, training=None):
     # anyway, if the smallest value is negative,
     # start from 0 (i.e. relative position)
-    delays = self.delay_context + max(0, -self.delay_context[0])
-
     shape = tf.shape(inputs)
     timestep = shape[1]
     y = []
 
-    for delay, layer in zip(delays, self.all_layers):
+    for delay, layer in zip(self.delays, self.all_layers):
       start = delay
-      end = timestep - self.context_length + delay
+      end = timestep - self.context_length + delay + 1 - self.min_delay
       y.append(tf.expand_dims(layer(inputs[:, start:end]), axis=0))
 
     y = tf.concat(y, axis=0)
@@ -315,6 +315,6 @@ class TimeDelayConvTied(TimeDelay):
         kernel_constraint=kernel_constraint,
         bias_constraint=bias_constraint,
     ),
-                                            delay_context=0,
+                                            delay_context=(0,),
                                             pooling='none',
                                             **kwargs)

@@ -11,6 +11,9 @@ import torch
 from six import string_types
 from tensorflow.python import keras
 
+from odin.backend.tensor import (concatenate, moments, reduce_max, reduce_mean,
+                                 reduce_min, reduce_sum, sqrt)
+
 __all__ = [
     'parse_activation', 'parse_attention', 'parse_constraint',
     'parse_initializer', 'parse_normalizer', 'parse_regularizer',
@@ -138,31 +141,29 @@ def parse_constraint(constraint, framework):
 # ===========================================================================
 # Layers
 # ===========================================================================
-def parse_reduction(reduce: Text, framework: Text):
+def parse_reduction(reduce: Text, framework=None):
   """ Return a reduce function """
   if reduce is None:
     reduce = 'none'
-  if _is_tensorflow(framework):
-    if isinstance(reduce, string_types):
-      if "min" in reduce:
-        return tf.reduce_min
-      if "max" in reduce:
-        return tf.reduce_max
-      if "avg" in reduce or "mean" in reduce:
-        return tf.reduce_mean
-      if "sum" in reduce:
-        return tf.reduce_sum
-      if "none" in reduce or reduce == "":
-        return lambda x, *args, **kwargs: x
-      if "stat" in reduce:
+  if isinstance(reduce, string_types):
+    if "min" in reduce:
+      return reduce_min
+    if "max" in reduce:
+      return reduce_max
+    if "avg" in reduce or "mean" in reduce:
+      return reduce_mean
+    if "sum" in reduce:
+      return reduce_sum
+    if "none" in reduce or reduce == "":
+      return lambda x, *args, **kwargs: x
 
-        def stat_reduce(x, axis=None, keepdims=None):
-          m, v = tf.nn.moments(x, axes=axis, keepdims=keepdims)
-          return tf.concat([m, tf.sqrt(v)], axis=-1)
+    if "stat" in reduce:
 
-        return stat_reduce
-  else:
-    pass
+      def stat_reduce(x, axis=None, keepdims=None):
+        m, v = moments(x, axis=axis, keepdims=keepdims)
+        return concatenate([m, sqrt(v)], axis=-1)
+
+      return stat_reduce
   _invalid("No support for reduce", reduce)
 
 

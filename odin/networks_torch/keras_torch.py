@@ -15,7 +15,7 @@ from odin.backend import (parse_activation, parse_constraint, parse_initializer,
 
 class Layer(nn.Module):
 
-  def __init__(self):
+  def __init__(self, **kwargs):
     super(Layer, self).__init__()
     self.built = False
 
@@ -42,7 +42,12 @@ class Layer(nn.Module):
       input_shape = input_shape[0]
     if not self.built:
       self.build(input_shape)
-    return self.call(inputs[0] if n_inputs == 1 else inputs, **kwargs)
+    # call
+    inputs = inputs[0] if n_inputs == 1 else inputs
+    # this make life easier but not the solution for everything
+    if isinstance(inputs, np.ndarray):
+      inputs = torch.Tensor(inputs)
+    return self.call(inputs, **kwargs)
 
   def call(self, inputs, **kwargs):
     raise NotImplementedError
@@ -65,7 +70,7 @@ class Dense(Layer):
     self.bias_initializer = parse_initializer(bias_initializer, self)
 
   def build(self, input_shape):
-    D_in = input_shape[1]
+    D_in = input_shape[-1]
     D_out = self.units
     self._linear = nn.Linear(in_features=D_in,
                              out_features=D_out,
