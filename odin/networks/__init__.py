@@ -1,4 +1,5 @@
 from odin.networks.advance_model import AdvanceModel
+from odin.networks.cudnn_rnn import *
 from odin.networks.distribution_util_layers import *
 from odin.networks.math import *
 from odin.networks.mixture_density_network import *
