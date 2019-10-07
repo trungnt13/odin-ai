@@ -10,6 +10,8 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 import torch
+from scipy.special import logsumexp
+from six import string_types
 from six.moves import builtins
 from tensorflow.python.ops import init_ops
 
@@ -25,6 +27,51 @@ def _normalize_axis(axis, ndim):
   if isinstance(axis, (tuple, list)):
     return tuple([a % ndim if a is not None else a for a in axis])
   return axis % ndim
+
+
+def dtype_universal(dtype, torch_dtype=False, tf_dtype=False, np_dtype=False):
+  if sum([torch_dtype, tf_dtype, np_dtype]) > 1:
+    raise ValueError("Cannot only return dtype for 1 framework a time.")
+  if isinstance(dtype, tf.dtypes.DType):
+    dtype = dtype.name
+  elif isinstance(dtype, torch.dtype):
+    dtype = str(dtype).split('.')[-1]
+  elif isinstance(dtype, np.dtype):
+    dtype = np.dtype(dtype).name
+
+  dtype = dtype.lower().strip()
+  if torch_dtype:
+    if dtype == 'float' or dtype == 'float32':
+      return torch.float32
+    if dtype == 'float64':
+      return torch.float64
+    if dtype == 'float16' or 'half':
+      return torch.float16
+    if dtype == 'int8':
+      return torch.int8
+    if dtype == 'uint8':
+      return torch.uint8
+    if dtype == 'int16' or dtype == 'short':
+      return torch.int16
+    if dtype == 'int' or dtype == 'int32':
+      return torch.int32
+    if dtype == 'int64' or dtype == 'long':
+      return torch.int64
+    if 'bool' in dtype:
+      return torch.bool
+  if tf_dtype:
+    return tf.as_dtype(dtype)
+  if np_dtype:
+    return np.dtype(dtype)
+  return dtype
+
+
+def cast(x, dtype):
+  if tf.is_tensor(x):
+    return tf.cast(x, dtype=dtype_universal(dtype, tf_dtype=True))
+  if torch.is_tensor(x):
+    return x.type(dtype_universal(dtype, torch_dtype=True))
+  return np.cast(x, dtype=dtype_universal(dtype, np_dtype=True))
 
 
 # ===========================================================================
@@ -80,33 +127,6 @@ def delog_norm(x, x_sum=1, scale_factor=10000):
 # ===========================================================================
 # Conversion
 # ===========================================================================
-def logreduceexp(x, reduction_function=tf.reduce_mean, axis=None, name=None):
-  """ log-reduction-exp over axis to avoid overflow and underflow
-
-  Parameters
-  ----------
-  `x` : [nb_sample, feat_dim]
-  `axis` should be features dimension
-  """
-  with tf.name_scope(name, "logreduceexp"):
-    x_max = tf.reduce_max(x, axis=axis, keepdims=True)
-    y = tf.log(reduction_function(tf.exp(x - x_max), axis=axis,
-                                  keepdims=True)) + x_max
-    return tf.squeeze(y)
-
-
-def logsumexp(x, axis=-1, name=None):
-  """
-  `x` : [nb_sample, feat_dim]
-  `axis` should be features dimension
-  """
-  # ====== tensorflow ====== #
-  with tf.name_scope(name, 'logsumexp', [x]):
-    xmax = tf.reduce_max(x, axis=axis, keepdims=True)
-    y = xmax + tf.log(tf.reduce_sum(tf.exp(x - xmax), axis=axis, keepdims=True))
-  return y
-
-
 def to_llh(x, name=None):
   ''' Convert a matrix of probabilities into log-likelihood
   :math:`LLH = log(prob(data|target))`
@@ -627,33 +647,130 @@ def moments(x, axis=None, keepdims=False):
   if tf.is_tensor(x):
     mean, variance = tf.nn.moments(x, axes=axis, keepdims=keepdims)
   elif torch.is_tensor(x):
-    pass
+    mean = reduce_mean(x, axis=axis, keepdims=True)
+    devs_squared = square(x - mean)
+    variance = reduce_mean(devs_squared, axis=axis, keepdims=keepdims)
+    if not keepdims:
+      mean = mean.squeeze(axis)
   else:
     mean = np.mean(x, axis=axis, keepdims=keepdims)
     variance = np.var(x, axis=axis, keepdims=keepdims)
   return mean, variance
 
 
-def var(x, axes=None, keepdims=False, name="Variance"):
-  with tf.name_scope(name):
-    axes = _normalize_axis(axes, x.shape.ndims)
-    x = tf.cast(x, floatX)
-    m = tf.reduce_mean(x, axis=axes, keepdims=True)
-    devs_squared = tf.square(x - m)
-    return tf.reduce_mean(devs_squared, axis=axes, keepdims=keepdims)
+def reduce_var(x, axis=None, keepdims=False, mean=None):
+  """ Calculate the variance of `x` along given `axis`
+  if `mean` is given,
+  """
+  if isinstance(x, np.ndarray):
+    return np.var(x, axis=axis, keepdims=keepdims)
+  ndim = x.ndim
+  axis = _normalize_axis(axis, ndim)
+  m = reduce_mean(x, axis=axis, keepdims=True) if mean is None else mean
+  devs_squared = square(x - m)
+  return reduce_mean(devs_squared, axis=axis, keepdims=keepdims)
 
 
-def std(x, axes=None, keepdims=False, name="Std"):
-  with tf.name_scope(name):
-    return tf.sqrt(var(x, axes=axes, keepdims=keepdims), name=name)
+def reduce_std(x, axis=None, keepdims=False):
+  return sqrt(reduce_var(x, axis=axis, keepdims=keepdims))
 
 
+def reduce_min(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_min(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.min(dim=axis, keepdim=keepdims)[0]
+  return np.min(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_max(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_max(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.max(dim=axis, keepdim=keepdims)[0]
+  return np.max(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_mean(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_mean(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.mean(dim=axis, keepdim=keepdims)
+  return np.mean(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_sum(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_sum(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.sum(dim=axis, keepdim=keepdims)
+  return np.sum(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_prod(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_prod(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.prod(dim=axis, keepdim=keepdims)
+  return np.prod(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_all(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_all(tf.cast(x, tf.bool), axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.bool().all(dim=axis, keepdim=keepdims)
+  return np.all(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_any(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_any(tf.cast(x, tf.bool), axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.bool().any(dim=axis, keepdim=keepdims)
+  return np.any(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_logsumexp(x, axis=None, keepdims=False):
+  if tf.is_tensor(x):
+    return tf.reduce_logsumexp(x, axis=axis, keepdims=keepdims)
+  if torch.is_tensor(x):
+    return x.logsumexp(dim=axis, keepdim=keepdims)
+  return logsumexp(x, axis=axis, keepdims=keepdims)
+
+
+def reduce_log_exp(x, reduction_function=tf.reduce_mean, axis=None, name=None):
+  """ log-reduction-exp over axis to avoid overflow and underflow
+
+  Parameters
+  ----------
+  `x` : [nb_sample, feat_dim]
+  `axis` should be features dimension
+  """
+  with tf.name_scope(name, "logreduceexp"):
+    x_max = tf.reduce_max(x, axis=axis, keepdims=True)
+    y = tf.log(reduction_function(tf.exp(x - x_max), axis=axis,
+                                  keepdims=True)) + x_max
+    return tf.squeeze(y)
+
+
+# ===========================================================================
+# Math
+# ===========================================================================
 def sqrt(x):
   if tf.is_tensor(x):
     return tf.math.sqrt(x)
   if torch.is_tensor(x):
     return torch.sqrt(x)
   return np.sqrt(x)
+
+
+def square(x):
+  if tf.is_tensor(x):
+    return tf.math.square(x)
+  if torch.is_tensor(x):
+    return torch.mul(x, x)
+  return np.square(x)
 
 
 def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
@@ -672,35 +789,3 @@ def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
                      x=tf.ones_like(X_rms, dtype=X_rms.dtype.base_dtype),
                      y=X_rms)
     return target_rms * X / X_rms
-
-
-def reduce_min(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_min(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.min(dim=axis, keepdim=keepdims)
-  return np.min(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_max(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_max(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.max(dim=axis, keepdim=keepdims)
-  return np.max(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_mean(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_mean(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.mean(dim=axis, keepdim=keepdims)
-  return np.mean(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_sum(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_sum(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.sum(dim=axis, keepdim=keepdims)
-  return np.sum(x, axis=axis, keepdims=keepdims)

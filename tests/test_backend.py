@@ -28,10 +28,13 @@ z = tf.convert_to_tensor(x)
 # ===========================================================================
 def _equal(info, a: np.ndarray, b: torch.Tensor, c: tf.Tensor):
   assert all(
-      int(i) == int(j) == int(k) for i, j, k in zip(a.shape, b.shape, c.shape)) \
-        and np.all(np.logical_and(a == b.numpy(), a == c.numpy())),\
+      int(i) == int(j) == int(k) for i, j, k in zip(a.shape, b.shape, c.shape)),\
         "Input shape: %s, info: %s, output shapes mismatch: %s, %s and %s" % \
           (str(x.shape), str(info), str(a.shape), str(b.shape), str(c.shape))
+  assert np.all(
+    np.logical_and(np.allclose(a, b.numpy()), np.allclose(a, c.numpy()))),\
+    "info: %s, output value mismatch, \n%s\n%s\n%s" % \
+      (info, str(a[0]), str(b.numpy()[0]), str(c.numpy()[0]))
 
 
 def test_reshape():
@@ -76,6 +79,45 @@ def test_flatten():
   flatten_and_test(2)
 
 
+# ===========================================================================
+# Reduction
+# ===========================================================================
+def test_stats_and_reduce():
+  for name, fn in (
+      ("min_keepdims", lambda _: K.reduce_min(_, 1, keepdims=True)),
+      ("min", lambda _: K.reduce_min(_, 1, keepdims=False)),
+      ("max_keepdims", lambda _: K.reduce_max(_, 1, keepdims=True)),
+      ("max", lambda _: K.reduce_max(_, 1, keepdims=False)),
+      ("mean_keepdims", lambda _: K.reduce_mean(_, 1, keepdims=True)),
+      ("mean", lambda _: K.reduce_mean(_, 1, keepdims=False)),
+      ("var_keepdims", lambda _: K.reduce_var(_, 1, keepdims=True)),
+      ("var", lambda _: K.reduce_var(_, 1, keepdims=False)),
+      ("std_keepdims", lambda _: K.reduce_std(_, 1, keepdims=True)),
+      ("std", lambda _: K.reduce_std(_, 1, keepdims=False)),
+      ("sum_keepdims", lambda _: K.reduce_sum(_, 1, keepdims=True)),
+      ("sum", lambda _: K.reduce_sum(_, 1, keepdims=False)),
+      ("prod_keepdims", lambda _: K.reduce_prod(_, 1, keepdims=True)),
+      ("prod", lambda _: K.reduce_prod(_, 1, keepdims=False)),
+      ("all_keepdims", lambda _: K.reduce_all(_, 1, keepdims=True)),
+      ("all", lambda _: K.reduce_all(_, 1, keepdims=False)),
+      ("any_keepdims", lambda _: K.reduce_any(_, 1, keepdims=True)),
+      ("any", lambda _: K.reduce_any(_, 1, keepdims=False)),
+      ("logsumexp_keepdims", lambda _: K.reduce_logsumexp(_, 1, keepdims=True)),
+      ("logsumexp", lambda _: K.reduce_logsumexp(_, 1, keepdims=False)),
+  ):
+    a = fn(x)
+    b = fn(y)
+    c = fn(z)
+    _equal(name, a, b, c)
+
+  a1, a2 = K.moments(x, axis=1)
+  b1, b2 = K.moments(y, axis=1)
+  c1, c2 = K.moments(z, axis=1)
+  _equal("moments_mean", a1, b1, c1)
+  _equal("moments_var", a2, b2, c2)
+
+
 test_reshape()
 test_dimshuffle()
 test_flatten()
+test_stats_and_reduce()
