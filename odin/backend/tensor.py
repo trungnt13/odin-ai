@@ -518,43 +518,71 @@ def concatenate(x, axis):
   return np.concatenate(x, axis)
 
 
-def dimshuffle(x, pattern, name='Dimshuffle'):
-  """ Transpose (or permute, or shuffle) the dimensions.
-  Support: `tensorflow`, `pytorch` and `numpy`
+def dimshuffle(x, pattern):
+  """ Reorder the dimensions of this variable, optionally inserting
+  broadcasted dimensions.
 
-  pattern should be a tuple or list of
-  dimension indices, e.g. [0, 2, 1].
+  Parameters
+  ----------
+  pattern
+      List/tuple of int mixed with 'x' for broadcastable dimensions.
+
+  Examples
+  --------
+  For example, to create a 3D view of a [2D] matrix, call
+  ``dimshuffle([0,'x',1])``.  This will create a 3D view such that the
+  middle dimension is an implicit broadcasted dimension.  To do the same
+  thing on the transpose of that matrix, call ``dimshuffle([1, 'x', 0])``.
+
+  Notes
+  -----
+  This function supports the pattern passed as a tuple, or as a
+  variable-length argument (e.g. ``a.dimshuffle(pattern)`` is equivalent
+  to ``a.dimshuffle(*pattern)`` where ``pattern`` is a list/tuple of ints
+  mixed with 'x' characters).
+
+  @Author: Theano Authors
   """
+  permute_pattern = [i for i in pattern if i != 'x']
   if tf.is_tensor(x):
-    with tf.name_scope(name):
-      x = tf.transpose(x, perm=[i for i in pattern if i != 'x'])
-      # insert new dimension
-      for i, p in enumerate(pattern):
-        if p == 'x':
-          x = tf.expand_dims(x, i)
+    x = tf.transpose(x, perm=permute_pattern)
+    # insert new dimension
+    for i, p in enumerate(pattern):
+      if p == 'x':
+        x = tf.expand_dims(x, i)
   elif torch.is_tensor(x):
-    pass
+    x = x.permute(permute_pattern)
+    for i, p in enumerate(pattern):
+      if p == 'x':
+        x = x.unsqueeze(i)
   else:
-    pass
+    x = np.transpose(x, permute_pattern)
+    for i, p in enumerate(pattern):
+      if p == 'x':
+        x = np.expand_dims(x, i)
   return x
 
 
-def flatten(x, outdim=1, name='Flatten'):
+def flatten(x, outdim=1):
   """ Keep all the original dimension until `outdim - 1`
   """
-  with tf.name_scope(name):
-    if outdim == 1:
-      return tf.reshape(x, [-1], name=name)
-    input_shape = [
-        tf.shape(x)[i] if d is None else d
-        for i, d in enumerate(x.shape.as_list())
-    ]
+  if tf.is_tensor(x):
+    input_shape = tf.shape(x)
+  elif torch.is_tensor(x):
+    input_shape = x.shape
+  else:
+    input_shape = x.shape
+
+  if outdim == 1:
+    output_shape = [-1]
+  else:
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
     n = 1
     for i in input_shape[(outdim - 1):]:
       n = n * i
     output_shape = other_shape + (n,)
-    return tf.reshape(x, output_shape)
+
+  return reshape(x, output_shape)
 
 
 def repeat(x, n, axes=None, name="Repeat"):

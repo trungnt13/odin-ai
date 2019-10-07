@@ -317,3 +317,8 @@ class Conv3D(Conv):
                                  kernel_initializer=kernel_initializer,
                                  bias_initializer=bias_initializer,
                                  **kwargs)
+
+
+# ===========================================================================
+# Recurrent neural network
+# ===========================================================================
