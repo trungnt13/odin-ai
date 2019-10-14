@@ -18,3 +18,4 @@ dependencies:
     - tensorflow-probability==0.8.0
     - tensorflow-addons==0.5.2
     - torch==1.2.0
+    - bigarray==0.2.1

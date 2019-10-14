@@ -18,7 +18,7 @@ from scipy import linalg
 from six import string_types
 
 from odin import backend as K
-from odin.fuel import MmapArray
+from bigarray import MmapArray
 from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
 from odin.utils import (MPI, Progbar, array_size, as_tuple, batching, cpu_count,
                         ctext, defaultdictkey, eprint, is_number, segment_list,

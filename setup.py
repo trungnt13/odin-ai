@@ -2,7 +2,7 @@ from os import path
 
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '1.2.1'
+_ODIN_VERSION_ = '1.2.2'
 
 _TENSORFLOW_VERSION = '2.0.0'
 _TENSORFLOW_PROBABILITY_VERSION = '0.8.0'
@@ -82,8 +82,9 @@ setup(
         'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
         'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
         'tensorflow-datasets',
-        'torch==%s' % _PYTORCH_VERSION, 'six>=1.9.0', 'scikit-learn>=0.18.0',
-        'matplotlib>=3.0.0', 'decorator', 'tqdm', 'dill', 'pyyaml', 'pycrypto'
+        'torch==%s' % _PYTORCH_VERSION, 'bigarray>=0.2.1', 'six>=1.9.0',
+        'scikit-learn>=0.18.0', 'matplotlib>=3.0.0', 'decorator', 'tqdm',
+        'dill', 'pyyaml', 'pycrypto'
     ],
     extras_require={
         'visualize': ['pydot>=1.2.4', 'colorama', 'seaborn'],

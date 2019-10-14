@@ -5,7 +5,7 @@ import pickle
 
 import numpy as np
 
-from odin.fuel import MmapArray, MmapArrayWriter
+from bigarray import MmapArray, MmapArrayWriter
 from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
 from odin.ml.gmm_tmat import GMM, Tmatrix, _split_jobs
 from odin.utils import (Progbar, UnitTimer, batching, crypto, ctext,

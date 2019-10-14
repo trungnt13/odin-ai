@@ -1,23 +1,24 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
+import inspect
 import os
 import re
-import inspect
-from enum import Enum
-
-from six import add_metaclass, string_types
 from abc import ABCMeta, abstractmethod
 from collections import Mapping
+from enum import Enum
 
 import numpy as np
+from six import add_metaclass, string_types
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.pipeline import Pipeline, make_pipeline as _make_pipeline
+from sklearn.pipeline import Pipeline
+from sklearn.pipeline import make_pipeline as _make_pipeline
 
 from odin.fuel import Dataset
 from odin.preprocessing.signal import delta, mvn, stack_frames
-from odin.utils import (get_all_files, is_string, as_tuple, is_pickleable,
-                        ctext, flatten_list, dummy_formatter,
-                        get_formatted_datetime)
+from odin.utils import (as_tuple, ctext, dummy_formatter, flatten_list,
+                        get_all_files, get_formatted_datetime, is_pickleable,
+                        is_string)
+
 
 class ExtractorSignal(object):
   """ ExtractorSignal """
@@ -68,22 +69,26 @@ class ExtractorSignal(object):
     # last input
     s += 'Last input: \n'
     if isinstance(self._last_input, Mapping):
-      for k, v in sorted(self._last_input.items(),
-                         key=lambda x: x[0]):
+      for k, v in sorted(self._last_input.items(), key=lambda x: x[0]):
         s += '  %s: %s\n' % (ctext(str(k), 'yellow'), dummy_formatter(v))
     else:
       s += '  Type: %s\n' % ctext(type(self._last_input), 'yellow')
       s += '  Object: %s\n' % ctext(str(self._last_input), 'yellow')
     # parameters
     s += 'Attributes: \n'
-    s += '  ' + ctext('InputLayer', 'yellow') + ': ' + str(self._extractor.is_input_layer) + '\n'
-    s += '  ' + ctext('RobustLevel', 'yellow') + ': ' + self._extractor.robust_level + '\n'
-    s += '  ' + ctext('InputName', 'yellow') + ': ' + str(self._extractor.input_name) + '\n'
-    s += '  ' + ctext('OutputName', 'yellow') + ': ' + str(self._extractor.output_name) + '\n'
+    s += '  ' + ctext('InputLayer', 'yellow') + ': ' + str(
+        self._extractor.is_input_layer) + '\n'
+    s += '  ' + ctext('RobustLevel',
+                      'yellow') + ': ' + self._extractor.robust_level + '\n'
+    s += '  ' + ctext('InputName', 'yellow') + ': ' + str(
+        self._extractor.input_name) + '\n'
+    s += '  ' + ctext('OutputName', 'yellow') + ': ' + str(
+        self._extractor.output_name) + '\n'
     for name, param in self._extractor.get_params().items():
       if name not in ('_input_name', '_output_name'):
         s += '  ' + ctext(name, 'yellow') + ': ' + dummy_formatter(param) + '\n'
     return s
+
 
 # ===========================================================================
 # Helper
@@ -122,19 +127,21 @@ def make_pipeline(steps, debug=False):
   # remove None
   steps = [s for s in steps if s is not None]
   if len(steps) == 0:
-    raise ValueError("No instance of odin.preprocessing.base.Extractor found in `steps`.")
+    raise ValueError(
+        "No instance of odin.preprocessing.base.Extractor found in `steps`.")
   # ====== set debug mode ====== #
-  set_extractor_debug([i[1] for i in steps],
-                      debug=bool(debug))
+  set_extractor_debug([i[1] for i in steps], debug=bool(debug))
   # ====== return pipeline ====== #
   ret = Pipeline(steps=steps)
   return ret
 
+
 def set_extractor_debug(extractors, debug):
   # ====== prepare ====== #
   if isinstance(extractors, (tuple, list)):
-    extractors = [i for i in flatten_list(extractors)
-                  if isinstance(i, Extractor)]
+    extractors = [
+        i for i in flatten_list(extractors) if isinstance(i, Extractor)
+    ]
   elif isinstance(extractors, Pipeline):
     extractors = [i[-1] for i in extractors.steps]
   elif isinstance(extractors, Mapping):
@@ -146,6 +153,7 @@ def set_extractor_debug(extractors, debug):
     i._debug = bool(debug)
   return extractors
 
+
 def _equal_inputs_outputs(x, y):
   try:
     if x != y:
@@ -154,15 +162,16 @@ def _equal_inputs_outputs(x, y):
     pass
   return True
 
+
 def _preprocess(x):
   if isinstance(x, np.str_):
     x = str(x)
   return x
 
+
 # ===========================================================================
 # Basic extractors
 # ===========================================================================
-@add_metaclass(ABCMeta)
 class Extractor(BaseEstimator, TransformerMixin):
   """ Extractor
 
@@ -192,9 +201,17 @@ class Extractor(BaseEstimator, TransformerMixin):
     'error' - raise Exception and stop processing
   """
 
-  def __init__(self, input_name=None, output_name=None,
-               is_input_layer=False, robust_level='ignore'):
+  def __init__(self,
+               input_name=None,
+               output_name=None,
+               is_input_layer=False,
+               robust_level='ignore',
+               name=None):
     super(Extractor, self).__init__()
+    if name is None:
+      self._name = "%s%d" % (self.__class__.__name__, np.random.rand(0, 888888))
+    else:
+      self._name = str(name)
     self._debug = False
     self._is_input_layer = bool(is_input_layer)
     self._last_debugging_text = ''
@@ -212,7 +229,8 @@ class Extractor(BaseEstimator, TransformerMixin):
     elif hasattr(input_name, '__iter__'):
       input_name = tuple([str(i).lower() for i in input_name])
     else:
-      raise ValueError("No support for `input_name` type: %s" % str(type(input_name)))
+      raise ValueError("No support for `input_name` type: %s" %
+                       str(type(input_name)))
     self._input_name = input_name
     # ====== check output_name ====== #
     if output_name is None:
@@ -225,8 +243,13 @@ class Extractor(BaseEstimator, TransformerMixin):
     elif hasattr(output_name, '__iter__'):
       output_name = tuple([str(i).lower() for i in output_name])
     else:
-      raise ValueError("No support for `output_name` type: %s" % str(type(output_name)))
+      raise ValueError("No support for `output_name` type: %s" %
+                       str(type(output_name)))
     self._output_name = output_name
+
+  @property
+  def name(self):
+    return self._name
 
   @property
   def last_debugging_text(self):
@@ -260,7 +283,6 @@ class Extractor(BaseEstimator, TransformerMixin):
     # Do nothing here
     return self
 
-  @abstractmethod
   def _transform(self, X):
     raise NotImplementedError
 
@@ -270,45 +292,42 @@ class Extractor(BaseEstimator, TransformerMixin):
       return X
     # ====== interpret different signal ====== #
     if X is None:
-      return ExtractorSignal(
-      ).set_message(extractor=self,
-                    msg="`None` value is returned by extractor",
-                    last_input=X
-      ).set_action(self.robust_level)
+      return ExtractorSignal().set_message(
+          extractor=self,
+          msg="`None` value is returned by extractor",
+          last_input=X).set_action(self.robust_level)
     # ====== input layer ====== #
     if not self.is_input_layer and not isinstance(X, Mapping):
       err_msg = "the input to `Extractor.transform` must be instance of dictionary, " + \
       "but given type: %s" % str(type(X))
-      return ExtractorSignal(
-      ).set_message(extractor=self,
-                    msg=err_msg,
-                    last_input=X
-      ).set_action(self.robust_level)
+      return ExtractorSignal().set_message(extractor=self,
+                                           msg=err_msg,
+                                           last_input=X).set_action(
+                                               self.robust_level)
     # ====== the transformation ====== #
     if self.input_name is not None and isinstance(X, Mapping):
       for name in as_tuple(self.input_name, t=string_types):
         if name not in X:
-          return ExtractorSignal(
-          ).set_message(extractor=self,
-                        msg="Cannot find features with name: %s" % name,
-                        last_input=X
-          ).set_action('error')
+          return ExtractorSignal().set_message(
+              extractor=self,
+              msg="Cannot find features with name: %s" % name,
+              last_input=X).set_action('error')
     y = self._transform(X)
     # if return Signal or None, no post-processing
     if isinstance(y, ExtractorSignal):
       return y
     if y is None:
-      return ExtractorSignal(
-      ).set_message(extractor=self,
-                    msg="`None` value is returned by the extractor: %s" % self.__class__.__name__,
-                    last_input=X
-      ).set_action(self.robust_level)
+      return ExtractorSignal().set_message(
+          extractor=self,
+          msg="`None` value is returned by the extractor: %s" %
+          self.__class__.__name__,
+          last_input=X).set_action(self.robust_level)
     # ====== return type must always be a dictionary ====== #
     if not isinstance(y, Mapping):
       if isinstance(y, (tuple, list)):
-        y = {i: j
-             for i, j in zip(as_tuple(self.output_name, t=string_types),
-                             y)}
+        y = {
+            i: j for i, j in zip(as_tuple(self.output_name, t=string_types), y)
+        }
       else:
         y = {self.output_name: y}
     # ====== Merge previous results ====== #
@@ -316,11 +335,10 @@ class Extractor(BaseEstimator, TransformerMixin):
     tmp = {}
     for name, feat in y.items():
       if any(c.isupper() for c in name):
-        return ExtractorSignal(
-        ).set_message(extractor=self,
-                      msg="Name for features cannot contain upper case",
-                      last_input=X
-        ).set_action('error')
+        return ExtractorSignal().set_message(
+            extractor=self,
+            msg="Name for features cannot contain upper case",
+            last_input=X).set_action('error')
       if feat is None:
         continue
       tmp[name] = feat
@@ -329,11 +347,10 @@ class Extractor(BaseEstimator, TransformerMixin):
     if isinstance(X, Mapping):
       for name, feat in X.items():
         if any(c.isupper() for c in name):
-          return ExtractorSignal(
-          ).set_message(extractor=self,
-                        msg="Name for features cannot contain upper case",
-                        last_input=X
-          ).set_action('error')
+          return ExtractorSignal().set_message(
+              extractor=self,
+              msg="Name for features cannot contain upper case",
+              last_input=X).set_action('error')
         if name not in y:
           y[name] = _preprocess(feat)
     # ====== print debug text ====== #
@@ -342,15 +359,16 @@ class Extractor(BaseEstimator, TransformerMixin):
       self._debug = False
     if self._debug:
       debug_text = ''
-      debug_text += '%s %s\n' % (ctext("[Extractor]", 'cyan'),
-                                 ctext(self.__class__.__name__, 'magenta'))
+      debug_text += '%s %s\n' % (ctext(
+          "[Extractor]", 'cyan'), ctext(self.__class__.__name__, 'magenta'))
       # inputs
       if not _equal_inputs_outputs(X, y):
         debug_text += '  %s\n' % ctext("Inputs:", 'yellow')
         debug_text += '  %s\n' % ctext("-------", 'yellow')
         if isinstance(X, Mapping):
           for k, v in X.items():
-            debug_text += '    %s : %s\n' % (ctext(k, 'blue'), dummy_formatter(v))
+            debug_text += '    %s : %s\n' % (ctext(k,
+                                                   'blue'), dummy_formatter(v))
         else:
           debug_text += '    %s\n' % dummy_formatter(X)
       # outputs
@@ -363,18 +381,18 @@ class Extractor(BaseEstimator, TransformerMixin):
         debug_text += '    %s\n' % dummy_formatter(y)
       # parameters
       for name, param in self.get_params().items():
-        if name not in ('_input_name',
-                        '_output_name'):
-          debug_text += '  %s : %s\n' % (ctext(name, 'yellow'), dummy_formatter(param))
+        if name not in ('_input_name', '_output_name'):
+          debug_text += '  %s : %s\n' % (ctext(
+              name, 'yellow'), dummy_formatter(param))
       self._last_debugging_text = debug_text
       print(debug_text)
     return y
+
 
 # ===========================================================================
 # General extractor
 # ===========================================================================
 class Converter(Extractor):
-
   """ Convert the value under `input_name` to a new value
   using `converter` function, and save the new value to
   the `output_name`.
@@ -391,7 +409,8 @@ class Converter(Extractor):
   """
 
   def __init__(self, converter, input_name='name', output_name='name'):
-    super(Converter, self).__init__(input_name=as_tuple(input_name, t=string_types),
+    super(Converter, self).__init__(input_name=as_tuple(input_name,
+                                                        t=string_types),
                                     output_name=str(output_name))
     # ====== check converter ====== #
     if not hasattr(converter, '__call__') and \
@@ -408,8 +427,8 @@ class Converter(Extractor):
       name = self.converter[X[0] if len(X) == 1 else X]
     return {self.output_name: name}
 
-class DeltaExtractor(Extractor):
 
+class DeltaExtractor(Extractor):
   """ Extracting the delta coefficients given the axis
 
   Parameters
@@ -426,15 +445,20 @@ class DeltaExtractor(Extractor):
       (suggest time-dimension for acoustic features, i.e. axis=0)
   """
 
-  def __init__(self, input_name, output_name=None,
-               width=9, order=(0, 1), axis=0):
-    super(DeltaExtractor, self).__init__(
-        input_name=as_tuple(input_name, t=string_types),
-        output_name=output_name)
+  def __init__(self,
+               input_name,
+               output_name=None,
+               width=9,
+               order=(0, 1),
+               axis=0):
+    super(DeltaExtractor, self).__init__(input_name=as_tuple(input_name,
+                                                             t=string_types),
+                                         output_name=output_name)
     # ====== check width ====== #
     width = int(width)
     if width % 2 == 0 or width < 3:
-      raise ValueError("`width` must be odd integer >= 3, give value: %d" % width)
+      raise ValueError("`width` must be odd integer >= 3, give value: %d" %
+                       width)
     self.width = width
     # ====== check order ====== #
     self.order = as_tuple(order, t=int)
@@ -442,19 +466,21 @@ class DeltaExtractor(Extractor):
     self.axis = axis
 
   def _calc_deltas(self, X):
-    all_deltas = delta(data=X, width=self.width, order=max(self.order), axis=self.axis)
+    all_deltas = delta(data=X,
+                       width=self.width,
+                       order=max(self.order),
+                       axis=self.axis)
     if not isinstance(all_deltas, (tuple, list)):
       all_deltas = (all_deltas,)
     else:
       all_deltas = tuple(all_deltas)
     all_deltas = (X,) + all_deltas
-    all_deltas = tuple([d for i, d in enumerate(all_deltas)
-                        if i in self.order])
+    all_deltas = tuple([d for i, d in enumerate(all_deltas) if i in self.order])
     return np.concatenate(all_deltas, axis=-1)
 
   def _transform(self, feat):
-    return [self._calc_deltas(feat[name])
-            for name in self.input_name]
+    return [self._calc_deltas(feat[name]) for name in self.input_name]
+
 
 class EqualizeShape0(Extractor):
   """ EqualizeShape0
@@ -478,8 +504,10 @@ class EqualizeShape0(Extractor):
   """
 
   def __init__(self, input_name=None, shrink_mode='right'):
-    super(EqualizeShape0, self).__init__(
-        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    super(
+        EqualizeShape0,
+        self).__init__(input_name=as_tuple(input_name, t=string_types
+                                          ) if input_name is not None else None)
     shrink_mode = str(shrink_mode).lower()
     if shrink_mode not in ('center', 'left', 'right'):
       raise ValueError("shrink mode support include: center, left, right")
@@ -522,6 +550,7 @@ class EqualizeShape0(Extractor):
       equalized[name] = y
     return equalized
 
+
 class RunningStatistics(Extractor):
   """ Running statistics
 
@@ -539,8 +568,10 @@ class RunningStatistics(Extractor):
   """
 
   def __init__(self, input_name=None, axis=0, prefix=''):
-    super(RunningStatistics, self).__init__(
-        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    super(
+        RunningStatistics,
+        self).__init__(input_name=as_tuple(input_name, t=string_types
+                                          ) if input_name is not None else None)
     self.axis = axis
     self.prefix = str(prefix)
 
@@ -579,6 +610,7 @@ class RunningStatistics(Extractor):
         feat[s2_name] += sum2
     return feat
 
+
 class AsType(Extractor):
   """ An extractor convert given features to given types
 
@@ -598,8 +630,10 @@ class AsType(Extractor):
   """
 
   def __init__(self, dtype, input_name=None, exclude_pattern=".+\_sum[1|2]"):
-    super(AsType, self).__init__(
-        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    super(
+        AsType,
+        self).__init__(input_name=as_tuple(input_name, t=string_types
+                                          ) if input_name is not None else None)
     self.dtype = np.dtype(dtype)
     if isinstance(exclude_pattern, string_types):
       exclude_pattern = re.compile(exclude_pattern)
@@ -628,23 +662,28 @@ class AsType(Extractor):
       updates[name] = y.astype(self.dtype)
     return updates
 
+
 class DuplicateFeatures(Extractor):
 
   def __init__(self, input_name, output_name):
-    super(DuplicateFeatures, self).__init__(
-        input_name=as_tuple(input_name, t=string_types),
-        output_name=as_tuple(output_name, t=string_types))
+    super(DuplicateFeatures,
+          self).__init__(input_name=as_tuple(input_name, t=string_types),
+                         output_name=as_tuple(output_name, t=string_types))
 
   def _transform(self, feat):
-    return {out_name: feat[in_name]
-            for in_name, out_name in zip(self.input_name, self.output_name)}
+    return {
+        out_name: feat[in_name]
+        for in_name, out_name in zip(self.input_name, self.output_name)
+    }
+
 
 class RenameFeatures(Extractor):
 
   def __init__(self, input_name, output_name):
-    super(RenameFeatures, self).__init__(
-        input_name=as_tuple(input_name, t=string_types),
-        output_name=as_tuple(output_name, t=string_types))
+    super(RenameFeatures, self).__init__(input_name=as_tuple(input_name,
+                                                             t=string_types),
+                                         output_name=as_tuple(output_name,
+                                                              t=string_types))
 
   def _transform(self, X):
     return X
@@ -652,11 +691,12 @@ class RenameFeatures(Extractor):
   def transform(self, feat):
     if isinstance(feat, Mapping):
       for old_name, new_name in zip(self.input_name, self.output_name):
-        if old_name in feat: # only remove if it exist
+        if old_name in feat:  # only remove if it exist
           X = feat[old_name]
           del feat[old_name]
           feat[new_name] = X
     return feat
+
 
 class DeleteFeatures(Extractor):
   """ Remove features by name from extracted features dictionary """
@@ -671,9 +711,10 @@ class DeleteFeatures(Extractor):
   def transform(self, feat):
     if isinstance(feat, Mapping):
       for name in self._name:
-        if name in feat: # only remove if it exist
+        if name in feat:  # only remove if it exist
           del feat[name]
     return feat
+
 
 # ===========================================================================
 # Shape
@@ -698,8 +739,10 @@ class StackFeatures(Extractor):
   """
 
   def __init__(self, n_context, input_name=None):
-    super(StackFeatures, self).__init__(
-        input_name=as_tuple(input_name, t=string_types) if input_name is not None else None)
+    super(
+        StackFeatures,
+        self).__init__(input_name=as_tuple(input_name, t=string_types
+                                          ) if input_name is not None else None)
     self.n_context = int(n_context)
     assert self.n_context > 0
 
@@ -717,8 +760,10 @@ class StackFeatures(Extractor):
     # ====== this ====== #
     for name, y in zip(output_name, X):
       # stacking the context frames
-      y = stack_frames(y, frame_length=self.n_context * 2 + 1,
-                       step_length=1, keep_length=True,
+      y = stack_frames(y,
+                       frame_length=self.n_context * 2 + 1,
+                       step_length=1,
+                       keep_length=True,
                        make_contigous=True)
       feat[name] = y
     return feat

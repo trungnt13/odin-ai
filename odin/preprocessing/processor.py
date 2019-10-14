@@ -3,39 +3,37 @@
 # Parallel features processing using multi-core CPU and multiprocessing
 # Copyright 2016-2017 TrungNT
 # ===========================================================================
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
-import re
 import os
-import sys
-import wave
-import time
 import random
+import re
 import shutil
+import sys
+import time
 import warnings
-from numbers import Number
-from multiprocessing import Pool, cpu_count, Process, Queue
-from six import add_metaclass, string_types
-from six.moves import zip, zip_longest, range, cPickle
+import wave
 from abc import ABCMeta, abstractmethod, abstractproperty
-
-from collections import defaultdict, Mapping
+from collections import Mapping, defaultdict
+from multiprocessing import Pool, Process, Queue, cpu_count
+from numbers import Number
 
 import numpy as np
-
+from six import add_metaclass, string_types
+from six.moves import cPickle, range, zip, zip_longest
 from sklearn.pipeline import Pipeline
 
-from odin.utils.mpi import MPI
-from odin.utils import (Progbar, as_tuple, get_all_files, ctext,
-                        get_tempdir, is_string, batching,
-                        add_notification, defaultdictkey,
-                        stdio, get_stdio_path, wprint,
-                        add_notification, flatten_list,
-                        get_formatted_datetime)
-from odin.fuel import Dataset, MmapDict, MmapData
+from bigarray import MmapArray
+from odin.fuel import Dataset, MmapDict
 from odin.preprocessing.base import Extractor, ExtractorSignal
+from odin.utils import (Progbar, add_notification, as_tuple, batching, ctext,
+                        defaultdictkey, flatten_list, get_all_files,
+                        get_formatted_datetime, get_stdio_path, get_tempdir,
+                        is_string, stdio, wprint)
+from odin.utils.mpi import MPI
 
 _default_module = re.compile(r"__.*__")
+
 
 # ===========================================================================
 # PCA calculation
@@ -56,8 +54,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
   elif isinstance(dataset, FeatureProcessor):
     dataset = Dataset(dataset.path, read_only=True)
   else:
-    raise ValueError("Cannot acquire Dataset from input: %s" %
-                     str(dataset))
+    raise ValueError("Cannot acquire Dataset from input: %s" % str(dataset))
   # ====== extract all feat_name ====== #
   if is_string(feat_name) and feat_name == 'auto':
     feat_name = []
@@ -66,9 +63,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
       if hasattr(X, 'ndim') and X.ndim == 2 and X.shape[-1] > 1:
         feat_name.append(k)
   else:
-    feat_name = [name
-                 for name in as_tuple(feat_name, t=str)
-                 if name in dataset]
+    feat_name = [name for name in as_tuple(feat_name, t=str) if name in dataset]
   # ====== load PCA ====== #
   from odin.ml import MiniBatchPCA
   # init PCA
@@ -77,7 +72,7 @@ def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
     nb_samples += dataset[feat].shape[0]
   # ====== prepare MPI PCA ====== #
   add_notification("Selected features for PCA: " +
-      ctext(', '.join(feat_name), 'yellow'))
+                   ctext(', '.join(feat_name), 'yellow'))
 
   def map_pca(name):
     X = dataset[name]
@@ -86,8 +81,10 @@ def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
       pca = dataset['pca_' + feat]
     # create new PCA
     else:
-      pca = MiniBatchPCA(n_components=None, whiten=False,
-                         copy=True, batch_size=None)
+      pca = MiniBatchPCA(n_components=None,
+                         whiten=False,
+                         copy=True,
+                         batch_size=None)
     # No shuffling make iter much faster
     for x in X.set_batch(batch_size=batch_size, seed=None, shuffle_level=0):
       pca.partial_fit(x)
@@ -97,13 +94,19 @@ def calculate_pca(dataset, feat_name='auto', batch_size=1234, override=False):
       cPickle.dump(pca, f, protocol=cPickle.HIGHEST_PROTOCOL)
     # finish return feature name
     yield name
-  mpi = MPI(jobs=feat_name, func=map_pca,
-            ncpu=None, batch=1, hwm=1234,
+
+  mpi = MPI(jobs=feat_name,
+            func=map_pca,
+            ncpu=None,
+            batch=1,
+            hwm=1234,
             backend='python')
   # ====== running the MPI ====== #
   remain_features = list(feat_name)
   finished_features = []
-  prog = Progbar(target=nb_samples, print_summary=True, print_report=True,
+  prog = Progbar(target=nb_samples,
+                 print_summary=True,
+                 print_report=True,
                  name='PCA')
   for n in mpi:
     if is_string(n):
@@ -135,37 +138,48 @@ def _special_cases(X, feat_name, file_name, ds, path):
     if '.wav' not in file_name:
       file_name += '.wav'
     save(os.path.join(path, _escape_file_name(file_name)),
-         X.astype('float32'), sr=sr)
+         X.astype('float32'),
+         sr=sr)
   elif feat_name == 'spec':
-    from odin.preprocessing.speech import (SpectraExtractor, STFTExtractor, Power2Db,
-                                          _extract_frame_step_length, save)
+    from odin.preprocessing.speech import (SpectraExtractor, STFTExtractor,
+                                           Power2Db, _extract_frame_step_length,
+                                           save)
     from odin.preprocessing.signal import ispec
     sr = ds['sr'][file_name]
-    extractor = [i for _, i in ds['pipeline'].steps
-                 if isinstance(i, SpectraExtractor) or isinstance(i, STFTExtractor)][0]
-    frame_length, step_length = _extract_frame_step_length(sr,
-        extractor.frame_length, extractor.step_length)
+    extractor = [
+        i for _, i in ds['pipeline'].steps
+        if isinstance(i, SpectraExtractor) or isinstance(i, STFTExtractor)
+    ][0]
+    frame_length, step_length = _extract_frame_step_length(
+        sr, extractor.frame_length, extractor.step_length)
     raw = ispec(X,
-                frame_length=frame_length, step_length=step_length,
-                window=extractor.window, padding=extractor.padding,
-                db=extractor.log if hasattr(extractor, 'log') else
-                any(isinstance(i, Power2Db) for i in ds['pipeline'].steps))
+                frame_length=frame_length,
+                step_length=step_length,
+                window=extractor.window,
+                padding=extractor.padding,
+                db=extractor.log if hasattr(extractor, 'log') else any(
+                    isinstance(i, Power2Db) for i in ds['pipeline'].steps))
     file_name += '-ispec.wav'
     save(os.path.join(path, _escape_file_name(file_name)),
-         raw.astype('float32'), sr=sr)
+         raw.astype('float32'),
+         sr=sr)
 
 
-def validate_features(ds_or_processor, path, nb_samples=25,
-                      override=False, seed=1234, fig_width=4):
+def validate_features(ds_or_processor,
+                      path,
+                      nb_samples=25,
+                      override=False,
+                      seed=1234,
+                      fig_width=4):
   # TODO: add PCA visualization
   # TODO: update to match new indices style
   def logger(title, tag, check):
     check = bool(check)
     text_color = 'yellow' if check else 'red'
-    print(ctext('   *', 'cyan'),
-          ctext(str(title), text_color),
+    print(ctext('   *', 'cyan'), ctext(str(title), text_color),
           ctext(str(tag), 'magenta'),
           ctext("✓", text_color) if check else ctext("✗", text_color))
+
   import matplotlib
   matplotlib.use('Agg')
   from odin.visual import plot_save, plot_multiple_features
@@ -210,15 +224,16 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   # store all features (included the features in external_indices
   all_features = []
   # the external indices can be: indices_mfcc_bnf
-  external_indices = flatten_list([k.split('_')[1:] for k in all_keys
-                                   if 'indices' in k and k != 'indices'])
+  external_indices = flatten_list(
+      [k.split('_')[1:] for k in all_keys if 'indices' in k and k != 'indices'])
   # ====== checking indices ====== #
-  main_indices = {name: (start, end)
-                  for name, (start, end) in ds['indices'].items()}
+  main_indices = {
+      name: (start, end) for name, (start, end) in ds['indices'].items()
+  }
   for ids_name in (k for k in all_keys if 'indices' in k):
-    ids = sorted([(name, start, end)
-                  for name, (start, end) in ds[ids_name].items()],
-                 key=lambda x: x[1])
+    ids = sorted(
+        [(name, start, end) for name, (start, end) in ds[ids_name].items()],
+        key=lambda x: x[1])
     for prev, now in zip(ids, ids[1:]):
       assert prev[2] == now[1], "Zero length in indices"
       assert prev[2] - prev[1] > 0, "Zero length in indices"
@@ -235,7 +250,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
         if feat_name not in external_indices and \
         'sum1' != feat_name[-4:] and 'sum2' != feat_name[-4:] and \
         'mean' != feat_name[-4:] and 'std' != feat_name[-3:] and \
-        isinstance(ds[feat_name], MmapData):
+        isinstance(ds[feat_name], MmapArray):
           assert now[-1] == len(ds[feat_name]), \
           "Length of indices and actual data mismatch, " + ids_name + ':' + feat_name
           all_features.append(feat_name)
@@ -247,7 +262,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       data = ds[name]
       # special cases
       if name == 'sr':
-        checking_func = lambda x: x > 0 # for sr
+        checking_func = lambda x: x > 0  # for sr
       else:
         checking_func = lambda x: True
       # check
@@ -264,14 +279,14 @@ def validate_features(ds_or_processor, path, nb_samples=25,
     'mean' == k[-4:] or 'std' == k[-3:]:
       all_stats[k[:-4].split('_')[0]].append(k)
   # get all pca name
-  all_pca = {i: i + '_pca' for i in all_features
-             if i + '_pca' in ds}
+  all_pca = {i: i + '_pca' for i in all_features if i + '_pca' in ds}
   # checking one-by-one numpy.ndarray features array
   for feat_name in all_features:
     dtype = str(ds[feat_name].dtype)
     # checking all data
     indices = ds.find_prefix(feat_name, 'indices')
-    prog = Progbar(target=len(indices), interval=0.1,
+    prog = Progbar(target=len(indices),
+                   interval=0.1,
                    print_report=True,
                    name='Checking: %s(%s)' % (feat_name, dtype))
     # start iterating over all data file
@@ -284,8 +299,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
         fail_test = True
       # not all value closed to zeros
       if np.all(np.isclose(dat, 0.)):
-        logger("All-closed-zeros values", file_name + ':' + feat_name,
-               False)
+        logger("All-closed-zeros values", file_name + ':' + feat_name, False)
         fail_test = True
       prog['Name'] = file_name
       prog.add(1)
@@ -302,8 +316,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
           logger("NaN values", feat_name + ':' + stat_name, False)
           fail_test = True
         if np.all(np.isclose(X, 0.)):
-          logger("All-closed-zeros values", feat_name + ':' + stat_name,
-                 False)
+          logger("All-closed-zeros values", feat_name + ':' + stat_name, False)
           fail_test = True
       if not fail_test:
         logger("Check statistics for: ", feat_name, True)
@@ -316,9 +329,8 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       # performing PCA on random samples
       for i in range(nb_samples):
         start = np.random.randint(0, n - nb_samples - 1)
-        X = pca.transform(
-            ds[feat_name][start:(start + nb_samples)],
-            n_components=max(nb_feats // 2, 1))
+        X = pca.transform(ds[feat_name][start:(start + nb_samples)],
+                          n_components=max(nb_feats // 2, 1))
         if np.any(np.isnan(X)):
           logger("NaN values in PCA", feat_name, False)
           fail_test = True
@@ -330,7 +342,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       if not fail_test:
         logger("Check PCA for: ", feat_name, True)
   # ====== Do sampling ====== #
-  np.random.seed(seed) # seed for reproceducible
+  np.random.seed(seed)  # seed for reproceducible
   all_samples = np.random.choice(list(ds['indices'].keys()),
                                  size=nb_samples,
                                  replace=False)
@@ -343,11 +355,14 @@ def validate_features(ds_or_processor, path, nb_samples=25,
       X[feat_name] = feat
       # some special handling
       try:
-        _special_cases(X=feat, feat_name=feat_name, file_name=file_name,
-                       ds=ds, path=path)
+        _special_cases(X=feat,
+                       feat_name=feat_name,
+                       file_name=file_name,
+                       ds=ds,
+                       path=path)
       except Exception as e:
-        logger("Special case error: %s" % str(e),
-               file_name + ':' + feat_name, False)
+        logger("Special case error: %s" % str(e), file_name + ':' + feat_name,
+               False)
     plot_multiple_features(X, title=file_name, fig_width=fig_width)
     figure_path = os.path.join(path, '%s.pdf' % _escape_file_name(file_name))
     plot_save(figure_path, log=False, clear_all=True)
@@ -355,9 +370,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   # plotting the statistic
   figure_path = os.path.join(path, 'stats.pdf')
   for feat_name, stat_name in all_stats.items():
-    X = {name: ds[name][:]
-         for name in stat_name
-         if ds[name].ndim >= 1}
+    X = {name: ds[name][:] for name in stat_name if ds[name].ndim >= 1}
     if len(X) > 0:
       plot_multiple_features(X, title=feat_name, fig_width=fig_width)
   plot_save(figure_path, log=False, clear_all=True)
@@ -367,6 +380,7 @@ def validate_features(ds_or_processor, path, nb_samples=25,
   stdio(path=prev_stdio)
   if should_close_ds:
     ds.close()
+
 
 # ===========================================================================
 # Features Processor
@@ -388,8 +402,8 @@ def _check_logpath(log_path):
     current_log_index += 1
   return main_path + '.' + str(current_log_index) + ext
 
-class FeatureProcessor(object):
 
+class FeatureProcessor(object):
   """ FeatureProcessor
 
   Parameters
@@ -440,8 +454,13 @@ class FeatureProcessor(object):
       appeared.
   """
 
-  def __init__(self, jobs, path, extractor,
-               n_cache=0.12, ncpu=1, override=False,
+  def __init__(self,
+               jobs,
+               path,
+               extractor,
+               n_cache=0.12,
+               ncpu=1,
+               override=False,
                identifier='name',
                log_path=None,
                stop_on_failure=False):
@@ -456,20 +475,21 @@ class FeatureProcessor(object):
       wprint("Remove existed Dataset at path: %s" % path)
       for i in os.listdir(path):
         i = os.path.join(path, i)
-        if os.path.isdir(i): # remove folder
+        if os.path.isdir(i):  # remove folder
           shutil.rmtree(i)
-        else: # remove file
+        else:  # remove file
           os.remove(i)
     # set path and name
     self.path = path
     # ====== check jobs ====== #
     if not isinstance(jobs, (tuple, list, np.ndarray)):
-      raise ValueError("Provided `jobs` must be instance of tuple, list or ndarray.")
+      raise ValueError(
+          "Provided `jobs` must be instance of tuple, list or ndarray.")
     if isinstance(jobs, np.ndarray):
       jobs = jobs.tolist()
     self.jobs = tuple(jobs)
     # ====== check multiprocessing ====== #
-    if ncpu is None: # auto select number of CPU
+    if ncpu is None:  # auto select number of CPU
       ncpu = min(len(jobs), cpu_count() - 1)
     ncpu = int(ncpu)
     if ncpu <= 0 or n_cache <= 0:
@@ -488,8 +508,7 @@ class FeatureProcessor(object):
       steps = [(str(n), e) for n, e in extractor.items()]
       extractor = Pipeline(steps=steps)
     elif isinstance(extractor, Extractor):
-      extractor = Pipeline(
-          steps=[(extractor.__class__.__name__, extractor)])
+      extractor = Pipeline(steps=[(extractor.__class__.__name__, extractor)])
     self.extractor = extractor
     # ====== check identifier and log path ====== #
     self._identifier = str(identifier)
@@ -513,7 +532,8 @@ class FeatureProcessor(object):
 
   # ==================== debugging ==================== #
   def __str__(self):
-    s = ctext('============= FeatureProcessor: %s =============' % self.path, 'yellow') + '\n'
+    s = ctext('============= FeatureProcessor: %s =============' % self.path,
+              'yellow') + '\n'
     padding = '  '
     # ====== basic info ====== #
     s += '- Jobs: ' + ctext(len(self.jobs), 'cyan') + '\n'
@@ -542,13 +562,13 @@ class FeatureProcessor(object):
     else:
       cache_limit = int(self.n_cache)
     # ====== indices ====== #
-    databases = defaultdictkey(lambda key:
-        MmapDict(path=os.path.join(dataset.path, key), cache_size=10000,
-                 read_only=False))
+    databases = defaultdictkey(lambda key: MmapDict(
+        path=os.path.join(dataset.path, key), cache_size=10000, read_only=False)
+                              )
     last_start = defaultdict(int)
     # ====== statistic ====== #
     # load old statistics
-    stats = defaultdict(lambda: [0, 0]) # name -> (sum1, sum2)
+    stats = defaultdict(lambda: [0, 0])  # name -> (sum1, sum2)
     for key in dataset.keys():
       if 'sum1' == key[-4]:
         stats[key[:-4]][0] = dataset[key][:]
@@ -556,7 +576,7 @@ class FeatureProcessor(object):
         stats[key[:-4]][1] = dataset[key][:]
     # all data are cached for periodically flushed
     cache = defaultdict(list)
-    n_processed = [0] # store the value as reference
+    n_processed = [0]  # store the value as reference
 
     # ====== helper ====== #
     def flush_feature(feat_name, X_cached):
@@ -573,11 +593,13 @@ class FeatureProcessor(object):
       # search for file name
       if self.identifier not in result:
         raise RuntimeError(
-            "Cannot find identifier '%s' in returned dictionary" % self.identifier)
+            "Cannot find identifier '%s' in returned dictionary" %
+            self.identifier)
       file_name = result[self.identifier]
       # invalid file_name
       if not is_string(file_name):
-        raise RuntimeError("Cannot find file name in returned features "
+        raise RuntimeError(
+            "Cannot find file name in returned features "
             "list, the file name can be specified in key: 'name', 'path' "
             "and the type of the value must be string. All available "
             "keys are: %s" % str(result.keys()))
@@ -588,8 +610,9 @@ class FeatureProcessor(object):
       for feat_name, X in result.items():
         # some invalid feat_name
         if feat_name in ('config', 'pipeline', 'sum1', 'sum2'):
-          raise RuntimeError("Returned features' name cannot be one "
-                             "of the following: 'config', 'pipeline', 'sum1', 'sum2'.")
+          raise RuntimeError(
+              "Returned features' name cannot be one "
+              "of the following: 'config', 'pipeline', 'sum1', 'sum2'.")
         # ignore some feat_name
         if feat_name in ('name'):
           continue
@@ -622,7 +645,7 @@ class FeatureProcessor(object):
           last_start[ids_name] += n
       # ====== flush cache ====== #
       n_processed[0] += 1
-      if n_processed[0] % cache_limit == 0: # 12 + 8
+      if n_processed[0] % cache_limit == 0:  # 12 + 8
         for feat_name, X_cached in cache.items():
           flush_feature(feat_name, X_cached)
         cache.clear()
@@ -633,17 +656,20 @@ class FeatureProcessor(object):
     def _map_func(dat):
       try:
         ret = self.extractor.transform(dat)
-      except Exception as e: # Non-handled exception
+      except Exception as e:  # Non-handled exception
         ret = '\n========\n'
         ret += 'Time  : `%s`\n' % str(get_formatted_datetime(only_number=False))
         ret += 'Error : `%s`\n' % str(e)
         ret += 'Input : `%s`\n' % str(dat)
         import traceback
         etype, value, tb = sys.exc_info()
-        for line in traceback.TracebackException(
-                type(value), value, tb, limit=None).format(chain=True):
+        for line in traceback.TracebackException(type(value),
+                                                 value,
+                                                 tb,
+                                                 limit=None).format(chain=True):
           ret += line
       return ret
+
     # ====== processing ====== #
     mpi = MPI(jobs=self.jobs,
               func=_map_func,
@@ -652,18 +678,23 @@ class FeatureProcessor(object):
               hwm=self.n_cpu * 3,
               backend='python')
     # initialize
-    prog = Progbar(target=njobs, name=self.path,
-                   interval=0.12, print_report=True, print_summary=True)
+    prog = Progbar(target=njobs,
+                   name=self.path,
+                   interval=0.12,
+                   print_report=True,
+                   print_summary=True)
     start_time = time.time()
     last_time = time.time()
     last_count = 0
     with open(self._log_path, 'w') as flog:
       # writing the log head
       flog.write('============================\n')
-      flog.write('Start Time : %s\n' % get_formatted_datetime(only_number=False))
+      flog.write('Start Time : %s\n' %
+                 get_formatted_datetime(only_number=False))
       flog.write('Outpath    : %s\n' % self.path)
-      flog.write('Extractor  : %s\n' % '->'.join([s[-1].__class__.__name__
-                                                  for s in self.extractor.steps]))
+      flog.write(
+          'Extractor  : %s\n' %
+          '->'.join([s[-1].__class__.__name__ for s in self.extractor.steps]))
       flog.write('#Jobs      : %d\n' % njobs)
       flog.write('#CPU       : %d\n' % self.n_cpu)
       flog.write('#Cache     : %d\n' % cache_limit)
@@ -680,16 +711,19 @@ class FeatureProcessor(object):
             raise RuntimeError(result)
         # some error might happened
         elif isinstance(result, ExtractorSignal):
-          flog.write(str(result)); flog.flush()
+          flog.write(str(result))
+          flog.flush()
           if result.action == 'error':
             prog.add_notification(str(result))
-            raise RuntimeError("ExtractorSignal requests terminating processor!")
+            raise RuntimeError(
+                "ExtractorSignal requests terminating processor!")
           elif result.action == 'warn':
             prog.add_notification(str(result))
           elif result.action == 'ignore':
             self._error_log.append(result)
           else:
-            raise RuntimeError("Unknown action from ExtractorSignal: %s" % result.action)
+            raise RuntimeError("Unknown action from ExtractorSignal: %s" %
+                               result.action)
           prog['File'] = '%-48s' % result.message[:48]
         # otherwise, no error happened, do post-processing
         else:
@@ -705,13 +739,12 @@ class FeatureProcessor(object):
           cur_speed = (count + 1 - last_count) / (curr_time - last_time)
           avg_est = (njobs - count - 1) / avg_speed
           cur_est = (njobs - count - 1) / cur_speed
-          flog.write('[%s] Processed: %d(files)   Remain: %d(files)   Elap.: %.2f(secs)\n'
-                     '   Avg.Spd: %.2f(obj/sec)  Avg.Est.: %.2f(secs)\n'
-                     '   Cur.Spd: %.2f(obj/sec)  Cur.Est.: %.2f(secs)\n' %
-                     (get_formatted_datetime(only_number=False),
-                      count + 1, njobs - count - 1, elap,
-                      avg_speed, avg_est,
-                      cur_speed, cur_est))
+          flog.write(
+              '[%s] Processed: %d(files)   Remain: %d(files)   Elap.: %.2f(secs)\n'
+              '   Avg.Spd: %.2f(obj/sec)  Avg.Est.: %.2f(secs)\n'
+              '   Cur.Spd: %.2f(obj/sec)  Cur.Est.: %.2f(secs)\n' %
+              (get_formatted_datetime(only_number=False), count + 1,
+               njobs - count - 1, elap, avg_speed, avg_est, cur_speed, cur_est))
           flog.flush()
           last_time = curr_time
           last_count = count + 1
@@ -727,9 +760,9 @@ class FeatureProcessor(object):
       db.flush(save_all=True)
       db_size = len(db)
       db.close()
-      prog.add_notification('Flush MmapDict "%s" to disk, size: %s' %
-                            (ctext(name, 'yellow'),
-                             ctext(str(db_size), 'yellow')))
+      prog.add_notification(
+          'Flush MmapDict "%s" to disk, size: %s' %
+          (ctext(name, 'yellow'), ctext(str(db_size), 'yellow')))
 
     # ====== save mean and std ====== #
     def save_mean_std(sum1, sum2, name):
@@ -744,6 +777,7 @@ class FeatureProcessor(object):
       dataset[name + 'sum2'] = sum2
       dataset[name + 'mean'] = mean
       dataset[name + 'std'] = std
+
     # save all stats
     if len(stats) > 0:
       for feat_name, (sum1, sum2) in stats.items():
@@ -773,8 +807,7 @@ class FeatureProcessor(object):
       if isinstance(j, (Number, string_types, bool)):
         config[i] = j
     config.flush(save_all=True)
-    self.config = {i: j
-                   for i, j in config}
+    self.config = {i: j for i, j in config}
     config.close()
     prog.add_notification("Saved configuration at: %s" %
                           ctext(config_path, 'yellow'))

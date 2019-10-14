@@ -1,12 +1,23 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
 
-# returns a list of augmented audio data, stereo or mono
-def augment_audio(y, sr, n_augment = 0, allow_speedandpitch = True, allow_pitch = True,
-    allow_speed = True, allow_dyn = True, allow_noise = True, allow_timeshift = True, tab="", quiet=False):
 
-  mods = [y]                  # always returns the original as element zero
+
+# returns a list of augmented audio data, stereo or mono
+def augment_audio(y,
+                  sr,
+                  n_augment=0,
+                  allow_speedandpitch=True,
+                  allow_pitch=True,
+                  allow_speed=True,
+                  allow_dyn=True,
+                  allow_noise=True,
+                  allow_timeshift=True,
+                  tab="",
+                  quiet=False):
+
+  mods = [y]  # always returns the original as element zero
   length = y.shape[0]
 
   for i in range(n_augment):
@@ -23,19 +34,22 @@ def augment_audio(y, sr, n_augment = 0, allow_speedandpitch = True, allow_pitch 
         print(tab + "    resample length_change = ", length_change)
       tmp = np.interp(np.arange(0, len(y), speed_fac), np.arange(0, len(y)), y)
       #tmp = resample(y,int(length*lengt_fac))    # signal.resample is too slow
-      minlen = min(y.shape[0], tmp.shape[0])     # keep same length as original;
-      y_mod *= 0                                    # pad with zeros
+      minlen = min(y.shape[0], tmp.shape[0])  # keep same length as original;
+      y_mod *= 0  # pad with zeros
       y_mod[0:minlen] = tmp[0:minlen]
       count_changes += 1
 
     # change pitch (w/o speed)
     if (allow_pitch) and random_onoff():
-      bins_per_octave = 24        # pitch increments are quarter-steps
-      pitch_pm = 4                                # +/- this many quarter steps
+      bins_per_octave = 24  # pitch increments are quarter-steps
+      pitch_pm = 4  # +/- this many quarter steps
       pitch_change = pitch_pm * 2 * (np.random.uniform() - 0.5)
       if not quiet:
         print(tab + "    pitch_change = ", pitch_change)
-      y_mod = librosa.effects.pitch_shift(y, sr, n_steps=pitch_change, bins_per_octave=bins_per_octave)
+      y_mod = librosa.effects.pitch_shift(y,
+                                          sr,
+                                          n_steps=pitch_change,
+                                          bins_per_octave=bins_per_octave)
       count_changes += 1
 
     # change speed (w/o pitch),
@@ -44,8 +58,8 @@ def augment_audio(y, sr, n_augment = 0, allow_speedandpitch = True, allow_pitch 
       if not quiet:
         print(tab + "    speed_change = ", speed_change)
       tmp = librosa.effects.time_stretch(y_mod, speed_change)
-      minlen = min(y.shape[0], tmp.shape[0])        # keep same length as original;
-      y_mod *= 0                                    # pad with zeros
+      minlen = min(y.shape[0], tmp.shape[0])  # keep same length as original;
+      y_mod *= 0  # pad with zeros
       y_mod[0:minlen] = tmp[0:minlen]
       count_changes += 1
 
@@ -72,7 +86,8 @@ def augment_audio(y, sr, n_augment = 0, allow_speedandpitch = True, allow_pitch 
 
     # shift in time forwards or backwards
     if (allow_timeshift) and random_onoff():
-      timeshift_fac = 0.2 * 2 * (np.random.uniform() - 0.5)  # up to 20% of length
+      timeshift_fac = 0.2 * 2 * (np.random.uniform() - 0.5
+                                )  # up to 20% of length
       if not quiet:
         print(tab + "    timeshift_fac = ", timeshift_fac)
       start = int(length * timeshift_fac)
@@ -86,20 +101,27 @@ def augment_audio(y, sr, n_augment = 0, allow_speedandpitch = True, allow_pitch 
     if (0 == count_changes):
       if not quiet:
         print("No changes made to signal, trying again")
-      mods.append(augment_audio(y, sr, n_augment = 1, tab="      ", quiet=quiet)[1])
+      mods.append(
+          augment_audio(y, sr, n_augment=1, tab="      ", quiet=quiet)[1])
     else:
       mods.append(y_mod)
 
   return mods
 
+
 """ scale frequency axis logarithmically """
+
+
 def logscale_spec(spec, sr=44100, factor=20., alpha=1.0, f0=0.9, fmax=1):
   spec = spec[:, 0:256]
   timebins, freqbins = np.shape(spec)
-  scale = np.linspace(0, 1, freqbins) #** factor
+  scale = np.linspace(0, 1, freqbins)  #** factor
 
   # http://ieeexplore.ieee.org/xpl/login.jsp?tp=&arnumber=650310&url=http%3A%2F%2Fieeexplore.ieee.org%2Fiel4%2F89%2F14168%2F00650310
-  scale = np.array(map(lambda x: x * alpha if x <= f0 else (fmax - alpha * f0) / (fmax - f0) * (x - f0) + alpha * f0, scale))
+  scale = np.array(
+      map(
+          lambda x: x * alpha if x <= f0 else (fmax - alpha * f0) /
+          (fmax - f0) * (x - f0) + alpha * f0, scale))
   scale *= (freqbins - 1) / max(scale)
 
   newspec = np.complex128(np.zeros([timebins, freqbins]))

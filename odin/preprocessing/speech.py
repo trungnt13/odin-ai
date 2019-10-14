@@ -33,59 +33,79 @@ The following order is recommended for extracting spectra:
 # Copyright (c) 2016, librosa development team.
 # Modified work Copyright 2016-2017 TrungNT
 # ===========================================================================
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
+import base64
+import copy
+import inspect
+import math
 import os
 import re
-import six
-import math
-import copy
-import base64
 import shutil
-import inspect
 import warnings
+from collections import Mapping, OrderedDict, defaultdict
 from numbers import Number
-from six import string_types
-from collections import OrderedDict, Mapping, defaultdict
 
 import numpy as np
+import six
 import tensorflow as tf
 from scipy.signal import lfilter
+from six import string_types
 
-from odin.fuel import Dataset, MmapData, MmapDict
-from odin.utils import (is_number, cache_memory, is_string, as_tuple,
-                        get_all_files, is_pickleable, Progbar, mpi, ctext,
-                        is_fileobj, batching)
-from odin.preprocessing.base import Extractor, ExtractorSignal
-from odin.preprocessing.signal import (smooth, pre_emphasis, get_window, get_energy,
-                                       spectra, vad_energy,
-                                       pitch_track, resample, rastafilt, mvn, wmvn,
-                                       shifted_deltas, stack_frames, stft,
-                                       power_spectrogram, mels_spectrogram, ceps_spectrogram,
-                                       power2db, anything2wav)
-# import all OpenSMILE extractor
+from bigarray import MmapArray
+from odin.fuel import Dataset, MmapDict
 from odin.preprocessing._opensmile import *
+from odin.preprocessing.base import Extractor, ExtractorSignal
+from odin.preprocessing.signal import (
+    anything2wav, ceps_spectrogram, get_energy, get_window, mels_spectrogram,
+    mvn, pitch_track, power2db, power_spectrogram, pre_emphasis, rastafilt,
+    resample, shifted_deltas, smooth, spectra, stack_frames, stft, vad_energy,
+    wmvn)
+from odin.utils import (Progbar, as_tuple, batching, cache_memory, ctext,
+                        get_all_files, is_fileobj, is_number, is_pickleable,
+                        is_string, mpi)
 
 # ===========================================================================
 # Predefined variables of speech datasets
 # ===========================================================================
 # ==================== Timit ==================== #
-timit_61 = ['aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay',
-    'b', 'bcl', 'ch', 'd', 'dcl', 'dh', 'dx', 'eh', 'el', 'em', 'en',
-    'eng', 'epi', 'er', 'ey', 'f', 'g', 'gcl', 'h#', 'hh', 'hv', 'ih',
-    'ix', 'iy', 'jh', 'k', 'kcl', 'l', 'm', 'n', 'ng', 'nx', 'ow',
-    'oy', 'p', 'pau', 'pcl', 'q', 'r', 's', 'sh', 't', 'tcl', 'th',
-    'uh', 'uw', 'ux', 'v', 'w', 'y', 'z', 'zh']
-timit_39 = ['aa', 'ae', 'ah', 'aw', 'ay', 'b', 'ch', 'd',
-    'dh', 'dx', 'eh', 'er', 'ey', 'f', 'g', 'hh', 'ih', 'iy', 'jh', 'k',
-    'l', 'm', 'n', 'ng', 'ow', 'oy', 'p', 'r', 's', 'sh', 'sil', 't',
-    'th', 'uh', 'uw', 'v', 'w', 'y', 'z']
-timit_map = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er',
-    'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm',
-    'en': 'n', 'nx': 'n',
-    'eng': 'ng', 'zh': 'sh', 'ux': 'uw',
-    'pcl': 'sil', 'tcl': 'sil', 'kcl': 'sil', 'bcl': 'sil',
-    'dcl': 'sil', 'gcl': 'sil', 'h#': 'sil', 'pau': 'sil', 'epi': 'sil'}
+timit_61 = [
+    'aa', 'ae', 'ah', 'ao', 'aw', 'ax', 'ax-h', 'axr', 'ay', 'b', 'bcl', 'ch',
+    'd', 'dcl', 'dh', 'dx', 'eh', 'el', 'em', 'en', 'eng', 'epi', 'er', 'ey',
+    'f', 'g', 'gcl', 'h#', 'hh', 'hv', 'ih', 'ix', 'iy', 'jh', 'k', 'kcl', 'l',
+    'm', 'n', 'ng', 'nx', 'ow', 'oy', 'p', 'pau', 'pcl', 'q', 'r', 's', 'sh',
+    't', 'tcl', 'th', 'uh', 'uw', 'ux', 'v', 'w', 'y', 'z', 'zh'
+]
+timit_39 = [
+    'aa', 'ae', 'ah', 'aw', 'ay', 'b', 'ch', 'd', 'dh', 'dx', 'eh', 'er', 'ey',
+    'f', 'g', 'hh', 'ih', 'iy', 'jh', 'k', 'l', 'm', 'n', 'ng', 'ow', 'oy', 'p',
+    'r', 's', 'sh', 'sil', 't', 'th', 'uh', 'uw', 'v', 'w', 'y', 'z'
+]
+timit_map = {
+    'ao': 'aa',
+    'ax': 'ah',
+    'ax-h': 'ah',
+    'axr': 'er',
+    'hv': 'hh',
+    'ix': 'ih',
+    'el': 'l',
+    'em': 'm',
+    'en': 'n',
+    'nx': 'n',
+    'eng': 'ng',
+    'zh': 'sh',
+    'ux': 'uw',
+    'pcl': 'sil',
+    'tcl': 'sil',
+    'kcl': 'sil',
+    'bcl': 'sil',
+    'dcl': 'sil',
+    'gcl': 'sil',
+    'h#': 'sil',
+    'pau': 'sil',
+    'epi': 'sil'
+}
+
 
 # ===========================================================================
 # Basics
@@ -102,6 +122,7 @@ def _read_pcm(path, encode):
       sr = 44000
   raw = np.memmap(path, dtype=dtype, mode='r')
   return raw, sr
+
 
 def read(path_or_file, encode=None):
   """
@@ -122,7 +143,7 @@ def read(path_or_file, encode=None):
     path = path_or_file
   else:
     raise ValueError("Invalid type of `path_or_file` %s" %
-        str(type(path_or_file)))
+                     str(type(path_or_file)))
   # ====== read the audio ====== #
   if '.pcm' in path.lower():
     f = open(path_or_file, 'rb')
@@ -139,12 +160,15 @@ def read(path_or_file, encode=None):
         raw, sr = _read_pcm(f, encode=encode)
       # read using external tools
       else:
-        raw, sr = anything2wav(inpath=path, outpath=None,
-                               codec=encode, return_data=True)
+        raw, sr = anything2wav(inpath=path,
+                               outpath=None,
+                               codec=encode,
+                               return_data=True)
   # close file
   if f is not None:
     f.close()
   return raw, sr
+
 
 def save(file_or_path, s, sr, subtype=None):
   '''
@@ -176,6 +200,7 @@ def save(file_or_path, s, sr, subtype=None):
   from soundfile import write
   return write(file_or_path, s, sr, subtype=subtype)
 
+
 # ===========================================================================
 # Helper function
 # ===========================================================================
@@ -194,6 +219,7 @@ def _extract_frame_step_length(sr, frame_length, step_length):
     step_length = int(step_length)
   return frame_length, step_length
 
+
 @cache_memory
 def _num_two_factors(x):
   """return number of times x is divideable for 2"""
@@ -205,13 +231,23 @@ def _num_two_factors(x):
     x //= 2
   return num_twos
 
+
 @cache_memory
 def _max_fft_bins(sr, n_fft, fmax):
-  return [i + 1 for i, j in enumerate(np.linspace(0, float(sr) / 2, int(1 + n_fft // 2),
-                                      endpoint=True)) if j >= fmax][0]
+  return [
+      i + 1
+      for i, j in enumerate(
+          np.linspace(0, float(sr) / 2, int(1 + n_fft // 2), endpoint=True))
+      if j >= fmax
+  ][0]
 
-def audio_segmenter(files, outpath, max_duration,
-                    sr=None, sr_new=None, best_resample=True,
+
+def audio_segmenter(files,
+                    outpath,
+                    max_duration,
+                    sr=None,
+                    sr_new=None,
+                    best_resample=True,
                     override=False):
   """ Segment all given files into small chunks, the new file
   name is formatted as:
@@ -229,8 +265,7 @@ def audio_segmenter(files, outpath, max_duration,
   info_path = os.path.join(outpath, 'segments.csv')
   # ====== validate arguments ====== #
   max_duration = int(max_duration)
-  files = [f for f in as_tuple(files, t=str)
-           if os.path.isfile(f)]
+  files = [f for f in as_tuple(files, t=str) if os.path.isfile(f)]
   outpath = str(outpath)
   if os.path.isfile(outpath):
     raise ValueError("outpath at: %s is a file." % outpath)
@@ -241,17 +276,24 @@ def audio_segmenter(files, outpath, max_duration,
       shutil.rmtree(outpath)
   if not os.path.isdir(outpath):
     os.mkdir(outpath)
-  reader = AudioReader(sr=sr, sr_new=sr_new, best_resample=best_resample,
-                       remove_dc_n_dither=False, preemphasis=None)
+  reader = AudioReader(sr=sr,
+                       sr_new=sr_new,
+                       best_resample=best_resample,
+                       remove_dc_n_dither=False,
+                       preemphasis=None)
 
   # ====== segmenting ====== #
   def segmenting(f):
     raw = reader.transform(f)
     path, sr, raw = raw['path'], raw['sr'], raw['raw']
-    segs = [int(np.round(i)) for i in np.linspace(
-        start=0, stop=raw.shape[0],
-        num=int(np.ceil(raw.shape[0] / (sr * max_duration))) + 1,
-        endpoint=True)]
+    segs = [
+        int(np.round(i))
+        for i in np.linspace(start=0,
+                             stop=raw.shape[0],
+                             num=int(np.ceil(raw.shape[0] /
+                                             (sr * max_duration))) + 1,
+                             endpoint=True)
+    ]
     indices = list(zip(segs, segs[1:]))
     name = os.path.basename(path)
     info = []
@@ -262,11 +304,17 @@ def audio_segmenter(files, outpath, max_duration,
       save(os.path.join(outpath, seg_name), y, sr)
       info.append((seg_name, s / sr, e / sr))
     return path, info
+
   nb_files = len(files)
-  prog = Progbar(target=nb_files, print_summary=True, print_report=True,
+  prog = Progbar(target=nb_files,
+                 print_summary=True,
+                 print_report=True,
                  name='Segmenting to path: %s' % outpath)
-  task = mpi.MPI(jobs=files, func=segmenting,
-                 ncpu=None, batch=1, backend='python')
+  task = mpi.MPI(jobs=files,
+                 func=segmenting,
+                 ncpu=None,
+                 batch=1,
+                 backend='python')
   # ====== running the processor ====== #
   seg_indices = []
   for f, info in task:
@@ -281,16 +329,20 @@ def audio_segmenter(files, outpath, max_duration,
     prog.add(1)
   # ====== save the info ====== #
   header = ' '.join(['segment', 'origin', 'start', 'end'])
-  np.savetxt(info_path, seg_indices,
-             fmt='%s', delimiter=' ', header=header, comments='')
+  np.savetxt(info_path,
+             seg_indices,
+             fmt='%s',
+             delimiter=' ',
+             header=header,
+             comments='')
   print("Segment info saved at:", ctext(info_path, 'cyan'))
   return info_path
+
 
 # ===========================================================================
 # I/O
 # ===========================================================================
 class AudioReader(Extractor):
-
   """ Return a dictionary of
   {
       'raw': loaded_signal,
@@ -326,8 +378,12 @@ class AudioReader(Extractor):
   For now only support one channel
   """
 
-  def __init__(self, sr=None, sr_new=None, best_resample=True,
-               remove_dc=True, dataset=None):
+  def __init__(self,
+               sr=None,
+               sr_new=None,
+               best_resample=True,
+               remove_dc=True,
+               dataset=None):
     super(AudioReader, self).__init__(is_input_layer=True)
     self.sr = sr
     self.sr_new = sr_new
@@ -341,8 +397,8 @@ class AudioReader(Extractor):
     self.dataset = dataset
 
   def _transform(self, path_or_array):
-    raw = None # raw
-    sr = None # by default, we don't know sample rate
+    raw = None  # raw
+    sr = None  # by default, we don't know sample rate
     name = None
     path = None
     duration = None
@@ -364,7 +420,8 @@ class AudioReader(Extractor):
         path = str(path_or_array['path'])
         raw, sr = read(path, encode=encode)
       else:
-        raise ValueError('`path_or_array` can be a dictionary, contains '
+        raise ValueError(
+            '`path_or_array` can be a dictionary, contains '
             'following key: sr, raw, path. One of the key `raw` for '
             'raw array signal, or `path` for path to audio file must '
             'be specified.')
@@ -389,7 +446,8 @@ class AudioReader(Extractor):
       path = path_or_array.name
       raw, sr = read(path_or_array, encode=encode)
     else:
-      raise ValueError("`path_or_array` can be: list, tuple, Mapping, string, file"
+      raise ValueError(
+          "`path_or_array` can be: list, tuple, Mapping, string, file"
           ". But given: %s" % str(type(path_or_array)))
     # ====== check channel ====== #
     raw = raw.astype('float32')
@@ -402,14 +460,13 @@ class AudioReader(Extractor):
         raw = raw[:, channel]
     else:
       raise ValueError("No support for %d-D signal from file: %s" %
-          (raw.ndim, path))
+                       (raw.ndim, path))
     # ====== valiate sample rate ====== #
     if sr is None and self.sr is not None:
       sr = int(self.sr)
     # resampling if necessary
     if sr is not None and self.sr_new is not None:
-      raw = resample(raw, sr, self.sr_new,
-                     best_algorithm=self.best_resample)
+      raw = resample(raw, sr, self.sr_new, best_algorithm=self.best_resample)
       sr = int(self.sr_new)
     # ====== remove DC offset ====== #
     if self.remove_dc:
@@ -423,11 +480,16 @@ class AudioReader(Extractor):
         path = str(path, 'utf-8')
       if '/' != path[0]:
         path = os.path.abspath(path)
-    ret = {'raw': raw, 'sr': sr, 'duration': duration, # in second
-           'path': path}
+    ret = {
+        'raw': raw,
+        'sr': sr,
+        'duration': duration,  # in second
+        'path': path
+    }
     if name is not None:
       ret['name'] = name
     return ret
+
 
 class AudioAugmentor(Extractor):
   """ SREAugmentor
@@ -443,6 +505,7 @@ class AudioAugmentor(Extractor):
   def _transform(self, row):
     pass
 
+
 # ===========================================================================
 # Pre-processing raw signal
 # ===========================================================================
@@ -450,9 +513,9 @@ class Dithering(Extractor):
   """ Dithering """
 
   def __init__(self, input_name=('raw', 'sr'), output_name='raw'):
-    super(Dithering, self).__init__(
-        input_name=as_tuple(input_name, t=string_types),
-        output_name=str(output_name))
+    super(Dithering, self).__init__(input_name=as_tuple(input_name,
+                                                        t=string_types),
+                                    output_name=str(output_name))
 
   def _transform(self, feat):
     raw, sr = [feat[name] for name in self.input_name]
@@ -473,6 +536,7 @@ class Dithering(Extractor):
     raw = raw + 1.e-6 * s_pow * dither
     return {self.output_name: raw}
 
+
 class PreEmphasis(Extractor):
   """ PreEmphasis
 
@@ -485,8 +549,7 @@ class PreEmphasis(Extractor):
 
   """
 
-  def __init__(self, coeff=0.97,
-               input_name='raw', output_name='raw'):
+  def __init__(self, coeff=0.97, input_name='raw', output_name='raw'):
     super(PreEmphasis, self).__init__(input_name=str(input_name),
                                       output_name=str(output_name))
     assert 0. < coeff < 1.
@@ -499,6 +562,7 @@ class PreEmphasis(Extractor):
                        str(raw.shape))
     return {self.output_name: pre_emphasis(raw, coeff=self.coeff)}
 
+
 # ===========================================================================
 # Low-level operator
 # ===========================================================================
@@ -510,13 +574,18 @@ class Framing(Extractor):
 
   """
 
-  def __init__(self, frame_length, step_length=None,
-               window='hamm', padding=False,
-               input_name=('raw', 'sr'), output_name='frames'):
+  def __init__(self,
+               frame_length,
+               step_length=None,
+               window='hamm',
+               padding=False,
+               input_name=('raw', 'sr'),
+               output_name='frames'):
     if isinstance(input_name, string_types):
       input_name = (input_name, 'sr')
     assert isinstance(output_name, string_types), "`output_name` must be string"
-    super(Framing, self).__init__(input_name=input_name, output_name=output_name)
+    super(Framing, self).__init__(input_name=input_name,
+                                  output_name=output_name)
     if step_length is None:
       step_length = frame_length // 4
     self.frame_length = frame_length
@@ -537,19 +606,19 @@ class Framing(Extractor):
     y_frames = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
     if y_frames.ndim > 2:
       y_frames = np.rollaxis(y_frames, 1)
-    y_frames = y_frames[::step_length] # [n, frame_length]
+    y_frames = y_frames[::step_length]  # [n, frame_length]
     # ====== prepare the window function ====== #
     if self.window is not None:
-      fft_window = get_window(
-          self.window, frame_length, periodic=True).reshape(1, -1)
+      fft_window = get_window(self.window, frame_length,
+                              periodic=True).reshape(1, -1)
       y_frames = fft_window * y_frames
       # scaling the windows
       scale = np.sqrt(1.0 / fft_window.sum()**2)
     else:
       scale = np.sqrt(1.0 / frame_length**2)
     # ====== calculate frames energy ====== #
-    return {self.output_name: y_frames,
-            'scale': scale}
+    return {self.output_name: y_frames, 'scale': scale}
+
 
 class CalculateEnergy(Extractor):
   """
@@ -569,16 +638,16 @@ class CalculateEnergy(Extractor):
 
   """
 
-  def __init__(self, log=True,
-               input_name='frames', output_name='energy'):
+  def __init__(self, log=True, input_name='frames', output_name='energy'):
     super(CalculateEnergy, self).__init__(input_name=str(input_name),
-                                  output_name=str(output_name))
+                                          output_name=str(output_name))
     self.log = bool(log)
 
   def _transform(self, X):
     frames = X[self.input_name]
     energy = get_energy(frames, log=self.log).astype('float32')
     return {self.output_name: energy}
+
 
 # ===========================================================================
 # Spectrogram
@@ -619,9 +688,16 @@ class STFTExtractor(Extractor):
   'stft_energy' : float32 array [time, 1]
   """
 
-  def __init__(self, frame_length=None, step_length=None, n_fft=512,
-               window='hamm', padding=False, energy=True, scale=None,
-               input_name=('raw', 'sr'), output_name='stft'):
+  def __init__(self,
+               frame_length=None,
+               step_length=None,
+               n_fft=512,
+               window='hamm',
+               padding=False,
+               energy=True,
+               scale=None,
+               input_name=('raw', 'sr'),
+               output_name='stft'):
     if isinstance(input_name, string_types):
       input_name = (input_name, 'sr')
     assert isinstance(output_name, string_types), "`output_name` must be string"
@@ -655,15 +731,19 @@ class STFTExtractor(Extractor):
           sr, self.frame_length, self.step_length)
     # ====== stft ====== #
     results = stft(y=y,
-                   frame_length=frame_length, step_length=step_length,
-                   n_fft=self.n_fft, window=self.window, scale=scale,
-                   padding=self.padding, energy=self.energy)
+                   frame_length=frame_length,
+                   step_length=step_length,
+                   n_fft=self.n_fft,
+                   window=self.window,
+                   scale=scale,
+                   padding=self.padding,
+                   energy=self.energy)
     if self.energy:
       s, e = results
-      return {self.output_name: s,
-              '%s_energy' % self.output_name: e}
+      return {self.output_name: s, '%s_energy' % self.output_name: e}
     else:
       return {self.output_name: results}
+
 
 class PowerSpecExtractor(Extractor):
   """ Extract power spectrogram from complex STFT array
@@ -674,14 +754,14 @@ class PowerSpecExtractor(Extractor):
 
   """
 
-  def __init__(self, power=2.0,
-               input_name='stft', output_name='spec'):
+  def __init__(self, power=2.0, input_name='stft', output_name='spec'):
     super(PowerSpecExtractor, self).__init__(input_name=input_name,
                                              output_name=output_name)
     self.power = float(power)
 
   def _transform(self, X):
     return power_spectrogram(S=X[self.input_name], power=self.power)
+
 
 class MelsSpecExtractor(Extractor):
   """
@@ -696,8 +776,13 @@ class MelsSpecExtractor(Extractor):
 
   """
 
-  def __init__(self, n_mels, fmin=64, fmax=None, top_db=80.0,
-               input_name=('spec', 'sr'), output_name='mspec'):
+  def __init__(self,
+               n_mels,
+               fmin=64,
+               fmax=None,
+               top_db=80.0,
+               input_name=('spec', 'sr'),
+               output_name='mspec'):
     # automatically add sample rate to input_name
     if isinstance(input_name, string_types):
       input_name = (input_name, 'sr')
@@ -709,17 +794,24 @@ class MelsSpecExtractor(Extractor):
     self.top_db = top_db
 
   def _transform(self, X):
-    return mels_spectrogram(spec=X[self.input_name[0]], sr=X[self.input_name[1]],
+    return mels_spectrogram(spec=X[self.input_name[0]],
+                            sr=X[self.input_name[1]],
                             n_mels=self.n_mels,
-                            fmin=self.fmin, fmax=self.fmax, top_db=self.top_db)
+                            fmin=self.fmin,
+                            fmax=self.fmax,
+                            top_db=self.top_db)
+
 
 class MFCCsExtractor(Extractor):
   """
   """
 
-  def __init__(self, n_ceps,
-               remove_first_coef=True, first_coef_energy=False,
-               input_name='mspec', output_name='mfcc'):
+  def __init__(self,
+               n_ceps,
+               remove_first_coef=True,
+               first_coef_energy=False,
+               input_name='mspec',
+               output_name='mfcc'):
     super(MFCCsExtractor, self).__init__(input_name=input_name,
                                          output_name=output_name)
     self.n_ceps = int(n_ceps)
@@ -733,11 +825,11 @@ class MFCCsExtractor(Extractor):
     mfcc = ceps_spectrogram(mspec=X[self.input_name],
                             n_ceps=n_ceps,
                             remove_first_coef=False)
-    ret = {
-        self.output_name: mfcc[:, 1:] if self.remove_first_coef else mfcc}
+    ret = {self.output_name: mfcc[:, 1:] if self.remove_first_coef else mfcc}
     if self.first_coef_energy:
       ret['%s_energy' % self.output_name] = mfcc[:, 0]
     return ret
+
 
 class Power2Db(Extractor):
   """ Convert power spectrogram to Decibel spectrogram
@@ -752,6 +844,7 @@ class Power2Db(Extractor):
 
   def _transform(self, X):
     return [power2db(S=X[name], top_db=self.top_db) for name in self.input_name]
+
 
 class SpectraExtractor(Extractor):
   """AcousticExtractor
@@ -783,9 +876,18 @@ class SpectraExtractor(Extractor):
       - If `False`, then `D[:, t]` begins at `y[t * hop_length]`
   """
 
-  def __init__(self, frame_length, step_length=None, n_fft=512, window='hann',
-               n_mels=None, n_ceps=None, fmin=64, fmax=None,
-               power=2.0, log=True, padding=False,
+  def __init__(self,
+               frame_length,
+               step_length=None,
+               n_fft=512,
+               window='hann',
+               n_mels=None,
+               n_ceps=None,
+               fmin=64,
+               fmax=None,
+               power=2.0,
+               log=True,
+               padding=False,
                input_name=('raw', 'sr')):
     super(SpectraExtractor, self).__init__(input_name=input_name)
     # ====== STFT ====== #
@@ -809,14 +911,23 @@ class SpectraExtractor(Extractor):
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
     # ====== extract spectra ====== #
-    feat = spectra(sr=sr, frame_length=frame_length, y=y, S=None,
-                   step_length=step_length, n_fft=self.n_fft,
+    feat = spectra(sr=sr,
+                   frame_length=frame_length,
+                   y=y,
+                   S=None,
+                   step_length=step_length,
+                   n_fft=self.n_fft,
                    window=self.window,
-                   n_mels=self.n_mels, n_ceps=self.n_ceps,
-                   fmin=self.fmin, fmax=self.fmax,
-                   top_db=80., power=self.power, log=self.log,
+                   n_mels=self.n_mels,
+                   n_ceps=self.n_ceps,
+                   fmin=self.fmin,
+                   fmax=self.fmax,
+                   top_db=80.,
+                   power=self.power,
+                   log=self.log,
                    padding=self.padding)
     return feat
+
 
 class CQTExtractor(Extractor):
   """ Constant-Q transform
@@ -825,8 +936,16 @@ class CQTExtractor(Extractor):
 
   """
 
-  def __init__(self, frame_length, step_length=None, n_bins=96, window='hann',
-               n_mels=None, n_ceps=None, fmin=64, fmax=None, padding=False,
+  def __init__(self,
+               frame_length,
+               step_length=None,
+               n_bins=96,
+               window='hann',
+               n_mels=None,
+               n_ceps=None,
+               fmin=64,
+               fmax=None,
+               padding=False,
                input_name=('raw', 'sr')):
     super(CQTExtractor, self).__init__(input_name=input_name)
     self.frame_length = frame_length
@@ -846,27 +965,46 @@ class CQTExtractor(Extractor):
     # ====== extract CQT ====== #
     from librosa.core import constantq
     # auto adjust bins_per_octave to get maximum range of frequency
-    bins_per_octave = np.ceil(float(self.n_bins - 1) / np.log2(sr / 2. / self.fmin)) + 1
+    bins_per_octave = np.ceil(
+        float(self.n_bins - 1) / np.log2(sr / 2. / self.fmin)) + 1
     # adjust the bins_per_octave to make acceptable hop_length
     # i.e. 2_factors(hop_length) < [ceil(cqt_bins / bins_per_octave) - 1]
-    if _num_two_factors(step_length) < np.ceil(self.n_bins / bins_per_octave) - 1:
-      bins_per_octave = np.ceil(self.n_bins / (_num_two_factors(step_length) + 1))
+    if _num_two_factors(step_length) < np.ceil(
+        self.n_bins / bins_per_octave) - 1:
+      bins_per_octave = np.ceil(self.n_bins /
+                                (_num_two_factors(step_length) + 1))
     with warnings.catch_warnings():
       warnings.filterwarnings("ignore", category=DeprecationWarning)
-      qtrans = constantq.cqt(y=y, sr=sr, hop_length=step_length, n_bins=self.n_bins,
+      qtrans = constantq.cqt(y=y,
+                             sr=sr,
+                             hop_length=step_length,
+                             n_bins=self.n_bins,
                              bins_per_octave=int(bins_per_octave),
-                             fmin=self.fmin, tuning=0.0, norm=1,
-                             filter_scale=1., sparsity=0.01).astype('complex64')
+                             fmin=self.fmin,
+                             tuning=0.0,
+                             norm=1,
+                             filter_scale=1.,
+                             sparsity=0.01).astype('complex64')
     # ====== ceptral analysis ====== #
-    feat = spectra(sr=sr, frame_length=frame_length, y=None, S=qtrans.T,
-                   step_length=step_length, n_fft=None, window='hann',
-                   n_mels=self.n_mels, n_ceps=self.n_ceps,
-                   fmin=64, fmax=self.fmax,
-                   top_db=80.0, power=2.0, log=True,
+    feat = spectra(sr=sr,
+                   frame_length=frame_length,
+                   y=None,
+                   S=qtrans.T,
+                   step_length=step_length,
+                   n_fft=None,
+                   window='hann',
+                   n_mels=self.n_mels,
+                   n_ceps=self.n_ceps,
+                   fmin=64,
+                   fmax=self.fmax,
+                   top_db=80.0,
+                   power=2.0,
+                   log=True,
                    padding=self.padding)
     # ====== add 'q' prefix for CQT features ====== #
     feat = {'q' + name: X for name, X in feat.items()}
     return feat
+
 
 # ===========================================================================
 # Bottleneck features
@@ -874,9 +1012,14 @@ class CQTExtractor(Extractor):
 class _BNFExtractorBase(Extractor):
   """ _BNFExtractorBase """
 
-  def __init__(self, input_name, network, output_name='bnf',
-               sad_name='sad', remove_non_speech=True,
-               stack_context=10, pre_mvn=True,
+  def __init__(self,
+               input_name,
+               network,
+               output_name='bnf',
+               sad_name='sad',
+               remove_non_speech=True,
+               stack_context=10,
+               pre_mvn=True,
                batch_size=2048):
     assert isinstance(input_name, string_types), "`input_name` must be string"
     if isinstance(sad_name, string_types):
@@ -885,8 +1028,8 @@ class _BNFExtractorBase(Extractor):
     else:
       self.use_sad = False
     self.remove_non_speech = bool(remove_non_speech)
-    super(_BNFExtractorBase, self).__init__(
-        input_name=input_name, output_name=output_name)
+    super(_BNFExtractorBase, self).__init__(input_name=input_name,
+                                            output_name=output_name)
     # ====== other configs ====== #
     if stack_context is None:
       stack_context = 0
@@ -904,8 +1047,10 @@ class _BNFExtractorBase(Extractor):
           (X_sad.std(0, keepdims=True) + 1e-18)
     # ====== stacking context and applying SAD ====== #
     if self.stack_context > 0:
-      X = stack_frames(X, frame_length=self.stack_context * 2 + 1,
-                       step_length=1, keep_length=True,
+      X = stack_frames(X,
+                       frame_length=self.stack_context * 2 + 1,
+                       step_length=1,
+                       keep_length=True,
                        make_contigous=True)
     if self.remove_non_speech and sad is not None:
       X = X[sad]
@@ -934,6 +1079,7 @@ class _BNFExtractorBase(Extractor):
 
   def _apply_dnn(self, X):
     raise NotImplementedError
+
 
 class BNFExtractorCPU(_BNFExtractorBase):
   """ Deep bottleneck feature extractor
@@ -983,10 +1129,14 @@ class BNFExtractorCPU(_BNFExtractorBase):
     % str(network)
     params = network.load_parameters()
     # note: the weights are transposed for column matrix (Matlab format)
-    self.weights = [params[name][:]
-        for name in sorted([key for key in params.keys() if 'w' == key[0]])]
-    self.biases = [params[name][:]
-        for name in sorted([key for key in params.keys() if 'b' == key[0]])]
+    self.weights = [
+        params[name][:]
+        for name in sorted([key for key in params.keys() if 'w' == key[0]])
+    ]
+    self.biases = [
+        params[name][:]
+        for name in sorted([key for key in params.keys() if 'b' == key[0]])
+    ]
     assert len(self.weights) == len(self.biases), \
     'Number of weights is: %d; but number of biases is: %s' % \
     (len(self.weights), len(self.biases))
@@ -1013,6 +1163,7 @@ class BNFExtractorCPU(_BNFExtractorBase):
     # last layer, only linear
     X = self.weights[-1].dot(X) + self.biases[-1]
     return X.T
+
 
 class BNFExtractor(_BNFExtractorBase):
   """ Deep bottleneck feature extractor
@@ -1067,17 +1218,16 @@ class BNFExtractor(_BNFExtractorBase):
     if not self.network.is_initialized:
       self.network()
     K.initialize_all_variables()
-    return (self._input_name, self._output_name,
-            self.use_sad, self.batch_size, self.stack_context, self.pre_mvn,
+    return (self._input_name, self._output_name, self.use_sad, self.batch_size,
+            self.stack_context, self.pre_mvn,
             N.serialize(self.network, binary_output=True))
 
   def __setstate__(self, states):
     from odin import nnet as N
-    (self._input_name, self._output_name,
-     self.use_sad, self.batch_size, self.stack_context, self.pre_mvn,
-     self.network) = states
-    self.network = N.deserialize(self.network,
-                                 force_restore_vars=False)
+    (self._input_name, self._output_name, self.use_sad, self.batch_size,
+     self.stack_context, self.pre_mvn, self.network) = states
+    self.network = N.deserialize(self.network, force_restore_vars=False)
+
 
 # ===========================================================================
 # Pitch
@@ -1097,9 +1247,15 @@ class PitchExtractor(Extractor):
 
   """
 
-  def __init__(self, frame_length, step_length=None,
-               threshold=0.5, fmin=20, fmax=400,
-               algo='swipe', f0=False, input_name=('raw', 'sr')):
+  def __init__(self,
+               frame_length,
+               step_length=None,
+               threshold=0.5,
+               fmin=20,
+               fmax=400,
+               algo='swipe',
+               f0=False,
+               input_name=('raw', 'sr')):
     super(PitchExtractor, self).__init__(input_name=input_name)
     self.threshold = threshold
     self.fmin = int(fmin)
@@ -1114,24 +1270,33 @@ class PitchExtractor(Extractor):
     frame_length, step_length = _extract_frame_step_length(
         sr, self.frame_length, self.step_length)
     # ====== extract pitch ====== #
-    pitch_freq = pitch_track(y=y, sr=sr, step_length=step_length, fmin=self.fmin,
-        fmax=self.fmax, threshold=self.threshold, otype='pitch',
-        algorithm=self.algo)
+    pitch_freq = pitch_track(y=y,
+                             sr=sr,
+                             step_length=step_length,
+                             fmin=self.fmin,
+                             fmax=self.fmax,
+                             threshold=self.threshold,
+                             otype='pitch',
+                             algorithm=self.algo)
     pitch_freq = np.expand_dims(pitch_freq, axis=-1)
     if self.f0:
-      f0_freq = pitch_track(y=y, sr=sr, step_length=step_length, fmin=self.fmin,
-          fmax=self.fmax, threshold=self.threshold, otype='f0',
-          algorithm=self.algo)
+      f0_freq = pitch_track(y=y,
+                            sr=sr,
+                            step_length=step_length,
+                            fmin=self.fmin,
+                            fmax=self.fmax,
+                            threshold=self.threshold,
+                            otype='f0',
+                            algorithm=self.algo)
       f0_freq = np.expand_dims(f0_freq, axis=-1)
-      return {'pitch': pitch_freq,
-              'f0': f0_freq}
+      return {'pitch': pitch_freq, 'f0': f0_freq}
     return {'pitch': pitch_freq}
+
 
 # ===========================================================================
 # SAD
 # ===========================================================================
-def _numba_thresholding(energy,
-                        energy_threshold, energy_mean_scale,
+def _numba_thresholding(energy, energy_threshold, energy_mean_scale,
                         frame_context, proportion_threshold):
   """ Using this numba function if at least 5 time faster than
   python/numpy implementation """
@@ -1159,6 +1324,7 @@ def _numba_thresholding(energy,
       sad[t] = 0
   return sad, energy_threshold
 
+
 try:
   import numba as nb
   _numba_thresholding = nb.jit(nopython=True, nogil=True)(_numba_thresholding)
@@ -1167,7 +1333,6 @@ except ImportError as e:
 
 
 class SADthreshold(Extractor):
-
   """ Compute voice-activity vector for a file: 1 if we judge the frame as
   voiced, 0 otherwise.  There are no continuity constraints.
   This method is a very simple energy-based method which only looks
@@ -1224,9 +1389,14 @@ class SADthreshold(Extractor):
 
   """
 
-  def __init__(self, energy_threshold=0.55, energy_mean_scale=0.5,
-               frame_context=2, proportion_threshold=0.12, smooth_window=5,
-               input_name='energy', output_name='sad'):
+  def __init__(self,
+               energy_threshold=0.55,
+               energy_mean_scale=0.5,
+               frame_context=2,
+               proportion_threshold=0.12,
+               smooth_window=5,
+               input_name='energy',
+               output_name='sad'):
     super(SADthreshold, self).__init__(input_name=str(input_name),
                                        output_name=str(output_name))
     self.energy_threshold = float(energy_threshold)
@@ -1248,10 +1418,11 @@ class SADthreshold(Extractor):
     if energy.ndim > 1:
       energy = np.squeeze(energy)
     assert energy.ndim == 1, "Only support 1-D energy"
-    sad, energy_threshold = _numba_thresholding(
-        energy.astype('float32'),
-        self.energy_threshold, self.energy_mean_scale,
-        self.frame_context, self.proportion_threshold)
+    sad, energy_threshold = _numba_thresholding(energy.astype('float32'),
+                                                self.energy_threshold,
+                                                self.energy_mean_scale,
+                                                self.frame_context,
+                                                self.proportion_threshold)
     sad = sad.astype('uint8')
     # ====== smooth the sad ====== #
     if self.smooth_window > 0:
@@ -1259,8 +1430,11 @@ class SADthreshold(Extractor):
       threshold = (2. / self.smooth_window)
       sad = smooth(x=sad, win=self.smooth_window, window='flat') >= threshold
     # ====== return the sad ====== #
-    return {self.output_name: sad,
-            '%s_threshold' % self.output_name: energy_threshold}
+    return {
+        self.output_name: sad,
+        '%s_threshold' % self.output_name: energy_threshold
+    }
+
 
 class SADgmm(Extractor):
   """ GMM-based SAD extractor
@@ -1271,8 +1445,12 @@ class SADgmm(Extractor):
   with very long silence
   """
 
-  def __init__(self, nb_mixture=3, nb_train_it=24 + 1, smooth_window=3,
-               input_name='energy', output_name='sad'):
+  def __init__(self,
+               nb_mixture=3,
+               nb_train_it=24 + 1,
+               smooth_window=3,
+               input_name='energy',
+               output_name='sad'):
     super(SADgmm, self).__init__(input_name=input_name, output_name=output_name)
     self.nb_mixture = int(nb_mixture)
     self.nb_train_it = int(nb_train_it)
@@ -1285,15 +1463,19 @@ class SADgmm(Extractor):
       features = features.sum(axis=-1)
     # ====== calculate VAD ====== #
     sad, sad_threshold = vad_energy(log_energy=features.ravel(),
-        distrib_nb=self.nb_mixture, nb_train_it=self.nb_train_it)
+                                    distrib_nb=self.nb_mixture,
+                                    nb_train_it=self.nb_train_it)
     if self.smooth_window > 0:
       # at least 2 voice frames
       threshold = (2. / self.smooth_window)
       sad = smooth(sad, win=self.smooth_window, window='flat') >= threshold
     # ====== vad is only 0 and 1 so 'uint8' is enough ====== #
     sad = sad.astype('uint8')
-    return {self.output_name: sad,
-            '%s_threshold' % self.output_name: float(sad_threshold)}
+    return {
+        self.output_name: sad,
+        '%s_threshold' % self.output_name: float(sad_threshold)
+    }
+
 
 # ===========================================================================
 # Normalization
@@ -1325,9 +1507,9 @@ class RASTAfilter(Extractor):
 
   """
 
-  def __init__(self, rasta=True, sdc=1,
-               input_name='mfcc', output_name=None):
-    super(RASTAfilter, self).__init__(input_name=as_tuple(input_name, t=string_types),
+  def __init__(self, rasta=True, sdc=1, input_name='mfcc', output_name=None):
+    super(RASTAfilter, self).__init__(input_name=as_tuple(input_name,
+                                                          t=string_types),
                                       output_name=output_name)
     self.rasta = bool(rasta)
     self.sdc = int(sdc)
@@ -1344,12 +1526,12 @@ class RASTAfilter(Extractor):
         n_ceps = mfcc.shape[-1]
         mfcc = np.hstack([
             mfcc,
-            shifted_deltas(mfcc, N=n_ceps, d=self.sdc,
-                           P=3, k=n_ceps) # k = 7
+            shifted_deltas(mfcc, N=n_ceps, d=self.sdc, P=3, k=n_ceps)  # k = 7
         ])
       # store new feature
       new_feat.append(mfcc.astype("float32"))
     return new_feat
+
 
 class AcousticNorm(Extractor):
   """
@@ -1369,14 +1551,21 @@ class AcousticNorm(Extractor):
 
   """
 
-  def __init__(self, input_name, output_name=None,
-               mean_var_norm=True, windowed_mean_var_norm=False,
-               win_length=301, var_norm=True,
-               sad_name=None, ignore_sad_error=True):
+  def __init__(self,
+               input_name,
+               output_name=None,
+               mean_var_norm=True,
+               windowed_mean_var_norm=False,
+               win_length=301,
+               var_norm=True,
+               sad_name=None,
+               ignore_sad_error=True):
     # ====== check which features will be normalized ====== #
-    self.sad_name = str(sad_name) if isinstance(sad_name, string_types) else None
+    self.sad_name = str(sad_name) if isinstance(sad_name,
+                                                string_types) else None
     self.ignore_sad_error = bool(ignore_sad_error)
-    super(AcousticNorm, self).__init__(input_name=as_tuple(input_name, t=string_types),
+    super(AcousticNorm, self).__init__(input_name=as_tuple(input_name,
+                                                           t=string_types),
                                        output_name=output_name)
     # ====== configs ====== #
     self.mean_var_norm = bool(mean_var_norm)
@@ -1406,7 +1595,8 @@ class AcousticNorm(Extractor):
       if sad is not None and len(sad) != len(X):
         if not self.ignore_sad_error:
           raise RuntimeError("Features with name: '%s' have length %d, but "
-                             "given SAD has length %d" % (name, len(X), len(sad)))
+                             "given SAD has length %d" %
+                             (name, len(X), len(sad)))
         else:
           X_sad = None
       # mean-variance normalization
@@ -1418,6 +1608,7 @@ class AcousticNorm(Extractor):
       # update new features
       feat_normalized.append(X)
     return feat_normalized
+
 
 class Read3ColSAD(Extractor):
   """ Read3ColSAD simple helper for applying 3 col
@@ -1445,8 +1636,12 @@ class Read3ColSAD(Extractor):
 
   """
 
-  def __init__(self, path_or_map, step_length, ref_feat,
-               input_name='path', output_name='sad',
+  def __init__(self,
+               path_or_map,
+               step_length,
+               ref_feat,
+               input_name='path',
+               output_name='sad',
                file_regex='.*'):
     super(Read3ColSAD, self).__init__(input_name=str(input_name))
     self.step_length = float(step_length)
@@ -1476,7 +1671,7 @@ class Read3ColSAD(Extractor):
     n_samples = len(ref_feat)
     # ====== convert step_length ====== #
     step_length = self.step_length
-    if step_length >= 1: # step_length is number of frames
+    if step_length >= 1:  # step_length is number of frames
       # now step_length is in second
       step_length = step_length / feat['sr']
     # ====== found SAD ====== #
@@ -1491,6 +1686,7 @@ class Read3ColSAD(Extractor):
         sad_indices[start_idx:end_idx] = 1
     # ====== return ====== #
     return {self.output_name: sad_indices}
+
 
 class ApplyingSAD(Extractor):
   """ Applying SAD index to given features
@@ -1517,13 +1713,20 @@ class ApplyingSAD(Extractor):
 
   """
 
-  def __init__(self, input_name, output_name=None, sad_name='sad',
-               threshold=None, smooth_window=None, keep_unvoiced=False):
-    super(ApplyingSAD, self).__init__(input_name=as_tuple(input_name, t=string_types),
+  def __init__(self,
+               input_name,
+               output_name=None,
+               sad_name='sad',
+               threshold=None,
+               smooth_window=None,
+               keep_unvoiced=False):
+    super(ApplyingSAD, self).__init__(input_name=as_tuple(input_name,
+                                                          t=string_types),
                                       output_name=output_name)
     self.sad_name = str(sad_name)
     self.threshold = float(threshold) if is_number(threshold) else None
-    self.smooth_window = int(smooth_window) if is_number(smooth_window) else None
+    self.smooth_window = int(smooth_window) if is_number(
+        smooth_window) else None
     self.keep_unvoiced = bool(keep_unvoiced)
 
   def _transform(self, X):
@@ -1535,7 +1738,7 @@ class ApplyingSAD(Extractor):
     if np.isclose(np.sum(sad), 0.):
       if not self.keep_unvoiced:
         return None
-      else: # take all frames
+      else:  # take all frames
         sad[:] = 1
     # ====== preprocessing sad ====== #
     if is_number(self.smooth_window) and self.smooth_window > 0:

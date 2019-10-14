@@ -10,9 +10,8 @@ import numpy as np
 from six import string_types
 from six.moves import cPickle, range, zip
 
+from bigarray import MmapArray, MmapArrayWriter, read_mmaparray_header
 from odin.fuel.databases import MmapDict, SQLiteDict
-from odin.fuel.mmap_array import (MmapArray, MmapArrayWriter,
-                                  read_mmaparray_header)
 from odin.utils import (Progbar, UnitTimer, as_tuple, ctext, eprint,
                         flatten_list, get_file, is_callable, is_string, wprint)
 
