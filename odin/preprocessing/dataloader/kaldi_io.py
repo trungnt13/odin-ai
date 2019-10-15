@@ -141,6 +141,7 @@ class KaldiFeaturesReader(Extractor):
   """
 
   def __init__(self,
+               name,
                delta_order: Optional[int] = None,
                delta_window: Optional[int] = None,
                sdelta_block_shift: Optional[int] = None,
@@ -150,8 +151,9 @@ class KaldiFeaturesReader(Extractor):
                cmn_min_window: int = 100,
                cmn_center: bool = False,
                cmn_normalize_variance: bool = False,
-               is_matrix: bool = True,
-               name=None):
+               is_matrix: bool = True):
+    assert isinstance(name, string_types), \
+      'a short name (description) must be given for KaldiFeaturesReader'
     super(KaldiFeaturesReader, self).__init__(name=name)
     _check_pykaldi()
     import kaldi.feat.functions as featfuncs
@@ -239,34 +241,115 @@ class KaldiDataset(data.Dataset):
   Parameters
   ----------
   specifier_description : dict
-    pass
-  sad_name : `str`
-  clipping :
+    mapping from `KaldiFeaturesReader` to list of Kaldi specifier in form of
+    string (e.g. "/kaldi_features/voxceleb/raw_mfcc_voxceleb.1.ark:42")
+  sad_name : `str` (default=`None`)
+    name of the SAD `KaldiFeaturesReader`. If not given, that means the SAD
+    (or VAD) is not provided.
+  labels : list of `int` (default=`None`)
+    integer label for each utterance, could be speaker label, language label
+    or anything.
+  shuffle : `bool` (default=`True`)
+    if shuffle the utterance list before organizing into minibatches
+  batch_size : `int` (default=`64`)
+    number of examples in single mini-batch
+  post_processing : {`callable`, 'xvector', 'ivector', `None`} (default=`None`)
+    post processing is a function take into account the loaded `features` and the
+    `labels`
+    - features : is a mapping from `KaldiFeaturesReader.name` to a mini-batch
+      (i.e. a list) of matrix or vector.
+    - labels : list of integer label for each example in the mini-batch. The
+      labels is `None` if not provided
+    a string, alias for predefined post-processor can be provided:
+    - 'xvector' : minibatch return in a tensor `[batch_size, time_frames, feature_size]`
+    - 'ivector' : minibatch return in a matrix `[time_frames, feature_size]`
+    if `post_processing=None`, return a dictionary mapping from
+    `KaldiFeaturesReader.name` to features mini-batch (a list of matrix or vector)
+  clipping : tuple of two `int` (default=`None`)
+    the utterance length is randomly clipped to the given range.
+    If `None`, no clipping is performed
   clipping_batch : `bool` (default=`True`)
     if `True`, all utterances in the same minibatch are clipped to the same
     length (for 'xvector').
     Otherwise, each utterance is clipped to different length (for 'ivector').
-  batch_strategy : {'full'}
-    'full' - iterate over all labels (e.g. speaker or language) and utterances
-    'label' - focus on the label for sampling
-    'stratify' -
+  utt_per_label_in_epoch : {`int`, `None`} (default=`np.inf`)
+    number of utterances per speaker (i.e. label) will appear in one epoch.
+    if `None`, or non-positive number is provided, substitute with `np.inf`
+  min_label_per_batch : `int`
+    Minimum number of speakers found in single mini-batch. If any batch doesn't
+    match the condition, it is ignored.
+  min_frames_per_utt : {`int`, `None`} (default=`None`)
+    filtering using the requirement of minimum number of frames per utterance.
+    if `None, no filtering is performed
+  min_utt_per_label :  {`int`, `None`} (default=`None`)
+    filtering using the requirement of minimum number of utterances per speader
+    (or label). Any speaker with less than required amount of utterances
+    will be ignored.
+    if `None, no filtering is performed
+  batch_strategy : {'naive', 'stratify'}
+    'naive' - just split the list of all utterances into minibatches
+    'stratify' - focus on the label for sampling
+  batch_drop_last : `bool` (default=`False`)
+    set to ``True`` to drop the last incomplete batch,
+    if the dataset size is not divisible by the batch size. If ``False`` and
+    the size of dataset is not divisible by the batch size, then the last batch
+    will be smaller. (default: ``False``)
+  return_labels : `bool` (default=`True`)
+    if `True`, return the labels if available in `__getitem__`
+  seed : {`int`, `numpy.random.RandomState`}
+    random seed
+  verbose : `bool` (default=`False`)
+    enable logging
+
+  Example
+  -------
+  >>> specifier_description = {
+  >>>     kaldi_io.KaldiFeaturesReader(cmn_window=300,
+  >>>                                  cmn_center=True,
+  >>>                                  cmn_normalize_variance=False,
+  >>>                                  cmn_min_window=100,
+  >>>                                  name='mfcc'): [
+  >>>         i[0] for i in training_segment_ids
+  >>>     ],
+  >>>     kaldi_io.KaldiFeaturesReader(is_matrix=False, name='sad'): [
+  >>>         i[1] for i in training_segment_ids
+  >>>     ],
+  >>> }
+  >>> dataset = kaldi_io.KaldiDataset(specifier_description,
+  >>>                                 labels=training_labels,
+  >>>                                 sad_name='sad',
+  >>>                                 post_processing='ivector',
+  >>>                                 utt_per_label_in_epoch=80,
+  >>>                                 min_label_per_batch=2,
+  >>>                                 min_frames_per_utt=100,
+  >>>                                 min_utt_per_label=100,
+  >>>                                 clipping=(200, 400),
+  >>>                                 clipping_batch=False,
+  >>>                                 batch_strategy='stratify',
+  >>>                                 batch_drop_last=True,
+  >>>                                 verbose=True)
+  >>> loader = dataset.create_dataloader()
+  >>> for data, labels in tqdm(dataset):
+  >>>   pass
+
   """
 
   def __init__(self,
                specifier_description: Dict[KaldiFeaturesReader, List[str]],
                sad_name: str = None,
-               labels: Optional[list] = None,
+               labels: Optional[List[int]] = None,
                shuffle=True,
                batch_size=64,
                post_processing=None,
                clipping=(200, 400),
                clipping_batch=True,
-               utts_per_label_in_epoch=320,
-               min_utt_per_label=None,
+               utt_per_label_in_epoch=np.inf,
+               min_label_per_batch=1,
                min_frames_per_utt=None,
-               batch_strategy='full',
+               min_utt_per_label=None,
+               batch_strategy='naive',
+               batch_drop_last=False,
                return_labels=True,
-               n_cpu='max',
                seed=8,
                verbose=False):
     _check_pykaldi()
@@ -295,6 +378,13 @@ class KaldiDataset(data.Dataset):
     self.labels = np.asarray(labels) if isinstance(labels, (tuple, list)) \
       else labels
     self.return_labels = bool(return_labels)
+    # label_id -> [utt_id, ...]
+    self.lab2utt = defaultdict(list)
+    self.utt2lab = {}
+    if self.labels is not None:
+      for utt_id, label in enumerate(self.labels):
+        self.lab2utt[label].append(utt_id)
+        self.utt2lab[utt_id] = label
     # ====== get the frame count ====== #
     specs = list(specifier_description.values())[0]
     is_sad_provided = False
@@ -310,8 +400,7 @@ class KaldiDataset(data.Dataset):
                                      is_matrix=not is_sad_provided,
                                      is_bool_index=is_sad_provided,
                                      progressbar=verbose,
-                                     n_cpu=cpu_count() -
-                                     2 if n_cpu == 'max' else int(n_cpu))
+                                     n_cpu=cpu_count() - 2)
     # ====== post_processing ====== #
     if callable(post_processing):
       self._post_processing = post_processing
@@ -322,8 +411,12 @@ class KaldiDataset(data.Dataset):
     # ====== batch configuration ====== #
     self.batch_size = int(batch_size)
     self.batch_strategy = str(batch_strategy).strip().lower()
+    self.batch_drop_last = bool(batch_drop_last)
     # ====== for filtering ====== #
-    self.utts_per_label_in_epoch = int(utts_per_label_in_epoch)
+    self.utt_per_label_in_epoch = np.inf \
+      if utt_per_label_in_epoch is None or utt_per_label_in_epoch <= 0 \
+        else int(utt_per_label_in_epoch)
+    self.min_label_per_batch = max(1, int(min_label_per_batch))
     self.clipping = None if clipping is None else as_tuple(clipping, t=int, N=2)
     self.clipping_batch = bool(clipping_batch)
     self.min_frames_per_utt = None if min_frames_per_utt is None else \
@@ -357,11 +450,6 @@ class KaldiDataset(data.Dataset):
           np.arange(self._n_utterances, dtype='int64'))
     else:
       indices = np.arange(self._n_utterances, dtype='int64')
-    # label_id -> [(utt_id, n_frames), ...]
-    self.lab2utt = defaultdict(list)
-    for idx, (frame_count,
-              label) in enumerate(zip(self.frame_counts, self.labels)):
-      self.lab2utt[label].append((idx, frame_count))
     # ====== filtering ====== #
     if self.min_frames_per_utt is not None:
       n_original = len(indices)
@@ -378,14 +466,14 @@ class KaldiDataset(data.Dataset):
       remove_indices = {}
       for spk, utt_list in self.lab2utt.items():
         if len(utt_list) < self.min_utt_per_label:
-          remove_indices.update({utt_id: True for (utt_id, _) in utt_list})
+          remove_indices.update({utt_id: True for utt_id in utt_list})
       indices = [i for i in indices if i not in remove_indices]
       n_new = len(indices)
       if self.verbose:
         print("Filtering min_utt_per_label=%d - original:%d  new:%d" %
               (self.min_utt_per_label, n_original, n_new))
-    # final utterances
-    self._indices = np.array(indices, dtype='int64')
+    # final utterances, stored as index in the utterance list
+    self._filtered_utt_id = np.array(indices, dtype='int64')
     # ====== create the batches ====== #
     attr_name = '_strategy_%s' % self.batch_strategy
     if not hasattr(self, attr_name):
@@ -448,45 +536,49 @@ class KaldiDataset(data.Dataset):
               (self.clipping, n_original, n_new))
 
   # ====== batch strategy ====== #
+  def _strategy_naive(self):
+    """ modify `_minibatches` to a list of tuple of utterances' ID """
+    for start in range(0, len(self._filtered_utt_id), self.batch_size):
+      batch = self._filtered_utt_id[start:start + self.batch_size]
+      if len(batch) < self.batch_size and self.batch_drop_last:
+        continue
+      self._minibatches.append(batch)
+
   def _strategy_stratify(self):
-    pass
+    """ modify `_minibatches` to a list of tuple of utterances' ID """
+    assert self.labels is not None, \
+      'Labels must be provided for stratify batching'
+    # need to update lab2utt with the new filtered utterances' ID
+    lab2utt = defaultdict(list)
+    for utt_id in self._filtered_utt_id:
+      label = self.utt2lab[utt_id]
+      lab2utt[label].append(utt_id)
 
-  def _strategy_full(self):
-    for start in range(0, len(self._indices), self.batch_size):
-      self._minibatches.append(self._indices[start:start + self.batch_size])
+    all_lab_utt = list(lab2utt.items())
+    self._rand.shuffle(all_lab_utt)
 
-  def _strategy_label(self):
-    # ====== create the batches ====== #
-    utts_per_speaker = {}
-    speaker_utt_index = {}
-    for key in lab2utt:
-      utts_per_speaker[key] = len(lab2utt[key])
-      speaker_utt_index[key] = 0
+    max_utt = self.utt_per_label_in_epoch
+    min_utt = self.min_label_per_batch
+    utt_count = 0
+    while True:
+      utt_list = [
+          utt_list.pop()
+          for lab_id, utt_list in all_lab_utt
+          if len(utt_list) > 0
+      ]
+      if len(utt_list) < min_utt:
+        break
+      # split into mini-batches
+      for start in range(0, len(utt_list), self.batch_size):
+        batch = utt_list[start:start + self.batch_size]
+        if len(batch) < self.batch_size and self.batch_drop_last:
+          continue
+        self._minibatches.append(batch)
 
-    labels = list(lab2utt.keys())
-    # each superbatch contains all speaker
-    # each epoch contain a number of repetition for each speaker
-    # (i.e. self.utts_per_label_in_epoch)
-    num_batches_in_superbatch = len(labels) // self.batch_size
-
-    for superbatch_index in range(self.utts_per_label_in_epoch):
-      shuffled_speakers = labels.copy()
-      self._rand.shuffle(shuffled_speakers)
-      spk_index = 0
-      for batch_index in range(num_batches_in_superbatch):
-        self._minibatches.append([])
-        clip_length = np.random.randint(self.clipping[0], self.clipping[1] + 1)
-        for utt_index in range(self.batch_size):
-          rxspecifiers = None
-          while rxspecifiers is None:
-            spk = shuffled_speakers[spk_index]
-            spk_index += 1
-            if spk_index == len(shuffled_speakers):
-              spk_index = 0
-
-            rxspecifiers, clip_indices = _select_next_clip(
-                spk, lab2utt[spk], clip_length)
-          self._minibatches[-1].append(None)
+      # breaking conditions
+      utt_count += 1
+      if utt_count >= max_utt:
+        break
 
   # ====== dataset methods ====== #
   def __len__(self):
@@ -543,13 +635,22 @@ class KaldiDataset(data.Dataset):
     return features
 
   # ====== data loader ====== #
-  def create_dataloader(self,
-                        n_workers: Union[str, int] = 'max') -> data.DataLoader:
-    n_workers = cpu_count() - 2 \
-      if isinstance(n_workers, string_types) and n_workers == 'max' else \
-        int(n_workers)
+  def create_dataloader(self, num_workers: Union[str, int] = 'max'
+                       ) -> data.DataLoader:
+    """ Since the `KaldiDataset` create and return the batch, not a single
+    example, this function is utilized to create `pytorch.DataLoader` that
+    is compatible.
+
+    Parameters
+    ----------
+    num_workers : {`int`, 'max'}
+      if 'max', use `cpu_count() - 2` workers, otherwise, number of processes
+    """
+    num_workers = cpu_count() - 2 \
+      if isinstance(num_workers, string_types) and num_workers == 'max' else \
+        int(num_workers)
     return data.DataLoader(self,
                            batch_size=1,
                            shuffle=False,
-                           num_workers=n_workers,
+                           num_workers=num_workers,
                            collate_fn=_collater)
