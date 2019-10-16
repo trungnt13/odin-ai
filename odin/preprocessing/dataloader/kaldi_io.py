@@ -7,11 +7,14 @@
 # @Modified by: Trung Ngo (https://github.com/trungnt13)
 from __future__ import absolute_import, division, print_function
 
+import inspect
 import random
 import sys
 from collections import defaultdict
+from copy import deepcopy
 from functools import partial
 from multiprocessing import cpu_count
+from numbers import Number
 from typing import Dict, List, Optional, Union
 
 import numpy as np
@@ -49,8 +52,10 @@ def count_frames(specifiers: List[str],
                  is_matrix: bool = False,
                  is_bool_index: bool = True,
                  progressbar: bool = False,
-                 n_cpu: int = 3):
+                 num_workers: int = 3) -> List[int]:
   """
+  Parameters
+  ----------
   specifiers : list of `str`
     list of sepcifier `["raw_mfcc_voxceleb.1.ark:42", ...]`
   is_matrix : `bool` (default=`False`)
@@ -58,6 +63,10 @@ def count_frames(specifiers: List[str],
   is_bool_index : `bool` (default=`True`)
     if `True`, the loaded data is boolean index of speech activity detection,
     the length of audio file is calculated by summing the index array.
+
+  Return
+  ------
+  List of integer (i.e. the frame count)
   """
   _check_pykaldi()
   import kaldi.util.io as kio
@@ -82,15 +91,16 @@ def count_frames(specifiers: List[str],
       res.append((int(idx), n))
     return res
 
-  jobs = np.array_split([(i, s) for i, s in enumerate(specifiers)], n_cpu * 25)
-  if n_cpu == 1:
+  jobs = np.array_split([(i, s) for i, s in enumerate(specifiers)],
+                        num_workers * 25)
+  if num_workers == 1:
     for j in jobs:
       for r in _count(j):
         frame_counts.append(r)
       progress.update(n=len(j))
   else:
     from odin.utils.mpi import MPI
-    for r in MPI(jobs=jobs, func=_count, ncpu=n_cpu, batch=1):
+    for r in MPI(jobs=jobs, func=_count, ncpu=num_workers, batch=1):
       progress.update(n=len(r))
       frame_counts.extend(r)
   return [i[1] for i in sorted(frame_counts)]
@@ -209,14 +219,14 @@ class KaldiFeaturesReader(Extractor):
 # ===========================================================================
 # Dataset
 # ===========================================================================
-def _xvec_processing(data, labels):
+def _xvector_processing(data, labels):
   return [
       torch.from_numpy(np.transpose(np.dstack(dat), (2, 0, 1)))
       for dat in data.values()
   ], labels
 
 
-def _ivec_processing(data, labels):
+def _ivector_processing(data, labels):
   n_samples = [len(i) for i in list(data.values())[0]]
   # repeat the labels
   if labels is not None:
@@ -227,17 +237,35 @@ def _ivec_processing(data, labels):
   return [torch.from_numpy(np.vstack(dat)) for dat in data.values()], labels
 
 
+def _flatten_processing(data, labels):
+  X = []
+  for dat in data.values():
+    X.extend(dat)
+  return X, labels
+
+
 def _select_post_processing(text):
   text = text.strip().lower()
-  if text == 'xvector':
-    return _xvec_processing
-  if text == 'ivector':
-    return _ivec_processing
-  raise ValueError("No support for post_processing='%s'" % text)
+  func_name = '_%s_processing' % text
+  globs = globals()
+  if func_name not in globs:
+    raise RuntimeError("No support for predefined post_processing='%s'" % text)
+  func = globs[func_name]
+  assert inspect.isfunction(func), \
+    "Object with name '%s' is not a function, invalid post_processing='%s'" % \
+      (func_name, text)
+  return func
 
 
 class KaldiDataset(data.Dataset):
-  """
+  """ Without any `post_processing` a dictionary mapping from
+  `KaldiFeaturesReader.name` to list of loaded features grouped into minibatch
+  will be returned (note: the labels will be returned with key 'labels'
+  if `return_labels=True`)
+
+  Check document of `post_processing` for better understand of the return of
+  `KaldiDataset`.
+
   Parameters
   ----------
   specifier_description : dict
@@ -251,6 +279,7 @@ class KaldiDataset(data.Dataset):
     or anything.
   shuffle : `bool` (default=`True`)
     if shuffle the utterance list before organizing into minibatches
+    note: the order of the utterances will be reserved with `shuffle=False`
   batch_size : `int` (default=`64`)
     number of examples in single mini-batch
   post_processing : {`callable`, 'xvector', 'ivector', `None`} (default=`None`)
@@ -263,12 +292,13 @@ class KaldiDataset(data.Dataset):
     a string, alias for predefined post-processor can be provided:
     - 'xvector' : minibatch return in a tensor `[batch_size, time_frames, feature_size]`
     - 'ivector' : minibatch return in a matrix `[time_frames, feature_size]`
+    - 'flatten' : flatten the return dictionary of features into a list
     if `post_processing=None`, return a dictionary mapping from
     `KaldiFeaturesReader.name` to features mini-batch (a list of matrix or vector)
   clipping : tuple of two `int` (default=`None`)
     the utterance length is randomly clipped to the given range.
     If `None`, no clipping is performed
-  clipping_batch : `bool` (default=`True`)
+  clipping_per_batch : `bool` (default=`True`)
     if `True`, all utterances in the same minibatch are clipped to the same
     length (for 'xvector').
     Otherwise, each utterance is clipped to different length (for 'ivector').
@@ -287,6 +317,7 @@ class KaldiDataset(data.Dataset):
     will be ignored.
     if `None, no filtering is performed
   batch_strategy : {'naive', 'stratify'}
+    'utt' - each minibatch is one utterance (`batch_size` is not in used here)
     'naive' - just split the list of all utterances into minibatches
     'stratify' - focus on the label for sampling
   batch_drop_last : `bool` (default=`False`)
@@ -324,7 +355,7 @@ class KaldiDataset(data.Dataset):
   >>>                                 min_frames_per_utt=100,
   >>>                                 min_utt_per_label=100,
   >>>                                 clipping=(200, 400),
-  >>>                                 clipping_batch=False,
+  >>>                                 clipping_per_batch=False,
   >>>                                 batch_strategy='stratify',
   >>>                                 batch_drop_last=True,
   >>>                                 verbose=True)
@@ -338,11 +369,11 @@ class KaldiDataset(data.Dataset):
                specifier_description: Dict[KaldiFeaturesReader, List[str]],
                sad_name: str = None,
                labels: Optional[List[int]] = None,
-               shuffle=True,
+               shuffle=False,
                batch_size=64,
                post_processing=None,
-               clipping=(200, 400),
-               clipping_batch=True,
+               clipping=None,
+               clipping_per_batch=True,
                utt_per_label_in_epoch=np.inf,
                min_label_per_batch=1,
                min_frames_per_utt=None,
@@ -351,7 +382,8 @@ class KaldiDataset(data.Dataset):
                batch_drop_last=False,
                return_labels=True,
                seed=8,
-               verbose=False):
+               verbose=False,
+               **kwargs):
     _check_pykaldi()
     if not isinstance(specifier_description, dict) or \
       (not all(isinstance(loader, KaldiFeaturesReader) and
@@ -370,6 +402,7 @@ class KaldiDataset(data.Dataset):
     self.shuffle = bool(shuffle)
     self._rand = seed if isinstance(seed, np.random.RandomState) else\
       np.random.RandomState(seed=seed)
+    self.seed = seed
     # ====== check the labels ====== #
     if labels is not None:
       assert len(labels) == self._n_utterances, \
@@ -396,11 +429,16 @@ class KaldiDataset(data.Dataset):
       self._sad_name = sad_name
     else:
       self._sad_name = None
-    self.frame_counts = count_frames(specs,
-                                     is_matrix=not is_sad_provided,
-                                     is_bool_index=is_sad_provided,
-                                     progressbar=verbose,
-                                     n_cpu=cpu_count() - 2)
+    if 'frame_counts' in kwargs:
+      self.frame_counts = list(kwargs['frame_counts'])
+    else:
+      self.frame_counts = count_frames(specs,
+                                       is_matrix=not is_sad_provided,
+                                       is_bool_index=is_sad_provided,
+                                       progressbar=verbose,
+                                       num_workers=cpu_count() - 2)
+    self.frame_counts = tuple(self.frame_counts)
+    assert len(self.frame_counts) == self._n_utterances, 'Invalid frame_counts!'
     # ====== post_processing ====== #
     if callable(post_processing):
       self._post_processing = post_processing
@@ -413,12 +451,11 @@ class KaldiDataset(data.Dataset):
     self.batch_strategy = str(batch_strategy).strip().lower()
     self.batch_drop_last = bool(batch_drop_last)
     # ====== for filtering ====== #
-    self.utt_per_label_in_epoch = np.inf \
-      if utt_per_label_in_epoch is None or utt_per_label_in_epoch <= 0 \
-        else int(utt_per_label_in_epoch)
+    self.utt_per_label_in_epoch = float(utt_per_label_in_epoch) \
+      if isinstance(utt_per_label_in_epoch, Number) else np.inf
     self.min_label_per_batch = max(1, int(min_label_per_batch))
     self.clipping = None if clipping is None else as_tuple(clipping, t=int, N=2)
-    self.clipping_batch = bool(clipping_batch)
+    self.clipping_per_batch = bool(clipping_per_batch)
     self.min_frames_per_utt = None if min_frames_per_utt is None else \
       int(min_frames_per_utt)
     self.min_utt_per_label = None if min_utt_per_label is None else \
@@ -511,7 +548,7 @@ class KaldiDataset(data.Dataset):
         for utt_id in batch:
           frame_count = self.frame_counts[utt_id]
           # differnt clipping length for each utterance
-          if not self.clipping_batch:
+          if not self.clipping_per_batch:
             clip_length = utt_length.pop()
           # not enough frames
           if frame_count < clip_length:
@@ -536,6 +573,10 @@ class KaldiDataset(data.Dataset):
               (self.clipping, n_original, n_new))
 
   # ====== batch strategy ====== #
+  def _strategy_utt(self):
+    for utt_id in self._filtered_utt_id:
+      self._minibatches.append([utt_id])
+
   def _strategy_naive(self):
     """ modify `_minibatches` to a list of tuple of utterances' ID """
     for start in range(0, len(self._filtered_utt_id), self.batch_size):
@@ -547,7 +588,7 @@ class KaldiDataset(data.Dataset):
   def _strategy_stratify(self):
     """ modify `_minibatches` to a list of tuple of utterances' ID """
     assert self.labels is not None, \
-      'Labels must be provided for stratify batching'
+      "Labels must be provided for 'stratify' batch strategy"
     # need to update lab2utt with the new filtered utterances' ID
     lab2utt = defaultdict(list)
     for utt_id in self._filtered_utt_id:
@@ -635,20 +676,59 @@ class KaldiDataset(data.Dataset):
     return features
 
   # ====== data loader ====== #
-  def create_dataloader(self, num_workers: Union[str, int] = 'max'
-                       ) -> data.DataLoader:
+  def copy(self, seed=None) -> 'KaldiDataset':
+    return KaldiDataset(
+        specifier_description={
+            reader: deepcopy(specs)
+            for reader, specs in self.specifier_description.items()
+        },
+        sad_name=self._sad_name,
+        labels=deepcopy(self.labels),
+        shuffle=self.shuffle,
+        batch_size=self.batch_size,
+        post_processing=self._post_processing,
+        clipping=self.clipping,
+        clipping_per_batch=self.clipping_per_batch,
+        utt_per_label_in_epoch=self.utt_per_label_in_epoch,
+        min_label_per_batch=self.min_label_per_batch,
+        min_frames_per_utt=self.min_frames_per_utt,
+        min_utt_per_label=self.min_utt_per_label,
+        batch_strategy=self.batch_strategy,
+        batch_drop_last=self.batch_drop_last,
+        return_labels=self.return_labels,
+        seed=self.seed if seed is None else seed,
+        verbose=self.verbose,
+        # no need re-calculating frame counts
+        frame_counts=self.frame_counts)
+
+  def create_dataloader(
+      self,
+      reset: bool = False,
+      copy: bool = False,
+      num_workers: Union[str, int] = 'max',
+      seed=None,
+  ) -> data.DataLoader:
     """ Since the `KaldiDataset` create and return the batch, not a single
     example, this function is utilized to create `pytorch.DataLoader` that
     is compatible.
 
     Parameters
     ----------
+    reset : `bool`
+      reset the dataset before create the `DataLoader`
+    copy : `bool`
+      return the `DataLoader` based on the copy version of this `Dataset`
     num_workers : {`int`, 'max'}
       if 'max', use `cpu_count() - 2` workers, otherwise, number of processes
+    seed : {`int`, `numpy.random.RandomState`}
+      only used for new instance if `copy=True`
     """
     num_workers = cpu_count() - 2 \
       if isinstance(num_workers, string_types) and num_workers == 'max' else \
         int(num_workers)
+    ds = self.copy(seed=seed) if copy else self
+    if reset:
+      ds.reset()
     return data.DataLoader(self,
                            batch_size=1,
                            shuffle=False,

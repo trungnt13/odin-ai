@@ -283,6 +283,9 @@ class Extractor(BaseEstimator, TransformerMixin):
     # Do nothing here
     return self
 
+  def __call__(self, X):
+    return self.transform(X)
+
   def _transform(self, X):
     raise NotImplementedError
 
