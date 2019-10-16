@@ -84,10 +84,10 @@ def count_frames(specifiers: List[str],
     for idx, s in specs:
       # both feature and VAD is provided, then get the vad only
       dat = read(s).numpy()
-      if is_bool_index:
+      if is_bool_index: # sum of all True values
         n = np.sum(dat)
-      else:
-        n = dat.size
+      else: # just get the first dimension
+        n = len(dat)
       res.append((int(idx), n))
     return res
 
@@ -280,6 +280,9 @@ class KaldiDataset(data.Dataset):
   shuffle : `bool` (default=`True`)
     if shuffle the utterance list before organizing into minibatches
     note: the order of the utterances will be reserved with `shuffle=False`
+  shuffle_batches : `bool` (default=`False`)
+    by default, `shuffle` only shuffles the utterances order,
+    if `shuffle_batches=True`, shuffle the order of minibatches as well.
   batch_size : `int` (default=`64`)
     number of examples in single mini-batch
   post_processing : {`callable`, 'xvector', 'ivector', `None`} (default=`None`)
@@ -316,6 +319,8 @@ class KaldiDataset(data.Dataset):
     (or label). Any speaker with less than required amount of utterances
     will be ignored.
     if `None, no filtering is performed
+  remove_empty_utt : `bool` (default=`True`)
+    if `True` remove all utterances with zero frame counts.
   batch_strategy : {'naive', 'stratify'}
     'utt' - each minibatch is one utterance (`batch_size` is not in used here)
     'naive' - just split the list of all utterances into minibatches
@@ -370,6 +375,7 @@ class KaldiDataset(data.Dataset):
                sad_name: str = None,
                labels: Optional[List[int]] = None,
                shuffle=False,
+               shuffle_batches=False,
                batch_size=64,
                post_processing=None,
                clipping=None,
@@ -378,6 +384,7 @@ class KaldiDataset(data.Dataset):
                min_label_per_batch=1,
                min_frames_per_utt=None,
                min_utt_per_label=None,
+               remove_empty_utt=True,
                batch_strategy='naive',
                batch_drop_last=False,
                return_labels=True,
@@ -400,24 +407,10 @@ class KaldiDataset(data.Dataset):
     self._n_utterances = self._n_utterances[0]
     # ====== randomization ====== #
     self.shuffle = bool(shuffle)
+    self.shuffle_batches = bool(shuffle_batches)
     self._rand = seed if isinstance(seed, np.random.RandomState) else\
       np.random.RandomState(seed=seed)
     self.seed = seed
-    # ====== check the labels ====== #
-    if labels is not None:
-      assert len(labels) == self._n_utterances, \
-        "Number of labels and number of utterances mismatch: %d vs %d" % \
-          (len(labels), self._n_utterances)
-    self.labels = np.asarray(labels) if isinstance(labels, (tuple, list)) \
-      else labels
-    self.return_labels = bool(return_labels)
-    # label_id -> [utt_id, ...]
-    self.lab2utt = defaultdict(list)
-    self.utt2lab = {}
-    if self.labels is not None:
-      for utt_id, label in enumerate(self.labels):
-        self.lab2utt[label].append(utt_id)
-        self.utt2lab[utt_id] = label
     # ====== get the frame count ====== #
     specs = list(specifier_description.values())[0]
     is_sad_provided = False
@@ -439,6 +432,38 @@ class KaldiDataset(data.Dataset):
                                        num_workers=cpu_count() - 2)
     self.frame_counts = tuple(self.frame_counts)
     assert len(self.frame_counts) == self._n_utterances, 'Invalid frame_counts!'
+    # ====== remove empty utterance ====== #
+    if remove_empty_utt:
+      remove_ids = set(
+          [idx for idx, count in enumerate(self.frame_counts) if count == 0])
+      if len(remove_ids) > 0:
+        self.specifier_description = {
+            reader: [s for idx, s in specs if idx not in remove_ids
+                    ] for reader, specs in self.specifier_description.items()
+        }
+        self._n_utterances = self._n_utterances - len(remove_ids)
+        self.frame_counts = [
+            count for idx, count in enumerate(self.frame_counts)
+            if idx not in remove_ids
+        ]
+      if verbose:
+        print("Removing %d empty utterances." % len(remove_ids))
+    self.remove_empty_utt = remove_empty_utt
+    # ====== check the labels ====== #
+    if labels is not None:
+      assert len(labels) == self._n_utterances, \
+        "Number of labels and number of utterances mismatch: %d vs %d" % \
+          (len(labels), self._n_utterances)
+    self.labels = np.asarray(labels) if isinstance(labels, (tuple, list)) \
+      else labels
+    self.return_labels = bool(return_labels)
+    # label_id -> [utt_id, ...]
+    self.lab2utt = defaultdict(list)
+    self.utt2lab = {}
+    if self.labels is not None:
+      for utt_id, label in enumerate(self.labels):
+        self.lab2utt[label].append(utt_id)
+        self.utt2lab[utt_id] = label
     # ====== post_processing ====== #
     if callable(post_processing):
       self._post_processing = post_processing
@@ -520,11 +545,13 @@ class KaldiDataset(data.Dataset):
     assert len(self._minibatches) > 0, \
       "Batch specifier must be a list of tuples that contains multiple " + \
         "utterance ID for minibatch"
+    if self.shuffle_batches:
+      self._rand.shuffle(self._minibatches)
     # ====== random clipping ====== #
-    # we need to make sure all utterances in the same minibatch got the same
-    # clipping length
     random.seed(self._rand.randint(0, 1e8))
-    self._minibatches_clipping = defaultdict(list)
+    # store clipping point (start, end) for each utterances
+    # within each minibatch
+    self._minibatches_clipping = []
 
     if self.clipping is not None:
       n_original = sum(len(batch) for batch in self._minibatches)
@@ -536,15 +563,18 @@ class KaldiDataset(data.Dataset):
       new_minibatches = []
       minibatches_clipping = []
       # random a big chunk of clip_length is faster
+      # we need to make sure all utterances in the same minibatch got the same
+      # clipping length if clipping_per_batch=True
       for batch, clip_length in zip(
           self._minibatches,
           self._rand.randint(low=self.clipping[0],
                              high=self.clipping[1] + 1,
                              size=(len(self._minibatches),),
                              dtype='int64')):
-        # iterate through batch to get different cut of utterances
+        # iterate through batch to get different cut of each utterance,
+        # also remove not long enough utterances
         new_batch = []
-        clipping_points = []
+        batch_clipping_points = []
         for utt_id in batch:
           frame_count = self.frame_counts[utt_id]
           # differnt clipping length for each utterance
@@ -558,18 +588,18 @@ class KaldiDataset(data.Dataset):
             # note: the random.randint include both end point, no need for +1
             start_point = random.randint(0, frame_count - clip_length)
             end_point = start_point + clip_length
-            clipping_points.append((start_point, end_point))
+            batch_clipping_points.append((start_point, end_point))
             new_batch.append(utt_id)
         # end of 1-minibatch
         new_minibatches.append(new_batch)
-        minibatches_clipping.append(clipping_points)
+        minibatches_clipping.append(batch_clipping_points)
       # end of clipping and filtering
       self._minibatches = new_minibatches
       self._minibatches_clipping = minibatches_clipping
       # show log if verbose
       if self.verbose:
         n_new = sum(len(batch) for batch in self._minibatches)
-        print("Filtering clipping=%s - original:%d  new:%d" %
+        print("Filtering by clipping=%s - original:%d  new:%d" %
               (self.clipping, n_original, n_new))
 
   # ====== batch strategy ====== #
@@ -652,6 +682,10 @@ class KaldiDataset(data.Dataset):
 
     # applying clipping
     if len(clipping) > 0:
+      # for name, data_list in feat_list.items():
+      #   assert len(clipping) == len(data_list)
+      #   for x, (start, end) in zip(data_list, clipping):
+      #     print(x.shape, start, end)
       feat_list = {
           name: [x[start:end] for x, (start, end) in zip(data_list, clipping)
                 ] for name, data_list in feat_list.items()
@@ -685,6 +719,7 @@ class KaldiDataset(data.Dataset):
         sad_name=self._sad_name,
         labels=deepcopy(self.labels),
         shuffle=self.shuffle,
+        shuffle_batches=self.shuffle_batches,
         batch_size=self.batch_size,
         post_processing=self._post_processing,
         clipping=self.clipping,
@@ -693,6 +728,7 @@ class KaldiDataset(data.Dataset):
         min_label_per_batch=self.min_label_per_batch,
         min_frames_per_utt=self.min_frames_per_utt,
         min_utt_per_label=self.min_utt_per_label,
+        remove_empty_utt=False,  # whatever it is, it already processed
         batch_strategy=self.batch_strategy,
         batch_drop_last=self.batch_drop_last,
         return_labels=self.return_labels,
