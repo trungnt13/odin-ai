@@ -84,9 +84,9 @@ def count_frames(specifiers: List[str],
     for idx, s in specs:
       # both feature and VAD is provided, then get the vad only
       dat = read(s).numpy()
-      if is_bool_index: # sum of all True values
+      if is_bool_index:  # sum of all True values
         n = np.sum(dat)
-      else: # just get the first dimension
+      else:  # just get the first dimension
         n = len(dat)
       res.append((int(idx), n))
     return res
@@ -308,7 +308,7 @@ class KaldiDataset(data.Dataset):
   utt_per_label_in_epoch : {`int`, `None`} (default=`np.inf`)
     number of utterances per speaker (i.e. label) will appear in one epoch.
     if `None`, or non-positive number is provided, substitute with `np.inf`
-  min_label_per_batch : `int`
+  min_utt_per_batch : `int`
     Minimum number of speakers found in single mini-batch. If any batch doesn't
     match the condition, it is ignored.
   min_frames_per_utt : {`int`, `None`} (default=`None`)
@@ -356,7 +356,7 @@ class KaldiDataset(data.Dataset):
   >>>                                 sad_name='sad',
   >>>                                 post_processing='ivector',
   >>>                                 utt_per_label_in_epoch=80,
-  >>>                                 min_label_per_batch=2,
+  >>>                                 min_utt_per_batch=2,
   >>>                                 min_frames_per_utt=100,
   >>>                                 min_utt_per_label=100,
   >>>                                 clipping=(200, 400),
@@ -381,7 +381,7 @@ class KaldiDataset(data.Dataset):
                clipping=None,
                clipping_per_batch=True,
                utt_per_label_in_epoch=np.inf,
-               min_label_per_batch=1,
+               min_utt_per_batch=1,
                min_frames_per_utt=None,
                min_utt_per_label=None,
                remove_empty_utt=True,
@@ -414,6 +414,8 @@ class KaldiDataset(data.Dataset):
     # ====== get the frame count ====== #
     specs = list(specifier_description.values())[0]
     is_sad_provided = False
+    if isinstance(sad_name, KaldiFeaturesReader):
+      sad_name = sad_name.name
     for key in specifier_description:
       if sad_name is not None and sad_name == key.name:
         specs = specifier_description[key]
@@ -478,7 +480,7 @@ class KaldiDataset(data.Dataset):
     # ====== for filtering ====== #
     self.utt_per_label_in_epoch = float(utt_per_label_in_epoch) \
       if isinstance(utt_per_label_in_epoch, Number) else np.inf
-    self.min_label_per_batch = max(1, int(min_label_per_batch))
+    self.min_utt_per_batch = max(1, int(min_utt_per_batch))
     self.clipping = None if clipping is None else as_tuple(clipping, t=int, N=2)
     self.clipping_per_batch = bool(clipping_per_batch)
     self.min_frames_per_utt = None if min_frames_per_utt is None else \
@@ -547,6 +549,17 @@ class KaldiDataset(data.Dataset):
         "utterance ID for minibatch"
     if self.shuffle_batches:
       self._rand.shuffle(self._minibatches)
+    # ====== filtering by min_utt_per_batch ====== #
+    if self.min_utt_per_batch > 1:
+      n_org = len(self._minibatches)
+      self._minibatches = [
+          batch for batch in self._minibatches
+          if len(batch) > self.min_utt_per_batch
+      ]
+      n_new = len(self._minibatches)
+      if self.verbose:
+        print("Filtering minibatches min_utt_per_batch=%d - original:%d  new:%d" %
+              (self.min_utt_per_batch, n_org, n_new))
     # ====== random clipping ====== #
     random.seed(self._rand.randint(0, 1e8))
     # store clipping point (start, end) for each utterances
@@ -555,10 +568,10 @@ class KaldiDataset(data.Dataset):
 
     if self.clipping is not None:
       n_original = sum(len(batch) for batch in self._minibatches)
-      utt_length = self._rand.randint(low=self.clipping[0],
-                                      high=self.clipping[1] + 1,
-                                      size=(n_original,),
-                                      dtype='int64').tolist()
+      clip_utt_length = self._rand.randint(low=self.clipping[0],
+                                           high=self.clipping[1] + 1,
+                                           size=(n_original,),
+                                           dtype='int64').tolist()
 
       new_minibatches = []
       minibatches_clipping = []
@@ -579,10 +592,10 @@ class KaldiDataset(data.Dataset):
           frame_count = self.frame_counts[utt_id]
           # differnt clipping length for each utterance
           if not self.clipping_per_batch:
-            clip_length = utt_length.pop()
+            clip_length = clip_utt_length.pop()
           # not enough frames
           if frame_count < clip_length:
-            remove_indices[utt_id] = True
+            pass
           # select random start and end point based on clip_length and frame_count
           else:
             # note: the random.randint include both end point, no need for +1
@@ -629,7 +642,6 @@ class KaldiDataset(data.Dataset):
     self._rand.shuffle(all_lab_utt)
 
     max_utt = self.utt_per_label_in_epoch
-    min_utt = self.min_label_per_batch
     utt_count = 0
     while True:
       utt_list = [
@@ -637,7 +649,8 @@ class KaldiDataset(data.Dataset):
           for lab_id, utt_list in all_lab_utt
           if len(utt_list) > 0
       ]
-      if len(utt_list) < min_utt:
+      # no utterance left
+      if len(utt_list) == 0:
         break
       # split into mini-batches
       for start in range(0, len(utt_list), self.batch_size):
@@ -725,7 +738,7 @@ class KaldiDataset(data.Dataset):
         clipping=self.clipping,
         clipping_per_batch=self.clipping_per_batch,
         utt_per_label_in_epoch=self.utt_per_label_in_epoch,
-        min_label_per_batch=self.min_label_per_batch,
+        min_utt_per_batch=self.min_utt_per_batch,
         min_frames_per_utt=self.min_frames_per_utt,
         min_utt_per_label=self.min_utt_per_label,
         remove_empty_utt=False,  # whatever it is, it already processed

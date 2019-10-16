@@ -45,7 +45,7 @@ def dtype_universal(dtype, torch_dtype=False, tf_dtype=False, np_dtype=False):
       return torch.float32
     if dtype == 'float64':
       return torch.float64
-    if dtype == 'float16' or 'half':
+    if dtype == 'float16' or dtype == 'half':
       return torch.float16
     if dtype == 'int8':
       return torch.int8
