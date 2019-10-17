@@ -28,6 +28,27 @@ def get_tensorflow_version():
 
 
 # ===========================================================================
+# Dependencies
+# ===========================================================================
+dependencies = [
+    'numpy>=1.0.0',
+    get_tensorflow_version(),
+    'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
+    'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
+    'tensorflow-datasets',
+    'torch==%s' % _PYTORCH_VERSION,
+    'pytorch-lightning',  # for training pytorch module
+    'bigarray>=0.2.1',
+    'six>=1.9.0',
+    'scikit-learn>=0.18.0',
+    'matplotlib>=3.0.0',
+    'decorator',
+    'tqdm',
+    'dill',
+    'pyyaml',
+    'pycrypto',
+]
+# ===========================================================================
 # Description
 # ===========================================================================
 here = path.abspath(path.dirname(__file__))
@@ -76,16 +97,7 @@ setup(
     packages=find_packages(exclude=['examples', 'examples/*', 'docs', 'tests']),
     # scripts=['bin/speech-augmentation', 'bin/speech-test'],
     setup_requires=['pip>=19.0'],
-    install_requires=[
-        'numpy>=1.0.0',
-        get_tensorflow_version(),
-        'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
-        'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
-        'tensorflow-datasets',
-        'torch==%s' % _PYTORCH_VERSION, 'bigarray>=0.2.1', 'six>=1.9.0',
-        'scikit-learn>=0.18.0', 'matplotlib>=3.0.0', 'decorator', 'tqdm',
-        'dill', 'pyyaml', 'pycrypto'
-    ],
+    install_requires=dependencies,
     extras_require={
         'visualize': ['pydot>=1.2.4', 'colorama', 'seaborn'],
         'tests': ['pytest', 'pandas', 'requests'],

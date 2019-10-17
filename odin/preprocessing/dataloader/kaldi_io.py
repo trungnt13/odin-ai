@@ -52,7 +52,8 @@ def count_frames(specifiers: List[str],
                  is_matrix: bool = False,
                  is_bool_index: bool = True,
                  progressbar: bool = False,
-                 num_workers: int = 3) -> List[int]:
+                 num_workers: int = 3,
+                 concat_char: str = '&') -> List[int]:
   """
   Parameters
   ----------
@@ -63,6 +64,10 @@ def count_frames(specifiers: List[str],
   is_bool_index : `bool` (default=`True`)
     if `True`, the loaded data is boolean index of speech activity detection,
     the length of audio file is calculated by summing the index array.
+  concat_char : `str` (default='&')
+    by concatenating multiple specifier using given character,
+    multiple utterance could be sequentially loaded and concatenated.
+    (e.g. 'raw_mfcc_sre18_dev.1.ark:3018396&raw_mfcc_sre18_dev.1.ark:5516398')
 
   Return
   ------
@@ -72,7 +77,7 @@ def count_frames(specifiers: List[str],
   import kaldi.util.io as kio
 
   frame_counts = []
-  read = kio.read_matrix if bool(is_matrix) else kio.read_vector
+  fn_read = kio.read_matrix if bool(is_matrix) else kio.read_vector
   progress = tqdm(total=len(specifiers),
                   desc="Kaldi counting frame",
                   disable=not progressbar,
@@ -81,13 +86,16 @@ def count_frames(specifiers: List[str],
 
   def _count(specs):
     res = []
-    for idx, s in specs:
-      # both feature and VAD is provided, then get the vad only
-      dat = read(s).numpy()
-      if is_bool_index:  # sum of all True values
-        n = np.sum(dat)
-      else:  # just get the first dimension
-        n = len(dat)
+    for idx, spec in specs:
+      n = 0
+      for s in spec.split(concat_char):
+        # both feature and VAD is provided, then get the vad only
+        dat = fn_read(s).numpy()
+        if is_bool_index:  # sum of all True values
+          n += np.sum(dat)
+        else:  # just get the first dimension
+          n += len(dat)
+      # (utt_id, frame_count)
       res.append((int(idx), n))
     return res
 
@@ -136,6 +144,10 @@ class KaldiFeaturesReader(Extractor):
   cmn_normalize_variance : `bool` (default=`False`)
   is_matrix : `bool` (default=`True`)
     if the input is a matrix or a vector
+  concat_char : `str` (default='&')
+    by concatenating multiple specifier using given character,
+    multiple utterance could be sequentially loaded and concatenated.
+    (e.g. 'raw_mfcc_sre18_dev.1.ark:3018396&raw_mfcc_sre18_dev.1.ark:5516398')
 
   Example
   -------
@@ -161,7 +173,8 @@ class KaldiFeaturesReader(Extractor):
                cmn_min_window: int = 100,
                cmn_center: bool = False,
                cmn_normalize_variance: bool = False,
-               is_matrix: bool = True):
+               is_matrix: bool = True,
+               concat_char: str = '&'):
     assert isinstance(name, string_types), \
       'a short name (description) must be given for KaldiFeaturesReader'
     super(KaldiFeaturesReader, self).__init__(name=name)
@@ -171,6 +184,7 @@ class KaldiFeaturesReader(Extractor):
     self._kio = kio
     self._featfuncs = featfuncs
     self.is_matrix = bool(is_matrix)
+    self.concat_char = str(concat_char)
     # ====== prepare the features option ====== #
     self.delta_opts = None
     self.sdelta_opts = None
@@ -190,7 +204,7 @@ class KaldiFeaturesReader(Extractor):
       self.cmn_opts.center = bool(cmn_center)
       self.cmn_opts.normalize_variance = bool(cmn_normalize_variance)
 
-  def transform(self, specifier, is_matrix=None):
+  def transform(self, specifier):
     """
     specifier : `str`
       file path and location joined by ':', for example:
@@ -198,22 +212,29 @@ class KaldiFeaturesReader(Extractor):
         "/kaldi_features/voxceleb/vad_voxceleb.1.ark:42"
     """
     assert isinstance(specifier, string_types), "specifier must be a string"
-    if is_matrix is None:
-      is_matrix = self.is_matrix
-    # ====== load features  ====== #
-    if is_matrix:
-      feats = self._kio.read_matrix(specifier)
-    else:
-      feats = self._kio.read_vector(specifier)
-    # ====== post-processing ====== #
-    if self.delta_opts is not None:
-      feats = self._featfuncs.compute_deltas(self.delta_opts, feats)
-    if self.sdelta_opts is not None:
-      feats = self._featfuncs.compute_shift_deltas(self.sdelta_opts, feats)
-    if self.cmn_opts is not None:
-      self._featfuncs.sliding_window_cmn(self.cmn_opts, feats, feats)
+    is_matrix = self.is_matrix
+    all_feats = []
+    for spec in specifier.split(self.concat_char):
+      # ====== load features  ====== #
+      if is_matrix:
+        feats = self._kio.read_matrix(spec)
+      else:
+        feats = self._kio.read_vector(spec)
+      # ====== post-processing ====== #
+      if self.delta_opts is not None:
+        feats = self._featfuncs.compute_deltas(self.delta_opts, feats)
+      if self.sdelta_opts is not None:
+        feats = self._featfuncs.compute_shift_deltas(self.sdelta_opts, feats)
+      if self.cmn_opts is not None:
+        self._featfuncs.sliding_window_cmn(self.cmn_opts, feats, feats)
+      # add to final features list
+      all_feats.append(feats.numpy())
     # ====== return results ====== #
-    return feats.numpy()
+    if len(all_feats) == 1:
+      all_feats = all_feats[0]
+    else:
+      all_feats = np.concatenate(all_feats, axis=0)
+    return all_feats
 
 
 # ===========================================================================
@@ -548,6 +569,8 @@ class KaldiDataset(data.Dataset):
       "Batch specifier must be a list of tuples that contains multiple " + \
         "utterance ID for minibatch"
     if self.shuffle_batches:
+      if self.verbose:
+        print("Shuffling the minbatches ...")
       self._rand.shuffle(self._minibatches)
     # ====== filtering by min_utt_per_batch ====== #
     if self.min_utt_per_batch > 1:
@@ -558,8 +581,9 @@ class KaldiDataset(data.Dataset):
       ]
       n_new = len(self._minibatches)
       if self.verbose:
-        print("Filtering minibatches min_utt_per_batch=%d - original:%d  new:%d" %
-              (self.min_utt_per_batch, n_org, n_new))
+        print(
+            "Filtering minibatches min_utt_per_batch=%d - original:%d  new:%d" %
+            (self.min_utt_per_batch, n_org, n_new))
     # ====== random clipping ====== #
     random.seed(self._rand.randint(0, 1e8))
     # store clipping point (start, end) for each utterances
@@ -711,6 +735,10 @@ class KaldiDataset(data.Dataset):
       labels = None
     features, labels = self.post_processing(feat_list, labels)
 
+    # re-organizing the features
+    if isinstance(features, (list, tuple)) and len(features) == 1:
+      features = features[0]
+
     # appending the labels to the returns in different ways
     if labels is not None and self.return_labels:
       labels = torch.from_numpy(labels)
@@ -720,6 +748,7 @@ class KaldiDataset(data.Dataset):
         features = tuple(features) + (labels,)
       else:
         features = (features, labels)
+    #
     return features
 
   # ====== data loader ====== #
