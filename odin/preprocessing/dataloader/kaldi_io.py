@@ -415,7 +415,7 @@ class KaldiDataset(data.Dataset):
     _check_pykaldi()
     if not isinstance(specifier_description, dict) or \
       (not all(isinstance(loader, KaldiFeaturesReader) and
-               isinstance(specs, (tuple, list)) and
+               isinstance(specs, (tuple, list, np.ndarray)) and
                all(isinstance(s, string_types) for s in specs)
        for loader, specs in specifier_description.items())):
       raise ValueError("specifier_description is mapping from "
@@ -567,7 +567,7 @@ class KaldiDataset(data.Dataset):
     # ====== checking if strategy return right results ====== #
     assert len(self._minibatches) > 0, \
       "Batch specifier must be a list of tuples that contains multiple " + \
-        "utterance ID for minibatch"
+        "utterance ID for minibatch, and the length must be > 0"
     if self.shuffle_batches:
       if self.verbose:
         print("Shuffling the minbatches ...")
