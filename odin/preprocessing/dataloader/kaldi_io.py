@@ -455,13 +455,17 @@ class KaldiDataset(data.Dataset):
                                        num_workers=cpu_count() - 2)
     self.frame_counts = tuple(self.frame_counts)
     assert len(self.frame_counts) == self._n_utterances, 'Invalid frame_counts!'
+    # ====== check the labels ====== #
+    self.labels = np.asarray(labels) if isinstance(labels, (tuple, list)) \
+      else labels
+    self.return_labels = bool(return_labels)
     # ====== remove empty utterance ====== #
     if remove_empty_utt:
       remove_ids = set(
           [idx for idx, count in enumerate(self.frame_counts) if count == 0])
       if len(remove_ids) > 0:
         self.specifier_description = {
-            reader: [s for idx, s in specs if idx not in remove_ids
+            reader: [s for idx, s in enumerate(specs) if idx not in remove_ids
                     ] for reader, specs in self.specifier_description.items()
         }
         self._n_utterances = self._n_utterances - len(remove_ids)
@@ -469,17 +473,19 @@ class KaldiDataset(data.Dataset):
             count for idx, count in enumerate(self.frame_counts)
             if idx not in remove_ids
         ]
+        if self.labels is not None:
+          self.labels = np.array([
+              lab for idx, lab in enumerate(self.labels)
+              if idx not in remove_ids
+          ])
       if verbose:
         print("Removing %d empty utterances." % len(remove_ids))
     self.remove_empty_utt = remove_empty_utt
-    # ====== check the labels ====== #
-    if labels is not None:
-      assert len(labels) == self._n_utterances, \
+    # ====== label metadata ====== #
+    if self.labels is not None:
+      assert len(self.labels) == self._n_utterances, \
         "Number of labels and number of utterances mismatch: %d vs %d" % \
-          (len(labels), self._n_utterances)
-    self.labels = np.asarray(labels) if isinstance(labels, (tuple, list)) \
-      else labels
-    self.return_labels = bool(return_labels)
+          (len(self.labels), self._n_utterances)
     # label_id -> [utt_id, ...]
     self.lab2utt = defaultdict(list)
     self.utt2lab = {}

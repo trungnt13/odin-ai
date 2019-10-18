@@ -41,10 +41,10 @@ except:
   pass
 
 
-
 def array_size(arr):
   """ Return size of an numpy.ndarray in bytes """
   return np.prod(arr.shape) * arr.dtype.itemsize
+
 
 # ===========================================================================
 # Pretty print
@@ -107,8 +107,8 @@ def dummy_formatter(x):
   if isinstance(x, np.ndarray):
     return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
   if isinstance(x, Mapping):
-    return "(map)length=%d;dtype=%s" % (len(x),
-        ';'.join([_type_name(i) for i in next(iter(x.items()))]))
+    return "(map)length=%d;dtype=%s" % (len(x), ';'.join(
+        [_type_name(i) for i in next(iter(x.items()))]))
   # dataset type
   if 'odin.fuel.dataset.Dataset' in str(type(x)):
     return ("(ds)path:%s" % x.path)
@@ -128,10 +128,9 @@ def UnitTimer(factor=1, name=None):
   # set name for timing task
   if name is None:
     name = 'Task'
-  print('"%s"' % ctext(name, 'yellow'),
-      "Time:",
-      ctext((end - start) / factor, 'cyan'),
-      '(sec)')
+  print('"%s"' % ctext(name, 'yellow'), "Time:",
+        ctext((end - start) / factor, 'cyan'), '(sec)')
+
 
 # ===========================================================================
 # Basics
@@ -168,9 +167,11 @@ def is_same_shape(shape1, shape2):
       return False
   return True
 
+
 def type_path(obj):
   clazz = type(obj)
   return clazz.__module__ + "." + clazz.__name__
+
 
 def iter_chunk(it, n):
   """ Chunking an iterator into small chunk of size `n`
@@ -182,6 +183,7 @@ def iter_chunk(it, n):
   while obj:
     yield obj
     obj = list(islice(it, n))
+
 
 def batching(batch_size, n=None, start=0, end=None, seed=None):
   """
@@ -220,9 +222,8 @@ def batching(batch_size, n=None, start=0, end=None, seed=None):
   batches = list(range(start, end + batch_size, batch_size))
   rand = np.random.RandomState(seed)
   rand.shuffle(batches)
-  return (((i, min(i + batch_size, end)))
-          for i in batches
-          if i < end)
+  return (((i, min(i + batch_size, end))) for i in batches if i < end)
+
 
 def read_lines(file_path):
   if not os.path.exists(file_path):
@@ -235,13 +236,16 @@ def read_lines(file_path):
       lines.append(i[:-1] if i[-1] == '\n' else i)
   return lines
 
+
 # ===========================================================================
 # Others
 # ===========================================================================
 def raise_return(e):
   raise e
 
+
 _CURRENT_STDIO = None
+
 
 class _LogWrapper():
 
@@ -267,8 +271,10 @@ class _LogWrapper():
       except Exception:
         pass
 
+
 def get_stdio_path():
   return _CURRENT_STDIO
+
 
 def stdio(path=None, suppress=False, stderr=True):
   """
@@ -305,23 +311,23 @@ def stdio(path=None, suppress=False, stderr=True):
     else:
       path = str(path)
   else:
-    raise ValueError("Unsupport for path=`%s` in `stdio`." %
-        str(type(path)))
+    raise ValueError("Unsupport for path=`%s` in `stdio`." % str(type(path)))
   # ====== set current stdio path ====== #
   global _CURRENT_STDIO
   _CURRENT_STDIO = path
   # ====== assign stdio ====== #
-  if f is None: # reset
+  if f is None:  # reset
     if isinstance(sys.stdout, _LogWrapper):
       sys.stdout.end()
     if isinstance(sys.stderr, _LogWrapper):
       sys.stderr.end()
     sys.stdout = sys.__stdout__
     sys.stderr = sys.__stderr__
-  else: # redirect to file
+  else:  # redirect to file
     sys.stdout = f
     if stderr:
       sys.stderr = f
+
 
 def auto_logging(log_dir=None, prefix='', num_max=None):
   """
@@ -338,7 +344,8 @@ def auto_logging(log_dir=None, prefix='', num_max=None):
     log_dir = get_script_path()
   if not os.path.isdir(log_dir):
     raise ValueError("'%s' is not a directory" % str(log_dir))
-  prefix = get_script_name() if prefix is None or len(prefix) == 0 else str(prefix)
+  prefix = get_script_name() if prefix is None or len(prefix) == 0 else str(
+      prefix)
   date_time = get_formatted_datetime(only_number=False)
   path = os.path.join(log_dir, prefix + '[%s]' % date_time + '.txt')
   # ====== check maximum number of log ====== #
@@ -346,30 +353,37 @@ def auto_logging(log_dir=None, prefix='', num_max=None):
     from stat import ST_CTIME
     num_max = int(num_max)
     past_logs = [i for i in os.listdir(log_dir) if prefix in i]
-    past_logs = sorted(past_logs,
-                       key=lambda x: os.stat(os.path.join(log_dir, x))[ST_CTIME],
-                       reverse=True)
+    past_logs = sorted(
+        past_logs,
+        key=lambda x: os.stat(os.path.join(log_dir, x))[ST_CTIME],
+        reverse=True)
     # remove previous logs
     for i, name in enumerate(past_logs):
       if i >= num_max - 1:
         os.remove(os.path.join(log_dir, name))
   return stdio(path=path, suppress=False, stderr=True)
 
+
 def eprint(text):
   """Print ERROR message to stderr"""
   print(ctext('[Error]', 'red') + str(text), file=sys.stderr)
+
 
 def wprint(text):
   """Print WARNING message to stderr"""
   print(ctext('[Warning]', 'yellow') + str(text), file=sys.stderr)
 
+
 # ===========================================================================
 # Universal ID
 # ===========================================================================
-_uuid_chars = list(chain(map(chr, range(65, 91)),  # ABCD
-                         map(chr, range(97, 123)),  # abcd
-                         map(chr, range(48, 57)))) # 0123
-_uuid_random_state = numpy.random.RandomState(int(str(int(time.time() * 100))[3:]))
+_uuid_chars = list(
+    chain(
+        map(chr, range(65, 91)),  # ABCD
+        map(chr, range(97, 123)),  # abcd
+        map(chr, range(48, 57))))  # 0123
+_uuid_random_state = numpy.random.RandomState(
+    int(str(int(time.time() * 100))[3:]))
 
 
 def uuid(length=8):
@@ -378,9 +392,7 @@ def uuid(length=8):
   # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
   # uniqid = str(uuid.uuid4())[:8]
   uniquid = ''.join(
-      _uuid_random_state.choice(_uuid_chars,
-                                size=length,
-                                replace=True))
+      _uuid_random_state.choice(_uuid_chars, size=length, replace=True))
   return uniquid
 
 
@@ -429,8 +441,8 @@ class UniqueHasher(object):
   def __init__(self, nb_labels=None):
     super(UniqueHasher, self).__init__()
     self.nb_labels = nb_labels
-    self._memory = {} # map: key -> hash_key
-    self._current_hash = {} # map: hash_key -> key
+    self._memory = {}  # map: key -> hash_key
+    self._current_hash = {}  # map: hash_key -> key
 
   def hash(self, value):
     key = abs(hash(value))
@@ -443,8 +455,9 @@ class UniqueHasher(object):
     if key in self._memory:
       if self.nb_labels is not None and \
           len(self._memory) >= self.nb_labels:
-        raise Exception('All %d labels have been assigned, outbound value:"%s"' %
-                        (self.nb_labels, value))
+        raise Exception(
+            'All %d labels have been assigned, outbound value:"%s"' %
+            (self.nb_labels, value))
       else:
         while key in self._memory:
           key += 1
@@ -497,16 +510,20 @@ class FuncDesc(object):
         sign = inspect.signature(func.function)
       else:
         sign = inspect.signature(func)
-      self._args = [n for n, p in sign.parameters.items()
-                    if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                                      inspect.Parameter.VAR_KEYWORD)]
+      self._args = [
+          n for n, p in sign.parameters.items()
+          if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                            inspect.Parameter.VAR_KEYWORD)
+      ]
       self._is_include_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
-                           for i in sign.parameters.values())
+                                  for i in sign.parameters.values())
       self._is_include_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
-                             for i in sign.parameters.values())
-      self._defaults = {n: p.default
-                        for n, p in sign.parameters.items()
-                        if p.default != inspect.Parameter.empty}
+                                    for i in sign.parameters.values())
+      self._defaults = {
+          n: p.default
+          for n, p in sign.parameters.items()
+          if p.default != inspect.Parameter.empty
+      }
       self._func = func
     else:
       raise ValueError("`func` must be function, method, or FuncDesc, "
@@ -518,9 +535,9 @@ class FuncDesc(object):
     # check if need to re-load function module during setstate
     if not is_lambda(self._func):
       module = inspect.getmodule(self._func)
-      func_module_key = [i
-                         for i, j in list(sys.modules.items())
-                         if j == module][0]
+      func_module_key = [
+          i for i, j in list(sys.modules.items()) if j == module
+      ][0]
       func_module_name = module.__name__
       func_module_path = inspect.getfile(module)
     else:
@@ -529,19 +546,15 @@ class FuncDesc(object):
       func_module_path = None
     # using dill to dump function
     func_str = dill.dumps(self._func)
-    return (func_str,
-            func_module_key, func_module_name, func_module_path,
-            self.__name__,
-            self._args, self._is_include_args,
+    return (func_str, func_module_key, func_module_name, func_module_path,
+            self.__name__, self._args, self._is_include_args,
             self._is_include_kwargs, self._defaults)
 
   def __setstate__(self, states):
     import dill
-    (func_str,
-     func_module_key, func_module_name, func_module_path,
-     self.__name__,
-     self._args, self._is_include_args,
-     self._is_include_kwargs, self._defaults) = states
+    (func_str, func_module_key, func_module_name, func_module_path,
+     self.__name__, self._args, self._is_include_args, self._is_include_kwargs,
+     self._defaults) = states
     # iterate through all loaded modules to find module contain given function
     if func_module_key is not None and \
     func_module_name is not None and \
@@ -621,8 +634,7 @@ class FuncDesc(object):
       args = ()
     # remove extra kwargs in inc_kwargs=False
     if not self._is_include_kwargs:
-      kwargs = {name: kwargs[name] for name in self._args
-                if name in kwargs}
+      kwargs = {name: kwargs[name] for name in self._args if name in kwargs}
     keywords.update(kwargs)
     # ====== update the default ====== #
     for name, val in self._defaults.items():
@@ -639,6 +651,7 @@ class FuncDesc(object):
         (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
             self._is_include_args, self._is_include_kwargs)
     return s
+
 
 # ===========================================================================
 # ArgCOntrol
@@ -677,6 +690,7 @@ def args_parse(descriptions):
     else:
       raise ValueError("No support for given description: %s" % str(desc))
   return args.parse()
+
 
 class ArgController(object):
   """ Simple interface to argparse """
@@ -718,8 +732,7 @@ class ArgController(object):
       val = str(val)
     return val
 
-  def add(self, name, help, default=None, enum=None,
-          preprocess=None):
+  def add(self, name, help, default=None, enum=None, preprocess=None):
     """ NOTE: if the default value is not given, the argument is
     required
 
@@ -740,28 +753,41 @@ class ArgController(object):
     """
     if self.parser is None:
       self.parser = argparse.ArgumentParser(
-          description='Automatic argument parser (yes,true > True; no,false > False)',
+          description=
+          'Automatic argument parser (yes,true > True; no,false > False)',
           add_help=True)
     # ====== NO default value ====== #
     if default is None:
       if self._is_positional(name):
-        self.parser.add_argument(name, help=help, type=str, action="store",
-            metavar='')
+        self.parser.add_argument(name,
+                                 help=help,
+                                 type=str,
+                                 action="store",
+                                 metavar='')
       else:
-        self.parser.add_argument(name, help=help, type=str, action="store",
-            required=True, metavar='')
+        self.parser.add_argument(name,
+                                 help=help,
+                                 type=str,
+                                 action="store",
+                                 required=True,
+                                 metavar='')
       self._require_input = True
     # ====== boolean default value ====== #
     elif isinstance(default, bool):
       help += ' (default: %s)' % str(default)
-      self.parser.add_argument(name, help=help,
+      self.parser.add_argument(name,
+                               help=help,
                                action="store_%s" % str(not default).lower())
       preprocess = lambda x: bool(x)
     # ====== add defaults value ====== #
     else:
       help += ' (default: %s)' % str(default)
-      self.parser.add_argument(name, help=help, type=str, action="store",
-          default=str(default), metavar='')
+      self.parser.add_argument(name,
+                               help=help,
+                               type=str,
+                               action="store",
+                               default=str(default),
+                               metavar='')
 
     # ====== store preprocess dictionary ====== #
     name = self._process_name(name)
@@ -788,16 +814,14 @@ class ArgController(object):
         args = self.parser.parse_args()
     except Exception as e:
       # if specfy version or help, don't need to print anything else
-      if all(i not in ['-h', '--help', '-v', '--version']
-             for i in sys.argv):
+      if all(i not in ['-h', '--help', '-v', '--version'] for i in sys.argv):
         self.parser.print_help()
       exit_now = True
     if exit_now:
       exit()
     # ====== parse the arguments ====== #
     try:
-      args = {i: self._parse_input(i, j)
-              for i, j in args._get_kwargs()}
+      args = {i: self._parse_input(i, j) for i, j in args._get_kwargs()}
     except Exception as e:
       print('Error parsing argument with name "%s"' % str(e))
       self.parser.print_help()
@@ -827,6 +851,7 @@ class ArgController(object):
     # convert it to struct
     return struct(args)
 
+
 # ===========================================================================
 # Simple math and processing
 # ===========================================================================
@@ -837,8 +862,8 @@ def as_tuple_of_shape(x):
     x = (x,)
   return x
 
-def axis_normalize(axis, ndim,
-                   return_tuple=False):
+
+def axis_normalize(axis, ndim, return_tuple=False):
   """ Normalize the axis
    * -1 => ndim - 1
    * 10 => 10 % ndim
@@ -899,76 +924,18 @@ def flatten_list(x, level=None):
 
 
 # ===========================================================================
-# Python
+# Online
 # ===========================================================================
-class struct(dict):
-
-  '''Flexible object can be assigned any attribtues'''
-
-  def __init__(self, *args, **kwargs):
-    super(struct, self).__init__(*args, **kwargs)
-    # copy all dict to attr
-    for i, j in self.items():
-      if is_string(i) and not hasattr(self, i):
-        super(struct, self).__setattr__(i, j)
-
-  def __setattr__(self, name, val):
-    super(struct, self).__setattr__(name, val)
-    super(struct, self).__setitem__(name, val)
-
-  def __setitem__(self, x, y):
-    super(struct, self).__setitem__(x, y)
-    if is_string(x):
-      super(struct, self).__setattr__(x, y)
-
-
-class bidict(dict):
-  """ Bi-directional dictionary (i.e. a <-> b)
-  Note
-  ----
-  When you iterate over this dictionary, it will be a doubled size
-  dictionary
-  """
-
-  def __init__(self, *args, **kwargs):
-    super(bidict, self).__init__(*args, **kwargs)
-    # this is duplication
-    self._inv = dict()
-    for i, j in self.items():
-      self._inv[j] = i
-
-  @property
-  def inv(self):
-    return self._inv
-
-  def __setitem__(self, key, value):
-    super(bidict, self).__setitem__(key, value)
-    self._inv[value] = key
-    return None
-
-  def __getitem__(self, key):
-    if key not in self:
-      return self._inv[key]
-    return super(bidict, self).__getitem__(key)
-
-  def update(self, *args, **kwargs):
-    for k, v in dict(*args, **kwargs).items():
-      self[k] = v
-      self._inv[v] = k
-
-  def __delitem__(self, key):
-    del self._inv[super(bidict, self).__getitem__(key)]
-    return dict.__delitem__(self, key)
-
-
 # Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
 # urllib module, known to have issues with proxy management
 if sys.version_info[0] == 2:
+
   def urlretrieve(url, filename, reporthook=None, data=None):
     '''
     This function is adpated from: https://github.com/fchollet/keras
     Original work Copyright (c) 2014-2015 keras contributors
     '''
+
     def chunk_read(response, chunk_size=8192, reporthook=None):
       total_size = response.info().get('Content-Length').strip()
       total_size = int(total_size)
@@ -989,6 +956,7 @@ if sys.version_info[0] == 2:
 else:
   from six.moves.urllib.request import urlretrieve
 
+
 def get_file(fname, origin, outdir, verbose=False):
   '''
   Parameters
@@ -1007,7 +975,8 @@ def get_file(fname, origin, outdir, verbose=False):
     if verbose:
       prog = Progbar(target=-1,
                      name="Downloading: %s" % os.path.basename(origin),
-                     print_report=True, print_summary=True)
+                     print_report=True,
+                     print_summary=True)
 
     def dl_progress(count, block_size, total_size):
       if verbose:
@@ -1015,6 +984,7 @@ def get_file(fname, origin, outdir, verbose=False):
           prog.target = total_size
         else:
           prog.add(count * block_size - prog.seen_so_far)
+
     ###
     error_msg = 'URL fetch failure on {}: {} -- {}'
     try:
@@ -1029,113 +999,6 @@ def get_file(fname, origin, outdir, verbose=False):
         os.remove(fpath)
       raise
   return fpath
-
-# ===========================================================================
-# Python utilities
-# ===========================================================================
-def get_all_files(path, filter_func=None):
-  ''' Recurrsively get all files in the given path '''
-  file_list = []
-  if os.access(path, os.R_OK):
-    for p in os.listdir(path):
-      p = os.path.join(path, p)
-      if os.path.isdir(p):
-        file_list += get_all_files(p, filter_func)
-      else:
-        if filter_func is not None and not filter_func(p):
-          continue
-        # remove dump files of Mac
-        if '.DS_Store' in p or '.DS_STORE' in p or \
-            '._' == os.path.basename(p)[:2]:
-          continue
-        file_list.append(p)
-  return file_list
-
-
-def get_all_ext(path):
-  """ Recurrsively get all extension of files in the given path
-
-  Parameters
-  ----------
-  path : str
-    input folder
-
-  """
-  file_list = []
-  if os.access(path, os.R_OK):
-    for p in os.listdir(path):
-      p = os.path.join(path, p)
-      if os.path.isdir(p):
-        file_list += get_all_ext(p)
-      else:
-        # remove dump files of Mac
-        if '.DS_Store' in p or '.DS_STORE' in p or \
-            '._' == os.path.basename(p)[:2]:
-          continue
-        ext = p.split('.')
-        if len(ext) > 1:
-          file_list.append(ext[-1])
-  file_list = list(set(file_list))
-  return file_list
-
-
-def folder2bin(path):
-  """ This function read all files within a Folder
-  in binary mode,
-  then, store all the data in a dictionary mapping:
-  `relative_path -> binary_data`
-  """
-  if not os.path.isdir(path):
-    raise ValueError('`path`=%s must be a directory.' % path)
-  path = os.path.abspath(path)
-  files = get_all_files(path)
-  data = {}
-  for f in files:
-    name = f.replace(path + '/', '')
-    with open(f, 'rb') as f:
-      data[name] = f.read()
-  return data
-
-
-def bin2folder(data, path, override=False):
-  """ Convert serialized data from `folder2bin` back
-  to a folder at `path`
-
-  Parameters
-  ----------
-  data: {string, dict}
-      if string, `data` can be pickled string, or path to a file.
-      if dict, `data` is the output from `folder2bin`
-  path: string
-      path to a folder
-  override: bool
-      if True, override exist folder at `path`
-  """
-  # ====== check input ====== #
-  if is_string(data):
-    if os.path.isfile(data):
-      with open(data, 'rb') as f:
-        data = pickle.load(f)
-    else:
-      data = pickle.loads(data)
-  if not isinstance(data, dict):
-    raise ValueError("`data` must be dictionary type, or string, or path to file.")
-  # ====== check outpath ====== #
-  path = os.path.abspath(str(path))
-  if not os.path.exists(path):
-    os.mkdir(path)
-  elif os.path.isfile(path):
-    raise ValueError("`path` must be path to a directory.")
-  elif os.path.isdir(path):
-    if not override:
-      raise RuntimeError("Folder at path:%s exist, cannot override." % path)
-    shutil.rmtree(path)
-    os.mkdir(path)
-  # ====== deserialize ====== #
-  for name, dat in data.items():
-    with open(os.path.join(path, name), 'wb') as f:
-      f.write(dat)
-  return path
 
 
 # ===========================================================================
@@ -1162,13 +1025,17 @@ def package_list(include_version=False):
   import pip
   for i in pip.get_installed_distributions():
     all_packages.append(i.key +
-        (('==' + i.version) if include_version is True else ''))
+                        (('==' + i.version) if include_version is True else ''))
   return all_packages
 
 
-def get_module_from_path(identifier, path='.',
-                         prefix='', suffix='', exclude='',
-                         prefer_compiled=False, return_error=False):
+def get_module_from_path(identifier,
+                         path='.',
+                         prefix='',
+                         suffix='',
+                         exclude='',
+                         prefer_compiled=False,
+                         return_error=False):
   ''' Algorithms:
    - Search all files in the `path` matched `prefix` and `suffix`
    - Exclude all files contain any str in `exclude`
@@ -1226,14 +1093,15 @@ def get_module_from_path(identifier, path='.',
     exclude = [exclude]
   prefer_flag = 1 if prefer_compiled else -1
   # ====== create pattern and load files ====== #
-  pattern = re.compile(r"^%s.*%s\.pyc?" % (prefix, suffix)) # py or pyc
+  pattern = re.compile(r"^%s.*%s\.pyc?" % (prefix, suffix))  # py or pyc
   file_name = os.listdir(path)
-  file_name = [f for f in file_name
-           if pattern.match(f) and
-           sum([i in f for i in exclude]) == 0]
+  file_name = [
+      f for f in file_name
+      if pattern.match(f) and sum([i in f for i in exclude]) == 0
+  ]
   # ====== remove duplicated pyc files ====== #
   file_name = sorted(file_name,
-                     key=lambda x: prefer_flag * len(x)) # pyc is longer
+                     key=lambda x: prefer_flag * len(x))  # pyc is longer
   # .pyc go first get overrided by .py
   file_name = sorted({f.split('.')[0]: f for f in file_name}.values())
   # ====== load all modules ====== #
@@ -1247,18 +1115,14 @@ def get_module_from_path(identifier, path='.',
     try:
       if '.pyc' in fname:
         modules.append(
-            imp.load_compiled(fname.split('.')[0],
-                              os.path.join(path, fname))
-        )
+            imp.load_compiled(fname.split('.')[0], os.path.join(path, fname)))
       else:
         modules.append(
-            imp.load_source(fname.split('.')[0],
-                            os.path.join(path, fname))
-        )
+            imp.load_source(fname.split('.')[0], os.path.join(path, fname)))
     except Exception as e:
       modules_error[fname] = str(e)
       eprint("Cannot loading modules from file: '%s' - %s" %
-        (ctext(fname, 'yellow'), ctext(str(e), 'red')))
+             (ctext(fname, 'yellow'), ctext(str(e), 'red')))
   # ====== Find all identifier in modules ====== #
   ids = []
   for m in modules:
@@ -1307,9 +1171,8 @@ def dict_union(*dicts, **kwargs):
   for d in list(dicts) + [kwargs]:
     duplicate_keys = set(result.keys()) & set(d.keys())
     if duplicate_keys:
-      raise ValueError("The following keys have duplicate entries: {}"
-                       .format(", ".join(str(key) for key in
-                                         duplicate_keys)))
+      raise ValueError("The following keys have duplicate entries: {}".format(
+          ", ".join(str(key) for key in duplicate_keys)))
     result.update(d)
   return result
 
@@ -1339,8 +1202,12 @@ def get_tempdir():
   return tempfile.mkdtemp()
 
 
-def _get_managed_path(folder, name, override, is_folder=False,
-                      root='~', odin_base=True):
+def _get_managed_path(folder,
+                      name,
+                      override,
+                      is_folder=False,
+                      root='~',
+                      odin_base=True):
   if root == '~':
     root = os.path.expanduser('~')
   datadir_base = os.path.join(root, '.odin') if odin_base else root
@@ -1355,9 +1222,9 @@ def _get_managed_path(folder, name, override, is_folder=False,
   if is_string(name):
     datadir = os.path.join(datadir, str(name))
     if os.path.exists(datadir) and override:
-      if os.path.isfile(datadir): # remove file
+      if os.path.isfile(datadir):  # remove file
         os.remove(datadir)
-      else: # remove and create new folder
+      else:  # remove and create new folder
         shutil.rmtree(datadir)
     if is_folder and not os.path.exists(datadir):
       os.mkdir(datadir)
@@ -1365,22 +1232,27 @@ def _get_managed_path(folder, name, override, is_folder=False,
 
 
 def get_datasetpath(name=None, override=False, is_folder=True, root='~'):
-  return _get_managed_path('datasets', name, override,
-                           is_folder=is_folder, root=root)
+  return _get_managed_path('datasets',
+                           name,
+                           override,
+                           is_folder=is_folder,
+                           root=root)
 
 
 def get_figpath(name=None, override=False, root='~'):
-  return _get_managed_path('figs', name, override,
-                           is_folder=True, root=root)
+  return _get_managed_path('figs', name, override, is_folder=True, root=root)
+
 
 def get_modelpath(name=None, override=False, root='~'):
   """ Default model path for saving O.D.I.N networks """
-  return _get_managed_path('models', name, override,
-                           is_folder=True, root=root)
+  return _get_managed_path('models', name, override, is_folder=True, root=root)
 
 
-def get_logpath(name=None, override=False, increasing=True,
-                odin_base=True, root='~'):
+def get_logpath(name=None,
+                override=False,
+                increasing=True,
+                odin_base=True,
+                root='~'):
   """
   name : (string) name of log file
   override : (bool) if True, override old log file if exist
@@ -1388,6 +1260,7 @@ def get_logpath(name=None, override=False, increasing=True,
   odin_base : (bool) if True, create log file under '.odin/logs' folder
   root : (string) root folder that contain all the log file
   """
+
   def _check_logpath(log_path):
     main_path, ext = os.path.splitext(log_path)
     main_path = main_path.split('.')
@@ -1405,16 +1278,18 @@ def get_logpath(name=None, override=False, increasing=True,
       current_log_index += 1
     return main_path + '.' + str(current_log_index) + ext
 
-  path = _get_managed_path('logs' if odin_base else '', name, override,
-                           is_folder=False, root=root,
+  path = _get_managed_path('logs' if odin_base else '',
+                           name,
+                           override,
+                           is_folder=False,
+                           root=root,
                            odin_base=odin_base)
   if increasing:
     path = _check_logpath(path)
   return path
 
 
-def get_exppath(tag, name=None, override=False, prompt=False,
-                root='~'):
+def get_exppath(tag, name=None, override=False, prompt=False, root='~'):
   """ Specific path for experiments results
 
   Parameters
@@ -1432,8 +1307,11 @@ def get_exppath(tag, name=None, override=False, prompt=False,
   root: string
       root path for the results (default: "~/.odin")
   """
-  path = _get_managed_path('exp', tag, False,
-                           is_folder=True, root=root,
+  path = _get_managed_path('exp',
+                           tag,
+                           False,
+                           is_folder=True,
+                           root=root,
                            odin_base=False)
   # only return the main folder
   if name is None:
@@ -1454,6 +1332,7 @@ def get_exppath(tag, name=None, override=False, prompt=False,
     shutil.rmtree(path)
     os.mkdir(path)
   return path
+
 
 # ===========================================================================
 # Misc
@@ -1489,8 +1368,10 @@ def run_script(s, wait=True, path='/tmp'):
   try:
     with open(path, 'w') as f:
       f.write(s)
-    cmd = subprocess.Popen("python %s" % path, shell=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    cmd = subprocess.Popen("python %s" % path,
+                           shell=True,
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
     (out, err) = cmd.communicate()
     if wait:
       status = cmd.wait()
@@ -1500,6 +1381,7 @@ def run_script(s, wait=True, path='/tmp'):
     if os.path.exists(path):
       os.remove(path)
   return status, str(out, encoding='utf-8'), str(err, encoding='utf-8')
+
 
 def exec_commands(cmds, print_progress=True):
   ''' Execute a command or list of commands in parallel with multiple process
@@ -1515,7 +1397,7 @@ def exec_commands(cmds, print_progress=True):
   failed: list of failed command
 
   '''
-  if not cmds: return [] # empty list
+  if not cmds: return []  # empty list
   if not isinstance(cmds, (list, tuple)):
     cmds = [cmds]
   else:
@@ -1590,12 +1472,19 @@ def play_audio(data, fs, volumn=1, speed=1):
     channels = data.shape[1]
   with TemporaryDirectory() as temppath:
     path = os.path.join(temppath, 'tmp_play.wav')
-    with sf.SoundFile(path, 'w', fs, channels, subtype=None,
-        endian=None, format=None, closefd=None) as f:
+    with sf.SoundFile(path,
+                      'w',
+                      fs,
+                      channels,
+                      subtype=None,
+                      endian=None,
+                      format=None,
+                      closefd=None) as f:
       f.write(data)
     os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
     raw_input('<enter> to stop audio.')
-    os.system("kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
+    os.system(
+        "kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
 
 
 # ===========================================================================
@@ -1604,10 +1493,16 @@ def play_audio(data, fs, volumn=1, speed=1):
 __process_pid_map = {}
 
 
-def get_process_status(pid=None, memory_usage=False, memory_shared=False,
-                       memory_virtual=False, memory_maps=False,
-                       cpu_percent=False, threads=False,
-                       status=False, name=False, io_counters=False):
+def get_process_status(pid=None,
+                       memory_usage=False,
+                       memory_shared=False,
+                       memory_virtual=False,
+                       memory_maps=False,
+                       cpu_percent=False,
+                       threads=False,
+                       status=False,
+                       name=False,
+                       io_counters=False):
   import psutil
   if pid is None:
     pid = os.getpid()
@@ -1624,14 +1519,13 @@ def get_process_status(pid=None, memory_usage=False, memory_shared=False,
   if io_counters:
     return process.io_counters()
   if memory_usage:
-    return process.memory_info().rss / float(2 ** 20)
+    return process.memory_info().rss / float(2**20)
   if memory_shared:
-    return process.memory_info().shared / float(2 ** 20)
+    return process.memory_info().shared / float(2**20)
   if memory_virtual:
-    return process.memory_info().vms / float(2 ** 20)
+    return process.memory_info().vms / float(2**20)
   if memory_maps:
-    return {i[0]: i[1] / float(2 ** 20)
-            for i in process.memory_maps()}
+    return {i[0]: i[1] / float(2**20) for i in process.memory_maps()}
   if cpu_percent:
     # first time call always return 0
     process.cpu_percent(None)
@@ -1640,9 +1534,13 @@ def get_process_status(pid=None, memory_usage=False, memory_shared=False,
     return {i.id: (i.user_time, i.system_time) for i in process.threads()}
 
 
-def get_system_status(memory_total=False, memory_total_actual=False,
-                      memory_total_usage=False, memory_total_free=False,
-                      all_pids=False, swap_memory=False, pid=False):
+def get_system_status(memory_total=False,
+                      memory_total_actual=False,
+                      memory_total_usage=False,
+                      memory_total_free=False,
+                      all_pids=False,
+                      swap_memory=False,
+                      pid=False):
   """
   Parameters
   ----------
@@ -1660,18 +1558,18 @@ def get_system_status(memory_total=False, memory_total_actual=False,
   import psutil
   # ====== general system query ====== #
   if memory_total:
-    return psutil.virtual_memory().total / float(2 ** 20)
+    return psutil.virtual_memory().total / float(2**20)
   if memory_total_actual:
-    return psutil.virtual_memory().available / float(2 ** 20)
+    return psutil.virtual_memory().available / float(2**20)
   if memory_total_usage:
-    return psutil.virtual_memory().used / float(2 ** 20)
+    return psutil.virtual_memory().used / float(2**20)
   if memory_total_free:
-    return psutil.virtual_memory().free / float(2 ** 20)
+    return psutil.virtual_memory().free / float(2**20)
   if swap_memory:
     tmp = psutil.swap_memory()
-    tmp.total /= float(2 ** 20)
-    tmp.used /= float(2 ** 20)
-    tmp.free /= float(2 ** 20)
+    tmp.total /= float(2**20)
+    tmp.used /= float(2**20)
+    tmp.free /= float(2**20)
     tmp.sin /= float(2**20)
     tmp.sout /= float(2**20)
     return tmp

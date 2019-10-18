@@ -55,6 +55,100 @@ RE_NUMBER = re.compile(r'^[+-]*((\d*\.\d+)|(\d+))$')
 
 
 # ===========================================================================
+# Data structure
+# ===========================================================================
+class struct(dict):
+  '''Flexible object can be assigned any attribtues'''
+
+  def __init__(self, *args, **kwargs):
+    super(struct, self).__init__(*args, **kwargs)
+    # copy all dict to attr
+    for i, j in self.items():
+      if is_string(i) and not hasattr(self, i):
+        super(struct, self).__setattr__(i, j)
+
+  def __setattr__(self, name, val):
+    super(struct, self).__setattr__(name, val)
+    super(struct, self).__setitem__(name, val)
+
+  def __setitem__(self, x, y):
+    super(struct, self).__setitem__(x, y)
+    if is_string(x):
+      super(struct, self).__setattr__(x, y)
+
+
+class bidict(dict):
+  """ Bi-directional dictionary (i.e. a <-> b)
+  Note
+  ----
+  When you iterate over this dictionary, it will be a doubled size
+  dictionary
+  """
+
+  def __init__(self, *args, **kwargs):
+    super(bidict, self).__init__(*args, **kwargs)
+    # this is duplication
+    self._inv = dict()
+    for i, j in self.items():
+      self._inv[j] = i
+
+  @property
+  def inv(self):
+    return self._inv
+
+  def __setitem__(self, key, value):
+    super(bidict, self).__setitem__(key, value)
+    self._inv[value] = key
+    return None
+
+  def __getitem__(self, key):
+    if key not in self:
+      return self._inv[key]
+    return super(bidict, self).__getitem__(key)
+
+  def update(self, *args, **kwargs):
+    for k, v in dict(*args, **kwargs).items():
+      self[k] = v
+      self._inv[v] = k
+
+  def __delitem__(self, key):
+    del self._inv[super(bidict, self).__getitem__(key)]
+    return dict.__delitem__(self, key)
+
+
+class defaultdictkey(defaultdict):
+  """ Enhanced version of `defaultdict`, instead of return a
+  default value, return an "improvised" default value based on
+  the given key.
+
+  Example
+  -------
+  >>> from odin.utils.python_utils import defaultdictkey
+  >>> d = defaultdictkey(lambda x: str(x))
+  >>> print(d['123']) # '123'
+  """
+
+  def __missing__(self, key):
+    if self.default_factory is None:
+      raise KeyError(key)
+    else:
+      ret = self[key] = self.default_factory(key)
+      return ret
+
+
+def multikeysdict(d):
+  assert isinstance(d, dict)
+  new_d = d.__class__()
+  for i, j in d.items():
+    if isinstance(i, tuple):
+      for k in i:
+        new_d[k] = j
+    else:
+      new_d[i] = j
+  return new_d
+
+
+# ===========================================================================
 # Getter
 # ===========================================================================
 def get_formatted_datetime(only_number=True):
@@ -262,66 +356,110 @@ def is_primitives(x, inc_ndarray=True, exception_types=[]):
 # ===========================================================================
 # IO utilities
 # ===========================================================================
-def savetxt(fname,
-            X,
-            fmt='%g',
-            delimiter=' ',
-            newline='\n',
-            header='',
-            footer='',
-            index=None,
-            comments='# ',
-            encoding=None,
-            async_backend='thread'):
-  """ Save an array to a text file.
+def get_all_files(path, filter_func=None):
+  ''' Recurrsively get all files in the given path '''
+  file_list = []
+  if os.access(path, os.R_OK):
+    for p in os.listdir(path):
+      p = os.path.join(path, p)
+      if os.path.isdir(p):
+        file_list += get_all_files(p, filter_func)
+      else:
+        if filter_func is not None and not filter_func(p):
+          continue
+        # remove dump files of Mac
+        if '.DS_Store' in p or '.DS_STORE' in p or \
+            '._' == os.path.basename(p)[:2]:
+          continue
+        file_list.append(p)
+  return file_list
+
+
+def get_all_ext(path):
+  """ Recurrsively get all extension of files in the given path
 
   Parameters
   ----------
+  path : str
+    input folder
 
-  fname : filename or file handle
-      If the filename ends in .gz, the file is automatically saved
-      in compressed gzip format. loadtxt understands gzipped files
-      transparently.
-
-  X : 1D or 2D array_like
-      Data to be saved to a text file.
-
-  fmt : str or sequence of strs, optional
-      A single format (%10.5f), a sequence of formats, or a multi-format
-      string, e.g. ‘Iteration %d – %10.5f’, in which case delimiter is
-      ignored. For complex X, the legal options for fmt are:
-
-      a single specifier, fmt=’%.4e’, resulting in numbers formatted like
-      ‘ (%s+%sj)’ % (fmt, fmt)
-      a full string specifying every real and imaginary part, e.g.
-      ‘ %.4e %+.4ej %.4e %+.4ej %.4e %+.4ej’ for 3 columns
-      a list of specifiers, one per column - in this case, the real and
-      imaginary part must have separate specifiers,
-      e.g. [‘%.3e + %.3ej’, ‘(%.15e%+.15ej)’] for 2 columns
-
-  delimiter : str, optional
-      String or character separating columns.
-
-  newline : str, optional
-      String or character separating lines.
-
-  header : str, optional
-      String that will be written at the beginning of the file.
-
-  footer : str, optional
-      String that will be written at the end of the file.
-
-  comments : str, optional
-      String that will be prepended to the header and footer strings, to mark them as comments. Default: ‘# ‘, as expected by e.g. numpy.loadtxt.
-
-  encoding : {None, str}, optional
-      Encoding used to encode the outputfile. Does not apply to output streams. If the encoding is something other than ‘bytes’ or ‘latin1’ you will not be able to load the file in NumPy versions < 1.14. Default is ‘latin1’.
-
-  async_backend : {'thread', 'process', None}
-      save the data to disk asynchronously using multi-threading or
-      multi-processing
   """
-  pass
+  file_list = []
+  if os.access(path, os.R_OK):
+    for p in os.listdir(path):
+      p = os.path.join(path, p)
+      if os.path.isdir(p):
+        file_list += get_all_ext(p)
+      else:
+        # remove dump files of Mac
+        if '.DS_Store' in p or '.DS_STORE' in p or \
+            '._' == os.path.basename(p)[:2]:
+          continue
+        ext = p.split('.')
+        if len(ext) > 1:
+          file_list.append(ext[-1])
+  file_list = list(set(file_list))
+  return file_list
+
+
+def folder2bin(path):
+  """ This function read all files within a Folder
+  in binary mode,
+  then, store all the data in a dictionary mapping:
+  `relative_path -> binary_data`
+  """
+  if not os.path.isdir(path):
+    raise ValueError('`path`=%s must be a directory.' % path)
+  path = os.path.abspath(path)
+  files = get_all_files(path)
+  data = {}
+  for f in files:
+    name = f.replace(path + '/', '')
+    with open(f, 'rb') as f:
+      data[name] = f.read()
+  return data
+
+
+def bin2folder(data, path, override=False):
+  """ Convert serialized data from `folder2bin` back
+  to a folder at `path`
+
+  Parameters
+  ----------
+  data: {string, dict}
+      if string, `data` can be pickled string, or path to a file.
+      if dict, `data` is the output from `folder2bin`
+  path: string
+      path to a folder
+  override: bool
+      if True, override exist folder at `path`
+  """
+  # ====== check input ====== #
+  if is_string(data):
+    if os.path.isfile(data):
+      with open(data, 'rb') as f:
+        data = pickle.load(f)
+    else:
+      data = pickle.loads(data)
+  if not isinstance(data, dict):
+    raise ValueError(
+        "`data` must be dictionary type, or string, or path to file.")
+  # ====== check outpath ====== #
+  path = os.path.abspath(str(path))
+  if not os.path.exists(path):
+    os.mkdir(path)
+  elif os.path.isfile(path):
+    raise ValueError("`path` must be path to a directory.")
+  elif os.path.isdir(path):
+    if not override:
+      raise RuntimeError("Folder at path:%s exist, cannot override." % path)
+    shutil.rmtree(path)
+    os.mkdir(path)
+  # ====== deserialize ====== #
+  for name, dat in data.items():
+    with open(os.path.join(path, name), 'wb') as f:
+      f.write(dat)
+  return path
 
 
 # ===========================================================================
@@ -374,36 +512,7 @@ def unique(seq, keep_order=False):
 # ===========================================================================
 # Async file IO
 # ===========================================================================
-class defaultdictkey(defaultdict):
-  """ Enhanced version of `defaultdict`, instead of return a
-  default value, return an "improvised" default value based on
-  the given key.
-
-  Example
-  -------
-  >>> from odin.utils.python_utils import defaultdictkey
-  >>> d = defaultdictkey(lambda x: str(x))
-  >>> print(d['123']) # '123'
-  """
-
-  def __missing__(self, key):
-    if self.default_factory is None:
-      raise KeyError(key)
-    else:
-      ret = self[key] = self.default_factory(key)
-      return ret
-
-
-def multikeysdict(d):
-  assert isinstance(d, dict)
-  new_d = d.__class__()
-  for i, j in d.items():
-    if isinstance(i, tuple):
-      for k in i:
-        new_d[k] = j
-    else:
-      new_d[i] = j
-  return new_d
+# TODO
 
 
 # ===========================================================================
