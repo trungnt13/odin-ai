@@ -1,3 +1,8 @@
+# A collection of functions for processing, manipulating and calculating
+# necessary information from tensors
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
 from __future__ import absolute_import, division, print_function
 
 import copy
@@ -29,7 +34,24 @@ def _normalize_axis(axis, ndim):
   return axis % ndim
 
 
-def dtype_universal(dtype, torch_dtype=False, tf_dtype=False, np_dtype=False):
+def parse_framework(alias):
+  """ Convert a string or object to appropriate framework module: numpy,
+  tensorflow or torch """
+  if not isinstance(alias, string_types):
+    alias = str(alias)
+  alias = alias.strip().lower()
+  if any(i in alias for i in ['tf', 'tensorflow', 'tensor']):
+    return tf
+  if any(i in alias for i in ['torch', 'pytorch', 'pt', 'tr']):
+    return torch
+  return np
+
+
+def dtype_universal(dtype,
+                    torch_dtype=False,
+                    tf_dtype=False,
+                    np_dtype=False,
+                    framework=None):
   if sum([torch_dtype, tf_dtype, np_dtype]) > 1:
     raise ValueError("Cannot only return dtype for 1 framework a time.")
   if isinstance(dtype, tf.dtypes.DType):
@@ -38,6 +60,21 @@ def dtype_universal(dtype, torch_dtype=False, tf_dtype=False, np_dtype=False):
     dtype = str(dtype).split('.')[-1]
   elif isinstance(dtype, np.dtype):
     dtype = np.dtype(dtype).name
+
+  if framework is not None:
+    framework = parse_framework(framework)
+    if framework == np:
+      np_dtype = True
+      torch_dtype = False
+      tf_dtype = False
+    if framework == torch:
+      torch_dtype = True
+      np_dtype = False
+      tf_dtype = False
+    if framework == tf:
+      tf_dtype = True
+      torch_dtype = False
+      np_dtype = False
 
   dtype = dtype.lower().strip()
   if torch_dtype:
@@ -67,61 +104,33 @@ def dtype_universal(dtype, torch_dtype=False, tf_dtype=False, np_dtype=False):
 
 
 def cast(x, dtype):
-  if tf.is_tensor(x):
+  if tf.is_tensor(x) or isinstance(dtype, tf.DType):
     return tf.cast(x, dtype=dtype_universal(dtype, tf_dtype=True))
-  if torch.is_tensor(x):
+  if torch.is_tensor(x) or isinstance(dtype, torch.dtype):
+    if not torch.is_tensor(x):
+      x = torch.tensor(x)
     return x.type(dtype_universal(dtype, torch_dtype=True))
-  return np.cast(x, dtype=dtype_universal(dtype, np_dtype=True))
+  dtype = dtype_universal(dtype, np_dtype=True)
+  return np.cast[dtype](x)
 
 
-# ===========================================================================
-# Normalization
-# ===========================================================================
-def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
-  """ L2-normalization (or vector unit length normalization)
+def array(x, framework=None, dtype=None):
+  if framework is None:
+    framework = 'numpy'
+  in_framework = parse_framework(x)
+  out_framework = parse_framework(framework)
 
-  Parameters
-  ----------
-  x : array
-  axis : int
-  ord : int
-    order of norm (1 for L1-norm, 2 for Frobenius or Euclidean)
-  """
-  ord = int(ord)
-  if ord not in (1, 2):
-    raise ValueError(
-        "only support `ord`: 1 for L1-norm; 2 for Frobenius or Euclidean")
-  if ord == 2:
-    x_norm = tf.sqrt(
-        tf.maximum(tf.reduce_sum(x**2, axis=axis, keepdims=True), epsilon))
-  else:
-    x_norm = tf.maximum(tf.reduce_sum(tf.abs(x), axis=axis, keepdims=True),
-                        epsilon)
-  return x / x_norm
-
-
-def calc_white_mat(X):
-  """ calculates the whitening transformation for cov matrix X
-  """
-  return tf.linalg.cholesky(tf.linalg.inv(X))
-
-
-def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
-  """ Seurat log-normalize
-  y = log(X / (sum(X, axis) + epsilon) * scale_factor)
-
-  where `log` is natural logarithm
-  """
-  eps = tf.cast(eps, x.dtype)
-  return tf.math.log1p(x / (tf.reduce_sum(x, axis=axis, keepdims=True) + eps) *
-                       scale_factor)
-
-
-def delog_norm(x, x_sum=1, scale_factor=10000):
-  """ This perform de-log normalization of `log_norm` values
-  if `x_sum` is not given (i.e. default value 1), then all the
-  """
-  return (tf.exp(x) - 1) / scale_factor * (x_sum + EPS)
+  if in_framework != out_framework:
+    # any conversion must go through numpy
+    if in_framework != np:
+      x = x.numpy()
+    if out_framework == tf:
+      return tf.convert_to_tensor(x, dtype=dtype)
+    if out_framework == torch:
+      if dtype is not None:
+        x = cast(x, dtype)
+      return torch.from_numpy(x)
+  return x
 
 
 # ===========================================================================
@@ -176,9 +185,48 @@ def to_sample_weights(indices, weights, name=None):
 
 
 # ===========================================================================
-# Allocation
+# Allocation and masking
 # ===========================================================================
-def tril(m, k=0, name=None):
+def ones_like(x, dtype=None):
+  if tf.is_tensor(x):
+    return tf.ones_like(x, dtype=dtype)
+  if torch.is_tensor(x):
+    return torch.ones_like(x, dtype=dtype)
+  return np.ones_like(x, dtype=dtype)
+
+
+def zeros_like(x, dtype=None):
+  if tf.is_tensor(x):
+    return tf.zeros_like(x, dtype=dtype)
+  if torch.is_tensor(x):
+    return torch.zeros_like(x, dtype=dtype)
+  return np.zeros_like(x, dtype=dtype)
+
+
+def ones(shape, dtype='float32', framework='numpy'):
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  return framework.ones(shape, dtype=dtype)
+
+
+def zeros(shape, dtype='float32', framework='numpy'):
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  return framework.zeros(shape, dtype=dtype)
+
+
+def tril_mask(shape, framework='numpy'):
+  """ Creates a lower-triangular boolean mask over the last 2 dimensions.
+
+  """
+  row_index = cumsum(ones(shape=shape, dtype='int32', framework=framework),
+                     axis=-2)
+  col_index = cumsum(ones(shape=shape, dtype='int32', framework=framework),
+                     axis=-1)
+  return greater_equal(row_index, col_index)
+
+
+def tril(m, k=0):
   """
   Lower triangle of an array.
 
@@ -197,20 +245,16 @@ def tril(m, k=0, name=None):
   tril : ndarray, shape (M, N)
       Lower triangle of `m`, of same shape and data-type as `m`.
   """
-  with tf.name_scope(name, 'LowerTriangle'):
-    if k == 0:
-      return tf.matrix_band_part(input=m, num_lower=-1, num_upper=0, name=name)
-    if k < 0:
-      return tf.subtract(m,
-                         tf.matrix_band_part(input=m,
-                                             num_lower=np.abs(k) - 1,
-                                             num_upper=-1),
-                         name=name)
-    # k > 0
-    return tf.matrix_band_part(input=m, num_lower=-1, num_upper=k, name=name)
+  if k == 0:
+    return tf.linalg.band_part(input=m, num_lower=-1, num_upper=0)
+  if k < 0:
+    return tf.subtract(
+        m, tf.linalg.band_part(input=m, num_lower=np.abs(k) - 1, num_upper=-1))
+  # k > 0
+  return tf.linalg.band_part(input=m, num_lower=-1, num_upper=k)
 
 
-def tril_indices(n, k=0, name=None):
+def tril_indices(n, k=0):
   """ Similar as `numpy.tril_indices`
   @Author: avdrher
   https://github.com/GPflow/GPflow/issues/439
@@ -233,13 +277,12 @@ def tril_indices(n, k=0, name=None):
       each with the indices along one dimension of the array.
 
   """
-  with tf.name_scope(name, "LowerTriangleIndices"):
-    M1 = tf.tile(tf.expand_dims(tf.range(n), axis=0), [n, 1])
-    M2 = tf.tile(tf.expand_dims(tf.range(n), axis=1), [1, n])
-    mask = tf.transpose((M1 - M2) >= -k)
-    ix1 = tf.boolean_mask(M2, mask)
-    ix2 = tf.boolean_mask(M1, mask)
-    return ix1, ix2
+  M1 = tf.tile(tf.expand_dims(tf.range(n), axis=0), [n, 1])
+  M2 = tf.tile(tf.expand_dims(tf.range(n), axis=1), [1, n])
+  mask = tf.transpose((M1 - M2) >= -k)
+  ix1 = tf.boolean_mask(M2, mask)
+  ix2 = tf.boolean_mask(M1, mask)
+  return ix1, ix2
 
 
 def prior2weights(prior,
@@ -754,38 +797,40 @@ def reduce_log_exp(x, reduction_function=tf.reduce_mean, axis=None, name=None):
     return tf.squeeze(y)
 
 
-# ===========================================================================
-# Math
-# ===========================================================================
-def sqrt(x):
+def cumsum(x, axis):
   if tf.is_tensor(x):
-    return tf.math.sqrt(x)
+    return tf.math.cumsum(x, axis=axis)
   if torch.is_tensor(x):
-    return torch.sqrt(x)
-  return np.sqrt(x)
+    return torch.cumsum(x, dim=axis)
+  return np.cumsum(x, axis=axis)
 
 
-def square(x):
-  if tf.is_tensor(x):
-    return tf.math.square(x)
-  if torch.is_tensor(x):
-    return torch.mul(x, x)
-  return np.square(x)
+# ===========================================================================
+# Logical function
+# ===========================================================================
+def where(condition, x=None, y=None):
+  if tf.is_tensor(condition) or tf.is_tensor(x) or tf.is_tensor(y):
+    return tf.where(condition, x, y)
+  if torch.is_tensor(condition) or torch.is_tensor(x) or torch.is_tensor(y):
+    if not torch.is_tensor(x):
+      x = torch.tensor(x, dtype=y.dtype)
+    if not torch.is_tensor(y):
+      y = torch.tensor(y, dtype=x.dtype)
+    return torch.where(condition, x, y)
+  return np.where(condition, x, y)
 
 
-def renorm_rms(X, axis=1, target_rms=1.0, name="RescaleRMS"):
-  """ Scales the data such that RMS of the features dimension is 1.0
-  scale = sqrt(x^t x / (D * target_rms^2)).
+def equal(x, y):
+  if tf.is_tensor(x) or tf.is_tensor(y):
+    return tf.equal(x, y)
+  if torch.is_tensor(x) or torch.is_tensor(y):
+    return x == y
+  return np.equal(x, y)
 
-  NOTE
-  ----
-  by defaults, assume the features dimension is `1`
-  """
-  with tf.name_scope(name):
-    D = tf.sqrt(tf.cast(tf.shape(X)[axis], X.dtype.base_dtype))
-    l2norm = tf.sqrt(tf.reduce_sum(X**2, axis=axis, keepdims=True))
-    X_rms = l2norm / D
-    X_rms = tf.where(tf.equal(X_rms, 0.),
-                     x=tf.ones_like(X_rms, dtype=X_rms.dtype.base_dtype),
-                     y=X_rms)
-    return target_rms * X / X_rms
+
+def greater_equal(x, y):
+  if tf.is_tensor(x) or tf.is_tensor(y):
+    return tf.greater_equal(x, y)
+  if torch.is_tensor(x) or torch.is_tensor(y):
+    return x >= y
+  return np.greater_equal(x, y)

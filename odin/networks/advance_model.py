@@ -18,12 +18,7 @@ from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.util import nest
 
-
-# ===========================================================================
-# Helpers
-# ===========================================================================
-def _is_list_of_layers(obj):
-  pass
+from odin import backend as bk
 
 
 # ===========================================================================
@@ -35,27 +30,27 @@ class AdvanceModel(Model):
 
   Parameters
   ----------
-  parameters : {`dict` or `None`}
+  arguments : {`dict` or `None`}
     recording the arguments given to `__init__`, recommend passing
     the `locals()` dictionary
   """
 
-  def __init__(self, parameters=None, name=None):
+  def __init__(self, arguments=None, name=None):
     super(AdvanceModel, self).__init__(name=name)
     self.supports_masking = True
     self._build_input_shape = None
 
-    if parameters is None:
-      parameters = {}
+    if arguments is None:
+      arguments = {}
     else:
-      parameters = dict(parameters)
-    kwargs = parameters.pop('kwargs', {})
-    parameters.update(kwargs)
-    parameters.pop('self', None)
-    parameters.pop('__class__', None)
+      arguments = dict(arguments)
+    kwargs = arguments.pop('kwargs', {})
+    arguments.update(kwargs)
+    arguments.pop('self', None)
+    arguments.pop('__class__', None)
     # tricky recursive reference of overriding classes
-    parameters.pop('parameters', None)
-    self._parameters = parameters
+    arguments.pop('arguments', None)
+    self._arguments = arguments
     self._optimizer_weights = None
     self._optimizer = None
     self._history = {}
@@ -64,7 +59,7 @@ class AdvanceModel(Model):
   def train_history(self):
     history = {}
     for key, val in self._history.items():
-      if 'val_' != key[:4]:
+      if key[:4] != 'val_':
         history[key] = val
     return history
 
@@ -72,7 +67,7 @@ class AdvanceModel(Model):
   def valid_history(self):
     history = {}
     for key, val in self._history.items():
-      if 'val_' == key[:4] and key[4:] in self._history:
+      if key[:4] == 'val_' and key[4:] in self._history:
         history[key] = val
     return history
 
@@ -88,6 +83,12 @@ class AdvanceModel(Model):
 
   @optimizer.setter
   def optimizer(self, optz):
+    if isinstance(optz, string_types):
+      optz = bk.parse_optimizer(optz, 'tensorflow')()
+    if not isinstance(optz, tf.optimizers.Optimizer):
+      raise ValueError(
+          "optimizer must be instance of tensorflow.optimizers.Optimizer, but given type: %s"
+          % str(type(optz)))
     self._optimizer = optz
 
   def __getstate__(self):
@@ -126,8 +127,8 @@ class AdvanceModel(Model):
     return {}
 
   @property
-  def parameters(self):
-    return dict(self._parameters)
+  def arguments(self):
+    return dict(self._arguments)
 
   @base_layer_utils.default
   def build(self, input_shape=None):
@@ -371,7 +372,7 @@ class AdvanceModel(Model):
     for key, val in self.__dict__.items():
       # TODO: not a good solution here, history make recursive reference
       # but couldn't found in Model soruce code where it is setted
-      if key in ('_parameters', 'history') or key in self.parameters:
+      if key in ('_arguments', 'history') or key in self.arguments:
         continue
       if isinstance(val, Layer):
         layer_attributes[id(val)] = key
@@ -400,7 +401,7 @@ class AdvanceModel(Model):
     config = {
         'name': self.name,
         'layers': copy.deepcopy(layer_configs),
-        'parameters': self.parameters,
+        'arguments': self.arguments,
         'build_input_shape': self._build_input_shape,
         'attributes': attributes,
         'history': self._history,
@@ -413,20 +414,20 @@ class AdvanceModel(Model):
       name = config['name']
       build_input_shape = config['build_input_shape']
       layer_configs = config['layers']
-      parameters = config['parameters']
+      arguments = config['arguments']
       attributes = config['attributes']
       history = config['history']
     else:
       name = None
       build_input_shape = None
       layer_configs = config
-      parameters = {}
+      arguments = {}
       attributes = {}
       history = {}
     # create new instance
     if 'name' in inspect.getfullargspec(cls.__init__).args:
-      parameters['name'] = name
-    model = cls(**parameters)
+      arguments['name'] = name
+    model = cls(**arguments)
     model._history = history
     # set all the attributes
     for key, val in attributes.items():

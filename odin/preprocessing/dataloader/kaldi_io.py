@@ -583,7 +583,7 @@ class KaldiDataset(data.Dataset):
       n_org = len(self._minibatches)
       self._minibatches = [
           batch for batch in self._minibatches
-          if len(batch) > self.min_utt_per_batch
+          if len(batch) >= self.min_utt_per_batch
       ]
       n_new = len(self._minibatches)
       if self.verbose:

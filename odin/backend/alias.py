@@ -11,8 +11,9 @@ import torch
 from six import string_types
 from tensorflow.python import keras
 
+from odin.backend.maths import sqrt
 from odin.backend.tensor import (concatenate, moments, reduce_max, reduce_mean,
-                                 reduce_min, reduce_sum, sqrt)
+                                 reduce_min, reduce_sum)
 
 __all__ = [
     'parse_activation', 'parse_attention', 'parse_constraint',
@@ -55,6 +56,14 @@ def _is_tensorflow(framework):
 # Network basics
 # ===========================================================================
 def parse_activation(activation, framework):
+  """
+  Parameters
+  ----------
+  activation : `str`
+    alias for activation function
+  framework : `str`
+    'tensorflow' or 'pytorch'
+  """
   if activation is None:
     activation = 'linear'
   if callable(activation):
@@ -92,6 +101,7 @@ def parse_initializer(initializer, framework):
 
 
 def parse_optimizer(optimizer, framework) -> Type:
+  """ Return the class for given optimizer alias """
   if _is_tensorflow(framework):
     all_classes = {
         'adadelta': keras.optimizers.adadelta_v2.Adadelta,
