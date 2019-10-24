@@ -4,7 +4,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import confusion_matrix as tf_cm
 
-from odin.backend.tensor import dimshuffle, to_llr, to_nonzeros
+from odin.backend.maths import to_llr
+from odin.backend.tensor import nonzeros, transpose
 from odin.utils import as_tuple, is_number
 
 

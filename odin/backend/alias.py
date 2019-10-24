@@ -11,9 +11,9 @@ import torch
 from six import string_types
 from tensorflow.python import keras
 
-from odin.backend.maths import sqrt
-from odin.backend.tensor import (concatenate, moments, reduce_max, reduce_mean,
-                                 reduce_min, reduce_sum)
+from odin.backend.maths import (moments, reduce_max, reduce_mean, reduce_min,
+                                reduce_sum, sqrt)
+from odin.backend.tensor import concatenate
 
 __all__ = [
     'parse_activation', 'parse_attention', 'parse_constraint',

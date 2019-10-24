@@ -1,8 +1,10 @@
 import numpy as np
 import tensorflow as tf
 
+from odin.backend.tensor import nonzeros, transpose
 from odin.utils import is_number
-from odin.backend.tensor import to_nonzeros, dimshuffle
+
+
 
 # ===========================================================================
 # Similarity measurement
@@ -14,14 +16,15 @@ def contrastive_loss(y_true, y_pred, margin=1, name=None):
   [1] http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
   """
   with tf.name_scope(name, 'contrastive_loss', [y_true, y_pred]):
-    loss = tf.reduce_mean(
-        y_true * tf.square(y_pred) +
-        (1 - y_true) * tf.square(tf.maximum(margin - y_pred, 0)))
+    loss = tf.reduce_mean(y_true * tf.square(y_pred) + (1 - y_true) *
+                          tf.square(tf.maximum(margin - y_pred, 0)))
   return loss
+
 
 def triplet_loss(y_true, y_pred):
   # TODO
   pass
+
 
 def contrastive_loss_andre(left_feature, right_feature, label, margin):
   """
@@ -56,8 +59,12 @@ def contrastive_loss_andre(left_feature, right_feature, label, margin):
     # first_part = tf.mul(one - label, tf.square(d))  # (Y-1)*(d^2)
     return loss, between_class, within_class
 
-def cosine_similarity(y_true, y_pred, weights=1.0,
-                      unit_norm=True, one_vs_all=True,
+
+def cosine_similarity(y_true,
+                      y_pred,
+                      weights=1.0,
+                      unit_norm=True,
+                      one_vs_all=True,
                       name=None):
   """
   Parameters
@@ -83,20 +90,25 @@ def cosine_similarity(y_true, y_pred, weights=1.0,
   with tf.name_scope(name, "cosine_similarity", (y_true, y_pred, weights)):
     y_pred.shape.assert_is_compatible_with(y_true.shape)
     if unit_norm:
-      y_true /= to_nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True), 1.)
-      y_pred /= to_nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True), 1.)
+      y_true /= nonzeros(tf.linalg.norm(y_true, ord=2, axis=-1, keep_dims=True),
+                         1.)
+      y_pred /= nonzeros(tf.linalg.norm(y_pred, ord=2, axis=-1, keep_dims=True),
+                         1.)
     if one_vs_all:
       scores = tf.matmul(tf.transpose(y_true), y_pred)
     else:
-      scores = 1 - tf.reduce_sum(tf.multiply(y_true, y_pred),
-                                 axis=(-1,), keep_dims=True)
+      scores = 1 - tf.reduce_sum(
+          tf.multiply(y_true, y_pred), axis=(-1,), keep_dims=True)
   return scores
+
 
 # ===========================================================================
 # Cross-entropy variations
 # ===========================================================================
-def bayes_crossentropy(y_true, y_pred,
-                       nb_classes=None, reduction=tf.reduce_mean,
+def bayes_crossentropy(y_true,
+                       y_pred,
+                       nb_classes=None,
+                       reduction=tf.reduce_mean,
                        name=None):
   with tf.name_scope(name, "bayes_crossentropy", [y_true, y_pred]):
     y_pred_shape = y_pred.shape
@@ -118,20 +130,22 @@ def bayes_crossentropy(y_true, y_pred,
     # ====== check distribution ====== #
     distribution = tf.reduce_sum(y_true, axis=0)
     # probability distribution of each class
-    prob_distribution = dimshuffle(distribution / tf.reduce_sum(distribution),
-                                   ('x', 0))
+    prob_distribution = transpose(distribution / tf.reduce_sum(distribution),
+                                  ('x', 0))
     # we need to clip the prior probability distribution also
     prob_distribution = tf.clip_by_value(prob_distribution, EPS, 1.0 - EPS)
     # ====== init confusion info loss ====== #
     # weighted by y_true
     loss = y_true * tf.log(y_pred)
-    loss = - 1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
+    loss = -1 / nb_classes * tf.reduce_sum(loss / prob_distribution, axis=1)
     return reduction(loss)
+
 
 def bayes_binary_crossentropy(y_true, y_pred):
   y_pred = tf.concat([1 - y_pred, y_pred], axis=-1)
   y_true = tf.one_hot(tf.cast(y_true, 'int32'), depth=2)
   return bayes_crossentropy(y_pred, y_true, nb_classes=2)
+
 
 # ===========================================================================
 # Variational
@@ -147,6 +161,7 @@ def jacobian_regularize(hidden, params):
   L = tf.reduce_sum(tf.pow(L, 2)) / hidden.shape[0]
   return tf.reduce_mean(L)
 
+
 def correntropy_regularize(x, sigma=1.):
   """
   Note
@@ -159,4 +174,3 @@ def correntropy_regularize(x, sigma=1.):
     tf.reduce_mean(tf.exp(x**2 / sigma), axis=0)
   ) / \
   tf.sqrt(2 * np.pi * sigma)
-

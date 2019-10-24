@@ -262,7 +262,7 @@ class TimeDelayConv(TimeDelay):
 
 class TimeDelayConvTied(TimeDelay):
   """ Time-delayed dense implementation but using a 1D-convolutional
-  neural network, only support consecutive delay context (given a number
+  neural network, only support continuos delay context (given a number
   of `delay_strides`).
 
   From the paper, it is suggested to create multiple `TimeDelayedConv`

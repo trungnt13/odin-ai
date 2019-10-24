@@ -1,6 +1,10 @@
 # A collection of functions for processing, manipulating and calculating
 # necessary information from tensors
 #
+# Aim for unifiying the API among numpy, tensorflow and pytorch.
+# Since numpy is most popular framework, the function name is strictly
+# following numpy name and arguments.
+#
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 from __future__ import absolute_import, division, print_function
@@ -9,18 +13,90 @@ import copy
 import inspect
 import numbers
 from collections import defaultdict
+from contextlib import contextmanager
 from functools import wraps
 
 import numpy as np
 import scipy as sp
 import tensorflow as tf
 import torch
-from scipy.special import logsumexp
 from six import string_types
 from six.moves import builtins
+from tensorflow import nest
 from tensorflow.python.ops import init_ops
 
 from odin.utils import as_tuple, is_number, is_same_shape, is_string, uuid
+
+# TODO: add stack for setting framework context
+_FRAMEWORK_STACK = ['numpy']
+
+
+class framework_(object):
+  """
+  ```python
+  with bk.framework_('tensorflow') as fw1:
+    print("Context 1:", bk.get_framework(), fw1)
+    with bk.framework_('pytorch') as fw2:
+      print("Context 2:", bk.get_framework(), fw2)
+    print("Context 1:", bk.get_framework())
+  print("Default:", bk.get_framework())
+
+  bk.framework_('tensorflow')
+  print("Current:", bk.get_framework())
+  bk.reset_framework()
+  print("Reset:", bk.get_framework())
+
+  # Context 1: tensorflow <module 'tensorflow'>
+  # Context 2: pytorch <module 'torch'>
+  # Context 1: tensorflow
+  # Default: numpy
+  # Current: tensorflow
+  # Reset: numpy
+  ```
+  """
+
+  def __init__(self, framework):
+    framework = parse_framework(framework)
+    _FRAMEWORK_STACK.append(framework)
+    self._framework = framework
+
+  def __enter__(self):
+    return parse_framework(self._framework)
+
+  def __exit__(self, *args):
+    reset_framework()
+
+
+def reset_framework():
+  if len(_FRAMEWORK_STACK) > 1:
+    _FRAMEWORK_STACK.pop()
+
+
+def get_framework():
+  return _FRAMEWORK_STACK[-1]
+
+
+def parse_framework(alias):
+  """ Convert a string or object to appropriate framework module: numpy,
+  tensorflow or torch """
+  if inspect.ismodule(alias):
+    if alias in (tf, torch, np):
+      return alias
+    alias = str(alias)
+  elif alias is None:
+    return get_framework()
+  elif inspect.isclass(alias):
+    alias = ''.join([str(i) for i in type.mro(alias)])
+  elif not isinstance(alias, string_types):
+    alias = type(alias)
+    alias = ''.join([str(i) for i in type.mro(alias)])
+
+  alias = alias.strip().lower()
+  if any(i in alias for i in ['tf', 'tensorflow', 'tensor']):
+    return tf
+  if any(i in alias for i in ['torch', 'pytorch', 'pt', 'tr']):
+    return torch
+  return np
 
 
 # ===========================================================================
@@ -34,24 +110,14 @@ def _normalize_axis(axis, ndim):
   return axis % ndim
 
 
-def parse_framework(alias):
-  """ Convert a string or object to appropriate framework module: numpy,
-  tensorflow or torch """
-  if not isinstance(alias, string_types):
-    alias = str(alias)
-  alias = alias.strip().lower()
-  if any(i in alias for i in ['tf', 'tensorflow', 'tensor']):
-    return tf
-  if any(i in alias for i in ['torch', 'pytorch', 'pt', 'tr']):
-    return torch
-  return np
-
-
 def dtype_universal(dtype,
                     torch_dtype=False,
                     tf_dtype=False,
                     np_dtype=False,
                     framework=None):
+  if dtype is None:
+    return dtype
+
   if sum([torch_dtype, tf_dtype, np_dtype]) > 1:
     raise ValueError("Cannot only return dtype for 1 framework a time.")
   if isinstance(dtype, tf.dtypes.DType):
@@ -115,8 +181,10 @@ def cast(x, dtype):
 
 
 def array(x, framework=None, dtype=None):
-  if framework is None:
-    framework = 'numpy'
+  """ This function equal to `numpy.array` for numpy;
+  `tensorflow.convert_to_tensor` for tensorflow;
+  and `torch.tensor` for pytorch
+  """
   in_framework = parse_framework(x)
   out_framework = parse_framework(framework)
 
@@ -134,54 +202,48 @@ def array(x, framework=None, dtype=None):
 
 
 # ===========================================================================
-# Conversion
+# Variable and gradients
 # ===========================================================================
-def to_llh(x, name=None):
-  ''' Convert a matrix of probabilities into log-likelihood
-  :math:`LLH = log(prob(data|target))`
-  '''
-  with tf.name_scope(name, "log_likelihood", [x]):
-    x /= tf.reduce_sum(x, axis=-1, keepdims=True)
-    x = tf.clip_by_value(x, EPS, 1 - EPS)
-    return tf.log(x)
+def variable(initial_value, framework=None, dtype=None, trainable=True):
+  framework = parse_framework(framework)
+  if framework == tf:
+    return tf.Variable(initial_value=initial_value,
+                       dtype=dtype_universal(dtype, tf_dtype=True),
+                       trainable=trainable)
+  elif framework == torch:
+    return torch.nn.Parameter(data=torch.tensor(data=initial_value,
+                                                dtype=dtype_universal(
+                                                    dtype, torch_dtype=True),
+                                                requires_grad=trainable),
+                              requires_grad=trainable)
+  raise RuntimeError("No variable support for framework: %s" % str(framework))
 
 
-def to_llr(x, name=None):
-  ''' Convert a matrix of probabilities into log-likelihood ratio
-  :math:`LLR = log(\\frac{prob(data|target)}{prob(data|non-target)})`
-  '''
-  with tf.name_scope(name, "log_likelihood_ratio", [x]):
-    nb_classes = x.shape.as_list()[-1]
-    new_arr = []
-    for j in range(nb_classes):
-      scores_copy = tf.transpose(
-          tf.gather(tf.transpose(x), [i for i in range(nb_classes) if i != j]))
-      scores_copy -= tf.expand_dims(x[:, j], axis=-1)
-      new_arr.append(-logsumexp(scores_copy, 1))
-    return tf.concat(new_arr, axis=-1) + np.log(13)
+def grad(fn_outputs, inputs, grad_outputs=None, return_outputs=False):
+  """ Compute and returns the sum of gradients of outputs w.r.t. the inputs.
+  """
+  if not callable(fn_outputs):
+    raise ValueError('fn_outputs must be a callable return a list of tensors')
+  inputs = nest.flatten(inputs)
 
+  if torch.is_tensor(inputs[0]):
+    outputs = nest.flatten(fn_outputs())
+    gradients = torch.autograd.grad(outputs=outputs,
+                                    inputs=inputs,
+                                    grad_outputs=grad_outputs)
+  elif tf.is_tensor(inputs[0]):
+    with tf.GradientTape() as tape:
+      tape.watch(inputs)
+      outputs = nest.flatten(fn_outputs())
+    gradients = tape.gradient(target=outputs,
+                              sources=inputs,
+                              output_gradients=grad_outputs)
+  if not return_outputs:
+    return gradients
+  return gradients, outputs
 
-def to_nonzeros(x, value):
-  x = tf.where(tf.equal(x, 0.), tf.zeros_like(x) + value, x)
-  return x
-
-
-def to_sample_weights(indices, weights, name=None):
-  """ Convert indices or one-hot matrix and
-  give weights to sample weights for training """
-  with tf.name_scope(name, "to_sample_weights", [indices]):
-    # ====== preprocess indices ====== #
-    ndim = len(indices.shape)
-    if ndim <= 1:  # indices vector
-      indices = tf.cast(indices, dtype=tf.int64)
-    else:
-      indices = tf.argmax(indices, axis=-1)
-    # ====== prior weights ====== #
-    if isinstance(weights, (tuple, list, np.ndarray)):
-      prior_weights = tf.constant(weights, dtype=floatX, name="prior_weights")
-    # ====== sample weights ====== #
-    weights = tf.gather(prior_weights, indices)
-  return weights
+  raise NotImplementedError(
+      "gradient function only support pytorch or tensorflow")
 
 
 # ===========================================================================
@@ -203,19 +265,24 @@ def zeros_like(x, dtype=None):
   return np.zeros_like(x, dtype=dtype)
 
 
-def ones(shape, dtype='float32', framework='numpy'):
+def ones(shape, dtype='float32', framework=None):
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
   return framework.ones(shape, dtype=dtype)
 
 
-def zeros(shape, dtype='float32', framework='numpy'):
+def zeros(shape, dtype='float32', framework=None):
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
   return framework.zeros(shape, dtype=dtype)
 
 
-def tril_mask(shape, framework='numpy'):
+def nonzeros(x, value):
+  """ Convert all zero entrities in `x` to a nonzeros `value`"""
+  return where(equal(x, 0.), zeros_like(x) + value, x)
+
+
+def tril_mask(shape, framework=None):
   """ Creates a lower-triangular boolean mask over the last 2 dimensions.
 
   """
@@ -376,7 +443,7 @@ def upsample(x, scale, axes, method='nn', name=None):
           x = upsample(x, scale_map[a], axes=a, method='nn')
       else:
         # repeat the tensor
-        x = dimshuffle(x, pattern=list(range(ndims)) + ['x'] * len(axes))
+        x = transpose(x, pattern=list(range(ndims)) + ['x'] * len(axes))
         x = repeat(x, scale, axes=[i for i in range(ndims, ndims + len(axes))])
         # transpose it back to the right shape
         axes_map = {i: j for i, j in zip(axes, range(ndims, ndims + len(axes)))}
@@ -411,118 +478,6 @@ def upsample(x, scale, axes, method='nn', name=None):
                          s * scale_map[i] if is_number(s) else None
                          for i, s in enumerate(input_shape_int)
                      ])
-
-
-# ===========================================================================
-# Linear Algebra
-# ===========================================================================
-def dot(x, y, name=None):
-  """ Theano-style dot product
-  For 2-D arrays it is equivalent to matrix multiplication,
-  and for 1-D arrays to inner product of vectors (without complex conjugation).
-  For N dimensions it is a sum product over the last axis of a and
-  the second-to-last of b
-
-  NOTE: this behavior is the same in `numpy.dot` as well but
-  hasn't replicated in `tensorflow.matmul`
-
-  Example
-  -------
-   (2, 3).(4, 3, 5) => (2, 4, 5)
-   (2, 3, 4).(4, 5) => (2, 3, 5)
-   (2, 3, 4).(5, 4, 6) => (2, 3, 5, 6)
-  """
-  with tf.name_scope(name, "DotProduct"):
-    shapeX = [
-        tf.shape(x)[i] if d is None else d
-        for i, d in enumerate(x.shape.as_list())
-    ]
-    shapeY = [
-        tf.shape(y)[i] if d is None else d
-        for i, d in enumerate(y.shape.as_list())
-    ]
-    ndimX = x.shape.ndims
-    ndimY = y.shape.ndims
-    if ndimX > 2:
-      x = tf.reshape(x, (-1, shapeX[-1]))
-    if ndimY > 2:
-      y_dims = list(range(ndimY))
-      y_dims = [y_dims.pop(-2)] + y_dims
-      y = tf.transpose(y, perm=y_dims)
-      y = tf.reshape(y, (shapeY[-2], -1))
-      outshapeY = [shapeY[i] for i in y_dims[1:]]
-    else:
-      outshapeY = [shapeY[-1]]
-    # calculate dot product and desire shape
-    output_shape = shapeX[:-1] + outshapeY
-    output = tf.reshape(tf.matmul(x, y), output_shape)
-  return output
-
-
-def batched_dot(x, y, name=None):
-  """Batchwise dot product.
-  This function computes the dot product between the two tensors,
-  by iterating over the first dimension.
-  """
-  with tf.name_scope(name, "BatchedDot"):
-    shapeX = [
-        tf.shape(x)[i] if d is None else d
-        for i, d in enumerate(x.shape.as_list())
-    ]
-    shapeY = [
-        tf.shape(y)[i] if d is None else d
-        for i, d in enumerate(y.shape.as_list())
-    ]
-    ndimX = x.shape.ndims
-    ndimY = y.shape.ndims
-    # same as dot but one more batch dimension
-    if ndimX > 2 + 1:
-      x = tf.reshape(x, (-1, np.prod(shapeX[1:-1]), shapeX[-1]))
-    if ndimY > 2 + 1:
-      y_dims = list(range(ndimY))
-      y_dims = [y_dims.pop(0), y_dims.pop(-2)] + y_dims
-      y = tf.transpose(y, perm=y_dims)
-      outshapeY = [shapeY[i] for i in y_dims[2:]]
-      y = tf.reshape(y, (-1, shapeY[-2], np.prod(outshapeY)))
-    else:
-      outshapeY = [shapeY[-1]]
-    # calculate dot product and desire shape
-    output_shape = shapeX[:-1] + outshapeY
-    output = tf.reshape(tf.matmul(x, y),
-                        [i if i is not None else -1 for i in output_shape],
-                        name=name)
-    return output
-
-
-def switch(condition, then_expression, else_expression, name=None):
-  with tf.name_scope(name, 'switch'):
-    if condition.dtype != tf.bool:
-      condition = tf.cast(condition, 'bool')
-    x_shape = copy.copy(then_expression.shape)
-    # tensorflow require the last dimension of 3 variables is equal, too
-    # it is irrelevant since condition can have shape[-1] = 1
-    cond_ndims = condition.shape.ndims
-    if cond_ndims > 1 and condition.shape[-1] != x_shape[-1]:
-      cond_shape = tf.shape(condition)
-      condition = tf.reshape(condition,
-                             [cond_shape[i] for i in range(cond_ndims - 1)])
-    x = tf.where(condition, then_expression, else_expression)
-    x.set_shape(x_shape)
-    return x
-
-
-def apply_mask(x, mask, name="ApplyMask"):
-  """
-  x : 3D tensor
-  mask : 2D tensor
-
-  Example
-  -------
-  >>> Input: [128, 500, 120]
-  >>> Mask:  [1, 1, 0]
-  >>> Output: [128, 500, 0]
-  """
-  return tf.mul(x, tf.expand_dims(mask, -1), name=name)
 
 
 # ===========================================================================
@@ -581,7 +536,21 @@ def concatenate(x, axis):
   return np.concatenate(x, axis)
 
 
-def dimshuffle(x, pattern):
+def swapaxes(x, axis1, axis2):
+  """ Interchange two axes of an array. """
+  if tf.is_tensor(x):
+    perm = list(range(x.shape.ndims))
+    perm[axis1] = axis2
+    perm[axis2] = axis1
+    x = tf.transpose(x, perm)
+  elif torch.is_tensor(x):
+    x = x.transpose(axis1, axis2)
+  else:
+    x = np.swapaxes(x, axis1, axis2)
+  return x
+
+
+def transpose(x, pattern):
   """ Reorder the dimensions of this variable, optionally inserting
   broadcasted dimensions.
 
@@ -593,15 +562,15 @@ def dimshuffle(x, pattern):
   Examples
   --------
   For example, to create a 3D view of a [2D] matrix, call
-  ``dimshuffle([0,'x',1])``.  This will create a 3D view such that the
+  ``transpose([0,'x',1])``.  This will create a 3D view such that the
   middle dimension is an implicit broadcasted dimension.  To do the same
-  thing on the transpose of that matrix, call ``dimshuffle([1, 'x', 0])``.
+  thing on the transpose of that matrix, call ``transpose([1, 'x', 0])``.
 
   Notes
   -----
   This function supports the pattern passed as a tuple, or as a
-  variable-length argument (e.g. ``a.dimshuffle(pattern)`` is equivalent
-  to ``a.dimshuffle(*pattern)`` where ``pattern`` is a list/tuple of ints
+  variable-length argument (e.g. ``a.transpose(pattern)`` is equivalent
+  to ``a.transpose(*pattern)`` where ``pattern`` is a list/tuple of ints
   mixed with 'x' characters).
 
   @Author: Theano Authors
@@ -678,134 +647,6 @@ def repeat(x, n, axes=None, name="Repeat"):
 
 
 # ===========================================================================
-# Statistics
-# ===========================================================================
-def moments(x, axis=None, keepdims=False):
-  """ Calculates the mean and variance of `x`.
-
-  The mean and variance are calculated by aggregating the contents of `x`
-  across `axes`.  If `x` is 1-D and `axes = [0]` this is just the mean
-  and variance of a vector.
-  """
-  if tf.is_tensor(x):
-    mean, variance = tf.nn.moments(x, axes=axis, keepdims=keepdims)
-  elif torch.is_tensor(x):
-    mean = reduce_mean(x, axis=axis, keepdims=True)
-    devs_squared = square(x - mean)
-    variance = reduce_mean(devs_squared, axis=axis, keepdims=keepdims)
-    if not keepdims:
-      mean = mean.squeeze(axis)
-  else:
-    mean = np.mean(x, axis=axis, keepdims=keepdims)
-    variance = np.var(x, axis=axis, keepdims=keepdims)
-  return mean, variance
-
-
-def reduce_var(x, axis=None, keepdims=False, mean=None):
-  """ Calculate the variance of `x` along given `axis`
-  if `mean` is given,
-  """
-  if isinstance(x, np.ndarray):
-    return np.var(x, axis=axis, keepdims=keepdims)
-  ndim = x.ndim
-  axis = _normalize_axis(axis, ndim)
-  m = reduce_mean(x, axis=axis, keepdims=True) if mean is None else mean
-  devs_squared = square(x - m)
-  return reduce_mean(devs_squared, axis=axis, keepdims=keepdims)
-
-
-def reduce_std(x, axis=None, keepdims=False):
-  return sqrt(reduce_var(x, axis=axis, keepdims=keepdims))
-
-
-def reduce_min(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_min(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.min(dim=axis, keepdim=keepdims)[0]
-  return np.min(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_max(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_max(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.max(dim=axis, keepdim=keepdims)[0]
-  return np.max(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_mean(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_mean(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.mean(dim=axis, keepdim=keepdims)
-  return np.mean(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_sum(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_sum(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.sum(dim=axis, keepdim=keepdims)
-  return np.sum(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_prod(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_prod(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.prod(dim=axis, keepdim=keepdims)
-  return np.prod(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_all(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_all(tf.cast(x, tf.bool), axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.bool().all(dim=axis, keepdim=keepdims)
-  return np.all(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_any(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_any(tf.cast(x, tf.bool), axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.bool().any(dim=axis, keepdim=keepdims)
-  return np.any(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_logsumexp(x, axis=None, keepdims=False):
-  if tf.is_tensor(x):
-    return tf.reduce_logsumexp(x, axis=axis, keepdims=keepdims)
-  if torch.is_tensor(x):
-    return x.logsumexp(dim=axis, keepdim=keepdims)
-  return logsumexp(x, axis=axis, keepdims=keepdims)
-
-
-def reduce_log_exp(x, reduction_function=tf.reduce_mean, axis=None, name=None):
-  """ log-reduction-exp over axis to avoid overflow and underflow
-
-  Parameters
-  ----------
-  `x` : [nb_sample, feat_dim]
-  `axis` should be features dimension
-  """
-  with tf.name_scope(name, "logreduceexp"):
-    x_max = tf.reduce_max(x, axis=axis, keepdims=True)
-    y = tf.log(reduction_function(tf.exp(x - x_max), axis=axis,
-                                  keepdims=True)) + x_max
-    return tf.squeeze(y)
-
-
-def cumsum(x, axis):
-  if tf.is_tensor(x):
-    return tf.math.cumsum(x, axis=axis)
-  if torch.is_tensor(x):
-    return torch.cumsum(x, dim=axis)
-  return np.cumsum(x, axis=axis)
-
-
-# ===========================================================================
 # Logical function
 # ===========================================================================
 def where(condition, x=None, y=None):
@@ -834,3 +675,66 @@ def greater_equal(x, y):
   if torch.is_tensor(x) or torch.is_tensor(y):
     return x >= y
   return np.greater_equal(x, y)
+
+
+def switch(condition, then_expression, else_expression):
+  condition = cast(condition, 'bool')
+  x_shape = copy.copy(then_expression.shape)
+  # tensorflow require the last dimension of 3 variables is equal, too
+  # it is irrelevant since condition can have shape[-1] = 1
+  cond_ndims = condition.shape.ndims
+  if cond_ndims > 1 and condition.shape[-1] != x_shape[-1]:
+    cond_shape = tf.shape(condition)
+    condition = tf.reshape(condition,
+                           [cond_shape[i] for i in range(cond_ndims - 1)])
+  x = tf.where(condition, then_expression, else_expression)
+  x.set_shape(x_shape)
+  return x
+
+
+# ===========================================================================
+# Logical functions
+# ===========================================================================
+def logical_(fn, x, y):
+  if x is None:
+    return y
+  if y is None:
+    return x
+
+  if fn == 'and':
+    fn = lambda x, y: x & y
+  elif fn == 'or':
+    fn = lambda x, y: x | y
+  else:
+    raise NotImplementedError(str(fn))
+  return fn(x, y)
+
+
+def logical_and(x, y):
+  """ More flexible version of and operator that handle the case `x` or `y`
+  might be `None` """
+  return logical_('and', x, y)
+
+
+def logical_or(x, y):
+  """ More flexible version of and operator that handle the case `x` or `y`
+  might be `None` """
+  return logical_('or', x, y)
+
+
+def logical_not(x):
+  return ~x
+
+
+def apply_mask(x, mask):
+  """
+  x : 3D tensor
+  mask : 2D tensor
+
+  Example
+  -------
+  >>> Input: [128, 500, 120]
+  >>> Mask:  [1, 1, 0]
+  >>> Output: [128, 500, 0]
+  """
+  return x * expand_dims(mask, -1)
