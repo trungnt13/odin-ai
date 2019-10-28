@@ -268,13 +268,30 @@ def zeros_like(x, dtype=None):
 def ones(shape, dtype='float32', framework=None):
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
+  if isinstance(shape, np.ndarray):
+    shape = shape.tolist()
   return framework.ones(shape, dtype=dtype)
 
 
 def zeros(shape, dtype='float32', framework=None):
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
+  if isinstance(shape, np.ndarray):
+    shape = shape.tolist()
   return framework.zeros(shape, dtype=dtype)
+
+
+def arange(start, stop=None, dtype=None, framework=None):
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  if framework == tf:
+    return tf.range(start, stop, dtype=dtype)
+  elif framework == torch:
+    if stop is None:
+      stop = start
+      start = 0
+    return torch.arange(start, stop, dtype=dtype)
+  return np.arange(start, stop, dtype=dtype)
 
 
 def nonzeros(x, value):
@@ -617,33 +634,35 @@ def flatten(x, outdim=1):
   return reshape(x, output_shape)
 
 
-def repeat(x, n, axes=None, name="Repeat"):
-  """ Repeat a N-D tensor.
+def tile(x, reps, axis=None):
+  """ Construct an array by repeating `x` the number of times given by `reps`.
 
-  If x has shape (s1, s2, s3) and axes=(1, -1), the output
+  If x has shape (s1, s2, s3) and axis=(1, -1), the output
   will have shape (s1, s2 * n[0], s3 * n[1]).
 
   Parameters
   ----------
-  n : {int, list of int}
+  reps : {int, list of int}
     each number of repeatation according to the axes
-  axes : {int, list or int}
+  axis : {int, list or int}
     all axes for repeating
   """
-  # TODO
-  if axes is not None:
-    ndim = x.shape.ndims
-    if not isinstance(axes, (tuple, list)):
-      axes = (axes,)
-    axes = _normalize_axis(axes, ndim)
-    n = as_tuple(n, len(axes))
-    return tf.tile(
-        x,
-        multiples=[n[axes.index(i)] if i in axes else 1 for i in range(ndim)],
-        name=name)
+  ndim = x.ndim
+  if axis is not None:
+    if not isinstance(axis, (tuple, list)):
+      axis = (axis,)
+    axis = _normalize_axis(axis, ndim)
+    reps = as_tuple(reps, N=len(axis), t=int)
+    multiples = [reps[axis.index(i)] if i in axis else 1 for i in range(ndim)]
   else:
-    n = int(n)
-    return tf.tile(x, multiples=[n for i in range(ndim)], name=name)
+    reps = as_tuple(reps, t=int)
+    multiples = [reps[i] if i < len(reps) else 1 for i in range(ndim)]
+
+  if tf.is_tensor(x):
+    return tf.tile(x, multiples=multiples)
+  elif torch.is_tensor(x):
+    return x.repeat(multiples)
+  return np.tile(x, reps=multiples)
 
 
 # ===========================================================================
@@ -667,6 +686,14 @@ def equal(x, y):
   if torch.is_tensor(x) or torch.is_tensor(y):
     return x == y
   return np.equal(x, y)
+
+
+def not_equal(x, y):
+  if tf.is_tensor(x) or tf.is_tensor(y):
+    return tf.not_equal(x, y)
+  if torch.is_tensor(x) or torch.is_tensor(y):
+    return x != y
+  return np.not_equal(x, y)
 
 
 def greater_equal(x, y):
@@ -738,3 +765,35 @@ def apply_mask(x, mask):
   >>> Output: [128, 500, 0]
   """
   return x * expand_dims(mask, -1)
+
+
+def embedding(indices, weight, max_norm=None):
+  """
+  A simple lookup table that looks up embeddings in a fixed dictionary and size.
+
+  This module is often used to retrieve word embeddings using indices. The input
+  to the module is a list of indices, and the embedding matrix, and the output
+  is the corresponding word embeddings.
+
+  Args:
+    indices: A `Tensor` with type `int32` or `int64` containing the ids to be
+      looked up in `weight`.
+    weight: A single tensor representing the complete embedding tensor, or a
+      list of P tensors all of same shape except for the first dimension,
+      representing sharded embedding tensors.  Alternatively, a
+      `PartitionedVariable`, created by partitioning along dimension 0. Each
+      element must be appropriately sized for the 'div' `partition_strategy`.
+    max_norm: If not `None`, each embedding is clipped if its l2-norm is larger
+      than this value.
+
+  Returns:
+    A `Tensor` with the same type as the tensors in `weights`.
+  """
+  if tf.is_tensor(indices) or tf.is_tensor(weight):
+    return tf.nn.embedding_lookup(params=weight, ids=indices, max_norm=max_norm)
+  if torch.is_tensor(indices) or torch.is_tensor(weight):
+    return torch.nn.functional.embedding(input=indices,
+                                         weight=weight,
+                                         max_norm=max_norm)
+  return tf.nn.embedding_lookup(params=weight, ids=indices,
+                                max_norm=max_norm).numpy()

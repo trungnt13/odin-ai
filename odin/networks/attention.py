@@ -1,5 +1,31 @@
+# A comprehensive implementation of Attention Mechanism for Neural Networks
+# Supporting:
+#  * Multi-head attention
+#  * Self-attention mechanism
+#  * Using more odin.backend function to make it easier transfer between
+#     tensorflow and pytorch
+#
+# References:
+#   Bahdanau, D., et al., 2014. Neural Machine Translation by Jointly Learning
+#     to Align and Translate. arXiv:1409.0473 [cs, stat].
+#   Graves, A., et al., 2014. Neural Turing Machines.
+#     arXiv:1410.5401 [cs].
+#   Xu, K., et al., 2015. Show, Attend and Tell: Neural Image Caption Generation
+#     with Visual Attention. arXiv:1502.03044 [cs].
+#   Luong, M.T., et al., 2015. Effective Approaches to Attention-based Neural
+#     Machine Translation. arXiv:1508.04025 [cs].
+#   Cheng, J., et al., 2016. Long Short-Term Memory-Networks for Machine Reading.
+#     arXiv:1601.06733 [cs].
+#   Kim, Y., et al., 2017. Structured Attention Networks.
+#     arXiv:1702.00887 [cs].
+#   Vaswani, A., et al., 2017. Attention Is All You Need.
+#     arXiv:1706.03762 [cs].
+#   Mishra, N., et al., 2018. A Simple Neural Attentive Meta-Learner.
+#     arXiv:1707.03141 [cs, stat].
+
 from __future__ import absolute_import, division, print_function
 
+import numpy as np
 import tensorflow as tf
 import torch
 from tensorflow import nest
@@ -9,9 +35,79 @@ from odin import backend as bk
 
 
 # ===========================================================================
-# Base classe
+# Base and helper classes
 # ===========================================================================
-class BaseAttention(keras.layers.Layer):
+class PositionalEncoder(keras.layers.Layer):
+  """ Positional encoding follow the approach in (Vaswani, 2017)
+  For even dimension in the embedding:
+    `PE(pos,2i) = sin(pos/10000^(2i/dmodel))`
+  and for odd position:
+    `PE(pos,2i+1) = cos(pos/10000^(2i/dmodel))`
+
+  """
+
+  def __init__(self,
+               output_dim,
+               max_len=10000,
+               trainable=False,
+               mask_zero=False):
+    super().__init__()
+    self.output_dim = output_dim
+    self.mask_zero = bool(mask_zero)
+    self.trainable = bool(trainable)
+    self.supports_masking = mask_zero
+    self.max_len = max_len
+
+    # Applying the cosine to even columns and sin to odds.
+    # if zero-masked, dont use the 0 position
+    # (i - i % 2) create a sequence of (0,0,1,1,2,2,...) which is needed
+    # for two running sequence of sin and cos in odd and even position
+    position_encoding = np.array([[
+        pos / np.power(10000, (i - i % 2) / output_dim)
+        for i in range(output_dim)
+    ] if pos != 0 or not mask_zero else [0.] * output_dim
+                                  for pos in range(max_len)])
+    # [max_len, output_dim]
+    position_encoding[:, 0::2] = np.sin(position_encoding[:, 0::2])  # dim 2i
+    position_encoding[:, 1::2] = np.cos(position_encoding[:, 1::2])  # dim 2i+1
+    if not trainable:
+      self.position_encoding = bk.array(position_encoding,
+                                        dtype='float32',
+                                        framework=self)
+    else:
+      self.position_encoding = bk.variable(initial_value=position_encoding,
+                                           dtype='float32',
+                                           trainable=True,
+                                           framework=self)
+
+  def compute_mask(self, inputs, mask=None):
+    if not self.mask_zero:
+      return None
+    return bk.not_equal(inputs, 0)
+
+  def call(self, sequence, mask=None, training=None):
+    with bk.framework_(self):
+      # [batch_size, time_dim]
+      positions = bk.tile(bk.expand_dims(bk.arange(sequence.shape[1]), 0),
+                          [sequence.shape[0], 1])
+      dtype = bk.dtype_universal(positions.dtype)
+      if dtype not in ('int32', 'int64'):
+        positions = bk.cast(positions, dtype='int32')
+      pe = bk.embedding(indices=positions, weight=self.position_encoding)
+      return pe
+
+  def get_config(self):
+    config = super().get_config()
+    config.update({
+        'output_dim': self.output_dim,
+        'trainable': self.trainable,
+        'mask_zero': self.mask_zero,
+        'max_len': self.max_len
+    })
+    return config
+
+
+class BaseAttention(keras.Model):
   pass
 
 
@@ -23,12 +119,6 @@ class SoftAttention(BaseAttention):
   `tensorflow/python/keras/layers/dense_attention.py`
   Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
-  Base Attention class, modified for supporting:
-   - Multi-head attention
-   - Self-attention mechanism
-   - Using more odin.backend function to make it easier transfer between
-     tensorflow and pytorch
-
   The meaning of `query`, `value` and `key` depend on the application. In the
   case of text similarity, for example, `query` is the sequence embeddings of
   the first piece of text and `value` is the sequence embeddings of the second
@@ -36,14 +126,12 @@ class SoftAttention(BaseAttention):
   `value`, `key` is usually the same tensor as value.
 
   Args:
-
     causal: Boolean. Set to `True` for decoder self-attention. Adds a mask such
       that position `i` cannot attend to positions `j > i`. This prevents the
       flow of information from the future towards the past.
     return_score: Boolean. Set to `True` for returning the attention scores.
 
   Call Arguments:
-
     inputs: List of the following tensors:
       * query: Query `Tensor` of shape `[batch_size, Tq, dim]`.
       * value: Value `Tensor` of shape `[batch_size, Tv, dim]`.
@@ -59,37 +147,28 @@ class SoftAttention(BaseAttention):
         `mask==False` do not contribute to the result.
 
   Output shape:
-
     Attention outputs of shape `[batch_size, Tq, dim]`.
-
-  References:
-    [1] Graves, A., et al., 2014. Neural Turing Machines. arXiv:1410.5401 [cs].
-    [2] Xu, K., et al., 2015. Show, Attend and Tell: Neural Image Caption
-        Generation with Visual Attention. arXiv:1502.03044 [cs].
-    [3] Luong, M.T., et al., 2015. Effective Approaches to Attention-based
-        Neural Machine Translation. arXiv:1508.04025 [cs].
-    [4] Kim, Y., Denton, C., Hoang, L., Rush, A.M., 2017. Structured Attention
-        Networks. arXiv:1702.00887 [cs].
-    [5] Vaswani, A., et al., 2017. Attention Is All You Need.
-        arXiv:1706.03762 [cs].
 
   """
 
   def __init__(self,
                input_dim=None,
                causal=False,
-               return_score=False,
+               return_scores=False,
+               num_head=0,
                multihead_norm=0.,
                scale_initializer='one',
                scale_tied=True,
                attention_type='mul',
                attention_activation='softmax',
                **kwargs):
-    super(SoftAttention, self).__init__(**kwargs)
+    super().__init__(**kwargs)
     self.causal = causal
-    self.return_score = bool(return_score)
-    self.multihead_norm = multihead_norm
+    self.return_scores = bool(return_scores)
     self.supports_masking = True
+    # ====== multi-head ====== #
+    self.multihead_norm = multihead_norm
+    self.num_head = int(num_head)
     # ====== initialize scale ====== #
     if not scale_tied and input_dim is None:
       raise ValueError("If scale_tied=False, the input_dim must be given")
@@ -119,7 +198,8 @@ class SoftAttention(BaseAttention):
       Tensor of shape `[batch_size, Tq, Tv]`.
     """
     if self.attention_type == 'mul':
-      # TODO: this might be wrong
+      # this is a trick to make attention_scale broadcastable when
+      # scale_tied=False
       return bk.matmul(self.attention_scale * query, bk.swapaxes(key, 1, 2))
     elif self.attention_type == 'add':
       # [batch_size, Tq, 1, dim]
@@ -217,7 +297,7 @@ class SoftAttention(BaseAttention):
 
   def get_config(self):
     config = {'causal': self.causal}
-    base_config = super(BaseAttention, self).get_config()
+    base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
 
 

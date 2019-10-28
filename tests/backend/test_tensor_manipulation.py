@@ -91,6 +91,19 @@ class BackendTensorTest(unittest.TestCase):
     swapaxes_and_test(0, 2)
     swapaxes_and_test(1, 0)
 
+  def test_tile(self):
+
+    def tile_and_test(reps, axis):
+      a = bk.tile(x, reps=reps, axis=axis)
+      b = bk.tile(y, reps=reps, axis=axis)
+      c = bk.tile(z, reps=reps, axis=axis)
+      _equal(self, (reps, axis), a, b, c)
+
+    for reps, axis in [(2, None), (2, -1), (2, -1), (2, 0), ((2, 2), None),
+                       ((2, 2, 3), None), (2, (0, 1)), ((2, 3), (1, 2)),
+                       ((3, 2, 1), (2, 1, 0))]:
+      tile_and_test(reps, axis)
+
   def test_stats_and_reduce(self):
     for axis in (1, 2, None):
       for name, fn in (
