@@ -161,6 +161,7 @@ class SoftAttention(BaseAttention):
                heads_bias=True,
                heads_norm=0.,
                heads_activation='relu',
+               heads_output_mode='mean',
                scale_initializer='one',
                scale_tied=True,
                attention_type='mul',
@@ -171,16 +172,29 @@ class SoftAttention(BaseAttention):
     self.return_scores = bool(return_scores)
     self.supports_masking = True
     # ====== multi-head ====== #
-    self.units = int(units)
+    self.heads_output_mode = str(heads_output_mode).lower().strip()
     self.heads_norm = heads_norm
     self.heads_bias = bool(heads_bias)
     self.num_heads = int(num_heads)
+    self.units = as_tuple(units, t=int)
     # create a deep feedforward network for the heads:
-    if self.num_heads > 0:
-      with bk.framework_(self):
-        self.query_heads = bk.nn.Parallel()
-        self.key_heads = bk.nn.Parallel()
-        self.value_heads = bk.nn.Parallel()
+    with bk.framework_(self):
+      if self.num_heads > 0:
+        create_heads = lambda: [
+            bk.nn.Sequential([
+                bk.nn.Dense(n, use_bias=heads_bias, activation=heads_activation)
+                for n in self.units
+            ])
+            for _ in range(self.num_heads)
+        ]
+        self.query_heads = bk.nn.Parallel(create_heads())
+        self.key_heads = bk.nn.Parallel(create_heads())
+        self.value_heads = bk.nn.Parallel(create_heads())
+      else:
+        self.query_heads = bk.nn.Identity()
+        self.key_heads = bk.nn.Identity()
+        self.value_heads = bk.nn.Identity()
+
     # ====== initialize scale ====== #
     if not scale_tied and input_dim is None:
       raise ValueError("If scale_tied=False, the input_dim must be given")
@@ -203,11 +217,11 @@ class SoftAttention(BaseAttention):
     """Calculates attention scores (a.k.a logits values).
 
     Args:
-      query: Query tensor of shape `[batch_size, Tq, dim]`.
-      key: Key tensor of shape `[batch_size, Tv, dim]`.
+      query: Query tensor of shape `[batch_size * num_heads, Tq, dim]`.
+      key: Key tensor of shape `[batch_size * num_heads, Tv, dim]`.
 
     Returns:
-      Tensor of shape `[batch_size, Tq, Tv]`.
+      Tensor of shape `[batch_size * num_heads, Tq, Tv]`.
     """
     if self.attention_type == 'mul':
       # this is a trick to make attention_scale broadcastable when
@@ -224,20 +238,27 @@ class SoftAttention(BaseAttention):
                                 self.attention_type)
 
   def calculate_scores_norm(self, scores):
-    """ With the attention scores is A `[batch_size, Tq, Tv, num_heads]`
+    """ With the attention scores is A `[batch_size * num_heads, Tq, Tv]`
     `P = ||A^T*A - I||_2^2`
     """
+    # it is easier to assume there is always 1-head at least
+    num_heads = max(self.num_heads, 1)
+
     with bk.framework_(self):
-      batch_size, Tq, Tv, num_heads = scores.shape
-      # [batch_size, TqTv, num_heads]
-      scores = bk.reshape(scores, shape=(batch_size, Tq * Tv, num_heads))
-      # [batch_size, num_heads, TqTv]
-      scoresT = bk.swapaxes(scores, 1, 2)
-      I = bk.eye(self.head)
+      Tq, Tv = scores.shape[1:]
+      # [batch_size, num_heads, Tq * Tv]
+      scoresT = bk.reshape(scores, shape=(-1, num_heads, Tq * Tv))
+      # [batch_size, Tq * Tv, num_heads]
+      scores = bk.swapaxes(scoresT, 1, 2)
+      # [batch_size, num_heads, num_heads]
+      A = bk.matmul(scoresT, scores)
+
+      I = bk.eye(num_heads, dtype=A.dtype)
       I = bk.expand_dims(I, axis=0)
       # [batch_size, num_heads, num_heads]
-      I = bk.tile(I, reps=scores.shape[0], axis=0)
-      P = bk.norm(bk.matmul(scoresT, scores) - I, p="fro")**2
+      I = bk.tile(I, reps=A.shape[0], axis=0)
+
+      P = bk.norm(A - I, p="fro")**2
     return P
 
   def _apply_scores(self, scores, value, scores_mask=None):
@@ -253,22 +274,24 @@ class SoftAttention(BaseAttention):
     * Apply `query_mask` and return the result.
 
     Args:
-      scores: Scores float tensor of shape `[batch_size, Tq, Tv]`.
-      value: Value tensor of shape `[batch_size, Tv, dim]`.
+      scores: Scores float tensor of shape `[batch_size * num_heads, Tq, Tv]`.
+      value: Value tensor of shape `[batch_size * num_heads, Tv, dim]`.
       scores_mask: A boolean mask `Tensor` of shape `[batch_size, 1, Tv]` or
         `[batch_size, Tq, Tv]`. If given, scores at positions where
         `scores_mask==False` do not contribute to the result. It must contain
         at least one `True` value in each line along the last dimension.
 
     Returns:
-      Tensor of shape `[batch_size, Tq, dim]`.
+      Tensor of shape `[batch_size * num_heads, Tq, dim]`.
 
     """
+    num_heads = max(self.num_heads, 1)
     if scores_mask is not None:
       padding_mask = bk.logical_not(scores_mask)
+      if num_heads > 1:
+        padding_mask = bk.tile(padding_mask, reps=num_heads, axis=0)
       # Bias so padding positions do not contribute to attention distribution.
       scores -= 1.e9 * bk.cast(padding_mask, dtype=scores.dtype)
-    # [batch_size, Tq, Tv]
     attention_distribution = self.attention_activation(scores)
     return bk.matmul(attention_distribution, value)
 
@@ -277,11 +300,12 @@ class SoftAttention(BaseAttention):
       value = query
     if key is None:
       key = value
+    num_heads = max(self.num_heads, 1)
 
     with bk.framework_(self):
-      query = bk.array(query)
-      key = bk.array(key)
-      value = bk.array(value)
+      query = bk.concatenate(self.query_heads(bk.array(query)), axis=0)
+      key = bk.concatenate(self.key_heads(bk.array(key)), axis=0)
+      value = bk.concatenate(self.value_heads(bk.array(value)), axis=0)
       scores = self.calculate_scores(query=query, key=key)
 
       # ====== multi-head regularization ====== #
@@ -316,7 +340,18 @@ class SoftAttention(BaseAttention):
       if q_mask is not None:
         # Mask of shape [batch_size, Tq, 1].
         q_mask = bk.expand_dims(q_mask, axis=-1)
+        if num_heads > 1:
+          q_mask = bk.tile(q_mask, reps=num_heads, axis=0)
         result *= bk.cast(q_mask, dtype=result.dtype)
+
+      # ====== final aggregation ====== #
+      result = bk.reshape(result, shape=(-1, num_heads, [1], [2]))
+      if self.heads_output_mode == 'mean':
+        result = bk.reduce_sum(result, axis=1) / num_heads
+      elif self.heads_output_mode in ('concat', 'cat', 'concatenate'):
+        result = bk.flatten(bk.swapaxes(result, 1, 2), outdim=3)
+      elif self.num_heads == 0:
+        result = bk.squeeze(result, axis=1)
     return result
 
   def compute_mask(self, inputs, mask=None):

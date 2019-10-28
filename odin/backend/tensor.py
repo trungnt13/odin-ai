@@ -556,6 +556,10 @@ def squeeze(x, axis):
 
 
 def concatenate(x, axis):
+  if not isinstance(x, (tuple, list)):
+    return x
+  if len(x) == 1:
+    return x[0]
   if tf.is_tensor(x[0]):
     return tf.concat(x, axis)
   if torch.is_tensor(x[0]):

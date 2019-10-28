@@ -33,8 +33,12 @@ class _nn_meta(type):
       all_objects.update(networks_torch.__dict__)
     elif fw == tf:
       from odin import networks
+      from tensorflow.python.keras.engine import sequential
+      from tensorflow.python.keras.engine import training
       all_objects.update(tf.keras.layers.__dict__)
       all_objects.update(networks.__dict__)
+      all_objects.update(sequential.__dict__)
+      all_objects.update(training.__dict__)
     else:
       raise NotImplementedError(str(fw))
     return all_objects[key]
