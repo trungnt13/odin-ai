@@ -32,13 +32,14 @@ from tensorflow import nest
 from tensorflow.python import keras
 
 from odin import backend as bk
+from odin.utils import as_tuple
 
 
 # ===========================================================================
 # Base and helper classes
 # ===========================================================================
 class PositionalEncoder(keras.layers.Layer):
-  """ Positional encoding follow the approach in (Vaswani, 2017)
+  r""" Positional encoding follow the approach in (Vaswani, 2017)
   For even dimension in the embedding:
     `PE(pos,2i) = sin(pos/10000^(2i/dmodel))`
   and for odd position:
@@ -115,7 +116,7 @@ class BaseAttention(keras.Model):
 # Attention classes
 # ===========================================================================
 class SoftAttention(BaseAttention):
-  """ Original implementation from Tensorflow:
+  r""" Original implementation from Tensorflow:
   `tensorflow/python/keras/layers/dense_attention.py`
   Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
@@ -155,8 +156,11 @@ class SoftAttention(BaseAttention):
                input_dim=None,
                causal=False,
                return_scores=False,
-               num_head=0,
-               multihead_norm=0.,
+               units=64,
+               num_heads=0,
+               heads_bias=True,
+               heads_norm=0.,
+               heads_activation='relu',
                scale_initializer='one',
                scale_tied=True,
                attention_type='mul',
@@ -167,8 +171,16 @@ class SoftAttention(BaseAttention):
     self.return_scores = bool(return_scores)
     self.supports_masking = True
     # ====== multi-head ====== #
-    self.multihead_norm = multihead_norm
-    self.num_head = int(num_head)
+    self.units = int(units)
+    self.heads_norm = heads_norm
+    self.heads_bias = bool(heads_bias)
+    self.num_heads = int(num_heads)
+    # create a deep feedforward network for the heads:
+    if self.num_heads > 0:
+      with bk.framework_(self):
+        self.query_heads = bk.nn.Parallel()
+        self.key_heads = bk.nn.Parallel()
+        self.value_heads = bk.nn.Parallel()
     # ====== initialize scale ====== #
     if not scale_tied and input_dim is None:
       raise ValueError("If scale_tied=False, the input_dim must be given")
@@ -210,6 +222,23 @@ class SoftAttention(BaseAttention):
     else:
       raise NotImplementedError("No support for attention_type='%s'" %
                                 self.attention_type)
+
+  def calculate_scores_norm(self, scores):
+    """ With the attention scores is A `[batch_size, Tq, Tv, num_heads]`
+    `P = ||A^T*A - I||_2^2`
+    """
+    with bk.framework_(self):
+      batch_size, Tq, Tv, num_heads = scores.shape
+      # [batch_size, TqTv, num_heads]
+      scores = bk.reshape(scores, shape=(batch_size, Tq * Tv, num_heads))
+      # [batch_size, num_heads, TqTv]
+      scoresT = bk.swapaxes(scores, 1, 2)
+      I = bk.eye(self.head)
+      I = bk.expand_dims(I, axis=0)
+      # [batch_size, num_heads, num_heads]
+      I = bk.tile(I, reps=scores.shape[0], axis=0)
+      P = bk.norm(bk.matmul(scoresT, scores) - I, p="fro")**2
+    return P
 
   def _apply_scores(self, scores, value, scores_mask=None):
     """Applies attention scores to the given value tensor.
@@ -254,6 +283,10 @@ class SoftAttention(BaseAttention):
       key = bk.array(key)
       value = bk.array(value)
       scores = self.calculate_scores(query=query, key=key)
+
+      # ====== multi-head regularization ====== #
+      if self.num_heads > 0 and self.heads_norm > 0:
+        self.add_loss(self.heads_norm * self.calculate_scores_norm(scores))
 
       # ====== prepare the mask ====== #
       q_mask = mask[0] if mask else None

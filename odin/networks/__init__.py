@@ -1,4 +1,4 @@
-from odin.networks.advance_model import AdvanceModel
+from odin.networks.advance_model import AdvanceModel, ModuleList
 from odin.networks.attention import *
 from odin.networks.cudnn_rnn import *
 from odin.networks.distribution_util_layers import *

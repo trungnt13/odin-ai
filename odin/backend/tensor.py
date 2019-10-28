@@ -281,6 +281,16 @@ def zeros(shape, dtype='float32', framework=None):
   return framework.zeros(shape, dtype=dtype)
 
 
+def eye(num_rows, num_cols=None, dtype=None, framework=None):
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  if framework == tf:
+    return tf.eye(num_rows, num_cols, dtype=dtype)
+  if framework == torch:
+    return torch.eye(num_rows, num_cols, dtype=dtype)
+  return np.eye(N=num_rows, M=num_cols, dtype=dtype)
+
+
 def arange(start, stop=None, dtype=None, framework=None):
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
@@ -556,7 +566,9 @@ def concatenate(x, axis):
 def swapaxes(x, axis1, axis2):
   """ Interchange two axes of an array. """
   if tf.is_tensor(x):
-    perm = list(range(x.shape.ndims))
+    ndim = x.shape.ndims
+    axis1, axis2 = _normalize_axis((axis1, axis2), ndim)
+    perm = list(range(ndim))
     perm[axis1] = axis2
     perm[axis2] = axis1
     x = tf.transpose(x, perm)

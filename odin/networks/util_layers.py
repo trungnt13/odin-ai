@@ -40,29 +40,28 @@ class BatchRenormalization(BatchNormalization):
                adjustment=None,
                name=None,
                **kwargs):
-    super(BatchRenormalization, self).__init__(
-        name=name,
-        axis=axis,
-        momentum=momentum,
-        epsilon=epsilon,
-        center=center,
-        scale=scale,
-        beta_initializer=beta_initializer,
-        gamma_initializer=gamma_initializer,
-        moving_mean_initializer=moving_mean_initializer,
-        moving_variance_initializer=moving_variance_initializer,
-        beta_regularizer=beta_regularizer,
-        gamma_regularizer=gamma_regularizer,
-        beta_constraint=beta_constraint,
-        gamma_constraint=gamma_constraint,
-        renorm=True,
-        renorm_clipping=renorm_clipping,
-        renorm_momentum=renorm_momentum,
-        fused=fused,
-        trainable=trainable,
-        virtual_batch_size=virtual_batch_size,
-        adjustment=adjustment,
-        **kwargs)
+    super().__init__(name=name,
+                     axis=axis,
+                     momentum=momentum,
+                     epsilon=epsilon,
+                     center=center,
+                     scale=scale,
+                     beta_initializer=beta_initializer,
+                     gamma_initializer=gamma_initializer,
+                     moving_mean_initializer=moving_mean_initializer,
+                     moving_variance_initializer=moving_variance_initializer,
+                     beta_regularizer=beta_regularizer,
+                     gamma_regularizer=gamma_regularizer,
+                     beta_constraint=beta_constraint,
+                     gamma_constraint=gamma_constraint,
+                     renorm=True,
+                     renorm_clipping=renorm_clipping,
+                     renorm_momentum=renorm_momentum,
+                     fused=fused,
+                     trainable=trainable,
+                     virtual_batch_size=virtual_batch_size,
+                     adjustment=adjustment,
+                     **kwargs)
 
 
 class Identity(Layer):
@@ -78,7 +77,6 @@ class Identity(Layer):
     return input_shape
 
 
-@keras_export('keras.models.Sequential', 'keras.Sequential')
 class Parallel(Sequential):
   """ Similar design to keras `Sequential` but simultanously applying
   all the layer on the input and return all the results.

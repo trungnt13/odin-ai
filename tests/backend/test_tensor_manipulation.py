@@ -1,6 +1,9 @@
 from __future__ import absolute_import, division, print_function
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
 import unittest
 
 import numpy as np
@@ -8,32 +11,7 @@ import tensorflow as tf
 import torch
 
 from odin import backend as bk
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
-tf.random.set_seed(8)
-np.random.seed(8)
-torch.manual_seed(8)
-
-# ===========================================================================
-# Helpers
-# ===========================================================================
-x = np.random.rand(12, 25, 8).astype('float32')
-y = torch.Tensor(x)
-z = tf.convert_to_tensor(x)
-
-
-def _equal(self, info, a: np.ndarray, b: torch.Tensor, c: tf.Tensor):
-  assert all(
-      int(i) == int(j) == int(k) for i, j, k in zip(a.shape, b.shape, c.shape)),\
-        "Input shape: %s, info: %s, output shapes mismatch: %s, %s and %s" % \
-          (str(x.shape), str(info), str(a.shape), str(b.shape), str(c.shape))
-  self.assertTrue(np.all(
-      np.logical_and(np.allclose(a, b.numpy()), np.allclose(a, c.numpy()))),
-                  msg="info: %s, output value mismatch, \n%s\n%s\n%s" %
-                  (info, str(a), str(b.numpy()), str(c.numpy())))
-
+from tests.backend.utils import assert_equal, x, y, z
 
 # ===========================================================================
 # test case
@@ -46,7 +24,7 @@ class BackendTensorTest(unittest.TestCase):
       a = bk.reshape(x, newshape)
       b = bk.reshape(y, newshape)
       c = bk.reshape(z, newshape)
-      _equal(self, newshape, a, b, c)
+      assert_equal(self, newshape, a, b, c)
 
     reshape_and_test((-1, 8))
     reshape_and_test((8, 12, 25))
@@ -60,7 +38,7 @@ class BackendTensorTest(unittest.TestCase):
       a = bk.transpose(x, pattern)
       b = bk.transpose(y, pattern)
       c = bk.transpose(z, pattern)
-      _equal(self, pattern, a, b, c)
+      assert_equal(self, pattern, a, b, c)
 
     transpose_and_test((0, 2, 1))
     transpose_and_test((0, 2, 1, 'x'))
@@ -74,7 +52,7 @@ class BackendTensorTest(unittest.TestCase):
       a = bk.flatten(x, n)
       b = bk.flatten(y, n)
       c = bk.flatten(z, n)
-      _equal(self, n, a, b, c)
+      assert_equal(self, n, a, b, c)
 
     flatten_and_test(1)
     flatten_and_test(2)
@@ -85,7 +63,7 @@ class BackendTensorTest(unittest.TestCase):
       a = bk.swapaxes(x, a1, a2)
       b = bk.swapaxes(y, a1, a2)
       c = bk.swapaxes(z, a1, a2)
-      _equal(self, (a1, a2), a, b, c)
+      assert_equal(self, (a1, a2), a, b, c)
 
     swapaxes_and_test(1, 2)
     swapaxes_and_test(0, 2)
@@ -97,7 +75,7 @@ class BackendTensorTest(unittest.TestCase):
       a = bk.tile(x, reps=reps, axis=axis)
       b = bk.tile(y, reps=reps, axis=axis)
       c = bk.tile(z, reps=reps, axis=axis)
-      _equal(self, (reps, axis), a, b, c)
+      assert_equal(self, (reps, axis), a, b, c)
 
     for reps, axis in [(2, None), (2, -1), (2, -1), (2, 0), ((2, 2), None),
                        ((2, 2, 3), None), (2, (0, 1)), ((2, 3), (1, 2)),
@@ -146,13 +124,13 @@ class BackendTensorTest(unittest.TestCase):
         a = fn(x)
         b = fn(y)
         c = fn(z)
-        _equal(self, name, a, b, c)
+        assert_equal(self, name, a, b, c)
 
     a1, a2 = bk.moments(x, axis=1)
     b1, b2 = bk.moments(y, axis=1)
     c1, c2 = bk.moments(z, axis=1)
-    _equal(self, "moments_mean", a1, b1, c1)
-    _equal(self, "moments_var", a2, b2, c2)
+    assert_equal(self, "moments_mean", a1, b1, c1)
+    assert_equal(self, "moments_var", a2, b2, c2)
 
   def test_variable_and_gradient(self):
     with bk.framework_('torch'):

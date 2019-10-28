@@ -30,9 +30,52 @@ def matmul(x, y):
   return np.matmul(x, y)
 
 
+def tensordot(x, y, axis=2):
+  """ Compute tensor dot product along specified axes.
+
+  axes : int or (2,) array_like
+    integer_like If an int N, sum over the last N axes of a and the first N axes
+    of b in order. The sizes of the corresponding axes must match.
+    (2,) array_like Or, a list of axes to be summed over, first sequence
+    applying to a, second to b. Both elements array_like must be of the same
+    length.
+
+
+  Example:
+
+  ```python
+    a = np.arange(60.).reshape(3,4,5)
+    b = np.arange(24.).reshape(4,3,2)
+    c = np.tensordot(a,b, axes=([1,0],[0,1]))
+    c.shape
+    # (5, 2)
+  ```
+  """
+  if tf.is_tensor(x) or tf.is_tensor(y):
+    return tf.tensordot(x, y, axes=axis)
+  if torch.is_tensor(x) or torch.is_tensor(y):
+    return torch.tensordot(x, y, dims=axis)
+  return np.tensordot(x, y, axes=axis)
+
+
 # ===========================================================================
 # Normalization
 # ===========================================================================
+def norm(x, p='fro', axis=None, keepdims=False):
+  """
+  x : must be 1-D or 2-D
+  """
+  if torch.is_tensor(x):
+    return torch.norm(x, p=p, dim=axis, keepdim=keepdims)
+  if isinstance(axis, (tuple, list)) and len(axis) == x.ndim:
+    axis = None
+  if p == 'fro':
+    p = 'euclidean'
+  if tf.is_tensor(x):
+    return tf.norm(x, ord=p, axis=axis, keepdims=keepdims)
+  return tf.norm(x, ord=p, axis=axis, keepdims=keepdims).numpy()
+
+
 def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
   """ L2-normalization (or vector unit length normalization)
 
