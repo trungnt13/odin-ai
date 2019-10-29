@@ -301,6 +301,8 @@ class SoftAttention(BaseAttention):
     if key is None:
       key = value
     num_heads = max(self.num_heads, 1)
+    assert query.shape[-1] == value.shape[-1] == key.shape[-1], \
+      "Query, key and value must has the same feature dimension."
 
     with bk.framework_(self):
       query = bk.concatenate(self.query_heads(bk.array(query)), axis=0)
@@ -316,6 +318,10 @@ class SoftAttention(BaseAttention):
       q_mask = mask[0] if mask else None
       v_mask = mask[1] if mask else None
       if v_mask is not None:
+        if v_mask.shape[1] != value.shape[1]:
+          raise RuntimeError(
+              "Value mask has time dimension %d, but value has time dimension %d"
+              % (v_mask.shape[1], value.shape[1]))
         # Mask of shape [batch_size, 1, Tv].
         v_mask = bk.expand_dims(v_mask, axis=-2)
       if self.causal:
@@ -338,6 +344,10 @@ class SoftAttention(BaseAttention):
 
       # ====== applying the mask ====== #
       if q_mask is not None:
+        if q_mask.shape[1] != query.shape[1]:
+          raise RuntimeError(
+              "Query mask has time dimension %d, but query has time dimension %d"
+              % (q_mask.shape[1], query.shape[1]))
         # Mask of shape [batch_size, Tq, 1].
         q_mask = bk.expand_dims(q_mask, axis=-1)
         if num_heads > 1:
