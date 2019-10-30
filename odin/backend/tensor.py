@@ -11,6 +11,7 @@ from __future__ import absolute_import, division, print_function
 
 import copy
 import inspect
+import itertools
 import numbers
 from collections import defaultdict
 from contextlib import contextmanager
@@ -92,7 +93,7 @@ def parse_framework(alias):
     alias = ''.join([str(i) for i in type.mro(alias)])
 
   alias = alias.strip().lower()
-  if any(i in alias for i in ['tf', 'tensorflow', 'tensor']):
+  if any(i in alias for i in ['tf', 'tensorflow']):
     return tf
   if any(i in alias for i in ['torch', 'pytorch', 'pt', 'tr']):
     return torch
@@ -197,6 +198,8 @@ def array(x, framework=None, dtype=None):
     if out_framework == torch:
       if dtype is not None:
         x = cast(x, dtype)
+      if torch.is_tensor(x):
+        return x
       return torch.from_numpy(x)
   return x
 
@@ -783,15 +786,63 @@ def apply_mask(x, mask):
   return x * expand_dims(mask, -1)
 
 
-def embedding(indices, weight, max_norm=None):
+# ===========================================================================
+# Randomization helper
+# ===========================================================================
+def random_normal(*shape, mean=0.0, stddev=1.0, dtype='float32',
+                  framework=None):
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  shape = tf.nest.flatten(shape)
+
+  if framework == tf:
+    return tf.random.normal(shape, mean=mean, stddev=stddev, dtype=dtype)
+  if framework == torch:
+    return mean + stddev * torch.randn(*shape, dtype=dtype)
+  return mean + stddev * np.random.randn(*shape)
+
+
+def random_uniform(*shape, minval=0, maxval=1, dtype='float32', framework=None):
+  r""" [minval, maxval) """
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  shape = tf.nest.flatten(shape)
+
+  if framework == tf:
+    return tf.random.uniform(shape, minval=minval, maxval=maxval, dtype=dtype)
+  if framework == torch:
+    return minval + torch.rand(*shape, dtype=dtype) * (maxval - minval)
+  return np.random.uniform(low=minval, high=maxval, size=shape)
+
+
+def random_binomial(*shape, p, dtype='float32', framework=None):
+  r"""
+  p : [0, 1], the probability of success (i.e. return 1)
   """
+  framework = parse_framework(framework)
+  dtype = dtype_universal(dtype, framework=framework)
+  shape = tf.nest.flatten(shape)
+
+  one = array(1, dtype=dtype, framework=framework)
+  zero = array(0, dtype=dtype, framework=framework)
+  return where(
+      random_uniform(
+          shape, minval=0., maxval=1., dtype=dtype, framework=framework) <= p,
+      one, zero)
+
+
+# ===========================================================================
+# General neural network utilities
+# ===========================================================================
+def embedding(indices, weight, max_norm=None):
+  R"""
   A simple lookup table that looks up embeddings in a fixed dictionary and size.
 
   This module is often used to retrieve word embeddings using indices. The input
   to the module is a list of indices, and the embedding matrix, and the output
   is the corresponding word embeddings.
 
-  Args:
+  Arguments:
     indices: A `Tensor` with type `int32` or `int64` containing the ids to be
       looked up in `weight`.
     weight: A single tensor representing the complete embedding tensor, or a
@@ -813,3 +864,92 @@ def embedding(indices, weight, max_norm=None):
                                          max_norm=max_norm)
   return tf.nn.embedding_lookup(params=weight, ids=indices,
                                 max_norm=max_norm).numpy()
+
+
+def _process_noise_dim(input_shape, dims):
+  """
+  By default, each element is kept or dropped independently.  If `noise_shape`
+  is specified, it must be
+  [broadcastable](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html)
+  to the shape of `x`, and only dimensions with `noise_shape[i] == shape(x)[i]`
+  will make independent decisions.  For example, if `shape(x) = [k, l, m, n]`
+  and `noise_shape = [k, 1, 1, n]`, each batch and channel component will be
+  kept independently and each row and column will be kept or not kept together.
+  Examples
+  --------
+  (None, 10, 10) with noise_dims=2
+  => Noise mask: (None, 10, 1)
+  """
+  if dims is None:
+    return input_shape
+  ndims = len(input_shape)
+  dims = [i % ndims for i in as_tuple(dims, t=int)]
+  # ====== get noise shape ====== #
+  return tuple([1 if i in dims else input_shape[i] for i in range(ndims)])
+
+
+def dropout(x,
+            p=0.5,
+            axis=None,
+            noise_type='uniform',
+            rescale=True,
+            training=True):
+  r""" Computes dropout output for training or evaluation phase.
+  With probability `keep_prob`, outputs the input element scaled up by
+  `1 / keep_prob`, otherwise outputs `0`.  The scaling is so that the expected
+  sum is unchanged.
+
+  Arguments:
+    x: A tensor.
+      input tensor
+    p: float(0.-1.)
+      probability of dropout (i.e. set a value to zero)
+    axis: int or list(int)
+      these dimensions will be setted to 1 in noise_shape, and
+      used to broadcast the dropout mask.
+    noise_type: 'gaussian' (or 'normal'), 'uniform', 'binomial'
+      distribution used for generating noise
+    rescale: bool
+      if `True`, the outputs are scaled by a factor of :math:`\frac{1}{1-p}` during
+      training. This means that during evaluation the module simply computes an
+      identity function
+    training: bool
+      if `True`, return the dropout-ed tensor during training,
+      otherwise rescaled tensor during evaluation.
+
+  References:
+    Hinton, G.E., et al., 2012. Improving neural networks by preventing
+      co-adaptation of feature detectors. arXiv:1207.0580 [cs].
+    Srivastava, N., et al., 2014. Dropout: A Simple Way to Prevent Neural Networks from
+      Overﬁtting, JMLR
+
+  Note:
+    This function only apply noise on Variable when training is enable
+  """
+  framework = parse_framework(x)
+  shape = x.shape
+  retain_prob = 1. - p
+  # ====== not a training variable NO dropout ====== #
+  if 'normal' in noise_type or 'gaussian' in noise_type:
+    randfunc = lambda shape: random_normal(shape,
+                                           mean=1.0,
+                                           stddev=np.sqrt((1.0 - retain_prob) /
+                                                          retain_prob),
+                                           dtype=x.dtype,
+                                           framework=framework)
+  elif 'uniform' in noise_type or 'binomial' in noise_type:
+    randfunc = lambda shape: random_binomial(
+        shape, p=retain_prob, dtype=x.dtype, framework=framework)
+  else:
+    raise ValueError('No support for noise_type=' + noise_type)
+
+  # ====== Dropout ====== #
+  if training:
+    noise_shape = shape if axis is None else _process_noise_dim(shape, axis)
+    noise_shape = [i for i in noise_shape]
+    y = x * randfunc(noise_shape)
+    if rescale:
+      y /= retain_prob
+    return y
+  else:
+    return x

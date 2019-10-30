@@ -156,6 +156,7 @@ class SoftAttention(BaseAttention):
                input_dim=None,
                causal=False,
                return_scores=False,
+               dropout=0,
                units=64,
                num_heads=0,
                heads_bias=True,
@@ -171,6 +172,7 @@ class SoftAttention(BaseAttention):
     self.causal = causal
     self.return_scores = bool(return_scores)
     self.supports_masking = True
+    self.dropout = dropout
     # ====== multi-head ====== #
     self.heads_output_mode = str(heads_output_mode).lower().strip()
     self.heads_norm = heads_norm
@@ -223,19 +225,29 @@ class SoftAttention(BaseAttention):
     Returns:
       Tensor of shape `[batch_size * num_heads, Tq, Tv]`.
     """
-    if self.attention_type == 'mul':
-      # this is a trick to make attention_scale broadcastable when
-      # scale_tied=False
-      return bk.matmul(self.attention_scale * query, bk.swapaxes(key, 1, 2))
-    elif self.attention_type == 'add':
-      # [batch_size, Tq, 1, dim]
-      q = bk.expand_dims(query, axis=2)
-      # [batch_size, 1, Tv, dim]
-      k = bk.expand_dims(key, axis=1)
-      return bk.reduce_sum(self.attention_scale * bk.tanh(q + k), axis=-1)
+    # ====== self-attention ====== #
+    if key is None:
+      # [batch_size * num_heads, Tq, 1]
+      scores = query
+      if scores.shape[-1] > 1:
+        scores = bk.reduce_mean(scores, axis=-1, keepdims=True)
+      return scores
+    # ====== multi-head attention ====== #
     else:
-      raise NotImplementedError("No support for attention_type='%s'" %
-                                self.attention_type)
+      if self.attention_type == 'mul':
+        # this is a trick to make attention_scale broadcastable when
+        # scale_tied=False
+        return bk.matmul(self.attention_scale * query, bk.swapaxes(key, 1, 2))
+      elif self.attention_type == 'add':
+        # [batch_size * num_heads, Tq, 1, dim]
+        q = bk.expand_dims(query, axis=2)
+        # [batch_size * num_heads, 1, Tv, dim]
+        k = bk.expand_dims(key, axis=1)
+        # [batch_size * num_heads, Tq, Tv]
+        return bk.reduce_sum(self.attention_scale * bk.tanh(q + k), axis=-1)
+      else:
+        raise NotImplementedError("No support for attention_type='%s'" %
+                                  self.attention_type)
 
   def calculate_scores_norm(self, scores):
     """ With the attention scores is A `[batch_size * num_heads, Tq, Tv]`
@@ -296,10 +308,17 @@ class SoftAttention(BaseAttention):
     return bk.matmul(attention_distribution, value)
 
   def call(self, query, value=None, key=None, mask=None, training=None):
-    if value is None:
-      value = query
+    # in case value is None, enable self-attention mode, only query is given
     if key is None:
       key = value
+    is_self_attention = False
+    if value is None and key is None:
+      is_self_attention = True
+    if value is None and key is not None:
+      raise RuntimeError("value is None but key is not None, in case of "
+                         "multi-heads attention, value must be provided and "
+                         "key is optional.")
+
     num_heads = max(self.num_heads, 1)
     assert query.shape[-1] == value.shape[-1] == key.shape[-1], \
       "Query, key and value must has the same feature dimension."
@@ -309,6 +328,10 @@ class SoftAttention(BaseAttention):
       key = bk.concatenate(self.key_heads(bk.array(key)), axis=0)
       value = bk.concatenate(self.value_heads(bk.array(value)), axis=0)
       scores = self.calculate_scores(query=query, key=key)
+
+      # dropout the attention scores
+      if self.dropout > 0:
+        scores = bk.dropout(scores, p=self.dropout, training=training)
 
       # ====== multi-head regularization ====== #
       if self.num_heads > 0 and self.heads_norm > 0:
