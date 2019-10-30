@@ -249,6 +249,17 @@ def grad(fn_outputs, inputs, grad_outputs=None, return_outputs=False):
       "gradient function only support pytorch or tensorflow")
 
 
+def cumsum(x, axis=0, dtype=None):
+  if tf.is_tensor(x):
+    x = tf.cumsum(x, axis=axis)
+    if dtype is not None:
+      x = tf.cast(x, dtype=dtype)
+    return x
+  elif torch.is_tensor(x):
+    return torch.cumsum(x, dim=axis, dtype=dtype)
+  return np.cumsum(x, axis=axis, dtype=dtype)
+
+
 # ===========================================================================
 # Allocation and masking
 # ===========================================================================
@@ -684,6 +695,14 @@ def tile(x, reps, axis=None):
   return np.tile(x, reps=multiples)
 
 
+def split(x, num_of_splits, axis=0):
+  if tf.is_tensor(x):
+    return tf.split(x, num_of_splits, axis=axis)
+  if torch.is_tensor(x):
+    return torch.split(x, num_of_splits, dim=axis)
+  return np.split(x, num_of_splits, axis=axis)
+
+
 # ===========================================================================
 # Logical function
 # ===========================================================================
@@ -757,19 +776,21 @@ def logical_(fn, x, y):
 
 
 def logical_and(x, y):
-  """ More flexible version of and operator that handle the case `x` or `y`
+  r""" More flexible version of and operator that handle the case `x` or `y`
   might be `None` """
   return logical_('and', x, y)
 
 
 def logical_or(x, y):
-  """ More flexible version of and operator that handle the case `x` or `y`
+  r""" More flexible version of and operator that handle the case `x` or `y`
   might be `None` """
   return logical_('or', x, y)
 
 
 def logical_not(x):
-  return ~x
+  if x is not None:
+    x = ~x
+  return x
 
 
 def apply_mask(x, mask):

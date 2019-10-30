@@ -22,7 +22,8 @@
 #     arXiv:1706.03762 [cs].
 #   Mishra, N., et al., 2018. A Simple Neural Attentive Meta-Learner.
 #     arXiv:1707.03141 [cs, stat].
-
+#   Park, K., 2019. github.com/Kyubyong/transformer.
+#   Alexander H. Liu, 2019. github.com/Alexander-H-Liu/End-to-end-ASR-Pytorch.
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
@@ -33,6 +34,22 @@ from tensorflow.python import keras
 
 from odin import backend as bk
 from odin.utils import as_tuple
+
+
+# ===========================================================================
+# Helper function
+# ===========================================================================
+def _split_and_concat(x, num_heads):
+  return bk.concatenate(bk.split(x, num_heads, axis=-1), axis=0)
+
+
+def _create_heads(input_dim, num_heads, heads_bias, heads_activation):
+  return bk.nn.Sequential([
+      bk.nn.Dense(input_dim * num_heads,
+                  use_bias=use_bias,
+                  activation=activation)
+      for use_bias, activation in zip(heads_bias, heads_activation)
+  ])
 
 
 # ===========================================================================
@@ -131,6 +148,9 @@ class SoftAttention(BaseAttention):
       that position `i` cannot attend to positions `j > i`. This prevents the
       flow of information from the future towards the past.
     return_score: Boolean. Set to `True` for returning the attention scores.
+    dropout : Float
+    temporal_dropout : Boolean. If `True`, using the same dropout mask along
+      temporal axis (i.e. the 1-st dimension)
 
   Call Arguments:
     inputs: List of the following tensors:
@@ -155,43 +175,47 @@ class SoftAttention(BaseAttention):
   def __init__(self,
                input_dim=None,
                causal=False,
-               return_scores=False,
+               residual=True,
+               return_attention=False,
                dropout=0,
-               units=64,
+               temporal_dropout=False,
                num_heads=0,
+               heads_depth=1,
                heads_bias=True,
                heads_norm=0.,
-               heads_activation='relu',
-               heads_output_mode='mean',
+               heads_activation='linear',
+               heads_output_mode='cat',
                scale_initializer='one',
                scale_tied=True,
                attention_type='mul',
-               attention_activation='softmax',
-               **kwargs):
-    super().__init__(**kwargs)
+               name=None):
+    super().__init__(name=name)
+    self.input_dim = input_dim
     self.causal = causal
-    self.return_scores = bool(return_scores)
+    self.residual = residual
+    self.return_attention = bool(return_attention)
     self.supports_masking = True
+    # ====== for dropout ====== #
     self.dropout = dropout
+    self.temporal_dropout = bool(temporal_dropout)
     # ====== multi-head ====== #
+    self.num_heads = int(num_heads)
     self.heads_output_mode = str(heads_output_mode).lower().strip()
     self.heads_norm = heads_norm
-    self.heads_bias = bool(heads_bias)
-    self.num_heads = int(num_heads)
-    self.units = as_tuple(units, t=int)
+    self.heads_depth = int(heads_depth)
+    self.heads_bias = as_tuple(heads_bias, N=self.heads_depth, t=bool)
+    self.heads_activation = as_tuple(heads_activation, N=self.heads_depth)
     # create a deep feedforward network for the heads:
     with bk.framework_(self):
       if self.num_heads > 0:
-        create_heads = lambda: [
-            bk.nn.Sequential([
-                bk.nn.Dense(n, use_bias=heads_bias, activation=heads_activation)
-                for n in self.units
-            ])
-            for _ in range(self.num_heads)
-        ]
-        self.query_heads = bk.nn.Parallel(create_heads())
-        self.key_heads = bk.nn.Parallel(create_heads())
-        self.value_heads = bk.nn.Parallel(create_heads())
+        if input_dim is None:
+          raise ValueError("If num_heads > 0, the input_dim must be provided.")
+        self.query_heads = _create_heads(input_dim, num_heads, self.heads_bias,
+                                         self.heads_activation)
+        self.key_heads = _create_heads(input_dim, self.num_heads,
+                                       self.heads_bias, self.heads_activation)
+        self.value_heads = _create_heads(input_dim, num_heads, self.heads_bias,
+                                         self.heads_activation)
       else:
         self.query_heads = bk.nn.Identity()
         self.key_heads = bk.nn.Identity()
@@ -199,7 +223,7 @@ class SoftAttention(BaseAttention):
 
     # ====== initialize scale ====== #
     if not scale_tied and input_dim is None:
-      raise ValueError("If scale_tied=False, the input_dim must be given")
+      raise ValueError("If scale_tied=False, the input_dim must be provided.")
     scale = 1
     if scale_initializer is not None:
       scale = bk.parse_initializer(scale_initializer, self)
@@ -213,7 +237,6 @@ class SoftAttention(BaseAttention):
                             framework=self)
     self.attention_scale = scale
     self.attention_type = str(attention_type).strip().lower()
-    self.attention_activation = bk.parse_activation(attention_activation, self)
 
   def calculate_scores(self, query, key):
     """Calculates attention scores (a.k.a logits values).
@@ -273,7 +296,7 @@ class SoftAttention(BaseAttention):
       P = bk.norm(A - I, p="fro")**2
     return P
 
-  def _apply_scores(self, scores, value, scores_mask=None):
+  def _apply_scores(self, scores, value, is_self_attention, scores_mask=None):
     """Applies attention scores to the given value tensor.
 
     To use this method in your attention layer, follow the steps:
@@ -294,18 +317,24 @@ class SoftAttention(BaseAttention):
         at least one `True` value in each line along the last dimension.
 
     Returns:
-      Tensor of shape `[batch_size * num_heads, Tq, dim]`.
+      Tensor of shape `[batch_size, Tq, dim]`.
 
     """
     num_heads = max(self.num_heads, 1)
     if scores_mask is not None:
       padding_mask = bk.logical_not(scores_mask)
-      if num_heads > 1:
+      if num_heads > 1 and padding_mask.shape[0] != 1:
         padding_mask = bk.tile(padding_mask, reps=num_heads, axis=0)
       # Bias so padding positions do not contribute to attention distribution.
       scores -= 1.e9 * bk.cast(padding_mask, dtype=scores.dtype)
-    attention_distribution = self.attention_activation(scores)
-    return bk.matmul(attention_distribution, value)
+    # if the last dimension is 1, no point for applying softmax, hence,
+    # softmax to the second last dimension
+    attention_distribution = bk.softmax(
+        scores, axis=-2 if scores.shape[-1] == 1 else -1)
+    if is_self_attention:  # self-attention
+      return attention_distribution * value, attention_distribution
+    else:  # multi-head attention
+      return bk.matmul(attention_distribution, value), attention_distribution
 
   def call(self, query, value=None, key=None, mask=None, training=None):
     # in case value is None, enable self-attention mode, only query is given
@@ -320,33 +349,52 @@ class SoftAttention(BaseAttention):
                          "key is optional.")
 
     num_heads = max(self.num_heads, 1)
-    assert query.shape[-1] == value.shape[-1] == key.shape[-1], \
-      "Query, key and value must has the same feature dimension."
+    if not is_self_attention:
+      assert query.shape[-1] == value.shape[-1] == key.shape[-1], \
+        "Query, key and value must has the same feature dimension."
+
+    # we want to keep the original value before projection of each head
+    Q, V, K = query, value, key
 
     with bk.framework_(self):
-      query = bk.concatenate(self.query_heads(bk.array(query)), axis=0)
-      key = bk.concatenate(self.key_heads(bk.array(key)), axis=0)
-      value = bk.concatenate(self.value_heads(bk.array(value)), axis=0)
-      scores = self.calculate_scores(query=query, key=key)
+      # [batch_size * num_heads, Tq, dim]
+      query = _split_and_concat(self.query_heads(bk.array(query)), num_heads)
+      if not is_self_attention:
+        # [batch_size * num_heads, Tv, dim]
+        key = _split_and_concat(self.key_heads(bk.array(key)), num_heads)
+        # [batch_size * num_heads, Tv, dim]
+        value = _split_and_concat(self.value_heads(bk.array(value)), num_heads)
 
+      # The attention scores [batch_size * num_heads, Tq, Tv]
+      scores = self.calculate_scores(query=query, key=key)
       # dropout the attention scores
       if self.dropout > 0:
-        scores = bk.dropout(scores, p=self.dropout, training=training)
-
+        scores = bk.dropout(scores,
+                            p=self.dropout,
+                            axis=1 if self.temporal_dropout else None,
+                            training=training)
       # ====== multi-head regularization ====== #
       if self.num_heads > 0 and self.heads_norm > 0:
         self.add_loss(self.heads_norm * self.calculate_scores_norm(scores))
 
       # ====== prepare the mask ====== #
-      q_mask = mask[0] if mask else None
-      v_mask = mask[1] if mask else None
-      if v_mask is not None:
-        if v_mask.shape[1] != value.shape[1]:
-          raise RuntimeError(
-              "Value mask has time dimension %d, but value has time dimension %d"
-              % (v_mask.shape[1], value.shape[1]))
-        # Mask of shape [batch_size, 1, Tv].
-        v_mask = bk.expand_dims(v_mask, axis=-2)
+      if is_self_attention:  # only 1 mask is need
+        if isinstance(mask, (tuple, list)):
+          q_mask = mask[0]
+        else:
+          q_mask = mask
+        v_mask = None
+      else:
+        q_mask = mask[0] if mask else None
+        v_mask = mask[1] if mask else None
+        if v_mask is not None:
+          if v_mask.shape[1] != value.shape[1]:
+            raise RuntimeError(
+                "Value mask has time dimension %d, but value has time dimension %d"
+                % (v_mask.shape[1], value.shape[1]))
+          # Mask of shape [batch_size, 1, Tv].
+          v_mask = bk.expand_dims(v_mask, axis=-2)
+
       if self.causal:
         # Creates a lower triangular mask, so position i cannot attend to
         # positions j>i. This prevents the flow of information from the future
@@ -361,9 +409,11 @@ class SoftAttention(BaseAttention):
       scores_mask = bk.logical_and(v_mask, causal_mask)
 
       # ====== applying the attention ====== #
-      result = self._apply_scores(scores=scores,
-                                  value=value,
-                                  scores_mask=scores_mask)
+      result, scores_distribution = self._apply_scores(
+          scores=scores,
+          value=query if value is None else value,
+          is_self_attention=is_self_attention,
+          scores_mask=scores_mask)
 
       # ====== applying the mask ====== #
       if q_mask is not None:
@@ -380,11 +430,20 @@ class SoftAttention(BaseAttention):
       # ====== final aggregation ====== #
       result = bk.reshape(result, shape=(-1, num_heads, [1], [2]))
       if self.heads_output_mode == 'mean':
+        # [batch_size, Tq, dim]
         result = bk.reduce_sum(result, axis=1) / num_heads
       elif self.heads_output_mode in ('concat', 'cat', 'concatenate'):
+        # [batch_size, Tq, dim * num_heads]
         result = bk.flatten(bk.swapaxes(result, 1, 2), outdim=3)
       elif self.num_heads == 0:
+        # [batch_size, Tq, dim]
         result = bk.squeeze(result, axis=1)
+      # ====== residual connection ====== #
+      if self.residual:
+        result += Q
+
+    if self.return_attention:
+      return result, scores_distribution
     return result
 
   def compute_mask(self, inputs, mask=None):
