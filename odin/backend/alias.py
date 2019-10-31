@@ -2,6 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 import inspect
 import os
+from functools import partial
+from numbers import Number
 from typing import Text, Type, Union
 
 import numpy as np
@@ -84,6 +86,12 @@ def parse_activation(activation, framework):
 
 
 def parse_initializer(initializer, framework):
+  if isinstance(initializer, Number):
+    if _is_tensorflow(framework):
+      return tf.initializers.Constant(value=initializer)
+    else:
+      return partial(torch.nn.init.constant_, val=initializer)
+
   if _is_tensorflow(framework):
     return keras.initializers.get(initializer)
   else:

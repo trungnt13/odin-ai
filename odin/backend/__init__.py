@@ -40,7 +40,8 @@ class _nn_meta(type):
       all_objects.update(sequential.__dict__)
       all_objects.update(training.__dict__)
     else:
-      raise NotImplementedError(str(fw))
+      raise NotImplementedError("No neural networks support for framework: " +
+                                str(fw))
     return all_objects[key]
 
 
