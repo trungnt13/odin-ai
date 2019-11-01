@@ -153,12 +153,15 @@ class SoftAttention(BaseAttention):
   the first piece of text and `value` is the sequence embeddings of the second
   piece of text. Hence, the attention determines alignment between `query` and
   `value`, `key` is usually the same tensor as value.
+  A mapping from `query` to `key` will be learned during the attention.
+
 
   Args:
     input_dim : Integer. Number of input features.
     causal : Boolean. Set to `True` for decoder self-attention. Adds a mask such
       that position `i` cannot attend to positions `j > i`. This prevents the
-      flow of information from the future towards the past.
+      flow of information from the future towards the past, suggested in
+      (Mishra N., et al., 2018).
     residual : Boolean. If `True`, add residual connection between input `query`
       and the attended output.
     return_attention : Boolean. Set to `True` for returning the attention
@@ -263,7 +266,7 @@ class SoftAttention(BaseAttention):
                                        self.heads_bias, self.heads_activation)
         self.value_heads = _create_heads(input_dim, num_heads, self.heads_bias,
                                          self.heads_activation)
-      else:
+      else:  # No heads, just identity function
         self.query_heads = bk.nn.Identity()
         self.key_heads = bk.nn.Identity()
         self.value_heads = bk.nn.Identity()
@@ -519,10 +522,3 @@ class SoftAttention(BaseAttention):
     config = {'causal': self.causal}
     base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
-
-
-# ===========================================================================
-# Soft and Hard attention
-# ===========================================================================
-class HardAttention(BaseAttention):
-  pass

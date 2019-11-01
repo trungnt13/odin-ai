@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 # Dependency imports
 import numpy as np
 import tensorflow as tf
+import tensorflow.compat.v1 as tf1
 import tensorflow_probability as tfp
 from six import string_types
 from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
@@ -20,15 +21,13 @@ from tensorflow_probability.python.layers.internal import \
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
-    'DistributionLambda', 'MultivariateNormalLayer', 'BernoulliLayer',
-    'DeterministicLayer', 'VectorDeterministicLayer', 'OneHotCategoricalLayer',
-    'GammaLayer', 'DirichletLayer', 'GaussianLayer', 'NormalLayer',
-    'LogNormalLayer', 'LogisticLayer', 'ZIBernoulliLayer',
+    'DistributionLambda', 'MultivariateNormalLayer', 'DeterministicLayer',
+    'VectorDeterministicLayer', 'GammaLayer', 'DirichletLayer', 'GaussianLayer',
+    'NormalLayer', 'LogNormalLayer', 'LogisticLayer',
     'update_convert_to_tensor_fn'
 ]
 
 DistributionLambda = tfl.DistributionLambda
-BernoulliLayer = tfl.IndependentBernoulli
 LogisticLayer = tfl.IndependentLogistic
 
 
@@ -69,19 +68,16 @@ class DeterministicLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
-               activity_regularizer=None,
                validate_args=False,
                **kwargs):
     super(DeterministicLayer,
           self).__init__(lambda t: type(self).new(t, validate_args),
-                         convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
-                         **kwargs)
+                         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params, validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'DeterministicLayer', [params]):
+    with tf1.name_scope(name, 'DeterministicLayer', [params]):
       params = tf.convert_to_tensor(value=params, name='params')
       return tfd.Deterministic(loc=params, validate_args=validate_args)
 
@@ -103,87 +99,22 @@ class VectorDeterministicLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
-               activity_regularizer=None,
                validate_args=False,
                **kwargs):
     super(VectorDeterministicLayer,
           self).__init__(lambda t: type(self).new(t, validate_args),
-                         convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
-                         **kwargs)
+                         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params, validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'VectorDeterministicLayer', [params]):
+    with tf1.name_scope(name, 'VectorDeterministicLayer', [params]):
       params = tf.convert_to_tensor(value=params, name='params')
       return tfd.VectorDeterministic(loc=params, validate_args=validate_args)
 
   @staticmethod
   def params_size(event_size, name=None):
     """ The number of `params` needed to create a single distribution. """
-    return event_size
-
-
-class OneHotCategoricalLayer(DistributionLambda):
-  """ A `d`-variate OneHotCategorical Keras layer from `d` params.
-
-  Parameters
-  ----------
-  convert_to_tensor_fn: callable
-    that takes a `tfd.Distribution` instance and returns a
-    `tf.Tensor`-like object. For examples, see `class` docstring.
-    Default value: `tfd.Distribution.sample`.
-
-  sample_dtype: `dtype`
-    Type of samples produced by this distribution.
-    Default value: `None` (i.e., previous layer's `dtype`).
-
-  validate_args: `bool` (default `False`)
-    When `True` distribution parameters are checked for validity
-    despite possibly degrading runtime performance.
-    When `False` invalid inputs may silently render incorrect outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
-
-  Note
-  ----
-  If input as probability values is given, it will be clipped by value
-  [1e-8, 1 - 1e-8]
-
-  """
-
-  def __init__(self,
-               event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
-               probs_input=False,
-               sample_dtype=None,
-               activity_regularizer=None,
-               validate_args=False,
-               **kwargs):
-    super(OneHotCategoricalLayer, self).__init__(
-        lambda t: type(self).new(t, probs_input, sample_dtype, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
-
-  @staticmethod
-  def new(params, probs_input=False, dtype=None, validate_args=False,
-          name=None):
-    """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'OneHotCategoricalLayer', [params]):
-      params = tf.convert_to_tensor(value=params, name='params')
-      return tfd.OneHotCategorical(
-          logits=params if not probs_input else None,
-          probs=tf.clip_by_value(params, 1e-8, 1 -
-                                 1e-8) if probs_input else None,
-          dtype=dtype or params.dtype.base_dtype,
-          validate_args=validate_args)
-
-  @staticmethod
-  def params_size(event_size, name=None):
-    """The number of `params` needed to create a single distribution."""
     return event_size
 
 
@@ -204,15 +135,11 @@ class DirichletLayer(DistributionLambda):
                pre_softplus=False,
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
-               activity_regularizer=None,
                validate_args=False,
                **kwargs):
-    super(DirichletLayer,
-          self).__init__(lambda t: type(self).new(
-              t, event_shape, pre_softplus, clip_for_stable, validate_args),
-                         convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
-                         **kwargs)
+    super(DirichletLayer, self).__init__(
+        lambda t: type(self).new(t, event_shape, pre_softplus, clip_for_stable,
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -223,7 +150,7 @@ class DirichletLayer(DistributionLambda):
           name=None):
     """Create the distribution instance from a `params` vector."""
     event_shape = _preprocess_eventshape(params, event_shape)
-    with tf.compat.v1.name_scope(name, 'DirichletLayer', [params, event_shape]):
+    with tf1.name_scope(name, 'DirichletLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -247,7 +174,7 @@ class DirichletLayer(DistributionLambda):
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Dirichlet_params_size', [event_shape]):
+    with tf1.name_scope(name, 'Dirichlet_params_size', [event_shape]):
       event_shape = tf.convert_to_tensor(value=event_shape,
                                          name='event_shape',
                                          dtype=tf.int32)
@@ -283,14 +210,11 @@ class GaussianLayer(DistributionLambda):
                event_shape=(),
                softplus_scale=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
-               activity_regularizer=None,
                validate_args=False,
                **kwargs):
     super(GaussianLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -299,7 +223,7 @@ class GaussianLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'NormalLayer', [params, event_shape]):
+    with tf1.name_scope(name, 'NormalLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -323,7 +247,7 @@ class GaussianLayer(DistributionLambda):
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Normal_params_size', [event_shape]):
+    with tf1.name_scope(name, 'Normal_params_size', [event_shape]):
       event_shape = tf.convert_to_tensor(value=event_shape,
                                          name='event_shape',
                                          dtype=tf.int32)
@@ -360,13 +284,10 @@ class LogNormalLayer(DistributionLambda):
                softplus_scale=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     super(LogNormalLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -375,7 +296,7 @@ class LogNormalLayer(DistributionLambda):
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'LogNormalLayer', [params, event_shape]):
+    with tf1.name_scope(name, 'LogNormalLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -399,7 +320,7 @@ class LogNormalLayer(DistributionLambda):
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'LogNormal_params_size', [event_shape]):
+    with tf1.name_scope(name, 'LogNormal_params_size', [event_shape]):
       event_shape = tf.convert_to_tensor(value=event_shape,
                                          name='event_shape',
                                          dtype=tf.int32)
@@ -432,18 +353,15 @@ class GammaLayer(DistributionLambda):
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     super(GammaLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'GammaLayer', [params, event_shape]):
+    with tf1.name_scope(name, 'GammaLayer', [params, event_shape]):
       params = tf.convert_to_tensor(value=params, name='params')
       event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
           value=event_shape, name='event_shape', dtype=tf.int32),
@@ -465,7 +383,7 @@ class GammaLayer(DistributionLambda):
   @staticmethod
   def params_size(event_shape=(), name=None):
     """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'Gamma_params_size', [event_shape]):
+    with tf1.name_scope(name, 'Gamma_params_size', [event_shape]):
       event_shape = tf.convert_to_tensor(value=event_shape,
                                          name='event_shape',
                                          dtype=tf.int32)
@@ -520,14 +438,10 @@ class MultivariateNormalLayer(DistributionLambda):
                softplus_scale=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
-    super(MultivariateNormalLayer,
-          self).__init__(lambda t: type(self).new(
-              t, event_size, covariance_type, softplus_scale, validate_args),
-                         convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
-                         **kwargs)
+    super(MultivariateNormalLayer, self).__init__(
+        lambda t: type(self).new(t, event_size, covariance_type, softplus_scale,
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -546,7 +460,7 @@ class MultivariateNormalLayer(DistributionLambda):
     else:
       scale_fn = lambda x: x
 
-    with tf.compat.v1.name_scope(name, 'MultivariateNormalLayer',
+    with tf1.name_scope(name, 'MultivariateNormalLayer',
                                  [params, event_size]):
       params = tf.convert_to_tensor(value=params, name='params')
 
@@ -579,7 +493,7 @@ class MultivariateNormalLayer(DistributionLambda):
     assert covariance_type in ('full', 'tril', 'diag'), \
     "No support for given covariance_type: '%s'" % covariance_type
 
-    with tf.compat.v1.name_scope(name, 'MultivariateNormal_params_size',
+    with tf1.name_scope(name, 'MultivariateNormal_params_size',
                                  [event_size]):
       if covariance_type == 'tril':
         return event_size + event_size * (event_size + 1) // 2
@@ -587,87 +501,6 @@ class MultivariateNormalLayer(DistributionLambda):
         return event_size + event_size
       elif covariance_type == 'full':
         return event_size + event_size * event_size
-
-
-class ZIBernoulliLayer(DistributionLambda):
-  """A Independent zero-inflated bernoulli keras layer
-
-  Parameters
-  ----------
-  event_shape: integer vector `Tensor` representing the shape of single
-    draw from this distribution.
-
-  given_log_count : boolean
-    is the input representing log count values or the count itself
-
-  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
-    instance and returns a `tf.Tensor`-like object.
-    Default value: `tfd.Distribution.sample`.
-
-  validate_args: Python `bool`, default `False`. When `True` distribution
-    parameters are checked for validity despite possibly degrading runtime
-    performance. When `False` invalid inputs may silently render incorrect
-    outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
-
-  """
-
-  def __init__(self,
-               event_shape=(),
-               given_logits=True,
-               convert_to_tensor_fn=tfd.Distribution.sample,
-               validate_args=False,
-               activity_regularizer=None,
-               **kwargs):
-    super(ZIBernoulliLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, given_logits, validate_args),
-        convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
-        **kwargs)
-
-  @staticmethod
-  def new(params,
-          event_shape=(),
-          given_logits=True,
-          validate_args=False,
-          name=None):
-    """Create the distribution instance from a `params` vector."""
-    with tf.compat.v1.name_scope(name, 'ZIBernoulliLayer',
-                                 [params, event_shape]):
-      params = tf.convert_to_tensor(value=params, name='params')
-      event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-          value=event_shape, name='event_shape', dtype=tf.int32),
-                                               tensor_name='event_shape')
-      output_shape = tf.concat([
-          tf.shape(input=params)[:-1],
-          event_shape,
-      ],
-                               axis=0)
-      (bernoulli_params, rate_params) = tf.split(params, 2, axis=-1)
-      bernoulli_params = tf.reshape(bernoulli_params, output_shape)
-      bern = tfd.Bernoulli(logits=bernoulli_params if given_logits else None,
-                           probs=bernoulli_params if not given_logits else None,
-                           validate_args=validate_args)
-      zibern = ZeroInflated(count_distribution=bern,
-                            logits=tf.reshape(rate_params, output_shape),
-                            validate_args=validate_args)
-      return tfd.Independent(
-          zibern,
-          reinterpreted_batch_ndims=tf.size(input=event_shape),
-          validate_args=validate_args)
-
-  @staticmethod
-  def params_size(event_shape=(), name=None):
-    """The number of `params` needed to create a single distribution."""
-    with tf.compat.v1.name_scope(name, 'ZeroInflatedBernoulli_params_size',
-                                 [event_shape]):
-      event_shape = tf.convert_to_tensor(value=event_shape,
-                                         name='event_shape',
-                                         dtype=tf.int32)
-      return 2 * _event_size(event_shape,
-                             name=name or 'ZeroInflatedBernoulli_params_size')
 
 
 # ===========================================================================

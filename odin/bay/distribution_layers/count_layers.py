@@ -51,7 +51,6 @@ class NegativeBinomialLayer(DistributionLambda):
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     dispersion = str(dispersion).lower()
     assert dispersion in ('full', 'single', 'share'), \
@@ -61,7 +60,6 @@ class NegativeBinomialLayer(DistributionLambda):
           self).__init__(lambda t: type(self).new(
               t, event_shape, given_log_count, dispersion, validate_args),
                          convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
                          **kwargs)
 
   @staticmethod
@@ -152,7 +150,6 @@ class NegativeBinomialDispLayer(DistributionLambda):
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     dispersion = str(dispersion).lower()
     assert dispersion in ('full', 'single', 'share'), \
@@ -162,7 +159,6 @@ class NegativeBinomialDispLayer(DistributionLambda):
         lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
                                  dispersion, validate_args),
         convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
         **kwargs)
 
   @staticmethod
@@ -229,12 +225,10 @@ class ZIPoissonLayer(DistributionLambda):
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     super(ZIPoissonLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, validate_args),
         convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
         **kwargs)
 
   @staticmethod
@@ -306,13 +300,11 @@ class ZINegativeBinomialLayer(DistributionLambda):
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     super(ZINegativeBinomialLayer,
           self).__init__(lambda t: type(self).new(
               t, event_shape, given_log_count, dispersion, validate_args),
                          convert_to_tensor_fn,
-                         activity_regularizer=activity_regularizer,
                          **kwargs)
 
   @staticmethod
@@ -410,13 +402,11 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
-               activity_regularizer=None,
                **kwargs):
     super(ZINegativeBinomialDispLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
                                  dispersion, validate_args),
         convert_to_tensor_fn,
-        activity_regularizer=activity_regularizer,
         **kwargs)
 
   @staticmethod
