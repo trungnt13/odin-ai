@@ -18,6 +18,8 @@ from tensorflow_probability.python.layers.internal import \
 from tensorflow_probability.python.layers.internal import \
     tensor_tuple as tensor_tuple
 
+from odin.bay.helpers import coercible_tensor
+
 __all__ = ['MixtureDensityNetwork']
 
 _COV_TYPES = ('none', 'diag', 'full', 'tril')
@@ -35,7 +37,7 @@ class MixtureDensityNetwork(Dense):
   covariance_type : {'none', 'diag', 'full', 'tril'}
     String describing the type of covariance parameters to use.
     Must be one of:
-      'none' (each component has its own single variance).
+      'none' (each component has its own single value variance).
       'diag' (each component has its own diagonal covariance matrix),
       'tril' (lower triangle matrix),
       'full' (each component has its own general covariance matrix),
@@ -195,24 +197,8 @@ class MixtureDensityNetwork(Dense):
                               validate_args=False,
                               name="Mixture%s" % cov)
     # Wraps the distribution to return both dist and concrete value."""
-    value_is_seq = isinstance(d.dtype, collections.Sequence)
-    maybe_composite_convert_to_tensor_fn = (
-        (lambda d: tensor_tuple.TensorTuple(self._convert_to_tensor_fn(d)))
-        if value_is_seq else self._convert_to_tensor_fn)
-    distribution = dtc._TensorCoercible(  # pylint: disable=protected-access
-        distribution=d,
-        convert_to_tensor_fn=maybe_composite_convert_to_tensor_fn)
-    value = distribution._value()  # pylint: disable=protected-access
-    value._tfp_distribution = distribution  # pylint: disable=protected-access
-    if value_is_seq:
-      value.shape = value[-1].shape
-      value.get_shape = value[-1].get_shape
-      value.dtype = value[-1].dtype
-      distribution.shape = value[-1].shape
-      distribution.get_shape = value[-1].get_shape
-    else:
-      distribution.shape = value.shape
-      distribution.get_shape = value.get_shape
+    distribution, value = coercible_tensor(
+        d, convert_to_tensor_fn=self._convert_to_tensor_fn, return_value=True)
     if self._enter_dunder_call:
       # Its critical to return both distribution and concretization
       # so Keras can inject `_keras_history` to both. This is what enables

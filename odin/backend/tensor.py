@@ -26,7 +26,9 @@ from six.moves import builtins
 from tensorflow import nest
 from tensorflow.python.ops import init_ops
 
-from odin.utils import as_tuple, is_number, is_same_shape, is_string, uuid
+from odin.utils import as_tuple, is_number, is_same_shape, is_string
+from odin.utils import one_hot as _one_hot
+from odin.utils import uuid
 
 # TODO: add stack for setting framework context
 _FRAMEWORK_STACK = ['numpy']
@@ -181,11 +183,16 @@ def cast(x, dtype):
   return np.cast[dtype](x)
 
 
-def array(x, framework=None, dtype=None):
+def array(x, framework=None, dtype=None, ignore_none=False):
   """ This function equal to `numpy.array` for numpy;
   `tensorflow.convert_to_tensor` for tensorflow;
   and `torch.tensor` for pytorch
   """
+  if x is None:
+    if ignore_none:
+      return x
+    raise ValueError("x is None, cannot convert to ndarray or Tensor")
+
   in_framework = parse_framework(x)
   out_framework = parse_framework(framework)
 
@@ -222,31 +229,85 @@ def variable(initial_value, framework=None, dtype=None, trainable=True):
   raise RuntimeError("No variable support for framework: %s" % str(framework))
 
 
-def grad(fn_outputs, inputs, grad_outputs=None, return_outputs=False):
-  """ Compute and returns the sum of gradients of outputs w.r.t. the inputs.
-  """
-  if not callable(fn_outputs):
-    raise ValueError('fn_outputs must be a callable return a list of tensors')
-  inputs = nest.flatten(inputs)
+@contextmanager
+def GradientTape():
+  r""" ensure the gradient is recording in Pytorch or Tensorflow. """
+  fw = get_framework()
+  if fw == tf:
+    tape = tf.GradientTape()
+  elif fw == torch:
+    tape = torch.enable_grad()
+  else:
+    raise NotImplementedError("No support for GradientTape framework: %s" %
+                              str(fw))
+  tape.__enter__()
+  yield tape
+  tape.__exit__(None, None, None)
 
-  if torch.is_tensor(inputs[0]):
-    outputs = nest.flatten(fn_outputs())
-    gradients = torch.autograd.grad(outputs=outputs,
-                                    inputs=inputs,
-                                    grad_outputs=grad_outputs)
-  elif tf.is_tensor(inputs[0]):
-    with tf.GradientTape() as tape:
-      tape.watch(inputs)
-      outputs = nest.flatten(fn_outputs())
-    gradients = tape.gradient(target=outputs,
-                              sources=inputs,
-                              output_gradients=grad_outputs)
+
+def grad(func_or_outputs,
+         inputs,
+         grad_outputs=None,
+         return_outputs=False,
+         tape=None):
+  r""" Compute and returns the sum of gradients of outputs w.r.t. the inputs.
+
+  Arguments:
+    func_or_outputs (sequence of Tensor or callable): outputs of the
+      differentiated function.
+    inputs (sequence of Tensor): Inputs w.r.t. which the gradient will be
+      returned (and not accumulated into ``.grad``).
+    grad_outputs (sequence of Tensor): The "vector" in the Jacobian-vector product.
+      Usually gradients w.r.t. each output. None values can be specified for scalar
+      Tensors or ones that don't require grad. If a None value would be acceptable
+      for all grad_tensors, then this argument is optional. Default: None.
+    return_outputs (`Boolean`): if a callable is given for `func_or_outputs`,
+      return the function outputs after calculating the gradients.
+    tape (tensorflow.GradientTape): gradient tape if not given, will be created
+      Default: None
+
+  Returns:
+    A list of `sum(dy/dx)` for each x in `xs`.
+  """
+  inputs = nest.flatten(inputs)
+  gradients = None
+  ### given a callable
+  if callable(func_or_outputs):
+    if torch.is_tensor(inputs[0]):
+      outputs = nest.flatten(func_or_outputs())
+      gradients = torch.autograd.grad(outputs=outputs,
+                                      inputs=inputs,
+                                      grad_outputs=grad_outputs)
+    elif tf.is_tensor(inputs[0]):
+      if tape is None:
+        tape = tf.GradientTape()
+      with tape:
+        tape.watch(inputs)
+        outputs = nest.flatten(func_or_outputs())
+      gradients = tape.gradient(target=outputs,
+                                sources=inputs,
+                                output_gradients=grad_outputs)
+  ### given outputs directly
+  else:
+    outputs = nest.flatten(func_or_outputs)
+    if torch.is_tensor(inputs[0]):
+      gradients = torch.autograd.grad(outputs=outputs,
+                                      inputs=inputs,
+                                      grad_outputs=grad_outputs)
+    elif tf.is_tensor(inputs[0]):
+      assert tape is not None, \
+        "If output Tensors are provided, GradientTape with the recorded "\
+          "outputs must be provided."
+      gradients = tape.gradient(target=outputs,
+                                sources=inputs,
+                                output_gradients=grad_outputs)
+  ### returns
+  if gradients is None:
+    raise RuntimeError("No grad support for outputs:%s and inputs:%s" %
+                       (str(outputs), str(inputs)))
   if not return_outputs:
     return gradients
   return gradients, outputs
-
-  raise NotImplementedError(
-      "gradient function only support pytorch or tensorflow")
 
 
 def cumsum(x, axis=0, dtype=None):
@@ -258,6 +319,49 @@ def cumsum(x, axis=0, dtype=None):
   elif torch.is_tensor(x):
     return torch.cumsum(x, dim=axis, dtype=dtype)
   return np.cumsum(x, axis=axis, dtype=dtype)
+
+
+def one_hot(x, num_classes):
+  if tf.is_tensor(x):
+    return tf.one_hot(x, num_classes)
+  if torch.is_tensor(x):
+    return torch.nn.functional.one_hot(x, num_classes)
+  return _one_hot(x, num_classes, x.dtype)
+
+
+# ===========================================================================
+# Tensor checking
+# ===========================================================================
+def isfinite(x):
+  if tf.is_tensor(x):
+    return tf.math.is_finite(x)
+  if torch.is_tensor(x):
+    return torch.isfinite(x)
+  return np.isfinite(x)
+
+
+def isinf(x):
+  if tf.is_tensor(x):
+    return tf.math.is_inf(x)
+  if torch.is_tensor(x):
+    return torch.isinf(x)
+  return np.isinf(x)
+
+
+def isnan(x):
+  if tf.is_tensor(x):
+    return tf.math.is_nan(x)
+  if torch.is_tensor(x):
+    return torch.isnan(x)
+  return np.isnan(x)
+
+
+def isnotnan(x):
+  if tf.is_tensor(x):
+    return tf.logical_not(tf.math.is_nan(x))
+  if torch.is_tensor(x):
+    return ~torch.isnan(x)
+  return np.logical_not(np.isnan(x))
 
 
 # ===========================================================================
@@ -435,92 +539,6 @@ def prior2weights(prior,
   return prior
 
 
-def entropy(p, name=None):
-  """Return simple calculation of discrete Shanon entropy"""
-  with tf.name_scope(name, "entropy"):
-    return -tf.reduce_sum(p * tf.log(p))
-
-
-def upsample(x, scale, axes, method='nn', name=None):
-  """
-  Parameters
-  ----------
-  scale: int, list of int
-      scaling up factor
-  axes: int, list of int
-      the axes of tensor which the upsampling method will be applied
-  method: str, int
-      'nn' for nearest neighbor (e.g. [1, 2] => [1, 1, 2, 2]),
-      'pad' for padding within the tensor. 'pad_margin' do padding
-      in the margin of the tensor. 'repeat' simple algorithm for
-      repeating the element (e.g. [1, 2] => [1, 2, 1, 2])
-  """
-  with tf.name_scope(name, "Upsample"):
-    method = method.lower()
-    input_shape = tf.shape(x)
-    input_shape_int = x.shape.as_list()
-    ndims = x.shape.ndims
-    # normalize all negative axes
-    if axes is None:
-      raise ValueError("axes cannot be None.")
-    axes = [1, 2] if axes is None else \
-        [i % ndims for i in as_tuple(axes)]
-    sorted(axes)
-    # make scale a tuple
-    scale = as_tuple(scale, N=len(axes), t=int)
-    # mapping from axis -> scale
-    scale_map = defaultdict(lambda: 1)
-    scale_map.update([(i, j) for i, j in zip(axes, scale)])
-    # create final output_shape
-    output_shape = [input_shape[i] * scale_map[i] for i in range(ndims)]
-    # ====== Nearest neighbor method ====== #
-    if method == 'nn':
-      # tensorflow only support for tile <= 6-D tensor
-      if ndims >= 6:
-        raise ValueError(
-            'upsample with NN mode does not support rank >= 6 tensor.')
-      elif ndims + len(axes) > 6:
-        for a in axes:
-          x = upsample(x, scale_map[a], axes=a, method='nn')
-      else:
-        # repeat the tensor
-        x = transpose(x, pattern=list(range(ndims)) + ['x'] * len(axes))
-        x = repeat(x, scale, axes=[i for i in range(ndims, ndims + len(axes))])
-        # transpose it back to the right shape
-        axes_map = {i: j for i, j in zip(axes, range(ndims, ndims + len(axes)))}
-        new_axes = []
-        for i in range(ndims):
-          if i not in axes_map:
-            new_axes.append(i)
-          else:
-            new_axes += [i, axes_map[i]]
-        x = tf.transpose(x, perm=new_axes)
-        x = reshape(x, output_shape)
-    # ====== pading_margin ====== #
-    elif method.lower() == 'pad_margin':
-      paddings = [[0, 0] if i not in axes else [
-          tf.cast(tf.ceil(input_shape[i] * (scale_map[i] - 1) / 2), 'int32'),
-          tf.cast(tf.floor(input_shape[i] * (scale_map[i] - 1) / 2), 'int32')
-      ] for i in range(ndims)]
-      x = tf.pad(x, paddings=paddings, mode='CONSTANT')
-    # ====== pading ====== #
-    elif method == 'pad':
-      raise NotImplementedError
-      # x = tf.scatter_nd(indices, x, shape=output_shape)
-    # ====== repeat ====== #
-    elif method == 'repeat':
-      x = repeat(x, n=scale, axes=axes)
-    # ====== no support ====== #
-    else:
-      raise ValueError("No support for method='%s'" % method)
-    # ====== add_shape ====== #
-    return set_shape(x,
-                     shape=[
-                         s * scale_map[i] if is_number(s) else None
-                         for i, s in enumerate(input_shape_int)
-                     ])
-
-
 # ===========================================================================
 # Shape manipulation
 # ===========================================================================
@@ -646,9 +664,10 @@ def flatten(x, outdim=1):
   """ Keep all the original dimension until `outdim - 1`
   """
   if tf.is_tensor(x):
-    input_shape = tf.shape(x)
-  elif torch.is_tensor(x):
-    input_shape = x.shape
+    static_shape = tf.shape(x)
+    input_shape = [
+        static_shape[i] if dim is None else dim for i, dim in enumerate(x.shape)
+    ]
   else:
     input_shape = x.shape
 
@@ -656,9 +675,10 @@ def flatten(x, outdim=1):
     output_shape = [-1]
   else:
     other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
-    n = 1
-    for i in input_shape[(outdim - 1):]:
-      n = n * i
+    if tf.is_tensor(x):
+      n = tf.reduce_prod(input_shape[(outdim - 1):])
+    else:
+      n = np.prod(input_shape[(outdim - 1):])
     output_shape = other_shape + (n,)
 
   return reshape(x, output_shape)
@@ -776,25 +796,27 @@ def logical_(fn, x, y):
 
 
 def logical_and(x, y):
-  r""" More flexible version of and operator that handle the case `x` or `y`
+  r""" More flexible version of logical operator that handle the case `x` or `y`
   might be `None` """
   return logical_('and', x, y)
 
 
 def logical_or(x, y):
-  r""" More flexible version of and operator that handle the case `x` or `y`
+  r""" More flexible version of logical operator that handle the case `x` or `y`
   might be `None` """
   return logical_('or', x, y)
 
 
 def logical_not(x):
+  r""" More flexible version of logical operator that handle the case `x` or `y`
+  might be `None` """
   if x is not None:
     x = ~x
   return x
 
 
 def apply_mask(x, mask):
-  """
+  r"""
   x : 3D tensor
   mask : 2D tensor
 
@@ -812,6 +834,7 @@ def apply_mask(x, mask):
 # ===========================================================================
 def random_normal(*shape, mean=0.0, stddev=1.0, dtype='float32',
                   framework=None):
+  r""" math::`x \sim N(mean, stddev)`"""
   framework = parse_framework(framework)
   dtype = dtype_universal(dtype, framework=framework)
   shape = tf.nest.flatten(shape)

@@ -1,10 +1,11 @@
 from odin.networks.advance_model import AdvanceModel, ModuleList
 from odin.networks.attention import *
+from odin.networks.attention_mechanism import *
 from odin.networks.cudnn_rnn import *
 from odin.networks.distribution_util_layers import *
-from odin.networks.hard_attention import *
 from odin.networks.math import *
 from odin.networks.mixture_density_network import *
+from odin.networks.positional_encoder import *
 from odin.networks.stat_layers import *
 from odin.networks.time_delay import *
 from odin.networks.util_layers import *

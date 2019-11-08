@@ -1,9 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import os
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import unittest
 from tempfile import mkstemp
 
@@ -45,6 +42,26 @@ class BackendMathTest(unittest.TestCase):
         b = bk.norm(bk.flatten(y, 2), p=p, axis=axis, keepdims=False)
         c = bk.norm(bk.flatten(z, 2), p=p, axis=axis, keepdims=False)
         assert_equal(self, (p, axis), a, b, c)
+
+  def test_countnonzero(self):
+    x = np.random.randint(0, 10, size=(25, 12, 8))
+    for axis in (None, 0, 1, 2, (1, 2)):
+      for keepdims in (True, False):
+        for dtype in ('int32', 'float32'):
+          y = [
+              bk.count_nonzero(bk.array(x, fw),
+                               axis=axis,
+                               keepdims=keepdims,
+                               dtype=dtype) for fw in FRAMEWORKS
+          ]
+          assert_equal(self, (axis, keepdims, dtype), *y)
+
+  def test_clip_by_value(self):
+    for minval, maxval in [(None, 1), (1, None), (1, 2)]:
+      a = bk.clip(x, minval, maxval)
+      b = bk.clip(y, minval, maxval)
+      c = bk.clip(z, minval, maxval)
+      assert_equal(self, (minval, maxval), a, b, c)
 
 
 if __name__ == '__main__':

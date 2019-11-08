@@ -1,8 +1,13 @@
+import os
+
 import numpy as np
 import tensorflow as tf
 import torch
+
 np.random.seed(8)
 torch.manual_seed(8)
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 x = np.random.rand(12, 25, 8).astype('float32')
 y = torch.Tensor(x)

@@ -1,9 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
 import unittest
 
 import numpy as np
@@ -12,6 +9,7 @@ import torch
 
 from odin import backend as bk
 from tests.backend.utils import assert_equal, x, y, z
+
 
 # ===========================================================================
 # test case

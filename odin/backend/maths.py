@@ -6,7 +6,7 @@ import torch
 from scipy.special import logsumexp
 
 from odin.backend import tensor as ts
-from odin.backend.tensor import _normalize_axis
+from odin.backend.tensor import _normalize_axis, dtype_universal
 
 
 # ===========================================================================
@@ -61,6 +61,34 @@ def tensordot(x, y, axis=2):
 # ===========================================================================
 # Normalization
 # ===========================================================================
+def clip(x, x_min=None, x_max=None):
+  r""" Clips tensor values to a specified min and max. """
+  if tf.is_tensor(x):
+    return tf.clip_by_value(x,
+                            clip_value_min=x.dtype.min if x_min is None else x_min,
+                            clip_value_max=x.dtype.max if x_max is None else x_max)
+  elif torch.is_tensor(x):
+    if x_min is None:
+      return torch.clamp(x, max=x_max)
+    elif x_max is None:
+      return torch.clamp(x, min=x_min)
+    return torch.clamp(x, min=x_min, max=x_max)
+  return np.clip(x,
+                 a_min=np.NINF if x_min is None else x_min,
+                 a_max=np.inf if x_max is None else x_max)
+
+
+def l2_normalize(x, axis=None, eps=1e-12):
+  r"""  output = x / sqrt(max(sum(x**2), epsilon)) """
+  # TODO: validate this implementation
+  if tf.is_tensor(x):
+    return tf.nn.l2_normalize(x, axis, eps)
+  elif torch.is_tensor(x):
+    s = x.square().sum(dim=axis, keepdim=True)
+    return s / torch.sqrt(torch.clamp(s, min=eps))
+  return tf.nn.l2_normalize(x, axis, eps).numpy()
+
+
 def norm(x, p='fro', axis=None, keepdims=False):
   """
   x : must be 1-D or 2-D
@@ -105,6 +133,33 @@ def calc_white_mat(X):
   return tf.linalg.cholesky(tf.linalg.inv(X))
 
 
+def exp(x):
+  r""" element-wise exponential function """
+  if tf.is_tensor(x):
+    return tf.math.exp(x)
+  elif torch.is_tensor(x):
+    return torch.exp(x)
+  return np.exp(x)
+
+
+def log(x):
+  r""" element-wise natural logarithm """
+  if tf.is_tensor(x):
+    return tf.math.log(x)
+  elif torch.is_tensor(x):
+    return torch.log(x)
+  return np.log(x)
+
+
+def log2(x):
+  r""" element-wise base-2 logarithm """
+  if tf.is_tensor(x):
+    return tf.math.log2(x)
+  elif torch.is_tensor(x):
+    return torch.log2(x)
+  return np.log2(x)
+
+
 def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
   """ Seurat log-normalize
   y = log(X / (sum(X, axis) + epsilon) * scale_factor)
@@ -143,7 +198,7 @@ def softmin(x, axis=None):
 
 
 def relu(x):
-  """ `f(x) = max(x, 0)` """
+  r""" `f(x) = max(x, 0)` """
   if tf.is_tensor(x):
     return tf.nn.relu(x)
   if torch.is_tensor(x):
@@ -152,7 +207,7 @@ def relu(x):
 
 
 def selu(x):
-  """ `f(x) = scale * [max(0, x) + min(0, alpha*(exp(x)-1))]`
+  r""" `f(x) = scale * [max(0, x) + min(0, alpha*(exp(x)-1))]`
   where:
     scale = ~1.0507
     alpha = ~1.6733
@@ -175,7 +230,7 @@ def selu(x):
 
 
 def tanh(x):
-  """ `f(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))` """
+  r""" `f(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))` """
   if tf.is_tensor(x):
     return tf.math.tanh(x)
   if torch.is_tensor(x):
@@ -184,7 +239,7 @@ def tanh(x):
 
 
 def softsign(x):
-  """ `f(x) = x / (1 + |x|)`"""
+  r""" `f(x) = x / (1 + |x|)`"""
   if tf.is_tensor(x):
     return tf.math.softsign(x)
   if torch.is_tensor(x):
@@ -193,7 +248,7 @@ def softsign(x):
 
 
 def softplus(x, beta=1, threshold=20):
-  """ `f(x) = 1/beta * log(exp(beta * x) + 1)`
+  r""" math::`f(x) = \frac{1}{beta} * log(exp^{beta * x} + 1)`
   threshold : values above this revert to a linear function
   """
   if tf.is_tensor(x):
@@ -208,6 +263,7 @@ def softplus(x, beta=1, threshold=20):
 
 
 def sigmoid(x):
+  r""" math::`f(x) = \frac{1}{1 + e^{-x}}` """
   if tf.is_tensor(x):
     return tf.math.sigmoid(x)
   if torch.is_tensor(x):
@@ -414,6 +470,30 @@ def cumsum(x, axis):
   return np.cumsum(x, axis=axis)
 
 
+def count_nonzero(x, axis=None, keepdims=None, dtype='int64'):
+  r""" Computes number of nonzero elements across dimensions of a tensor.
+
+  **NOTE** Floating point comparison to zero is done by exact floating point
+  equality check.  Small values are **not** rounded to zero for purposes of
+  the nonzero check.
+
+  Returns:
+    The reduced tensor (number of nonzero values).
+  """
+  dtype = dtype_universal(dtype, framework=x)
+  if tf.is_tensor(x):
+    return tf.math.count_nonzero(x, axis, keepdims, dtype)
+  elif torch.is_tensor(x):
+    x = x != 0
+    x = torch.sum(x) if axis is None else \
+      torch.sum(x, dim=axis, keepdim=keepdims)
+    return x.type(dtype)
+  #
+  x = x != 0
+  x = np.sum(x, axis=axis, keepdims=keepdims).astype(dtype)
+  return x
+
+
 # ===========================================================================
 # Conversion
 # ===========================================================================
@@ -458,3 +538,91 @@ def to_sample_weights(indices, weights, name=None):
     # ====== sample weights ====== #
     weights = tf.gather(prior_weights, indices)
   return weights
+
+
+# ===========================================================================
+# Information theory
+# ===========================================================================
+def entropy(p):
+  r"""element-wise calculation of Shanon entropy"""
+  return p * log(p)
+
+
+def upsample(x, scale, axes, method='nn', name=None):
+  """
+  Parameters
+  ----------
+  scale: int, list of int
+      scaling up factor
+  axes: int, list of int
+      the axes of tensor which the upsampling method will be applied
+  method: str, int
+      'nn' for nearest neighbor (e.g. [1, 2] => [1, 1, 2, 2]),
+      'pad' for padding within the tensor. 'pad_margin' do padding
+      in the margin of the tensor. 'repeat' simple algorithm for
+      repeating the element (e.g. [1, 2] => [1, 2, 1, 2])
+  """
+  with tf.name_scope(name, "Upsample"):
+    method = method.lower()
+    input_shape = tf.shape(x)
+    input_shape_int = x.shape.as_list()
+    ndims = x.shape.ndims
+    # normalize all negative axes
+    if axes is None:
+      raise ValueError("axes cannot be None.")
+    axes = [1, 2] if axes is None else \
+        [i % ndims for i in as_tuple(axes)]
+    sorted(axes)
+    # make scale a tuple
+    scale = as_tuple(scale, N=len(axes), t=int)
+    # mapping from axis -> scale
+    scale_map = defaultdict(lambda: 1)
+    scale_map.update([(i, j) for i, j in zip(axes, scale)])
+    # create final output_shape
+    output_shape = [input_shape[i] * scale_map[i] for i in range(ndims)]
+    # ====== Nearest neighbor method ====== #
+    if method == 'nn':
+      # tensorflow only support for tile <= 6-D tensor
+      if ndims >= 6:
+        raise ValueError(
+            'upsample with NN mode does not support rank >= 6 tensor.')
+      elif ndims + len(axes) > 6:
+        for a in axes:
+          x = upsample(x, scale_map[a], axes=a, method='nn')
+      else:
+        # repeat the tensor
+        x = transpose(x, pattern=list(range(ndims)) + ['x'] * len(axes))
+        x = repeat(x, scale, axes=[i for i in range(ndims, ndims + len(axes))])
+        # transpose it back to the right shape
+        axes_map = {i: j for i, j in zip(axes, range(ndims, ndims + len(axes)))}
+        new_axes = []
+        for i in range(ndims):
+          if i not in axes_map:
+            new_axes.append(i)
+          else:
+            new_axes += [i, axes_map[i]]
+        x = tf.transpose(x, perm=new_axes)
+        x = reshape(x, output_shape)
+    # ====== pading_margin ====== #
+    elif method.lower() == 'pad_margin':
+      paddings = [[0, 0] if i not in axes else [
+          tf.cast(tf.ceil(input_shape[i] * (scale_map[i] - 1) / 2), 'int32'),
+          tf.cast(tf.floor(input_shape[i] * (scale_map[i] - 1) / 2), 'int32')
+      ] for i in range(ndims)]
+      x = tf.pad(x, paddings=paddings, mode='CONSTANT')
+    # ====== pading ====== #
+    elif method == 'pad':
+      raise NotImplementedError
+      # x = tf.scatter_nd(indices, x, shape=output_shape)
+    # ====== repeat ====== #
+    elif method == 'repeat':
+      x = repeat(x, n=scale, axes=axes)
+    # ====== no support ====== #
+    else:
+      raise ValueError("No support for method='%s'" % method)
+    # ====== add_shape ====== #
+    return set_shape(x,
+                     shape=[
+                         s * scale_map[i] if is_number(s) else None
+                         for i, s in enumerate(input_shape_int)
+                     ])
