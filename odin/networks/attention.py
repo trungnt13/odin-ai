@@ -13,40 +13,14 @@ from tensorflow import nest
 from tensorflow.python import keras
 
 from odin import backend as bk
-from odin.utils import as_tuple
 from odin.networks.attention_mechanism import *
-
-# ===========================================================================
-# Helper function and type
-# ===========================================================================
-def _split_and_concat(x, num_heads):
-  return bk.concatenate(bk.split(x, num_heads, axis=-1), axis=0)
+from odin.networks.attention_mechanism import _GROUPS
+from odin.utils import as_tuple
 
 
-def _create_heads(input_dim, num_heads, heads_bias, heads_activation):
-  return bk.nn.Sequential([
-      bk.nn.Dense(input_dim * num_heads,
-                  use_bias=use_bias,
-                  activation=activation)
-      for use_bias, activation in zip(heads_bias, heads_activation)
-  ])
-
-
-# ===========================================================================
-# Attention classes
-# ===========================================================================
+@add_metaclass(ABCMeta)
 class Attention(keras.Model):
-  r""" Original implementation from Tensorflow:
-  `tensorflow/python/keras/layers/dense_attention.py`
-  Copyright 2019 The TensorFlow Authors. All Rights Reserved.
-
-  The meaning of `query`, `value` and `key` depend on the application. In the
-  case of text similarity, for example, `query` is the sequence embeddings of
-  the first piece of text and `value` is the sequence embeddings of the second
-  piece of text. Hence, the attention determines alignment between `query` and
-  `value`, `key` is usually the same tensor as value.
-  A mapping from `query` to `key` will be learned during the attention.
-
+  r"""
 
   Args:
     input_dim : Integer. Number of input features.
@@ -56,8 +30,6 @@ class Attention(keras.Model):
       (Mishra N., et al., 2018).
     residual : Boolean. If `True`, add residual connection between input `query`
       and the attended output.
-    return_attention : Boolean. Set to `True` for returning the attention
-      scores.
 
     dropout : Float. Dropout probability of the attention scores.
     temporal_dropout : Boolean. If `True`, using the same dropout mask along
@@ -70,10 +42,6 @@ class Attention(keras.Model):
     heads_regularization : Float. Using L2-normalize to encourage diversity among
       attention heads (Kim Y., et al. 2017). If `0.`, turn off normalization
     heads_activation : Activation for each layer within an attention head.
-    heads_output_mode : {'cat', 'mean', ''} (default='cat')
-      'cat' - concatenate multiple-heads into single output
-      'mean' - calculate the mean of all atttention heads.
-      '' - do nothing return the output with all heads
 
     scale_initializer : String or Number.
       'vaswani' - Suggested by (Vaswani et al. 2017) for large values
@@ -83,17 +51,6 @@ class Attention(keras.Model):
       dimensions, otherwise, create separate scale parameters for each
       dimension.
     scale_trainable : Boolean. If `True`, all scale parameters are trainable.
-
-    attention_type : {'mul', 'add', 'hard', 'loc'}.
-      'mul' - Scale-dot-product or multiplicative attention style a.k.a.
-      Luong or Vaswani-style attention.
-      'add' - addictive attention style a.k.a. Bahdanau-style attention.
-      'loc' - location-base attention, the attention scores only based on
-        the `query` itself (Luong et al. 2015).
-        The model will automatically switch to location-base attention if
-        `key` and `value` are not provided.
-    hard_attention : `Boolean`. If True, enable stochastic hard attention
-      (Xu et al. 2015)
 
   Call Arguments:
     query: Query (or target sequence) `Tensor` of shape `[batch_size, Tq, dim]`.
@@ -116,10 +73,9 @@ class Attention(keras.Model):
   """
 
   def __init__(self,
-               input_dim=None,
+               input_dim,
                causal=False,
                residual=True,
-               return_attention=False,
                dropout=0,
                temporal_dropout=False,
                num_heads=0,
@@ -127,48 +83,33 @@ class Attention(keras.Model):
                heads_bias=True,
                heads_regularization=0.,
                heads_activation='linear',
-               heads_output_mode='cat',
                scale_initializer='vaswani',
                scale_tied=True,
                scale_trainable=False,
-               attention_type='mul',
-               hard_attention=False,
+               n_mcmc=1,
+               temperature=0.5,
+               temperature_trainable=False,
                name=None):
-    super().__init__(name=name)
+    super(Attention, self).__init__(name=name)
     self.input_dim = input_dim
-    self.causal = causal
-    self.residual = residual
-    self.return_attention = bool(return_attention)
-    self.supports_masking = True
+    self.causal = bool(causal)
+    self.residual = bool(residual)
     # ====== for dropout ====== #
     self.dropout = dropout
     self.temporal_dropout = bool(temporal_dropout)
+    # ====== for hard attention ====== #
+    self.n_mcmc = int(n_mcmc)
+    self.temperature_trainable = temperature_trainable
+    self.temperature = bk.variable(initial_value=temperature,
+                                   trainable=temperature_trainable,
+                                   dtype='float32',
+                                   framework=self)
     # ====== multi-head ====== #
     self.num_heads = int(num_heads)
-    self.heads_output_mode = str(heads_output_mode).lower().strip()
     self.heads_regularization = heads_regularization
     self.heads_depth = int(heads_depth)
     self.heads_bias = as_tuple(heads_bias, N=self.heads_depth, t=bool)
     self.heads_activation = as_tuple(heads_activation, N=self.heads_depth)
-    # create a deep feedforward network for the heads:
-    with bk.framework_(self):
-      if self.num_heads > 0:
-        if input_dim is None:
-          raise ValueError("If num_heads > 0, the input_dim must be provided.")
-        self.query_heads = _create_heads(input_dim, num_heads, self.heads_bias,
-                                         self.heads_activation)
-        self.key_heads = _create_heads(input_dim, self.num_heads,
-                                       self.heads_bias, self.heads_activation)
-        self.value_heads = _create_heads(input_dim, num_heads, self.heads_bias,
-                                         self.heads_activation)
-      else:  # No heads, just identity function
-        self.query_heads = bk.nn.Identity()
-        self.key_heads = bk.nn.Identity()
-        self.value_heads = bk.nn.Identity()
-      # use for location-base attention (when key and value are not provided)
-      self.location_projection = bk.nn.Dense(1,
-                                             activation='linear',
-                                             use_bias=True)
     # ====== initialize scale ====== #
     self.scale_initializer = scale_initializer
     self.scale_tied = scale_tied
@@ -192,254 +133,111 @@ class Attention(keras.Model):
         scale = bk.variable(initial_value=scale(nest.flatten(input_dim)),
                             trainable=scale_trainable,
                             framework=self)
-    self.attention_scale = scale
-    self.attention_type = str(attention_type).strip().lower()
-    self.hard_attention = bool(hard_attention)
-
-  def calculate_scores(self, query, key=None):
-    """Calculates attention scores (a.k.a logits values).
-
-    Args:
-      query: Query tensor of shape `[batch_size * num_heads, Tq, dim]`.
-      key: Key tensor of shape `[batch_size * num_heads, Tv, dim]`.
-
-    Returns:
-      Tensor of shape `[batch_size * num_heads, Tq, Tv]`.
-    """
-    if self.attention_type == 'loc' or key is None:
-      # [batch_size * num_heads, Tq, dim]
-      if not self.scale_tied:
-        raise RuntimeError(
-            "Self-attention mode, when only query provided doesn't support "
-            "untied scale")
-      return self.attention_scale * self.location_projection(query)
-    elif self.attention_type == 'mul':
-      # this is a trick to make attention_scale broadcastable when
-      # scale_tied=False
-      return bk.matmul(self.attention_scale * query, bk.swapaxes(key, 1, 2))
-    elif self.attention_type == 'add':
-      # [batch_size * num_heads, Tq, 1, dim]
-      q = bk.expand_dims(query, axis=2)
-      # [batch_size * num_heads, 1, Tv, dim]
-      k = bk.expand_dims(key, axis=1)
-      # [batch_size * num_heads, Tq, Tv]
-      return bk.reduce_sum(self.attention_scale * bk.tanh(q + k), axis=-1)
-    else:
-      raise NotImplementedError("No support for attention_type='%s'" %
-                                self.attention_type)
-
-  def calculate_scores_norm(self, scores):
-    """ With the attention scores is A `[batch_size * num_heads, Tq, Tv]`
-    `P = ||A^T*A - I||_2^2`
-    """
-    # it is easier to assume there is always 1-head at least
-    num_heads = max(self.num_heads, 1)
-
+    self.scale = scale
+    # ====== init parameters and layers ====== #
     with bk.framework_(self):
-      Tq, Tv = scores.shape[1:]
-      # [batch_size, num_heads, Tq * Tv]
-      scoresT = bk.reshape(scores, shape=(-1, num_heads, Tq * Tv))
-      # [batch_size, Tq * Tv, num_heads]
-      scores = bk.swapaxes(scoresT, 1, 2)
-      # [batch_size, num_heads, num_heads]
-      A = bk.matmul(scoresT, scores)
+      self.query_heads = create_attention_heads(
+          input_dim,
+          num_heads=self.num_heads,
+          depth=self.heads_depth,
+          use_bias=self.heads_bias,
+          activation=self.heads_activation)
+      self.key_heads = create_attention_heads(input_dim,
+                                              num_heads=self.num_heads,
+                                              depth=self.heads_depth,
+                                              use_bias=self.heads_bias,
+                                              activation=self.heads_activation)
+      self.value_heads = create_attention_heads(
+          input_dim,
+          num_heads=self.num_heads,
+          depth=self.heads_depth,
+          use_bias=self.heads_bias,
+          activation=self.heads_activation)
+      # init default object
+      self._mechanism = Inter | PosGlobal | AlignSoft | ScoreLocative
+      self.location_proj = None
+      self.target_proj = None
+      #
+      self._local_init()
+      self.set_methods()
 
-      I = bk.eye(num_heads, dtype=A.dtype)
-      I = bk.expand_dims(I, axis=0)
-      # [batch_size, num_heads, num_heads]
-      I = bk.tile(I, reps=A.shape[0], axis=0)
+  def set_methods(self, scoring=None, alignment=None):
+    if alignment is not None:
+      assert alignment in _GROUPS[2], \
+        "alignment must be one of the following: %s" % str(_GROUPS[2])
+      self._mechanism |= alignment
+    if scoring is not None:
+      assert scoring in _GROUPS[3], \
+        "scoring must be one of the following: %s" % str(_GROUPS[3])
+      self._mechanism |= scoring
+    self._mechanism.validate()
+    return self
 
-      P = bk.norm(A - I, p="fro")**2
-    return P
+  def _local_init(self):
+    pass
 
-  def _apply_scores(self,
-                    scores,
-                    value,
-                    is_loc_attention,
-                    scores_mask=None,
-                    training=None):
-    """Applies attention scores to the given value tensor.
+  @property
+  def mechanism(self):
+    return self._mechanism
 
-    To use this method in your attention layer, follow the steps:
-
-    * Use `query` tensor of shape `[batch_size, Tq]` and `key` tensor of shape
-      `[batch_size, Tv]` to calculate the attention `scores`.
-    * Pass `scores` and `value` tensors to this method. The method applies
-      `scores_mask`, calculates `attention_distribution = softmax(scores)`, then
-      returns `matmul(attention_distribution, value).
-    * Apply `query_mask` and return the result.
-
-    Args:
-      scores: Scores float tensor of shape `[batch_size * num_heads, Tq, Tv]`.
-      value: Value tensor of shape `[batch_size * num_heads, Tv, dim]`.
-      scores_mask: A boolean mask `Tensor` of shape `[batch_size, 1, Tv]` or
-        `[batch_size, Tq, Tv]`. If given, scores at positions where
-        `scores_mask==False` do not contribute to the result. It must contain
-        at least one `True` value in each line along the last dimension.
-
-    Returns:
-      Tensor of shape `[batch_size, Tq, dim]`.
-
-    """
-    num_heads = max(self.num_heads, 1)
-    if scores_mask is not None:
-      padding_mask = bk.logical_not(scores_mask)
-      if num_heads > 1 and padding_mask.shape[0] != 1:
-        padding_mask = bk.tile(padding_mask, reps=num_heads, axis=0)
-      # Bias so padding positions do not contribute to attention distribution.
-      scores -= 1.e9 * bk.cast(padding_mask, dtype=scores.dtype)
-    # if the last dimension is 1, no point for applying softmax, hence,
-    # softmax to the second last dimension
-    attention_distribution = bk.softmax(
-        scores, axis=-2 if scores.shape[-1] == 1 else -1)
-    # ======  dropout the attention scores ====== #
-    if self.dropout > 0:
-      attention_distribution = bk.dropout(
-          attention_distribution,
-          p=self.dropout,
-          axis=1 if self.temporal_dropout else None,
-          training=training)
-    # ====== applying the attention ====== #
-    if is_loc_attention:  # location-based attention
-      return attention_distribution * value, attention_distribution
-    else:  # multi-head attention
-      return bk.matmul(attention_distribution, value), attention_distribution
-
-  def call(self, query, value=None, key=None, mask=None, training=None):
-    # in case value is None, enable location-base mode,
-    # only query should be given
-    if key is None:
-      key = value
-    is_loc_attention = self.attention_type == 'loc'
-    if value is None and key is None:
-      is_loc_attention = True
-
-    if self.input_dim is not None and self.input_dim != query.shape[-1]:
-      raise ValueError("Given input dimension=%d, but query has dimension=%d" %
-                       (self.input_dim, query.shape[-1]))
-
-    if is_loc_attention:
-      if (key is not None or value is not None):
-        warnings.warn(
-            "Location based attention need only query, ignore provided key and value",
-            category=UserWarning)
-      key = None
-      value = None
-    elif value is None and key is not None:
-      raise RuntimeError("value is None but key is not None, value must be "
-                         "provided and key is optional.")
-
-    num_heads = max(self.num_heads, 1)
-    if not is_loc_attention:
-      assert query.shape[-1] == value.shape[-1] == key.shape[-1], \
-        "Query, key and value must has the same feature dimension."
-
-    # store original query for residual connection
-    Q = query
-
+  def call(self, inputs, mask=None, training=None, return_attention=False):
+    if not isinstance(inputs, (tuple, list)):
+      inputs = [inputs]
     with bk.framework_(self):
-      # [batch_size * num_heads, Tq, dim]
-      query = _split_and_concat(self.query_heads(bk.array(query)), num_heads)
-      if not is_loc_attention:
-        # [batch_size * num_heads, Tv, dim]
-        key = _split_and_concat(self.key_heads(bk.array(key)), num_heads)
-        # [batch_size * num_heads, Tv, dim]
-        value = _split_and_concat(self.value_heads(bk.array(value)), num_heads)
+      q, k, v, q_mask, v_mask = self._mechanism.prepare(*inputs, mask=mask)
+      assert self.input_dim == q.shape[-1], \
+        "Given input_dim=%d but query shape=%s" % (self.input_dim, q.shape)
+      q, k, v = [
+          x if x is None else f(x) for x, f in zip(
+              [q, k, v], [self.query_heads, self.key_heads, self.value_heads])
+      ]
+      scores = self._mechanism.score(query=q,
+                                     key=k,
+                                     scale=self.scale,
+                                     window_width=None,
+                                     q_proj=self.location_proj,
+                                     target_proj=self.target_proj)
+      out, att = self._mechanism.align(scores=scores,
+                                       value=v,
+                                       query=q,
+                                       q_mask=q_mask,
+                                       v_mask=v_mask,
+                                       causal=self.causal,
+                                       residual=self.residual,
+                                       dropout=self.dropout,
+                                       temporal_dropout=self.temporal_dropout,
+                                       n_mcmc=self.n_mcmc,
+                                       temperature=self.temperature,
+                                       training=training)
+      ### attention heads regularization
+      if self.heads_regularization > 0:
+        P = self._mechanism.normalize(scores)
+        self.add_loss(self.heads_regularization * P)
+      ### return attention distribution or not
+      if return_attention:
+        return out, att
+      return out
 
-      # The attention scores [batch_size * num_heads, Tq, Tv]
-      scores = self.calculate_scores(query=query, key=key)
 
-      # ====== multi-head regularization ====== #
-      if self.num_heads > 0 and self.heads_regularization > 0:
-        self.add_loss(self.heads_regularization *
-                      self.calculate_scores_norm(scores))
+# ===========================================================================
+# Attention classes
+# ===========================================================================
+class SelfAttention(Attention):
 
-      # ====== prepare the mask ====== #
-      if is_loc_attention:  # only 1 mask is need
-        if isinstance(mask, (tuple, list)):
-          q_mask = mask[0]
-        else:
-          q_mask = mask
-        v_mask = None
-      else:
-        q_mask = mask[0] if mask else None
-        v_mask = mask[1] if mask else None
-        if v_mask is not None:
-          if v_mask.shape[1] != value.shape[1]:
-            raise RuntimeError(
-                "Value mask has time dimension %d, but value has time dimension %d"
-                % (v_mask.shape[1], value.shape[1]))
-          # Mask of shape [batch_size, 1, Tv].
-          v_mask = bk.expand_dims(v_mask, axis=-2)
+  def _local_init(self):
+    self._mechanism |= Intra
+    # self attention only support global positioning
+    self._mechanism |= PosGlobal
+    self._mechanism |= ScoreLocative
+    # use for location-base attention (when key and value are not provided)
+    self.location_proj = bk.nn.Dense(1, activation='linear', use_bias=True)
 
-      # ====== Causal mask ====== #
-      if self.causal:
-        # Creates a lower triangular mask, so position i cannot attend to
-        # positions j>i. This prevents the flow of information from the future
-        # into the past.
-        scores_shape = scores.shape
-        # causal_mask_shape = [1, Tq, Tv].
-        causal_mask_shape = bk.concatenate(
-            [bk.ones_like(scores_shape[:-2]), scores_shape[-2:]], axis=0)
-        causal_mask = bk.tril_mask(causal_mask_shape)
-      else:
-        causal_mask = None
-      scores_mask = bk.logical_and(v_mask, causal_mask)
 
-      # ====== applying the attention and the score mask ====== #
-      result, scores_distribution = self._apply_scores(
-          scores=scores,
-          value=query if value is None or is_loc_attention else value,
-          is_loc_attention=is_loc_attention,
-          scores_mask=scores_mask,
-          training=training)
+class LocalPredictiveAttention(Attention):
 
-      # ====== applying the Query mask ====== #
-      if q_mask is not None:
-        assert q_mask.shape[1] == query.shape[1],\
-          "Query mask has time dimension %d, but query has time dimension %d" \
-            % (q_mask.shape[1], query.shape[1])
-        # Mask of shape [batch_size, Tq, 1].
-        q_mask = bk.expand_dims(q_mask, axis=-1)
-        if num_heads > 1:
-          q_mask = bk.tile(q_mask, reps=num_heads, axis=0)
-        result *= bk.cast(q_mask, dtype=result.dtype)
-
-      # ====== residual connection ====== #
-      if self.residual:
-        result += bk.tile(Q, reps=num_heads, axis=0) if num_heads > 1 else Q
-
-      # ====== final aggregation ====== #
-      result = bk.reshape(result, shape=(-1, num_heads, [1], [2]))
-      if self.heads_output_mode == 'mean':
-        # [batch_size, Tq, dim]
-        result = bk.reduce_sum(result, axis=1) / num_heads
-      elif self.heads_output_mode in ('concat', 'cat', 'concatenate'):
-        # [batch_size, Tq, dim * num_heads]
-        result = bk.flatten(bk.swapaxes(result, 1, 2), outdim=3)
-      elif self.num_heads == 0:
-        # [batch_size, Tq, dim]
-        result = bk.squeeze(result, axis=1)
-
-    if self.return_attention:
-      return result, scores_distribution
-    return result
-
-  def compute_mask(self, query, value=None, key=None, mask=None):
-    with bk.framework_(self):
-      if mask:
-        # location-based
-        if (value is None and key is None) or self.attention_type == 'loc':
-          q_mask = mask[0] if isinstance(mask, (tuple, list)) else mask
-        # other attention
-        else:
-          q_mask = mask[0]
-          if q_mask is None:
-            return None
-        return bk.array(q_mask)
-      return None
-
-  def get_config(self):
-    config = {'causal': self.causal}
-    base_config = super().get_config()
-    return dict(list(base_config.items()) + list(config.items()))
+  def _local_init(self):
+    self._mechanism |= Inter
+    self._mechanism |= PosLocalP
+    self._mechanism |= ScoreDotProd
+    # use for location-base attention (when key and value are not provided)
+    self.target_proj = bk.nn.Dense(1, activation='linear', use_bias=True)

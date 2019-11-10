@@ -1,11 +1,25 @@
 from __future__ import absolute_import, division, print_function
 
+import types
+
+from tensorflow.python import keras
 from tensorflow.python.keras import Sequential
 from tensorflow.python.keras.layers import (Activation, BatchNormalization,
-                                            Dense, Layer)
-from tensorflow.python.util.tf_export import keras_export
+                                            Dense, Lambda, Layer)
+from tensorflow.python.ops import variable_scope
 
 __all__ = ['Identity', 'Parallel', 'BatchRenormalization']
+
+
+def _Lambda_call(self, *args, **kwargs):
+  arguments = self.arguments
+  arguments.update(kwargs)
+  with variable_scope.variable_creator_scope(self._variable_creator):
+    return self.function(*args, **arguments)
+
+
+# simple hack make Lambda for flexible
+Lambda.call = _Lambda_call
 
 
 class BatchRenormalization(BatchNormalization):

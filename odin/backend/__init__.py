@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import functools
 import inspect
 import os
 from collections import Mapping
@@ -8,8 +9,7 @@ from contextlib import contextmanager
 from six import add_metaclass
 from six.moves import builtins, cPickle
 
-from odin.backend import (keras_callbacks, keras_helpers, losses, metrics,
-                          tf_utils)
+from odin.backend import (keras_callbacks, keras_helpers, losses, metrics)
 from odin.backend.alias import *
 from odin.backend.maths import *
 from odin.backend.tensor import *

@@ -36,17 +36,72 @@ from functools import partial
 
 from odin import backend as bk
 from odin import bay
+from odin.utils import as_tuple
+
+
+def _split_and_concat(x, num_heads):
+  return bk.stack(bk.split(x, num_heads, axis=-1), axis=0)
+
+
+def _get_num_heads(query):
+  r""" return the number of attention heads.
+  return 0 if no multi-heads attention applied """
+  ndim = query.ndim if hasattr(query, 'ndim') else query.shape.ndims
+  if ndim == 3:
+    num_heads = 0
+  else:  # multi-heads attention
+    num_heads = query.shape[0]
+  return num_heads
+
+
+def create_attention_heads(input_dim,
+                           num_heads=2,
+                           depth=1,
+                           use_bias=True,
+                           activation='relu'):
+  r""" Create multi-heads attention projection
+  `[batch_size, Tq, dim]` to `[num_heads, batch_size, Tq, dim]`
+  """
+  num_heads = int(num_heads)
+  depth = int(depth)
+  if num_heads > 1 and depth > 0:
+    use_bias = as_tuple(use_bias, N=depth, t=bool)
+    activation = as_tuple(activation, N=depth)
+    layers = [
+        bk.nn.Dense(input_dim * num_heads, use_bias=bias, activation=activ)
+        for bias, activ in zip(use_bias, activation)
+    ]
+    layers.append(bk.nn.Lambda(partial(_split_and_concat, num_heads=num_heads)))
+    return bk.nn.Sequential(layers)
+  else:
+    return bk.nn.Identity()
 
 
 class AttentionMechanism(IntFlag):
   r""" The taxomony of all attention
+  The meaning of `query`, `value` and `key` depend on the application. In the
+  case of text similarity, for example, `query` is the sequence embeddings of
+  the first piece of text and `value` is the sequence embeddings of the second
+  piece of text. Hence, the attention determines alignment between `query` and
+  `value`, `key` is usually the same tensor as value.
+  A mapping from `query` to `key` will be learned during the attention.
+
   To use this method in your attention layer, follow the steps:
-  * Use `query` tensor of shape `[batch_size, Tq]` and `key` tensor of shape
-    `[batch_size, Tv]` to calculate the attention `scores`.
-  * Pass `scores` and `value` tensors to this method. The method applies
-    `scores_mask`, calculates `attention_distribution = softmax(scores)`, then
-    returns `matmul(attention_distribution, value).
-  * Apply `query_mask` and return the result.
+    * Use `query` tensor of shape `[batch_size, Tq]` and `key` tensor of shape
+      `[batch_size, Tv]` to calculate the attention `scores`.
+    * Pass `scores` and `value` tensors to this method. The method applies
+      `scores_mask`, calculates `attention_distribution = softmax(scores)`, then
+      returns `matmul(attention_distribution, value).
+    * Apply `query_mask` and return the result.
+
+  The following method call order is recommended:
+    * `validate`: make the no duplicated steps stored in the `AttentionMechanism`
+    * `prepare`: prepare the query, key, value and masks according to the given
+      mechanism.
+    * `score`: get the attention scores given the query and the key
+    * `normalize` (optional): normalize the multi-heads attention scores.
+    * `align`: create attention distribution, use this distribution to align
+      the query and the value
 
   All family of attention mechanism is summarized into follow
   a hierarchical structure, the order is as follow:
@@ -131,6 +186,10 @@ class AttentionMechanism(IntFlag):
   def is_soft_attention(self):
     return AlignSoft in self
 
+  @property
+  def is_hard_attention(self):
+    return AlignSoft not in self
+
   def validate(self):
 
     def count_and_check(groups):
@@ -149,10 +208,21 @@ class AttentionMechanism(IntFlag):
       count_and_check(g)
     return self
 
-  def check_inputs(self, query, key=None, value=None, mask=None):
+  def prepare(self, query, key=None, value=None, mask=None):
+    r""" Preparing input for attention model
+
+    Returns:
+      query: Query (or target sequence) tensor of shape `[batch_size, Tq, dim]`.
+      key: Key (or source sequence) tensor of shape `[batch_size, Tv, dim]`.
+      value: Value (or source sequence) tensor of shape `[batch_size, Tv, dim]`.
+      query_mask: A boolean mask `Tensor` of shape `[batch_size, Tq]`.
+        If given, the output will be zero at the positions where
+        `mask==False`.
+      value_mask: A boolean mask `Tensor` of shape `[batch_size, Tv]`.
+        If given, will apply the mask such that values at positions where
+        `mask==False` do not contribute to the result.
+    """
     # by default, if key is not provide, using value
-    if key is None:
-      key = value
     query = bk.array(query, ignore_none=True)
     key = bk.array(key, ignore_none=True)
     value = bk.array(value, ignore_none=True)
@@ -167,9 +237,13 @@ class AttentionMechanism(IntFlag):
         key = query
       if value is not None:
         value = query
-    elif value is None and key is not None:
-      raise RuntimeError("value is None but key is not None, value must be "
-                         "provided and key is optional.")
+    ### inter-attention
+    else:
+      if key is None:
+        key = value
+      elif value is None:  # value must always provided
+        raise RuntimeError("value is None but key is not None, value must be "
+                           "provided and key is optional.")
     # ====== masks ====== #
     if self.is_self_attention:  # only 1 mask is need
       if isinstance(mask, (tuple, list)):
@@ -189,7 +263,7 @@ class AttentionMechanism(IntFlag):
     return query, key, value, \
       bk.array(q_mask, ignore_none=True), bk.array(v_mask, ignore_none=True)
 
-  def normalize_scores(self, scores, num_heads=1):
+  def normalize(self, scores):
     r""" Normalize attention scores using "fro"-norm that encouraging diversity
     among attention heads math::`P = ||A^T*A - I||_2^2` (Kim et al. 2017)
 
@@ -197,10 +271,11 @@ class AttentionMechanism(IntFlag):
       scores: Tensor with shape `[batch_size * num_heads, Tq, Tv]`
     """
     # it is easier to assume there is always 1-head at least
-    num_heads = max(num_heads, 1)
-    Tq, Tv = scores.shape[1:]
+    num_heads = _get_num_heads(scores)
+    if num_heads == 0:
+      return bk.cast(0., scores.dtype)
     # [batch_size, num_heads, Tq * Tv]
-    scoresT = bk.reshape(scores, shape=(-1, num_heads, Tq * Tv))
+    scoresT = bk.swapaxes(bk.reshape(scores, shape=([0], [1], -1)), 0, 1)
     # [batch_size, Tq * Tv, num_heads]
     scores = bk.swapaxes(scoresT, 1, 2)
     # [batch_size, num_heads, num_heads]
@@ -219,13 +294,17 @@ class AttentionMechanism(IntFlag):
             scale=1,
             window_width=None,
             q_proj=None,
-            v_proj=None):
+            target_proj=None):
     r"""
     Arguments:
       query: Query (or target sequence) tensor of shape
-        `[batch_size * num_heads, Tq, dim]`.
+        `[batch_size, Tq, dim]` or `[num_heads, batch_size, Tq, dim]` in case
+        of multi-heads attention.
       key: Key (or source sequence) tensor of shape
-        `[batch_size * num_heads, Tv, dim]`.
+        `[batch_size, Tv, dim]` or `[num_heads, batch_size, Tv, dim]` in case
+        of multi-heads attention.
+      scale: single `Scalar` or `Tensor` of shape `[dim]` for scaling
+        the attention scores, suggested `1/sqrt(dim)` in (Vaswani et al. 2017).
       window_width : `None`, `Integer` or `Float` ([0, 1]). The total number of
         frames for a single window in local attention (i.e. `left + 1 + right`)
         Can be given as a fixed number of frames (`int`), or percentage of
@@ -233,12 +312,21 @@ class AttentionMechanism(IntFlag):
       q_proj : `Dense`, instance of dense or fully connected layer
         - for `ScoreLocative`, the number of hidden unit is `1`
         - for `ScoreGeneral`, the number of hidden unit is `dim`
-      v_proj : `Dense`, instance of dense of full connected layer
+      target_proj : `Dense`, for predictive local attention, applying
+        a fully connected network on target sequence (i.e. the query) to
+        predict the position on source sequence (i.e. the key).
+        The layer must has output dimension equal to 1 and return logit value.
 
     Returns:
-      Tensor of shape `[batch_size * num_heads, Tq, Tv]`, or
-       `[batch_size * num_heads, Tq, 1]` if `key` is not provided
+      Tensor of shape `[num_heads, batch_size, Tq, Tv]`, or
+       `[num_heads, batch_size, Tq, 1]` if `ScoreLocative`
     """
+    ### Check if multi-head attention is used
+    num_heads = _get_num_heads(query)
+    if num_heads > 0:
+      query = bk.reshape(query, [-1] + [i for i in query.shape[2:]])
+      if key is not None:
+        key = bk.reshape(key, [-1] + [i for i in key.shape[2:]])
     Tq = query.shape[1]
     Tv = Tq if key is None else key.shape[1]
     # scale shape is `[]` or `[dim]`
@@ -253,72 +341,82 @@ class AttentionMechanism(IntFlag):
     if AttentionMechanism.ScoreLocative in self:
       if PosLocalM in self or PosLocalP in self:
         raise NotImplementedError(
-            "ScoreLocative only support Global attention.")
+            "ScoreLocative only support Global attention, but given: %s" %
+            str(self))
       # [batch_size * num_heads, Tq, dim]
       scores = bk.reduce_mean(scale) * q_proj(query)
       assert scores.shape[-1] == 1, \
         " q_proj must have only 1 hidden unit, but given %d" % scores.shape[-1]
-      return scores
-    ### Other score mode need key tensor
-    if key is None:
-      raise ValueError("key must be provided for attention type: %s" %
-                       str(self))
-    ### Attention position (local or global)
-    if PosLocalM in self:
-      key = key[:, -window_width:]
-    elif PosLocalP in self:
-      pt = bk.sigmoid(v_proj(bk.reshape(query, ([0], -1))))
-      # `[batch_size * num_heads, 1]`
-      pt = Tv * pt
-      # `[batch_size * num_heads, Tv]`
-      # Eq (10) (Luong et al. 2015)
-      gauss_est = bk.exp(-bk.square(bk.arange(Tv, dtype=pt.dtype) - pt) /
-                         (2 * bk.square(window_width / 2)))
-      # `[batch_size * num_heads, 1, Tv]`
-      gauss_est = bk.expand_dims(gauss_est, axis=1)
-    ### Additive or concat method
-    if AttentionMechanism.ScoreAdditive in self:
-      # [batch_size * num_heads, Tq, 1, dim]
-      q = bk.expand_dims(query, axis=2)
-      # [batch_size * num_heads, 1, Tv, dim]
-      k = bk.expand_dims(key, axis=1)
-      # [batch_size * num_heads, Tq, Tv]
-      scores = bk.reduce_sum(scale * bk.tanh(q + k), axis=-1)
-    ### Dot product or multiplicative scoring
-    elif AttentionMechanism.ScoreDotProd in self:
-      # this is a trick to make attention_scale broadcastable when
-      # scale_tied=False
-      scores = bk.matmul(scale * query, bk.swapaxes(key, 1, 2))
-    ### cosine scoring
-    elif AttentionMechanism.ScoreCosine in self:
-      # [batch_size * num_heads, Tq, 1, dim]
-      q = bk.expand_dims(query, axis=2)
-      # [batch_size * num_heads, 1, Tv, dim]
-      k = bk.expand_dims(key, axis=1)
-      # [batch_size * num_heads, Tq, Tv, dim]
-      scores = (q * k) / (bk.norm(q, p=2) * bk.norm(k, p=2))
-      scores = bk.reduce_sum(scale * scores, axis=-1, keepdims=False)
-    ### general method with only project on the query
-    elif AttentionMechanism.ScoreGeneral in self:
-      query = q_proj(query)
-      assert query.shape[-1] == key.shape[-1], \
-        " q_proj must have %d hidden units, but given %d units" % \
-          (key.shape[-1], query.shape[-1])
-      scores = bk.matmul(scale * query, bk.swapaxes(key, 1, 2))
+    ### Other score mode need the key tensor
     else:
-      raise NotImplementedError("No support for attention_type='%s'" %
-                                str(self))
-    ### applying the local-predictive attention
-    if PosLocalP in self:
-      scores = scores * gauss_est
+      if key is None:
+        raise ValueError("key must be provided for attention type: %s" %
+                         str(self))
+      ### Attention position (local or global)
+      if PosLocalM in self:
+        key = key[:, -window_width:]
+      elif PosLocalP in self:
+        pt = bk.sigmoid(target_proj(bk.reshape(query, ([0], -1))))
+        assert pt.shape[-1] == 1, \
+          "target_proj must project the query [., Tq * dim] to [., 1], i.e. " + \
+            "predicting the attention position on source sequence using " + \
+              "knowledge from target sequence."
+        pt = Tv * pt  # `[batch_size * num_heads, 1]`
+        # `[batch_size * num_heads, Tv]`
+        # Eq (10) (Luong et al. 2015)
+        gauss_est = bk.exp(-bk.square(bk.arange(Tv, dtype=pt.dtype) - pt) /
+                           (2 * bk.square(window_width / 2)))
+        # `[batch_size * num_heads, 1, Tv]`
+        gauss_est = bk.expand_dims(gauss_est, axis=1)
+      ### Additive or concat method
+      if AttentionMechanism.ScoreAdditive in self:
+        # [batch_size * num_heads, Tq, 1, dim]
+        q = bk.expand_dims(query, axis=2)
+        # [batch_size * num_heads, 1, Tv, dim]
+        k = bk.expand_dims(key, axis=1)
+        # [batch_size * num_heads, Tq, Tv]
+        scores = bk.reduce_sum(scale * bk.tanh(q + k), axis=-1)
+      ### Dot product or multiplicative scoring
+      elif AttentionMechanism.ScoreDotProd in self:
+        # this is a trick to make attention_scale broadcastable when
+        # scale_tied=False
+        scores = bk.matmul(scale * query, bk.swapaxes(key, 1, 2))
+      ### cosine scoring
+      elif AttentionMechanism.ScoreCosine in self:
+        # [batch_size * num_heads, Tq, 1, dim]
+        q = bk.expand_dims(query, axis=2)
+        # [batch_size * num_heads, 1, Tv, dim]
+        k = bk.expand_dims(key, axis=1)
+        # [batch_size * num_heads, Tq, Tv, dim]
+        scores = (q * k) / (bk.norm(q, p=2) * bk.norm(k, p=2))
+        scores = bk.reduce_sum(scale * scores, axis=-1, keepdims=False)
+      ### general method with only project on the query
+      elif AttentionMechanism.ScoreGeneral in self:
+        query = q_proj(query)
+        assert query.shape[-1] == key.shape[-1], \
+          " q_proj must have %d hidden units, but given %d units" % \
+            (key.shape[-1], query.shape[-1])
+        scores = bk.matmul(scale * query, bk.swapaxes(key, 1, 2))
+      else:
+        raise NotImplementedError("No support for attention_type='%s'" %
+                                  str(self))
+      ### applying the local-predictive attention
+      if PosLocalP in self:
+        scores = scores * gauss_est
+    ### get back the multi-heads shape
+    if num_heads > 0:
+      scores = bk.reshape(scores,
+                          shape=[num_heads, -1] + [i for i in scores.shape[1:]])
     return scores
 
   def align(self,
             scores,
             value,
+            query=None,
             q_mask=None,
             v_mask=None,
             causal=False,
+            residual=False,
             dropout=0,
             temporal_dropout=False,
             n_mcmc=1,
@@ -326,16 +424,22 @@ class AttentionMechanism(IntFlag):
             training=None):
     r"""Applies attention scores to the given value tensor.
 
-    Args:
+    Arguments:
       scores: Attention Scores float tensor of shape
-        `[batch_size * num_heads, Tq, Tv]`.
-      value: Value tensor of shape `[batch_size * num_heads, Tv, dim]`.
+        `[num_heads, batch_size, Tq, Tv]`.
+      value: Value (or source sequence) tensor of shape
+        `[num_heads, batch_size, Tv, dim]`.
+      query: Query (or target sequence) tensor of shape
+        `[num_heads, batch_size, Tq, dim]`.
       q_mask: A boolean query mask `Tensor` of shape `[batch_size, Tq]`.
         If given, the output will be zero at the positions where
         `mask==False`.
       v_mask: A boolean value mask `Tensor` of shape `[batch_size, Tv]`.
         If given, will apply the mask such that values at positions where
         `mask==False` do not contribute to the result.
+      dropout : Float. Dropout probability of the attention scores.
+      temporal_dropout : Boolean. If `True`, using the same dropout mask along
+        temporal axis (i.e. the 1-st dimension)
       n_mcmc (`Integer`) : number of mcmc samples for estimating the gradient
         of hard attention
       temperature: An 0-D `Tensor`, representing the temperature
@@ -343,15 +447,31 @@ class AttentionMechanism(IntFlag):
         should be positive.
 
     Returns:
-      attended sequence: Tensor of shape `[batch_size * num_heads, Tq, dim]`,
-        or, in case of hard attention, tensor of shape
-        `[n_mcmc, batch_size, Tq, dim]`.
-      attention distribution : Tensor or one-hot OneHotCategorical distribution
-        of shape `[n_mcmc, batch_size * num_heads, Tq]` for self-attention, and
-        `[n_mcmc, batch_size * num_heads, Tq, Tv]` for inter-attention.
+      attended sequence: Tensor of shape
+        * `[n_mcmc, num_heads, batch_size, Tq, dim]` for (hard + multi-heads)
+        * `[n_mcmc, batch_size, Tq, dim]` for (hard + no-head)
+        * `[num_heads, batch_size, Tq, dim]` for (soft + multi-heads)
+        * `[batch_size, Tq, dim]` for (soft + no-head)
+      attention distribution : for soft attention, return Tensor of shape
+        * `[num_heads, batch_size, Tq]` for self-attention
+        * `[num_heads, batch_size, Tq, Tv]` for inter-attention.
+        for hard attention, return one-hot categorical distribution of shape
+        * `[n_mcmc, num_heads, batch_size, Tq]` for self-attention
+        * `[n_mcmc, num_heads, batch_size, Tq, Tv]` for inter-attention.
+        if multi-heads attention wasn't used, omit the `[num_heads]`.
     """
-    Tq = scores.shape[1]
-    Tv = scores.shape[2]
+    num_heads = _get_num_heads(scores)
+    if num_heads == 0:
+      Tq = scores.shape[1]
+      Tv = scores.shape[2]
+    else:
+      Tq = scores.shape[2]
+      Tv = scores.shape[3]
+    if value is None:
+      if query is None:
+        raise ValueError("both query and value are None, "
+                         "at least one of them must be given")
+      value = query
     # ====== Causal mask ====== #
     if causal:
       # Creates a lower triangular mask, so position i cannot attend to
@@ -371,13 +491,12 @@ class AttentionMechanism(IntFlag):
       # Mask of shape [batch_size, 1, Tv].
       v_mask = bk.expand_dims(v_mask, axis=-2)
       v_mask = bk.cast(v_mask, 'bool')
+      if num_heads > 0:
+        v_mask = bk.expand_dims(v_mask, axis=0)
     scores_mask = bk.logical_and(v_mask, causal_mask)
     ### applying the scores mask
     if scores_mask is not None:
       padding_mask = bk.logical_not(scores_mask)
-      num_heads = bk.cast(scores.shape[0] / padding_mask.shape[0], 'int32')
-      if num_heads > 1 and padding_mask.shape[0] != 1:
-        padding_mask = bk.tile(padding_mask, reps=num_heads, axis=0)
       # Bias so padding positions do not contribute to attention distribution.
       scores -= 1.e9 * bk.cast(padding_mask, dtype=scores.dtype)
     # ====== convert attention score to distribution ====== #
@@ -406,20 +525,19 @@ class AttentionMechanism(IntFlag):
       attention_distribution = bay.coercible_tensor(
           attention_distribution, convert_to_tensor_fn=fsample)
     # ======  dropout the attention scores ====== #
-    if dropout > 0:
-      attention_distribution = bk.dropout(attention_distribution,
-                                          p=dropout,
-                                          axis=1 if temporal_dropout else None,
-                                          training=training)
+    attention = bk.dropout(attention_distribution,
+                           p=dropout,
+                           axis=1 if temporal_dropout else None,
+                           training=training and dropout > 0)
     # ====== applying the attention ====== #
     if self.is_self_attention and ScoreLocative in self:
-      if attention_distribution.shape[-1] != 1:
-        attention_distribution = bk.expand_dims(attention_distribution, axis=-1)
-      result = attention_distribution * value
+      result = bk.expand_dims(bk.array(attention), axis=-1) * value  \
+          if attention.shape[-1] != 1 else \
+            attention * value
     else:
       if PosLocalM in self:
-        value = value[:, -Tv:]
-      result = bk.matmul(attention_distribution, value)
+        value = value[:, -Tv:] if num_heads == 0 else value[:, :, -Tv:]
+      result = bk.matmul(attention, value)
     # ====== applying the Query mask ====== #
     if q_mask is not None:
       assert q_mask.shape[1] == Tq,\
@@ -427,16 +545,19 @@ class AttentionMechanism(IntFlag):
           % (q_mask.shape[1], Tq)
       # Mask of shape [batch_size, Tq, 1].
       q_mask = bk.expand_dims(q_mask, axis=-1)
-      num_heads = bk.cast(scores.shape[0] / q_mask.shape[0], 'int32')
-      if num_heads > 1 and q_mask.shape[0] != 1:
-        q_mask = bk.tile(q_mask, reps=num_heads, axis=0)
       result *= bk.cast(q_mask, dtype=result.dtype)
+    # ====== residual connection ====== #
+    if residual:
+      if query is None:
+        raise ValueError("query must be given for residual connection")
+      result += query
     # ====== return ====== #
     return result, attention_distribution
 
-  def __call__(self, query, key=None, value=None):
-    if residual:
-      result += bk.tile(Q, reps=num_heads, axis=0) if num_heads > 1 else Q
+  def compute_mask(self, mask=None):
+    if mask:
+      q_mask = mask[0] if isinstance(mask, (tuple, list)) else mask
+      return bk.array(q_mask)
 
 
 # shortcut to make it easier

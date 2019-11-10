@@ -14,10 +14,20 @@ from odin.backend import (parse_activation, parse_constraint, parse_initializer,
                           parse_regularizer)
 
 
+class Lambda(nn.Module):
+
+  def __init__(self, function):
+    super().__init__()
+    self._function = function
+
+  def forward(self, *args, **kwargs):
+    return self._function(*args, **kwargs)
+
+
 class Layer(nn.Module):
 
   def __init__(self, **kwargs):
-    super(Layer, self).__init__()
+    super().__init__()
     self.built = False
 
   def build(self, input_shape):

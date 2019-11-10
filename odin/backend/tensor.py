@@ -193,21 +193,19 @@ def array(x, framework=None, dtype=None, ignore_none=False):
       return x
     raise ValueError("x is None, cannot convert to ndarray or Tensor")
 
-  in_framework = parse_framework(x)
   out_framework = parse_framework(framework)
 
-  if in_framework != out_framework:
-    # any conversion must go through numpy
-    if in_framework != np:
-      x = x.numpy()
-    if out_framework == tf:
-      return tf.convert_to_tensor(x, dtype=dtype)
-    if out_framework == torch:
-      if dtype is not None:
-        x = cast(x, dtype)
-      if torch.is_tensor(x):
-        return x
-      return torch.from_numpy(x)
+  # any conversion must go through numpy
+  if out_framework == np:
+    x = x.numpy() if hasattr(x, 'numpy') else np.asarray(x)
+  elif out_framework == tf:
+    return tf.convert_to_tensor(x, dtype=dtype)
+  elif out_framework == torch:
+    if dtype is not None:
+      x = cast(x, dtype)
+    if torch.is_tensor(x):
+      return x
+    return torch.from_numpy(x)
   return x
 
 
@@ -723,6 +721,18 @@ def split(x, num_of_splits, axis=0):
   return np.split(x, num_of_splits, axis=axis)
 
 
+def stack(x, axis=0):
+  if not isinstance(x, (tuple, list)):
+    return x
+  if len(x) == 1:
+    return x[0]
+  if tf.is_tensor(x[0]):
+    return tf.stack(x, axis)
+  if torch.is_tensor(x[0]):
+    return torch.stack(x, axis)
+  return np.stack(x, axis)
+
+
 # ===========================================================================
 # Logical function
 # ===========================================================================
@@ -970,10 +980,13 @@ def dropout(x,
   Note:
     This function only apply noise on Variable when training is enable
   """
+  # ====== no training NO dropout ====== #
+  if not training:
+    return x
+  # ====== calculate noise shape ====== #
   framework = parse_framework(x)
   shape = x.shape
   retain_prob = 1. - p
-  # ====== not a training variable NO dropout ====== #
   if 'normal' in noise_type or 'gaussian' in noise_type:
     randfunc = lambda shape: random_normal(shape,
                                            mean=1.0,
@@ -986,14 +999,10 @@ def dropout(x,
         shape, p=retain_prob, dtype=x.dtype, framework=framework)
   else:
     raise ValueError('No support for noise_type=' + noise_type)
-
   # ====== Dropout ====== #
-  if training:
-    noise_shape = shape if axis is None else _process_noise_dim(shape, axis)
-    noise_shape = [i for i in noise_shape]
-    y = x * randfunc(noise_shape)
-    if rescale:
-      y /= retain_prob
-    return y
-  else:
-    return x
+  noise_shape = shape if axis is None else _process_noise_dim(shape, axis)
+  noise_shape = [i for i in noise_shape]
+  y = x * randfunc(noise_shape)
+  if rescale:
+    y /= retain_prob
+  return y
