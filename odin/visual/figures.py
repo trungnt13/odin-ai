@@ -5,24 +5,25 @@
 # Copyright (c) 2016, librosa development team.
 # Modified work Copyright 2016-2017 TrungNT
 # ===========================================================================
-from __future__ import print_function, absolute_import, division
+from __future__ import absolute_import, division, print_function
 
+import colorsys
+import copy
+import itertools
 import os
 import sys
-import copy
 import warnings
-import colorsys
-import itertools
-from numbers import Number
-from six import string_types
-from six.moves import zip, range
-from contextlib import contextmanager
 from collections import Mapping, OrderedDict, defaultdict
+from contextlib import contextmanager
+from numbers import Number
 
 import numpy as np
 from scipy import stats
+from six import string_types
+from six.moves import range, zip
 
 from odin.visual.stats_plot import *
+
 # try:
 #     import seaborn # import seaborn for pretty plot
 # except:
@@ -32,22 +33,29 @@ line_styles = ['-', '--', '-.', ':']
 
 # this is shuffled by hand to make sure everything ordered
 # in the most intuitive way
-marker_styles = [".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d",
-                 "v", "H", "<", "8", ">", "X",
-                 "1", "3", "4", "D", "o"]
+marker_styles = [
+    ".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d", "v", "H",
+    "<", "8", ">", "X", "1", "3", "4", "D", "o"
+]
+
 
 def get_all_named_colors(to_hsv=False):
   from matplotlib import colors as mcolors
   colors = dict(mcolors.BASE_COLORS, **mcolors.CSS4_COLORS)
   # Sort colors by hue, saturation, value and name.
   if to_hsv:
-    by_hsv = sorted((tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
-                    for name, color in colors.items())
+    by_hsv = sorted(
+        (tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
+        for name, color in colors.items())
     colors = OrderedDict([(name, color) for color, name in by_hsv])
   return colors
 
-def generate_random_colors(n, seed=1234, lightness_value=None,
-                           return_hsl=False, return_hex=True):
+
+def generate_random_colors(n,
+                           seed=1234,
+                           lightness_value=None,
+                           return_hsl=False,
+                           return_hex=True):
   if seed is not None:
     rand = np.random.RandomState(seed)
   n = int(n)
@@ -55,9 +63,9 @@ def generate_random_colors(n, seed=1234, lightness_value=None,
   # we want maximizing the differences in hue
   all_hue = np.linspace(0., 0.88, num=n)
   for i, hue in enumerate(all_hue):
-    saturation = 0.6 + rand.rand(1)[0] / 2.5 # saturation
+    saturation = 0.6 + rand.rand(1)[0] / 2.5  # saturation
     if lightness_value is None:
-      lightness = 0.25 + rand.rand(1)[0] / 1.4 # lightness
+      lightness = 0.25 + rand.rand(1)[0] / 1.4  # lightness
     else:
       lightness = float(lightness_value)
     # select color scheme to return
@@ -65,11 +73,11 @@ def generate_random_colors(n, seed=1234, lightness_value=None,
       colors.append((hue, saturation, lightness))
     else:
       rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-      colors.append(rgb if not return_hex else
-        "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255),
-                                     int(rgb[1] * 255),
-                                     int(rgb[2] * 255)))
+      colors.append(rgb if not return_hex else "#{:02x}{:02x}{:02x}".
+                    format(int(rgb[0] * 255), int(rgb[1] *
+                                                  255), int(rgb[2] * 255)))
   return colors
+
 
 def generate_random_colormaps(n, seed=1234, bicolors=False):
   from matplotlib.colors import LinearSegmentedColormap
@@ -79,31 +87,41 @@ def generate_random_colormaps(n, seed=1234, bicolors=False):
        (h, l, s),
        (h, l - 0.1, min(s + 0.1, 1.))]
   if bicolors:
-    base_colors = generate_random_colors(n * 2, lightness_value=0.5, seed=seed,
+    base_colors = generate_random_colors(n * 2,
+                                         lightness_value=0.5,
+                                         seed=seed,
                                          return_hsl=True)
     base_colors = list(zip(base_colors[:n], base_colors[n:]))
   else:
-    base_colors = generate_random_colors(n, lightness_value=0.5, seed=seed,
+    base_colors = generate_random_colors(n,
+                                         lightness_value=0.5,
+                                         seed=seed,
                                          return_hsl=True)
   for i, c in enumerate(base_colors):
     if bicolors:
       cA, cB = c
-      colors = [colorsys.hls_to_rgb(*i)
-                for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)]
+      colors = [
+          colorsys.hls_to_rgb(*i)
+          for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)
+      ]
     else:
       hue, saturation, lightness = c
-      colors = [colorsys.hls_to_rgb(*i)
-                for i in interpolate_hsl(*c)]
-    color_maps.append(LinearSegmentedColormap.from_list(
-        name='Colormap%d' % i, colors=colors, N=256, gamma=1))
+      colors = [colorsys.hls_to_rgb(*i) for i in interpolate_hsl(*c)]
+    color_maps.append(
+        LinearSegmentedColormap.from_list(name='Colormap%d' % i,
+                                          colors=colors,
+                                          N=256,
+                                          gamma=1))
   return color_maps
+
 
 def generate_random_marker(n, seed=1234):
   if n > len(marker_styles):
     raise ValueError("There are %d different marker styles, but need %d" %
-      (len(marker_styles), n))
+                     (len(marker_styles), n))
   return marker_styles[:n]
   # return np.random.choice(marker_styles, size=n, replace=False)
+
 
 def to_axis(ax, is_3D=False):
   """ Convert: int, tuple, None, Axes object
@@ -132,6 +150,7 @@ def to_axis(ax, is_3D=False):
       ax = plt.gca()
   return ax
 
+
 def _check_arg_length(dat, n, dtype, default, converter):
   """ Shortcut for validating sequence of uniform data type """
   if dat is None:
@@ -142,6 +161,7 @@ def _check_arg_length(dat, n, dtype, default, converter):
     assert len(dat) == n
   dat = [converter(d) for d in dat]
   return dat
+
 
 # ===========================================================================
 # Helper for spectrogram
@@ -221,14 +241,17 @@ def time_ticks(locs, *args, **kwargs):  # pylint: disable=star-args
     times = times[positions]
 
   # Format the labels by time
-  formats = {'ms': lambda t: '{:d}ms'.format(int(1e3 * t)),
-             's': '{:0.2f}s'.format,
-             'm': lambda t: '{:d}:{:02d}'.format(int(t / 6e1),
-                                                 int(np.mod(t, 6e1))),
-             'h': lambda t: '{:d}:{:02d}:{:02d}'.format(int(t / 3.6e3),
-                                                        int(np.mod(t / 6e1,
-                                                                   6e1)),
-                                                        int(np.mod(t, 6e1)))}
+  formats = {
+      'ms':
+          lambda t: '{:d}ms'.format(int(1e3 * t)),
+      's':
+          '{:0.2f}s'.format,
+      'm':
+          lambda t: '{:d}:{:02d}'.format(int(t / 6e1), int(np.mod(t, 6e1))),
+      'h':
+          lambda t: '{:d}:{:02d}:{:02d}'.format(int(
+              t / 3.6e3), int(np.mod(t / 6e1, 6e1)), int(np.mod(t, 6e1)))
+  }
 
   if time_fmt is None:
     if max(times) > 3.6e3:
@@ -323,6 +346,7 @@ def resize_images(x, shape):
 
   reszie_func = lambda x, shape: imresize(x, shape, interp='bilinear')
   if x.ndim == 4:
+
     def reszie_func(x, shape):
       # x: 3D
       # The color channel is the first dimension
@@ -337,7 +361,10 @@ def resize_images(x, shape):
   return imgs
 
 
-def tile_raster_images(X, tile_shape=None, tile_spacing=(2, 2), spacing_value=0.):
+def tile_raster_images(X,
+                       tile_shape=None,
+                       tile_spacing=(2, 2),
+                       spacing_value=0.):
   ''' This function create tile of images
 
   Parameters
@@ -378,15 +405,15 @@ def tile_raster_images(X, tile_shape=None, tile_spacing=(2, 2), spacing_value=0.
 
   # ====== Append columns ====== #
   rows = []
-  for i in range(n): # each rows
+  for i in range(n):  # each rows
     r = []
-    for j in range(n): # all columns
+    for j in range(n):  # all columns
       idx = i * n + j
       if idx < len(X):
         r.append(np.vstack((X[i * n + j], rows_spacing)))
       else:
         r.append(nothing)
-      if j != n - 1:   # cols spacing
+      if j != n - 1:  # cols spacing
         r.append(cols_spacing)
     rows.append(np.hstack(r))
   # ====== Append rows ====== #
@@ -407,15 +434,17 @@ def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
   else:
     nrow = inches_for_box * nrow
     ncol = inches_for_box * ncol
-  nrow += 1.2 # for the title
+  nrow += 1.2  # for the title
   fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
   yield fig
   plt.suptitle(title)
   if show:
     plot_show(block=True, tight_layout=tight_layout)
 
+
 def merge_figures(nrow, ncol):
   pass
+
 
 def fig2data(fig):
   """w, h, 4"""
@@ -426,20 +455,24 @@ def fig2data(fig):
   buf = np.roll(buf, 3, axis=2)
   return buf
 
+
 def data2fig(data):
   from matplotlib import pyplot as plt
   fig = plt.figure()
   plt.imshow(data)
   return fig
 
+
 def plot_figure(nrow=8, ncol=8, dpi=180):
   from matplotlib import pyplot as plt
   fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
   return fig
 
+
 def plot_title(title, fontsize=12):
   from matplotlib import pyplot as plt
   plt.suptitle(str(title), fontsize=fontsize)
+
 
 def subplot(*arg, **kwargs):
   from matplotlib import pyplot as plt
@@ -447,6 +480,7 @@ def subplot(*arg, **kwargs):
   if 'title' in kwargs:
     subplot.set_title(kwargs['title'])
   return subplot
+
 
 def plot_frame(ax=None, left=None, right=None, top=None, bottom=None):
   """ Turn on, off the frame (i.e. the bounding box of an axis) """
@@ -460,6 +494,7 @@ def plot_frame(ax=None, left=None, right=None, top=None, bottom=None):
   if left is not None:
     ax.spines['left'].set_visible(bool(left))
   return ax
+
 
 def plot_aspect(aspect=None, adjustable=None, ax=None):
   """
@@ -480,6 +515,7 @@ def plot_aspect(aspect=None, adjustable=None, ax=None):
     ax.set_aspect(aspect, adjustable)
   return ax
 
+
 @contextmanager
 def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
   """
@@ -492,9 +528,9 @@ def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
   plt.subplot(grid[1, 2])
   """
   from matplotlib import pyplot as plt
-  grid = plt.GridSpec(nrows=nrow, ncols=ncol,
-                      wspace=wspace, hspace=hspace)
+  grid = plt.GridSpec(nrows=nrow, ncols=ncol, wspace=wspace, hspace=hspace)
   yield grid
+
 
 def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
   """
@@ -506,11 +542,16 @@ def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
   ax4 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
   """
   from matplotlib import pyplot as plt
-  return plt.subplot2grid(shape=shape, loc=loc, colspan=colspan, rowspan=rowspan)
+  return plt.subplot2grid(shape=shape,
+                          loc=loc,
+                          colspan=colspan,
+                          rowspan=rowspan)
+
 
 def plot_subplot(*args):
   from matplotlib import pyplot as plt
   return plt.subplot(*args)
+
 
 def set_labels(ax, title=None, xlabel=None, ylabel=None):
   if title is not None:
@@ -520,16 +561,25 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
   if ylabel is not None:
     ax.set_ylabel(ylabel)
 
+
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
   from matplotlib import pyplot as plt
   ax = ax if ax is not None else plt.gca()
   ax.axvline(x=x, ymin=ymin, ymax=ymax, color=color, linewidth=1, alpha=0.6)
   return ax
 
-def plot_comparison_track(Xs, legends, tick_labels,
-                          line_colors=None, line_styles=None, linewidth=1.,
-                          marker_size=33, marker_styles=None,
-                          fontsize=10, draw_label=True, title=None):
+
+def plot_comparison_track(Xs,
+                          legends,
+                          tick_labels,
+                          line_colors=None,
+                          line_styles=None,
+                          linewidth=1.,
+                          marker_size=33,
+                          marker_styles=None,
+                          fontsize=10,
+                          draw_label=True,
+                          title=None):
   """ Plot multiple series for comparison
   Parameters
   ----------
@@ -548,7 +598,8 @@ def plot_comparison_track(Xs, legends, tick_labels,
   nb_series = len(Xs)
   if len(Xs[0]) != len(tick_labels):
     raise ValueError("Number of points for each series is: %d different from "
-                     "number of xticks' labels: %d" % (len(Xs[0], len(tick_labels))))
+                     "number of xticks' labels: %d" %
+                     (len(Xs[0], len(tick_labels))))
   nb_points = len(Xs[0])
   from matplotlib import pyplot as plt
   # ====== some default styles ====== #
@@ -569,8 +620,7 @@ def plot_comparison_track(Xs, legends, tick_labels,
     else:
       kwargs['linestyle'] = '--'
     # lines
-    handlers.append(
-        plt.plot(X, linewidth=linewidth, **kwargs)[0])
+    handlers.append(plt.plot(X, linewidth=linewidth, **kwargs)[0])
     # points
     ax = plt.gca()
     for i, j in enumerate(X):
@@ -579,24 +629,46 @@ def plot_comparison_track(Xs, legends, tick_labels,
         p = plt.scatter(i, j, s=marker_size, marker=style)
         point_colors.append(p.get_facecolor()[0])
       else:
-        p = plt.scatter(i, j, s=marker_size, marker=style, color=point_colors[i])
+        p = plt.scatter(i,
+                        j,
+                        s=marker_size,
+                        marker=style,
+                        color=point_colors[i])
       if draw_label:
-        ax.text(i, 1.01 * j, s=str(j), ha='center', va='bottom',
+        ax.text(i,
+                1.01 * j,
+                s=str(j),
+                ha='center',
+                va='bottom',
                 fontsize=fontsize)
     inited = True
   # ====== legends and tick labels ====== #
   plt.gca().set_xticks(np.arange(len(tick_labels)))
   plt.gca().set_xticklabels(tick_labels, rotation=-60, fontsize=fontsize)
-  plt.legend(handlers, legends,
-             bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.,
+  plt.legend(handlers,
+             legends,
+             bbox_to_anchor=(1.05, 1),
+             loc=2,
+             borderaxespad=0.,
              fontsize=fontsize)
   if title is not None:
     plt.suptitle(title)
 
-def plot_histogram(x, bins=80, ax=None,
-                   normalize=False, range_0_1=False, kde=False, covariance_factor=None,
-                   color='blue', color_kde='red', alpha=0.6, centerlize=False,
-                   linewidth=1.2, fontsize=12, title=None):
+
+def plot_histogram(x,
+                   bins=80,
+                   ax=None,
+                   normalize=False,
+                   range_0_1=False,
+                   kde=False,
+                   covariance_factor=None,
+                   color='blue',
+                   color_kde='red',
+                   alpha=0.6,
+                   centerlize=False,
+                   linewidth=1.2,
+                   fontsize=12,
+                   title=None):
   """
   x: histogram
   covariance_factor : None or float
@@ -614,42 +686,60 @@ def plot_histogram(x, bins=80, ax=None,
         (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
   hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
   width = (hist_bins[1] - hist_bins[0]) / 1.36
-  ax.bar((hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2, hist,
-         width=width, color=color, alpha=alpha)
+  ax.bar((hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2,
+         hist,
+         width=width,
+         color=color,
+         alpha=alpha)
   # ====== centerlize the data ====== #
   min_val = np.min(hist_bins)
   max_val = np.max(hist_bins)
   if centerlize:
-    ax.set_xlim((min_val - np.abs(max_val) / 2,
-                 max_val + np.abs(max_val) / 2))
+    ax.set_xlim((min_val - np.abs(max_val) / 2, max_val + np.abs(max_val) / 2))
   # ====== kde ====== #
   if kde:
     if not normalize:
-      raise ValueError("KDE plot only applicable for normalized-to-1 histogram.")
+      raise ValueError(
+          "KDE plot only applicable for normalized-to-1 histogram.")
     density = stats.gaussian_kde(x)
     if isinstance(covariance_factor, Number):
       density.covariance_factor = lambda: float(covariance_factor)
       density._compute_covariance()
     if centerlize:
-      xx = np.linspace(np.min(x) - np.abs(max_val) / 2,
-                       np.max(x) + np.abs(max_val) / 2, 100)
+      xx = np.linspace(
+          np.min(x) - np.abs(max_val) / 2,
+          np.max(x) + np.abs(max_val) / 2, 100)
     else:
       xx = np.linspace(np.min(x), np.max(x), 100)
     yy = density(xx)
-    ax.plot(xx, yy,
-            color=color_kde, alpha=min(1., alpha + 0.2),
-            linewidth=linewidth, linestyle='-.')
+    ax.plot(xx,
+            yy,
+            color=color_kde,
+            alpha=min(1., alpha + 0.2),
+            linewidth=linewidth,
+            linestyle='-.')
   # ====== post processing ====== #
   ax.tick_params(axis='both', labelsize=fontsize)
   if title is not None:
     ax.set_title(str(title), fontsize=fontsize)
   return hist, hist_bins
 
-def plot_histogram_layers(Xs, bins=50, ax=None,
-                          normalize=False, range_0_1=False, kde=False, covariance_factor=None,
-                          layer_name=None, layer_color=None,
-                          legend_loc='upper center', legend_ncol=5, legend_colspace=0.4,
-                          grid=True, fontsize=12, title=None):
+
+def plot_histogram_layers(Xs,
+                          bins=50,
+                          ax=None,
+                          normalize=False,
+                          range_0_1=False,
+                          kde=False,
+                          covariance_factor=None,
+                          layer_name=None,
+                          layer_color=None,
+                          legend_loc='upper center',
+                          legend_ncol=5,
+                          legend_colspace=0.4,
+                          grid=True,
+                          fontsize=12,
+                          title=None):
   """
   normalize : bool (default: False)
     pass
@@ -665,29 +755,38 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
   num_classes = len(Xs)
   ax = to_axis(ax, is_3D=True)
   # ====== validate input argument ====== #
-  layer_name = _check_arg_length(layer_name, n=num_classes,
-                                 dtype=string_types, default='',
-                                 converter=lambda x:str(x))
-  layer_color = _check_arg_length(layer_color, n=num_classes,
-                                  dtype=string_types, default='blue',
-                                  converter=lambda x:str(x))
+  layer_name = _check_arg_length(layer_name,
+                                 n=num_classes,
+                                 dtype=string_types,
+                                 default='',
+                                 converter=lambda x: str(x))
+  layer_color = _check_arg_length(layer_color,
+                                  n=num_classes,
+                                  dtype=string_types,
+                                  default='blue',
+                                  converter=lambda x: str(x))
   legends = []
   for name, a, c, z, x in zip(layer_name,
-                              np.linspace(0.6, 0.9, num_classes)[::-1],
-                              layer_color,
-                              np.linspace(0, 100, num_classes),
-                              Xs):
+                              np.linspace(0.6, 0.9,
+                                          num_classes)[::-1], layer_color,
+                              np.linspace(0, 100, num_classes), Xs):
     if range_0_1:
       x = (x - np.min(x, axis=0, keepdims=True)) /\
           (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
     hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
     width = (hist_bins[1] - hist_bins[0]) / 1.36
     _ = ax.bar(left=(hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2,
-               height=hist, width=width,
-               zs=z, zdir='y', color=c, ec=c, alpha=a)
+               height=hist,
+               width=width,
+               zs=z,
+               zdir='y',
+               color=c,
+               ec=c,
+               alpha=a)
     if kde:
       if not normalize:
-        raise ValueError("KDE plot only applicable for normalized-to-1 histogram.")
+        raise ValueError(
+            "KDE plot only applicable for normalized-to-1 histogram.")
       density = stats.gaussian_kde(x)
       if isinstance(covariance_factor, Number):
         density.covariance_factor = lambda: float(covariance_factor)
@@ -695,18 +794,29 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
       xx = np.linspace(np.min(x), np.max(x), 1000)
       yy = density(xx)
       zz = np.full_like(xx, fill_value=z)
-      ax.plot(xs=xx, ys=zz, zs=yy,
-              color=c, alpha=a, linewidth=1.2, linestyle='-.')
+      ax.plot(xs=xx,
+              ys=zz,
+              zs=yy,
+              color=c,
+              alpha=a,
+              linewidth=1.2,
+              linestyle='-.')
     # legend
     if len(name) > 0:
       legends.append((name, _))
   # ====== legend ====== #
   if len(legends) > 0:
     legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
-      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
-      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
-      columnspacing=float(legend_colspace), labelspacing=0.,
-      fontsize=fontsize, handletextpad=0.1)
+                        markerscale=1.5,
+                        scatterpoints=1,
+                        scatteryoffsets=[0.375, 0.5, 0.3125],
+                        loc=legend_loc,
+                        bbox_to_anchor=(0.5, -0.01),
+                        ncol=int(legend_ncol),
+                        columnspacing=float(legend_colspace),
+                        labelspacing=0.,
+                        fontsize=fontsize,
+                        handletextpad=0.1)
     for i, c in enumerate(layer_color):
       legends.legendHandles[i].set_color(c)
   # ====== config ====== #
@@ -717,6 +827,7 @@ def plot_histogram_layers(Xs, bins=50, ax=None,
   if title is not None:
     ax.set_title(str(title))
   return ax
+
 
 # ===========================================================================
 # Scatter plot
@@ -748,8 +859,11 @@ def _parse_scatterXYZ(x, y, z):
       x = x[:, 0]
   return x, y, z
 
+
 def _validate_color_marker_size_legend(n_samples,
-                                       color, marker, size,
+                                       color,
+                                       marker,
+                                       size,
                                        is_colormap=False):
   """ Return: colors, markers, sizes, legends """
   from matplotlib.colors import LinearSegmentedColormap
@@ -762,9 +876,11 @@ def _validate_color_marker_size_legend(n_samples,
     default_marker = marker
     marker = None
   default_size = 8
-  legend = [[None] * n_samples, # color
-            [None] * n_samples, # marker
-            [None] * n_samples] # size
+  legend = [
+      [None] * n_samples,  # color
+      [None] * n_samples,  # marker
+      [None] * n_samples
+  ]  # size
   seed = 1234
   create_label_map = lambda labs, def_val, fn_gen: \
       ({labs[0]: def_val}
@@ -795,16 +911,17 @@ def _validate_color_marker_size_legend(n_samples,
   "Given %d variable for `size`, but require %d samples" % (len(size), n_samples)
   # ====== labels set ====== #
   color_labels = np.unique(color)
-  color_map = create_label_map(color_labels, default_color,
-                               generate_random_colormaps
-                               if is_colormap else
-                               generate_random_colors)
+  color_map = create_label_map(
+      color_labels, default_color,
+      generate_random_colormaps if is_colormap else generate_random_colors)
 
   marker_labels = np.unique(marker)
-  marker_map = create_label_map(marker_labels, default_marker, generate_random_marker)
+  marker_map = create_label_map(marker_labels, default_marker,
+                                generate_random_marker)
 
   size_labels = np.unique(size)
-  size_map = create_label_map(size_labels, default_size, lambda n, s: [default_size] * n)
+  size_map = create_label_map(size_labels, default_size,
+                              lambda n, s: [default_size] * n)
   # ====== prepare legend ====== #
   legend_name = []
   legend_style = []
@@ -812,29 +929,33 @@ def _validate_color_marker_size_legend(n_samples,
     name = []
     style = []
     if c is None:
-      name.append(''); style.append(color_map[0])
+      name.append('')
+      style.append(color_map[0])
     else:
-      name.append(str(c)); style.append(color_map[c])
+      name.append(str(c))
+      style.append(color_map[c])
     if m is None:
-      name.append(''); style.append(marker_map[0])
+      name.append('')
+      style.append(marker_map[0])
     else:
-      name.append(str(m)); style.append(marker_map[m])
+      name.append(str(m))
+      style.append(marker_map[m])
     if s is None:
-      name.append(''); style.append(size_map[0])
+      name.append('')
+      style.append(size_map[0])
     else:
-      name.append(str(s)); style.append(size_map[s])
+      name.append(str(s))
+      style.append(size_map[s])
     name = tuple(name)
     style = tuple(style)
     if name not in legend_name:
       legend_name.append(name)
       legend_style.append(style)
-  legend = OrderedDict([(i, j)
-                        for i, j in zip(legend_style, legend_name)])
+  legend = OrderedDict([(i, j) for i, j in zip(legend_style, legend_name)])
   # ====== return ====== #
-  return ([color_map[i] for i in color],
-          [marker_map[i] for i in marker],
-          [size_map[i] for i in size],
-          legend)
+  return ([color_map[i] for i in color], [marker_map[i] for i in marker],
+          [size_map[i] for i in size], legend)
+
 
 def _downsample_scatter_points(x, y, z, n_samples, *args):
   args = list(args)
@@ -847,20 +968,34 @@ def _downsample_scatter_points(x, y, z, n_samples, *args):
     y = np.array(y)[ids]
     if z is not None:
       z = np.array(z)[ids]
-    args = [np.array(a)[ids]
-            if isinstance(a, (tuple, list, np.ndarray))
-            else a
-            for a in args]
+    args = [
+        np.array(a)[ids] if isinstance(a, (tuple, list, np.ndarray)) else a
+        for a in args
+    ]
   return [len(x), x, y, z] + args
 
-def plot_scatter_layers(x_y_val, ax=None,
-                        layer_name=None, layer_color=None, layer_marker=None,
-                        size=4.0, z_ratio=4, elev=None, azim=88,
-                        ticks_off=True, grid=True, surface=True,
-                        wireframe=False, wireframe_resolution=10,
-                        colorbar=False, colorbar_horizontal=False,
-                        legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-                        fontsize=8, title=None):
+
+def plot_scatter_layers(x_y_val,
+                        ax=None,
+                        layer_name=None,
+                        layer_color=None,
+                        layer_marker=None,
+                        size=4.0,
+                        z_ratio=4,
+                        elev=None,
+                        azim=88,
+                        ticks_off=True,
+                        grid=True,
+                        surface=True,
+                        wireframe=False,
+                        wireframe_resolution=10,
+                        colorbar=False,
+                        colorbar_horizontal=False,
+                        legend_loc='upper center',
+                        legend_ncol=3,
+                        legend_colspace=0.4,
+                        fontsize=8,
+                        title=None):
   """
   Parameter
   ---------
@@ -880,29 +1015,43 @@ def plot_scatter_layers(x_y_val, ax=None,
   num_classes = len(x_y_val)
   # ====== preparing ====== #
   # name
-  layer_name = _check_arg_length(dat=layer_name, n=num_classes,
-                                 dtype=string_types, default='',
+  layer_name = _check_arg_length(dat=layer_name,
+                                 n=num_classes,
+                                 dtype=string_types,
+                                 default='',
                                  converter=lambda x: str(x))
   # colormap
-  layer_color = _check_arg_length(dat=layer_color, n=num_classes,
-                                  dtype=string_types, default='Blues',
+  layer_color = _check_arg_length(dat=layer_color,
+                                  n=num_classes,
+                                  dtype=string_types,
+                                  default='Blues',
                                   converter=lambda x: plt.get_cmap(str(x)))
   # class marker
-  layer_marker = _check_arg_length(dat=layer_marker, n=num_classes,
-                                   dtype=string_types, default='o',
+  layer_marker = _check_arg_length(dat=layer_marker,
+                                   n=num_classes,
+                                   dtype=string_types,
+                                   default='o',
                                    converter=lambda x: str(x))
   # size
-  size = _check_arg_length(dat=size, n=num_classes,
-                           dtype=Number, default=4.0,
+  size = _check_arg_length(dat=size,
+                           n=num_classes,
+                           dtype=Number,
+                           default=4.0,
                            converter=lambda x: float(x))
   # ====== plotting each class ====== #
   legends = []
-  for idx, (alpha, z) in enumerate(zip(np.linspace(0.05, 0.4, num_classes),
-                                     np.linspace(min_z / 4, max_z / 4, num_classes))):
+  for idx, (alpha, z) in enumerate(
+      zip(np.linspace(0.05, 0.4, num_classes),
+          np.linspace(min_z / 4, max_z / 4, num_classes))):
     x, y, val = x_y_val[idx]
     num_samples = len(x)
     z = np.full(shape=(num_samples,), fill_value=z)
-    _ = ax.scatter(x, y, z, c=val, s=size[idx], marker=layer_marker[idx],
+    _ = ax.scatter(x,
+                   y,
+                   z,
+                   c=val,
+                   s=size[idx],
+                   marker=layer_marker[idx],
                    cmap=layer_color[idx])
     # ploting surface and wireframe
     if surface or wireframe:
@@ -910,29 +1059,45 @@ def plot_scatter_layers(x_y_val, ax=None,
                          np.linspace(min(y), max(y), wireframe_resolution))
       z = np.full_like(x, fill_value=z[0])
       if surface:
-        ax.plot_surface(X=x, Y=y, Z=z,
-                        color=layer_color[idx](0.5), edgecolor='none',
+        ax.plot_surface(X=x,
+                        Y=y,
+                        Z=z,
+                        color=layer_color[idx](0.5),
+                        edgecolor='none',
                         alpha=alpha)
       if wireframe:
-        ax.plot_wireframe(X=x, Y=y, Z=z, linewidth=0.8,
-                          color=layer_color[idx](0.8), alpha=alpha + 0.1)
+        ax.plot_wireframe(X=x,
+                          Y=y,
+                          Z=z,
+                          linewidth=0.8,
+                          color=layer_color[idx](0.8),
+                          alpha=alpha + 0.1)
     # legend
     name = layer_name[idx]
     if len(name) > 0:
       legends.append((name, _))
     # colorbar
     if colorbar:
-      cba = plt.colorbar(_, shrink=0.5, pad=0.01,
-        orientation='horizontal' if colorbar_horizontal else 'vertical')
+      cba = plt.colorbar(
+          _,
+          shrink=0.5,
+          pad=0.01,
+          orientation='horizontal' if colorbar_horizontal else 'vertical')
       if len(name) > 0:
         cba.set_label(name, fontsize=fontsize)
   # ====== plot the legend ====== #
   if len(legends) > 0:
     legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
-      markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
-      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
-      columnspacing=float(legend_colspace), labelspacing=0.,
-      fontsize=fontsize, handletextpad=0.1)
+                        markerscale=1.5,
+                        scatterpoints=1,
+                        scatteryoffsets=[0.375, 0.5, 0.3125],
+                        loc=legend_loc,
+                        bbox_to_anchor=(0.5, -0.01),
+                        ncol=int(legend_ncol),
+                        columnspacing=float(legend_colspace),
+                        labelspacing=0.,
+                        fontsize=fontsize,
+                        handletextpad=0.1)
     for i, c in enumerate(layer_color):
       legends.legendHandles[i].set_color(c(.8))
   # ====== some configuration ====== #
@@ -948,14 +1113,30 @@ def plot_scatter_layers(x_y_val, ax=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
-              colormap='bwr', marker='o', size=4.0, alpha=0.8,
-              elev=None, azim=None,
-              ticks_off=True, grid=True,
-              colorbar=False, colorbar_horizontal=False, colorbar_ticks=None,
-              legend_enable=True,
-              legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-              n_samples=None, fontsize=8, title=None):
+
+def plot_scatter_heatmap(x,
+                         val,
+                         y=None,
+                         z=None,
+                         ax=None,
+                         colormap='bwr',
+                         marker='o',
+                         size=4.0,
+                         alpha=0.8,
+                         elev=None,
+                         azim=None,
+                         ticks_off=True,
+                         grid=True,
+                         colorbar=False,
+                         colorbar_horizontal=False,
+                         colorbar_ticks=None,
+                         legend_enable=True,
+                         legend_loc='upper center',
+                         legend_ncol=3,
+                         legend_colspace=0.4,
+                         n_samples=None,
+                         fontsize=8,
+                         title=None):
   """
   Parameters
   ----------
@@ -998,9 +1179,15 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
         if is_3D_mode:
           z_.append(z[i])
     # plot
-    kwargs = {'c':val_, 'vmin': min_val, 'vmax': max_val,
-              'cmap': style[0], 'marker':style[1], 's':style[2],
-              'alpha': alpha}
+    kwargs = {
+        'c': val_,
+        'vmin': min_val,
+        'vmax': max_val,
+        'cmap': style[0],
+        'marker': style[1],
+        's': style[2],
+        'alpha': alpha
+    }
     if is_3D_mode:
       _ = ax.scatter(x_, y_, z_, **kwargs)
     else:
@@ -1017,11 +1204,13 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
       legend_name.append(name)
     # colorbar
     if colorbar and idx == 0:
-      cba = plt.colorbar(_, shrink=0.99, pad=0.01,
-        orientation='horizontal' if colorbar_horizontal else 'vertical')
+      cba = plt.colorbar(
+          _,
+          shrink=0.99,
+          pad=0.01,
+          orientation='horizontal' if colorbar_horizontal else 'vertical')
       if colorbar_ticks is not None:
-        cba.set_ticks(np.linspace(min_val, max_val,
-                      num=len(colorbar_ticks)))
+        cba.set_ticks(np.linspace(min_val, max_val, num=len(colorbar_ticks)))
         cba.set_ticklabels(colorbar_ticks)
       else:
         cba.set_ticks(np.linspace(min_val, max_val, num=8 - 1))
@@ -1030,11 +1219,18 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
       #   cba.set_label(name, fontsize=fontsize)
   # ====== plot the legend ====== #
   if len(legend_name) > 0 and bool(legend_enable):
-    legend = ax.legend(axes, legend_name, markerscale=1.5,
-      scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
-      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
-      columnspacing=float(legend_colspace), labelspacing=0.,
-      fontsize=fontsize, handletextpad=0.1)
+    legend = ax.legend(axes,
+                       legend_name,
+                       markerscale=1.5,
+                       scatterpoints=1,
+                       scatteryoffsets=[0.375, 0.5, 0.3125],
+                       loc=legend_loc,
+                       bbox_to_anchor=(0.5, -0.01),
+                       ncol=int(legend_ncol),
+                       columnspacing=float(legend_colspace),
+                       labelspacing=0.,
+                       fontsize=fontsize,
+                       handletextpad=0.1)
   # if len(legend_name) > 0:
   #   legends = ax.legend([i[1] for i in legends], [i[0] for i in legends],
   #     markerscale=1.5, scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
@@ -1057,16 +1253,30 @@ def plot_scatter_heatmap(x, val, y=None, z=None, ax=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-def plot_scatter(x, y=None, z=None,
-                 color='b', marker='.', size=4.0, alpha=1,
-                 linewidths=None, linestyle='-',
-                 facecolors=None, edgecolors=None,
-                 elev=None, azim=None,
-                 ticks_off=True, grid=True,
+
+def plot_scatter(x,
+                 y=None,
+                 z=None,
+                 color='b',
+                 marker='.',
+                 size=4.0,
+                 alpha=1,
+                 linewidths=None,
+                 linestyle='-',
+                 facecolors=None,
+                 edgecolors=None,
+                 elev=None,
+                 azim=None,
+                 ticks_off=True,
+                 grid=True,
                  legend_enable=True,
-                 legend_loc='upper center', legend_ncol=3, legend_colspace=0.4,
-                 n_samples=None, fontsize=8,
-                 ax=None, title=None):
+                 legend_loc='upper center',
+                 legend_ncol=3,
+                 legend_colspace=0.4,
+                 n_samples=None,
+                 fontsize=8,
+                 ax=None,
+                 title=None):
   ''' Plot the amplitude envelope of a waveform.
 
   Parameters
@@ -1147,16 +1357,27 @@ def plot_scatter(x, y=None, z=None,
           z_.append(z[i])
     # plotting
     if is_3D_mode:
-      _ = ax.scatter(x_, y_, z_,
-                     color=style[0], marker=style[1], s=style[2],
-                     alpha=alpha, linewidths=linewidths,
-                     edgecolors=edgecolors, facecolors=facecolors,
+      _ = ax.scatter(x_,
+                     y_,
+                     z_,
+                     color=style[0],
+                     marker=style[1],
+                     s=style[2],
+                     alpha=alpha,
+                     linewidths=linewidths,
+                     edgecolors=edgecolors,
+                     facecolors=facecolors,
                      linestyle=linestyle)
     else:
-      _ = ax.scatter(x_, y_,
-                     color=style[0], marker=style[1], s=style[2],
-                     alpha=alpha, linewidths=linewidths,
-                     edgecolors=edgecolors, facecolors=facecolors,
+      _ = ax.scatter(x_,
+                     y_,
+                     color=style[0],
+                     marker=style[1],
+                     s=style[2],
+                     alpha=alpha,
+                     linewidths=linewidths,
+                     edgecolors=edgecolors,
+                     facecolors=facecolors,
                      linestyle=linestyle)
     axes.append(_)
     # make the shortest name
@@ -1170,11 +1391,18 @@ def plot_scatter(x, y=None, z=None,
       legend_name.append(', '.join(name))
   # ====== plot the legend ====== #
   if len(legend_name) > 0 and bool(legend_enable):
-    legend = ax.legend(axes, legend_name, markerscale=1.5,
-      scatterpoints=1, scatteryoffsets=[0.375, 0.5, 0.3125],
-      loc=legend_loc, bbox_to_anchor=(0.5, -0.01), ncol=int(legend_ncol),
-      columnspacing=float(legend_colspace), labelspacing=0.,
-      fontsize=fontsize, handletextpad=0.1)
+    legend = ax.legend(axes,
+                       legend_name,
+                       markerscale=1.5,
+                       scatterpoints=1,
+                       scatteryoffsets=[0.375, 0.5, 0.3125],
+                       loc=legend_loc,
+                       bbox_to_anchor=(0.5, -0.01),
+                       ncol=int(legend_ncol),
+                       columnspacing=float(legend_colspace),
+                       labelspacing=0.,
+                       fontsize=fontsize,
+                       handletextpad=0.1)
   # ====== some configuration ====== #
   if ticks_off:
     ax.set_xticklabels([])
@@ -1189,9 +1417,16 @@ def plot_scatter(x, y=None, z=None,
                  azim=ax.azim if azim is None else azim)
   return ax
 
-def plot_text_scatter(X, text, ax=None,
-                      font_weight='bold', font_size=8, font_alpha=0.8,
-                      elev=None, azim=None, title=None):
+
+def plot_text_scatter(X,
+                      text,
+                      ax=None,
+                      font_weight='bold',
+                      font_size=8,
+                      font_alpha=0.8,
+                      elev=None,
+                      azim=None,
+                      title=None):
   """
   Parameters
   ----------
@@ -1231,16 +1466,20 @@ def plot_text_scatter(X, text, ax=None,
   text = [str(i) for i in text]
   labels = sorted(set(text))
   # ====== start plotting ====== #
-  font_dict = {'weight': font_weight,
-               'size': font_size,
-               'alpha':font_alpha}
+  font_dict = {'weight': font_weight, 'size': font_size, 'alpha': font_alpha}
   for x, t in zip(X, text):
     if is_3D:
-      plt.gca().text(x[0], x[1], x[2], t,
-                     color=plt.cm.tab20((labels.index(t) + 1) / float(len(labels))),
+      plt.gca().text(x[0],
+                     x[1],
+                     x[2],
+                     t,
+                     color=plt.cm.tab20(
+                         (labels.index(t) + 1) / float(len(labels))),
                      fontdict=font_dict)
     else:
-      plt.text(x[0], x[1], t,
+      plt.text(x[0],
+               x[1],
+               t,
                color=plt.cm.tab20((labels.index(t) + 1) / float(len(labels))),
                fontdict=font_dict)
   # ====== minor adjustment ====== #
@@ -1251,6 +1490,7 @@ def plot_text_scatter(X, text, ax=None,
   if title is not None:
     ax.set_title(title, fontsize=font_size + 2, weight='semibold')
   return ax
+
 
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
@@ -1263,6 +1503,7 @@ def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   else:
     ax.plot(x, y, c=color, lw=lw, **kwargs)
   return ax
+
 
 def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
   """ Plot an ellipse in 2-D
@@ -1277,18 +1518,18 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
   assert sigma.shape == (2, 2), "sigma must be matrix of shape (2, 2)"
   if ax is None:
     ax = plt.gca()
-  covariances = sigma ** 2
+  covariances = sigma**2
   # ====== create the ellipses ====== #
   v, w = np.linalg.eigh(covariances)
   u = w[0] / np.linalg.norm(w[0])
   angle = np.arctan2(u[1], u[0])
   angle = 180 * angle / np.pi  # convert to degrees
   v = 2. * np.sqrt(2.) * np.sqrt(v)
-  ell = mpl.patches.Ellipse(mean, v[0], v[1], 180 + angle,
-                            color=color)
+  ell = mpl.patches.Ellipse(mean, v[0], v[1], 180 + angle, color=color)
   ell.set_clip_box(ax.bbox)
   ell.set_alpha(alpha)
   ax.add_artist(ell)
+
 
 def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
   from matplotlib import pyplot as plt
@@ -1297,12 +1538,15 @@ def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
 
   x = range(idx.shape[0]) if x is None else x
   for i, j in zip(idx, x):
-    if i: ax.axvline(x=j, ymin=ymin, ymax=ymax,
-                     color='r', linewidth=1, alpha=alpha)
+    if i:
+      ax.axvline(x=j, ymin=ymin, ymax=ymax, color='r', linewidth=1, alpha=alpha)
   return ax
 
 
-def plot_multiple_features(features, order=None, title=None, fig_width=4,
+def plot_multiple_features(features,
+                           order=None,
+                           title=None,
+                           fig_width=4,
                            sharex=False):
   """ Plot a series of 1D and 2D in the same scale for comparison
 
@@ -1324,24 +1568,54 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
   known_order = [
       # For audio processing
       'raw',
-      'stft_energy', 'stft_energy_d1', 'stft_energy_d2',
-      'frames_energy', 'frames_energy_d1', 'frames_energy_d2',
-      'energy', 'energy_d1', 'energy_d2',
+      'stft_energy',
+      'stft_energy_d1',
+      'stft_energy_d2',
+      'frames_energy',
+      'frames_energy_d1',
+      'frames_energy_d2',
+      'energy',
+      'energy_d1',
+      'energy_d2',
       'vad',
       'sad',
-      'sap', 'sap_d1', 'sap_d2',
-      'pitch', 'pitch_d1', 'pitch_d2',
-      'loudness', 'loudness_d1', 'loudness_d2',
-      'f0', 'f0_d1', 'f0_d2',
-      'spec', 'spec_d1', 'spec_d2',
-      'mspec', 'mspec_d1', 'mspec_d2',
-      'mfcc', 'mfcc_d1', 'mfcc_d2',
+      'sap',
+      'sap_d1',
+      'sap_d2',
+      'pitch',
+      'pitch_d1',
+      'pitch_d2',
+      'loudness',
+      'loudness_d1',
+      'loudness_d2',
+      'f0',
+      'f0_d1',
+      'f0_d2',
+      'spec',
+      'spec_d1',
+      'spec_d2',
+      'mspec',
+      'mspec_d1',
+      'mspec_d2',
+      'mfcc',
+      'mfcc_d1',
+      'mfcc_d2',
       'sdc',
-      'qspec', 'qspec_d1', 'qspec_d2',
-      'qmspec', 'qmspec_d1', 'qmspec_d2',
-      'qmfcc', 'qmfcc_d1', 'qmfcc_d2',
-      'bnf', 'bnf_d1', 'bnf_d2',
-      'ivec', 'ivec_d1', 'ivec_d2',
+      'qspec',
+      'qspec_d1',
+      'qspec_d2',
+      'qmspec',
+      'qmspec_d1',
+      'qmspec_d2',
+      'qmfcc',
+      'qmfcc_d1',
+      'qmfcc_d2',
+      'bnf',
+      'bnf_d1',
+      'bnf_d2',
+      'ivec',
+      'ivec_d1',
+      'ivec_d2',
       # For image processing
       # For video processing
   ]
@@ -1358,8 +1632,8 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
     if isinstance(features, OrderedDict):
       order = features.keys()
     else:
-      keys = sorted(features.keys() if isinstance(features, Mapping) else
-                    [k for k, v in features])
+      keys = sorted(features.keys(
+      ) if isinstance(features, Mapping) else [k for k, v in features])
       order = []
       for name in known_order:
         if name in keys:
@@ -1371,8 +1645,7 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
   # ====== get all numpy array ====== #
   features = [(name, features[name])
               for name in order
-              if name in features and
-              isinstance(features[name], np.ndarray) and
+              if name in features and isinstance(features[name], np.ndarray) and
               features[name].ndim <= 4]
   plt.figure(figsize=(int(fig_width), len(features)))
   for i, (name, X) in enumerate(features):
@@ -1386,7 +1659,7 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
       plt.plot(X)
       plt.xlim(0, len(X))
       plt.ylabel(name, fontsize=6)
-    elif X.ndim == 2: # transpose to frequency x time
+    elif X.ndim == 2:  # transpose to frequency x time
       plot_spectrogram(X.T, title=name)
     elif X.ndim == 3:
       plt.imshow(X)
@@ -1400,16 +1673,21 @@ def plot_multiple_features(features, order=None, title=None, fig_width=4,
     # plt.axis('off')
     plt.xticks(())
     # plt.yticks(())
-    plt.tick_params(axis='y', size=6, labelsize=4, color='r', pad=0,
-                    length=2)
+    plt.tick_params(axis='y', size=6, labelsize=4, color='r', pad=0, length=2)
     # add title to the first subplot
     if i == 0 and title is not None:
       plt.title(str(title), fontsize=8)
     if sharex:
       plt.subplots_adjust(hspace=0)
 
-def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
-                     linewidth=0.5, vmin='auto', vmax='auto',
+
+def plot_spectrogram(x,
+                     vad=None,
+                     ax=None,
+                     colorbar=False,
+                     linewidth=0.5,
+                     vmin='auto',
+                     vmax='auto',
                      title=None):
   ''' Plotting spectrogram
 
@@ -1467,14 +1745,24 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
   # ax.axis('off')
   if title is not None:
     ax.set_ylabel(str(title) + '-' + str(x.shape), fontsize=6)
-  img = ax.imshow(x, cmap=colormap, interpolation='kaiser', alpha=0.9,
-                  vmin=vmin, vmax=vmax, origin='lower')
+  img = ax.imshow(x,
+                  cmap=colormap,
+                  interpolation='kaiser',
+                  alpha=0.9,
+                  vmin=vmin,
+                  vmax=vmax,
+                  origin='lower')
   # img = ax.pcolorfast(x, cmap=colormap, alpha=0.9)
   # ====== draw vad vertical line ====== #
   if vad is not None:
     for i, j in enumerate(vad):
-      if j: ax.axvline(x=i, ymin=0, ymax=1, color='r', linewidth=linewidth,
-                       alpha=0.3)
+      if j:
+        ax.axvline(x=i,
+                   ymin=0,
+                   ymax=1,
+                   color='r',
+                   linewidth=linewidth,
+                   alpha=0.3)
   # plt.grid(True)
   if colorbar == 'all':
     fig = ax.get_figure()
@@ -1484,8 +1772,8 @@ def plot_spectrogram(x, vad=None, ax=None, colorbar=False,
     plt.colorbar(img, ax=ax)
   return ax
 
-def plot_images(X, tile_shape=None, tile_spacing=None,
-                fig=None, title=None):
+
+def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
   '''
   Parameters
   ----------
@@ -1522,6 +1810,7 @@ def plot_images(X, tile_shape=None, tile_spacing=None,
 
   fig.tight_layout()
   return fig
+
 
 def plot_images_old(x, fig=None, titles=None, show=False):
   '''
@@ -1572,7 +1861,11 @@ def plot_images_old(x, fig=None, titles=None, show=False):
     return fig
 
 
-def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
+def plot_Cnorm(cnorm,
+               labels,
+               Ptrue=[0.1, 0.5],
+               ax=None,
+               title=None,
                fontsize=12):
   from matplotlib import pyplot as plt
   cmap = plt.cm.Blues
@@ -1581,9 +1874,9 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
     Ptrue = (Ptrue,)
   Ptrue = [float(i) for i in Ptrue]
   if len(Ptrue) != cnorm.shape[0]:
-    raise ValueError("`Cnorm` was calculated for %d Ptrue values, but given only "
-                     "%d values for `Ptrue`: %s" %
-                     (cnorm.shape[0], len(Ptrue), str(Ptrue)))
+    raise ValueError(
+        "`Cnorm` was calculated for %d Ptrue values, but given only "
+        "%d values for `Ptrue`: %s" % (cnorm.shape[0], len(Ptrue), str(Ptrue)))
   ax = to_axis(ax, is_3D=False)
   ax.imshow(cnorm, interpolation='nearest', cmap=cmap)
   # axis.get_figure().colorbar(im)
@@ -1594,14 +1887,17 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
   ax.set_ylabel('Ptrue', fontsize=fontsize)
   ax.set_xlabel('Predicted label', fontsize=fontsize)
   # center text for value of each grid
-  for i, j in itertools.product(range(len(Ptrue)),
-                                range(len(labels))):
+  for i, j in itertools.product(range(len(Ptrue)), range(len(labels))):
     color = 'red'
     weight = 'normal'
     fs = fontsize
     text = '%.2f' % cnorm[i, j]
-    plt.text(j, i, text,
-             weight=weight, color=color, fontsize=fs,
+    plt.text(j,
+             i,
+             text,
+             weight=weight,
+             color=color,
+             fontsize=fs,
              verticalalignment="center",
              horizontalalignment="center")
   # Turns off grid on the left Axis.
@@ -1612,7 +1908,12 @@ def plot_Cnorm(cnorm, labels, Ptrue=[0.1, 0.5], ax=None, title=None,
   # axis.tight_layout()
   return ax
 
-def plot_confusion_matrix(cm, labels=None, ax=None, fontsize=12, colorbar=False,
+
+def plot_confusion_matrix(cm,
+                          labels=None,
+                          ax=None,
+                          fontsize=12,
+                          colorbar=False,
                           title=None):
   # TODO: new style for confusion matrix (using small and big dot)
   from matplotlib import pyplot as plt
@@ -1645,27 +1946,31 @@ def plot_confusion_matrix(cm, labels=None, ax=None, fontsize=12, colorbar=False,
   ax.set_ylabel('True label', fontsize=fontsize)
   ax.set_xlabel('Predicted label', fontsize=fontsize)
   # center text for value of each grid
-  worst_index = {i: np.argmax([val if j != i else -1
-                               for j, val in enumerate(row)])
-                 for i, row in enumerate(cm)}
-  for i, j in itertools.product(range(nb_classes),
-                                range(nb_classes)):
+  worst_index = {
+      i: np.argmax([val if j != i else -1 for j, val in enumerate(row)
+                   ]) for i, row in enumerate(cm)
+  }
+  for i, j in itertools.product(range(nb_classes), range(nb_classes)):
     color = 'black'
     weight = 'normal'
     fs = fontsize
     text = '%.2f' % cm[i, j]
-    if i == j: # diagonal
+    if i == j:  # diagonal
       color = 'magenta'
       # color = "darkgreen" if cm[i, j] <= 0.8 else 'forestgreen'
       weight = 'bold'
       fs = fontsize
       text = '%.2f\nF1:%.2f' % (cm[i, j], F1[i])
-    elif j == worst_index[i]: # worst mis-classified
+    elif j == worst_index[i]:  # worst mis-classified
       color = 'red'
       weight = 'semibold'
       fs = fontsize
-    plt.text(j, i, text,
-             weight=weight, color=color, fontsize=fs,
+    plt.text(j,
+             i,
+             text,
+             weight=weight,
+             color=color,
+             fontsize=fs,
              verticalalignment="center",
              horizontalalignment="center")
   # Turns off grid on the left Axis.
@@ -1685,7 +1990,9 @@ def plot_confusion_matrix(cm, labels=None, ax=None, fontsize=12, colorbar=False,
   # axis.tight_layout()
   return ax
 
-def plot_weights(x, ax=None, colormap = "Greys", colorbar=False, keep_aspect=True):
+
+def plot_weights(x, ax=None, colormap="Greys", colorbar=False,
+                 keep_aspect=True):
   '''
   Parameters
   ----------
@@ -1752,7 +2059,8 @@ def plot_weights(x, ax=None, colormap = "Greys", colorbar=False, keep_aspect=Tru
     plt.colorbar(img, ax=ax)
   return ax
 
-def plot_weights3D(x, colormap = "Greys"):
+
+def plot_weights3D(x, colormap="Greys"):
   '''
   Example
   -------
@@ -1802,7 +2110,8 @@ def plot_weights3D(x, colormap = "Greys"):
   fig.colorbar(img, ax=axes)
   return fig
 
-def plot_weights4D(x, colormap = "Greys"):
+
+def plot_weights4D(x, colormap="Greys"):
   '''
   Example
   -------
@@ -1849,6 +2158,7 @@ def plot_weights4D(x, colormap = "Greys"):
   fig.colorbar(img, ax=axes)
   return fig
 
+
 def plot_hinton(matrix, max_weight=None, ax=None):
   '''
   Hinton diagrams are useful for visualizing the values of a 2D array (e.g.
@@ -1862,7 +2172,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
       hinton_plot(W)
   '''
   from matplotlib import pyplot as plt
-
   """Draw Hinton diagram for visualizing a weight matrix."""
   ax = ax if ax is not None else plt.gca()
 
@@ -1877,13 +2186,17 @@ def plot_hinton(matrix, max_weight=None, ax=None):
   for (x, y), w in np.ndenumerate(matrix):
     color = 'white' if w > 0 else 'black'
     size = np.sqrt(np.abs(w))
-    rect = plt.Rectangle([x - size / 2, y - size / 2], size, size,
-                         facecolor=color, edgecolor=color)
+    rect = plt.Rectangle([x - size / 2, y - size / 2],
+                         size,
+                         size,
+                         facecolor=color,
+                         edgecolor=color)
     ax.add_patch(rect)
 
   ax.autoscale_view()
   ax.invert_yaxis()
   return ax
+
 
 # ===========================================================================
 # Helper methods
@@ -1893,7 +2206,7 @@ def plot_show(block=True, tight_layout=False):
   if tight_layout:
     plt.tight_layout()
   plt.show(block=block)
-  if not block: # manually block
+  if not block:  # manually block
     input('<enter> to close all plots')
   plt.close('all')
 
@@ -1946,15 +2259,26 @@ def _ppndf(cum_prob):
   R[tailindexes] = cum_prob[tailindexes]
   R[tailindexes[right]] = 1 - cum_prob[tailindexes[right]]
   R[tailindexes] = np.sqrt((-1.0) * np.log(R[tailindexes]))
-  norm_dev[tailindexes] = (((C3 * R[tailindexes] + C2) * R[tailindexes] + C1) * R[tailindexes] + C0)
-  norm_dev[tailindexes] = norm_dev[tailindexes] / ((D2 * R[tailindexes] + D1) * R[tailindexes] + 1.0)
+  norm_dev[tailindexes] = ((
+      (C3 * R[tailindexes] + C2) * R[tailindexes] + C1) * R[tailindexes] + C0)
+  norm_dev[tailindexes] = norm_dev[tailindexes] / (
+      (D2 * R[tailindexes] + D1) * R[tailindexes] + 1.0)
   # swap sign on left tail
   norm_dev[tailindexes[left]] = norm_dev[tailindexes[left]] * -1.0
   return norm_dev
 
-def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
-                         ax=None, labels=None, legend=True,
-                         title=None, linewidth=1.2, pointsize=8.0):
+
+def plot_detection_curve(x,
+                         y,
+                         curve,
+                         xlims=None,
+                         ylims=None,
+                         ax=None,
+                         labels=None,
+                         legend=True,
+                         title=None,
+                         linewidth=1.2,
+                         pointsize=8.0):
   """
   Parameters
   ----------
@@ -1988,8 +2312,9 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   if not isinstance(y, (tuple, list)):
     y = (y,)
   if len(x) != len(y):
-    raise ValueError("Given %d series for `x`, but only get %d series for `y`."
-                     % (len(x), len(y)))
+    raise ValueError(
+        "Given %d series for `x`, but only get %d series for `y`." %
+        (len(x), len(y)))
   if not isinstance(labels, (tuple, list)):
     labels = (labels,)
   labels = as_tuple(labels, N=len(x))
@@ -2014,24 +2339,32 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     # 0.00001, 0.00002,
     # , 0.99995, 0.99998, 0.99999
     xticks = np.array([
-        0.00005, 0.0001, 0.0002, 0.0005,
-        0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
-        0.1, 0.2, 0.4, 0.6, 0.8, 0.9,
-        0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
-        0.9995, 0.9998, 0.9999])
-    xticklabels = [str(i)[:-2] if '.0' == str(i)[-2:]
-               else (str(i) if i > 99.99 else str(i))
-               for i in xticks * 100]
+        0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
+        0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
+        0.9995, 0.9998, 0.9999
+    ])
+    xticklabels = [
+        str(i)[:-2] if '.0' == str(i)[-2:] else
+        (str(i) if i > 99.99 else str(i)) for i in xticks * 100
+    ]
     if xlims is None:
-      xlims = (max(min(np.min(i) for i in x), xticks[0]),
-               min(max(np.max(i) for i in x), xticks[-1]))
-    xlims = ([val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] + eps,
-             [val for i, val in enumerate(xticks) if val >= xlims[1] or i == len(xticks) - 1][0] - eps)
+      xlims = (max(min(np.min(i) for i in x),
+                   xticks[0]), min(max(np.max(i) for i in x), xticks[-1]))
+    xlims = (
+        [val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] +
+        eps, [
+            val for i, val in enumerate(xticks)
+            if val >= xlims[1] or i == len(xticks) - 1
+        ][0] - eps)
     if ylims is None:
-      ylims = (max(min(np.min(i) for i in y), xticks[0]),
-               min(max(np.max(i) for i in y), xticks[-1]))
-    ylims = ([val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] + eps,
-             [val for i, val in enumerate(xticks) if val >= ylims[1] or i == len(xticks) - 1][0] - eps)
+      ylims = (max(min(np.min(i) for i in y),
+                   xticks[0]), min(max(np.max(i) for i in y), xticks[-1]))
+    ylims = (
+        [val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] +
+        eps, [
+            val for i, val in enumerate(xticks)
+            if val >= ylims[1] or i == len(xticks) - 1
+        ][0] - eps)
     # convert to log scale
     xticks = _ppndf(xticks)
     yticks, yticklabels = xticks, xticklabels
@@ -2048,15 +2381,16 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
       dcf, Pfa_opt, Pmiss_opt = K.metrics.compute_minDCF(Pfa=Pfa, Pmiss=Pmiss)
       Pfa_opt = _ppndf((Pfa_opt,))
       Pmiss_opt = _ppndf((Pmiss_opt,))
-      points.append(((Pfa_opt, Pmiss_opt),
-                     {'s': pointsize}))
+      points.append(((Pfa_opt, Pmiss_opt), {'s': pointsize}))
       # det curve
       Pfa = _ppndf(Pfa)
       Pmiss = _ppndf(Pmiss)
       name = name_fmt(name, eer, dcf)
-      lines.append(((Pfa, Pmiss),
-                    {'lw': linewidth, 'label': name,
-                     'linestyle': '-' if count % 2 == 0 else '-.'}))
+      lines.append(((Pfa, Pmiss), {
+          'lw': linewidth,
+          'label': name,
+          'linestyle': '-' if count % 2 == 0 else '-.'
+      }))
       labels_new.append(name)
     labels = labels_new
   # ====== select ROC curve style ====== #
@@ -2072,14 +2406,19 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
     for count, (i, j, name) in enumerate(zip(x, y, labels)):
       auc = K.metrics.compute_AUC(i, j)
       name = name_fmt(name, auc)
-      lines.append([(i, j),
-                    {'lw': linewidth, 'label': name,
-                     'linestyle': '-' if count % 2 == 0 else '-.'}])
+      lines.append([(i, j), {
+          'lw': linewidth,
+          'label': name,
+          'linestyle': '-' if count % 2 == 0 else '-.'
+      }])
       labels_new.append(name)
     labels = labels_new
     # diagonal
-    lines.append([(xlims, ylims),
-                  {'lw': 0.8, 'linestyle': '-.', 'color': 'black'}])
+    lines.append([(xlims, ylims), {
+        'lw': 0.8,
+        'linestyle': '-.',
+        'color': 'black'
+    }])
   # ====== select ROC curve style ====== #
   elif curve == 'prc':
     raise NotImplementedError
@@ -2113,12 +2452,17 @@ def plot_detection_curve(x, y, curve, xlims=None, ylims=None,
   if legend and any(i is not None for i in labels):
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
+
 # ===========================================================================
 # Micro-control
 # ===========================================================================
-def plot_colorbar(colormap, vmin=0, vmax=1,
-                  ax=None, orientation='vertical',
-                  tick_location=None, tick_labels=None,
+def plot_colorbar(colormap,
+                  vmin=0,
+                  vmax=1,
+                  ax=None,
+                  orientation='vertical',
+                  tick_location=None,
+                  tick_labels=None,
                   label=None):
   """
 
@@ -2151,16 +2495,19 @@ def plot_colorbar(colormap, vmin=0, vmax=1,
       cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     else:
       cbar_ax = fig.add_axes([0.15, 0.92, 0.7, 0.02])
-    cb1 = mpl.colorbar.ColorbarBase(cbar_ax, cmap=cmap,
+    cb1 = mpl.colorbar.ColorbarBase(cbar_ax,
+                                    cmap=cmap,
                                     norm=norm,
                                     orientation=orientation)
   # ====== add colorbar for only 1 Axes ====== #
   elif isinstance(ax, mpl.axes.Axes):
     mappable = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    mappable.set_array([]) # no idea why we need this
-    cb1 = plt.colorbar(mappable, ax=ax,
+    mappable.set_array([])  # no idea why we need this
+    cb1 = plt.colorbar(mappable,
+                       ax=ax,
                        pad=0.03 if orientation == 'vertical' else 0.1,
-                       shrink=0.7, aspect=25)
+                       shrink=0.7,
+                       aspect=25)
   # ====== no idea ====== #
   else:
     raise ValueError("No support for `ax` type: %s" % str(type(ax)))
@@ -2175,6 +2522,7 @@ def plot_colorbar(colormap, vmin=0, vmax=1,
 
   return cb1
 
+
 # ===========================================================================
 # Shortcut
 # ===========================================================================
@@ -2182,8 +2530,14 @@ def plot_close():
   from matplotlib import pyplot as plt
   plt.close('all')
 
-def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
-              tight_plot=False, clear_all=True, log=False):
+
+def plot_save(path='/tmp/tmp.pdf',
+              figs=None,
+              dpi=180,
+              tight_plot=False,
+              clear_all=True,
+              log=False,
+              transparent=False):
   """
   Parameters
   ----------
@@ -2205,7 +2559,11 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
       from matplotlib.backends.backend_pdf import PdfPages
       pp = PdfPages(path)
       for fig in figs:
-        fig.savefig(pp, dpi=dpi, format='pdf', bbox_inches="tight")
+        fig.savefig(pp,
+                    dpi=dpi,
+                    transparent=transparent,
+                    format='pdf',
+                    bbox_inches="tight")
       pp.close()
     except Exception as e:
       sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
@@ -2221,8 +2579,7 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
         out_path = path + ('.%d.' % idx) + ext
       else:
         out_path = path + '.' + ext
-      fig.savefig(out_path, **kwargs)
-
+      fig.savefig(out_path, transparent=transparent, **kwargs)
       saved_path.append(out_path)
   # ====== clean ====== #
   if log:
@@ -2230,7 +2587,12 @@ def plot_save(path='/tmp/tmp.pdf', figs=None, dpi=180,
   if clear_all:
     plt.close('all')
 
-def plot_save_show(path, figs=None, dpi=180, tight_plot=False,
-                   clear_all=True, log=True):
+
+def plot_save_show(path,
+                   figs=None,
+                   dpi=180,
+                   tight_plot=False,
+                   clear_all=True,
+                   log=True):
   plot_save(path, figs, dpi, tight_plot, clear_all, log)
   os.system('open -a /Applications/Preview.app %s' % path)

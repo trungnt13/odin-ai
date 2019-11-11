@@ -154,8 +154,10 @@ class Attention(keras.Model):
           use_bias=self.heads_bias,
           activation=self.heads_activation)
       # init default object
-      self._mechanism = Inter | PosGlobal | AlignSoft | ScoreLocative
+      self._mechanism = Inter | PosGlobal | AlignSoft | ScoreLocation
+      # query projection for location-based scoring method
       self.location_proj = None
+      # target projection use in Local Predictive attention
       self.target_proj = None
       #
       self._local_init()
@@ -183,6 +185,8 @@ class Attention(keras.Model):
   def call(self, inputs, mask=None, training=None, return_attention=False):
     if not isinstance(inputs, (tuple, list)):
       inputs = [inputs]
+    if len(inputs) == 2:
+      inputs = (inputs[0], None, inputs[1])
     with bk.framework_(self):
       q, k, v, q_mask, v_mask = self._mechanism.prepare(*inputs, mask=mask)
       assert self.input_dim == q.shape[-1], \
@@ -223,17 +227,31 @@ class Attention(keras.Model):
 # Attention classes
 # ===========================================================================
 class SelfAttention(Attention):
+  r""" Self(Intra)-sequence attention using global positioning and
+  locative scoring method by default """
 
   def _local_init(self):
     self._mechanism |= Intra
     # self attention only support global positioning
     self._mechanism |= PosGlobal
-    self._mechanism |= ScoreLocative
+    self._mechanism |= ScoreLocation
     # use for location-base attention (when key and value are not provided)
     self.location_proj = bk.nn.Dense(1, activation='linear', use_bias=True)
 
 
+class GlobalAttention(Attention):
+  r""" Inter-sequence global attention using dot-product scoring method
+  by default """
+
+  def _local_init(self):
+    self._mechanism |= Inter
+    self._mechanism |= PosGlobal
+    self._mechanism |= ScoreDotProd
+
+
 class LocalPredictiveAttention(Attention):
+  r""" Inter-sequence local predictive attention using dot-product scoring
+  method by default """
 
   def _local_init(self):
     self._mechanism |= Inter

@@ -5,6 +5,15 @@
 #  * Using more odin.backend function to make it easier transfer between
 #     tensorflow and pytorch
 #
+# Some suggestion for designing attention-based model:
+# * Attention First, Feedforward Later (the sandwich design) is suggested in
+#   (Press et al. 2019), more attention layers at the bottom, and more
+#   feed-forward layer at the end.
+# * Balancing the number of self-attention and feedforward sublayers appears
+#   to be a desirable property
+# * Use scale `1/sqrt(dim)` for dot-product attention (Vaswani et al. 2017).
+# *
+#
 # References:
 #   Bahdanau, D., et al., 2014. Neural Machine Translation by Jointly Learning
 #     to Align and Translate. arXiv:1409.0473 [cs, stat].
@@ -27,6 +36,9 @@
 #   Park, K., 2019. github.com/Kyubyong/transformer
 #   Alexander H. Liu, 2019. github.com/Alexander-H-Liu/End-to-end-ASR-Pytorch
 #   Macar O.U., 2019. https://github.com/uzaymacar/attention-mechanisms
+#   Press, O., Smith, N.A., Levy, O., n.d. 2019. Improving Transformer Models by
+#     Reordering their Sublayers 8.
+
 from __future__ import absolute_import, division, print_function
 
 import warnings
@@ -121,7 +133,7 @@ class AttentionMechanism(IntFlag):
     - `AlignHard`:
 
   The score function in which the attention logits are calculated:
-    - `ScoreLocative`:
+    - `ScoreLocation`:
     - `ScoreAdditive`:
     - `ScoreDotProd`:
     - `ScoreCosine`:
@@ -130,7 +142,7 @@ class AttentionMechanism(IntFlag):
   Since many studies try to group attention algorithm into categories, we take
   a more flexbile approach that allow a random path passing through each stage
   to create the final algorithm, e.g.
-    - `Intra` to `PosGlobal` to `AlignSoft` to `ScoreLocative`
+    - `Intra` to `PosGlobal` to `AlignSoft` to `ScoreLocation`
     - `Inter` to `PosGlobal` to `AlignHard` to `ScoreConcat`
   and so on.
 
@@ -150,7 +162,7 @@ class AttentionMechanism(IntFlag):
   AlignHard = enum_auto()
   AlignRelax = enum_auto()
   # ====== alignment score function ====== #
-  ScoreLocative = enum_auto()
+  ScoreLocation = enum_auto()
   ScoreAdditive = enum_auto()
   ScoreDotProd = enum_auto()
   ScoreCosine = enum_auto()
@@ -215,12 +227,13 @@ class AttentionMechanism(IntFlag):
       query: Query (or target sequence) tensor of shape `[batch_size, Tq, dim]`.
       key: Key (or source sequence) tensor of shape `[batch_size, Tv, dim]`.
       value: Value (or source sequence) tensor of shape `[batch_size, Tv, dim]`.
-      query_mask: A boolean mask `Tensor` of shape `[batch_size, Tq]`.
-        If given, the output will be zero at the positions where
-        `mask==False`.
-      value_mask: A boolean mask `Tensor` of shape `[batch_size, Tv]`.
-        If given, will apply the mask such that values at positions where
-        `mask==False` do not contribute to the result.
+      mask: list of the following
+        * query_mask: A boolean mask `Tensor` of shape `[batch_size, Tq]`.
+            If given, the output will be zero at the positions where
+            `mask==False`.
+        * value_mask: A boolean mask `Tensor` of shape `[batch_size, Tv]`.
+            If given, will apply the mask such that values at positions where
+            `mask==False` do not contribute to the result.
     """
     # by default, if key is not provide, using value
     query = bk.array(query, ignore_none=True)
@@ -241,9 +254,8 @@ class AttentionMechanism(IntFlag):
     else:
       if key is None:
         key = value
-      elif value is None:  # value must always provided
-        raise RuntimeError("value is None but key is not None, value must be "
-                           "provided and key is optional.")
+      if value is None:  # value must always provided
+        raise RuntimeError("value must be given of inter-sequences attention.")
     # ====== masks ====== #
     if self.is_self_attention:  # only 1 mask is need
       if isinstance(mask, (tuple, list)):
@@ -310,7 +322,7 @@ class AttentionMechanism(IntFlag):
         Can be given as a fixed number of frames (`int`), or percentage of
         the sequence length (`float`). If `None`, use `Tq`
       q_proj : `Dense`, instance of dense or fully connected layer
-        - for `ScoreLocative`, the number of hidden unit is `1`
+        - for `ScoreLocation`, the number of hidden unit is `1`
         - for `ScoreGeneral`, the number of hidden unit is `dim`
       target_proj : `Dense`, for predictive local attention, applying
         a fully connected network on target sequence (i.e. the query) to
@@ -319,7 +331,7 @@ class AttentionMechanism(IntFlag):
 
     Returns:
       Tensor of shape `[num_heads, batch_size, Tq, Tv]`, or
-       `[num_heads, batch_size, Tq, 1]` if `ScoreLocative`
+       `[num_heads, batch_size, Tq, 1]` if `ScoreLocation`
     """
     ### Check if multi-head attention is used
     num_heads = _get_num_heads(query)
@@ -338,10 +350,10 @@ class AttentionMechanism(IntFlag):
       window_width = window_width * Tv
     window_width = int(window_width)
     ### Locative attention
-    if AttentionMechanism.ScoreLocative in self:
+    if AttentionMechanism.ScoreLocation in self:
       if PosLocalM in self or PosLocalP in self:
         raise NotImplementedError(
-            "ScoreLocative only support Global attention, but given: %s" %
+            "ScoreLocation only support Global attention, but given: %s" %
             str(self))
       # [batch_size * num_heads, Tq, dim]
       scores = bk.reduce_mean(scale) * q_proj(query)
@@ -530,7 +542,7 @@ class AttentionMechanism(IntFlag):
                            axis=1 if temporal_dropout else None,
                            training=training and dropout > 0)
     # ====== applying the attention ====== #
-    if self.is_self_attention and ScoreLocative in self:
+    if self.is_self_attention and ScoreLocation in self:
       result = bk.expand_dims(bk.array(attention), axis=-1) * value  \
           if attention.shape[-1] != 1 else \
             attention * value
@@ -569,7 +581,7 @@ PosLocalP = AttentionMechanism.PosLocalP
 AlignSoft = AttentionMechanism.AlignSoft
 AlignRelax = AttentionMechanism.AlignRelax
 AlignHard = AttentionMechanism.AlignHard
-ScoreLocative = AttentionMechanism.ScoreLocative
+ScoreLocation = AttentionMechanism.ScoreLocation
 ScoreAdditive = AttentionMechanism.ScoreAdditive
 ScoreDotProd = AttentionMechanism.ScoreDotProd
 ScoreCosine = AttentionMechanism.ScoreCosine
@@ -579,5 +591,5 @@ _GROUPS = [
     (Intra, Inter), \
     (PosGlobal, PosLocalM, PosLocalP), \
     (AlignSoft, AlignHard, AlignRelax), \
-    (ScoreLocative, ScoreAdditive, ScoreDotProd, ScoreCosine, ScoreGeneral)
+    (ScoreLocation, ScoreAdditive, ScoreDotProd, ScoreCosine, ScoreGeneral)
 ]

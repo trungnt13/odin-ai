@@ -64,9 +64,12 @@ class framework_(object):
     self._framework = framework
 
   def __enter__(self):
-    return parse_framework(self._framework)
+    return self._framework
 
   def __exit__(self, *args):
+    reset_framework()
+
+  def reset(self):
     reset_framework()
 
 
@@ -418,6 +421,15 @@ def arange(start, stop=None, dtype=None, framework=None):
       start = 0
     return torch.arange(start, stop, dtype=dtype)
   return np.arange(start, stop, dtype=dtype)
+
+
+def linspace(start, stop, num=50, framework=None):
+  framework = parse_framework(framework)
+  if framework == tf:
+    return tf.linspace(start, stop, num)
+  elif framework == torch:
+    return torch.arange(start, stop, num)
+  return np.linspace(start, stop, num)
 
 
 def nonzeros(x, value):
