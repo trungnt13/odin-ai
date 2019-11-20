@@ -23,8 +23,6 @@ from itertools import chain, islice, tee
 from multiprocessing import Lock, cpu_count, current_process
 
 import numpy
-from six.moves.urllib.error import HTTPError, URLError
-from six.moves.urllib.request import urlopen
 
 from odin.utils import crypto, decorators, mpi
 from odin.utils.cache_utils import *
@@ -926,37 +924,6 @@ def flatten_list(x, level=None):
 # ===========================================================================
 # Online
 # ===========================================================================
-# Under Python 2, 'urlretrieve' relies on FancyURLopener from legacy
-# urllib module, known to have issues with proxy management
-if sys.version_info[0] == 2:
-
-  def urlretrieve(url, filename, reporthook=None, data=None):
-    '''
-    This function is adpated from: https://github.com/fchollet/keras
-    Original work Copyright (c) 2014-2015 keras contributors
-    '''
-
-    def chunk_read(response, chunk_size=8192, reporthook=None):
-      total_size = response.info().get('Content-Length').strip()
-      total_size = int(total_size)
-      count = 0
-      while 1:
-        chunk = response.read(chunk_size)
-        if not chunk:
-          break
-        count += 1
-        if reporthook:
-          reporthook(count, chunk_size, total_size)
-        yield chunk
-
-    response = urlopen(url, data)
-    with open(filename, 'wb') as fd:
-      for chunk in chunk_read(response, reporthook=reporthook):
-        fd.write(chunk)
-else:
-  from six.moves.urllib.request import urlretrieve
-
-
 def get_file(fname, origin, outdir, verbose=False):
   '''
   Parameters
@@ -965,6 +932,8 @@ def get_file(fname, origin, outdir, verbose=False):
   origin: url, link
   outdir: path to output dir
   '''
+  from six.moves.urllib.request import urlretrieve
+  from six.moves.urllib.error import HTTPError, URLError
   fpath = os.path.join(outdir, fname)
   # ====== remove empty folder ====== #
   if os.path.exists(fpath):

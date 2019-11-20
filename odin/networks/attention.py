@@ -228,7 +228,19 @@ class Attention(keras.Model):
 # ===========================================================================
 class SelfAttention(Attention):
   r""" Self(Intra)-sequence attention using global positioning and
-  locative scoring method by default """
+  locative scoring method by default
+
+  Example:
+
+  ```python
+  att = net.SelfAttention(dim, **kw)
+  y, a = att(query, mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignHard)
+  y, a = att(query, mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignRelax)
+  y, a = att(query, mask=(q_mask, v_mask), return_attention=True)
+  ```
+  """
 
   def _local_init(self):
     self._mechanism |= Intra
@@ -241,7 +253,19 @@ class SelfAttention(Attention):
 
 class GlobalAttention(Attention):
   r""" Inter-sequence global attention using dot-product scoring method
-  by default """
+  by default
+
+  Example:
+
+  ```python
+  att = net.GlobalAttention(dim, **kw)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignHard)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignRelax)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  ```
+  """
 
   def _local_init(self):
     self._mechanism |= Inter
@@ -251,7 +275,19 @@ class GlobalAttention(Attention):
 
 class LocalPredictiveAttention(Attention):
   r""" Inter-sequence local predictive attention using dot-product scoring
-  method by default """
+  method by default
+
+  Example:
+
+  ```python
+  att = net.LocalPredictiveAttention(dim, **kw)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignHard)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  att.set_methods(alignment=net.attention_mechanism.AlignRelax)
+  y, a = att([query, value], mask=(q_mask, v_mask), return_attention=True)
+  ```
+  """
 
   def _local_init(self):
     self._mechanism |= Inter
