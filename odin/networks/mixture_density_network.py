@@ -18,6 +18,7 @@ from tensorflow_probability.python.layers.internal import \
 from tensorflow_probability.python.layers.internal import \
     tensor_tuple as tensor_tuple
 
+from odin import backend as bk
 from odin.bay.helpers import coercible_tensor
 
 __all__ = ['MixtureDensityNetwork']
@@ -26,22 +27,35 @@ _COV_TYPES = ('none', 'diag', 'full', 'tril')
 
 
 class MixtureDensityNetwork(Dense):
-  """A mixture of Gaussian Keras layer.
+  r"""A mixture of Gaussian Keras layer.
 
-  Parameters
-  ----------
-  units : `int`
-    number of output features for each component.
-  n_components : `int` (default=`2`)
-    The number of mixture components.
-  covariance_type : {'none', 'diag', 'full', 'tril'}
-    String describing the type of covariance parameters to use.
-    Must be one of:
-      'none' (each component has its own single value variance).
-      'diag' (each component has its own diagonal covariance matrix),
-      'tril' (lower triangle matrix),
-      'full' (each component has its own general covariance matrix),
+  Arguments:
+    units : `int`
+      number of output features for each component.
+    n_components : `int` (default=`2`)
+      The number of mixture components.
+    covariance_type : {'none', 'diag', 'full', 'tril'}
+      String describing the type of covariance parameters to use.
+      Must be one of:
+        'none' - each component is a collection of univariate gaussian distributions,
+        'diag' - each component has its own diagonal covariance matrix,
+        'tril' - lower triangle covariance matrix,
+        'full' - full covariance matrix.
+    dropout : a Scalar. Dropout the activation before parameterizing the
+      distributions
 
+  Attributes:
+    mixture_distribution: `tfp.distributions.Categorical`-like instance.
+      Manages the probability of selecting components. The number of
+      categories must match the rightmost batch dimension of the
+      `components_distribution`. Must have either scalar `batch_shape` or
+      `batch_shape` matching `components_distribution.batch_shape[:-1]`.
+    components_distribution: `tfp.distributions.Distribution`-like instance.
+      Right-most batch dimension indexes components, i.e.
+      `[batch_dim, component_dim, ...]`
+
+  References:
+    Bishop, C.M. (1994). Mixture density networks.
   """
 
   def __init__(self,
@@ -53,6 +67,7 @@ class MixtureDensityNetwork(Dense):
                validate_args=False,
                activation='linear',
                use_bias=True,
+               dropout=0.0,
                kernel_initializer='glorot_uniform',
                bias_initializer='zeros',
                kernel_regularizer=None,
@@ -70,6 +85,7 @@ class MixtureDensityNetwork(Dense):
     self._validate_args = bool(validate_args)
     self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
     self._softplus_scale = bool(softplus_scale)
+    self._dropout = dropout
     # We'll need to keep track of who's calling who since the functional
     # API has a different way of injecting `_keras_history` than the
     # `keras.Sequential` way.
@@ -127,9 +143,11 @@ class MixtureDensityNetwork(Dense):
 
   def call(self, inputs, *args, **kwargs):
     dense_kwargs = dict(kwargs)
-    dense_kwargs.pop('training', None)
+    training = dense_kwargs.pop('training', None)
     params = super(MixtureDensityNetwork, self).call(inputs, *args,
                                                      **dense_kwargs)
+    if self._dropout > 0:
+      params = bk.dropout(params, p_drop=self._dropout, training=training)
     n_components = tf.convert_to_tensor(value=self.n_components,
                                         name='n_components',
                                         dtype_hint=tf.int32)
@@ -225,6 +243,7 @@ class MixtureDensityNetwork(Dense):
         'validate_args': self._validate_args,
         'n_components': self._n_components,
         'softplus_scale': self._softplus_scale,
+        'dropout': self._dropout
     }
     base_config = super(MixtureDensityNetwork, self).get_config()
     base_config.update(config)

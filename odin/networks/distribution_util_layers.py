@@ -47,22 +47,21 @@ class Sampling(Layer):
   """ Sample the output from tensorflow-probability
   distribution layers """
 
-  def __init__(self, n_samples=None, **kwargs):
+  def __init__(self, n_mcmc=None, **kwargs):
     super(Sampling, self).__init__(**kwargs)
-    self.n_samples = n_samples
+    self.n_mcmc = n_mcmc
 
   def get_config(self):
     config = super(Sampling, self).get_config()
-    config['n_samples'] = self.n_samples
+    config['n_mcmc'] = self.n_mcmc
     return config
 
-  def call(self, x, n_samples=None, **kwargs):
+  def call(self, x, n_mcmc=None, **kwargs):
     if not isinstance(x, Distribution):
       return tf.expand_dims(x, axis=0)
-
-    if n_samples is None:
-      n_samples = self.n_samples
-    return x.sample() if n_samples is None else x.sample(n_samples)
+    if n_mcmc is None:
+      n_mcmc = self.n_mcmc
+    return x.sample() if n_mcmc is None else x.sample(n_mcmc)
 
 
 class Moments(Layer):

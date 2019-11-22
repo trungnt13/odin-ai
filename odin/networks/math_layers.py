@@ -3,14 +3,24 @@ from __future__ import absolute_import, division, print_function
 import inspect
 
 import tensorflow as tf
-from tensorflow.python.keras.layers import Layer
+from tensorflow import keras
 from tensorflow_probability.python.distributions import Distribution
 
-__all__ = ['Reduce']
+__all__ = ['Reduce', 'LogNorm']
 
 
-class Reduce(Layer):
-  """ ReduceMean """
+class LogNorm(keras.layers.Layer):
+
+  def call(self, x, **kwargs):
+    return tf.math.log1p(x)
+
+
+class Reduce(keras.layers.Layer):
+  r""" Customized reduction with Lambda
+  Arguments:
+    op : String. One of the following: 'mean', 'sum', 'prod', 'max', 'min',
+      'logsumexp', 'any', 'all'
+  """
 
   def __init__(self, op, axis=None, keepdims=None):
     if not callable(op):
@@ -35,7 +45,6 @@ class Reduce(Layer):
       args = inspect.getfullargspec(op)
       assert 'axis' in args and 'keepdims' in args, \
         "reduce function must has 2 arguments: 'axis' and 'keepdims'"
-
     super(Reduce, self).__init__(name=op.__name__)
     self.op = op
     self.axis = axis
@@ -48,7 +57,7 @@ class Reduce(Layer):
     config['keepdims'] = self.keepdims
     return config
 
-  def call(self, x):
+  def call(self, x, **kwargs):
     if isinstance(x, (tuple, list)):
       return [self.op(i, axis=self.axis, keepdims=self.keepdims) for i in x]
     return self.op(x, axis=self.axis, keepdims=self.keepdims)

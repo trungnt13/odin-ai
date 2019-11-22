@@ -1,6 +1,9 @@
 from __future__ import absolute_import, division, print_function
 
+import inspect
+
 import numpy as np
+from six import string_types
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import distribution_layer as tfl
 
@@ -30,7 +33,7 @@ _dist_mapping = multikeysdict({
     'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
     'deterministic': (obl.DeterministicLayer, tfd.Deterministic),
     'vdeterministic': (obl.VectorDeterministicLayer, tfd.VectorDeterministic),
-    # 'beta': (obl),
+    'beta': (obl.BetaLayer, tfd.Beta),
 })
 
 
@@ -41,10 +44,21 @@ def parse_distribution(alias):
   layer : `tensorflow_probability.python.layers.DistributionLambda`
   dist : `tensorflow_probability.python.distributions.Distribution`
   """
-  alias = str(alias).lower()
-  if alias not in _dist_mapping:
-    raise ValueError("Cannot find distribution with alias: '%s', "
-                     "all available distributions: %s" %
-                     (alias, ', '.join(list(_dist_mapping.keys()))))
-  layer, dist = _dist_mapping[alias]
+  if isinstance(alias, string_types):
+    alias = alias.lower()
+    if alias not in _dist_mapping:
+      raise ValueError("Cannot find distribution with alias: '%s', "
+                       "all available distributions: %s" %
+                       (alias, ', '.join(list(_dist_mapping.keys()))))
+    layer, dist = _dist_mapping[alias]
+  if not inspect.isclass(alias):
+    alias = type(alias)
+  if issubclass(alias, tfd.Distribution):
+    for i, j in _dist_mapping.values():
+      if j is alias:
+        return i, j
+  elif issubclass(alias, tfl.DistributionLambda):
+    for i, j in _dist_mapping.values():
+      if i is alias:
+        return i, j
   return layer, dist

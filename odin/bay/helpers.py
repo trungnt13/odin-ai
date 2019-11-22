@@ -102,27 +102,24 @@ def kl_divergence(q,
                   use_analytic_kl=False,
                   q_sample=lambda q: q.sample(),
                   reduce_axis=(),
-                  auto_remove_independent=True,
-                  name=None):
+                  auto_remove_independent=True):
   r""" Calculating KL(q(x)||p(x))
 
   Arguments:
-  q : tensorflow_probability.Distribution
-    the approximated posterior distribution
-  p : tensorflow_probability.Distribution
-    the prior distribution
-  use_analytic_kl : bool (default: False)
-    if True, use the close-form solution  for
-  q_sample : {callable, Tensor, Number}
-    callable for extracting sample from `q(x)` (takes `q` posterior distribution
-    as input argument)
-  reudce_axis : {None, int, tuple}
-    reduce axis when use MCMC to estimate KL divergence, default
-    `()` mean keep all original dimensions
-  auto_remove_independent : bool (default: True)
-    if `q` or `p` is `tfd.Independent` wrapper, get the original
-    distribution for calculating the analytic KL
-  name : {None, str}
+    q : `tensorflow_probability.Distribution`, the approximated posterior
+      distribution
+    p : `tensorflow_probability.Distribution`, the prior distribution
+    use_analytic_kl : bool (default: False)
+      if True, use the close-form solution  for
+    q_sample : {callable, Tensor, Number}
+      callable for extracting sample from `q(x)` (takes `q` posterior distribution
+      as input argument)
+    reudce_axis : {None, int, tuple}
+      reduce axis when use MCMC to estimate KL divergence, default
+      `()` mean keep all original dimensions
+    auto_remove_independent : bool (default: True)
+      if `q` or `p` is `tfd.Independent` wrapper, get the original
+      distribution for calculating the analytic KL
 
   Returns:
     Tensor KL-divergence
@@ -155,19 +152,16 @@ def kl_divergence(q,
       q = q.distribution
     if not isinstance(q, tfd.Independent) and isinstance(p, tfd.Independent):
       p = p.distribution
-  q_name = [i for i in q.name.split('/') if len(i) > 0][-1]
-  p_name = [i for i in p.name.split('/') if len(i) > 0][-1]
-  with tf.compat.v1.name_scope(name, "KL_q%s_p%s" % (q_name, p_name)):
-    if bool(use_analytic_kl):
-      return tfd.kl_divergence(q, p)
-    # using MCMC sampling for estimating the KL
-    if callable(q_sample):
-      z = q_sample(q)
-    elif isinstance(q_sample, Number) or tf.is_tensor(q_sample):
-      z = q.sample(tf.convert_to_tensor(q_sample, dtype='int64'))
-    else:
-      z = q_sample
-    # calculate the output, then perform reduction
-    kl = q.log_prob(z) - p.log_prob(z)
-    kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
-    return kl
+  if bool(use_analytic_kl):
+    return tfd.kl_divergence(q, p)
+  # using MCMC sampling for estimating the KL
+  if callable(q_sample):
+    z = q_sample(q)
+  elif isinstance(q_sample, Number) or tf.is_tensor(q_sample):
+    z = q.sample(tf.convert_to_tensor(q_sample, dtype='int64'))
+  else:
+    z = q_sample
+  # calculate the output, then perform reduction
+  kl = q.log_prob(z) - p.log_prob(z)
+  kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
+  return kl

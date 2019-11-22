@@ -955,7 +955,7 @@ def _process_noise_dim(input_shape, dims):
 
 
 def dropout(x,
-            p=0.5,
+            p_drop=0.5,
             axis=None,
             noise_type='uniform',
             rescale=True,
@@ -966,17 +966,15 @@ def dropout(x,
   sum is unchanged.
 
   Arguments:
-    x: A tensor.
-      input tensor
-    p: float(0.-1.)
-      probability of dropout (i.e. set a value to zero)
-    axis: int or list(int)
-      these dimensions will be setted to 1 in noise_shape, and
-      used to broadcast the dropout mask.
-    noise_type: 'gaussian' (or 'normal'), 'uniform', 'binomial'
-      distribution used for generating noise
-    rescale: bool
-      if `True`, the outputs are scaled by a factor of :math:`\frac{1}{1-p}` during
+    x : A tensor. input tensor
+    p_drop : float(0.-1.). The probability of drop entries (i.e. set a
+      value to zero)
+    axis: int or list(int). These dimensions will be setted to 1 in noise_shape,
+      and used to broadcast the dropout mask.
+    noise_type: 'gaussian' (or 'normal'), 'uniform', 'binomial'. Distribution
+      used for generating noise
+    rescale: bool. If `True`, the outputs are scaled by a factor of
+      :math:`\frac{1}{1-p}` during
       training. This means that during evaluation the module simply computes an
       identity function
     training: bool
@@ -986,8 +984,8 @@ def dropout(x,
   References:
     Hinton, G.E., et al., 2012. Improving neural networks by preventing
       co-adaptation of feature detectors. arXiv:1207.0580 [cs].
-    Srivastava, N., et al., 2014. Dropout: A Simple Way to Prevent Neural Networks from
-      Overﬁtting, JMLR
+    Srivastava, N., et al., 2014. Dropout: A Simple Way to Prevent Neural
+      Networks from Overfitting, JMLR
 
   Note:
     This function only apply noise on Variable when training is enable
@@ -998,7 +996,7 @@ def dropout(x,
   # ====== calculate noise shape ====== #
   framework = parse_framework(x)
   shape = x.shape
-  retain_prob = 1. - p
+  retain_prob = 1. - p_drop
   if 'normal' in noise_type or 'gaussian' in noise_type:
     randfunc = lambda shape: random_normal(shape,
                                            mean=1.0,

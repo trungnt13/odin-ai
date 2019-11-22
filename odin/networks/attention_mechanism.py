@@ -538,7 +538,7 @@ class AttentionMechanism(IntFlag):
           attention_distribution, convert_to_tensor_fn=fsample)
     # ======  dropout the attention scores ====== #
     attention = bk.dropout(attention_distribution,
-                           p=dropout,
+                           p_drop=dropout,
                            axis=1 if temporal_dropout else None,
                            training=training and dropout > 0)
     # ====== applying the attention ====== #

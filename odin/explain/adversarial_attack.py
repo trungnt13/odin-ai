@@ -10,7 +10,8 @@ from sklearn.base import BaseEstimator
 from odin.explain.helpers import _may_add_batch_dim, get_pretrained_model
 
 
-@tf.function
+# it seems adding tf.function don't improve much performance
+# @tf.function
 def _adversarial_optimizing(model, X, y, X_org, loss_function, l2_norm, l1_norm,
                             learning_rate):
   with tf.GradientTape() as tape:
