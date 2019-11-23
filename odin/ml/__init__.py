@@ -1,4 +1,5 @@
 from odin.ml.base import evaluate
+from odin.ml.cluster import fast_kmeans, fast_knn
 from odin.ml.decompositions import *
 from odin.ml.fast_tsne import fast_tsne
 from odin.ml.gmm_classifier import GMMclassifier

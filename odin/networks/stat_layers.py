@@ -75,9 +75,8 @@ class DenseDistribution(Dense):
     posterior_kwargs : `dict`. Keyword arguments for initializing the posterior
       `DistributionLambda`
 
-  Return
-  ------
-  `tensorflow_probability.Distribution`
+  Return:
+    `tensorflow_probability.Distribution`
   """
 
   def __init__(self,
@@ -238,7 +237,7 @@ class DenseDistribution(Dense):
     return kullback_div
 
   def log_prob(self, x, training=None, n_mcmc=1):
-    """ Calculating the log probability (i.e. log likelihood) """
+    r""" Calculating the log probability (i.e. log likelihood) """
     return self.call(x, training=training, n_mcmc=n_mcmc).log_prob(x)
 
   def __repr__(self):

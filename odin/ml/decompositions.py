@@ -19,6 +19,11 @@ from odin.ml.base import BaseEstimator, TransformerMixin
 from odin.utils import Progbar, batching, ctext, flatten_list
 from odin.utils.mpi import MPI
 
+try:
+  from cuml.decomposition import PCA as cuPCA
+except ImportError:
+  cuPCA = None
+
 __all__ = [
     "fast_pca",
     "MiniBatchPCA",
@@ -26,37 +31,42 @@ __all__ = [
     "SupervisedPPCA",
 ]
 
-def fast_pca(*x, n_components=None, algo='rpca', y=None,
-             batch_size=1024, return_model=False,
-             random_state=1234):
-  """ A shortcut for many different PCA algorithms
 
-  Parameters
-  ----------
-  x : {list, tuple}
-    list of matrices for transformation, the first matrix will
-    be used for training
-  n_components : {None, int}
-    number of PCA components
-  algo : {'pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'}
-    different PCA algorithm:
-      'ipca' - IncrementalPCA,
-      'ppca' - Probabilistic PCA,
-      'sppca' - Supervised Probabilistic PCA,
-      'plda' - Probabilistic LDA,
-      'rpca' - randomized PCA using randomized SVD
-  y : {numpy.ndarray, None}
-    required for labels in case of `sppca`
-  batch_size : int (default: 1024)
-    batch size, only used for IncrementalPCA
-  return_model : bool (default: False)
-    if True, return the trained PCA model as the FIRST return
+def fast_pca(*x,
+             n_components=None,
+             algo='rpca',
+             y=None,
+             batch_size=1024,
+             return_model=False,
+             random_state=1234):
+  r""" A shortcut for many different PCA algorithms
+
+  Arguments:
+    x : {list, tuple}
+      list of matrices for transformation, the first matrix will
+      be used for training
+    n_components : {None, int}
+      number of PCA components
+    algo : {'pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'}
+      different PCA algorithm:
+        'ipca' - IncrementalPCA,
+        'ppca' - Probabilistic PCA,
+        'sppca' - Supervised Probabilistic PCA,
+        'plda' - Probabilistic LDA,
+        'rpca' - randomized PCA using randomized SVD
+    y : {numpy.ndarray, None}
+      required for labels in case of `sppca`
+    batch_size : int (default: 1024)
+      batch size, only used for IncrementalPCA
+    return_model : bool (default: False)
+      if True, return the trained PCA model as the FIRST return
   """
   batch_size = int(batch_size)
   algo = str(algo).lower()
   if algo not in ('pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'):
     raise ValueError("`algo` must be one of the following: 'pca', "
-                     "'ppca', 'plda', 'sppca', or 'rpca'; but given: '%s'" % algo)
+                     "'ppca', 'plda', 'sppca', or 'rpca'; but given: '%s'" %
+                     algo)
   if algo in ('sppca', 'plda') and y is None:
     raise RuntimeError("`y` must be not None if `algo='sppca'`")
   x = flatten_list(x, level=None)
@@ -64,12 +74,12 @@ def fast_pca(*x, n_components=None, algo='rpca', y=None,
   x_train = x[0]
   x_test = x[1:]
   input_shape = None
-  if x_train.ndim > 2: # only 2D for PCA
+  if x_train.ndim > 2:  # only 2D for PCA
     input_shape = (-1,) + x_train.shape[1:]
     new_shape = (-1, np.prod(input_shape[1:]))
     x_train = np.reshape(x_train, new_shape)
     x_test = [np.reshape(x, new_shape) for x in x_test]
-    if n_components is not None: # no need to reshape back
+    if n_components is not None:  # no need to reshape back
       input_shape = None
   # ====== train PCA ====== #
   if algo == 'sppca':
@@ -80,19 +90,26 @@ def fast_pca(*x, n_components=None, algo='rpca', y=None,
     pca = PLDA(n_phi=n_components, random_state=random_state)
     pca.fit(x_train, y)
   elif algo == 'pca':
-    pca = PCA(n_components=n_components, random_state=random_state)
+    if x_train.shape[1] > 1000 and x_train.shape[0] > 1e5 and cuPCA is not None:
+      pca = cuPCA(n_components=n_components, random_state=random_state)
+    else:
+      pca = PCA(n_components=n_components, random_state=random_state)
     pca.fit(x_train)
   elif algo == 'rpca':
     # we copy the implementation of RandomizedPCA because
     # it is significantly faster than PCA(svd_solver='randomize')
-    pca = RandomizedPCA(n_components=n_components, iterated_power=2,
+    pca = RandomizedPCA(n_components=n_components,
+                        iterated_power=2,
                         random_state=random_state)
     pca.fit(x_train)
   elif algo == 'ipca':
     pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
     prog = Progbar(target=x_train.shape[0],
-                   print_report=False, print_summary=False, name="Fitting PCA")
-    for start, end in batching(batch_size=batch_size, n=x_train.shape[0],
+                   print_report=False,
+                   print_summary=False,
+                   name="Fitting PCA")
+    for start, end in batching(batch_size=batch_size,
+                               n=x_train.shape[0],
                                seed=1234):
       pca.partial_fit(x_train[start:end], check_input=False)
       prog.add(end - start)
@@ -109,7 +126,9 @@ def fast_pca(*x, n_components=None, algo='rpca', y=None,
   # return the results
   if len(x_test) == 0:
     return x_train if not return_model else (pca, x_train)
-  return tuple([x_train] + x_test) if not return_model else tuple([pca, x_train] + x_test)
+  return tuple([x_train] +
+               x_test) if not return_model else tuple([pca, x_train] + x_test)
+
 
 # ===========================================================================
 # PPCA
@@ -154,9 +173,14 @@ class PPCA(BaseEstimator, TransformerMixin):
 
   """
 
-  def __init__(self, n_components=None, bias='auto',
-               n_iter='auto', improve_threshold=1e-3, solver='traditional',
-               verbose=0, random_state=None):
+  def __init__(self,
+               n_components=None,
+               bias='auto',
+               n_iter='auto',
+               improve_threshold=1e-3,
+               solver='traditional',
+               verbose=0,
+               random_state=None):
     super(PPCA, self).__init__()
     if isinstance(n_components, Number):
       assert n_components > 0, \
@@ -191,7 +215,8 @@ class PPCA(BaseEstimator, TransformerMixin):
     elif isinstance(random_state, np.random.RandomState):
       rand = random_state
     else:
-      raise ValueError("No suppport for `random_state` value: %s" % str(random_state))
+      raise ValueError("No suppport for `random_state` value: %s" %
+                       str(random_state))
     self.random_state_ = rand
     # ====== other dimension ====== #
     self.improve_threshold_ = float(improve_threshold)
@@ -218,28 +243,33 @@ class PPCA(BaseEstimator, TransformerMixin):
     varianceM = np.sum(centeredM**2) / (num_samples * feat_dim)
     # ====== training ====== #
     if self.verbose_:
-      print('[PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s' %
-            (n_components, num_samples, feat_dim,
-             -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
+      print(
+          '[PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s'
+          % (n_components, num_samples, feat_dim, -1 if self.n_iter_ == 'auto'
+             else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
-      B = (V * 1 / sigma).T # [feat_dim, n_components]
-      Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V)) # [n_components, n_components]
-      my = np.dot(np.dot(Sigma, B), centeredM.T) # [n_components, num_samples]
+      B = (V * 1 / sigma).T  # [feat_dim, n_components]
+      Sigma = np.linalg.inv(np.eye(n_components) +
+                            np.dot(B, V))  # [n_components, n_components]
+      my = np.dot(np.dot(Sigma, B), centeredM.T)  # [n_components, num_samples]
 
       if self.solver_ == 'traditional':
         sumEmm = num_samples * Sigma + np.dot(my, my.T)
       elif self.solver_ == 'simple':
         sumEmm = np.dot(my, my.T)
-      sumEmmInv = np.linalg.inv(sumEmm) # [n_components, n_components]
+      sumEmmInv = np.linalg.inv(sumEmm)  # [n_components, n_components]
       # updating V and sigma for next iteration
-      V = np.dot(np.dot(centeredM.T, my.T), sumEmmInv) # [feat_dim, n_components]
+      V = np.dot(np.dot(centeredM.T, my.T),
+                 sumEmmInv)  # [feat_dim, n_components]
       last_sigma = sigma
-      sigma = varianceM - np.sum(sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
+      sigma = varianceM - np.sum(
+          sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
       improvement = last_sigma - sigma
       # log
       if self.verbose_ > 0:
-        print("Iteration: %d   sigma: %.3f   improvement: %.3f" % (curr_n_iter, sigma, improvement))
+        print("Iteration: %d   sigma: %.3f   improvement: %.3f" %
+              (curr_n_iter, sigma, improvement))
       # check iteration escape
       curr_n_iter += 1
       if isinstance(self.n_iter_, Number):
@@ -258,7 +288,7 @@ class PPCA(BaseEstimator, TransformerMixin):
     # pre-calculate matrix for transform
     B = (V * 1 / sigma).T
     Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V))
-    self.extractorMatrix_ = np.dot(Sigma, B) # [n_components, feat_dim]
+    self.extractorMatrix_ = np.dot(Sigma, B)  # [n_components, feat_dim]
 
   def transform(self, X):
     """
@@ -271,6 +301,7 @@ class PPCA(BaseEstimator, TransformerMixin):
     "Expect input matrix with shape: [?, %d], but give: %s" % (self.feat_dim_, str(X.shape))
     ivec = np.dot(self.extractorMatrix_, (X - self.bias_[np.newaxis, :]).T)
     return ivec.T
+
 
 class SupervisedPPCA(PPCA):
   """ Supervised Probabilistic Principal Components Analysis
@@ -317,18 +348,29 @@ class SupervisedPPCA(PPCA):
 
   """
 
-  def __init__(self, n_components=None, bias='auto', beta=1,
-               n_iter='auto', improve_threshold=1e-3,
-               solver='traditional', extractor='supervised',
-               verbose=0, random_state=None):
-    super(SupervisedPPCA, self).__init__(n_components=n_components, bias=bias,
-               n_iter=n_iter, solver=solver, improve_threshold=improve_threshold,
-               verbose=verbose, random_state=random_state)
+  def __init__(self,
+               n_components=None,
+               bias='auto',
+               beta=1,
+               n_iter='auto',
+               improve_threshold=1e-3,
+               solver='traditional',
+               extractor='supervised',
+               verbose=0,
+               random_state=None):
+    super(SupervisedPPCA, self).__init__(n_components=n_components,
+                                         bias=bias,
+                                         n_iter=n_iter,
+                                         solver=solver,
+                                         improve_threshold=improve_threshold,
+                                         verbose=verbose,
+                                         random_state=random_state)
     self.beta_ = float(beta)
     # ====== check extractor ====== #
     extractor = str(extractor).lower()
     if extractor not in ('supervised', 'unsupervised'):
-      raise ValueError("`extractor` can only be: 'unsupervised' or 'supervised'")
+      raise ValueError(
+          "`extractor` can only be: 'unsupervised' or 'supervised'")
     self.extractor_ = extractor
 
   def fit(self, X, y, z=None):
@@ -383,14 +425,16 @@ class SupervisedPPCA(PPCA):
     varianceY = np.sum(centeredY**2) / (num_samples * feat_dim)
     # ====== training ====== #
     if self.verbose_:
-      print('[S-PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s' %
-            (n_components, num_samples, feat_dim,
-             -1 if self.n_iter_ == 'auto' else self.n_iter_, self.improve_threshold_, self.solver_))
+      print(
+          '[S-PPCA]n_components: %d  n_sample: %d  feat_dim: %d  n_iter: %d  threshold: %f  solver: %s'
+          % (n_components, num_samples, feat_dim, -1 if self.n_iter_ == 'auto'
+             else self.n_iter_, self.improve_threshold_, self.solver_))
     curr_n_iter = 0
     while True:
-      B = (V * 1 / sigma).T # [feat_dim, n_components]
-      C = (Q * self.beta_ * 1 / rho).T # [feat_dim, n_components]
-      Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V) + np.dot(C, Q)) # [n_components, n_components]
+      B = (V * 1 / sigma).T  # [feat_dim, n_components]
+      C = (Q * self.beta_ * 1 / rho).T  # [feat_dim, n_components]
+      Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V) +
+                            np.dot(C, Q))  # [n_components, n_components]
       # [n_components, num_samples]
       my = np.dot(Sigma, np.dot(B, centeredM.T) + np.dot(C, centeredY.T))
 
@@ -398,24 +442,29 @@ class SupervisedPPCA(PPCA):
         sumEmm = num_samples * Sigma + np.dot(my, my.T)
       elif self.solver_ == 'simple':
         sumEmm = np.dot(my, my.T)
-      sumEmmInv = np.linalg.inv(sumEmm) # [n_components, n_components]
+      sumEmmInv = np.linalg.inv(sumEmm)  # [n_components, n_components]
 
       # updating V and sigma for next iteration
-      V = np.dot(np.dot(centeredM.T, my.T), sumEmmInv) # [feat_dim, n_components]
-      Q = np.dot(np.dot(centeredY.T, my.T), sumEmmInv) # [feat_dim, n_components]
+      V = np.dot(np.dot(centeredM.T, my.T),
+                 sumEmmInv)  # [feat_dim, n_components]
+      Q = np.dot(np.dot(centeredY.T, my.T),
+                 sumEmmInv)  # [feat_dim, n_components]
 
       last_sigma = sigma
-      sigma = varianceM - np.sum(sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
+      sigma = varianceM - np.sum(
+          sumEmm * np.dot(V.T, V)) / (feat_dim * num_samples)
       improvement_sigma = last_sigma - sigma
 
       last_rho = rho
-      rho = varianceY - np.sum(sumEmm * np.dot(Q.T, Q)) / (feat_dim * num_samples)
+      rho = varianceY - np.sum(
+          sumEmm * np.dot(Q.T, Q)) / (feat_dim * num_samples)
       improvement_rho = last_rho - rho
 
       # log
       if self.verbose_ > 0:
-        print("Iteration: %d   sigma: %.3f   rho: %.3f    improvement: %.3f:%.3f" %
-          (curr_n_iter, sigma, rho, improvement_sigma, improvement_rho))
+        print(
+            "Iteration: %d   sigma: %.3f   rho: %.3f    improvement: %.3f:%.3f"
+            % (curr_n_iter, sigma, rho, improvement_sigma, improvement_rho))
       # check iteration escape
       curr_n_iter += 1
       if isinstance(self.n_iter_, Number):
@@ -440,26 +489,34 @@ class SupervisedPPCA(PPCA):
     # pre-calculate matrix for PPCA transform
     B = (V * 1 / sigma).T
     Sigma = np.linalg.inv(np.eye(n_components) + np.dot(B, V))
-    self.extractorMatrix_ = np.dot(Sigma, B) # [n_components, feat_dim]
+    self.extractorMatrix_ = np.dot(Sigma, B)  # [n_components, feat_dim]
     # pre-calculate matrix for PPLS transform
-    A = np.concatenate([V, Q], axis=0) # [2 * feat_dim, n_components]
-    B = np.concatenate([(V * 1 / sigma).T, (Q * 1 / rho).T], axis=-1) # [n_components, 2 * feat_dim]
-    sigmaW = np.linalg.inv(np.eye(n_components) + np.dot(B, A)) # [n_components, n_components]
-    self.extractorMatrixPPLS_ = np.dot(sigmaW, B) # [n_components, 2 * feat_dim]
+    A = np.concatenate([V, Q], axis=0)  # [2 * feat_dim, n_components]
+    B = np.concatenate([(V * 1 / sigma).T, (Q * 1 / rho).T],
+                       axis=-1)  # [n_components, 2 * feat_dim]
+    sigmaW = np.linalg.inv(np.eye(n_components) +
+                           np.dot(B, A))  # [n_components, n_components]
+    self.extractorMatrixPPLS_ = np.dot(sigmaW,
+                                       B)  # [n_components, 2 * feat_dim]
 
-    C = np.dot(V.T, V) + sigma * np.eye(n_components) # [n_components, n_components]
-    self.labelMatrix_ = np.dot(Q, np.linalg.solve(C, V.T)) # [feat_dim, feat_dim]
+    C = np.dot(V.T,
+               V) + sigma * np.eye(n_components)  # [n_components, n_components]
+    self.labelMatrix_ = np.dot(Q, np.linalg.solve(C,
+                                                  V.T))  # [feat_dim, feat_dim]
 
   def transform(self, X):
     if self.extractor_ == 'unsupervised':
       return super(SupervisedPPCA, self).transform(X)
     else:
       centeredM = X - self.bias_[np.newaxis, :]
-      labels = np.dot(self.labelMatrix_, centeredM.T) + self.classBias_[:, np.newaxis]
-      ivec = np.dot(self.extractorMatrixPPLS_,
-                    np.concatenate([X.T, labels], axis=0) -
-                    np.concatenate([self.bias_, self.classBias_])[:, np.newaxis])
+      labels = np.dot(self.labelMatrix_,
+                      centeredM.T) + self.classBias_[:, np.newaxis]
+      ivec = np.dot(
+          self.extractorMatrixPPLS_,
+          np.concatenate([X.T, labels], axis=0) -
+          np.concatenate([self.bias_, self.classBias_])[:, np.newaxis])
       return ivec.T
+
 
 # ===========================================================================
 # PCA
@@ -545,8 +602,12 @@ class RandomizedPCA(BaseEstimator, TransformerMixin):
 
   """
 
-  def __init__(self, n_components=None, copy=True, iterated_power=2,
-               whiten=False, random_state=None):
+  def __init__(self,
+               n_components=None,
+               copy=True,
+               iterated_power=2,
+               whiten=False,
+               random_state=None):
     self.n_components = n_components
     self.copy = copy
     self.iterated_power = iterated_power
@@ -599,11 +660,12 @@ class RandomizedPCA(BaseEstimator, TransformerMixin):
     else:
       n_components = self.n_components
 
-    U, S, V = randomized_svd(X, n_components,
+    U, S, V = randomized_svd(X,
+                             n_components,
                              n_iter=self.iterated_power,
                              random_state=random_state)
 
-    self.explained_variance_ = exp_var = (S ** 2) / (n_samples - 1)
+    self.explained_variance_ = exp_var = (S**2) / (n_samples - 1)
     full_var = np.var(X, ddof=1, axis=0).sum()
     self.explained_variance_ratio_ = exp_var / full_var
     self.singular_values_ = S  # Store the singular values.
@@ -687,6 +749,7 @@ class RandomizedPCA(BaseEstimator, TransformerMixin):
     if self.mean_ is not None:
       X_original = X_original + self.mean_
     return X_original
+
 
 class MiniBatchPCA(IncrementalPCA):
   """ A modified version of IncrementalPCA to effectively
@@ -839,10 +902,15 @@ class MiniBatchPCA(IncrementalPCA):
   TruncatedSVD
   """
 
-  def __init__(self, n_components=None, whiten=False, copy=True,
+  def __init__(self,
+               n_components=None,
+               whiten=False,
+               copy=True,
                batch_size=None):
     super(MiniBatchPCA, self).__init__(n_components=n_components,
-        whiten=whiten, copy=copy, batch_size=batch_size)
+                                       whiten=whiten,
+                                       copy=copy,
+                                       batch_size=batch_size)
     # some statistics
     self.n_samples_seen_ = 0
     self.mean_ = .0
@@ -921,7 +989,7 @@ class MiniBatchPCA(IncrementalPCA):
       # not enough samples yet
       if self._nb_cached_samples < n_features:
         return
-      else: # group mini batch into big batch
+      else:  # group mini batch into big batch
         X = np.concatenate(self._cache_batches, axis=0)
         self._cache_batches = []
         self._nb_cached_samples = 0
@@ -939,7 +1007,7 @@ class MiniBatchPCA(IncrementalPCA):
                                   last_variance=self.var_,
                                   last_sample_count=self.n_samples_seen_)
     total_var = np.sum(col_var * n_total_samples)
-    if total_var == 0: # if variance == 0, make no sense to continue
+    if total_var == 0:  # if variance == 0, make no sense to continue
       return self
     # Whitening
     if self.n_samples_seen_ == 0:
@@ -952,13 +1020,13 @@ class MiniBatchPCA(IncrementalPCA):
       mean_correction = \
           np.sqrt((self.n_samples_seen_ * n_samples) /
                   n_total_samples) * (self.mean_ - col_batch_mean)
-      X = np.vstack((self.singular_values_.reshape((-1, 1)) *
-                    self.components_, X, mean_correction))
+      X = np.vstack((self.singular_values_.reshape(
+          (-1, 1)) * self.components_, X, mean_correction))
 
     U, S, V = linalg.svd(X, full_matrices=False)
     U, V = svd_flip(U, V, u_based_decision=False)
-    explained_variance = S ** 2 / n_total_samples
-    explained_variance_ratio = S ** 2 / total_var
+    explained_variance = S**2 / n_total_samples
+    explained_variance_ratio = S**2 / total_var
 
     self.n_samples_seen_ = n_total_samples
     self.components_ = V[:self.n_components_]
@@ -1004,8 +1072,7 @@ class MiniBatchPCA(IncrementalPCA):
   def invert_transform(self, X):
     return super(MiniBatchPCA, self).inverse_transform(X=X)
 
-  def transform_mpi(self, X, keep_order=True, ncpu=4,
-                    n_components=None):
+  def transform_mpi(self, X, keep_order=True, ncpu=4, n_components=None):
     """ Sample as transform but using multiprocessing """
     n = X.shape[0]
     if self.batch_size is None:
@@ -1013,7 +1080,8 @@ class MiniBatchPCA(IncrementalPCA):
     else:
       batch_size = self.batch_size
     batch_list = [(i, min(i + batch_size, n))
-        for i in range(0, n + batch_size, batch_size) if i < n]
+                  for i in range(0, n + batch_size, batch_size)
+                  if i < n]
 
     # ====== run MPI jobs ====== #
     def map_func(batch):
@@ -1025,8 +1093,12 @@ class MiniBatchPCA(IncrementalPCA):
         x = x[:, :n_components]
       # just need to return the start for ordering
       yield start, x
-    mpi = MPI(batch_list, func=map_func,
-              ncpu=ncpu, batch=1, hwm=ncpu * 12,
+
+    mpi = MPI(batch_list,
+              func=map_func,
+              ncpu=ncpu,
+              batch=1,
+              hwm=ncpu * 12,
               backend='python')
     # ====== process the return ====== #
     X_transformed = []
@@ -1039,8 +1111,9 @@ class MiniBatchPCA(IncrementalPCA):
 
   def __str__(self):
     if self.is_fitted:
-      explained_vars = ';'.join([ctext('%.2f' % i, 'cyan')
-                                 for i in self.explained_variance_ratio_[:8]])
+      explained_vars = ';'.join([
+          ctext('%.2f' % i, 'cyan') for i in self.explained_variance_ratio_[:8]
+      ])
     else:
       explained_vars = 0
     s = '%s(batch_size=%s, #components=%s, #samples=%s, vars=%s)' % \
