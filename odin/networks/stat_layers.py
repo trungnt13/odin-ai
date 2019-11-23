@@ -17,7 +17,7 @@ from tensorflow_probability.python.layers.distribution_layer import (
 
 from odin.bay.distribution_alias import _dist_mapping, parse_distribution
 from odin.bay.distribution_layers import VectorDeterministicLayer
-from odin.bay.helpers import Statistic, kl_divergence
+from odin.bay.helpers import kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
 __all__ = ['DenseDeterministic', 'DenseDistribution']
@@ -84,6 +84,7 @@ class DenseDistribution(Dense):
                posterior='normal',
                prior=None,
                posterior_kwargs={},
+               convert_to_tensor_fn=Distribution.sample,
                dropout=0.0,
                activation='linear',
                use_bias=True,
@@ -104,16 +105,18 @@ class DenseDistribution(Dense):
     if 'event_size' in posterior_kwargs:
       event_shape = posterior_kwargs.pop('event_size')
     if 'convert_to_tensor_fn' in posterior_kwargs:
-      posterior_kwargs.pop('convert_to_tensor_fn')
+      convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn')
     # process the posterior
     post_layer, _ = parse_distribution(posterior)
     self._n_mcmc = [1]
-    self._posterior_layer = post_layer(event_shape,
-                                       convert_to_tensor_fn=partial(
-                                           Distribution.sample,
-                                           sample_shape=self._n_mcmc),
-                                       **posterior_kwargs)
+    self._posterior_layer = post_layer(
+        event_shape,
+        convert_to_tensor_fn=partial(Distribution.sample,
+                                     sample_shape=self._n_mcmc) if
+        convert_to_tensor_fn == Distribution.sample else convert_to_tensor_fn,
+        **posterior_kwargs)
     # create layers
+    self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
     self._posterior = posterior
     self._prior = prior
     self._event_shape = event_shape
@@ -131,17 +134,8 @@ class DenseDistribution(Dense):
                          kernel_constraint=kernel_constraint,
                          bias_constraint=bias_constraint,
                          **kwargs)
-    # basics
+    # store the distribution from last call
     self._last_distribution = None
-
-  def get_config(self):
-    config = super().get_config()
-    config['event_shape'] = self._event_shape
-    config['posterior'] = self._posterior
-    config['prior'] = self._prior
-    config['dropout'] = self._dropout
-    config['posterior_kwargs'] = self._posterior_kwargs
-    return config
 
   @property
   def prior(self):
@@ -153,29 +147,9 @@ class DenseDistribution(Dense):
 
   @property
   def posterior(self):
-    """ Return the last parametrized distribution, i.e. the result from `call`
-    """
+    r""" Return the last parametrized distribution, i.e. the result from the
+    last `call` """
     return self._last_distribution
-
-  def mean(self, x):
-    dist = self.call(x)
-    y = Moments(mean=True, variance=False)(dist)
-    setattr(y, '_distribution', dist)
-    self._last_distribution = y._distribution
-    return y
-
-  def variance(self, x):
-    dist = self.call(x)
-    y = Moments(mean=False, variance=True)(dist)
-    setattr(y, '_distribution', dist)
-    self._last_distribution = y._distribution
-    return y
-
-  def stddev(self, x):
-    v = self.variance(x)
-    y = Lambda(tf.math.sqrt)(v)
-    setattr(y, '_distribution', v._distribution)
-    return y
 
   def call(self, x, training=None, n_mcmc=1):
     if n_mcmc is None:
@@ -189,16 +163,11 @@ class DenseDistribution(Dense):
     self._last_distribution = posterior
     return posterior
 
-  def kl_divergence(self,
-                    x=None,
-                    training=None,
-                    prior=None,
-                    analytic_kl=True,
-                    n_mcmc=1):
-    r"""
+  def kl_divergence(self, prior=None, analytic_kl=True, n_mcmc=1):
+    r""" KL(q||p) where `p` is the posterior distribution returned from last
+    call
+
     Arguments:
-      x : `Tensor` (optional) . The Input for parametrizing the distribution,
-        if not given, used the last result from `call`
       prior : instance of `tensorflow_probability.Distribution`
         prior distribution of the latent
       analytic_kl : `bool` (default=`True`). Using closed form solution for
@@ -214,17 +183,12 @@ class DenseDistribution(Dense):
     if prior is None:
       prior = self._prior
     assert isinstance(prior, Distribution), "prior is not given!"
-
-    if x is not None:
-      posterior = self.call(x, training=training)
-    else:
-      posterior = self.posterior
-    if posterior is None:
+    if self.posterior is None:
       raise RuntimeError(
           "DenseDistribution must be called to create the distribution before "
           "calculating the kl-divergence.")
 
-    kullback_div = kl_divergence(q=posterior,
+    kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
                                  use_analytic_kl=bool(analytic_kl),
                                  q_sample=int(n_mcmc),
@@ -236,9 +200,10 @@ class DenseDistribution(Dense):
         kullback_div = tf.tile(kullback_div, [n_mcmc] + [1] * (ndims - 1))
     return kullback_div
 
-  def log_prob(self, x, training=None, n_mcmc=1):
-    r""" Calculating the log probability (i.e. log likelihood) """
-    return self.call(x, training=training, n_mcmc=n_mcmc).log_prob(x)
+  def log_prob(self, x):
+    r""" Calculating the log probability (i.e. log likelihood) using the last
+    distribution returned from call """
+    return self.posterior.log_prob(x)
 
   def __repr__(self):
     return self.__str__()
@@ -248,3 +213,13 @@ class DenseDistribution(Dense):
       (self.units, self._params_size / self.units,
        self.layers[-1].__class__.__name__,
        self.prior.__class__.__name__)
+
+  def get_config(self):
+    config = super().get_config()
+    config['convert_to_tensor_fn'] = _serialize(self._convert_to_tensor_fn)
+    config['event_shape'] = self._event_shape
+    config['posterior'] = self._posterior
+    config['prior'] = self._prior
+    config['dropout'] = self._dropout
+    config['posterior_kwargs'] = self._posterior_kwargs
+    return config
