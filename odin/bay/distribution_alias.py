@@ -9,7 +9,7 @@ from tensorflow_probability.python.layers import distribution_layer as tfl
 
 from odin.bay import distribution_layers as obl
 from odin.bay import distributions as obd
-from odin.utils.python_utils import multikeysdict
+from odin.utils.python_utils import multikeysdict, partialclass
 
 # mapping from alias to
 _dist_mapping = multikeysdict({
@@ -24,13 +24,26 @@ _dist_mapping = multikeysdict({
         (obl.ZINegativeBinomialLayer, tfd.NegativeBinomial),
     ('nbd', 'negativebinomialdisp'):
         (obl.NegativeBinomialDispLayer, obd.NegativeBinomialDisp),
+    'nbshare': (partialclass(obl.NegativeBinomialDispLayer,
+                             dispersion='share'), obd.NegativeBinomialDisp),
+    'nbsingle': (partialclass(obl.NegativeBinomialDispLayer,
+                              dispersion='single'), obd.NegativeBinomialDisp),
+    'nbfull': (partialclass(obl.NegativeBinomialDispLayer,
+                            dispersion='full'), obd.NegativeBinomialDisp),
     ('zinbd', 'zinegativebinomialdisp', 'zeroinflatednegativebinomialdisp'):
         (obl.ZINegativeBinomialDispLayer, obd.NegativeBinomialDisp),
+    'zinbshare': (partialclass(obl.ZINegativeBinomialDispLayer,
+                               dispersion='share'), obd.NegativeBinomialDisp),
+    'zinbsingle': (partialclass(obl.ZINegativeBinomialDispLayer,
+                                dispersion='single'), obd.NegativeBinomialDisp),
+    'zinbfull': (partialclass(obl.ZINegativeBinomialDispLayer,
+                              dispersion='full'), obd.NegativeBinomialDisp),
     ('pois', 'poisson'): (obl.PoissonLayer, tfd.Poisson),
     ('zipois', 'zipoisson', 'zeroinflatedpoisson'):
         (obl.ZIPoissonLayer, tfd.Poisson),
     'dirichlet': (obl.DirichletLayer, tfd.Dirichlet),
     'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
+    ('cat', 'categorical', 'discrete'): (obl.CategoricalLayer, tfd.Categorical),
     'deterministic': (obl.DeterministicLayer, tfd.Deterministic),
     'vdeterministic': (obl.VectorDeterministicLayer, tfd.VectorDeterministic),
     'beta': (obl.BetaLayer, tfd.Beta),

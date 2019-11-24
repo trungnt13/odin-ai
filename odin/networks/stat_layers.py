@@ -56,7 +56,9 @@ class DenseDeterministic(Dense):
 
   def call(self, inputs, **kwargs):
     outputs = super(DenseDeterministic, self).call(inputs)
-    return VectorDeterministicLayer()(outputs)
+    distribution = VectorDeterministicLayer()(outputs)
+    distribution._prior = None
+    return distribution
 
 
 class DenseDistribution(Dense):
@@ -104,8 +106,8 @@ class DenseDistribution(Dense):
       event_shape = posterior_kwargs.pop('event_shape')
     if 'event_size' in posterior_kwargs:
       event_shape = posterior_kwargs.pop('event_size')
-    if 'convert_to_tensor_fn' in posterior_kwargs:
-      convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn')
+    convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn',
+                                                Distribution.sample)
     # process the posterior
     post_layer, _ = parse_distribution(posterior)
     self._n_mcmc = [1]
@@ -141,6 +143,11 @@ class DenseDistribution(Dense):
   def prior(self):
     return self._prior
 
+  @prior.setter
+  def prior(self, p):
+    assert isinstance(p, (Distribution, type(None)))
+    self._prior = p
+
   @property
   def distribution_layer(self):
     return self._posterior_layer
@@ -161,6 +168,7 @@ class DenseDistribution(Dense):
     self._n_mcmc[0] = n_mcmc
     posterior = self._posterior_layer(params, training=training)
     self._last_distribution = posterior
+    posterior._prior = self.prior
     return posterior
 
   def kl_divergence(self, prior=None, analytic_kl=True, n_mcmc=1):
@@ -204,15 +212,6 @@ class DenseDistribution(Dense):
     r""" Calculating the log probability (i.e. log likelihood) using the last
     distribution returned from call """
     return self.posterior.log_prob(x)
-
-  def __repr__(self):
-    return self.__str__()
-
-  def __str__(self):
-    return '<DenseDistribution units:%d #params:%g posterior:%s prior:%s>' %\
-      (self.units, self._params_size / self.units,
-       self.layers[-1].__class__.__name__,
-       self.prior.__class__.__name__)
 
   def get_config(self):
     config = super().get_config()

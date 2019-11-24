@@ -16,16 +16,7 @@ from tensorflow_probability.python.layers.internal import \
 
 from odin.bay import distributions as obd
 
-
-# ===========================================================================
-# enum
-# ===========================================================================
-class Statistic(Flag):
-  SAMPLE = auto()
-  MEAN = auto()
-  VAR = auto()
-  STDDEV = auto()
-  DIST = auto()
+__all__ = ['print_dist', 'coercible_tensor', 'kl_divergence']
 
 
 # ===========================================================================

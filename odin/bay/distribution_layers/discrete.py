@@ -94,6 +94,7 @@ class ZIBernoulliLayer(tfl.DistributionLambda):
 class CategoricalLayer(tfl.DistributionLambda):
 
   def __init__(self,
+               event_size=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
                probs_input=False,
                sample_dtype=None,
@@ -150,6 +151,7 @@ class OneHotCategoricalLayer(tfl.DistributionLambda):
   """
 
   def __init__(self,
+               event_size=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
                probs_input=False,
                sample_dtype=None,
@@ -205,8 +207,9 @@ class RelaxedSoftmaxLayer(tfl.DistributionLambda):
   """
 
   def __init__(self,
-               temperature,
+               event_size=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
+               temperature=0.5,
                probs_input=False,
                validate_args=False,
                **kwargs):
@@ -291,10 +294,10 @@ class RelaxedBernoulliLayer(tfl.DistributionLambda):
   """
 
   def __init__(self,
-               temperature,
                event_shape=(),
-               probs_input=False,
                convert_to_tensor_fn=tfd.Distribution.sample,
+               temperature=0.5,
+               probs_input=False,
                validate_args=False,
                **kwargs):
     super().__init__(make_distribution_fn=lambda t: RelaxedBernoulliLayer.new(

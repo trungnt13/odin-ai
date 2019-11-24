@@ -1,6 +1,5 @@
 from __future__ import absolute_import, division, print_function
 
-import types
 from collections import Iterable
 
 from tensorflow.python import keras

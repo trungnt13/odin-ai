@@ -62,7 +62,7 @@ class MixtureDensityNetwork(Dense):
 
   def __init__(self,
                units,
-               n_components=2,
+               n_components=8,
                covariance_type='none',
                convert_to_tensor_fn=tfd.Distribution.sample,
                softplus_scale=True,
@@ -119,7 +119,7 @@ class MixtureDensityNetwork(Dense):
                          bias_constraint=bias_constraint,
                          **kwargs)
     # ====== create prior ====== #
-    self.set_prior()
+    self._prior = None
 
   def set_prior(self, loc=0., log_scale=np.log(np.expm1(1)), mixture_logits=1.):
     r""" Set the prior for mixture density network
@@ -257,6 +257,7 @@ class MixtureDensityNetwork(Dense):
       # so Keras can inject `_keras_history` to both. This is what enables
       # either to be used as an input to another Keras `Model`.
       return distribution, value
+    distribution._prior = self.prior
     return distribution
 
   def kl_divergence(self, prior=None, analytic_kl=False, n_mcmc=1):

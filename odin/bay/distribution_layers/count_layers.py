@@ -118,8 +118,8 @@ class NegativeBinomialDispLayer(DistributionLambda):
       is the input representing log mean values or the count mean itself
     dispersion : {'full', 'share', 'single'}
       'full' creates a dispersion value for each individual data point,
-      'share' creates a single vector of dispersion for all examples, and
-      'single' uses a single value as dispersion for all data points.
+      'share' creates a single dispersion vector of `event_shape` for all examples,
+      and 'single' uses a single value as dispersion for all data points.
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object.
       Default value: `tfd.Distribution.sample`.
@@ -142,6 +142,7 @@ class NegativeBinomialDispLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     dispersion = str(dispersion).lower()
+    self.dispersion = dispersion
     assert dispersion in ('full', 'single', 'share'), \
       "Only support three different dispersion value: 'full', 'single' and " + \
         "'share', but given: %s" % dispersion
@@ -336,32 +337,29 @@ class ZINegativeBinomialLayer(DistributionLambda):
 
 
 class ZINegativeBinomialDispLayer(DistributionLambda):
-  """A Independent zero-inflated negative binomial (alternative
+  r"""A Independent zero-inflated negative binomial (alternative
   parameterization) keras layer
 
-  Parameters
-  ----------
-  event_shape: integer vector `Tensor` representing the shape of single
-    draw from this distribution.
-  given_log_mean : boolean
-    is the input representing log count values or the count itself
-  given_log_disp : boolean
-    is the input representing log dispersion values
-  dispersion : {'full', 'share', 'single'}
-    'full' creates a dispersion value for each individual data point,
-    'share' creates a single vector of dispersion for all examples, and
-    'single' uses a single value as dispersion for all data points.
-  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
-    instance and returns a `tf.Tensor`-like object.
-    Default value: `tfd.Distribution.sample`.
-  validate_args: Python `bool`, default `False`. When `True` distribution
-    parameters are checked for validity despite possibly degrading runtime
-    performance. When `False` invalid inputs may silently render incorrect
-    outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
-
+  Arguments:
+    event_shape: integer vector `Tensor` representing the shape of single
+      draw from this distribution.
+    given_log_mean : boolean
+      is the input representing log count values or the count itself
+    given_log_disp : boolean
+      is the input representing log dispersion values
+    dispersion : {'full', 'share', 'single'}
+      'full' creates a dispersion value for each individual data point,
+      'share' creates a single dispersion vector of `event_shape` for all examples,
+      and 'single' uses a single value as dispersion for all data points.
+    convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+      instance and returns a `tf.Tensor`-like object.
+      Default value: `tfd.Distribution.sample`.
+    validate_args: Python `bool`, default `False`. When `True` distribution
+      parameters are checked for validity despite possibly degrading runtime
+      performance. When `False` invalid inputs may silently render incorrect
+      outputs.
+      Default value: `False`.
+    **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
   """
 
   def __init__(self,
@@ -372,6 +370,7 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
+    self.dispersion = dispersion
     super(ZINegativeBinomialDispLayer, self).__init__(
         lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
                                  dispersion, validate_args),

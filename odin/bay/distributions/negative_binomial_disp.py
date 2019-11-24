@@ -11,7 +11,7 @@ from tensorflow_probability.python.util.seed_stream import SeedStream
 
 
 class NegativeBinomialDisp(distribution.Distribution):
-  """Alternate parameterization for NegativeBinomial distribution using
+  r"""Alternate parameterization for NegativeBinomial distribution using
   mean and dispersion as often mentioned in infobiomatic literatures.
 
   The NegativeBinomial distribution is related to the experiment of performing

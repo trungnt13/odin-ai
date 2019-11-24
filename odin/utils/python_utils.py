@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import functools
 import inspect
 import io
 import numbers
@@ -146,6 +147,16 @@ def multikeysdict(d):
     else:
       new_d[i] = j
   return new_d
+
+
+def partialclass(cls, *args, **kwargs):
+  new_cls = type('Partial%s' % cls.__name__, (cls,), {})
+  new_cls.__init__ = functools.partialmethod(new_cls.__init__, *args, **kwargs)
+
+  # class PartialClass(cls):
+  #   __init__ = functools.partialmethod(cls.__init__, *args, **kwargs)
+
+  return new_cls
 
 
 # ===========================================================================
