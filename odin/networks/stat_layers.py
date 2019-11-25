@@ -140,6 +140,10 @@ class DenseDistribution(Dense):
     self._last_distribution = None
 
   @property
+  def event_shape(self):
+    return tf.nest.flatten(self._event_shape)
+
+  @property
   def prior(self):
     return self._prior
 
@@ -158,10 +162,8 @@ class DenseDistribution(Dense):
     last `call` """
     return self._last_distribution
 
-  def call(self, x, training=None, n_mcmc=1):
-    if n_mcmc is None:
-      n_mcmc = 1
-    params = super().call(x)
+  def call(self, inputs, training=None, n_mcmc=1, projection=True):
+    params = super().call(inputs) if projection else inputs
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
     # modifying the Lambda to return given number of n_mcmc samples
@@ -186,8 +188,6 @@ class DenseDistribution(Dense):
     Return:
       kullback_divergence : Tensor [n_mcmc, batch_size, ...]
     """
-    if n_mcmc is None:
-      n_mcmc = 1
     if prior is None:
       prior = self._prior
     assert isinstance(prior, Distribution), "prior is not given!"
@@ -198,7 +198,7 @@ class DenseDistribution(Dense):
 
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
-                                 use_analytic_kl=bool(analytic_kl),
+                                 analytic=bool(analytic_kl),
                                  q_sample=int(n_mcmc),
                                  auto_remove_independent=True)
     if analytic_kl:

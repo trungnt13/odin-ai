@@ -122,7 +122,7 @@ class LatentDirichletAllocation(Model):
 
     # ELBO
     kl = kl_divergence(q=docs_topics_posterior, p=topics_prior,
-                       use_analytic_kl=self.analytic_kl,
+                       analytic=self.analytic_kl,
                        q_sample=self.n_mcmc_samples,
                        auto_remove_independent=True)
     if self.analytic_kl:

@@ -198,8 +198,8 @@ class MixtureDensityNetwork(Dense):
     self._enter_dunder_call = False
     return distribution
 
-  def call(self, inputs, training=None, n_mcmc=1):
-    params = super(MixtureDensityNetwork, self).call(inputs)
+  def call(self, inputs, training=None, n_mcmc=1, projection=True):
+    params = super().call(inputs) if projection else inputs
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
     n_components = tf.convert_to_tensor(value=self.n_components,
@@ -287,7 +287,7 @@ class MixtureDensityNetwork(Dense):
 
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
-                                 use_analytic_kl=bool(analytic_kl),
+                                 analytic=bool(analytic_kl),
                                  q_sample=int(n_mcmc),
                                  auto_remove_independent=True)
     if analytic_kl:

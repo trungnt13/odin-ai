@@ -109,13 +109,15 @@ class NegativeBinomialLayer(DistributionLambda):
 class NegativeBinomialDispLayer(DistributionLambda):
   r"""An alternative parameterization of the NegativeBinomial Keras layer.
 
+  The order of input parameters are: mean, dispersion
+
   Arguments:
     event_shape: integer vector `Tensor` representing the shape of single
       draw from this distribution.
-    given_log_mean : `bool`
+    log_mean : `bool`
       is the input representing log mean values or the count mean itself
-    given_log_mean : `bool`
-      is the input representing log mean values or the count mean itself
+    log_disp : `bool`
+      is the input representing log dispersion values or the raw value
     dispersion : {'full', 'share', 'single'}
       'full' creates a dispersion value for each individual data point,
       'share' creates a single dispersion vector of `event_shape` for all examples,
@@ -128,15 +130,14 @@ class NegativeBinomialDispLayer(DistributionLambda):
       performance. When `False` invalid inputs may silently render incorrect
       outputs.
       Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+    **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
 
   """
 
   def __init__(self,
                event_shape=(),
-               given_log_mean=True,
-               given_log_disp=True,
+               log_mean=True,
+               log_disp=True,
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
@@ -147,15 +148,14 @@ class NegativeBinomialDispLayer(DistributionLambda):
       "Only support three different dispersion value: 'full', 'single' and " + \
         "'share', but given: %s" % dispersion
     super(NegativeBinomialDispLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
-                                 dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape, log_mean, log_disp, dispersion,
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
-          given_log_mean=True,
-          given_log_disp=True,
+          log_mean=True,
+          log_disp=True,
           dispersion='full',
           validate_args=False,
           name=None):
@@ -178,9 +178,9 @@ class NegativeBinomialDispLayer(DistributionLambda):
                                                  output_shape.shape[0] - 1,
                                                  dtype='int32'),
                                    keepdims=True)
-    if given_log_mean:
+    if log_mean:
       loc_params = tf.exp(loc_params, name='loc')
-    if given_log_disp:
+    if log_disp:
       disp_params = tf.exp(disp_params, name='disp')
     return tfd.Independent(NegativeBinomialDisp(
         loc=tf.reshape(loc_params, output_shape),
@@ -204,8 +204,7 @@ class NegativeBinomialDispLayer(DistributionLambda):
 # Zero inflated
 # ===========================================================================
 class ZIPoissonLayer(DistributionLambda):
-  """A Independent zero-inflated Poisson keras layer
-  """
+  r"""A Independent zero-inflated Poisson keras layer """
 
   def __init__(self,
                event_shape=(),
@@ -249,28 +248,26 @@ class ZIPoissonLayer(DistributionLambda):
 
 
 class ZINegativeBinomialLayer(DistributionLambda):
-  """A Independent zero-inflated negative binomial keras layer
+  r"""A Independent zero-inflated negative binomial keras layer
 
-  Parameters
-  ----------
-  event_shape: integer vector `Tensor` representing the shape of single
-    draw from this distribution.
-  given_log_count : boolean
-    is the input representing log count values or the count itself
-  dispersion : {'full', 'share', 'single'}
-    'full' creates a dispersion value for each individual data point,
-    'share' creates a single vector of dispersion for all examples, and
-    'single' uses a single value as dispersion for all data points.
-  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
-    instance and returns a `tf.Tensor`-like object.
-    Default value: `tfd.Distribution.sample`.
-  validate_args: Python `bool`, default `False`. When `True` distribution
-    parameters are checked for validity despite possibly degrading runtime
-    performance. When `False` invalid inputs may silently render incorrect
-    outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
+  Arguments:
+    event_shape: integer vector `Tensor` representing the shape of single
+      draw from this distribution.
+    given_log_count : boolean
+      is the input representing log count values or the count itself
+    dispersion : {'full', 'share', 'single'}
+      'full' creates a dispersion value for each individual data point,
+      'share' creates a single vector of dispersion for all examples, and
+      'single' uses a single value as dispersion for all data points.
+    convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+      instance and returns a `tf.Tensor`-like object.
+      Default value: `tfd.Distribution.sample`.
+    validate_args: Python `bool`, default `False`. When `True` distribution
+      parameters are checked for validity despite possibly degrading runtime
+      performance. When `False` invalid inputs may silently render incorrect
+      outputs.
+      Default value: `False`.
+    **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
 
   """
 
@@ -338,14 +335,16 @@ class ZINegativeBinomialLayer(DistributionLambda):
 
 class ZINegativeBinomialDispLayer(DistributionLambda):
   r"""A Independent zero-inflated negative binomial (alternative
-  parameterization) keras layer
+  parameterization) keras layer.
+
+  The order of input parameters are: mean, dispersion, dropout rate
 
   Arguments:
     event_shape: integer vector `Tensor` representing the shape of single
       draw from this distribution.
-    given_log_mean : boolean
+    log_mean : boolean
       is the input representing log count values or the count itself
-    given_log_disp : boolean
+    log_disp : boolean
       is the input representing log dispersion values
     dispersion : {'full', 'share', 'single'}
       'full' creates a dispersion value for each individual data point,
@@ -364,23 +363,22 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               given_log_mean=True,
-               given_log_disp=True,
+               log_mean=True,
+               log_disp=True,
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     self.dispersion = dispersion
     super(ZINegativeBinomialDispLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, given_log_mean, given_log_disp,
-                                 dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape, log_mean, log_disp, dispersion,
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
-          given_log_mean=True,
-          given_log_disp=True,
+          log_mean=True,
+          log_disp=True,
           dispersion='full',
           validate_args=False,
           name=None):
@@ -405,9 +403,9 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                                                  dtype='int32'),
                                    keepdims=True)
     # as count value, do exp if necessary
-    if given_log_mean:
+    if log_mean:
       loc_params = tf.exp(loc_params, name='loc')
-    if given_log_disp:
+    if log_disp:
       disp_params = tf.exp(disp_params, name='disp')
     # create the distribution
     nb = NegativeBinomialDisp(loc=tf.reshape(loc_params, output_shape),

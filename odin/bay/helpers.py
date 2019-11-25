@@ -90,9 +90,10 @@ def coercible_tensor(d,
 # ===========================================================================
 def kl_divergence(q,
                   p,
-                  use_analytic_kl=False,
+                  analytic=False,
                   q_sample=lambda q: q.sample(),
                   reduce_axis=(),
+                  reverse=True,
                   auto_remove_independent=True):
   r""" Calculating KL(q(x)||p(x))
 
@@ -100,20 +101,25 @@ def kl_divergence(q,
     q : `tensorflow_probability.Distribution`, the approximated posterior
       distribution
     p : `tensorflow_probability.Distribution`, the prior distribution
-    use_analytic_kl : bool (default: False)
+    analytic : bool (default: False)
       if True, use the close-form solution  for
     q_sample : {callable, Tensor, Number}
       callable for extracting sample from `q(x)` (takes `q` posterior distribution
       as input argument)
-    reudce_axis : {None, int, tuple}
-      reduce axis when use MCMC to estimate KL divergence, default
-      `()` mean keep all original dimensions
-    auto_remove_independent : bool (default: True)
-      if `q` or `p` is `tfd.Independent` wrapper, get the original
-      distribution for calculating the analytic KL
+    reudce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
+      divergence, default `()` mean keep all original dimensions.
+    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+      (or p_model) by greedily filling in the highest modes of data (or, in
+      other word, placing low probability to where data does not occur).
+      Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
+      at anywhere data occur (i.e. averagely fitting the data).
+    auto_remove_independent : `bool`. If `q` or `p` is
+      `tfd.Independent` wrapper, get the original distribution for calculating
+      the analytic KL (default: `True`).
 
   Returns:
-    Tensor KL-divergence
+    Tensor KL-divergence : shape `[batch_dims]` for analytic KL, otherwise,
+      `[n_mcmc, batch_dims]`.
 
   Example:
   ```python
@@ -143,7 +149,9 @@ def kl_divergence(q,
       q = q.distribution
     if not isinstance(q, tfd.Independent) and isinstance(p, tfd.Independent):
       p = p.distribution
-  if bool(use_analytic_kl):
+  if not bool(reverse):
+    q, p = [q, p][::-1]
+  if bool(analytic):
     return tfd.kl_divergence(q, p)
   # using MCMC sampling for estimating the KL
   if callable(q_sample):
@@ -156,3 +164,16 @@ def kl_divergence(q,
   kl = q.log_prob(z) - p.log_prob(z)
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
   return kl
+
+
+class KLdivergence:
+
+  def __init__(self, posterior, prior, analytic=True, n_mcmc=1, reverse=True):
+    self.posterior = posterior
+    self.prior = prior
+    self.analytic = bool(analytic)
+    self.n_mcmc = int(n_mcmc)
+    self.reverse = bool(reverse)
+
+  def __call__(self, analytic=None, n_mcmc=None, reverse=None):
+    pass
