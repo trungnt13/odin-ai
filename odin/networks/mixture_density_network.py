@@ -21,7 +21,7 @@ from tensorflow_probability.python.layers.internal import \
     tensor_tuple as tensor_tuple
 
 from odin import backend as bk
-from odin.bay.helpers import coercible_tensor, kl_divergence
+from odin.bay.helpers import KLdivergence, coercible_tensor, kl_divergence
 
 __all__ = ['MixtureDensityNetwork']
 
@@ -184,6 +184,11 @@ class MixtureDensityNetwork(Dense):
   def prior(self):
     return self._prior
 
+  @prior.setter
+  def prior(self, p):
+    assert isinstance(p, (tfd.Distribution, type(None)))
+    self._prior = p
+
   @property
   def posterior(self):
     r""" Return the last parametrized distribution, i.e. the result from the
@@ -198,7 +203,7 @@ class MixtureDensityNetwork(Dense):
     self._enter_dunder_call = False
     return distribution
 
-  def call(self, inputs, training=None, n_mcmc=1, projection=True):
+  def call(self, inputs, training=None, n_mcmc=1, projection=True, prior=None):
     params = super().call(inputs) if projection else inputs
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
@@ -257,20 +262,25 @@ class MixtureDensityNetwork(Dense):
       # so Keras can inject `_keras_history` to both. This is what enables
       # either to be used as an input to another Keras `Model`.
       return distribution, value
-    distribution._prior = self.prior
+    # injecting KL object
+    distribution.KL_divergence = KLdivergence(
+        distribution,
+        prior=self.prior if prior is None else prior,
+        n_mcmc=n_mcmc)
     return distribution
 
-  def kl_divergence(self, prior=None, analytic_kl=False, n_mcmc=1):
+  def kl_divergence(self, prior=None, analytic=False, n_mcmc=1, reverse=True):
     r""" KL(q||p) where `p` is the posterior distribution returned from last
     call
 
     Arguments:
       prior : instance of `tensorflow_probability.Distribution`
         prior distribution of the latent
-      analytic_kl : `bool` (default=`False`). Using closed form solution for
+      analytic : `bool` (default=`False`). Using closed form solution for
         calculating divergence, otherwise, sampling with MCMC
+      reverse : `bool`. If `True`, calculate `KL(q||p)` else `KL(p||q)`
       n_mcmc : `int` (default=`1`)
-        number of MCMC sample if `analytic_kl=False`
+        number of MCMC sample if `analytic=False`
 
     Return:
       kullback_divergence : Tensor [n_mcmc, batch_size, ...]
@@ -287,10 +297,11 @@ class MixtureDensityNetwork(Dense):
 
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
-                                 analytic=bool(analytic_kl),
+                                 analytic=bool(analytic),
+                                 reverse=bool(reverse),
                                  q_sample=int(n_mcmc),
                                  auto_remove_independent=True)
-    if analytic_kl:
+    if analytic:
       kullback_div = tf.expand_dims(kullback_div, axis=0)
       if n_mcmc > 1:
         ndims = kullback_div.shape.ndims

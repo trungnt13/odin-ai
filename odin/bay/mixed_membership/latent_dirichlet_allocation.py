@@ -49,7 +49,7 @@ class LatentDirichletAllocation(Model):
 
   def __init__(self, n_components=10, components_prior=0.7,
                encoder_layers=[64, 64], activation='relu',
-               n_mcmc_samples=1, analytic_kl=True,
+               n_mcmc_samples=1, analytic=True,
                random_state=None):
     super(LatentDirichletAllocation, self).__init__()
     self._random_state = np.random.RandomState(seed=random_state) \
@@ -62,7 +62,7 @@ class LatentDirichletAllocation(Model):
     self.components_prior = np.array(softplus_inverse(components_prior))
 
     self.n_mcmc_samples = n_mcmc_samples
-    self.analytic_kl = analytic_kl
+    self.analytic = analytic
     # ====== encoder ====== #
     encoder = Sequential(name="Encoder")
     for num_hidden_units in encoder_layers:
@@ -122,10 +122,10 @@ class LatentDirichletAllocation(Model):
 
     # ELBO
     kl = kl_divergence(q=docs_topics_posterior, p=topics_prior,
-                       analytic=self.analytic_kl,
+                       analytic=self.analytic,
                        q_sample=self.n_mcmc_samples,
                        auto_remove_independent=True)
-    if self.analytic_kl:
+    if self.analytic:
       kl = tf.expand_dims(kl, axis=0)
     llk = output_dist.log_prob(inputs)
     ELBO = llk - kl

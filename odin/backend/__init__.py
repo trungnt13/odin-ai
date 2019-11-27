@@ -9,8 +9,9 @@ from contextlib import contextmanager
 from six import add_metaclass
 from six.moves import builtins, cPickle
 
-from odin.backend import (keras_callbacks, keras_helpers, losses, metrics)
+from odin.backend import keras_callbacks, keras_helpers, losses, metrics
 from odin.backend.alias import *
+from odin.backend.interpolation import *
 from odin.backend.maths import *
 from odin.backend.tensor import *
 from odin.utils import as_tuple, is_path, is_string

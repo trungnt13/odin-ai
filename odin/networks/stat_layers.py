@@ -15,9 +15,10 @@ from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
     _serialize_function)
 
+from odin import backend as bk
 from odin.bay.distribution_alias import _dist_mapping, parse_distribution
 from odin.bay.distribution_layers import VectorDeterministicLayer
-from odin.bay.helpers import kl_divergence
+from odin.bay.helpers import KLdivergence, kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
 __all__ = ['DenseDeterministic', 'DenseDistribution']
@@ -57,7 +58,7 @@ class DenseDeterministic(Dense):
   def call(self, inputs, **kwargs):
     outputs = super(DenseDeterministic, self).call(inputs)
     distribution = VectorDeterministicLayer()(outputs)
-    distribution._prior = None
+    distribution.KL_divergence = KLdivergence(distribution, prior=None)
     return distribution
 
 
@@ -162,7 +163,7 @@ class DenseDistribution(Dense):
     last `call` """
     return self._last_distribution
 
-  def call(self, inputs, training=None, n_mcmc=1, projection=True):
+  def call(self, inputs, training=None, n_mcmc=1, projection=True, prior=None):
     params = super().call(inputs) if projection else inputs
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
@@ -170,20 +171,23 @@ class DenseDistribution(Dense):
     self._n_mcmc[0] = n_mcmc
     posterior = self._posterior_layer(params, training=training)
     self._last_distribution = posterior
-    posterior._prior = self.prior
+    # NOTE: all distribution has the method kl_divergence, so we cannot use it
+    posterior.KL_divergence = KLdivergence(
+        posterior, prior=self.prior if prior is None else prior, n_mcmc=n_mcmc)
     return posterior
 
-  def kl_divergence(self, prior=None, analytic_kl=True, n_mcmc=1):
+  def kl_divergence(self, prior=None, analytic=True, n_mcmc=1, reverse=True):
     r""" KL(q||p) where `p` is the posterior distribution returned from last
     call
 
     Arguments:
       prior : instance of `tensorflow_probability.Distribution`
         prior distribution of the latent
-      analytic_kl : `bool` (default=`True`). Using closed form solution for
+      analytic : `bool` (default=`True`). Using closed form solution for
         calculating divergence, otherwise, sampling with MCMC
+      reverse : `bool`. If `True`, calculate `KL(q||p)` else `KL(p||q)`
       n_mcmc : `int` (default=`1`)
-        number of MCMC sample if `analytic_kl=False`
+        number of MCMC sample if `analytic=False`
 
     Return:
       kullback_divergence : Tensor [n_mcmc, batch_size, ...]
@@ -198,10 +202,11 @@ class DenseDistribution(Dense):
 
     kullback_div = kl_divergence(q=self.posterior,
                                  p=prior,
-                                 analytic=bool(analytic_kl),
+                                 analytic=bool(analytic),
+                                 reverse=reverse,
                                  q_sample=int(n_mcmc),
                                  auto_remove_independent=True)
-    if analytic_kl:
+    if analytic:
       kullback_div = tf.expand_dims(kullback_div, axis=0)
       if n_mcmc > 1:
         ndims = kullback_div.shape.ndims

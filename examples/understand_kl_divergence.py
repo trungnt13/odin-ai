@@ -114,41 +114,54 @@ n_components = 3
 X = np.zeros(shape=(1, n_components)).astype('float32')
 X = np.linspace(0, 80, num=n_components, dtype='float32')[None, :]
 # X = np.random.rand(1, 3).astype('float32')
-loc = keras.Sequential([
-    keras.layers.Dense(16, activation='relu', input_shape=(n_components,)),
-    keras.layers.Dense(n_components, activation='linear',
-                       input_shape=(n_components,)),
-])
-scale = tf.Variable([1.] * n_components,
-                    dtype='float32',
-                    trainable=True,
-                    name='scale')
-history = minimize(lambda: kl_divergence(tfp.distributions.MixtureSameFamily(
-    mixture_distribution=tfp.distributions.Categorical(
-        probs=[1. / n_components] * n_components),
-    components_distribution=tfp.distributions.Normal(loc=loc(X), scale=scale)),
-                                         prior,
-                                         reverse=True, # False for llk
-                                         q_sample=100),
-                   params=loc.trainable_variables + [scale],
-                   verbose=True,
-                   print_params=False,
-                   learning_rate=0.01,
-                   epochs=1200)
-
-posterior = tfp.distributions.MixtureSameFamily(
-    mixture_distribution=tfp.distributions.Categorical(
-        probs=[1. / n_components] * n_components),
-    components_distribution=tfp.distributions.Normal(loc=loc(X), scale=scale))
+outputs = {}
+for reverse in (True, False):
+  loc = keras.Sequential([
+      keras.layers.Dense(16, activation='relu', input_shape=(n_components,)),
+      keras.layers.Dense(n_components,
+                         activation='linear',
+                         input_shape=(n_components,)),
+  ])
+  scale = tf.Variable([1.] * n_components,
+                      dtype='float32',
+                      trainable=True,
+                      name='scale')
+  history = minimize(lambda: kl_divergence(tfp.distributions.MixtureSameFamily(
+      mixture_distribution=tfp.distributions.Categorical(
+          probs=[1. / n_components] * n_components),
+      components_distribution=tfp.distributions.Normal(loc=loc(X), scale=scale
+                                                      )),
+                                           prior,
+                                           reverse=reverse,
+                                           q_sample=100),
+                     params=loc.trainable_variables + [scale],
+                     verbose=True,
+                     print_params=False,
+                     learning_rate=0.01,
+                     epochs=1200)
+  posterior = tfp.distributions.MixtureSameFamily(
+      mixture_distribution=tfp.distributions.Categorical(
+          probs=[1. / n_components] * n_components),
+      components_distribution=tfp.distributions.Normal(loc=loc(X), scale=scale))
+  outputs[reverse] = [posterior, history]
 
 plt.figure(figsize=(18, 8))
 plt.subplot(1, 2, 1)
 sns.kdeplot(prior.sample(10000).numpy(), label='Prior')
-sns.kdeplot(posterior.sample(10000).numpy().ravel(), label='Posterior')
+sns.kdeplot(outputs[True][0].sample(10000).numpy().ravel(),
+            label='Posterior-KL(q||p)')
+sns.kdeplot(outputs[False][0].sample(10000).numpy().ravel(),
+            label='Posterior-KL(p||q)',
+            linestyle='--')
 plt.legend()
-plt.subplot(1, 2, 2)
-plt.plot([i[0] for i in history])
-plt.title("Loss")
+ax = plt.subplot(1, 2, 2)
+l1 = plt.plot([i[0] for i in outputs[True][1]], label='KL(q||p)')
+ax.twinx()
+l2 = plt.plot([i[0] for i in outputs[False][1]],
+              label='KL(p||q)',
+              linestyle='--')
+plt.title("KL loss")
+plt.legend(handles=[l1[0], l2[0]])
 
 # ===========================================================================
 # Mixture with Mixture Posterior

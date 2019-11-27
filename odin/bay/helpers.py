@@ -95,7 +95,8 @@ def kl_divergence(q,
                   reduce_axis=(),
                   reverse=True,
                   auto_remove_independent=True):
-  r""" Calculating KL(q(x)||p(x))
+  r""" Calculating KL(q(x)||p(x)) (reverse=True) or
+  KL(p(x)||q(x)) (reverse=False)
 
   Arguments:
     q : `tensorflow_probability.Distribution`, the approximated posterior
@@ -118,8 +119,9 @@ def kl_divergence(q,
       the analytic KL (default: `True`).
 
   Returns:
-    Tensor KL-divergence : shape `[batch_dims]` for analytic KL, otherwise,
-      `[n_mcmc, batch_dims]`.
+    A Tensor with the batchwise KL-divergence between `distribution_a`
+      and `distribution_b`.  The shape is `[batch_dims]` for analytic KL,
+      otherwise, `[n_mcmc, batch_dims]`.
 
   Example:
   ```python
@@ -167,13 +169,35 @@ def kl_divergence(q,
 
 
 class KLdivergence:
+  r""" This class freezes the arguments of `kl_divergence` so it could be call
+  later without the required arguments.
 
-  def __init__(self, posterior, prior, analytic=True, n_mcmc=1, reverse=True):
+  Note:
+    this class return 0. if the prior is not given (i.e. prior=None)
+  """
+
+  def __init__(self,
+               posterior,
+               prior=None,
+               analytic=False,
+               n_mcmc=1,
+               reverse=True):
     self.posterior = posterior
     self.prior = prior
     self.analytic = bool(analytic)
     self.n_mcmc = int(n_mcmc)
     self.reverse = bool(reverse)
 
-  def __call__(self, analytic=None, n_mcmc=None, reverse=None):
-    pass
+  def __call__(self, prior=None, analytic=None, n_mcmc=None, reverse=None):
+    prior = self.prior if prior is None else prior
+    analytic = self.analytic if analytic is None else bool(analytic)
+    n_mcmc = self.n_mcmc if n_mcmc is None else int(n_mcmc)
+    reverse = self.reverse if reverse is None else bool(reverse)
+    if prior is None:
+      return 0.
+    return kl_divergence(q=self.posterior,
+                         p=prior,
+                         analytic=analytic,
+                         reverse=reverse,
+                         q_sample=n_mcmc,
+                         auto_remove_independent=True)
