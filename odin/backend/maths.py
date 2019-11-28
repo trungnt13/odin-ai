@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 import torch
 from scipy.special import logsumexp
 
@@ -64,9 +65,10 @@ def tensordot(x, y, axis=2):
 def clip(x, x_min=None, x_max=None):
   r""" Clips tensor values to a specified min and max. """
   if tf.is_tensor(x):
-    return tf.clip_by_value(x,
-                            clip_value_min=x.dtype.min if x_min is None else x_min,
-                            clip_value_max=x.dtype.max if x_max is None else x_max)
+    return tf.clip_by_value(
+        x,
+        clip_value_min=x.dtype.min if x_min is None else x_min,
+        clip_value_max=x.dtype.max if x_max is None else x_max)
   elif torch.is_tensor(x):
     if x_min is None:
       return torch.clamp(x, max=x_max)
@@ -247,6 +249,16 @@ def softsign(x):
   return x / (1 + np.abs(x))
 
 
+def softplus_inverse(x):
+  r""" Mathematically this is `log(exp(x) - 1)`, however, a more numerically
+  stable calculation is `log(1 - exp(-x)) + x` """
+  if tf.is_tensor(x):
+    return tfp.math.softplus_inverse(x)
+  if torch.is_tensor(x):
+    return torch.log(1 - torch.exp(-x)) + x
+  return np.log(1 - np.exp(-x)) + x
+
+
 def softplus(x, beta=1, threshold=20):
   r""" math::`f(x) = \frac{1}{beta} * log(exp^{beta * x} + 1)`
   threshold : values above this revert to a linear function
@@ -260,6 +272,13 @@ def softplus(x, beta=1, threshold=20):
   return torch.nn.functional.softplus(torch.from_numpy(x),
                                       beta=beta,
                                       threshold=threshold).numpy()
+
+
+def softplus1(x):
+  r""" Return positive standard deviation for normal distributions
+  `softplus(x) + softplus_inverse(1.0)` """
+  # tf.math.softplus(x) + tfp.math.softplus_inverse(1.0)
+  return softplus(x) + softplus_inverse(1.0)
 
 
 def sigmoid(x):

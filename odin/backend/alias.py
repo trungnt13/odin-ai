@@ -73,15 +73,23 @@ def parse_activation(activation, framework):
   if isinstance(activation, string_types):
     if activation.lower() == 'linear':
       return _linear_function
-
     if _is_tensorflow(framework):
-      return keras.activations.get(activation)
+      try:
+        fn = keras.activations.get(activation)
+        return fn
+      except ValueError:
+        pass
     else:
       for i in dir(torch.nn.functional):
         if i.lower() == activation.lower():
           fn = getattr(torch.nn.functional, i)
           if inspect.isfunction(fn):
             return fn
+  # search for custom activation in odin.backend.maths
+  from odin.backend import maths
+  for name, member in inspect.getmembers(maths):
+    if inspect.isfunction(member) and name == activation:
+      return member
   _invalid("No support for activation", activation)
 
 

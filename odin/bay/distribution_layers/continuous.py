@@ -18,6 +18,7 @@ from tensorflow_probability.python.layers.distribution_layer import _event_size
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
 
+from odin.backend import parse_activation
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
@@ -117,15 +118,12 @@ class VectorDeterministicLayer(DistributionLambda):
 
 
 class DirichletLayer(DistributionLambda):
-  """
-  Parameters
-  ----------
-  pre_softplus : bool (default: False)
-    applying softplus activation on the parameters before parameterizing
-
-  clip_for_stable : bool (default: True)
-    clipping the concentration into range [1e-3, 1e3] for stability
-
+  r"""
+  Arguments:
+    pre_softplus : bool (default: False)
+      applying softplus activation on the parameters before parameterizing
+    clip_for_stable : bool (default: True)
+      clipping the concentration into range [1e-3, 1e3] for stability
   """
 
   def __init__(self,
@@ -178,46 +176,35 @@ class DirichletLayer(DistributionLambda):
 
 
 class GaussianLayer(DistributionLambda):
-  """An independent normal Keras layer.
+  r"""An independent normal Keras layer.
 
-  Parameters
-  ----------
-  event_shape: integer vector `Tensor` representing the shape of single
-    draw from this distribution.
-
-  softplus_scale : bool
-    if True, `scale = softplus(params) + softplus_inverse(1.0)`
-
-  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
-    instance and returns a `tf.Tensor`-like object.
-    Default value: `tfd.Distribution.sample`.
-
-  validate_args: Python `bool`, default `False`. When `True` distribution
-    parameters are checked for validity despite possibly degrading runtime
-    performance. When `False` invalid inputs may silently render incorrect
-    outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
-
+  Arguments:
+    event_shape: integer vector `Tensor` representing the shape of single
+      draw from this distribution.
+    scale_activation : activation function for scale parameters, default:
+      `softplus1(x) = softplus(x) + softplus_inverse(1.0)`
+    convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+      instance and returns a `tf.Tensor`-like object.
+      Default value: `tfd.Distribution.sample`.
+    validate_args: Python `bool`, default `False`. When `True` distribution
+      parameters are checked for validity despite possibly degrading runtime
+      performance. When `False` invalid inputs may silently render incorrect
+      outputs. Default value: `False`.
+    **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
   """
 
   def __init__(self,
                event_shape=(),
-               softplus_scale=True,
+               scale_activation=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(GaussianLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape, scale_activation, validate_args
+                                ), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params,
-          event_shape=(),
-          softplus_scale=True,
-          validate_args=False,
-          name=None):
+  def new(params, event_shape, scale_activation, validate_args, name=None):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -229,9 +216,7 @@ class GaussianLayer(DistributionLambda):
     ],
                              axis=0)
     loc_params, scale_params = tf.split(params, 2, axis=-1)
-    if softplus_scale:
-      scale_params = tf.math.softplus(scale_params) + tfp.math.softplus_inverse(
-          1.0)
+    scale_params = parse_activation(scale_activation, 'tf')(scale_params)
     return tfd.Independent(tfd.Normal(loc=tf.reshape(loc_params, output_shape),
                                       scale=tf.reshape(scale_params,
                                                        output_shape),
@@ -250,44 +235,38 @@ class GaussianLayer(DistributionLambda):
 
 
 class LogNormalLayer(DistributionLambda):
-  """An independent LogNormal Keras layer.
+  r"""An independent LogNormal Keras layer.
 
-  Parameters
-  ----------
-  event_shape: integer vector `Tensor` representing the shape of single
-    draw from this distribution.
-
-  softplus_scale : bool
-    if True, `scale = softplus(params) + softplus_inverse(1.0)`
-
-  convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
-    instance and returns a `tf.Tensor`-like object.
-    Default value: `tfd.Distribution.sample`.
-
-  validate_args: Python `bool`, default `False`. When `True` distribution
-    parameters are checked for validity despite possibly degrading runtime
-    performance. When `False` invalid inputs may silently render incorrect
-    outputs.
-    Default value: `False`.
-
-  **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
-
+  Arguments:
+    event_shape: integer vector `Tensor` representing the shape of single
+      draw from this distribution.
+    scale_activation : activation function for scale parameters, default:
+      `softplus1(x) = softplus(x) + softplus_inverse(1.0)`
+    convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
+      instance and returns a `tf.Tensor`-like object.
+      Default value: `tfd.Distribution.sample`.
+    validate_args: Python `bool`, default `False`. When `True` distribution
+      parameters are checked for validity despite possibly degrading runtime
+      performance. When `False` invalid inputs may silently render incorrect
+      outputs.
+      Default value: `False`.
+    **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
   """
 
   def __init__(self,
                event_shape=(),
-               softplus_scale=True,
+               scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(LogNormalLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, softplus_scale, validate_args),
+        lambda t: type(self).new(t, event_shape, scale_activation, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
-          softplus_scale=True,
+          scale_activation='softplus1',
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
@@ -301,9 +280,7 @@ class LogNormalLayer(DistributionLambda):
     ],
                              axis=0)
     loc_params, scale_params = tf.split(params, 2, axis=-1)
-    if softplus_scale:
-      scale_params = tf.math.softplus(scale_params) + tfp.math.softplus_inverse(
-          1.0)
+    scale_params = parse_activation(scale_activation, 'tf')(scale_params)
     return tfd.Independent(tfd.LogNormal(loc=tf.reshape(loc_params,
                                                         output_shape),
                                          scale=tf.reshape(
@@ -438,72 +415,55 @@ class BetaLayer(DistributionLambda):
 # Multivariate distribution
 # ===========================================================================
 class MultivariateNormalLayer(DistributionLambda):
-  """A `d`-variate Multivariate Normal distribution Keras layer:
+  r"""A `d`-variate Multivariate Normal distribution Keras layer:
 
   Different covariance mode:
    - tril (lower triangle): `d + d * (d + 1) // 2` params.
    - diag (diagonal) : `d + d` params.
    - full (full) : `d + d * d` params.
 
-  Typical choices for `convert_to_tensor_fn` include:
-
-  - `tfd.Distribution.sample`
-  - `tfd.Distribution.mean`
-  - `tfd.Distribution.mode`
-  - `lambda s: s.mean() + 0.1 * s.stddev()`
-
-    Parameters
-    ----------
+  Arguments:
     event_size: Scalar `int` representing the size of single draw from this
       distribution.
-
     covariance_type : {'diag', 'tril', 'full'}
-
-    softplus_scale : bool
-      if True, `scale = softplus(params) + softplus_inverse(1.0)`
-
+    scale_activation : activation function for scale, default:
+      `softplus1(x) = softplus(x) + softplus_inverse(1.0)`
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object. For examples, see
       `class` docstring.
       Default value: `tfd.Distribution.sample`.
-
     validate_args: Python `bool`, default `False`. When `True` distribution
       parameters are checked for validity despite possibly degrading runtime
       performance. When `False` invalid inputs may silently render incorrect
       outputs.
       Default value: `False`.
-
     **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
   """
 
   def __init__(self,
                event_size,
                covariance_type='diag',
-               softplus_scale=True,
+               scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(t, event_size, covariance_type, softplus_scale,
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_size, covariance_type,
+                                 scale_activation, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_size,
           covariance_type,
-          softplus_scale,
+          scale_activation,
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
     covariance_type = str(covariance_type).lower().strip()
     assert covariance_type in ('full', 'tril', 'diag'), \
     "No support for given covariance_type: '%s'" % covariance_type
-
-    if bool(softplus_scale):
-      scale_fn = lambda x: tf.math.softplus(x) + tfp.math.softplus_inverse(1.0)
-    else:
-      scale_fn = lambda x: x
-
+    scale_fn = parse_activation(scale_activation, 'tf')
     params = tf.convert_to_tensor(value=params, name='params')
     if covariance_type == 'tril':
       scale_tril = tfb.ScaleTriL(diag_shift=np.array(

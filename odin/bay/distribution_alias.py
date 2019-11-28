@@ -17,6 +17,12 @@ _dist_mapping = multikeysdict({
     ('zibernoulli', 'zeroinflatedbernoulli'):
         (obl.ZIBernoulliLayer, tfd.Bernoulli),
     ('normal', 'gaussian'): (obl.NormalLayer, tfd.Normal),
+    ('normaldiag', 'gaussiandiag'): (partialclass(obl.MultivariateNormalLayer,
+                                                  covariance_type='diag'),
+                                     tfd.MultivariateNormalDiag),
+    ('normaltril', 'gaussiantril', 'normalfull', 'gaussianfull'):
+        (partialclass(obl.MultivariateNormalLayer,
+                      covariance_type='tril'), tfd.MultivariateNormalTriL),
     'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
     ('nb', 'negativebinomial'):
         (obl.NegativeBinomialLayer, tfd.NegativeBinomial),
@@ -51,11 +57,10 @@ _dist_mapping = multikeysdict({
 
 
 def parse_distribution(alias):
-  """
-  Return
-  ------
-  layer : `tensorflow_probability.python.layers.DistributionLambda`
-  dist : `tensorflow_probability.python.distributions.Distribution`
+  r"""
+  Returns:
+    layer : `tensorflow_probability.python.layers.DistributionLambda`
+    dist : `tensorflow_probability.python.distributions.Distribution`
   """
   if isinstance(alias, string_types):
     alias = alias.lower()
@@ -64,14 +69,15 @@ def parse_distribution(alias):
                        "all available distributions: %s" %
                        (alias, ', '.join(list(_dist_mapping.keys()))))
     layer, dist = _dist_mapping[alias]
+    return layer, dist
   if not inspect.isclass(alias):
     alias = type(alias)
   if issubclass(alias, tfd.Distribution):
     for i, j in _dist_mapping.values():
-      if j is alias:
-        return i, j
+      if issubclass(j, alias):
+        return i, alias
   elif issubclass(alias, tfl.DistributionLambda):
     for i, j in _dist_mapping.values():
-      if i is alias:
-        return i, j
-  return layer, dist
+      if issubclass(i, alias):
+        return alias, j
+  raise ValueError("Cannot find distribution with alias: %s" % str(alias))

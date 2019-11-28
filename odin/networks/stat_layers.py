@@ -111,6 +111,7 @@ class DenseDistribution(Dense):
     convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn',
                                                 Distribution.sample)
     # process the posterior
+    # TODO: support give instance of DistributionLambda directly
     post_layer, _ = parse_distribution(posterior)
     self._n_mcmc = [1]
     self._posterior_layer = post_layer(

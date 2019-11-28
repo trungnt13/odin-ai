@@ -65,8 +65,8 @@ class MixtureDensityNetwork(Dense):
                n_components=8,
                covariance_type='none',
                convert_to_tensor_fn=tfd.Distribution.sample,
-               softplus_scale=True,
-               activation='linear',
+               loc_activation='linear',
+               scale_activation='softplus1',
                use_bias=True,
                dropout=0.0,
                kernel_initializer='glorot_uniform',
@@ -86,7 +86,8 @@ class MixtureDensityNetwork(Dense):
     self._is_sampling = True \
       if convert_to_tensor_fn == tfd.Distribution.sample else False
     self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
-    self._softplus_scale = bool(softplus_scale)
+    self._loc_activation = bk.parse_activation(loc_activation, self)
+    self._scale_activation = bk.parse_activation(scale_activation, self)
     self._dropout = dropout
     # We'll need to keep track of who's calling who since the functional
     # API has a different way of injecting `_keras_history` than the
@@ -108,7 +109,7 @@ class MixtureDensityNetwork(Dense):
     self._event_size = units
     super(MixtureDensityNetwork,
           self).__init__(units=params_size,
-                         activation=activation,
+                         activation='linear',
                          use_bias=use_bias,
                          kernel_initializer=kernel_initializer,
                          bias_initializer=bias_initializer,
@@ -138,11 +139,11 @@ class MixtureDensityNetwork(Dense):
     elif self.covariance_type == 'none':
       scale_shape = [self.n_components, event_size]
       fn = lambda l, s: tfd.Independent(
-          tfd.Normal(loc=l, scale=tf.nn.softplus(s)), 1)
+          tfd.Normal(loc=l, scale=tf.math.softplus(s)), 1)
     elif self.covariance_type == 'full':
       scale_shape = [self.n_components, event_size * (event_size + 1) // 2]
       fn = lambda l, s: tfd.MultivariateNormalTriL(
-          loc=l, scale_tril=tfb.ScaleTriL(diag_shift=1e-5)(tf.nn.softplus(s)))
+          loc=l, scale_tril=tfb.ScaleTriL(diag_shift=1e-5)(tf.math.softplus(s)))
     #
     if isinstance(log_scale, Number) or tf.rank(log_scale) == 0:
       loc = tf.fill([self.n_components, self.event_size], loc)
@@ -214,36 +215,42 @@ class MixtureDensityNetwork(Dense):
     mixture_coefficients = params[..., :n_components]
     mixture_dist = tfd.Categorical(logits=mixture_coefficients,
                                    name="MixtureWeights")
-    # ====== initialize the components ====== #
+    # ====== prepare the function ====== #
     params = tf.reshape(
         params[..., n_components:],
-        tf.concat([tf.shape(input=params)[:-1], [n_components, -1]], axis=0))
-    if bool(self._softplus_scale):
-      scale_fn = lambda x: tf.math.softplus(x) + tfd.softplus_inverse(1.0)
-    else:
-      scale_fn = lambda x: x
-
+        tf.concat([
+            tf.shape(input=params)[:-1],
+            [
+                n_components,
+                (self.units - self.n_components) // self.n_components
+            ]
+        ],
+                  axis=0))
+    # ====== initialize the components ====== #
     if self.covariance_type == 'none':
       cov = 'IndependentNormal'
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       components_dist = tfd.Independent(tfd.Normal(
-          loc=loc_params, scale=scale_fn(scale_params)),
+          loc=self._loc_activation(loc_params),
+          scale=self._scale_activation(scale_params)),
                                         reinterpreted_batch_ndims=1)
     #
     elif self.covariance_type == 'diag':
       cov = 'MultivariateNormalDiag'
       loc_params, scale_params = tf.split(params, 2, axis=-1)
       components_dist = tfd.MultivariateNormalDiag(
-          loc=loc_params, scale_diag=scale_fn(scale_params))
+          loc=self._loc_activation(loc_params),
+          scale_diag=self._scale_activation(scale_params))
     #
     elif self.covariance_type == 'full':
       cov = 'MultivariateNormalTriL'
       loc_params = params[..., :self.event_size]
-      scale_params = scale_fn(params[..., self.event_size:])
+      scale_params = params[..., self.event_size:]
       scale_tril = tfb.ScaleTriL(
           diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()))
       components_dist = tfd.MultivariateNormalTriL(
-          loc=loc_params, scale_tril=scale_tril(scale_params))
+          loc=self._loc_activation(loc_params),
+          scale_tril=scale_tril(self._scale_activation(scale_params)))
     else:
       raise NotImplementedError
     # ====== finally the mixture ====== #
@@ -257,16 +264,16 @@ class MixtureDensityNetwork(Dense):
                                      sample_shape=[n_mcmc])
     distribution, value = coercible_tensor(
         d, convert_to_tensor_fn=convert_to_tensor_fn, return_value=True)
-    if self._enter_dunder_call:
-      # Its critical to return both distribution and concretization
-      # so Keras can inject `_keras_history` to both. This is what enables
-      # either to be used as an input to another Keras `Model`.
-      return distribution, value
     # injecting KL object
     distribution.KL_divergence = KLdivergence(
         distribution,
         prior=self.prior if prior is None else prior,
         n_mcmc=n_mcmc)
+    if self._enter_dunder_call:
+      # Its critical to return both distribution and concretization
+      # so Keras can inject `_keras_history` to both. This is what enables
+      # either to be used as an input to another Keras `Model`.
+      return distribution, value
     return distribution
 
   def kl_divergence(self, prior=None, analytic=False, n_mcmc=1, reverse=True):
@@ -330,7 +337,8 @@ class MixtureDensityNetwork(Dense):
         'convert_to_tensor_fn': _serialize(self._convert_to_tensor_fn),
         'covariance_type': self._covariance_type,
         'n_components': self._n_components,
-        'softplus_scale': self._softplus_scale,
+        'loc_activation': keras.activations.serialize(self._loc_activation),
+        'scale_activation': keras.activations.serialize(self._scale_activation),
         'dropout': self._dropout
     }
     base_config = super(MixtureDensityNetwork, self).get_config()
