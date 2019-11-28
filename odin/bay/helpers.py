@@ -29,12 +29,13 @@ def _dist2text(dist):
 
 def _extract_desc(dist, name, pad):
   text = pad + (name + ':' if len(name) > 0 else '') + _dist2text(dist) + '\n'
-  obj_type = type(dist)
-  for key in dir(dist):
-    val = getattr(dist, key)
-    if isinstance(val, tfd.Distribution) and \
-      not isinstance(getattr(obj_type, key, None), property):
-      text += _extract_desc(val, key, pad + ' ')
+  for key, val in dist.parameters.items():
+    if isinstance(val, tfd.Distribution):
+      text += _extract_desc(val, key, pad + '  ')
+    elif tf.is_tensor(val):
+      text += pad + '  %s shape:%s dtype:%s\n' % (key, val.shape, val.dtype)
+    else:
+      text += pad + '  %s:%s\n' % (key, str(val))
   return text
 
 

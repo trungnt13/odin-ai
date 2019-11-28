@@ -6,8 +6,13 @@ import re
 from enum import Enum, auto
 
 import numpy as np
+import tensorflow as tf
 
 pattern = re.compile(r'^([a-z]+)(\d*)([a-zA-Z]*)')
+
+
+def cbrt(x):
+  return tf.pow(x, 1 / 3)
 
 
 class Interpolation(Enum):
@@ -59,7 +64,7 @@ class Interpolation(Enum):
   def __call__(self, a, vmin=0., vmax=1.):
     name = str(self).split('.')[-1]
     _, name, power, mode, _ = pattern.split(name)
-    power = int(power) if len(power) > 0 else 1
+    power = float(power) if len(power) > 0 else 1.
 
     isinverse = 'Inverse' in mode
     mode = mode.replace('Inverse', '')
@@ -76,48 +81,48 @@ class Interpolation(Enum):
       a = a * a * a * (a * (a * 6 - 15) + 10)
     elif 'pow' == name[:3]:
       if isin:
-        a = (np.sqrt(a) if power == 2 else np.cbrt(a)) \
+        a = (tf.sqrt(a) if power == 2 else cbrt(a)) \
           if isinverse else \
-            np.power(a, power)
+            tf.pow(a, power)
       elif isout:
-        a = (1 - np.sqrt(-(a - 1)) if power == 2 else 1 - np.cbrt(-(a - 1))) \
+        a = (1 - tf.sqrt(-(a - 1)) if power == 2 else 1 - cbrt(-(a - 1))) \
           if isinverse else \
-            np.power(a - 1, power) * (-1 if power % 2 == 0 else 1) + 1
+            tf.pow(a - 1, power) * (-1 if power % 2 == 0 else 1) + 1
       else:
-        a = np.where(
+        a = tf.where(
             a <= 0.5,
-            np.power(a * 2, power) / 2,
-            np.power((a - 1) * 2, power) / (-2 if power % 2 == 0 else 2) + 1)
+            tf.pow(a * 2, power) / 2,
+            tf.pow((a - 1) * 2, power) / (-2 if power % 2 == 0 else 2) + 1)
     elif 'sine' == name[:4]:
       if isin:
-        a = 1 - np.cos(a * np.pi / 2)
+        a = 1 - tf.cos(a * np.pi / 2)
       elif isout:
-        a = np.sin(a * np.pi / 2)
+        a = tf.sin(a * np.pi / 2)
       else:
-        a = (1 - np.cos(a * np.pi)) / 2
+        a = (1 - tf.cos(a * np.pi)) / 2
     elif 'circle' == name[:6]:
       if isin:
-        a = 1 - np.sqrt(1 - a * a)
+        a = 1 - tf.sqrt(1 - a * a)
       elif isout:
-        a = np.sqrt(1 - (a - 1)**2)
+        a = tf.sqrt(1 - (a - 1)**2)
       else:
-        a = np.where(
+        a = tf.where(
           a <= 0.5, \
-          (1 - np.sqrt(1 - (a * 2)**2)) / 2, \
-          (np.sqrt(1 - ((a - 1) * 2)**2) + 1) / 2)
+          (1 - tf.sqrt(1 - (a * 2)**2)) / 2, \
+          (tf.sqrt(1 - ((a - 1) * 2)**2) + 1) / 2)
     elif 'exp' == name[:3]:
       base = 2.
-      min_val = np.power(base, -power)
+      min_val = tf.pow(base, -power)
       scale = 1 / (1 - min_val)
       if isin:
-        a = (np.power(base, power * (a - 1)) - min_val) * scale
+        a = (tf.pow(base, power * (a - 1)) - min_val) * scale
       elif isout:
-        a = 1 - (np.power(base, -power * a) - min_val) * scale
+        a = 1 - (tf.pow(base, -power * a) - min_val) * scale
       else:
-        a = np.where(
+        a = tf.where(
             a <= 0.5, \
-            (np.power(base, power * (a * 2 - 1)) - min_val) * scale / 2, \
-            (2 - (np.power(base, -power * (a * 2 - 1)) - min_val) * scale) / 2)
+            (tf.pow(base, power * (a * 2 - 1)) - min_val) * scale / 2, \
+            (2 - (tf.pow(base, -power * (a * 2 - 1)) - min_val) * scale) / 2)
     elif 'swing' == name[:5]:
       if isin:
         scale = 2
@@ -128,34 +133,34 @@ class Interpolation(Enum):
         a = a * a * ((scale + 1) * a + scale) + 1
       else:
         scale = 3
-        a = np.where(
+        a = tf.where(
           a <= 0.5, \
           (a * 2) ** 2 * ((scale + 1) * a * 2 - scale) / 2, \
           ((a - 1) * 2) ** 2 * ((scale + 1) * ((a - 1) * 2) + scale) / 2 + 1 \
         )
     elif 'elastic' == name[:7]:
-      base = 2
-      power = 10
-      scale = 1
+      base = 2.
+      power = 10.
+      scale = 1.
       bounces = 6 if isin else 7
       bounces *= np.pi * (1 if bounces % 2 == 0 else -1)
       if isin:
-        a = np.where(
+        a = tf.where(
           a >= 0.99, \
-          np.ones_like(a), \
-          np.power(base, power * (a - 1)) * np.sin(a * bounces) * scale
+          tf.ones_like(a), \
+          tf.pow(base, power * (a - 1)) * tf.sin(a * bounces) * scale
         )
       elif isout:
-        a = np.where(
+        a = tf.where(
           a == 0, \
-          np.zeros_like(a), \
-          1 - np.power(base, power * ((1 - a) - 1)) * np.sin((1 - a) * bounces) * scale
+          tf.zeros_like(a), \
+          1 - tf.pow(base, power * ((1 - a) - 1)) * tf.sin((1 - a) * bounces) * scale
         )
       else:
-        a = np.where(
+        a = tf.where(
           a <= 0.5, \
-          np.power(base, power * (a * 2 - 1)) * np.sin(a * 2 * bounces) * scale / 2, \
-          1 - np.power(base, power * ((1 - a) * 2 - 1)) * np.sin((1 - a) * 2 * bounces) * scale / 2
+          tf.pow(base, power * (a * 2 - 1)) * tf.sin(a * 2 * bounces) * scale / 2, \
+          1 - tf.pow(base, power * ((1 - a) * 2 - 1)) * tf.sin((1 - a) * 2 * bounces) * scale / 2
         )
 
     return (vmax - vmin) * a + vmin

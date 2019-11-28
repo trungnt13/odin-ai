@@ -9,13 +9,16 @@ from matplotlib import pyplot as plt
 from odin import visual as vs
 from odin.backend.interpolation import Interpolation
 
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 sns.set()
 
 n = len(Interpolation)
 n_col = 5
 n_row = int(np.ceil(n / 5))
 
-x = np.linspace(0., 1., num=250)
+x = np.linspace(0., 1., num=250).astype('float32')
 plt.figure(figsize=(int(n_col * 2.5), int(n_row * 2.5)))
 for idx, fi in enumerate(Interpolation):
   plt.subplot(n_row, n_col, idx + 1)

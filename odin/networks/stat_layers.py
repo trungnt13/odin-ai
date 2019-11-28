@@ -55,9 +55,10 @@ class DenseDeterministic(Dense):
                          bias_constraint=bias_constraint,
                          **kwargs)
 
-  def call(self, inputs, **kwargs):
+  def call(self, inputs, n_mcmc=1, **kwargs):
     outputs = super(DenseDeterministic, self).call(inputs)
-    distribution = VectorDeterministicLayer()(outputs)
+    distribution = VectorDeterministicLayer(convert_to_tensor_fn=partial(
+        Distribution.sample, sample_shape=[n_mcmc]))(outputs)
     distribution.KL_divergence = KLdivergence(distribution, prior=None)
     return distribution
 
