@@ -112,13 +112,17 @@ class DenseDistribution(Dense):
                                                 Distribution.sample)
     # process the posterior
     # TODO: support give instance of DistributionLambda directly
-    post_layer, _ = parse_distribution(posterior)
+    if inspect.isclass(posterior) and issubclass(posterior, DistributionLambda):
+      post_layer = posterior
+    else:
+      post_layer, _ = parse_distribution(posterior)
     self._n_mcmc = [1]
     self._posterior_layer = post_layer(
         event_shape,
         convert_to_tensor_fn=partial(Distribution.sample,
-                                     sample_shape=self._n_mcmc) if
-        convert_to_tensor_fn == Distribution.sample else convert_to_tensor_fn,
+                                     sample_shape=self._n_mcmc) \
+          if convert_to_tensor_fn == Distribution.sample else \
+            convert_to_tensor_fn,
         **posterior_kwargs)
     # create layers
     self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
@@ -127,8 +131,12 @@ class DenseDistribution(Dense):
     self._event_shape = event_shape
     self._posterior_kwargs = posterior_kwargs
     self._dropout = dropout
+    # params_size could be static function or method
+    params_size = self._posterior_layer.params_size() \
+      if 'self' in inspect.getfullargspec(post_layer.params_size).args else \
+        post_layer.params_size(event_shape)
     super(DenseDistribution,
-          self).__init__(units=post_layer.params_size(event_shape),
+          self).__init__(units=params_size,
                          activation=activation,
                          use_bias=use_bias,
                          kernel_initializer=kernel_initializer,

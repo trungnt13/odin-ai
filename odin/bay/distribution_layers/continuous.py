@@ -120,27 +120,29 @@ class VectorDeterministicLayer(DistributionLambda):
 class DirichletLayer(DistributionLambda):
   r"""
   Arguments:
-    pre_softplus : bool (default: False)
-      applying softplus activation on the parameters before parameterizing
+    alpha_activation: activation function return positive floating-point `Tensor`
+      indicating mean number of class occurrences; aka "alpha"
     clip_for_stable : bool (default: True)
       clipping the concentration into range [1e-3, 1e3] for stability
   """
 
   def __init__(self,
                event_shape='auto',
-               pre_softplus=False,
+               alpha_activation='softplus',
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(DirichletLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, pre_softplus, clip_for_stable,
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape,
+                                 parse_activation(alpha_activation, self),
+                                 clip_for_stable, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape='auto',
-          pre_softplus=False,
+          alpha_activation=tf.nn.softplus,
           clip_for_stable=True,
           validate_args=False,
           name=None):
@@ -156,8 +158,7 @@ class DirichletLayer(DistributionLambda):
     ],
                              axis=0)
     # Clips the Dirichlet parameters to the numerically stable KL region
-    if pre_softplus:
-      params = tf.nn.softplus(params)
+    params = alpha_activation(params)
     if clip_for_stable:
       params = tf.clip_by_value(params, 1e-3, 1e3)
     return tfd.Independent(tfd.Dirichlet(concentration=tf.reshape(
@@ -195,16 +196,24 @@ class GaussianLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               scale_activation=True,
+               loc_activation='linear',
+               scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(GaussianLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, scale_activation, validate_args
-                                ), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(loc_activation, self),
+            parse_activation(scale_activation, self), validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, event_shape, scale_activation, validate_args, name=None):
+  def new(params,
+          event_shape,
+          loc_activation,
+          scale_activation,
+          validate_args,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -216,10 +225,10 @@ class GaussianLayer(DistributionLambda):
     ],
                              axis=0)
     loc_params, scale_params = tf.split(params, 2, axis=-1)
-    scale_params = parse_activation(scale_activation, 'tf')(scale_params)
-    return tfd.Independent(tfd.Normal(loc=tf.reshape(loc_params, output_shape),
-                                      scale=tf.reshape(scale_params,
-                                                       output_shape),
+    loc_params = tf.reshape(loc_activation(loc_params), output_shape)
+    scale_params = tf.reshape(scale_activation(scale_params), output_shape)
+    return tfd.Independent(tfd.Normal(loc=loc_params,
+                                      scale=scale_params,
                                       validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            validate_args=validate_args)
@@ -255,18 +264,22 @@ class LogNormalLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
+               loc_activation='linear',
                scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(LogNormalLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, scale_activation, validate_args),
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(loc_activation, self),
+            parse_activation(scale_activation, self), validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
-          event_shape=(),
-          scale_activation='softplus1',
+          event_shape,
+          loc_activation,
+          scale_activation,
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
@@ -280,11 +293,10 @@ class LogNormalLayer(DistributionLambda):
     ],
                              axis=0)
     loc_params, scale_params = tf.split(params, 2, axis=-1)
-    scale_params = parse_activation(scale_activation, 'tf')(scale_params)
-    return tfd.Independent(tfd.LogNormal(loc=tf.reshape(loc_params,
-                                                        output_shape),
-                                         scale=tf.reshape(
-                                             scale_params, output_shape),
+    loc_params = tf.reshape(loc_activation(loc_params), output_shape)
+    scale_params = tf.reshape(scale_activation(scale_params), output_shape)
+    return tfd.Independent(tfd.LogNormal(loc=loc_params,
+                                         scale=scale_params,
                                          validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            validate_args=validate_args)
@@ -443,19 +455,22 @@ class MultivariateNormalLayer(DistributionLambda):
   def __init__(self,
                event_size,
                covariance_type='diag',
+               loc_activation='linear',
                scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
         lambda t: type(self).new(t, event_size, covariance_type,
-                                 scale_activation, validate_args),
-        convert_to_tensor_fn, **kwargs)
+                                 parse_activation(loc_activation, self),
+                                 parse_activation(scale_activation, self),
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_size,
           covariance_type,
+          loc_activation,
           scale_activation,
           validate_args=False,
           name=None):
@@ -463,25 +478,26 @@ class MultivariateNormalLayer(DistributionLambda):
     covariance_type = str(covariance_type).lower().strip()
     assert covariance_type in ('full', 'tril', 'diag'), \
     "No support for given covariance_type: '%s'" % covariance_type
-    scale_fn = parse_activation(scale_activation, 'tf')
+    floc = loc_activation
+    fscale = scale_activation
     params = tf.convert_to_tensor(value=params, name='params')
     if covariance_type == 'tril':
       scale_tril = tfb.ScaleTriL(diag_shift=np.array(
           1e-5, params.dtype.as_numpy_dtype()),
                                  validate_args=validate_args)
-      return tfd.MultivariateNormalTriL(loc=params[..., :event_size],
+      return tfd.MultivariateNormalTriL(loc=floc(params[..., :event_size]),
                                         scale_tril=scale_tril(
-                                            scale_fn(params[..., event_size:])),
+                                            fscale(params[..., event_size:])),
                                         validate_args=validate_args)
     elif covariance_type == 'diag':
-      return tfd.MultivariateNormalDiag(loc=params[..., :event_size],
-                                        scale_diag=scale_fn(
+      return tfd.MultivariateNormalDiag(loc=floc(params[..., :event_size]),
+                                        scale_diag=fscale(
                                             params[..., event_size:]),
                                         validate_args=validate_args)
     elif covariance_type == 'full':
       return tfd.MultivariateNormalFullCovariance(
-          loc=params[..., :event_size],
-          covariance_matrix=tf.reshape(scale_fn(params[..., event_size:]),
+          loc=floc(params[..., :event_size]),
+          covariance_matrix=tf.reshape(fscale(params[..., event_size:]),
                                        (event_size, event_size)),
           validate_args=validate_args)
 

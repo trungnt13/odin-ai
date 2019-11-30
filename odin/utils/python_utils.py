@@ -152,10 +152,11 @@ def multikeysdict(d):
 def partialclass(cls, *args, **kwargs):
   new_cls = type('Partial%s' % cls.__name__, (cls,), {})
   new_cls.__init__ = functools.partialmethod(new_cls.__init__, *args, **kwargs)
-
+  # just store args and kwargs, so it is easier for debugging
+  new_cls._partial_kwargs = kwargs
+  new_cls._partial_args = args
   # class PartialClass(cls):
   #   __init__ = functools.partialmethod(cls.__init__, *args, **kwargs)
-
   return new_cls
 
 
