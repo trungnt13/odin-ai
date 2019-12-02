@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import ScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
@@ -204,6 +200,14 @@ class DenseDistribution(Dense):
     r""" Calculating the log probability (i.e. log likelihood) using the last
     distribution returned from call """
     return self.posterior.log_prob(x)
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return "<Dense shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
+      (self.event_shape, self.units, self._posterior_layer.name, str(self.prior),
+       self._dropout, str(self._posterior_kwargs))
 
   def get_config(self):
     config = super().get_config()

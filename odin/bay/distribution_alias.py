@@ -26,7 +26,7 @@ _dist_mapping = multikeysdict({
                       covariance='tril'), tfd.MultivariateNormalTriL),
     'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
     # ====== Mixture of Gaussian ====== #
-    ('mixnormal', 'mdn', 'mixgaussian'):
+    ('mixnormal', 'mdn', 'mixgaussian', 'mixdensity'):
         (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),
     'mixdiag': (partialclass(obl.MixtureGaussianLayer,
                              covariance='diag'), tfd.MixtureSameFamily),
@@ -69,7 +69,8 @@ _dist_mapping = multikeysdict({
     'zinbdfull': (partialclass(obl.ZINegativeBinomialDispLayer,
                                dispersion='full'), obd.NegativeBinomialDisp),
     # ====== mixture of NegativeBinomial ====== #
-    ('mixnb', 'mnb'): (obl.MixtureNegativeBinomialLayer, obd.NegativeBinomial),
+    ('mixnb', 'mnb', 'mixmass'):
+        (obl.MixtureNegativeBinomialLayer, obd.NegativeBinomial),
     'mixnbd': (partialclass(obl.MixtureNegativeBinomialLayer,
                             alternative=True,
                             mean_activation='softplus',
