@@ -553,13 +553,17 @@ def prior2weights(prior,
 # Shape manipulation
 # ===========================================================================
 def reshape(x, shape):
-  """ More flexible version of reshape operation
+  r""" More flexible version of reshape operation
 
-  Example
-  -------
-  x.shape = [25, 08, 12]
-  reshape(shape=([1], [2], [0]))
-  => x.shape = (08, 12, 25)
+  Arguments:
+    shape : tuple of integer, list, or callable.
+
+  Example:
+  ```python
+  # x.shape = [25, 08, 12]
+  bk.reshape(x, shape=([1], [2], [0]))
+  # x.shape = (08, 12, 25)
+  ```
   """
   if tf.is_tensor(x):
     fn_reshape = tf.reshape
@@ -570,13 +574,15 @@ def reshape(x, shape):
   # start reshaping
   input_shape = x.shape
   new_shape = []
-  for i in shape:
-    if i is None:
+  for idx, shape_info in enumerate(tf.nest.flatten(shape)):
+    if shape_info is None:
       new_shape.append(-1)
-    elif isinstance(i, (list, tuple)):
-      new_shape.append(input_shape[i[0]])
+    elif isinstance(shape_info, (list, tuple, np.ndarray)):
+      new_shape.append(input_shape[shape_info[0]])
+    elif callable(shape_info):
+      new_shape.append(shape_info(input_shape[idx]))
     else:
-      new_shape.append(i)
+      new_shape.append(shape_info)
   new_shape = tuple([-1 if i is None else i for i in new_shape])
   return fn_reshape(x, new_shape)
 
