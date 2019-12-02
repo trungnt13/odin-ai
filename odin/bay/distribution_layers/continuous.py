@@ -19,6 +19,7 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
 
 from odin.backend import parse_activation
+from odin.backend.maths import softplus1
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
@@ -59,7 +60,7 @@ def _preprocess_eventshape(params, event_shape, n_dims=1):
 # Simple distribution
 # ===========================================================================
 class DeterministicLayer(DistributionLambda):
-  """
+  r"""
   ```none
   pmf(x; loc) = 1, if x == loc, else 0
   cdf(x; loc) = 1, if x >= loc, else 0
@@ -71,24 +72,33 @@ class DeterministicLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
-    super(DeterministicLayer,
-          self).__init__(lambda t: type(self).new(t, validate_args),
-                         convert_to_tensor_fn, **kwargs)
+    super(DeterministicLayer, self).__init__(
+        lambda t: type(self).new(t, event_shape, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, validate_args=False, name=None):
+  def new(params, event_shape=(), validate_args=False, name=None):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    return tfd.Deterministic(loc=params, validate_args=validate_args)
+    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+        value=event_shape, name='event_shape', dtype=tf.int32),
+                                             tensor_name='event_shape')
+    output_shape = tf.concat([
+        tf.shape(input=params)[:-1],
+        event_shape,
+    ],
+                             axis=0)
+    return tfd.Deterministic(loc=tf.reshape(params, output_shape),
+                             validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_size, name=None):
-    """ The number of `params` needed to create a single distribution. """
-    return event_size
+  def params_size(event_shape, name=None):
+    r""" The number of `params` needed to create a single distribution. """
+    return tf.cast(tf.reduce_prod(event_shape), tf.int32)
 
 
 class VectorDeterministicLayer(DistributionLambda):
-  """
+  r"""
   ```none
   pmf(x; loc)
     = 1, if All[Abs(x - loc) <= atol + rtol * Abs(loc)],
@@ -101,20 +111,29 @@ class VectorDeterministicLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
-    super(VectorDeterministicLayer,
-          self).__init__(lambda t: type(self).new(t, validate_args),
-                         convert_to_tensor_fn, **kwargs)
+    super(VectorDeterministicLayer, self).__init__(
+        lambda t: type(self).new(t, event_shape, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, validate_args=False, name=None):
-    """Create the distribution instance from a `params` vector."""
+  def new(params, event_shape=(), validate_args=False, name=None):
+    r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    return tfd.VectorDeterministic(loc=params, validate_args=validate_args)
+    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+        value=event_shape, name='event_shape', dtype=tf.int32),
+                                             tensor_name='event_shape')
+    output_shape = tf.concat([
+        tf.shape(input=params)[:-1],
+        event_shape,
+    ],
+                             axis=0)
+    return tfd.VectorDeterministic(loc=tf.reshape(params, output_shape),
+                                   validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_size, name=None):
-    """ The number of `params` needed to create a single distribution. """
-    return event_size
+  def params_size(event_shape, name=None):
+    r""" The number of `params` needed to create a single distribution. """
+    return tf.cast(tf.reduce_prod(event_shape), tf.int32)
 
 
 class DirichletLayer(DistributionLambda):
@@ -437,7 +456,9 @@ class MultivariateNormalLayer(DistributionLambda):
   Arguments:
     event_size: Scalar `int` representing the size of single draw from this
       distribution.
-    covariance_type : {'diag', 'tril', 'full'}
+    covariance : {'diag', 'tril', 'full'}
+    loc_activation : activation function for loc (a.k.a mean), default:
+      'identity'
     scale_activation : activation function for scale, default:
       `softplus1(x) = softplus(x) + softplus_inverse(1.0)`
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
@@ -454,34 +475,34 @@ class MultivariateNormalLayer(DistributionLambda):
 
   def __init__(self,
                event_size,
-               covariance_type='diag',
-               loc_activation='linear',
+               covariance='diag',
+               loc_activation='identity',
                scale_activation='softplus1',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(t, event_size, covariance_type,
-                                 parse_activation(loc_activation, self),
-                                 parse_activation(scale_activation, self),
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(
+            t, event_size, covariance, parse_activation(loc_activation, self),
+            parse_activation(scale_activation, self), validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_size,
-          covariance_type,
-          loc_activation,
-          scale_activation,
+          covariance,
+          loc_activation=tf.identity,
+          scale_activation=softplus1,
           validate_args=False,
           name=None):
     """Create the distribution instance from a `params` vector."""
-    covariance_type = str(covariance_type).lower().strip()
-    assert covariance_type in ('full', 'tril', 'diag'), \
-    "No support for given covariance_type: '%s'" % covariance_type
+    covariance = str(covariance).lower().strip()
+    assert covariance in ('full', 'tril', 'diag'), \
+    "No support for given covariance: '%s'" % covariance
     floc = loc_activation
     fscale = scale_activation
     params = tf.convert_to_tensor(value=params, name='params')
-    if covariance_type == 'tril':
+    if covariance == 'tril':
       scale_tril = tfb.ScaleTriL(diag_shift=np.array(
           1e-5, params.dtype.as_numpy_dtype()),
                                  validate_args=validate_args)
@@ -489,12 +510,12 @@ class MultivariateNormalLayer(DistributionLambda):
                                         scale_tril=scale_tril(
                                             fscale(params[..., event_size:])),
                                         validate_args=validate_args)
-    elif covariance_type == 'diag':
+    elif covariance == 'diag':
       return tfd.MultivariateNormalDiag(loc=floc(params[..., :event_size]),
                                         scale_diag=fscale(
                                             params[..., event_size:]),
                                         validate_args=validate_args)
-    elif covariance_type == 'full':
+    elif covariance == 'full':
       return tfd.MultivariateNormalFullCovariance(
           loc=floc(params[..., :event_size]),
           covariance_matrix=tf.reshape(fscale(params[..., event_size:]),
@@ -502,16 +523,16 @@ class MultivariateNormalLayer(DistributionLambda):
           validate_args=validate_args)
 
   @staticmethod
-  def params_size(event_size, covariance_type='diag', name=None):
+  def params_size(event_size, covariance='diag', name=None):
     """The number of `params` needed to create a single distribution."""
-    covariance_type = str(covariance_type).lower().strip()
-    assert covariance_type in ('full', 'tril', 'diag'), \
-    "No support for given covariance_type: '%s'" % covariance_type
-    if covariance_type == 'tril':
+    covariance = str(covariance).lower().strip()
+    assert covariance in ('full', 'tril', 'diag'), \
+    "No support for given covariance: '%s'" % covariance
+    if covariance == 'tril':
       return event_size + event_size * (event_size + 1) // 2
-    elif covariance_type == 'diag':
+    elif covariance == 'diag':
       return event_size + event_size
-    elif covariance_type == 'full':
+    elif covariance == 'full':
       return event_size + event_size * event_size
 
 

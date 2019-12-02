@@ -8,6 +8,8 @@ from tensorflow_probability.python.internal import \
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import _event_size
 
+from odin.backend import parse_activation
+from odin.backend.maths import softplus1
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
@@ -55,8 +57,10 @@ class NegativeBinomialLayer(DistributionLambda):
       "Only support three different dispersion value: 'full', 'single' and " + \
         "'share', but given: %s" % dispersion
     super(NegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, count_activation, dispersion,
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape,
+                                 parse_activation(count_activation, self),
+                                 dispersion, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -131,8 +135,8 @@ class NegativeBinomialDispLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               mean_activation='exp',
-               disp_activation='exp',
+               mean_activation='softplus',
+               disp_activation='softplus1',
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
@@ -143,15 +147,16 @@ class NegativeBinomialDispLayer(DistributionLambda):
       "Only support three different dispersion value: 'full', 'single' and " + \
         "'share', but given: %s" % dispersion
     super(NegativeBinomialDispLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, mean_activation,
-                                 disp_activation, dispersion, validate_args),
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(mean_activation, self),
+            parse_activation(disp_activation, self), dispersion, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
-          mean_activation=tf.exp,
-          disp_activation=tf.exp,
+          mean_activation=tf.nn.softplus,
+          disp_activation=softplus1,
           dispersion='full',
           validate_args=False,
           name=None):
@@ -202,15 +207,21 @@ class ZIPoissonLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
+               activation='linear',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(ZIPoissonLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, validate_args),
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(activation, self), validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          activation=tf.identity,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -222,12 +233,12 @@ class ZIPoissonLayer(DistributionLambda):
     ],
                              axis=0)
     (log_rate_params, logits_params) = tf.split(params, 2, axis=-1)
-    zip = ZeroInflated(count_distribution=tfd.Poisson(
-        log_rate=tf.reshape(log_rate_params, output_shape),
+    return tfd.Independent(ZeroInflated(count_distribution=tfd.Poisson(
+        log_rate=activation(tf.reshape(log_rate_params, output_shape)),
         validate_args=validate_args),
-                       logits=tf.reshape(logits_params, output_shape),
-                       validate_args=validate_args)
-    return tfd.Independent(zip,
+                                        logits=tf.reshape(
+                                            logits_params, output_shape),
+                                        validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            validate_args=validate_args)
 
@@ -273,8 +284,10 @@ class ZINegativeBinomialLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     super(ZINegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, count_activation, dispersion,
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape,
+                                 parse_activation(count_activation, self),
+                                 dispersion, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -354,23 +367,25 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               mean_activation='exp',
-               disp_activation='exp',
+               mean_activation='softplus',
+               disp_activation='softplus1',
                dispersion='full',
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     self.dispersion = dispersion
     super(ZINegativeBinomialDispLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, mean_activation,
-                                 disp_activation, dispersion, validate_args),
+        lambda t: type(self).new(t, event_shape,
+                                 parse_activation(mean_activation, self),
+                                 parse_activation(disp_activation, self),
+                                 dispersion, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
-          mean_activation=tf.exp,
-          disp_activation=tf.exp,
+          mean_activation=tf.nn.softplus,
+          disp_activation=softplus1,
           dispersion='full',
           validate_args=False,
           name=None):

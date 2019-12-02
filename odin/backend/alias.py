@@ -27,7 +27,8 @@ __all__ = [
 # ===========================================================================
 # Helper
 # ===========================================================================
-def _linear_function(x):
+def identity_function(x):
+  r""" `f(x) = x` """
   return x
 
 
@@ -71,8 +72,8 @@ def parse_activation(activation, framework):
   if callable(activation):
     return activation
   if isinstance(activation, string_types):
-    if activation.lower() == 'linear':
-      return _linear_function
+    if activation.lower() in ('linear', 'identity'):
+      return identity_function
     if _is_tensorflow(framework):
       try:
         fn = keras.activations.get(activation)

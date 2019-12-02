@@ -11,6 +11,7 @@ from odin.bay import distribution_layers as obl
 from odin.bay import distributions as obd
 from odin.utils.python_utils import multikeysdict, partialclass
 
+# TODO: better specifying complex distribution
 # mapping from alias to
 _dist_mapping = multikeysdict({
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
@@ -19,11 +20,19 @@ _dist_mapping = multikeysdict({
     ('normal', 'gaussian'): (obl.NormalLayer, tfd.Normal),
     ('diag', 'normaldiag', 'gaussiandiag'):
         (partialclass(obl.MultivariateNormalLayer,
-                      covariance_type='diag'), tfd.MultivariateNormalDiag),
+                      covariance='diag'), tfd.MultivariateNormalDiag),
     ('tril', 'full', 'normaltril', 'gaussiantril', 'normalfull', 'gaussianfull'):
         (partialclass(obl.MultivariateNormalLayer,
-                      covariance_type='tril'), tfd.MultivariateNormalTriL),
+                      covariance='tril'), tfd.MultivariateNormalTriL),
     'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
+    # ====== Mixture of Gaussian ====== #
+    ('mixnormal', 'mdn', 'mixgaussian'):
+        (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),
+    'mixdiag': (partialclass(obl.MixtureGaussianLayer,
+                             covariance='diag'), tfd.MixtureSameFamily),
+    ('mixtril', 'mixfull'): (partialclass(obl.MixtureGaussianLayer,
+                                          covariance='tril'),
+                             tfd.MixtureSameFamily),
     # ====== NegativeBinomial ====== #
     ('nb', 'negativebinomial'):
         (obl.NegativeBinomialLayer, tfd.NegativeBinomial),
@@ -60,29 +69,25 @@ _dist_mapping = multikeysdict({
     'zinbdfull': (partialclass(obl.ZINegativeBinomialDispLayer,
                                dispersion='full'), obd.NegativeBinomialDisp),
     # ====== mixture of NegativeBinomial ====== #
-    'mixnb': (partialclass(obl.MixtureNegativeBinomial,
-                           alternative_paramerization=False,
-                           mean_activation='softplus',
-                           disp_activation='linear',
-                           is_zero_inflated=False), obd.NegativeBinomial),
-    'mixnbd': (partialclass(obl.MixtureNegativeBinomial,
-                            alternative_paramerization=True,
+    ('mixnb', 'mnb'): (obl.MixtureNegativeBinomialLayer, obd.NegativeBinomial),
+    'mixnbd': (partialclass(obl.MixtureNegativeBinomialLayer,
+                            alternative=True,
                             mean_activation='softplus',
                             disp_activation='softplus',
-                            is_zero_inflated=False), obd.NegativeBinomial),
-    'mixzinb': (partialclass(obl.MixtureNegativeBinomial,
-                             alternative_paramerization=False,
+                            zero_inflated=False), obd.NegativeBinomial),
+    'mixzinb': (partialclass(obl.MixtureNegativeBinomialLayer,
+                             alternative=False,
                              mean_activation='softplus',
                              disp_activation='linear',
-                             is_zero_inflated=True), obd.NegativeBinomial),
-    'mixzinbd': (partialclass(obl.MixtureNegativeBinomial,
-                              alternative_paramerization=True,
+                             zero_inflated=True), obd.NegativeBinomial),
+    'mixzinbd': (partialclass(obl.MixtureNegativeBinomialLayer,
+                              alternative=True,
                               mean_activation='softplus',
                               disp_activation='softplus',
-                              is_zero_inflated=True), obd.NegativeBinomial),
+                              zero_inflated=True), obd.NegativeBinomial),
     # ====== Poisson ====== #
     ('pois', 'poisson'): (obl.PoissonLayer, tfd.Poisson),
-    ('zipois', 'zipoisson', 'zeroinflatedpoisson'):
+    ('zip', 'zipois', 'zipoisson', 'zeroinflatedpoisson'):
         (obl.ZIPoissonLayer, tfd.Poisson),
     # ====== Dirichlet ====== #
     'dirichlet': (obl.DirichletLayer, tfd.Dirichlet),

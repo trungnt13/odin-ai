@@ -2,65 +2,38 @@ from __future__ import absolute_import, division, print_function
 
 import inspect
 from functools import partial
+from numbers import Number
 from typing import Callable, Optional, Text, Type, Union
 
+import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
-from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.bijectors import ScaleTriL
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
     _serialize_function)
 
 from odin import backend as bk
-from odin.bay.distribution_alias import _dist_mapping, parse_distribution
+from odin.bay.distribution_alias import parse_distribution
 from odin.bay.distribution_layers import VectorDeterministicLayer
 from odin.bay.helpers import KLdivergence, kl_divergence
 from odin.networks.distribution_util_layers import Moments, Sampling
 
-__all__ = ['DenseDeterministic', 'DenseDistribution']
-
-
-class DenseDeterministic(Dense):
-  """ Similar to `keras.Dense` layer but return a
-  `tensorflow_probability.Deterministic` distribution to represent the output,
-  hence, make it compatible to probabilistic frameworks
-  """
-
-  def __init__(self,
-               units,
-               activation=None,
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               **kwargs):
-    super(DenseDeterministic,
-          self).__init__(units=units,
-                         activation=activation,
-                         use_bias=use_bias,
-                         kernel_initializer=kernel_initializer,
-                         bias_initializer=bias_initializer,
-                         kernel_regularizer=kernel_regularizer,
-                         bias_regularizer=bias_regularizer,
-                         activity_regularizer=activity_regularizer,
-                         kernel_constraint=kernel_constraint,
-                         bias_constraint=bias_constraint,
-                         **kwargs)
-
-  def call(self, inputs, n_mcmc=1, **kwargs):
-    outputs = super(DenseDeterministic, self).call(inputs)
-    distribution = VectorDeterministicLayer(convert_to_tensor_fn=partial(
-        Distribution.sample, sample_shape=[n_mcmc]))(outputs)
-    distribution.KL_divergence = KLdivergence(distribution, prior=None)
-    return distribution
+__all__ = [
+    'DenseDeterministic', 'DenseDistribution', 'MixtureDensityNetwork',
+    'MixtureMassNetwork'
+]
 
 
 class DenseDistribution(Dense):
@@ -68,7 +41,7 @@ class DenseDistribution(Dense):
   `Distribution`
 
   Arguments:
-    units : `int`
+    event_shape : `int`
       number of output units.
     posterior : the posterior distribution, a distribution alias or Distribution
       type can be given for later initialization (Default: 'normal').
@@ -86,8 +59,8 @@ class DenseDistribution(Dense):
   def __init__(self,
                event_shape=(),
                posterior='normal',
-               prior=None,
                posterior_kwargs={},
+               prior=None,
                convert_to_tensor_fn=Distribution.sample,
                dropout=0.0,
                activation='linear',
@@ -153,6 +126,10 @@ class DenseDistribution(Dense):
   @property
   def event_shape(self):
     return tf.nest.flatten(self._event_shape)
+
+  @property
+  def event_size(self):
+    return tf.cast(tf.reduce_prod(self._event_shape), tf.int32)
 
   @property
   def prior(self):
@@ -237,3 +214,177 @@ class DenseDistribution(Dense):
     config['dropout'] = self._dropout
     config['posterior_kwargs'] = self._posterior_kwargs
     return config
+
+
+# ===========================================================================
+# Shortcuts
+# ===========================================================================
+class MixtureDensityNetwork(DenseDistribution):
+
+  def __init__(self,
+               units,
+               n_components=8,
+               covariance='none',
+               loc_activation='linear',
+               scale_activation='softplus1',
+               convert_to_tensor_fn=Distribution.sample,
+               use_bias=True,
+               dropout=0.0,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               kernel_regularizer=None,
+               bias_regularizer=None,
+               activity_regularizer=None,
+               kernel_constraint=None,
+               bias_constraint=None,
+               **kwargs):
+    self.covariance = covariance
+    self.n_components = n_components
+    super().__init__(event_shape=units,
+                     posterior='mixgaussian',
+                     prior=None,
+                     posterior_kwargs=dict(n_components=int(n_components),
+                                           covariance=str(covariance),
+                                           loc_activation=loc_activation,
+                                           scale_activation=scale_activation),
+                     convert_to_tensor_fn=convert_to_tensor_fn,
+                     dropout=dropout,
+                     activation='linear',
+                     use_bias=use_bias,
+                     kernel_initializer=kernel_initializer,
+                     bias_initializer=bias_initializer,
+                     kernel_regularizer=kernel_regularizer,
+                     bias_regularizer=bias_regularizer,
+                     activity_regularizer=activity_regularizer,
+                     kernel_constraint=kernel_constraint,
+                     bias_constraint=bias_constraint,
+                     **kwargs)
+
+  def set_prior(self, loc=0., log_scale=np.log(np.expm1(1)), mixture_logits=1.):
+    r""" Set the prior for mixture density network
+
+    loc : Scalar or Tensor with shape `[n_components, event_size]`
+    log_scale : Scalar or Tensor with shape
+      `[n_components, event_size]` for 'none' and 'diag' component, and
+      `[n_components, event_size*(event_size +1)//2]` for 'full' component.
+    mixture_logits : Scalar or Tensor with shape `[n_components]`
+    """
+    event_size = self.event_size
+    if self.covariance == 'diag':
+      scale_shape = [self.n_components, event_size]
+      fn = lambda l, s: MultivariateNormalDiag(loc=l,
+                                               scale_diag=tf.nn.softplus(s))
+    elif self.covariance == 'none':
+      scale_shape = [self.n_components, event_size]
+      fn = lambda l, s: Independent(Normal(loc=l, scale=tf.math.softplus(s)), 1)
+    elif self.covariance == 'full':
+      scale_shape = [self.n_components, event_size * (event_size + 1) // 2]
+      fn = lambda l, s: MultivariateNormalTriL(
+          loc=l, scale_tril=ScaleTriL(diag_shift=1e-5)(tf.math.softplus(s)))
+    #
+    if isinstance(log_scale, Number) or tf.rank(log_scale) == 0:
+      loc = tf.fill([self.n_components, self.event_size], loc)
+    #
+    if isinstance(log_scale, Number) or tf.rank(log_scale) == 0:
+      log_scale = tf.fill(scale_shape, log_scale)
+    #
+    if mixture_logits is None:
+      mixture_logits = 1.
+    if isinstance(mixture_logits, Number) or tf.rank(mixture_logits) == 0:
+      mixture_logits = tf.fill([self.n_components], mixture_logits)
+    #
+    loc = tf.cast(loc, self.dtype)
+    log_scale = tf.cast(log_scale, self.dtype)
+    mixture_logits = tf.cast(mixture_logits, self.dtype)
+    self._prior = MixtureSameFamily(
+        components_distribution=fn(loc, log_scale),
+        mixture_distribution=Categorical(logits=mixture_logits),
+        name="prior")
+    return self
+
+
+class MixtureMassNetwork(DenseDistribution):
+
+  def __init__(self,
+               event_shape=(),
+               n_components=2,
+               mean_activation='softplus1',
+               disp_activation=None,
+               dispersion='full',
+               alternative=False,
+               zero_inflated=False,
+               convert_to_tensor_fn=Distribution.sample,
+               use_bias=True,
+               dropout=0.0,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               kernel_regularizer=None,
+               bias_regularizer=None,
+               activity_regularizer=None,
+               kernel_constraint=None,
+               bias_constraint=None,
+               **kwargs):
+    self.n_components = n_components
+    self.dispersion = dispersion
+    self.zero_inflated = zero_inflated
+    self.alternative = alternative
+    super().__init__(event_shape=event_shape,
+                     posterior='mixnb',
+                     prior=None,
+                     posterior_kwargs=dict(
+                         n_components=int(n_components),
+                         mean_activation=mean_activation,
+                         disp_activation=disp_activation,
+                         dispersion=dispersion,
+                         alternative=alternative,
+                         zero_inflated=zero_inflated,
+                     ),
+                     convert_to_tensor_fn=convert_to_tensor_fn,
+                     dropout=dropout,
+                     activation='linear',
+                     use_bias=use_bias,
+                     kernel_initializer=kernel_initializer,
+                     bias_initializer=bias_initializer,
+                     kernel_regularizer=kernel_regularizer,
+                     bias_regularizer=bias_regularizer,
+                     activity_regularizer=activity_regularizer,
+                     kernel_constraint=kernel_constraint,
+                     bias_constraint=bias_constraint,
+                     **kwargs)
+
+
+class DenseDeterministic(DenseDistribution):
+  r""" Similar to `keras.Dense` layer but return a
+  `tensorflow_probability.VectorDeterministic` distribution to represent
+  the output, hence, making it compatible to the probabilistic framework.
+  """
+
+  def __init__(self,
+               units,
+               dropout=0.0,
+               activation='linear',
+               use_bias=True,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               kernel_regularizer=None,
+               bias_regularizer=None,
+               activity_regularizer=None,
+               kernel_constraint=None,
+               bias_constraint=None,
+               **kwargs):
+    super().__init__(event_shape=int(units),
+                     posterior='vdeterministic',
+                     posterior_kwargs={},
+                     prior=None,
+                     convert_to_tensor_fn=Distribution.sample,
+                     dropout=dropout,
+                     activation=activation,
+                     use_bias=use_bias,
+                     kernel_initializer=kernel_initializer,
+                     bias_initializer=bias_initializer,
+                     kernel_regularizer=kernel_regularizer,
+                     bias_regularizer=bias_regularizer,
+                     activity_regularizer=activity_regularizer,
+                     kernel_constraint=kernel_constraint,
+                     bias_constraint=bias_constraint,
+                     **kwargs)
