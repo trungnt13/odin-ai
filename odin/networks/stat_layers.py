@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import ScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
@@ -120,6 +124,14 @@ class DenseDistribution(Dense):
     self._last_distribution = None
 
   @property
+  def is_zero_inflated(self):
+    raise NotImplementedError()
+
+  @property
+  def is_mixture(self):
+    raise NotImplementedError()
+
+  @property
   def event_shape(self):
     return tf.nest.flatten(self._event_shape)
 
@@ -137,7 +149,7 @@ class DenseDistribution(Dense):
     self._prior = p
 
   @property
-  def distribution_layer(self):
+  def posterior_layer(self):
     return self._posterior_layer
 
   @property
@@ -152,7 +164,7 @@ class DenseDistribution(Dense):
       params = bk.dropout(params, p_drop=self._dropout, training=training)
     # modifying the Lambda to return given number of n_mcmc samples
     self._n_mcmc[0] = n_mcmc
-    posterior = self._posterior_layer(params, training=training)
+    posterior = self.posterior_layer(params, training=training)
     self._last_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(
@@ -206,7 +218,7 @@ class DenseDistribution(Dense):
 
   def __str__(self):
     return "<Dense shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
-      (self.event_shape, self.units, self._posterior_layer.name, str(self.prior),
+      (self.event_shape, self.units, self.posterior_layer.name, str(self.prior),
        self._dropout, str(self._posterior_kwargs))
 
   def get_config(self):
