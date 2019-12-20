@@ -375,10 +375,9 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                **kwargs):
     self.dispersion = dispersion
     super(ZINegativeBinomialDispLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape,
-                                 parse_activation(mean_activation, self),
-                                 parse_activation(disp_activation, self),
-                                 dispersion, validate_args),
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(mean_activation, self),
+            parse_activation(disp_activation, self), dispersion, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod

@@ -56,7 +56,7 @@ def coercible_tensor(d,
   r""" make a distribution convertible to Tensor using the
   `convert_to_tensor_fn`
 
-  This code is copied from: `distribution_layer.py` tensorflow_probability
+  This code is copied from: `distribution_layers.py` tensorflow_probability
   """
   assert isinstance(d, tfd.Distribution), \
     "dist must be instance of tensorflow_probability.Distribution"
@@ -96,8 +96,8 @@ def kl_divergence(q,
                   reduce_axis=(),
                   reverse=True,
                   auto_remove_independent=True):
-  r""" Calculating KL(q(x)||p(x)) (reverse=True) or
-  KL(p(x)||q(x)) (reverse=False)
+  r""" Calculating KL(q(x)||p(x)) (if reverse=True) or
+  KL(p(x)||q(x)) (if reverse=False)
 
   Arguments:
     q : `tensorflow_probability.Distribution`, the approximated posterior
@@ -160,7 +160,7 @@ def kl_divergence(q,
   if callable(q_sample):
     z = q_sample(q)
   elif isinstance(q_sample, Number) or tf.is_tensor(q_sample):
-    z = q.sample(tf.convert_to_tensor(q_sample, dtype='int64'))
+    z = q.sample((tf.convert_to_tensor(q_sample, tf.int64),))
   else:
     z = q_sample
   # calculate the output, then perform reduction
@@ -173,6 +173,22 @@ class KLdivergence:
   r""" This class freezes the arguments of `kl_divergence` so it could be call
   later without the required arguments.
 
+  Calculating KL(q(x)||p(x)) (if reverse=True) or
+  KL(p(x)||q(x)) (if reverse=False)
+
+  Arguments:
+    posterior : `tensorflow_probability.Distribution`, the approximated
+      posterior distribution
+    prior : `tensorflow_probability.Distribution`, the prior distribution
+    analytic : bool (default: False)
+      if True, use the close-form solution  for
+    n_mcmc : {Tensor, Number}
+      number of MCMC samples for MCMC estimation of KL-divergence
+    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+      (or p_model) by greedily filling in the highest modes of data (or, in
+      other word, placing low probability to where data does not occur).
+      Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
+      at anywhere data occur (i.e. averagely fitting the data).
   Note:
     this class return 0. if the prior is not given (i.e. prior=None)
   """

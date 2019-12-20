@@ -22,21 +22,6 @@ __all__ = [
 ]
 
 
-def _Lambda_call(self, *args, **kwargs):
-  arguments = self.arguments
-  arguments.update(kwargs)
-  if not self._fn_expects_training_arg:
-    arguments.pop('training', None)
-  if not self._fn_expects_mask_arg:
-    arguments.pop('mask', None)
-  with variable_scope.variable_creator_scope(self._variable_creator):
-    return self.function(*args, **arguments)
-
-
-# simple hack make Lambda for flexible
-Lambda.call = _Lambda_call
-
-
 class ModuleList(Sequential):
   r""" Holds submodules in a list.
   :class:`~odin.networks.ModuleList` can be indexed like a regular Python list,

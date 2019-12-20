@@ -55,15 +55,50 @@ def _is_tensorflow(framework):
   return False
 
 
+class _SequentialActivation():
+
+  def __init__(self, *functions):
+    super().__init__()
+    self.functions = list(functions)
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return '->'.join([
+        '<%s>(%s%s%s)' %
+        (f.__name__ if hasattr(f, '__name__') else type(f).__name__, \
+         ','.join([a for a in inspect.getfullargspec(f).args if a != 'self']),
+         ',*a' if inspect.getfullargspec(f).varargs else '',
+         ',**kw' if inspect.getfullargspec(f).varkw else '')
+        for f in self.functions
+    ])
+
+  def __call__(self, *args, **kwargs):
+    out = self.functions[0](*args, **kwargs)
+    for f in self.functions[1:]:
+      out = f(out)
+    return out
+
+
 # ===========================================================================
 # Network basics
 # ===========================================================================
+def _get_math_function(activation):
+  # search for custom activation in odin.backend.maths
+  from odin.backend import maths
+  for name, member in inspect.getmembers(maths):
+    if inspect.isfunction(member) and name == activation:
+      return member
+  return None
+
+
 def parse_activation(activation, framework):
-  """
+  r"""
   Parameters
   ----------
   activation : `str`
-    alias for activation function
+    alias for activation function, multiple activations are concatenated by '+'
   framework : `str`
     'tensorflow' or 'pytorch'
   """
@@ -71,27 +106,38 @@ def parse_activation(activation, framework):
     activation = 'linear'
   if callable(activation):
     return activation
+  # given alias of function
   if isinstance(activation, string_types):
-    if activation.lower() in ('linear', 'identity'):
-      return identity_function
-    if _is_tensorflow(framework):
-      try:
-        fn = keras.activations.get(activation)
-        return fn
-      except ValueError:
-        pass
-    else:
-      for i in dir(torch.nn.functional):
-        if i.lower() == activation.lower():
-          fn = getattr(torch.nn.functional, i)
-          if inspect.isfunction(fn):
-            return fn
-  # search for custom activation in odin.backend.maths
-  from odin.backend import maths
-  for name, member in inspect.getmembers(maths):
-    if inspect.isfunction(member) and name == activation:
-      return member
-  _invalid("No support for activation", activation)
+    functions = []
+    for activ in activation.split('+'):
+      activ = activ.lower().strip()
+      fn = None
+      if activ in ('linear', 'identity'):
+        fn = identity_function
+      elif _is_tensorflow(framework):
+        try:
+          fn = keras.activations.get(activ)
+        except ValueError:
+          try:
+            fn = keras.constraints.get(activ)
+          except ValueError:
+            pass
+      else:
+        for i in dir(torch.nn.functional):
+          if i.lower() == activ:
+            fn = getattr(torch.nn.functional, i)
+            if inspect.isfunction(fn):
+              break
+            else:
+              fn = None
+      if fn is None:
+        fn = _get_math_function(activ)
+      if fn is None:
+        _invalid("No support for activation", activation)
+      functions.append(fn)
+    if len(functions) == 1:
+      return functions[0]
+    return _SequentialActivation(*functions)
 
 
 def parse_initializer(initializer, framework):

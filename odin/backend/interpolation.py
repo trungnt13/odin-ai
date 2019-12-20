@@ -16,6 +16,9 @@ def cbrt(x):
 
 
 class Interpolation(Enum):
+  r"""
+  """
+
   linear = auto()
   smooth = auto()
   smooth2 = auto()
@@ -61,7 +64,30 @@ class Interpolation(Enum):
   elasticIn = auto()
   elasticOut = auto()
 
-  def __call__(self, a, vmin=0., vmax=1.):
+  def __call__(self, a, norm=None, cyclical=False, delay=0., vmin=0., vmax=1.):
+    return self.apply(a, norm, cyclical, vmin, vmax)
+
+  def apply(self, a, norm=None, cyclical=False, delay=0., vmin=0., vmax=1.):
+    r"""
+    Arguments:
+      a : Scalar.
+      norm : Scalar (optional)
+      cyclical : Boolean. Enable cyclical scheduling, `norm` determines the
+        cycle periodic.
+      delay : Scalar. The amount of delay before each cycle reseted.
+      vmin : Scalar (default: 0). Minimum value for the interpolation output,
+        the return range is [vmin, vmax]
+      vmax : Scalar (default: 1). Maximum value for the interpolation output,
+        the return range is [vmin, vmax]
+    """
+    if norm is not None:
+      a = tf.maximum(tf.cast(a, 'float32'), 1e-8)
+      if cyclical:
+        a = a % (norm + delay) + 1
+        a = tf.minimum(a, norm)
+      a = a / norm
+    a = tf.maximum(0., tf.minimum(a, 1.))
+
     name = str(self).split('.')[-1]
     _, name, power, mode, _ = pattern.split(name)
     power = float(power) if len(power) > 0 else 1.

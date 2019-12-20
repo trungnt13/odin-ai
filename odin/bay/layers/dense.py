@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import ScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
@@ -28,7 +24,7 @@ from odin import backend as bk
 from odin.bay.distribution_alias import parse_distribution
 from odin.bay.distribution_layers import VectorDeterministicLayer
 from odin.bay.helpers import KLdivergence, kl_divergence
-from odin.networks.distribution_util_layers import Moments, Sampling
+from odin.bay.layers.distribution_util_layers import Moments, Sampling
 
 __all__ = [
     'DenseDeterministic', 'DenseDistribution', 'MixtureDensityNetwork',
@@ -104,6 +100,12 @@ class DenseDistribution(Dense):
     self._event_shape = event_shape
     self._posterior_kwargs = posterior_kwargs
     self._dropout = dropout
+    # set more descriptive name
+    name = kwargs.pop('name', None)
+    if name is None:
+      name = 'dense_%s' % (posterior if isinstance(posterior, string_types) else
+                           posterior.__class__.__name__)
+    kwargs['name'] = name
     # params_size could be static function or method
     params_size = self._posterior_layer.params_size() \
       if 'self' in inspect.getfullargspec(post_layer.params_size).args else \

@@ -1,12 +1,12 @@
 from odin.networks import attention_mechanism
 from odin.networks.attention import *
 from odin.networks.cudnn_rnn import *
-from odin.networks.distribution_util_layers import *
 from odin.networks.math_layers import *
 from odin.networks.positional_encoder import *
-from odin.networks.stat_layers import *
+from odin.networks.sequential_networks import *
 from odin.networks.time_delay import *
 from odin.networks.util_layers import *
+
 
 
 def register_new_keras_layers(extras=None):
