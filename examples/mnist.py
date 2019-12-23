@@ -63,7 +63,7 @@ def optimize(inputs, tape):
 
 
 def callback():
-  signal = Trainer.early_stop(trainer.valid_loss, verbose=True)
+  signal = Trainer.early_stop(trainer.valid_loss, threshold=0.25, verbose=True)
   if signal == Trainer.SIGNAL_BEST:
     print(" - Save the best weights!")
     Trainer.save_weights(network)
@@ -80,10 +80,10 @@ trainer.fit(Trainer.prepare(train,
                             postprocess=process,
                             parallel_postprocess=False,
                             shuffle=True,
-                            epochs=25),
+                            epochs=32),
             optimize,
             valid_ds=Trainer.prepare(test, postprocess=process),
-            valid_freq=1000,
+            valid_freq=2500,
             autograph=True,
             logging_interval=2,
             callback=callback)

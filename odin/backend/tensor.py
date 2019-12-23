@@ -574,7 +574,7 @@ def reshape(x, shape):
   # start reshaping
   input_shape = x.shape
   new_shape = []
-  for idx, shape_info in enumerate(tf.nest.flatten(shape)):
+  for idx, shape_info in enumerate(as_tuple(shape)):
     if shape_info is None:
       new_shape.append(-1)
     elif isinstance(shape_info, (list, tuple, np.ndarray)):

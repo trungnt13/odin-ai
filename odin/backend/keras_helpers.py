@@ -99,8 +99,8 @@ _CHECKPOINT_MANAGER = {}
 class Trainer(object):
   r"""
   """
-  SIGNAL_TERMINATE = object()
-  SIGNAL_BEST = object()
+  SIGNAL_TERMINATE = '__signal_terminate__'
+  SIGNAL_BEST = '__signal_best__'
 
   @staticmethod
   def save_weights(models, optimizers=None):
@@ -132,8 +132,7 @@ class Trainer(object):
 
   @staticmethod
   def save_checkpoint(dir_path, optimizer, models, trainer=None, max_to_keep=5):
-    r"""
-    """
+    r""" Save checkpoint """
     assert isinstance(optimizer, tf.optimizers.Optimizer), \
       "optimizer must be instance of tf.optimizers.Optimizer"
     dir_path = os.path.abspath(dir_path)
@@ -166,6 +165,7 @@ class Trainer(object):
 
   @staticmethod
   def restore_checkpoint(dir_path, models=None, optimizer=None, index=-1):
+    r""" Restore saved checkpoint """
     dir_path = os.path.abspath(dir_path)
     if not os.path.exists(dir_path):
       os.mkdir(dir_path)
@@ -314,16 +314,25 @@ class Trainer(object):
       args = func.function_spec.arg_names
     else:
       args = inspect.getfullargspec(func).args
-    template = [['inputs', 'tape'], ['inputs', 'tape', 'n_iter']]
-    assert any(args[1:] == temp[1:] for temp in template), \
-      "optimize function must has one of the following template: %s; but given: %s"\
+    template = ['tape', 'training', 'n_iter']
+    assert 'tape' in args, \
+      "tape (i.e. GradientTape) must be in arguments list of optimize function."
+    assert all(a in template for a in args[1:]), \
+      "optimize function must has the following arguments: %s; but given: %s"\
         % (template, args)
-    if 'n_iter' in args:
-      return True
-    return False
+    return args
 
   @staticmethod
   def apply_gradients(tape, optimizer, loss, model_or_weights):
+    r"""
+    Arguments:
+      tape : GradientTape (optional). If not given, no optimization is
+        performed.
+      optimizer : Instance of `tf.optimizers.Optimizer`.
+      loss : a Tensor value with rank 0.
+      model_or_weights : List of keras.layers.Layer or tf.Variable, only
+        `trainable` variables are optimized.
+    """
     if tape is None:
       return
     assert isinstance(tape, tf.GradientTape)
@@ -352,12 +361,26 @@ class Trainer(object):
               shuffle=None,
               parallel_preprocess=0,
               parallel_postprocess=0):
+    r""" A standarlized procedure for preparing `tf.data.Dataset` for training
+    or evaluation.
 
-    parallel_preprocess = None if parallel_preprocess <= 0 else \
-      (tf.data.experimental.AUTOTUNE if parallel_preprocess == 1 else
+    Arguments:
+      ds : `tf.data.Dataset`
+      preprocess : Callable (optional). Call at the beginning when a single
+        example is fetched.
+      postprocess : Callable (optional). Called after `.batch`, which processing
+        the whole minibatch.
+      parallel_preprocess, parallel_postprocess : Integer.
+        - if value is 0, process sequentially
+        - if value is -1, using `tf.data.experimental.AUTOTUNE`
+        - if value > 0, explicitly specify the number of process for running
+            map task
+    """
+    parallel_preprocess = None if parallel_preprocess == 0 else \
+      (tf.data.experimental.AUTOTUNE if parallel_preprocess == -1 else
        int(parallel_preprocess))
-    parallel_postprocess = None if parallel_postprocess <= 0 else \
-      (tf.data.experimental.AUTOTUNE if parallel_postprocess == 1 else
+    parallel_postprocess = None if parallel_postprocess == 0 else \
+      (tf.data.experimental.AUTOTUNE if parallel_postprocess == -1 else
        int(parallel_postprocess))
 
     if not isinstance(ds, tf.data.Dataset):
@@ -416,9 +439,19 @@ class Trainer(object):
     r""" A simplified fitting API
 
     Arugments:
+      ds : tf.data.Dataset. Training dataset
+      optimize : Callable. Optimization function, return loss and a list of
+        metrics.
+      valid_ds : tf.data.Dataset. Validation dataset
+      valid_freq : Integer. The frequency of validation task, based on number
+        of iteration in training.
       persistent_tape : Boolean. Using persistent GradientTape, so multiple
         call to gradient is feasible.
       autograph : Boolean. Enable static graph for optimize function
+      logging_interval : Scalar. Interval for print out log information
+        (in second)
+      callback : Callable. The callback will be called after every validation
+        epoch. If `valid_ds=None`, it is called at `logging_interval`.
     """
     autograph = int(autograph)
     ### Prepare the data
@@ -429,21 +462,20 @@ class Trainer(object):
         'valid_ds must be instance of tf.data.Datasets'
     valid_freq = int(valid_freq)
     ### optimizing function
-    args_has_niter = Trainer.validate_optimize(optimize)
+    optimize_args = Trainer.validate_optimize(optimize)
 
     ### helper function for training iteration
     def step(n_iter, inputs, training):
+      kw = dict()
+      if 'n_iter' in optimize_args:
+        kw['n_iter'] = n_iter
+      if 'training' in optimize_args:
+        kw['training'] = training
       if training:  # for training
         with tf.GradientTape(persistent=persistent_tape) as tape:
-          if args_has_niter:
-            loss, metrics = optimize(inputs, tape=tape, n_iter=n_iter)
-          else:
-            loss, metrics = optimize(inputs, tape=tape)
+          loss, metrics = optimize(inputs, tape=tape, **kw)
       else:  # for validation
-        if args_has_niter:
-          loss, metrics = optimize(inputs, tape=None, n_iter=n_iter)
-        else:
-          loss, metrics = optimize(inputs, tape=None)
+        loss, metrics = optimize(inputs, tape=None, **kw)
       return loss, metrics
 
     if autograph and not isinstance(optimize, Function):
