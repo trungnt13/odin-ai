@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import ScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
@@ -151,6 +155,14 @@ class DenseDistribution(Dense):
     r""" Return the last parametrized distribution, i.e. the result from the
     last `call` """
     return self._last_distribution
+
+  @tf.function
+  def sample(self, sample_shape=(), seed=None):
+    r""" Sample from prior distribution """
+    if self._prior is None:
+      raise RuntimeError("prior hasn't been provided for the %s" %
+                         self.__class__.__name__)
+    return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
   def call(self, inputs, training=None, n_mcmc=1, projection=True, prior=None):
     params = super().call(inputs) if projection else inputs

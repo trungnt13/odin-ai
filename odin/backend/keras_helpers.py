@@ -439,7 +439,7 @@ class Trainer(object):
     r""" A simplified fitting API
 
     Arugments:
-      ds : tf.data.Dataset. Training dataset
+      ds : tf.data.Dataset. Training dataset.
       optimize : Callable. Optimization function, return loss and a list of
         metrics.
       valid_ds : tf.data.Dataset. Validation dataset
@@ -447,11 +447,11 @@ class Trainer(object):
         of iteration in training.
       persistent_tape : Boolean. Using persistent GradientTape, so multiple
         call to gradient is feasible.
-      autograph : Boolean. Enable static graph for optimize function
+      autograph : Boolean. Enable static graph for the `optimize` function.
       logging_interval : Scalar. Interval for print out log information
-        (in second)
-      callback : Callable. The callback will be called after every validation
-        epoch. If `valid_ds=None`, it is called at `logging_interval`.
+        (in second).
+      callback : Callable. The callback will be called after every fixed number
+        of iteration according to `valid_freq`.
     """
     autograph = int(autograph)
     ### Prepare the data
@@ -510,8 +510,8 @@ class Trainer(object):
       for inputs in ds:
         self.n_iter.assign_add(1.)
         # ====== validation ====== #
-        if valid_ds is not None:
-          if self.n_iter % valid_freq == 0:
+        if self.n_iter % valid_freq == 0:
+          if valid_ds is not None:
             total_time += tf.cast(tf.timestamp() - start_time, tf.float32)
             # finish the validation
             valid_loss, valid_metrics = valid()
@@ -524,9 +524,10 @@ class Trainer(object):
                      sep="")
             # reset start_time
             start_time = tf.timestamp()
-            signal = callback()
-            if signal == Trainer.SIGNAL_TERMINATE:
-              break
+          # callback always called
+          signal = callback()
+          if signal == Trainer.SIGNAL_TERMINATE:
+            break
         # ====== train ====== #
         loss, metrics = step(self.n_iter, inputs, training=True)
         self.train_loss.append(loss.numpy())
@@ -534,10 +535,6 @@ class Trainer(object):
         interval = tf.cast(tf.timestamp() - start_time, tf.float32)
         # ====== logging ====== #
         if interval >= logging_interval:
-          if valid_ds is None:
-            signal = callback()
-            if signal == Trainer.SIGNAL_TERMINATE:
-              break
           total_time += interval
           tf.print("#",
                    self.n_iter,
