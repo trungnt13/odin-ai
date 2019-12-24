@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
 from tensorflow.python.framework import tensor_shape
+from tensorflow.python.keras.layers.convolutional import Conv as _Conv
 
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
@@ -33,10 +34,12 @@ def _rank_and_input_shape(rank, input_shape):
     raise ValueError(
         "rank or input_shape must be given so the convolution type "
         "can be determined.")
-  if rank is not None and input_shape is not None and \
-    rank != (len(as_tuple(input_shape)) - 1):
-    raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
-                     (rank, str(input_shape), len(input_shape) - 1))
+  if rank is not None and input_shape is not None:
+    if not isinstance(input_shape, tf.TensorShape):
+      input_shape = tf.nest.flatten(input_shape)
+    if rank != (len(input_shape) - 1):
+      raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
+                       (rank, str(input_shape), len(input_shape) - 1))
   if rank is None:
     rank = len(input_shape) - 1
   return rank, input_shape
@@ -278,7 +281,11 @@ class ConvNetwork(SequentialNetwork):
         start_layers.append(keras.Input(input_shape=self.output_shape[1:]))
       else:
         input_shape = as_tuple(input_shape)
-        shape = self.output_shape[1:]
+        shape = [
+            l.output_shape[1:]
+            for l in self.layers[::-1]
+            if isinstance(l, _Conv)
+        ][0] # last convolution layer
         start_layers = [keras.layers.Flatten(input_shape=input_shape)]
         if input_shape != shape:
           if np.prod(input_shape) != np.prod(shape):

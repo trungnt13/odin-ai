@@ -126,14 +126,6 @@ class DenseDistribution(Dense):
     self._last_distribution = None
 
   @property
-  def is_zero_inflated(self):
-    raise NotImplementedError()
-
-  @property
-  def is_mixture(self):
-    raise NotImplementedError()
-
-  @property
   def event_shape(self):
     return tf.nest.flatten(self._event_shape)
 
