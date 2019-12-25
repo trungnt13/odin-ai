@@ -19,9 +19,8 @@ np.random.seed(8)
 # ===========================================================================
 # Load data
 # ===========================================================================
-dataset = tfds.load('fashion_mnist')
-train = dataset['train']
-test = dataset['test']
+train, valid, test = tfds.load('fashion_mnist:3.0.0',
+                               split=['train[:80%]', 'train[80%:]', 'test'])
 input_shape = tf.data.experimental.get_structure(train)['image'].shape
 
 
@@ -82,7 +81,7 @@ trainer.fit(Trainer.prepare(train,
                             shuffle=True,
                             epochs=32),
             optimize,
-            valid_ds=Trainer.prepare(test, postprocess=process),
+            valid_ds=Trainer.prepare(valid, postprocess=process),
             valid_freq=2500,
             autograph=True,
             logging_interval=2,

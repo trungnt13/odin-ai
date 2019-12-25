@@ -61,6 +61,11 @@ class SequentialNetwork(keras.Sequential):
     return dict(self._init_arguments)
 
   def transpose(self, input_shape=None, tied_weights=False):
+    r"""
+    Arguments:
+      input_shape : specific input shape for the transposed network
+      tied_weights : Boolean. Tie the weight of the encoder and decoder.
+    """
     raise NotImplementedError
 
   def get_config(self):
@@ -150,6 +155,8 @@ class DenseNetwork(SequentialNetwork):
     if tied_weights:
       args['kernel_constraint'] = None
       args['kernel_regularizer'] = None
+    del args['nlayers']
+    # create the transposed network
     transpose_net = DenseNetwork(**args)
     _STORED_TRANSPOSE[id(self)] = transpose_net
     if tied_weights:
@@ -285,7 +292,7 @@ class ConvNetwork(SequentialNetwork):
             l.output_shape[1:]
             for l in self.layers[::-1]
             if isinstance(l, _Conv)
-        ][0] # last convolution layer
+        ][0]  # last convolution layer
         start_layers = [keras.layers.Flatten(input_shape=input_shape)]
         if input_shape != shape:
           if np.prod(input_shape) != np.prod(shape):
@@ -294,23 +301,6 @@ class ConvNetwork(SequentialNetwork):
                                    use_bias=False,
                                    activation='linear'))
           start_layers.append(keras.layers.Reshape(shape))
-    # output_shape: simple projection, no bias or activation
-    extra_layers = []
-    if hasattr(self, 'input_shape'):
-      output_channel = self.input_shape[-1]
-      if output_channel != args['filters'][-1]:
-        if rank == 3:
-          raise NotImplementedError
-        elif rank == 2:
-          layer_type = keras.layers.Conv2DTranspose
-        elif rank == 1:
-          layer_type = Conv1DTranspose
-        extra_layers.append(
-            layer_type(filters=output_channel,
-                       kernel_size=1,
-                       padding='same',
-                       use_bias=False,
-                       activation='linear'))
     # create the transposed network
     transposed = DeconvNetwork(
         filters=args['filters'],
@@ -333,7 +323,7 @@ class ConvNetwork(SequentialNetwork):
         output_dropout=args['output_dropout'],
         layer_dropout=args['layer_dropout'],
         start_layers=start_layers,
-        extra_layers=extra_layers)
+        extra_layers=[])
     _STORED_TRANSPOSE[id(self)] = transposed
     return transposed
 
