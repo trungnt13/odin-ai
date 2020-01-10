@@ -38,14 +38,20 @@ class Animation(object):
 
   def save(self,
            path='/tmp/tmp.gif',
+           save_freq=None,
            writer='imagemagick',
            dpi=None,
            interval=200,
            repeat_delay=1200,
            repeat=True):
     r"""
+    save_freq : None or Integer. If given, only save the animation at given
+      frequency, determined by number of artists stored.
     writer: 'ffmpeg', 'pillow', 'imagemagick', None
     """
+    if save_freq is not None:
+      if len(self.artists) % int(save_freq) != 0:
+        return self
     import matplotlib.animation as animation
     ani = animation.ArtistAnimation(self.fig,
                                     self.artists,

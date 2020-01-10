@@ -13,6 +13,8 @@ from tensorflow.python.keras import Model
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.util import nest
 
+from odin.utils import as_tuple
+
 __all__ = [
     'copy_keras_metadata', 'has_keras_meta', 'add_trainable_weights',
     'layer2text'
@@ -271,6 +273,8 @@ class Trainer(object):
     Reference:
       Prechelt, L. (1998). "Early Stopping | but when?".
     """
+    if len(losses) == 0:
+      return
     if terminate_on_nan and (np.isnan(losses[-1]) or np.isinf(losses[-1])):
       return Trainer.SIGNAL_TERMINATE
     if len(losses) < max(2., min_epoch):
@@ -412,8 +416,12 @@ class Trainer(object):
                               name='n_iter')
     self.train_loss = []
     self.train_metrics = []
+    # store the average value
     self.valid_loss = []
     self.valid_metrics = []
+    # store all iterations results per epoch
+    self.valid_loss_epoch = []
+    self.valid_metrics_epoch = []
 
   def __getstate__(self):
     return self.n_iter.numpy(), self.train_loss, self.train_metrics, \
@@ -482,16 +490,16 @@ class Trainer(object):
       step = tf.function(step)
 
     def valid():
-      avg_loss = 0.
-      avg_metrics = 0.
+      epoch_loss = []
+      epoch_metrics = []
       start_time = tf.timestamp()
       last_it = 0.
       for it, inputs in enumerate(valid_ds.repeat(1)):
         it = tf.cast(it, tf.float32)
         _loss, _metrics = step(it, inputs, training=False)
-        # moving average
-        avg_loss = (_loss + it * avg_loss) / (it + 1)
-        avg_metrics = (_metrics + it * avg_metrics) / (it + 1)
+        # store for calculating average
+        epoch_loss.append(_loss)
+        epoch_metrics.append(_metrics)
         # print log
         end_time = tf.timestamp()
         if end_time - start_time >= logging_interval:
@@ -501,7 +509,10 @@ class Trainer(object):
           tf.print(" [Valid] #", it + 1, " ", it_per_sec, "(it/s)", sep="")
           start_time = tf.timestamp()
           last_it = it
-      return avg_loss, avg_metrics
+      self.valid_loss_epoch.append(epoch_loss)
+      self.valid_metrics_epoch.append(epoch_metrics)
+      return tf.reduce_mean(epoch_loss, axis=0), \
+        tf.reduce_mean(epoch_metrics, axis=0)
 
     def train():
       total_time = 0.
@@ -517,7 +528,10 @@ class Trainer(object):
             valid_loss, valid_metrics = valid()
             self.valid_loss.append(valid_loss.numpy())
             self.valid_metrics.append(np.array(tf.nest.flatten(valid_metrics)))
-            tf.print(" [Valid] loss:",
+            tf.print(" [Valid#",
+                     len(self.valid_loss),
+                     "]",
+                     " loss:",
                      valid_loss,
                      " metr:",
                      valid_metrics,
@@ -554,3 +568,80 @@ class Trainer(object):
     ### train and return
     # train = tf.function(train)
     train()
+
+  def plot_learning_curves(self,
+                           path="/tmp/tmp.pdf",
+                           summary_steps=100,
+                           metrics_name=None,
+                           show_validation=True,
+                           dpi=180):
+    r""" Learning curves
+    """
+    from odin import visual as vs
+    from matplotlib import pyplot as plt
+    import seaborn as sns
+    sns.set()
+    summary_steps = as_tuple(summary_steps, N=2, t=int)
+    is_validated = bool(len(self.valid_loss) > 0) and bool(show_validation)
+    ncol = 2 if is_validated else 1
+    n_metrics = len(self.train_metrics[0])
+    nrow = 1 + n_metrics
+    fig = plt.figure(figsize=(8, nrow * 3))
+    if metrics_name is None:
+      metrics_name = ["Metric#%d" % i for i in range(n_metrics)]
+    metrics_name = ["loss"] + tf.nest.flatten(metrics_name)
+    # prepare the results
+    train = [self.train_loss] + \
+      [[epoch[i] for epoch in self.train_metrics] for i in range(n_metrics)]
+    train_name = metrics_name
+    if is_validated:
+      valid = [tf.nest.flatten(self.valid_loss_epoch)] + \
+        [tf.nest.flatten([[it[i] for it in epoch]
+                          for epoch in self.valid_metrics_epoch])
+         for i in range(n_metrics)]
+      valid_name = ['val_' + i for i in metrics_name]
+      all_data = zip([i for pair in zip(train_name, valid_name) for i in pair],
+                     [i for pair in zip(train, valid) for i in pair])
+    else:
+      all_data = zip(train_name, train)
+    # plotting
+    subplots = []
+    for idx, (name, data) in enumerate(all_data):
+      ax = plt.subplot(nrow, ncol, idx + 1)
+      subplots.append(ax)
+      data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
+        data).batch(summary_steps[1 if 'val_' == name[:4] else 0])]
+      data_avg = np.array([np.mean(i) for i in data])
+      data_std = np.array([np.std(i) for i in data])
+      plt.plot(data_avg, label='Avg.')
+      plt.plot(np.argmin(data_avg),
+               np.min(data_avg),
+               marker='o',
+               color='green',
+               alpha=0.5,
+               label='Min')
+      plt.plot(np.argmax(data_avg),
+               np.max(data_avg),
+               marker='o',
+               color='red',
+               alpha=0.5,
+               label='Max')
+      plt.fill_between(np.arange(len(data_avg)),
+                       data_avg + data_std,
+                       data_avg - data_std,
+                       alpha=0.3)
+      plt.title(name)
+      plt.legend()
+    # set the xlabels
+    for ax, step in zip(subplots[-2:], summary_steps):
+      ax.set_xlabel("#Iter * %d" % step)
+    plt.tight_layout()
+    vs.plot_save(path, figs=[fig], dpi=dpi, clear_all=False)
+    fig.clf()
+    return self
+
+  def commit(self):
+    # TODO
+
+  def select(self):
+    # TODO

@@ -16,6 +16,8 @@ from odin.backend import Trainer
 from odin.bay.distribution_layers import BernoulliLayer, GaussianLayer
 from odin.bay.layers import DiagonalGaussianLatent, IndependentGaussianLatent
 from odin.networks import ConvNetwork, DenseNetwork
+from odin.utils import ArgController
+# TODO: improve performance of VAE
 
 sns.set()
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -24,8 +26,25 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 tf.random.set_seed(8)
 np.random.seed(8)
 
+
+args = ArgController(
+).add('-ds', "1-apple/orange, 2-fashionMNIST, 3-MNIST", 1\
+).add('-zdim', "number of latent units", 32\
+).add('--conv', "Use convolutional neural network", False\
+).parse()
+
 BATCH_SIZE = 256
-DATASET = 2
+DATASET = int(args['ds'])
+CONV = bool(args['conv'])
+EPOCHS = 128
+FREQ = 800
+ZDIM = int(args['zdim'])
+SUMMARY_STEPS = [500, 100]
+output_dir = os.path.join(
+    '/tmp', 'vae_z%d_d%s_%s' % (ZDIM, DATASET, 'conv' if CONV else 'dense'))
+if not os.path.exists(output_dir):
+  os.mkdir(output_dir)
+print("Output directory:", output_dir)
 
 # ===========================================================================
 # Load dataset and helpers
@@ -35,19 +54,30 @@ process = lambda data: (tf.cast(data['image'], tf.float32) / 255. - 0.5) * 2.
 deprocess = lambda x: tf.cast((x / 2. + 0.5) * 255., tf.uint8)
 
 # ====== Cycle-GAN/apple_orange ====== #
-if DATASET == 1:
+if DATASET in (1, 2):
+  if DATASET == 1:
+    name = 'apple2orange'
+  elif DATASET == 2:
+    name = 'vangogh2photo'
   trainA, trainB, validA, validB, testA, testB = \
-   tfds.load('cycle_gan/apple2orange:2.0.0',
-             split=['trainA[:80%]', 'trainB[:80%]',
-                    'trainA[80%:]', 'trainB[80%:]',
+   tfds.load('cycle_gan/%s:2.0.0' % name,
+             split=['trainA[:90%]', 'trainB[:90%]',
+                    'trainA[90%:]', 'trainB[90%:]',
                     'testA', 'testB'])
   train = trainA.concatenate(trainB)
   valid = validA.concatenate(validB)
   test = testA.concatenate(testB)
-  input_shape = (256, 256, 3)
+  input_shape = (48, 48, 3)
   Posterior = GaussianLayer
+
+  process = lambda data: (tf.cast(
+      tf.image.resize(data['image'], input_shape[:2]), tf.float32) / 255. - 0.5
+                         ) * 2.
+  EPOCHS = 512
+  FREQ = 120
+  SUMMARY_STEPS = [10, 2]
 # ====== Fashion-MNIST ====== #
-elif DATASET == 2:
+elif DATASET == 3:
   train, valid, test = tfds.load('fashion_mnist:3.0.0',
                                  split=['train[:80%]', 'train[80%:]', 'test'])
   input_shape = tf.data.experimental.get_structure(train)['image'].shape
@@ -63,7 +93,10 @@ else:
   process = lambda x: tf.cast(x['image'], tf.float32)
   deprocess = lambda x: x
 
-prepare = partial(Trainer.prepare, postprocess=process, batch_size=BATCH_SIZE)
+prepare = partial(Trainer.prepare,
+                  postprocess=process,
+                  batch_size=BATCH_SIZE,
+                  parallel_postprocess=tf.data.experimental.AUTOTUNE)
 
 
 # ===========================================================================
@@ -74,10 +107,10 @@ class VAE(keras.Model):
   def __init__(self, input_shape, zdim, use_conv=True):
     super().__init__()
     if use_conv:
-      self.encoder = ConvNetwork(filters=[32, 64],
+      self.encoder = ConvNetwork(filters=[32, 64, 80],
                                  input_shape=input_shape,
-                                 kernel_size=[3, 5],
-                                 strides=[2, 2],
+                                 kernel_size=[3, 5, 5],
+                                 strides=[1, 2, 2],
                                  extra_layers=[keras.layers.Flatten()])
       self.decoder = keras.Sequential([
           self.encoder.transpose(input_shape=(zdim,)),
@@ -89,7 +122,7 @@ class VAE(keras.Model):
           keras.layers.Flatten()
       ])
     else:
-      self.encoder = DenseNetwork(units=[512, 256, 128],
+      self.encoder = DenseNetwork(units=[1024, 512, 256, 128],
                                   input_shape=input_shape,
                                   flatten=True)
       self.decoder = keras.Sequential([
@@ -124,7 +157,7 @@ class VAE(keras.Model):
 
 
 # ====== create the vae and its optimizer ====== #
-vae = VAE(input_shape, 32, use_conv=True)
+vae = VAE(input_shape, ZDIM, use_conv=CONV)
 optimizer = tf.optimizers.Adam(learning_rate=0.001,
                                beta_1=0.9,
                                beta_2=0.999,
@@ -151,14 +184,21 @@ def optimize(X, tape=None, training=None, n_iter=None):
 def callback():
   img = vae.generate(z_seed)
   animation.plot_images(img)
-  return Trainer.early_stop(trainer.valid_loss, verbose=True)
+  animation.save(save_freq=5)
+  Trainer.early_stop(trainer.valid_loss, threshold=0.25, verbose=True)
 
 
 trainer = Trainer()
-trainer.fit(ds=prepare(train, shuffle=True, epochs=128),
+trainer.fit(ds=prepare(train, shuffle=True, epochs=EPOCHS),
             valid_ds=prepare(valid),
-            valid_freq=1200,
+            valid_freq=FREQ,
             optimize=optimize,
             autograph=True,
             callback=callback)
-animation.save()
+
+# ====== save the analysis ====== #
+trainer.plot_learning_curves(path=os.path.join(output_dir,
+                                               'learning_curves.pdf'),
+                             summary_steps=SUMMARY_STEPS,
+                             metrics_name=["LLK", "KL(q||p)"])
+animation.save(path=os.path.join(output_dir, 'images.gif'))

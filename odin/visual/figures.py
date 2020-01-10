@@ -1787,6 +1787,7 @@ def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
   from matplotlib import pyplot as plt
   if not isinstance(X, (tuple, list)):
     X = [X]
+  X = [np.asarray(x) for x in X]
   if not isinstance(title, (tuple, list)):
     title = [title]
 
