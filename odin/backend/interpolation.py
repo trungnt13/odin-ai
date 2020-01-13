@@ -19,6 +19,7 @@ class Interpolation(Enum):
   r"""
   """
 
+  const = auto()
   linear = auto()
   smooth = auto()
   smooth2 = auto()
@@ -109,6 +110,8 @@ class Interpolation(Enum):
     isin = 'In' in mode
     isout = 'Out' in mode
 
+    if name == 'const':
+      return a / a * vmax
     if name == 'linear':
       pass
     elif 'smooth' == name[:6]:

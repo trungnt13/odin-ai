@@ -27,4 +27,4 @@ for idx, fi in enumerate(Interpolation):
   plt.plot(x, y)
   plt.title(name)
 plt.tight_layout()
-vs.plot_save()
+vs.plot_save(log=True)

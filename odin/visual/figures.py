@@ -1273,11 +1273,12 @@ def plot_scatter(x,
                  legend_loc='upper center',
                  legend_ncol=3,
                  legend_colspace=0.4,
+                 centroids=False,
                  n_samples=None,
                  fontsize=8,
                  ax=None,
                  title=None):
-  ''' Plot the amplitude envelope of a waveform.
+  r""" Plot the amplitude envelope of a waveform.
 
   Parameters
   ----------
@@ -1327,9 +1328,11 @@ def plot_scatter(x,
     stores the azimuth angle in the x,y plane.
     This can be used to rotate the axes programatically.
 
+  centroids : Boolean. If True, annotate the labels on centroid of each cluster.
+
   title : {None, string} (default: None)
     specific title for the subplot
-  '''
+  """
   x, y, z = _parse_scatterXYZ(x, y, z)
   assert len(x) == len(y)
   if z is not None:
@@ -1345,6 +1348,15 @@ def plot_scatter(x,
   # group into color-marker then plot each set
   axes = []
   legend_name = []
+  text_styles = dict(horizontalalignment='center',
+                     verticalalignment='center',
+                     fontsize=fontsize + 2,
+                     weight="bold",
+                     bbox=dict(boxstyle="circle",
+                               facecolor="black",
+                               alpha=0.48,
+                               pad=0.,
+                               edgecolor='none'))
 
   for style, name in legend.items():
     x_, y_, z_ = [], [], []
@@ -1379,6 +1391,12 @@ def plot_scatter(x,
                      edgecolors=edgecolors,
                      facecolors=facecolors,
                      linestyle=linestyle)
+      if centroids:
+        ax.text(np.mean(x_),
+                np.mean(y_),
+                s=name[0],
+                color=style[0],
+                **text_styles)
     axes.append(_)
     # make the shortest name
     name = [i for i in name if len(i) > 0]
