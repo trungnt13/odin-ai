@@ -64,10 +64,22 @@ class Interpolation(Enum):
   elasticIn = auto()
   elasticOut = auto()
 
-  def __call__(self, a, norm=None, cyclical=False, delay=0., vmin=0., vmax=1.):
-    return self.apply(a, norm, cyclical, vmin, vmax)
+  def __call__(self, a, vmin=0., vmax=1., norm=None, cyclical=False, delay=0.):
+    r"""
+    Arguments:
+      a : Scalar.
+      norm : Scalar (optional)
+      cyclical : Boolean. Enable cyclical scheduling, `norm` determines the
+        cycle periodic.
+      delay : Scalar. The amount of delay before each cycle reseted.
+      vmin : Scalar (default: 0). Minimum value for the interpolation output,
+        the return range is [vmin, vmax]
+      vmax : Scalar (default: 1). Maximum value for the interpolation output,
+        the return range is [vmin, vmax]
+    """
+    return self.apply(a, vmin, vmax, norm, cyclical, delay)
 
-  def apply(self, a, norm=None, cyclical=False, delay=0., vmin=0., vmax=1.):
+  def apply(self, a, vmin=0., vmax=1., norm=None, cyclical=False, delay=0.):
     r"""
     Arguments:
       a : Scalar.

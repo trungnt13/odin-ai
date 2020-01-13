@@ -18,6 +18,23 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 tf.random.set_seed(8)
 np.random.seed(8)
 
+def test_mvn():
+  mu = [1., 2, 3]
+  cov = [[0.36, 0.12, 0.06], [0.12, 0.29, -0.13], [0.06, -0.13, 0.26]]
+  diag = tf.linalg.diag_part(cov)
+  tril = tf.linalg.cholesky(cov)
+
+  d1 = bay.distributions.MultivariateNormalDiag(loc=mu, scale_diag=diag)
+  d2 = bay.distributions.MultivariateNormalDiag(loc=mu, scale_diag=diag)
+
+  d1 = bay.distributions.MultivariateNormalTriL(loc=mu, scale_tril=tril)
+  d2 = bay.distributions.MultivariateNormalTriL(loc=mu, scale_tril=tril)
+
+  d1 = bay.distributions.MultivariateNormalFullCovariance(loc=mu,
+                                                          covariance_matrix=cov)
+  d2 = bay.distributions.MultivariateNormalFullCovariance(loc=mu,
+                                                          covariance_matrix=cov)
+  d = bay.concat_distribution([d1, d2])
 
 def assert_consistent_statistics(d1, d2):
   d = concat_distribution((d1, d2))

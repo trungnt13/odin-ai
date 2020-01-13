@@ -642,6 +642,8 @@ class Trainer(object):
 
   def commit(self):
     # TODO
+    pass
 
   def select(self):
     # TODO
+    pass
