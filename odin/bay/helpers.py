@@ -205,6 +205,14 @@ class KLdivergence:
     self.n_mcmc = int(n_mcmc)
     self.reverse = bool(reverse)
 
+  def __str__(self):
+    return '<KL post:%s prior:%s analytic:%s reverse:%s #mcmc:%d>' % \
+      (self.posterior.__class__.__name__, self.prior.__class__.__name__,
+       self.analytic, self.reverse, self.n_mcmc)
+
+  def __repr__(self):
+    return self.__str__()
+
   def __call__(self, prior=None, analytic=None, n_mcmc=None, reverse=None):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)

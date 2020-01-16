@@ -925,12 +925,11 @@ def flatten_list(x, level=None):
 # Online
 # ===========================================================================
 def get_file(fname, origin, outdir, verbose=False):
-  '''
-  Parameters
-  ----------
-  fname: output file name
-  origin: url, link
-  outdir: path to output dir
+  r'''
+  Arguments:
+    fname: output file name
+    origin: url, link
+    outdir: path to output dir
   '''
   from six.moves.urllib.request import urlretrieve
   from six.moves.urllib.error import HTTPError, URLError

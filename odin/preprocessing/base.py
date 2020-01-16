@@ -173,7 +173,7 @@ def _preprocess(x):
 # Basic extractors
 # ===========================================================================
 class Extractor(BaseEstimator, TransformerMixin):
-  """ Extractor
+  r""" Extractor
 
   The developer must override the `_transform` method:
    - If the return is instance of `collections.Mapping`, the new features
@@ -183,22 +183,21 @@ class Extractor(BaseEstimator, TransformerMixin):
    - If `None` is returned, no `_transform` is called, just return None for
      the whole pipeline (i.e. None act as terminal signal)
 
-  Parameters
-  ----------
-  input_name : {None, string, list of string}
-    list of string represent the name of feature
-  output_name : {None, string, list of string}
-    default name for the output feature (in case the return is not
-    instance of dictionary);
-    If `input_name` is None and `output_name` is None, use lower
-    case of class name as default
-  is_input_layer : bool (default: False)
-    An input layer accept any type of input to `transform`,
-    otherwise, only accept a dictionary type as input.
-  robust_level : {'ignore', 'warn', 'error'}
-    'ignore' - ignore error files
-    'warn' - warn about error file during processing
-    'error' - raise Exception and stop processing
+  Arguments:
+    input_name : {None, string, list of string}
+      list of string represent the name of feature
+    output_name : {None, string, list of string}
+      default name for the output feature (in case the return is not
+      instance of dictionary);
+      If `input_name` is None and `output_name` is None, use lower
+      case of class name as default
+    is_input_layer : bool (default: False)
+      An input layer accept any type of input to `transform`,
+      otherwise, only accept a dictionary type as input.
+    robust_level : {'ignore', 'warn', 'error'}
+      'ignore' - ignore error files
+      'warn' - warn about error file during processing
+      'error' - raise Exception and stop processing
   """
 
   def __init__(self,

@@ -6,7 +6,7 @@ import numpy as np
 def fast_umap(
     *X,
     n_components=2,
-    n_neighbors=15,
+    n_neighbors=12,
     n_samples=None,
     metric="euclidean",
     n_epochs=None,

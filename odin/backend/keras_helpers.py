@@ -360,7 +360,7 @@ class Trainer(object):
               postprocess=None,
               batch_size=128,
               epochs=1,
-              cache=True,
+              cache='',
               drop_remainder=False,
               shuffle=None,
               parallel_preprocess=0,
@@ -398,8 +398,8 @@ class Trainer(object):
 
     if preprocess is not None:
       ds = ds.map(preprocess, num_parallel_calls=parallel_preprocess)
-      if cache:
-        ds = ds.cache()
+      if cache is not None:
+        ds = ds.cache(cache)
     ds = ds.repeat(epochs).batch(batch_size, drop_remainder=drop_remainder)
 
     if postprocess is not None:

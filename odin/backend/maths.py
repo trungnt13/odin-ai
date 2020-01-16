@@ -156,10 +156,19 @@ def log(x):
 def log2(x):
   r""" element-wise base-2 logarithm """
   if tf.is_tensor(x):
-    return tf.math.log2(x)
+    return tf.math.log(x) / tf.math.log(tf.constant(2., dtype=x.dtype))
   elif torch.is_tensor(x):
     return torch.log2(x)
   return np.log2(x)
+
+
+def log10(x):
+  r""" element-wise base-10 logarithm """
+  if tf.is_tensor(x):
+    return tf.math.log(x) / tf.math.log(tf.constant(10., dtype=x.dtype))
+  elif torch.is_tensor(x):
+    return torch.log10(x)
+  return np.log10(x)
 
 
 def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):

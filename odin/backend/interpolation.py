@@ -83,8 +83,9 @@ class Interpolation(Enum):
   def apply(self, a, vmin=0., vmax=1., norm=None, cyclical=False, delay=0.):
     r"""
     Arguments:
-      a : Scalar.
-      norm : Scalar (optional)
+      a : Scalar. Expect input value in range [0, 1]
+      norm : Scalar (optional). Normalization constant for the input value,
+        the repeat cycle in case of cyclical scheduling.
       cyclical : Boolean. Enable cyclical scheduling, `norm` determines the
         cycle periodic.
       delay : Scalar. The amount of delay before each cycle reseted.
