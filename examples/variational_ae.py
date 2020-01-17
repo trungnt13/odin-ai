@@ -13,10 +13,11 @@ from tensorflow import keras
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import Trainer
-from odin.bay.distribution_layers import BernoulliLayer, GaussianLayer
-from odin.bay.layers import DiagonalGaussianLatent, IndependentGaussianLatent
+from odin.bay.layers import (BernoulliLayer, DiagonalGaussianLatent,
+                             GaussianLayer, IndependentGaussianLatent)
 from odin.networks import ConvNetwork, DenseNetwork
 from odin.utils import ArgController
+
 # TODO: improve performance of VAE
 
 sns.set()
@@ -178,7 +179,7 @@ def optimize(X, tape=None, training=None, n_iter=None):
   loss = -ELBO
 
   Trainer.apply_gradients(tape, optimizer, loss, vae)
-  return loss, [tf.reduce_mean(LLK), tf.reduce_mean(KL)]
+  return loss, dict(llk=tf.reduce_mean(LLK), kl=tf.reduce_mean(KL))
 
 
 def callback():
@@ -199,6 +200,5 @@ trainer.fit(ds=prepare(train, shuffle=True, epochs=EPOCHS),
 # ====== save the analysis ====== #
 trainer.plot_learning_curves(path=os.path.join(output_dir,
                                                'learning_curves.pdf'),
-                             summary_steps=SUMMARY_STEPS,
-                             metrics_name=["LLK", "KL(q||p)"])
+                             summary_steps=SUMMARY_STEPS)
 animation.save(path=os.path.join(output_dir, 'images.gif'))

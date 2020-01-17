@@ -1,21 +1,17 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
-
 import tensorflow as tf
-
 from tensorflow.python.keras import Model, Sequential
-from tensorflow.python.keras.layers import Dense, Layer, Concatenate
+from tensorflow.python.keras.layers import Concatenate, Dense, Layer
+from tensorflow_probability import distributions as tfd
+from tensorflow_probability.python.distributions import (Dirichlet,
+                                                         softplus_inverse)
 
-from  tensorflow_probability import distributions as tfd
-from tensorflow_probability.python.distributions import (
-  softplus_inverse, Dirichlet)
+from odin.bay.layers.continuous import DirichletLayer
+from odin.bay.layers.discrete import OneHotCategoricalLayer
 
-from odin.bay.distribution_layers import DirichletLayer, OneHotCategoricalLayer
-
-__all__ = [
-    'GradeMembershipModel'
-]
+__all__ = ['GradeMembershipModel']
 
 
 class GradeMembershipModel(Model):
@@ -23,10 +19,15 @@ class GradeMembershipModel(Model):
 
   """
 
-  def __init__(self,  n_questions, n_answers, n_components=10,
+  def __init__(self,
+               n_questions,
+               n_answers,
+               n_components=10,
                components_prior=0.7,
-               encoder_layers=[16, 16], activation='relu',
-               n_mcmc_samples=1, random_state=None):
+               encoder_layers=[16, 16],
+               activation='relu',
+               n_mcmc_samples=1,
+               random_state=None):
     super(GradeMembershipModel, self).__init__()
     self._random_state = np.random.RandomState(seed=random_state) \
         if not isinstance(random_state, np.random.RandomState) \
@@ -60,8 +61,10 @@ class GradeMembershipModel(Model):
                 activation=tf.nn.softplus,
                 kernel_initializer=self._initializer,
                 name="DenseConcentration"))
-      encoder.add(DirichletLayer(clip_for_stable=True, pre_softplus=False,
-                                 name="topics_posteriorQ%d" % question_idx))
+      encoder.add(
+          DirichletLayer(clip_for_stable=True,
+                         pre_softplus=False,
+                         name="topics_posteriorQ%d" % question_idx))
       # this is a must for the Model store Layer parameters
       setattr(self, 'encoder%d' % question_idx, encoder)
       self.encoder.append(encoder)
@@ -75,21 +78,22 @@ class GradeMembershipModel(Model):
       # log_prob of OneHotCategorical computes the probability correctly in
       # this case.
       decoder = OneHotCategoricalLayer(probs_input=True,
-                                  name="AnswerSheetQ%d" % question_idx)
+                                       name="AnswerSheetQ%d" % question_idx)
       # this is a must for the Model store Layer parameters
       setattr(self, 'decoder%d' % question_idx, decoder)
       self.decoder.append([group_answer_logits, decoder])
 
     # same prior for all questions
-    self.prior_logit = self.add_weight(
-        name="prior_logit",
-        shape=[1, self.n_components],
-        trainable=False,
-        initializer=tf.initializers.Constant(self.components_prior))
+    self.prior_logit = self.add_weight(name="prior_logit",
+                                       shape=[1, self.n_components],
+                                       trainable=False,
+                                       initializer=tf.initializers.Constant(
+                                           self.components_prior))
 
   def call(self, inputs):
     n_questions = inputs.shape[1]
-    tf.assert_equal(n_questions, self.n_questions,
+    tf.assert_equal(n_questions,
+                    self.n_questions,
                     message="Number of questions mismatches")
     all_llk = []
     all_kl = []
@@ -99,10 +103,9 @@ class GradeMembershipModel(Model):
     # since we use the same prior for all question and components,
     # initiate the prior first, concentration is clipped to
     # stable range for Dirichlet
-    concentration = tf.clip_by_value(
-        tf.nn.softplus(self.prior_logit), 1e-3, 1e3)
-    group_prior = Dirichlet(
-        concentration=concentration, name="group_prior")
+    concentration = tf.clip_by_value(tf.nn.softplus(self.prior_logit), 1e-3,
+                                     1e3)
+    group_prior = Dirichlet(concentration=concentration, name="group_prior")
 
     # iterate over each column (i.e. each question)
     for question_idx in range(n_questions):
@@ -118,8 +121,8 @@ class GradeMembershipModel(Model):
       group_answer_logits, decoder = self.decoder[question_idx]
       group_answer_probs = tf.nn.softmax(group_answer_logits, axis=1)
       sheet_answer_probs = tf.matmul(sheet_group_samples, group_answer_probs)
-      output_dist = decoder(
-        tf.clip_by_value(sheet_answer_probs, 1e-4, 1 - 1e-4))
+      output_dist = decoder(tf.clip_by_value(sheet_answer_probs, 1e-4,
+                                             1 - 1e-4))
       outputs.append(tf.argmax(output_dist.mean(), axis=-1))
 
       # preparing the ELBO
@@ -134,9 +137,13 @@ class GradeMembershipModel(Model):
       all_elbo.append(ELBO)
 
     # maximizing ELBO, hence, minizing following loss
-    self.add_loss(tf.reduce_mean(-sum(all_elbo)/self.n_questions))
-    self.add_metric(tf.reduce_mean(sum(all_kl)/self.n_questions), aggregation='mean', name="MeanKL")
-    self.add_metric(tf.reduce_mean(-sum(all_llk)/self.n_questions), aggregation='mean', name="MeanNLLK")
+    self.add_loss(tf.reduce_mean(-sum(all_elbo) / self.n_questions))
+    self.add_metric(tf.reduce_mean(sum(all_kl) / self.n_questions),
+                    aggregation='mean',
+                    name="MeanKL")
+    self.add_metric(tf.reduce_mean(-sum(all_llk) / self.n_questions),
+                    aggregation='mean',
+                    name="MeanNLLK")
 
     outputs = tf.concat(outputs, -1)
     return outputs

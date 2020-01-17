@@ -7,7 +7,7 @@ from six import string_types
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import distribution_layer as tfl
 
-from odin.bay import distribution_layers as obl
+from odin.bay import layers as obl
 from odin.bay import distributions as obd
 from odin.utils.python_utils import multikeysdict, partialclass
 

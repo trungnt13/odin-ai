@@ -7,12 +7,20 @@ from tensorflow_probability.python.distributions import (Independent, LogNormal,
                                                          MultivariateNormalDiag,
                                                          Normal)
 
-from odin.bay.distribution_layers import (LogNormalLayer,
-                                          MultivariateNormalLayer, NormalLayer)
-from odin.bay.layers import DenseDistribution, MixtureDensityNetwork
+from odin.bay.layers.continuous import (LogNormalLayer, MultivariateNormalLayer,
+                                        NormalLayer)
+from odin.bay.layers.dense import DenseDistribution, MixtureDensityNetwork
+
+__all__ = [
+    'DiagonalGaussianLatent',
+    'IndependentGaussianLatent',
+    'MixtureDiagonalGaussianLatent',
+    'MixtureIndependentGaussianLatent',
+]
 
 
 class DiagonalGaussianLatent(DenseDistribution):
+  r"""  """
 
   def __init__(self, units, **kwargs):
     super().__init__(units,

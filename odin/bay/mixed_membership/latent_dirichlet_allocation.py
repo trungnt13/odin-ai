@@ -10,7 +10,8 @@ from tensorflow.python.keras.layers import Dense, Layer
 from tensorflow_probability.python.distributions import (
   softplus_inverse, Dirichlet)
 
-from odin.bay.distribution_layers import DirichletLayer, OneHotCategoricalLayer
+from odin.bay.layers.discrete import OneHotCategoricalLayer
+from odin.bay.layers.continuous import DirichletLayer
 from odin.bay.helpers import kl_divergence
 
 __all__ = [

@@ -26,7 +26,7 @@ from tensorflow_probability.python.layers.distribution_layer import (
 
 from odin import backend as bk
 from odin.bay.distribution_alias import parse_distribution
-from odin.bay.distribution_layers import VectorDeterministicLayer
+from odin.bay.layers.continuous import VectorDeterministicLayer
 from odin.bay.helpers import KLdivergence, kl_divergence
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
 

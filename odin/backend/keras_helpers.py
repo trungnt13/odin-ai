@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import os
 import pickle
+from collections import defaultdict
 from numbers import Number
 
 import numpy as np
@@ -415,10 +416,10 @@ class Trainer(object):
                               trainable=False,
                               name='n_iter')
     self.train_loss = []
-    self.train_metrics = []
+    self.train_metrics = defaultdict(list)
     # store the average value
     self.valid_loss = []
-    self.valid_metrics = []
+    self.valid_metrics = defaultdict(list)
     # store all iterations results per epoch
     self.valid_loss_epoch = []
     self.valid_metrics_epoch = []
@@ -449,7 +450,10 @@ class Trainer(object):
     Arugments:
       ds : tf.data.Dataset. Training dataset.
       optimize : Callable. Optimization function, return loss and a list of
-        metrics.
+        metrics. The input arguments must be:
+          - ('inputs', 'tape', 'training', 'n_iter');
+        and the function returns:
+          - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
       valid_ds : tf.data.Dataset. Validation dataset
       valid_freq : Integer. The frequency of validation task, based on number
         of iteration in training.
@@ -484,6 +488,7 @@ class Trainer(object):
           loss, metrics = optimize(inputs, tape=tape, **kw)
       else:  # for validation
         loss, metrics = optimize(inputs, tape=None, **kw)
+      assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
       return loss, metrics
 
     if autograph and not isinstance(optimize, Function):
@@ -491,15 +496,18 @@ class Trainer(object):
 
     def valid():
       epoch_loss = []
-      epoch_metrics = []
+      epoch_metrics = defaultdict(list)
       start_time = tf.timestamp()
       last_it = 0.
       for it, inputs in enumerate(valid_ds.repeat(1)):
         it = tf.cast(it, tf.float32)
         _loss, _metrics = step(it, inputs, training=False)
+        assert isinstance(_metrics, dict), \
+          "Metrics must be instance of dictionary"
         # store for calculating average
         epoch_loss.append(_loss)
-        epoch_metrics.append(_metrics)
+        for k, v in _metrics.items():
+          epoch_metrics[k].append(v)
         # print log
         end_time = tf.timestamp()
         if end_time - start_time >= logging_interval:
@@ -512,7 +520,7 @@ class Trainer(object):
       self.valid_loss_epoch.append(epoch_loss)
       self.valid_metrics_epoch.append(epoch_metrics)
       return tf.reduce_mean(epoch_loss, axis=0), \
-        tf.reduce_mean(epoch_metrics, axis=0)
+        {k: tf.reduce_mean(v, axis=0) for k, v in epoch_metrics.items()}
 
     def train():
       total_time = 0.
@@ -527,12 +535,12 @@ class Trainer(object):
             # finish the validation
             valid_loss, valid_metrics = valid()
             self.valid_loss.append(valid_loss.numpy())
-            self.valid_metrics.append(np.array(tf.nest.flatten(valid_metrics)))
+            for k, v in valid_metrics.items():
+              self.valid_metrics[k].append(v)
             tf.print(" [Valid#",
                      len(self.valid_loss),
                      "]",
-                     " loss:",
-                     valid_loss,
+                     " loss:%.4f" % valid_loss,
                      " metr:",
                      valid_metrics,
                      sep="")
@@ -545,15 +553,15 @@ class Trainer(object):
         # ====== train ====== #
         loss, metrics = step(self.n_iter, inputs, training=True)
         self.train_loss.append(loss.numpy())
-        self.train_metrics.append(np.array(tf.nest.flatten(metrics)))
+        for k, v in metrics.items():
+          self.train_metrics[k].append(v)
         interval = tf.cast(tf.timestamp() - start_time, tf.float32)
         # ====== logging ====== #
         if interval >= logging_interval:
           total_time += interval
           tf.print("#",
                    self.n_iter,
-                   " loss:",
-                   loss,
+                   " loss:%.4f" % loss,
                    " metr:",
                    metrics,
                    "  ",
@@ -572,10 +580,13 @@ class Trainer(object):
   def plot_learning_curves(self,
                            path="/tmp/tmp.pdf",
                            summary_steps=100,
-                           metrics_name=None,
                            show_validation=True,
                            dpi=180):
     r""" Learning curves
+
+    Arguments:
+      path: save path for the figure
+      summary_steps: number of iteration for estimating the mean and variance
     """
     from odin import visual as vs
     from matplotlib import pyplot as plt
@@ -583,22 +594,21 @@ class Trainer(object):
     sns.set()
     summary_steps = as_tuple(summary_steps, N=2, t=int)
     is_validated = bool(len(self.valid_loss) > 0) and bool(show_validation)
+    n_metrics = len(self.train_metrics)
+    metrics_name = list(self.train_metrics.keys())
+    metrics_name = ["loss"] + tf.nest.flatten(metrics_name)
+    # create the figure
     ncol = 2 if is_validated else 1
-    n_metrics = len(self.train_metrics[0])
     nrow = 1 + n_metrics
     fig = plt.figure(figsize=(8, nrow * 3))
-    if metrics_name is None:
-      metrics_name = ["Metric#%d" % i for i in range(n_metrics)]
-    metrics_name = ["loss"] + tf.nest.flatten(metrics_name)
     # prepare the results
     train = [self.train_loss] + \
-      [[epoch[i] for epoch in self.train_metrics] for i in range(n_metrics)]
+      [self.train_metrics[i] for i in metrics_name[1:]]
     train_name = metrics_name
     if is_validated:
       valid = [tf.nest.flatten(self.valid_loss_epoch)] + \
-        [tf.nest.flatten([[it[i] for it in epoch]
-                          for epoch in self.valid_metrics_epoch])
-         for i in range(n_metrics)]
+        [tf.nest.flatten([epoch[i] for epoch in self.valid_metrics_epoch])
+         for i in metrics_name[1:]]
       valid_name = ['val_' + i for i in metrics_name]
       all_data = zip([i for pair in zip(train_name, valid_name) for i in pair],
                      [i for pair in zip(train, valid) for i in pair])
@@ -609,8 +619,13 @@ class Trainer(object):
     for idx, (name, data) in enumerate(all_data):
       ax = plt.subplot(nrow, ncol, idx + 1)
       subplots.append(ax)
+      batch_size = summary_steps[1 if 'val_' == name[:4] else 0]
+      if batch_size > len(data):
+        raise RuntimeError(
+            "Given summary_steps=%d but only has %d data points" %
+            (batch_size, len(data)))
       data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
-        data).batch(summary_steps[1 if 'val_' == name[:4] else 0])]
+        data).batch(batch_size)]
       data_avg = np.array([np.mean(i) for i in data])
       data_std = np.array([np.std(i) for i in data])
       plt.plot(data_avg, label='Avg.')
