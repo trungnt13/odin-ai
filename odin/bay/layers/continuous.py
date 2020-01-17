@@ -351,14 +351,23 @@ class GammaLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
+               concentration_activation='linear',
+               rate_activation='linear',
                validate_args=False,
                **kwargs):
     super(GammaLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, validate_args),
+        lambda t: type(self).new(
+            t, event_shape, parse_activation(concentration_activation, self),
+            parse_activation(rate_activation, self), validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), validate_args=False, name=None):
+  def new(params,
+          event_shape,
+          concentration_activation,
+          rate_activation,
+          validate_args=False,
+          name=None):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -369,10 +378,12 @@ class GammaLayer(DistributionLambda):
         event_shape,
     ],
                              axis=0)
-    concentration_params, rate_params = tf.split(params, 2, axis=-1)
-    return tfd.Independent(tfd.Gamma(concentration=tf.reshape(
-        concentration_params, output_shape),
-                                     rate=tf.reshape(rate_params, output_shape),
+    concentration, rate = tf.split(params, 2, axis=-1)
+    concentration = tf.reshape(concentration_activation(concentration),
+                               output_shape)
+    rate = tf.reshape(rate_activation(rate), output_shape)
+    return tfd.Independent(tfd.Gamma(concentration=concentration,
+                                     rate=rate,
                                      validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            validate_args=validate_args)

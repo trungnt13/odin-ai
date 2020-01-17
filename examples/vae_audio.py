@@ -17,6 +17,7 @@ from odin import networks as net
 from odin import visual as vs
 from odin.backend import Interpolation, Trainer
 from odin.fuel import AudioFeatureLoader
+from odin.utils import partialclass
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -31,7 +32,12 @@ MAX_LENGTH = 48
 BUFFER_SIZE = 100
 PARALLEL = tf.data.experimental.AUTOTUNE
 # GaussianLayer, GammaLayer, NegativeBinomialLayer
-POSTERIOR = bay.layers.NegativeBinomialLayer
+# POSTERIOR = partialclass(bay.layers.GammaLayer,
+#                          concentration_activation='softplus1',
+#                          rate_activation='softplus1')
+# POSTERIOR = partialclass(bay.layers.NegativeBinomialLayer,
+#                          count_activation='softplus1')
+POSTERIOR = bay.layers.GaussianLayer
 BETA = partial(Interpolation.linear,
                vmin=0,
                vmax=100,
@@ -135,7 +141,8 @@ optimizer = tf.optimizers.Adam(learning_rate=0.001,
                                beta_1=0.9,
                                beta_2=0.999,
                                epsilon=1e-07,
-                               amsgrad=False)
+                               amsgrad=False,
+                               clipnorm=100)
 
 
 # ===========================================================================
