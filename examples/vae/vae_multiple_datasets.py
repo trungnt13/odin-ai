@@ -1,22 +1,32 @@
-from __future__ import print_function, division, absolute_import
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib import pyplot as plt
+from __future__ import absolute_import, division, print_function
 
 import os
-os.environ['ODIN'] = 'float32,gpu,seed=1234'
 import timeit
 
+import matplotlib
 import numpy as np
-
 import tensorflow as tf
-from tensorflow_probability import distributions as tfd, bijectors as tfb
+from matplotlib import pyplot as plt
+from tensorflow_probability import bijectors as tfb
+from tensorflow_probability import distributions as tfd
 
-from odin import (nnet as N, bay as B, backend as K, fuel as F,
-                  visual as V, training as T, ml)
-from odin.utils import args_parse, ctext, batching, Progbar
+from odin import backend as K
+from odin import bay as B
+from odin import fuel as F
+from odin import ml
+from odin import nnet as N
+from odin import training as T
+from odin import visual as V
 from odin.ml import fast_pca
 from odin.stats import describe
+from odin.utils import Progbar, args_parse, batching, ctext
+
+matplotlib.use('Agg')
+
+os.environ['ODIN'] = 'float32,gpu,seed=1234'
+
+
+
 
 args = args_parse(descriptions=[
     ('-ds', 'dataset', None, 'mnist_original'),

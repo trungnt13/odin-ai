@@ -628,25 +628,27 @@ class Trainer(object):
         data).batch(batch_size)]
       data_avg = np.array([np.mean(i) for i in data])
       data_std = np.array([np.std(i) for i in data])
+      data_min = np.min(data_avg)
+      data_max = np.max(data_avg)
       plt.plot(data_avg, label='Avg.')
       plt.plot(np.argmin(data_avg),
-               np.min(data_avg),
+               data_min,
                marker='o',
                color='green',
                alpha=0.5,
-               label='Min')
+               label='Min:%.2f' % data_min)
       plt.plot(np.argmax(data_avg),
-               np.max(data_avg),
+               data_max,
                marker='o',
                color='red',
                alpha=0.5,
-               label='Max')
+               label='Max:%.2f' % data_max)
       plt.fill_between(np.arange(len(data_avg)),
                        data_avg + data_std,
                        data_avg - data_std,
                        alpha=0.3)
       plt.title(name)
-      plt.legend()
+      plt.legend(fontsize=10)
     # set the xlabels
     for ax, step in zip(subplots[-2:], summary_steps):
       ax.set_xlabel("#Iter * %d" % step)

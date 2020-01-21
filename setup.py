@@ -2,12 +2,12 @@ from os import path
 
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '1.2.2'
+_ODIN_VERSION_ = '1.2.3'
 
-_TENSORFLOW_VERSION = '2.0.0'
-_TENSORFLOW_PROBABILITY_VERSION = '0.8.0'
+_TENSORFLOW_VERSION = '2.1.0'
+_TENSORFLOW_PROBABILITY_VERSION = '0.9.0'
 _TENSORFLOW_ADDONS_VERSION = '0.5.2'
-_PYTORCH_VERSION = '1.2.0'
+_PYTORCH_VERSION = '1.4.0'
 
 
 # ===========================================================================
@@ -20,11 +20,11 @@ def get_tensorflow_version():
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     out = task.stdout.read()
-    if "release 9.0" in str(out, 'utf-8'):
-      return "tensorflow-gpu==%s" % _TENSORFLOW_VERSION
+    if "Cuda" in str(out, 'utf-8'):
+      return "tensorflow==%s" % _TENSORFLOW_VERSION
   except FileNotFoundError:
     pass
-  return "tensorflow==%s" % _TENSORFLOW_VERSION
+  return "tensorflow-cpu==%s" % _TENSORFLOW_VERSION
 
 
 # ===========================================================================

@@ -5,8 +5,8 @@ import tensorflow as tf
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras.layers import Concatenate, Dense, Layer
 from tensorflow_probability import distributions as tfd
-from tensorflow_probability.python.distributions import (Dirichlet,
-                                                         softplus_inverse)
+from tensorflow_probability.python.distributions import Dirichlet
+from tensorflow_probability.python.math import softplus_inverse
 
 from odin.bay.layers.continuous import DirichletLayer
 from odin.bay.layers.discrete import OneHotCategoricalLayer

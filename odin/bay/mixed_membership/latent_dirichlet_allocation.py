@@ -1,22 +1,17 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
-
 import tensorflow as tf
-
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras.layers import Dense, Layer
+from tensorflow_probability.python.distributions import Dirichlet
+from tensorflow_probability.python.math import softplus_inverse
 
-from tensorflow_probability.python.distributions import (
-  softplus_inverse, Dirichlet)
-
-from odin.bay.layers.discrete import OneHotCategoricalLayer
-from odin.bay.layers.continuous import DirichletLayer
 from odin.bay.helpers import kl_divergence
+from odin.bay.layers.continuous import DirichletLayer
+from odin.bay.layers.discrete import OneHotCategoricalLayer
 
-__all__ = [
-    'LatentDirichletAllocation'
-]
+__all__ = ['LatentDirichletAllocation']
 
 
 class LatentDirichletAllocation(Model):
@@ -48,9 +43,13 @@ class LatentDirichletAllocation(Model):
        https://arxiv.org/abs/1703.01488
   """
 
-  def __init__(self, n_components=10, components_prior=0.7,
-               encoder_layers=[64, 64], activation='relu',
-               n_mcmc_samples=1, analytic=True,
+  def __init__(self,
+               n_components=10,
+               components_prior=0.7,
+               encoder_layers=[64, 64],
+               activation='relu',
+               n_mcmc_samples=1,
+               analytic=True,
                random_state=None):
     super(LatentDirichletAllocation, self).__init__()
     self._random_state = np.random.RandomState(seed=random_state) \
@@ -76,16 +75,16 @@ class LatentDirichletAllocation(Model):
               activation=tf.nn.softplus,
               kernel_initializer=self._initializer,
               name="DenseConcentration"))
-    encoder.add(DirichletLayer(clip_for_stable=True,
-                               pre_softplus=False,
-                               name="topics_posterior"))
+    encoder.add(
+        DirichletLayer(clip_for_stable=True,
+                       pre_softplus=False,
+                       name="topics_posterior"))
     self.encoder = encoder
     # ====== decoder ====== #
     # The observations are bag of words and therefore not one-hot. However,
     # log_prob of OneHotCategorical computes the probability correctly in
     # this case.
-    self.decoder = OneHotCategoricalLayer(
-      probs_input=True, name="bag_of_words")
+    self.decoder = OneHotCategoricalLayer(probs_input=True, name="bag_of_words")
 
   def build(self, input_shape):
     n_features = input_shape[1]
@@ -95,11 +94,11 @@ class LatentDirichletAllocation(Model):
         shape=[self.n_components, n_features],
         initializer=self._initializer)
     # prior
-    self.prior_logit = self.add_weight(
-        name="prior_logit",
-        shape=[1, self.n_components],
-        trainable=False,
-        initializer=tf.initializers.Constant(self.components_prior))
+    self.prior_logit = self.add_weight(name="prior_logit",
+                                       shape=[1, self.n_components],
+                                       trainable=False,
+                                       initializer=tf.initializers.Constant(
+                                           self.components_prior))
     # call this to set built flag to True
     super(LatentDirichletAllocation, self).build(input_shape)
 
@@ -112,17 +111,17 @@ class LatentDirichletAllocation(Model):
     # [n_docs, n_words]
     docs_words_probs = tf.matmul(docs_topics_samples, topics_words_probs)
     output_dist = self.decoder(
-      tf.clip_by_value(docs_words_probs, 1e-4, 1 - 1e-4))
+        tf.clip_by_value(docs_words_probs, 1e-4, 1 - 1e-4))
 
     # initiate prior, concentration is clipped to stable range
     # for Dirichlet
-    concentration = tf.clip_by_value(
-        tf.nn.softplus(self.prior_logit), 1e-3, 1e3)
-    topics_prior = Dirichlet(
-        concentration=concentration, name="topics_prior")
+    concentration = tf.clip_by_value(tf.nn.softplus(self.prior_logit), 1e-3,
+                                     1e3)
+    topics_prior = Dirichlet(concentration=concentration, name="topics_prior")
 
     # ELBO
-    kl = kl_divergence(q=docs_topics_posterior, p=topics_prior,
+    kl = kl_divergence(q=docs_topics_posterior,
+                       p=topics_prior,
                        analytic=self.analytic,
                        q_sample=self.n_mcmc_samples,
                        auto_remove_independent=True)

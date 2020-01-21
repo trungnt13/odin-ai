@@ -15,7 +15,7 @@ from tqdm import tqdm
 from odin import bay
 from odin import networks as net
 from odin import visual as vs
-from odin.backend import Interpolation, Trainer
+from odin.backend import Trainer, interpolation
 from odin.fuel import AudioFeatureLoader
 from odin.utils import partialclass
 
@@ -38,12 +38,11 @@ PARALLEL = tf.data.experimental.AUTOTUNE
 # POSTERIOR = partialclass(bay.layers.NegativeBinomialLayer,
 #                          count_activation='softplus1')
 POSTERIOR = bay.layers.GaussianLayer
-BETA = partial(Interpolation.linear,
-               vmin=0,
-               vmax=100,
-               norm=500,
-               delay=50,
-               cyclical=True)
+BETA = interpolation.linear(vmin=0,
+                            vmax=100,
+                            norm=500,
+                            delayOut=50,
+                            cyclical=True)
 
 # ===========================================================================
 # Load the data
@@ -89,7 +88,7 @@ class VAE(keras.Model):
         keras.layers.Conv1D(64, 5, strides=2, padding='same'),
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
-        keras.layers.Conv1D(80, 5, strides=2, padding='same'),
+        keras.layers.Conv1D(128, 5, strides=2, padding='same'),
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
         keras.layers.Flatten()
@@ -97,8 +96,8 @@ class VAE(keras.Model):
     self.latent = bay.layers.DiagonalGaussianLatent(zdim)
     self.decoder = keras.Sequential([
         keras.layers.Dense(self.encoder.output_shape[1], input_shape=(zdim,)),
-        keras.layers.Reshape((12, 80)),
-        net.Deconv1D(80, 5, strides=2, padding='same'),
+        keras.layers.Reshape((12, 128)),
+        net.Deconv1D(128, 5, strides=2, padding='same'),
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
         net.Deconv1D(64, 5, strides=2, padding='same'),
@@ -134,6 +133,9 @@ class VAE(keras.Model):
     return pX, qZ_X
 
 
+# ===========================================================================
+# Create the network and basic optimizer
+# ===========================================================================
 vae = VAE(tf.data.experimental.get_structure(train).shape[1:],
           posterior=POSTERIOR)
 z = vae.sample(n=16)

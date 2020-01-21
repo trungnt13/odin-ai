@@ -53,7 +53,7 @@ dist_params = {
     obd.Categorical: ['logits_parameter'],
     # others
     obd.Laplace: ['loc', 'scale'],
-    obd.Wishart: ['df', 'scale'],
+    obd.WishartTriL: ['df', 'scale'],
     obd.Uniform: ['low', 'high'],
     obd.Multinomial: ['total_count', 'logits_parameter'],
     obd.Deterministic: ['loc', 'atol', 'rtol'],

@@ -50,9 +50,10 @@ _STORED_TRANSPOSE = {}
 
 class SequentialNetwork(keras.Sequential):
 
-  def __init__(self, start_layers=[], layers=None, extra_layers=[], name=None):
-    layers = [[] if l is None else list(l)
-              for l in (start_layers, layers, extra_layers)]
+  def __init__(self, start_layers=[], layers=None, end_layers=[], name=None):
+    layers = [
+        [] if l is None else list(l) for l in (start_layers, layers, end_layers)
+    ]
     layers = tf.nest.flatten(layers)
     super().__init__(layers=None if len(layers) == 0 else layers, name=name)
 
@@ -100,7 +101,7 @@ class DenseNetwork(SequentialNetwork):
                layer_dropout=0.,
                input_shape=None,
                start_layers=[],
-               extra_layers=[],
+               end_layers=[],
                name=None):
     (units, activation, use_bias, kernel_initializer, bias_initializer,
      kernel_regularizer, bias_regularizer, activity_regularizer,
@@ -141,10 +142,11 @@ class DenseNetwork(SequentialNetwork):
       layers.append(keras.layers.Dropout(output_dropout))
     super().__init__(start_layers=start_layers,
                      layers=layers,
-                     extra_layers=extra_layers,
+                     end_layers=end_layers,
                      name=name)
 
   def transpose(self, input_shape=None, tied_weights=False):
+    r""" Created a transposed network """
     if id(self) in _STORED_TRANSPOSE:
       return _STORED_TRANSPOSE[id(self)]
     args = self.init_arguments
@@ -214,7 +216,7 @@ class ConvNetwork(SequentialNetwork):
                layer_dropout=0.,
                input_shape=None,
                start_layers=[],
-               extra_layers=[],
+               end_layers=[],
                name=None):
     rank, input_shape = _rank_and_input_shape(rank, input_shape)
     (filters, kernel_size, strides, padding, dilation_rate, activation,
@@ -267,7 +269,7 @@ class ConvNetwork(SequentialNetwork):
       layers.append(keras.layers.Dropout(output_dropout))
     super().__init__(start_layers=start_layers,
                      layers=layers,
-                     extra_layers=extra_layers,
+                     end_layers=end_layers,
                      name=name)
 
   def transpose(self, input_shape=None, tied_weights=False):
@@ -323,7 +325,7 @@ class ConvNetwork(SequentialNetwork):
         output_dropout=args['output_dropout'],
         layer_dropout=args['layer_dropout'],
         start_layers=start_layers,
-        extra_layers=[])
+        end_layers=[])
     _STORED_TRANSPOSE[id(self)] = transposed
     return transposed
 
@@ -354,7 +356,7 @@ class DeconvNetwork(SequentialNetwork):
                layer_dropout=0.,
                input_shape=None,
                start_layers=[],
-               extra_layers=[],
+               end_layers=[],
                name=None):
     rank, input_shape = _rank_and_input_shape(rank, input_shape)
     (filters, kernel_size, strides, padding, output_padding, dilation_rate,
@@ -409,5 +411,5 @@ class DeconvNetwork(SequentialNetwork):
       layers.append(keras.layers.Dropout(output_dropout))
     super().__init__(start_layers=start_layers,
                      layers=layers,
-                     extra_layers=extra_layers,
+                     end_layers=end_layers,
                      name=name)

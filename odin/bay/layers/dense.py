@@ -19,6 +19,8 @@ from tensorflow_probability.python.distributions import (Categorical,
                                                          MultivariateNormalDiag,
                                                          MultivariateNormalTriL,
                                                          Normal)
+from tensorflow_probability.python.internal import \
+    distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
@@ -26,8 +28,8 @@ from tensorflow_probability.python.layers.distribution_layer import (
 
 from odin import backend as bk
 from odin.bay.distribution_alias import parse_distribution
-from odin.bay.layers.continuous import VectorDeterministicLayer
 from odin.bay.helpers import KLdivergence, kl_divergence
+from odin.bay.layers.continuous import VectorDeterministicLayer
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
 
 __all__ = [
@@ -165,7 +167,14 @@ class DenseDistribution(Dense):
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
   def call(self, inputs, training=None, n_mcmc=1, projection=True, prior=None):
-    params = super().call(inputs) if projection else inputs
+    # projection by Dense layer could be skipped by setting projection=False
+    # NOTE: a 2D inputs is important here, but we don't want to flatten
+    # automatically
+    if projection:
+      params = super().call(inputs)
+    else:
+      params = inputs
+    # applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
     # modifying the Lambda to return given number of n_mcmc samples
