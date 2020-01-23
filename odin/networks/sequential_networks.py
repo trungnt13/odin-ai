@@ -29,17 +29,23 @@ def _store_arguments(d):
   self._init_arguments = dict(d)
 
 
-def _rank_and_input_shape(rank, input_shape):
+def _rank_and_input_shape(rank, input_shape, start_layers):
   if rank is None and input_shape is None:
     raise ValueError(
         "rank or input_shape must be given so the convolution type "
         "can be determined.")
-  if rank is not None and input_shape is not None:
-    if not isinstance(input_shape, tf.TensorShape):
-      input_shape = tf.nest.flatten(input_shape)
-    if rank != (len(input_shape) - 1):
-      raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
-                       (rank, str(input_shape), len(input_shape) - 1))
+  if input_shape is not None:
+    if len(start_layers) > 0:
+      first = start_layers[0]
+      if not hasattr(first, '_batch_input_shape'):
+        first._batch_input_shape = (None,) + tuple(input_shape)
+      input_shape = None
+    elif rank is not None:
+      if not isinstance(input_shape, tf.TensorShape):
+        input_shape = tf.nest.flatten(input_shape)
+      if rank != (len(input_shape) - 1):
+        raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
+                         (rank, str(input_shape), len(input_shape) - 1))
   if rank is None:
     rank = len(input_shape) - 1
   return rank, input_shape
@@ -113,8 +119,6 @@ class DenseNetwork(SequentialNetwork):
     _store_arguments(locals())
 
     layers = []
-    if input_shape is not None:
-      layers.append(keras.Input(shape=input_shape))
     if flatten:
       layers.append(keras.layers.Flatten())
     if 0. < input_dropout < 1.:
@@ -140,6 +144,13 @@ class DenseNetwork(SequentialNetwork):
         layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
     if 0. < output_dropout < 1.:
       layers.append(keras.layers.Dropout(output_dropout))
+    # matching input_shape and start_layers
+    if input_shape is not None:
+      if len(start_layers) > 0 and \
+        not hasattr(start_layers[0], '_batch_input_shape'):
+        start_layers[0]._batch_input_shape = (None,) + tuple(input_shape)
+      else:
+        layers = [keras.Input(shape=input_shape)] + layers
     super().__init__(start_layers=start_layers,
                      layers=layers,
                      end_layers=end_layers,
@@ -218,7 +229,7 @@ class ConvNetwork(SequentialNetwork):
                start_layers=[],
                end_layers=[],
                name=None):
-    rank, input_shape = _rank_and_input_shape(rank, input_shape)
+    rank, input_shape = _rank_and_input_shape(rank, input_shape, start_layers)
     (filters, kernel_size, strides, padding, dilation_rate, activation,
      use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
      bias_regularizer, activity_regularizer, kernel_constraint, bias_constraint,
@@ -358,7 +369,7 @@ class DeconvNetwork(SequentialNetwork):
                start_layers=[],
                end_layers=[],
                name=None):
-    rank, input_shape = _rank_and_input_shape(rank, input_shape)
+    rank, input_shape = _rank_and_input_shape(rank, input_shape, start_layers)
     (filters, kernel_size, strides, padding, output_padding, dilation_rate,
      activation, use_bias, kernel_initializer, bias_initializer,
      kernel_regularizer, bias_regularizer, activity_regularizer,

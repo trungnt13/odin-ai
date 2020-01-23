@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import os
 import pickle
+import warnings
 from collections import defaultdict
 from numbers import Number
 
@@ -337,6 +338,9 @@ class Trainer(object):
       loss : a Tensor value with rank 0.
       model_or_weights : List of keras.layers.Layer or tf.Variable, only
         `trainable` variables are optimized.
+
+    Returns:
+      gradients : List of gradient Tensor
     """
     if tape is None:
       return
@@ -354,6 +358,7 @@ class Trainer(object):
     with tape.stop_recording():
       grads = tape.gradient(loss, weights)
       optimizer.apply_gradients(grads_and_vars=zip(grads, weights))
+    return grads
 
   @staticmethod
   def prepare(ds,
@@ -444,6 +449,7 @@ class Trainer(object):
           persistent_tape=True,
           autograph=True,
           logging_interval=2,
+          max_iter=-1,
           callback=lambda: None):
     r""" A simplified fitting API
 
@@ -462,6 +468,8 @@ class Trainer(object):
       autograph : Boolean. Enable static graph for the `optimize` function.
       logging_interval : Scalar. Interval for print out log information
         (in second).
+      max_iter : An Interger or `None`. Maximum number of iteration for
+        training. If `max_iter <= 0`, iterate the training data until the end.
       callback : Callable. The callback will be called after every fixed number
         of iteration according to `valid_freq`.
     """
@@ -526,6 +534,7 @@ class Trainer(object):
       total_time = 0.
       start_time = tf.timestamp()
       last_iter = tf.identity(self.n_iter)
+      total_iter = 0
       for inputs in ds:
         self.n_iter.assign_add(1.)
         # ====== validation ====== #
@@ -572,7 +581,10 @@ class Trainer(object):
                    sep="")
           start_time = tf.timestamp()
           last_iter = tf.identity(self.n_iter)
-
+        # ====== check maximum iteration ====== #
+        total_iter += 1
+        if max_iter > 0 and total_iter >= max_iter:
+          break
     ### train and return
     # train = tf.function(train)
     train()
@@ -621,9 +633,10 @@ class Trainer(object):
       subplots.append(ax)
       batch_size = summary_steps[1 if 'val_' == name[:4] else 0]
       if batch_size > len(data):
-        raise RuntimeError(
-            "Given summary_steps=%d but only has %d data points" %
+        warnings.warn(
+            "Given summary_steps=%d but only has %d data points, skip plot!" %
             (batch_size, len(data)))
+        return self
       data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
         data).batch(batch_size)]
       data_avg = np.array([np.mean(i) for i in data])
