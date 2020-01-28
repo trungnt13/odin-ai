@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+import os
+
 import numpy as np
 
 
@@ -75,11 +77,14 @@ class Animation(object):
            path='/tmp/tmp.gif',
            save_freq=None,
            writer='imagemagick',
+           clear_folder=False,
            dpi=None,
            interval=200,
            repeat_delay=1200,
            repeat=False):
     r"""
+    path : path to 'gif' or 'png' file, if a folder is given, write the
+      animation to multiple 'png' files.
     save_freq : None or Integer. If given, only save the animation at given
       frequency, determined by number of artists stored.
     writer: 'ffmpeg', 'pillow', 'imagemagick', None
@@ -89,7 +94,15 @@ class Animation(object):
     if save_freq is not None:
       if len(self.artists) % int(save_freq) != 0:
         return self
+    # ====== save to Animation ====== #
     import matplotlib.animation as animation
+    if os.path.isdir(path):
+      if clear_folder:
+        for f in os.listdir(path):
+          f = os.path.join(path, f)
+          if os.path.isfile(f):
+            os.remove(f)
+      path = os.path.join(path, 'image.png')
     ani = animation.ArtistAnimation(self.fig,
                                     self.artists,
                                     interval=interval,

@@ -1,11 +1,13 @@
 from __future__ import absolute_import, division, print_function
 
 import os
+import tarfile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 import tensorflow as tf
 
-from odin.utils import as_tuple, get_datasetpath, get_file
+from odin.utils import as_tuple, get_all_files, get_datasetpath, get_file
 from odin.utils.crypto import md5_checksum
 
 
@@ -71,9 +73,9 @@ class AudioFeatureLoader():
     fft_length = 2**int(np.ceil(np.log2(fft_length)))
     ### store
     self.save_path = save_path
-    self.frame_length = frame_length
-    self.frame_step = frame_step
-    self.fft_length = fft_length
+    self.frame_length = int(frame_length)
+    self.frame_step = int(frame_step)
+    self.fft_length = int(fft_length)
     self.log_mels = bool(log_mels)
     self.power = power
     self.top_DB = top_DB
@@ -265,6 +267,8 @@ class AudioFeatureLoader():
       in wav files at 8kHz. The recordings are trimmed so that they have near
       minimal silence at the beginnings and ends.
 
+    Sample rate: 8,000
+
     Reference:
       Link: https://github.com/Jakobovski/free-spoken-digit-dataset
     """
@@ -309,7 +313,51 @@ class AudioFeatureLoader():
     return train_files, test_files
 
   def load_command(self):
-    pass
+    r""" Warden P. Speech Commands: A public dataset for single-word speech
+      recognition, 2017. Available from
+      http://download.tensorflow.org/data/speech_commands_v0.01.tar.gz
 
-  def load_yesno(self):
-    pass
+    Sample rate: 16,000
+
+    Example:
+      ds = AudioFeatureLoader(sample_rate=16000,
+                              frame_length=int(0.025 * 16000),
+                              frame_step=int(0.005 * 16000))
+      train, valid, test = ds.load_command()
+      train = ds.create_dataset(train, max_length=40, return_path=True)
+    """
+    LINK = "http://download.tensorflow.org/data/speech_commands_v0.01.tar.gz"
+    MD5 = "a08eb256cea8cbb427c6c0035fffd881"
+    save_path = os.path.join(self.save_path, 'speech_commands')
+    if not os.path.exists(save_path):
+      os.mkdir(save_path)
+    audio_path = os.path.join(save_path, 'audio')
+    audio_files = sorted(
+        get_all_files(audio_path, filter_func=lambda x: '.wav' == x[-4:]))
+    md5 = md5_checksum(''.join([os.path.basename(i) for i in audio_files]))
+    # ====== Download and extract the data ====== #
+    if md5 != MD5:
+      zip_path = get_file(fname='speech_commands_v0.01.tar.gz',
+                          origin=LINK,
+                          outdir=save_path,
+                          verbose=True)
+      with tarfile.open(zip_path, 'r:gz') as tar:
+        tar.extractall(audio_path)
+    # ====== processing the audio file list ====== #
+    audio_files = [i for i in audio_files if '_background_noise_' not in i]
+    with open(os.path.join(audio_path, 'validation_list.txt'), 'r') as f:
+      valid_list = {i.strip(): 1 for i in f}
+    with open(os.path.join(audio_path, 'testing_list.txt'), 'r') as f:
+      test_list = {i.strip(): 1 for i in f}
+    train_files = []
+    valid_files = []
+    test_files = []
+    for f in audio_files:
+      name = '/'.join(f.split('/')[-2:])
+      if name in valid_list:
+        valid_files.append(f)
+      elif name in test_list:
+        test_files.append(f)
+      else:
+        train_files.append(f)
+    return train_files, valid_files, test_files

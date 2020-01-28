@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import os
 import pickle
+import sys
 import warnings
 from collections import defaultdict
 from numbers import Number
@@ -135,9 +136,11 @@ class Trainer(object):
             i.set_weights(_BEST_OPTIMIZER[id(i)])
 
   @staticmethod
-  def save_checkpoint(dir_path, optimizer, models, trainer=None, max_to_keep=5):
+  def save_checkpoint(dir_path, optimizers, models, trainer=None,
+                      max_to_keep=5):
     r""" Save checkpoint """
-    assert isinstance(optimizer, tf.optimizers.Optimizer), \
+    optimizers = tf.nest.flatten(optimizers)
+    assert all(isinstance(opt, tf.optimizers.Optimizer) for opt in optimizers), \
       "optimizer must be instance of tf.optimizers.Optimizer"
     dir_path = os.path.abspath(dir_path)
     if not os.path.exists(dir_path):
@@ -148,35 +151,39 @@ class Trainer(object):
         i for i in tf.nest.flatten(models)
         if isinstance(i, (tf.Variable, keras.layers.Layer))
     ]
-    footprint = dir_path + str(id(optimizer)) + \
+    footprint = dir_path + \
+      ''.join(sorted([str(id(i)) for i in optimizers])) + \
       ''.join(sorted([str(id(i)) for i in models]))
     if footprint in _CHECKPOINT_MANAGER:
       manager, cp = _CHECKPOINT_MANAGER[footprint]
     else:
       models = {"model%d" % idx: m for idx, m in enumerate(models)}
-      cp = tf.train.Checkpoint(optimizer=optimizer, **models)
+      models.update(
+          {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+      cp = tf.train.Checkpoint(**models)
       manager = tf.train.CheckpointManager(cp,
                                            directory=dir_path,
                                            max_to_keep=max_to_keep)
       _CHECKPOINT_MANAGER[footprint] = (manager, cp)
     with open(os.path.join(dir_path, 'trainer.pkl'), 'wb') as f:
       pickle.dump(trainer, f)
-    with open(os.path.join(dir_path, 'optimizer.pkl'), 'wb') as f:
-      pickle.dump([optimizer.__class__.__name__, optimizer.get_config()], f)
+    with open(os.path.join(dir_path, 'optimizers.pkl'), 'wb') as f:
+      pickle.dump(
+          [(opt.__class__.__name__, opt.get_config()) for opt in optimizers], f)
     with open(os.path.join(dir_path, 'max_to_keep'), 'wb') as f:
       pickle.dump(max_to_keep, f)
     manager.save()
 
   @staticmethod
-  def restore_checkpoint(dir_path, models=None, optimizer=None, index=-1):
+  def restore_checkpoint(dir_path, models=None, optimizers=None, index=-1):
     r""" Restore saved checkpoint """
     dir_path = os.path.abspath(dir_path)
     if not os.path.exists(dir_path):
       os.mkdir(dir_path)
     elif os.path.isfile(dir_path):
       raise ValueError("dir_path must be path to a folder")
-    #
-    if models is None and optimizer is None:
+    # check models and optimizers
+    if models is None and optimizers is None:
       footprint = [name for name in _CHECKPOINT_MANAGER \
                    if dir_path in name]
       if len(footprint) == 0:
@@ -184,7 +191,7 @@ class Trainer(object):
                          dir_path)
       footprint = footprint[0]
       manager, cp = _CHECKPOINT_MANAGER[footprint]
-    #
+    # given models
     elif models is not None:
       models = [
           i for i in tf.nest.flatten(models)
@@ -193,39 +200,48 @@ class Trainer(object):
       models_ids = ''.join(sorted([str(id(i)) for i in models]))
       with open(os.path.join(dir_path, 'max_to_keep'), 'rb') as f:
         max_to_keep = pickle.load(f)
-      if optimizer is None:
+      # not provided optimizers
+      if optimizers is None:
         footprint = [name for name in _CHECKPOINT_MANAGER \
                      if dir_path in name and models_ids in name]
         if len(footprint) > 0:
           manager, cp = _CHECKPOINT_MANAGER[footprint[0]]
         else:  # create optimizer
-          with open(os.path.join(dir_path, 'optimizer.pkl'), 'rb') as f:
-            name, config = pickle.load(f)
-          optimizer_class = tf.optimizers.get(name)
-          optimizer = optimizer_class.from_config(config)
-          cp = tf.train.Checkpoint(
-              optimizer=optimizer,
-              **{"model%d" % idx: m for idx, m in enumerate(models)})
+          with open(os.path.join(dir_path, 'optimizers.pkl'), 'rb') as f:
+            optimizers = pickle.load(f)
+          optimizers = [
+              tf.optimizers.get(name).from_config(config)
+              for name, config in optimizers
+          ]
+          kwargs = {"model%d" % idx: m for idx, m in enumerate(models)}
+          kwargs.update(
+              {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+          cp = tf.train.Checkpoint(**kwargs)
           manager = tf.train.CheckpointManager(cp,
                                                directory=dir_path,
                                                max_to_keep=max_to_keep)
+      # both models and optimizers available
       else:
+        optimizers = tf.nest.flatten(optimizers)
+        optimizers_ids = ''.join(sorted([str(id(i)) for i in optimizers]))
         footprint = [name for name in _CHECKPOINT_MANAGER \
                      if dir_path in name and \
-                       str(id(optimizer)) in name and \
+                       optimizers_ids in name and \
                          models_ids in name]
         if len(footprint) > 0:
           manager, cp = _CHECKPOINT_MANAGER[footprint[0]]
         else:
-          cp = tf.train.Checkpoint(
-              optimizer=optimizer,
-              **{"model%d" % idx: m for idx, m in enumerate(models)})
+          kwargs = {"model%d" % idx: m for idx, m in enumerate(models)}
+          kwargs.update(
+              {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+          cp = tf.train.Checkpoint(**kwargs)
           manager = tf.train.CheckpointManager(cp,
                                                directory=dir_path,
                                                max_to_keep=max_to_keep)
+    # only given optimizers, cannot do anything
     else:
       raise ValueError("Not support for models=%s optimizers=%s" %
-                       (str(models), str(optimizer)))
+                       (str(models), str(optimizers)))
     cp.restore(manager.checkpoints[int(index)])
     # restore trainer (if exist)
     trainer_path = os.path.join(dir_path, 'trainer.pkl')
@@ -449,6 +465,7 @@ class Trainer(object):
           persistent_tape=True,
           autograph=True,
           logging_interval=2,
+          log_path=None,
           max_iter=-1,
           callback=lambda: None):
     r""" A simplified fitting API
@@ -474,6 +491,9 @@ class Trainer(object):
         of iteration according to `valid_freq`.
     """
     autograph = int(autograph)
+    output_stream = sys.stdout
+    if log_path is not None:
+      output_stream = 'file://%s' % log_path
     ### Prepare the data
     assert isinstance(ds, tf.data.Dataset), \
       'ds must be instance of tf.data.Datasets'
@@ -522,7 +542,13 @@ class Trainer(object):
           it_per_sec = tf.cast(
               (it - last_it) / tf.cast(end_time - start_time, tf.float32),
               tf.int32)
-          tf.print(" [Valid] #", it + 1, " ", it_per_sec, "(it/s)", sep="")
+          tf.print(" [Valid] #",
+                   it + 1,
+                   " ",
+                   it_per_sec,
+                   "(it/s)",
+                   sep="",
+                   output_stream=output_stream)
           start_time = tf.timestamp()
           last_it = it
       self.valid_loss_epoch.append(epoch_loss)
@@ -552,7 +578,8 @@ class Trainer(object):
                      " loss:%.4f" % valid_loss,
                      " metr:",
                      valid_metrics,
-                     sep="")
+                     sep="",
+                     output_stream=output_stream)
             # reset start_time
             start_time = tf.timestamp()
           # callback always called
@@ -578,13 +605,15 @@ class Trainer(object):
                    "(s) ",
                    tf.cast((self.n_iter - last_iter) / interval, tf.int32),
                    "(it/s)",
-                   sep="")
+                   sep="",
+                   output_stream=output_stream)
           start_time = tf.timestamp()
           last_iter = tf.identity(self.n_iter)
         # ====== check maximum iteration ====== #
         total_iter += 1
         if max_iter > 0 and total_iter >= max_iter:
           break
+
     ### train and return
     # train = tf.function(train)
     train()
@@ -667,7 +696,7 @@ class Trainer(object):
       ax.set_xlabel("#Iter * %d" % step)
     plt.tight_layout()
     vs.plot_save(path, figs=[fig], dpi=dpi, clear_all=False)
-    fig.clf()
+    plt.close(fig)
     return self
 
   def commit(self):
