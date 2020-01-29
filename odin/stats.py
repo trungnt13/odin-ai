@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
+
 import math
 import random
-
-from numbers import Number
+from collections import Iterator, Mapping, OrderedDict, defaultdict
 from itertools import chain
-from collections import defaultdict, Iterator, OrderedDict, Mapping
+from numbers import Number
 
 import numpy as np
 
-from odin.maths import interp
-from odin.utils import as_tuple, flatten_list, ctext, batching
+from odin.utils import as_tuple, batching, ctext, flatten_list
+
 
 def prior2weights(prior, exponential=False,
                   min_value=0.1, max_value=None,
@@ -40,6 +40,7 @@ def prior2weights(prior, exponential=False,
   if exponential:
     prior = sorted([(i, p) for i, p in enumerate(prior)],
                    key=lambda x: x[-1], reverse=False)
+    # TODO: new interpolation module here
     alpha = interp.expIn(n=len(prior), power=10)
     prior = {i: a * p for a, (i, p) in zip(alpha, prior)}
     prior = np.array([prior[i] for i in range(len(prior))]) + 1
