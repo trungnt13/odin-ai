@@ -34,7 +34,7 @@ __all__ = [
 
 def fast_pca(*x,
              n_components=None,
-             algo='rpca',
+             algo='pca',
              y=None,
              batch_size=1024,
              return_model=False,
@@ -54,6 +54,7 @@ def fast_pca(*x,
         'sppca' - Supervised Probabilistic PCA,
         'plda' - Probabilistic LDA,
         'rpca' - randomized PCA using randomized SVD
+        'pca'  - Normal PCA
     y : {numpy.ndarray, None}
       required for labels in case of `sppca`
     batch_size : int (default: 1024)

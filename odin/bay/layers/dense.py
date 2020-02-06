@@ -11,7 +11,7 @@ from six import string_types
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
-from tensorflow_probability.python.bijectors import ScaleTriL
+from tensorflow_probability.python.bijectors import FillScaleTriL
 from tensorflow_probability.python.distributions import (Categorical,
                                                          Distribution,
                                                          Independent,
@@ -311,7 +311,7 @@ class MixtureDensityNetwork(DenseDistribution):
     elif self.covariance == 'full':
       scale_shape = [self.n_components, event_size * (event_size + 1) // 2]
       fn = lambda l, s: MultivariateNormalTriL(
-          loc=l, scale_tril=ScaleTriL(diag_shift=1e-5)(tf.math.softplus(s)))
+          loc=l, scale_tril=FillScaleTriL(diag_shift=1e-5)(tf.math.softplus(s)))
     #
     if isinstance(log_scale, Number) or tf.rank(log_scale) == 0:
       loc = tf.fill([self.n_components, self.event_size], loc)

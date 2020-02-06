@@ -37,6 +37,7 @@ dependencies = [
     'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
     'tensorflow-datasets',
     'torch==%s' % _PYTORCH_VERSION,
+    'hydra-core', # for easy configuration
     'pytorch-lightning',  # for training pytorch module
     'bigarray>=0.2.1',
     'six>=1.9.0',

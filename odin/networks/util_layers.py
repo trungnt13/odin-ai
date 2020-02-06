@@ -169,8 +169,8 @@ class BatchRenormalization(BatchNormalization):
 
 class Identity(Layer):
 
-  def __init__(self, name=None):
-    super(Identity, self).__init__(name=name)
+  def __init__(self, name=None, **kwargs):
+    super(Identity, self).__init__(name=name, **kwargs)
     self.supports_masking = True
 
   def call(self, inputs, training=None):

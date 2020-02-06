@@ -10,6 +10,7 @@ import string
 import tarfile
 import types
 import warnings
+import pickle
 from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
                          deque)
 from contextlib import contextmanager

@@ -136,9 +136,14 @@ class Trainer(object):
             i.set_weights(_BEST_OPTIMIZER[id(i)])
 
   @staticmethod
-  def save_checkpoint(dir_path, optimizers, models, trainer=None,
+  def save_checkpoint(dir_path,
+                      models,
+                      optimizers=None,
+                      trainer=None,
                       max_to_keep=5):
     r""" Save checkpoint """
+    if optimizers is None:
+      optimizers = []
     optimizers = tf.nest.flatten(optimizers)
     assert all(isinstance(opt, tf.optimizers.Optimizer) for opt in optimizers), \
       "optimizer must be instance of tf.optimizers.Optimizer"
@@ -165,19 +170,27 @@ class Trainer(object):
                                            directory=dir_path,
                                            max_to_keep=max_to_keep)
       _CHECKPOINT_MANAGER[footprint] = (manager, cp)
-    with open(os.path.join(dir_path, 'trainer.pkl'), 'wb') as f:
-      pickle.dump(trainer, f)
+    manager.save()
     with open(os.path.join(dir_path, 'optimizers.pkl'), 'wb') as f:
       pickle.dump(
           [(opt.__class__.__name__, opt.get_config()) for opt in optimizers], f)
     with open(os.path.join(dir_path, 'max_to_keep'), 'wb') as f:
       pickle.dump(max_to_keep, f)
-    manager.save()
+    if trainer is not None:
+      with open(os.path.join(dir_path, 'trainer.pkl'), 'wb') as f:
+        pickle.dump(trainer, f)
 
   @staticmethod
   def restore_checkpoint(dir_path, models=None, optimizers=None, index=-1):
-    r""" Restore saved checkpoint """
+    r""" Restore saved checkpoint
+
+    Returns:
+      models : list of `keras.Model` or `tf.Variable`
+      optimizers : list of `tf.optimizers.Optimizer`
+      trainer : `odin.backend.Trainer` or `None`
+    """
     dir_path = os.path.abspath(dir_path)
+    kwargs = {}
     if not os.path.exists(dir_path):
       os.mkdir(dir_path)
     elif os.path.isfile(dir_path):
@@ -244,11 +257,17 @@ class Trainer(object):
                        (str(models), str(optimizers)))
     cp.restore(manager.checkpoints[int(index)])
     # restore trainer (if exist)
+    trainer = None
     trainer_path = os.path.join(dir_path, 'trainer.pkl')
     if os.path.exists(trainer_path):
       with open(trainer_path, 'rb') as f:
-        return pickle.load(f)
-    return None
+        trainer = pickle.load(f)
+    # return
+    models = [getattr(cp, k) for k in sorted(dir(cp)) if 'model' in k[:5]]
+    optimizers = [
+        getattr(cp, k) for k in sorted(dir(cp)) if 'optimizer' in k[:9]
+    ]
+    return models, optimizers, trainer
 
   @staticmethod
   def early_stop(losses,

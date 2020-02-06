@@ -8,7 +8,7 @@ _FIGURE_LIST = defaultdict(dict)
 
 
 class Visualizer(object):
-  """ Visualizer """
+  r""" Visualizer """
 
   def assert_figure(self, fig):
     from matplotlib import pyplot as plt
@@ -39,6 +39,15 @@ class Visualizer(object):
                    separate_files=True,
                    clear_figures=True,
                    verbose=False):
+    r""" Saving all stored figures to path
+
+    Arguments:
+      path : path to a pdf or image file
+      dpi : dot-per-inch
+      separate_files : save each figure in separated file
+      clear_figures : remove and close all stored figures
+      verbose : print out the log
+    """
     from odin.utils import ctext
     from matplotlib import pyplot as plt
     # checking arguments

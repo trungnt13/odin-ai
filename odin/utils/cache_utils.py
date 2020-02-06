@@ -1,19 +1,19 @@
-from __future__ import print_function, division, absolute_import
+from __future__ import absolute_import, division, print_function
 
+import inspect
 import os
 import shutil
-import inspect
-
+from collections import OrderedDict, defaultdict
 from functools import wraps
-from six import string_types
-from six.moves import builtins
-from decorator import FunctionMaker
-from collections import defaultdict, OrderedDict
 
 import numpy as np
+from decorator import FunctionMaker
+from six import string_types
+from six.moves import builtins
 
 # to set the cache dir, set the environment CACHE_DIR
-__cache_dir = os.environ.get("CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
+__cache_dir = os.environ.get(
+    "CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
 _memory = None
 # check cache_dir
 if not os.path.exists(__cache_dir):
@@ -21,8 +21,8 @@ if not os.path.exists(__cache_dir):
 elif os.path.isfile(__cache_dir):
   raise ValueError("Invalid cache directory at path:" + __cache_dir)
 
-# Don't use memmap anymore, carefull when cache big numpy ndarray results
 
+# Don't use memmap anymore, carefull when cache big numpy ndarray results
 def get_cache_memory():
   try:
     from joblib import Memory
@@ -31,21 +31,25 @@ def get_cache_memory():
   global _memory
   if _memory is None:
     _memory = Memory(cachedir=__cache_dir,
-                     mmap_mode=None, compress=False, verbose=0)
+                     mmap_mode=None,
+                     compress=False,
+                     verbose=0)
   return _memory
 
 
-def get_cache_path():
+def cache_path():
+  r""" Get the directory path used for `cache_disk` """
   return __cache_dir
 
 
-def clear_disk_cache():
+def cache_clear():
+  r""" Clear all cache stored by `cache_disk` """
   if os.path.exists(__cache_dir):
     shutil.rmtree(__cache_dir)
 
 
 def cache_disk(function):
-  """ Lazy evaluation of function, by storing the results to the disk,
+  r""" Lazy evaluation of function, by storing the results to the disk,
   and not rerunning the function twice for the same arguments.
 
   It works by explicitly saving the output to a file and it is
@@ -67,22 +71,25 @@ def cache_disk(function):
   >>> for _ in range(12):
   ...     print(np.sum(doit(8)))
   """
+
   def decorator_apply(dec, func):
     """Decorate a function by preserving the signature even if dec
     is not a signature-preserving decorator.
     This recipe is derived from
     http://micheles.googlecode.com/hg/decorator/documentation.html#id14
     """
-    return FunctionMaker.create(
-        func, 'return decorated(%(signature)s)',
-        dict(decorated=dec(func)), __wrapped__=func)
+    return FunctionMaker.create(func,
+                                'return decorated(%(signature)s)',
+                                dict(decorated=dec(func)),
+                                __wrapped__=func)
+
   return decorator_apply(get_cache_memory().cache, function)
 
 
 # ===========================================================================
 # Cache
 # ===========================================================================
-__CACHE = defaultdict(lambda: ([], [])) #id(function) -> (KEY_ARGS, RET_VALUE)
+__CACHE = defaultdict(lambda: ([], []))  #id(function) -> (KEY_ARGS, RET_VALUE)
 __NO_ARGUMENT = '___NO_ARGUMENT___'
 
 
@@ -169,10 +176,11 @@ def cache_memory(func, *attrs):
       # ====== check if strict_mode and caching enable ====== #
       if strict_mode:
         # __cache__ specified in args
-        if any(isinstance(a, string_types) and a == '__cache__'
-               for a in args):
-          args = tuple([a for a in args
-                        if not isinstance(a, string_types) or a != '__cache__'])
+        if any(isinstance(a, string_types) and a == '__cache__' for a in args):
+          args = tuple([
+              a for a in args
+              if not isinstance(a, string_types) or a != '__cache__'
+          ])
         # __cache__ specified in kwargs
         elif '__cache__' in kwargs:
           kwargs.pop('__cache__')
@@ -190,14 +198,12 @@ def cache_memory(func, *attrs):
           input_args[len(args) + i] = args_defaults[name]
         else:
           raise ValueError("Cannot find specified argument for "
-              "argument with name: %s" % name)
+                           "argument with name: %s" % name)
       # ====== create cache_key ====== #
       # custom attribute
-      object_attrs = [getattr(args[0], k) for k in attrs
-                      if hasattr(args[0], k)]
+      object_attrs = [getattr(args[0], k) for k in attrs if hasattr(args[0], k)]
       cache_key = input_args + object_attrs
-      cache_key = [id(k) if isinstance(k, np.ndarray) else k
-                   for k in cache_key]
+      cache_key = [id(k) if isinstance(k, np.ndarray) else k for k in cache_key]
       # ====== check cache ====== #
       key_list = __CACHE[id(func)][0]
       value_list = __CACHE[id(func)][1]
@@ -211,6 +217,7 @@ def cache_memory(func, *attrs):
         key_list.append(cache_key)
         value_list.append(value)
         return value
+
     return wrapper
 
   # return wrapped function

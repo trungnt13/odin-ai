@@ -29,6 +29,7 @@ def fast_umap(
     target_metric_kwds=None,
     target_weight=0.5,
     transform_seed=42,
+    return_model=False,
     verbose=False,
 ):
   r"""Uniform Manifold Approximation and Projection
@@ -180,7 +181,7 @@ def fast_umap(
   kwargs = dict(locals())
   del kwargs['X']
   n_samples = kwargs.pop('n_samples', None)
-  force_sklearn = kwargs.pop('force_sklearn', False)
+  return_model = kwargs.pop('return_model', False)
   # ====== downsampling ====== #
   if n_samples is not None:
     n_samples = int(n_samples)
@@ -203,4 +204,6 @@ def fast_umap(
   umap = umap.UMAP(**kwargs)
   umap.fit(X[0])
   results = [umap.transform(x) for x in X]
+  if return_model:
+    return results[0] if len(results) == 1 else results, umap
   return results[0] if len(results) == 1 else results

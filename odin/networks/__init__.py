@@ -6,7 +6,7 @@ from odin.networks.positional_encoder import *
 from odin.networks.sequential_networks import *
 from odin.networks.time_delay import *
 from odin.networks.util_layers import *
-
+from odin.networks.dropout import *
 
 
 def register_new_keras_layers(extras=None):

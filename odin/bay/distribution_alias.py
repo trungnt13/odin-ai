@@ -7,8 +7,8 @@ from six import string_types
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import distribution_layer as tfl
 
-from odin.bay import layers as obl
 from odin.bay import distributions as obd
+from odin.bay import layers as obl
 from odin.utils.python_utils import multikeysdict, partialclass
 
 # TODO: better specifying complex distribution
@@ -17,14 +17,14 @@ _dist_mapping = multikeysdict({
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):
         (obl.ZIBernoulliLayer, tfd.Bernoulli),
-    ('normal', 'gaussian'): (obl.NormalLayer, tfd.Normal),
+    ('normal', 'gaussian', 'norm', 'gaus', 'gauss'): (obl.NormalLayer, tfd.Normal),
     ('diag', 'normaldiag', 'gaussiandiag'):
         (partialclass(obl.MultivariateNormalLayer,
                       covariance='diag'), tfd.MultivariateNormalDiag),
     ('tril', 'full', 'normaltril', 'gaussiantril', 'normalfull', 'gaussianfull'):
         (partialclass(obl.MultivariateNormalLayer,
                       covariance='tril'), tfd.MultivariateNormalTriL),
-    'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
+    ('lognormal', 'lognorm', 'loggaus'): (obl.LogNormalLayer, tfd.LogNormal),
     # ====== Mixture of Gaussian ====== #
     ('mixnormal', 'mdn', 'mixgaussian', 'mixdensity'):
         (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),

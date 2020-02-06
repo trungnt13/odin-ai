@@ -53,6 +53,12 @@ class CelebA(object):
   Argument:
     path : path to the folder contained the three files.
 
+  Attributes:
+    train_files, valid_files, test_files : `numpy.ndarray`, list of path
+      to images shape `[218, 178, 3]`
+    train_attr, valid_attr, test_attr : `numpy.ndarray`, 40 attributes
+      for each images
+
   Reference:
     Liu, Ziwei and Luo, Ping and Wang, Xiaogang and Tang, Xiaoou, (2015).
       Deep Learning Face Attributes in the Wild. Proceedings of International
@@ -130,6 +136,9 @@ class CelebA(object):
           - 0 : only return the images `(tf.uint8, (64, 64, 3))`
           - 1 : only return the labels `(tf.float64, (6,))`
           - otherwise return both images and labels
+
+    Return:
+      train, valid, test: `tensorflow.data.Dataset`
     """
     image_shape = [218, 178, 3]
     if image_size is not None:
@@ -352,3 +361,20 @@ class Shapes3D(object):
         assert np.all(self.images[start:end] == images1[start:end]) and \
           np.all(self.labels[start:end] == labels1[start:end])
     return self
+
+
+class MultidSprites(object):
+  r""" https://github.com/deepmind/multi_object_datasets """
+
+  def __init__(self,
+               path='~/tensorflow_datasets/3dshapes.h5',
+               cache_dir=None,
+               seed=8):
+    pass
+
+
+class LegoFaces(object):
+  r""" https://www.echevarria.io/blog/lego-face-vae/index.html """
+
+  def __init__(self, path):
+    super().__init__()
