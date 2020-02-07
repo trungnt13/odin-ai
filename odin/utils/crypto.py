@@ -60,11 +60,53 @@ def _is_dictionary(obj):
     'omegaconf.dictconfig.DictConfig' in str(type(obj))
 
 
+def md5_folder(path,
+               chunksize=512 * 1024,
+               base64_encode=False,
+               file_filter=lambda path: True,
+               verbose=False):
+  r""" Calculate md5 checksum of all files in a folder and all its subfolders
+  """
+  # a folder (then read all files in order)
+  path = str(path)
+  assert os.path.isdir(path), "'%s' is not path to a folder" % path
+  chunksize = int(chunksize)
+  hash_md5 = hashlib.md5()
+  # ====== get all files ====== #
+  folders = [path]
+  files = []
+  while len(folders) > 0:
+    curr_folder = folders.pop()
+    for name in os.listdir(curr_folder):
+      path = os.path.join(curr_folder, name)
+      if os.path.isdir(path):
+        folders.append(path)
+      elif '.DS_Store' not in path and \
+        '.DS_STORE' not in path and \
+          '._' != os.path.basename(path)[:2] and \
+            file_filter(path):
+        files.append(path)
+  # ====== update the hash ====== #
+  all_files = sorted(files)
+  if verbose:
+    from tqdm import tqdm
+    all_files = tqdm(all_files, desc="MD5 reading files")
+  for path in all_files:
+    with open(path, 'rb') as f:
+      for chunk in iter(lambda: f.read(chunksize), b""):
+        hash_md5.update(chunk)
+  # ====== encoding ====== #
+  digest = hash_md5.hexdigest()
+  if base64_encode:
+    digest = base64.urlsafe_b64encode(digest.encode('utf-8')).decode('ascii')
+  return digest
+
+
 def md5_checksum(file_or_path, chunksize=512 * 1024, base64_encode=False):
   r""" Calculating MD5 checksum
 
   Parameters
-  ---------
+  ----------
   file_or_path : object
     One of the following
       - File object
@@ -85,6 +127,9 @@ def md5_checksum(file_or_path, chunksize=512 * 1024, base64_encode=False):
         md5_checksum(key) + md5_checksum(value)
         for key, value in sorted(file_or_path.items())
     ]))
+  # ======  None value ====== #
+  elif file_or_path is None:
+    digest = r"<NoneType>"
   # ======  just python Scalar ====== #
   elif isinstance(file_or_path, Number):
     file_or_path = float(file_or_path)
@@ -110,23 +155,15 @@ def md5_checksum(file_or_path, chunksize=512 * 1024, base64_encode=False):
   # ======  path to file or folder ====== #
   elif isinstance(file_or_path, string_types):
     # TODO: sometimes the folder or file "accidently" exists
-    # if os.path.exists(file_or_path):
-    #   # a file
-    #   if os.path.isfile(file_or_path):
-    #     f = open(file_or_path, 'rb')
-    #     for chunk in iter(lambda: f.read(chunksize), b""):
-    #       hash_md5.update(chunk)
-    #     f.close()
-    #   # a folder (then read all files in order)
-    #   elif os.path.isdir(file_or_path):
-    #     for fpath in sorted(os.listdir(file_or_path)):
-    #       fpath = os.path.join(file_or_path, fpath)
-    #       with open(fpath, 'rb') as f:
-    #         for chunk in iter(lambda: f.read(chunksize), b""):
-    #           hash_md5.update(chunk)
-    # # just string or text
-    # else:
-    hash_md5.update(file_or_path.encode('utf-8'))
+    # a file
+    if os.path.isfile(file_or_path):
+      f = open(file_or_path, 'rb')
+      for chunk in iter(lambda: f.read(chunksize), b""):
+        hash_md5.update(chunk)
+      f.close()
+    # just string or text
+    else:
+      hash_md5.update(file_or_path.encode('utf-8'))
   # ====== bytes object directly ====== #
   elif isinstance(file_or_path, bytes):
     hash_md5.update(file_or_path)

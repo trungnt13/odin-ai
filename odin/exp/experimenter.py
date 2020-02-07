@@ -6,7 +6,9 @@ import re
 import shutil
 import sqlite3
 import sys
+import warnings
 from contextlib import contextmanager
+from copy import deepcopy
 from numbers import Number
 
 from hydra._internal.config_loader import ConfigLoader
@@ -18,11 +20,11 @@ from hydra._internal.utils import (create_config_search_path, get_args_parser,
 from hydra.plugins.common.utils import (configure_log, filter_overrides,
                                         run_job, setup_globals,
                                         split_config_path)
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig, OmegaConf, open_dict
 from six import string_types
 
-from odin.utils import as_tuple
-from odin.utils.crypto import md5_checksum
+from odin.utils import as_tuple, get_formatted_datetime
+from odin.utils.crypto import md5_checksum, md5_folder
 from odin.utils.mpi import MPI
 
 # ===========================================================================
@@ -51,7 +53,22 @@ def _overrides(overrides):
                    if isinstance(value, (tuple, list)) else str(value))
         for key, value in overrides.items()
     ]
-  return overrides
+  elif isinstance(overrides, string_types):
+    overrides = [overrides]
+  elif overrides is None:
+    overrides = []
+  return list(overrides)
+
+
+def _all_keys(d, base):
+  keys = []
+  for k, v in d.items():
+    if len(base) > 0:
+      k = base + "." + k
+    keys.append(k)
+    if hasattr(v, 'items'):
+      keys += _all_keys(v, k)
+  return keys
 
 
 # ===========================================================================
@@ -167,14 +184,18 @@ class Experimenter():
     # ====== found exist singleton ====== #
     save_path = _abspath(save_path)
     if save_path in _INSTANCES:
-      print("SAME INSTANCE")
       return _INSTANCES[save_path]
     # ====== create new instance ====== #
     new_instance = super(Experimenter, cls).__new__(cls)
     _INSTANCES[save_path] = new_instance
     return new_instance
 
-  def __init__(self, save_path, config_path="", ncpu=1):
+  def __init__(self,
+               save_path,
+               config_path="",
+               ncpu=1,
+               ignore_keys=[],
+               consistent_model=True):
     # already init, return by singleton
     if hasattr(self, '_configs'):
       return
@@ -194,11 +215,39 @@ class Experimenter():
     self.config_loader = ConfigLoader(config_search_path=search_path,
                                       default_strict=False)
     self._configs = self.load_configuration()
+    self._all_keys = set(_all_keys(self._configs, base=""))
+    self._ignore_keys = as_tuple(ignore_keys, t=string_types)
+    self.consistent_model = bool(consistent_model)
 
   ####################### Static helpers
   @staticmethod
-  def hash_config(cfg: DictConfig) -> str:
+  def remove_keys(cfg: DictConfig, keys=[], copy=True) -> DictConfig:
+    r""" Remove list of keys from given configs """
     assert isinstance(cfg, (DictConfig, dict))
+    ignore_keys = as_tuple(keys, t=string_types)
+    if len(ignore_keys) > 0:
+      if copy:
+        cfg = deepcopy(cfg)
+      for key in ignore_keys:
+        if '.' in key:
+          key = key.split('.')
+          attr = cfg
+          for i in key[:-1]:
+            attr = getattr(attr, i)
+          del attr[key[-1]]
+        else:
+          del cfg[key]
+    return cfg
+
+  @staticmethod
+  def hash_config(cfg: DictConfig, ignore_keys=[]) -> str:
+    r"""
+    cfg : dictionary of configuration to generate an unique identity
+    ignore_keys : list of string, given keys will be ignored from the
+      configuraiton
+    """
+    assert isinstance(cfg, (DictConfig, dict))
+    cfg = Experimenter.remove_keys(cfg, copy=True, keys=ignore_keys)
     return md5_checksum(cfg)[:8]
 
   @staticmethod
@@ -221,6 +270,10 @@ class Experimenter():
 
   ####################### Property
   @property
+  def ignore_keys(self):
+    return self._ignore_keys
+
+  @property
   def manager(self) -> ExperimentManager:
     return self._manager
 
@@ -230,55 +283,63 @@ class Experimenter():
 
   @property
   def configs(self) -> DictConfig:
-    return self._configs.copy()
+    return deepcopy(self._configs)
 
   ####################### Helpers
-  def get_output_path(self, overrides=[]):
-    overrides = _overrides(overrides)
-    keys = self.hash(overrides)
-    if isinstance(keys, string_types):
-      keys = [keys]
-    paths = []
-    for k in keys:
-      p = os.path.join(self._save_path, 'exp_%s' % k)
-      if not os.path.exists(p):
-        os.mkdir(p)
-      paths.append(p)
-    return paths[0] if len(paths) == 1 else tuple(paths)
+  def get_output_path(self, cfg: DictConfig = None):
+    if cfg is None:
+      cfg = self.configs
+    key = Experimenter.hash_config(cfg, self.ignore_keys)
+    path = os.path.join(self._save_path, 'exp_%s' % key)
+    if not os.path.exists(path):
+      os.mkdir(path)
+    return path
 
-  def parse_overrides(self, overrides=[]):
-    overrides = _overrides(overrides)
+  def get_model_path(self, cfg: DictConfig = None):
+    output_path = self.get_output_path(cfg)
+    return os.path.join(output_path, 'model')
+
+  def get_config_path(self, cfg: DictConfig = None, datetime=False):
+    output_path = self.get_output_path(cfg)
+    if datetime:
+      return os.path.join(
+          output_path,
+          'configs_%s.yaml' % get_formatted_datetime(only_number=False))
+    return os.path.join(output_path, 'configs.yaml')
+
+  def parse_overrides(self, overrides=[], **configs):
+    overrides = _overrides(overrides) + _overrides(configs)
     lists = []
     for s in overrides:
       key, value = s.split("=")
-      assert key in self._configs, \
+      assert key in self._all_keys, \
         "Cannot find key='%s' in default configs, possible key are: %s" % \
-          (key, ', '.join(self._configs.keys()))
+          (key, ', '.join(self._all_keys))
       lists.append(["{}={}".format(key, val) for val in value.split(",")])
     lists = list(itertools.product(*lists))
     return lists
 
-  def load_configuration(self, overrides=[]):
-    overrides = _overrides(overrides)
+  def load_configuration(self, overrides=[], **configs):
+    overrides = _overrides(overrides) + _overrides(configs)
     # create the config
     returns = []
     for overrides in self.parse_overrides(overrides):
       cfg = self.config_loader.load_configuration(\
         config_file=os.path.basename(self.config_path),
         overrides=list(overrides),
-        strict=False)
+        strict=True)
       del cfg['hydra']
       returns.append(cfg)
     return returns[0] if len(returns) == 1 else returns
 
-  def hash(self, overrides=[]) -> str:
+  def hash(self, overrides=[], **configs) -> str:
     r""" An unique hash string of length 8 based on the parsed configurations.
     """
-    overrides = _overrides(overrides)
+    overrides = _overrides(overrides) + _overrides(configs)
     cfg = self.load_configuration(overrides)
     if isinstance(cfg, DictConfig):
-      return Experimenter.hash_config(cfg)
-    return [Experimenter.hash_config(cfg) for c in cfg]
+      return Experimenter.hash_config(cfg, self.ignore_keys)
+    return [Experimenter.hash_config(cfg, self.ignore_keys) for c in cfg]
 
   def clear_all_experiments(self, verbose=True):
     input("<Enter> to continue remove all experiments ...")
@@ -294,34 +355,88 @@ class Experimenter():
 
   ####################### Base methods
   def on_load_data(self, cfg: DictConfig):
+    r""" Cleaning """
     pass
 
-  def on_load_model(self, cfg: DictConfig):
+  def on_create_model(self, cfg: DictConfig):
+    r""" Cleaning """
+    pass
+
+  def on_load_model(self, path: str):
+    r""" Cleaning """
     pass
 
   def on_train(self, cfg: DictConfig):
+    r""" Cleaning """
     pass
 
-  def on_clean(self, cfg: DictConfig):
+  def on_train(self, cfg: DictConfig, model_path: str):
+    r""" Cleaning """
     pass
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
-    self.on_load_data(cfg)
-    self.on_load_model(cfg)
-    self.on_train(cfg)
-    self.on_clean(cfg)
+    with warnings.catch_warnings():
+      warnings.filterwarnings('ignore', category=DeprecationWarning)
+      # prepare the paths
+      model_path = self.get_model_path(cfg)
+      md5_path = model_path + '.md5'
+      # check the configs
+      config_path = self.get_config_path(cfg, datetime=True)
+      with open(config_path, 'w') as f:
+        OmegaConf.save(cfg, f)
+      # load data
+      self.on_load_data(cfg)
+      # create or load model
+      if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
+        # check if the loading model is consistent with the saved model
+        if os.path.exists(md5_path) and self.consistent_model:
+          md5_loaded = md5_folder(model_path)
+          with open(md5_path, 'r') as f:
+            md5_saved = f.read().strip()
+          assert md5_loaded == md5_saved, \
+            "MD5 of saved model mismatch, probably files are corrupted"
+        self.on_load_model(model_path)
+      else:
+        self.on_create_model(cfg)
+      # training
+      self.on_train(cfg, model_path)
+      # saving the model hash
+      if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
+        with open(md5_path, 'w') as f:
+          f.write(md5_folder(model_path))
 
-  def run(self, overrides=[]):
-    overrides = _overrides(overrides)
-    ncpu = self.ncpu
+  def run(self, overrides=[], ncpu=None, strict=True, **configs):
+    r"""
+
+    Arguments:
+      strict: A Boolean, strict configurations prevent the access to
+        unknown key, otherwise, the config will return `None`.
+    """
+    overrides = _overrides(overrides) + _overrides(configs)
+    if ncpu is None:
+      ncpu = self.ncpu
+    ncpu = int(ncpu)
+
+    def _run(self, config_file, task_function, overrides):
+      cfg = self.compose_config(config_file=config_file,
+                                overrides=overrides,
+                                strict=strict,
+                                with_log_configuration=True)
+      HydraConfig().set_config(cfg)
+      return run_job(
+          config=cfg,
+          task_function=task_function,
+          job_dir_key="hydra.run.dir",
+          job_subdir_key=None,
+      )
 
     def _multirun(self, config_file, task_function, overrides):
       # Initial config is loaded without strict (individual job configs may have strict).
       from hydra._internal.plugins import Plugins
       cfg = self.compose_config(config_file=config_file,
                                 overrides=overrides,
-                                strict=False,
+                                strict=strict,
                                 with_log_configuration=True)
       HydraConfig().set_config(cfg)
       sweeper = Plugins.instantiate_sweeper(config=cfg,
@@ -335,7 +450,8 @@ class Experimenter():
                                task_function=task_function)
       return sweeper.sweep(arguments=cfg.hydra.overrides.task)
 
-    old_multirun = Hydra.multirun
+    old_multirun = (Hydra.run, Hydra.multirun)
+    Hydra.run = _run
     Hydra.multirun = _multirun
 
     try:
@@ -346,10 +462,11 @@ class Experimenter():
           args_parser=args_parser,
           task_function=self._run,
           config_path=self.config_path,
-          strict=False,
+          strict=strict,
       )
     except KeyboardInterrupt:
       sys.exit(-1)
     except SystemExit:
       pass
-    Hydra.multirun = old_multirun
+    Hydra.run = old_multirun[0]
+    Hydra.multirun = old_multirun[1]
