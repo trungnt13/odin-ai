@@ -30,7 +30,7 @@ from odin.utils.mpi import MPI
 # ===========================================================================
 # Helpers
 # ===========================================================================
-log = logging.getLogger(__name__)
+LOGGER = logging.getLogger("Experimenter")
 
 
 def _abspath(path):
@@ -75,26 +75,31 @@ def _all_keys(d, base):
 # Hydra Launcher
 # ===========================================================================
 class ParallelLauncher(BasicLauncher):
-  r"""Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved"""
+  r"""Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
-  def __init__(self, ncpu=2):
+  This launcher won't run parallel task if `ncpu<=1`
+  """
+
+  def __init__(self, ncpu=1):
     super().__init__()
-    self.ncpu = int(ncpu)
+    self.ncpu = ncpu
 
   def launch(self, job_overrides):
     setup_globals()
     configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
     sweep_dir = self.config.hydra.sweep.dir
     Path(str(sweep_dir)).mkdir(parents=True, exist_ok=True)
-    log.info("Launching {} jobs locally".format(len(job_overrides)))
+    LOGGER.info("Launching {} jobs locally".format(len(job_overrides)))
 
     def run_task(job):
       idx, overrides = job
-      log.info("\t#{} : {}".format(idx, " ".join(filter_overrides(overrides))))
+      LOGGER.info("\t#{} : {}".format(idx,
+                                      " ".join(filter_overrides(overrides))))
       sweep_config = self.config_loader.load_sweep_config(
           self.config, list(overrides))
       with open_dict(sweep_config):
-        sweep_config.hydra.job.id = idx
+        # id is concatenated overrides here
+        sweep_config.hydra.job.id = '_'.join(sorted(overrides))
         sweep_config.hydra.job.num = idx
       HydraConfig().set_config(sweep_config)
       ret = run_job(
@@ -106,10 +111,15 @@ class ParallelLauncher(BasicLauncher):
       configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
       return (idx, ret)
 
-    jobs = list(enumerate(job_overrides))
-    runs = sorted(
-        [ret for ret in MPI(jobs=jobs, func=run_task, ncpu=self.ncpu, batch=1)])
-    runs = [i[1] for i in runs]
+    if self.ncpu > 1:
+      jobs = list(enumerate(job_overrides))
+      runs = sorted([
+          ret
+          for ret in MPI(jobs=jobs, func=run_task, ncpu=int(self.ncpu), batch=1)
+      ])
+      runs = [i[1] for i in runs]
+    else:
+      runs = [run_task(job)[1] for job in enumerate(job_overrides)]
     return runs
 
 
@@ -176,25 +186,14 @@ _INSTANCES = {}
 
 
 class Experimenter():
-
-  def __new__(cls, save_path, *args, **kwargs):
-    # ====== from pickling ====== #
-    if save_path is None:
-      return super(Experimenter, cls).__new__(cls)
-    # ====== found exist singleton ====== #
-    save_path = _abspath(save_path)
-    if save_path in _INSTANCES:
-      return _INSTANCES[save_path]
-    # ====== create new instance ====== #
-    new_instance = super(Experimenter, cls).__new__(cls)
-    _INSTANCES[save_path] = new_instance
-    return new_instance
+  r"""
+  """
 
   def __init__(self,
                save_path,
                config_path="",
                ncpu=1,
-               ignore_keys=[],
+               exclude_keys=[],
                consistent_model=True):
     # already init, return by singleton
     if hasattr(self, '_configs'):
@@ -216,7 +215,7 @@ class Experimenter():
                                       default_strict=False)
     self._configs = self.load_configuration()
     self._all_keys = set(_all_keys(self._configs, base=""))
-    self._ignore_keys = as_tuple(ignore_keys, t=string_types)
+    self._exclude_keys = as_tuple(exclude_keys, t=string_types)
     self.consistent_model = bool(consistent_model)
 
   ####################### Static helpers
@@ -224,11 +223,11 @@ class Experimenter():
   def remove_keys(cfg: DictConfig, keys=[], copy=True) -> DictConfig:
     r""" Remove list of keys from given configs """
     assert isinstance(cfg, (DictConfig, dict))
-    ignore_keys = as_tuple(keys, t=string_types)
-    if len(ignore_keys) > 0:
+    exclude_keys = as_tuple(keys, t=string_types)
+    if len(exclude_keys) > 0:
       if copy:
         cfg = deepcopy(cfg)
-      for key in ignore_keys:
+      for key in exclude_keys:
         if '.' in key:
           key = key.split('.')
           attr = cfg
@@ -240,14 +239,14 @@ class Experimenter():
     return cfg
 
   @staticmethod
-  def hash_config(cfg: DictConfig, ignore_keys=[]) -> str:
+  def hash_config(cfg: DictConfig, exclude_keys=[]) -> str:
     r"""
     cfg : dictionary of configuration to generate an unique identity
-    ignore_keys : list of string, given keys will be ignored from the
+    exclude_keys : list of string, given keys will be ignored from the
       configuraiton
     """
     assert isinstance(cfg, (DictConfig, dict))
-    cfg = Experimenter.remove_keys(cfg, copy=True, keys=ignore_keys)
+    cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
     return md5_checksum(cfg)[:8]
 
   @staticmethod
@@ -270,8 +269,8 @@ class Experimenter():
 
   ####################### Property
   @property
-  def ignore_keys(self):
-    return self._ignore_keys
+  def exclude_keys(self):
+    return self._exclude_keys
 
   @property
   def manager(self) -> ExperimentManager:
@@ -289,7 +288,7 @@ class Experimenter():
   def get_output_path(self, cfg: DictConfig = None):
     if cfg is None:
       cfg = self.configs
-    key = Experimenter.hash_config(cfg, self.ignore_keys)
+    key = Experimenter.hash_config(cfg, self.exclude_keys)
     path = os.path.join(self._save_path, 'exp_%s' % key)
     if not os.path.exists(path):
       os.mkdir(path)
@@ -298,6 +297,12 @@ class Experimenter():
   def get_model_path(self, cfg: DictConfig = None):
     output_path = self.get_output_path(cfg)
     return os.path.join(output_path, 'model')
+
+  def get_hydra_path(self):
+    path = os.path.join(self._save_path, 'hydra')
+    if not os.path.exists(path):
+      os.mkdir(path)
+    return path
 
   def get_config_path(self, cfg: DictConfig = None, datetime=False):
     output_path = self.get_output_path(cfg)
@@ -338,8 +343,8 @@ class Experimenter():
     overrides = _overrides(overrides) + _overrides(configs)
     cfg = self.load_configuration(overrides)
     if isinstance(cfg, DictConfig):
-      return Experimenter.hash_config(cfg, self.ignore_keys)
-    return [Experimenter.hash_config(cfg, self.ignore_keys) for c in cfg]
+      return Experimenter.hash_config(cfg, self.exclude_keys)
+    return [Experimenter.hash_config(cfg, self.exclude_keys) for c in cfg]
 
   def clear_all_experiments(self, verbose=True):
     input("<Enter> to continue remove all experiments ...")
@@ -376,6 +381,8 @@ class Experimenter():
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
+    # the cfg is dispatched by hydra.run_job, we couldn't change anything here
+    logger = LOGGER
     with warnings.catch_warnings():
       warnings.filterwarnings('ignore', category=DeprecationWarning)
       # prepare the paths
@@ -385,8 +392,10 @@ class Experimenter():
       config_path = self.get_config_path(cfg, datetime=True)
       with open(config_path, 'w') as f:
         OmegaConf.save(cfg, f)
+      logger.info("Save config: %s" % config_path)
       # load data
       self.on_load_data(cfg)
+      logger.info("Loaded data")
       # create or load model
       if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
         # check if the loading model is consistent with the saved model
@@ -396,17 +405,25 @@ class Experimenter():
             md5_saved = f.read().strip()
           assert md5_loaded == md5_saved, \
             "MD5 of saved model mismatch, probably files are corrupted"
-        self.on_load_model(model_path)
+        model = self.on_load_model(model_path)
+        if model is None:
+          raise RuntimeError(
+              "The implementation of on_load_model must return the loaded model."
+          )
+        logger.info("Loaded model: %s" % model_path)
       else:
         self.on_create_model(cfg)
+        logger.info("Create model: %s" % model_path)
       # training
       self.on_train(cfg, model_path)
+      logger.info("Finish training")
       # saving the model hash
       if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
         with open(md5_path, 'w') as f:
           f.write(md5_folder(model_path))
+        logger.info("Save model:%s" % model_path)
 
-  def run(self, overrides=[], ncpu=None, strict=True, **configs):
+  def run(self, overrides=[], ncpu=None, **configs):
     r"""
 
     Arguments:
@@ -414,11 +431,17 @@ class Experimenter():
         unknown key, otherwise, the config will return `None`.
     """
     overrides = _overrides(overrides) + _overrides(configs)
+    strict = False
     if ncpu is None:
       ncpu = self.ncpu
     ncpu = int(ncpu)
+    is_multirun = any(',' in ovr for ovr in overrides)
 
     def _run(self, config_file, task_function, overrides):
+      if is_multirun:
+        raise RuntimeError(
+            "Performing single run with multiple overrides in hydra "
+            "(use '-m' for multirun): %s" % str(overrides))
       cfg = self.compose_config(config_file=config_file,
                                 overrides=overrides,
                                 strict=strict,
@@ -443,11 +466,10 @@ class Experimenter():
                                             config_loader=self.config_loader,
                                             task_function=task_function)
       # override launcher for using multiprocessing
-      if ncpu > 1:
-        sweeper.launcher = ParallelLauncher(ncpu=ncpu)
-        sweeper.launcher.setup(config=cfg,
-                               config_loader=self.config_loader,
-                               task_function=task_function)
+      sweeper.launcher = ParallelLauncher(ncpu=ncpu)
+      sweeper.launcher.setup(config=cfg,
+                             config_loader=self.config_loader,
+                             task_function=task_function)
       return sweeper.sweep(arguments=cfg.hydra.overrides.task)
 
     old_multirun = (Hydra.run, Hydra.multirun)
@@ -455,8 +477,16 @@ class Experimenter():
     Hydra.multirun = _multirun
 
     try:
+      # append the new override
       if len(overrides) > 0:
         sys.argv += overrides
+      # append the hydra log path
+      job_fmt = "/${now:%d%b%y_%H%M%S}"
+      sys.argv.append("hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)
+      sys.argv.append("hydra.sweep.dir=%s" % self.get_hydra_path() + job_fmt)
+      sys.argv.append("hydra.sweep.subdir=${hydra.job.id}")
+      # sys.argv.append(r"hydra.job_logging.formatters.simple.format=" +
+      #                 r"[\%(asctime)s][\%(name)s][\%(levelname)s] - \%(message)s")
       args_parser = get_args_parser()
       run_hydra(
           args_parser=args_parser,
@@ -470,3 +500,40 @@ class Experimenter():
       pass
     Hydra.run = old_multirun[0]
     Hydra.multirun = old_multirun[1]
+    return self
+
+  ####################### For evaluation
+  def search(self, conditions={}):
+    path = self._save_path
+    conditions = [cond.split('=') for cond in _overrides(conditions)]
+    conditions = {
+        key: set([i.strip() for i in values.split(',')
+                 ]) for key, values in conditions
+    }
+    exp_path = [
+        os.path.join(path, name)
+        for name in os.listdir(path)
+        if 'exp_' == name[:4]
+    ]
+    exp_path = list(
+        filter(lambda x: os.path.isdir(os.path.join(x, 'model')), exp_path))
+    found_models = []
+    for path in exp_path:
+      cfg = sorted([
+          os.path.join(path, i) for i in os.listdir(path) if 'configs_' == i[:8]
+      ],
+                   key=lambda x: get_formatted_datetime(
+                       only_number=False,
+                       convert_text=x.split('_')[-1].split('.')[0]).timestamp())
+      cfg = cfg[-1]  # lastest config
+      with open(cfg, 'r') as f:
+        cfg = OmegaConf.load(f)
+      # filter the conditions
+      if all(cfg[key] in val for key, val in conditions.items()):
+        found_models.append(os.path.join(path, 'model'))
+    # ====== load the found models ====== #
+    if len(found_models) == 0:
+      raise RuntimeError("Cannot find model satisfying conditions: %s" %
+                         str(conditions))
+    models = [self.on_load_model(path) for path in found_models]
+    return models[0] if len(models) == 1 else models

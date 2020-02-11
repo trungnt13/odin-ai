@@ -5,12 +5,12 @@ import inspect
 import io
 import numbers
 import os
+import pickle
 import re
 import string
 import tarfile
 import types
 import warnings
-import pickle
 from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
                          deque)
 from contextlib import contextmanager
@@ -164,10 +164,31 @@ def partialclass(cls, *args, **kwargs):
 # ===========================================================================
 # Getter
 # ===========================================================================
-def get_formatted_datetime(only_number=True):
+def get_formatted_datetime(only_number=True, convert_text=None):
+  r""" To convert datetime object to epoch time
+
+  >>> time_str = get_formatted_datetime(only_number=False)
+  # 00:37:12-12Feb20
+
+  >>> date_time = get_formatted_datetime(only_number=False, convert_text=time_str)
+  # 2020-02-12 00:37:12 (<class 'datetime.datetime'>)
+
+  >>> date_time.timestamp()
+  # 1581460808.0
+
+
+  """
+  if isinstance(convert_text, string_types):
+    if only_number:
+      return datetime.strptime(convert_text, r"%H%M%S%d%m%y")
+    return datetime.strptime(convert_text, r"%H:%M:%S-%d%b%y")
   if only_number:
     return "{:%H%M%S%d%m%y}".format(datetime.now())
   return "{:%H:%M:%S-%d%b%y}".format(datetime.now())
+
+
+def datetime_to_epoch(s, fmt=r"%H:%M:%S-%d%b%y"):
+  return datetime.strptime(s, fmt)
 
 
 def get_all_properties(obj):
@@ -188,7 +209,7 @@ def get_all_properties(obj):
 def get_string_placeholders(s):
   assert isinstance(s, string_types)
   fmt = []
-  for (_, key, spec, _) in string.Formatter().parse(save_path):
+  for (_, key, spec, _) in string.Formatter().parse(s):
     if spec is not None:
       fmt.append(key)
   return tuple(fmt)

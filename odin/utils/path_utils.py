@@ -1,15 +1,37 @@
 from __future__ import absolute_import, division, print_function
 
+import inspect
 import os
 import shutil
 import sys
 
+from six import string_types
 
-def get_script_path():
-  """Return the path of the script that calling this methods"""
-  path = os.path.dirname(sys.argv[0])
-  path = os.path.join('.', path)
-  return os.path.abspath(path)
+
+def get_script_path(module=None, return_dir=False):
+  r""" Return the path of the running script or the given module
+
+  Example:
+
+    >>> get_script_path(__name__)
+    # return the path to current module
+
+    >>> get_script_path()
+    # return the path to runnings script, e.g. "python train.py" -> train.py
+  """
+  if module is None:
+    path = os.path.dirname(sys.argv[0])
+    path = os.path.join('.', path)
+    path = os.path.abspath(path)
+  elif isinstance(module, string_types):
+    module = sys.modules[module]
+    path = os.path.abspath(module.__file__)
+  else:
+    module = inspect.getmodule(module)
+    path = os.path.abspath(module.__file__)
+  if return_dir:
+    path = os.path.dirname(path)
+  return path
 
 
 def get_script_name():
