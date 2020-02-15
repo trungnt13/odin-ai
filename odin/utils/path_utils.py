@@ -46,6 +46,7 @@ def get_folder_size(path):
 
 
 def clean_folder(path, filter=None, verbose=False):
+  r""" Remove all files and subfolder in a directory """
   if os.path.exists(path) and os.path.isdir(path):
     for name in os.listdir(path):
       f = os.path.join(path, name)
@@ -53,10 +54,12 @@ def clean_folder(path, filter=None, verbose=False):
       if filter is not None and callable(filter):
         if not filter(f):
           continue
-      if verbose:
-        print("Remove:", f)
       # remove
       if os.path.isfile(f):
         os.remove(f)
+        if verbose:
+          print("Remove file  :", f)
       elif os.path.isdir(f):
         shutil.rmtree(f)
+        if verbose:
+          print("Remove folder:", f)

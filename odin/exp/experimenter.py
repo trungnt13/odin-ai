@@ -1,12 +1,16 @@
+from __future__ import absolute_import, division, print_function
+
 import inspect
 import itertools
 import logging
 import os
+import random
 import re
 import shutil
 import sqlite3
 import sys
 import warnings
+from collections import OrderedDict
 from contextlib import contextmanager
 from copy import deepcopy
 from numbers import Number
@@ -21,9 +25,11 @@ from hydra.plugins.common.utils import (configure_log, filter_overrides,
                                         run_job, setup_globals,
                                         split_config_path)
 from omegaconf import DictConfig, OmegaConf, open_dict
+from pandas import DataFrame
 from six import string_types
 
-from odin.utils import as_tuple, get_formatted_datetime
+from odin.utils import (as_tuple, clean_folder, get_all_files,
+                        get_formatted_datetime)
 from odin.utils.crypto import md5_checksum, md5_folder
 from odin.utils.mpi import MPI
 
@@ -31,6 +37,29 @@ from odin.utils.mpi import MPI
 # Helpers
 # ===========================================================================
 LOGGER = logging.getLogger("Experimenter")
+_APP_HELP = """
+${hydra.help.header}
+
+-ncpu (number of process for multirun)
+
+--reset (remove all exists experiments' results)
+
+== Configuration groups ==
+Compose your configuration from those groups (group=option)
+
+$APP_CONFIG_GROUPS
+
+== Arguments help ==
+
+%s
+
+
+== Config ==
+Override anything in the config (foo.bar=value)
+
+$CONFIG
+
+"""
 
 
 def _abspath(path):
@@ -45,7 +74,7 @@ def _abspath(path):
   return path
 
 
-def _overrides(overrides):
+def _overrides(overrides) -> list:
   if isinstance(overrides, dict):
     overrides = [
         "%s=%s" % (str(key), \
@@ -250,7 +279,9 @@ class Experimenter():
     return md5_checksum(cfg)[:8]
 
   @staticmethod
-  def match_arguments(func: callable, cfg: DictConfig, ignores=[],
+  def match_arguments(func: callable,
+                      cfg: DictConfig,
+                      exclude_args=[],
                       **defaults) -> dict:
     kwargs = {}
     spec = inspect.getfullargspec(func)
@@ -262,7 +293,7 @@ class Experimenter():
         kwargs[name] = cfg[name]
       elif name in defaults:
         kwargs[name] = defaults[name]
-    for name in as_tuple(ignores, t=str):
+    for name in as_tuple(exclude_args, t=str):
       if name in kwargs:
         del kwargs[name]
     return kwargs
@@ -284,7 +315,20 @@ class Experimenter():
   def configs(self) -> DictConfig:
     return deepcopy(self._configs)
 
+  @property
+  def args_help(self) -> dict:
+    r""" Return a mapping argument name to list of allowed values """
+    return {}
+
   ####################### Helpers
+  def write_history(self, *msg):
+    with open(os.path.join(self._save_path, 'history.txt'), 'a+') as f:
+      f.write("[%s]" % get_formatted_datetime(only_number=False))
+      for i, m in enumerate(msg):
+        sep = " " if i == 0 else "\t"
+        f.write("%s%s\n" % (sep, str(m)))
+    return self
+
   def get_output_path(self, cfg: DictConfig = None):
     if cfg is None:
       cfg = self.configs
@@ -429,13 +473,58 @@ class Experimenter():
     Arguments:
       strict: A Boolean, strict configurations prevent the access to
         unknown key, otherwise, the config will return `None`.
+
+    Example:
+      exp = SisuaExperimenter(ncpu=1)
+      exp.run(
+          overrides={
+              'model': ['sisua', 'dca', 'vae'],
+              'dataset.name': ['cortex', 'pbmc8kly'],
+              'train.verbose': 0,
+              'train.epochs': 2,
+              'train': ['adam'],
+          })
     """
     overrides = _overrides(overrides) + _overrides(configs)
     strict = False
+    command = ' '.join(sys.argv)
+    # parse ncpu
     if ncpu is None:
       ncpu = self.ncpu
     ncpu = int(ncpu)
-    is_multirun = any(',' in ovr for ovr in overrides)
+    for idx, arg in enumerate(list(sys.argv)):
+      if 'ncpu' in arg:
+        if '=' in arg:
+          ncpu = int(arg.split('=')[-1])
+          sys.argv.pop(idx)
+        else:
+          ncpu = int(sys.argv[idx + 1])
+          sys.argv.pop(idx)
+          sys.argv.pop(idx)
+        break
+    # check reset
+    for idx, arg in enumerate(list(sys.argv)):
+      if '--reset' == arg:
+        if len(get_all_files(self._save_path)) > 0:
+          old_exps = '\n'.join(
+              [" - %s" % i for i in os.listdir(self._save_path)])
+          inp = input("<Enter> to clear all exists experiments:"
+                      "\n%s\n'n' to cancel, otherwise continue:" % old_exps)
+          if inp.strip().lower() != 'n':
+            clean_folder(self._save_path, verbose=True)
+        sys.argv.pop(idx)
+    # check multirun
+    is_multirun = any(',' in ovr for ovr in overrides) or \
+      any(',' in arg and '=' in arg for arg in sys.argv)
+    # write history
+    self.write_history(command, "overrides: %s" % str(overrides),
+                       "strict: %s" % str(strict), "ncpu: %d" % ncpu,
+                       "multirun: %s" % str(is_multirun))
+    # generate app help
+    hlp = '\n\n'.join([
+        "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))
+        for key, val in dict(self.args_help).items()
+    ])
 
     def _run(self, config_file, task_function, overrides):
       if is_multirun:
@@ -480,11 +569,16 @@ class Experimenter():
       # append the new override
       if len(overrides) > 0:
         sys.argv += overrides
+      # help for arguments
+      if '--help' in sys.argv:
+        sys.argv.append("hydra.help.header='**** %s ****'" %
+                        self.__class__.__name__)
+        sys.argv.append("hydra.help.template=%s" % (_APP_HELP % hlp))
       # append the hydra log path
       job_fmt = "/${now:%d%b%y_%H%M%S}"
-      sys.argv.append("hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)
-      sys.argv.append("hydra.sweep.dir=%s" % self.get_hydra_path() + job_fmt)
-      sys.argv.append("hydra.sweep.subdir=${hydra.job.id}")
+      sys.argv.insert(1, "hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)
+      sys.argv.insert(1, "hydra.sweep.dir=%s" % self.get_hydra_path() + job_fmt)
+      sys.argv.insert(1, "hydra.sweep.subdir=${hydra.job.id}")
       # sys.argv.append(r"hydra.job_logging.formatters.simple.format=" +
       #                 r"[\%(asctime)s][\%(name)s][\%(levelname)s] - \%(message)s")
       args_parser = get_args_parser()
@@ -500,16 +594,13 @@ class Experimenter():
       pass
     Hydra.run = old_multirun[0]
     Hydra.multirun = old_multirun[1]
+    # update the summary
+    self.summary()
     return self
 
   ####################### For evaluation
-  def search(self, conditions={}):
+  def fetch_exp_cfg(self):
     path = self._save_path
-    conditions = [cond.split('=') for cond in _overrides(conditions)]
-    conditions = {
-        key: set([i.strip() for i in values.split(',')
-                 ]) for key, values in conditions
-    }
     exp_path = [
         os.path.join(path, name)
         for name in os.listdir(path)
@@ -517,7 +608,7 @@ class Experimenter():
     ]
     exp_path = list(
         filter(lambda x: os.path.isdir(os.path.join(x, 'model')), exp_path))
-    found_models = []
+    ret = {}
     for path in exp_path:
       cfg = sorted([
           os.path.join(path, i) for i in os.listdir(path) if 'configs_' == i[:8]
@@ -525,15 +616,83 @@ class Experimenter():
                    key=lambda x: get_formatted_datetime(
                        only_number=False,
                        convert_text=x.split('_')[-1].split('.')[0]).timestamp())
+      if len(cfg) > 0:
+        ret[path] = cfg
+    return ret
+
+  def random_model(self, seed=1):
+    exp_cfg = self.fetch_exp_cfg()
+    random.seed(seed)
+    exp, cfg = random.choice(list(exp_cfg.items()))
+    model = self.on_load_model(os.path.join(exp, 'model'))
+    cfg = OmegaConf.load(cfg[-1])
+    return model, cfg
+
+  def search(self, conditions={}, return_config=True):
+    r"""
+    Arguments:
+      conditions : a Dictionary
+      return_config : a Boolean
+
+    Returns:
+      list of (model, config) tuple or list of loaded model
+        (if `return_config=False`)
+    """
+    conditions = [cond.split('=') for cond in _overrides(conditions)]
+    conditions = {
+        key: set([i.strip() for i in values.split(',')
+                 ]) for key, values in conditions
+    }
+    # ====== get all exp ====== #
+    exp_cfg = self.fetch_exp_cfg()
+    # ====== filtering the model ====== #
+    found_models = []
+    found_cfg = []
+    for path, cfg in exp_cfg.items():
       cfg = cfg[-1]  # lastest config
       with open(cfg, 'r') as f:
         cfg = OmegaConf.load(f)
       # filter the conditions
       if all(cfg[key] in val for key, val in conditions.items()):
         found_models.append(os.path.join(path, 'model'))
+        found_cfg.append(cfg)
     # ====== load the found models ====== #
     if len(found_models) == 0:
       raise RuntimeError("Cannot find model satisfying conditions: %s" %
                          str(conditions))
     models = [self.on_load_model(path) for path in found_models]
-    return models[0] if len(models) == 1 else models
+    if return_config:
+      models = list(zip(models, found_cfg))
+    return models
+
+  def summary(self, save_files=True) -> DataFrame:
+    exp_cfg = self.fetch_exp_cfg()
+    records = []
+    index = []
+    for path, cfg in exp_cfg.items():
+      index.append(os.path.basename(path))
+      report = {"#run": len(cfg)}
+      cfg = [("",
+              Experimenter.remove_keys(OmegaConf.load(cfg[-1]),
+                                       copy=False,
+                                       keys=self.exclude_keys))]
+      # use stack instead of recursive
+      while len(cfg) > 0:
+        root, items = cfg.pop()
+        for key, val in items.items():
+          name = root + key
+          if hasattr(val, 'items'):
+            cfg.append((name + '.', val))
+          else:
+            report[name] = val
+      records.append(report)
+    # ====== save dataframe to html ====== #
+    df = DataFrame(records, index=index)
+    if save_files:
+      with open(os.path.join(self._save_path, 'summary.html'), 'w') as f:
+        f.write(df.to_html())
+      try:
+        df.to_excel(os.path.join(self._save_path, 'summary.xlsx'))
+      except ModuleNotFoundError as e:
+        print("Cannot save summary to excel file: %s" % str(e))
+    return df

@@ -168,13 +168,13 @@ def get_formatted_datetime(only_number=True, convert_text=None):
   r""" To convert datetime object to epoch time
 
   >>> time_str = get_formatted_datetime(only_number=False)
-  # 00:37:12-12Feb20
+  00:37:12-12Feb20
 
   >>> date_time = get_formatted_datetime(only_number=False, convert_text=time_str)
-  # 2020-02-12 00:37:12 (<class 'datetime.datetime'>)
+  2020-02-12 00:37:12 (<class 'datetime.datetime'>)
 
   >>> date_time.timestamp()
-  # 1581460808.0
+  1581460808.0
 
 
   """

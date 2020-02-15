@@ -60,7 +60,7 @@ class Interpolation(object):
     return self.__str__()
 
   def __str__(self):
-    return "<%s range:(%.2f,%.2f) norm:%d cyclical:%s delay:(%d,%d)>" % \
+    return "<%s(%.2f,%.2f,%d) cyclical:%s delay:(%d,%d)>" % \
       (self.__class__.__name__, self.vmin, self.vmax,
        self.norm, self.cyclical, self.delayIn, self.delayOut)
 

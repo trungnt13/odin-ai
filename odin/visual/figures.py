@@ -497,7 +497,7 @@ def plot_frame(ax=None, left=None, right=None, top=None, bottom=None):
 
 
 def plot_aspect(aspect=None, adjustable=None, ax=None):
-  """
+  r"""
   aspect : {'auto', 'equal'} or num
     'auto'  automatic; fill the position rectangle with data
     'equal' same scaling from data to plot units for x and y
@@ -1928,16 +1928,136 @@ def plot_Cnorm(cnorm,
   return ax
 
 
+def plot_heatmap(data,
+                 cmap="Blues",
+                 ax=None,
+                 xticklabels=None,
+                 yticklabels=None,
+                 xlabel=None,
+                 ylabel=None,
+                 colorbar_title=None,
+                 colorbar=False,
+                 fontsize=12,
+                 gridline=0,
+                 hide_spines=True,
+                 annotation=None,
+                 text_colors=dict(diag="black",
+                                  minrow=None,
+                                  mincol=None,
+                                  maxrow=None,
+                                  maxcol=None,
+                                  other="black"),
+                 title=None):
+  from matplotlib import pyplot as plt
+  ax = to_axis(ax, is_3D=False)
+  fig = ax.get_figure()
+  figsize = fig.get_size_inches()
+  # prepare labels
+  if xticklabels is None:
+    xticklabels = ["X#%d" % i for i in range(data.shape[1])]
+  if yticklabels is None:
+    yticklabels = ["Y#%d" % i for i in range(data.shape[0])]
+  # Plot the heatmap
+  im = ax.imshow(data,
+                 interpolation='nearest',
+                 cmap=cmap,
+                 aspect='equal',
+                 origin='upper')
+  # Create colorbar
+  if colorbar:
+    cbar = plt.colorbar(im, fraction=0.03, pad=0.02)
+    if colorbar_title is not None:
+      cbar.ax.set_ylabel(colorbar_title,
+                         rotation=-90,
+                         va="bottom",
+                         fontsize=fontsize)
+  # major ticks
+  ax.set_xticks(np.arange(data.shape[1]))
+  ax.set_xticklabels(xticklabels, fontsize=fontsize)
+  ax.set_yticks(np.arange(data.shape[0]))
+  ax.set_yticklabels(list(yticklabels), fontsize=fontsize)
+  # axis label
+  if ylabel is not None:
+    ax.set_ylabel(ylabel, fontsize=fontsize + 1)
+  if xlabel is not None:
+    ax.set_xlabel(xlabel, fontsize=fontsize + 1)
+  # Let the horizontal axes labeling appear on top.
+  ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
+  # Rotate the tick labels and set their alignment.
+  plt.setp(ax.get_xticklabels(),
+           rotation=-30,
+           ha="right",
+           rotation_mode="anchor")
+  # Turn spines off
+  if hide_spines:
+    for edge, spine in ax.spines.items():
+      spine.set_visible(False)
+  # minor ticks and create white grid.
+  # (if no minor ticks, the image will be cut-off)
+  ax.set_xticks(np.arange(data.shape[1] + 1) - .5, minor=True)
+  ax.set_yticks(np.arange(data.shape[0] + 1) - .5, minor=True)
+  if gridline > 0:
+    ax.grid(which="minor", color="w", linestyle='-', linewidth=gridline)
+    ax.tick_params(which="minor", bottom=False, left=False)
+  # set the title
+  if title is not None:
+    ax.set_title(str(title), fontsize=fontsize, weight='semibold')
+  # prepare the annotation
+  if annotation is not None and annotation is not False:
+    if annotation is True:
+      annotation = np.array([['%.2g' % x for x in row] for row in data])
+    assert annotation.shape == data.shape
+    kw = dict(horizontalalignment="center",
+              verticalalignment="center",
+              fontsize=fontsize)
+    # np.log(max(2, np.mean(data.shape) - np.mean(figsize)))
+    # Loop over the data and create a `Text` for each "pixel".
+    # Change the text's color depending on the data.
+    texts = []
+    minrow = text_colors.get('minrow', None)
+    maxrow = text_colors.get('maxrow', None)
+    mincol = text_colors.get('mincol', None)
+    maxcol = text_colors.get('maxcol', None)
+    for i in range(data.shape[0]):
+      for j in range(data.shape[1]):
+        # basics text config
+        if i == j:
+          kw['weight'] = 'bold'
+          color = text_colors.get('diag', 'black')
+        else:
+          kw['weight'] = 'normal'
+          color = text_colors.get('other', 'black')
+        # min, max of row
+        if data[i, j] == min(data[i]) and minrow is not None:
+          color = minrow
+        elif data[i, j] == max(data[i]) and maxrow is not None:
+          color = maxrow
+        # min, max of column
+        if data[i, j] == min(data[:, j]) and mincol is not None:
+          color = mincol
+        elif data[i, j] == max(data[:, j]) and maxcol is not None:
+          color = maxcol
+        # show text
+        text = im.axes.text(j, i, annotation[i, j], color=color, **kw)
+        texts.append(text)
+  return ax
+
+
 def plot_confusion_matrix(cm,
                           labels=None,
+                          cmap="Blues",
                           ax=None,
                           fontsize=12,
                           colorbar=False,
-                          title=None):
+                          title=None,
+                          **kwargs):
+  r"""
+  cm : a square matrix of raw count
+  kwargs : arguments for `odin.visual.plot_heatmap`
+  """
   # TODO: new style for confusion matrix (using small and big dot)
-  from matplotlib import pyplot as plt
-  cmap = plt.cm.Blues
-  ax = to_axis(ax, is_3D=False)
+  assert cm.shape[0] == cm.shape[1], \
+    "Plot confusion matrix only applied for squared matrix"
   if labels is None:
     labels = ['#%d' % i for i in range(max(cm.shape))]
   # calculate F1
@@ -1954,60 +2074,30 @@ def plot_confusion_matrix(cm,
   # column normalize
   nb_classes = cm.shape[0]
   cm = cm.astype('float32') / np.sum(cm, axis=1, keepdims=True)
-  # im = ax.pcolorfast(cm.T, cmap=cmap)
-  im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
-  # axis.get_figure().colorbar(im)
-  tick_marks = np.arange(len(labels))
-  ax.set_xticks(tick_marks)
-  ax.set_yticks(tick_marks)
-  ax.set_xticklabels(labels, rotation=-57, fontsize=fontsize)
-  ax.set_yticklabels(labels, fontsize=fontsize)
-  ax.set_ylabel('True label', fontsize=fontsize)
-  ax.set_xlabel('Predicted label', fontsize=fontsize)
-  # center text for value of each grid
-  worst_index = {
-      i: np.argmax([val if j != i else -1 for j, val in enumerate(row)
-                   ]) for i, row in enumerate(cm)
-  }
+  # generate annotation
+  annotation = np.empty(shape=(nb_classes, nb_classes), dtype=object)
   for i, j in itertools.product(range(nb_classes), range(nb_classes)):
-    color = 'black'
-    weight = 'normal'
-    fs = fontsize
-    text = '%.2f' % cm[i, j]
     if i == j:  # diagonal
-      color = 'magenta'
-      # color = "darkgreen" if cm[i, j] <= 0.8 else 'forestgreen'
-      weight = 'bold'
-      fs = fontsize
       text = '%.2f\nF1:%.2f' % (cm[i, j], F1[i])
-    elif j == worst_index[i]:  # worst mis-classified
-      color = 'red'
-      weight = 'semibold'
-      fs = fontsize
-    plt.text(j,
-             i,
-             text,
-             weight=weight,
-             color=color,
-             fontsize=fs,
-             verticalalignment="center",
-             horizontalalignment="center")
-  # Turns off grid on the left Axis.
-  ax.grid(False)
-  # ====== colorbar ====== #
-  if colorbar == 'all':
-    fig = ax.get_figure()
-    axes = fig.get_axes()
-    fig.colorbar(im, ax=axes)
-  elif colorbar:
-    plt.colorbar(im, ax=ax)
-  # ====== set title ====== #
-  if title is None:
-    title = ''
-  title += ' (F1: %.3f)' % F1_mean
-  ax.set_title(title, fontsize=fontsize + 2, weight='semibold')
-  # axis.tight_layout()
-  return ax
+    else:
+      text = '%.2f' % cm[i, j]
+    annotation[i, j] = text
+  # plotting
+  return plot_heatmap(\
+      data=cm,
+      xticklabels=labels,
+      yticklabels=labels,
+      xlabel="Prediction",
+      ylabel="True",
+      cmap=cmap,
+      ax=ax,
+      fontsize=fontsize,
+      colorbar=colorbar,
+      colorbar_title="Accuracy",
+      annotation=annotation,
+      text_colors=dict(diag='magenta', other='black', minrow='red'),
+      title='%s(F1: %.3f)' % ('' if title is None else str(title), F1_mean),
+      **kwargs)
 
 
 def plot_weights(x, ax=None, colormap="Greys", colorbar=False,

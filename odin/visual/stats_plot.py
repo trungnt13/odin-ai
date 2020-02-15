@@ -12,6 +12,9 @@ import numpy as np
 # Helpers
 # ===========================================================================
 def to_axis2D(ax, fig=None):
+  r"""
+  fig : matplotlib.Figure, None - plt.gcf() or tuple of (width, height)
+  """
   from matplotlib import pyplot as plt
   if fig is None:
     fig = plt.gcf()
