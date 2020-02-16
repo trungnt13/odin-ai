@@ -1950,8 +1950,9 @@ def plot_heatmap(data,
                  title=None):
   from matplotlib import pyplot as plt
   ax = to_axis(ax, is_3D=False)
+  ax.grid(False)
   fig = ax.get_figure()
-  figsize = fig.get_size_inches()
+  # figsize = fig.get_size_inches()
   # prepare labels
   if xticklabels is None:
     xticklabels = ["X#%d" % i for i in range(data.shape[1])]

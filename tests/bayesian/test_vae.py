@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
-from odin.bay import vae
+from odin.bay import vi
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -20,12 +20,12 @@ class VAETest(unittest.TestCase):
 
   def test_permute_dims(self):
     x = tf.reshape(tf.range(8), (4, 2))
-    z = vae.permute_dims(x)
+    z = vi.permute_dims(x)
     w = tf.convert_to_tensor([[2, 5], [4, 7], [6, 3], [0, 1]], dtype=tf.int32)
     self.assertTrue(np.all(z.numpy() == w.numpy()))
 
     x = tf.random.uniform((128, 64), dtype=tf.float64)
-    z = vae.permute_dims(x)
+    z = vi.permute_dims(x)
     self.assertTrue(np.any(x.numpy() != z.numpy()))
     self.assertTrue(np.all(np.any(i != j) for i, j in zip(x, z)))
     self.assertTrue(

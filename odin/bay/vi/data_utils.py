@@ -42,7 +42,9 @@ except ImportError:
 # Main class
 # ===========================================================================
 class Factor(object):
-  r""" Factor for disentanglement analysis
+  r""" Discrete factor for disentanglement analysis
+
+  For discretizing continuous factor `odin.bay.vi.discretizing`
 
   Arguments:
     factors : `[num_samples, num_factors]`, an Integer array
