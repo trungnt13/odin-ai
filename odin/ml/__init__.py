@@ -1,3 +1,4 @@
+from odin.ml.gmm_embedding import ProbabilisticEmbedding
 from odin.ml.base import evaluate
 from odin.ml.cluster import fast_kmeans, fast_knn
 from odin.ml.decompositions import *

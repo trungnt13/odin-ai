@@ -24,7 +24,7 @@ def logdet(A):
   return y
 
 class PLDA(BaseEstimator, TransformerMixin, Evaluable):
-  """ Probabilistic LDA
+  r""" Probabilistic LDA
 
   Parameters
   ----------

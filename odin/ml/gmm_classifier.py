@@ -10,7 +10,8 @@ from odin.ml.base import BaseEstimator, ClassifierMixin, Evaluable
 from odin.ml.scoring import VectorNormalizer
 
 class GMMclassifier(BaseEstimator, ClassifierMixin, Evaluable):
-  """ GMMclassifier
+  r""" GMMclassifier
+
   Parameters
   ----------
   strategy : str

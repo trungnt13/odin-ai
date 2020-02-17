@@ -655,6 +655,113 @@ def plot_comparison_track(Xs,
     plt.suptitle(title)
 
 
+def plot_gaussian_mixture(x,
+                          gmm,
+                          bins=80,
+                          fontsize=12,
+                          linewidth=2,
+                          show_pdf=False,
+                          show_probability=False,
+                          show_components=True,
+                          legend=True,
+                          ax=None,
+                          title=None):
+  from sklearn.mixture import GaussianMixture
+  from odin.utils import as_tuple, catch_warnings_ignore
+  import seaborn as sns
+  from scipy import stats
+  ax = to_axis(ax, is_3D=False)
+  n_points = int(bins * 12)
+  assert gmm.means_.shape[1] == 1, "Only support plotting 1-D series GMM"
+  x = x.ravel()
+  order = np.argsort(gmm.means_.ravel())
+  means_ = gmm.means_.ravel()[order]
+  precision_ = gmm.precisions_.ravel()[order]
+  colors = sns.color_palette(n_colors=gmm.n_components + 2)
+  # ====== Histogram ====== #
+  count, bins = plot_histogram(x=x,
+                               bins=int(bins),
+                               ax=ax,
+                               normalize=False,
+                               kde=False,
+                               range_0_1=False,
+                               covariance_factor=0.25,
+                               centerlize=False,
+                               fontsize=fontsize,
+                               alpha=0.25,
+                               title=title)
+  ax.set_ylabel("Histogram Count", fontsize=fontsize)
+  ax.set_xlim((np.min(x), np.max(x)))
+  ax.set_xticks(
+      np.linspace(start=np.min(x), stop=np.max(x), num=5, dtype='float32'))
+  ax.set_yticks(
+      np.linspace(start=np.min(count), stop=np.max(count), num=5,
+                  dtype='int32'))
+  # ====== GMM PDF ====== #
+  x_ = np.linspace(np.min(bins), np.max(bins), n_points)
+  y_ = np.exp(gmm.score_samples(x_[:, np.newaxis]))
+  y_ = (y_ - np.min(y_)) / (np.max(y_) - np.min(y_)) * np.max(count)
+  if show_pdf:
+    ax.plot(x_,
+            y_,
+            color='red',
+            linestyle='-',
+            linewidth=linewidth * 1.2,
+            alpha=0.6,
+            label="GMM log-likelihood")
+  # ====== GMM probability ====== #
+  twinx = None
+  ymax = 0.0
+  if show_probability:
+    if twinx is None:
+      twinx = ax.twinx()
+    y_ = gmm.predict_proba(x_[:, np.newaxis])
+    for idx, (c, j) in enumerate(zip(colors, y_.T)):
+      twinx.plot(x_,
+                 j,
+                 color=c,
+                 linestyle='--',
+                 linewidth=linewidth,
+                 alpha=0.8,
+                 label=r"$p_{\#%d}(x)$" % idx)
+    ymax = max(ymax, np.max(y_))
+  # ====== draw the each Gaussian bell ====== #
+  if show_components:
+    if twinx is None:
+      twinx = ax.twinx()
+    for idx, (c, m, p) in enumerate(zip(colors, means_, precision_)):
+      with catch_warnings_ignore(Warning):
+        j = stats.norm.pdf(x_, m, np.sqrt(1 / p))
+      twinx.plot(x_,
+                 j,
+                 color=c,
+                 linestyle='-',
+                 linewidth=linewidth,
+                 label=r"$PDF_{\#%d}$" % idx)
+      # mean, top of the bell
+      twinx.scatter(x_[np.argmax(j)],
+                    np.max(j),
+                    s=88,
+                    alpha=0.8,
+                    linewidth=0,
+                    color=c)
+      ymax = max(ymax, np.max(j))
+    twinx.set_ylabel("Probability Density", fontsize=fontsize)
+    twinx.grid(False)
+  # set the limit for twinx
+  if twinx is not None:
+    twinx.set_ylim(0.0, ymax * 1.05)
+  # ====== show legend ====== #
+  if twinx is not None:
+    twinx.yaxis.label.set_color(colors[0])
+    twinx.tick_params(axis='y', colors=colors[0])
+  if legend:
+    ax.legend(fontsize=fontsize)
+    if twinx is not None:
+      twinx.legend(fontsize=fontsize)
+  return ax
+
+
 def plot_histogram(x,
                    bins=80,
                    ax=None,
@@ -669,10 +776,10 @@ def plot_histogram(x,
                    linewidth=1.2,
                    fontsize=12,
                    title=None):
-  """
-  x: histogram
-  covariance_factor : None or float
-      if float is given, smaller mean more detail
+  r"""
+  Arguments:
+    x: histogram
+    covariance_factor : None or float, smaller number mean more detail
   """
   # ====== prepare ====== #
   # only 1-D

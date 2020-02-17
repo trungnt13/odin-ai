@@ -268,7 +268,7 @@ class _ExpectationResults(object):
 # Main GMM
 # ===========================================================================
 class GMM(DensityMixin, BaseEstimator, TransformerMixin):
-  """ Gaussian Mixture Model with diagonal covariance.
+  r""" Gaussian Mixture Model with diagonal covariance.
 
   Parameters
   ----------

@@ -43,7 +43,7 @@ except ImportError:
 # ===========================================================================
 class Factor(object):
   r""" Discrete factor for disentanglement analysis
-
+  If the factors is continuous, the values are casted to `int64`
   For discretizing continuous factor `odin.bay.vi.discretizing`
 
   Arguments:
@@ -91,6 +91,10 @@ class Factor(object):
 
   def __repr__(self):
     return self.__str__()
+
+  @property
+  def shape(self):
+    return self.factors.shape
 
   @property
   def num_factors(self):

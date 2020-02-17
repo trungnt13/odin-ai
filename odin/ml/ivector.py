@@ -81,7 +81,7 @@ def _extract_zero_and_first_stats(X, sad, indices, gmm, z_path, f_path,
 # Fast combined GMM-Tmatrix training for I-vector extraction
 # ===========================================================================
 class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
-  """ Ivector extraction using GMM and T-matrix """
+  r""" Ivector extraction using GMM and T-matrix """
 
   def __init__(self,
                path,
