@@ -100,6 +100,15 @@ def _all_keys(d, base):
   return keys
 
 
+def _prepare_conditions(conditions={}):
+  conditions = [cond.split('=') for cond in _overrides(conditions)]
+  conditions = {
+      key: set([i.strip() for i in values.split(',')]) \
+        for key, values in conditions
+  }
+  return conditions
+
+
 # ===========================================================================
 # Hydra Launcher
 # ===========================================================================
@@ -599,7 +608,25 @@ class Experimenter():
     return self
 
   ####################### For evaluation
-  def fetch_exp_cfg(self):
+  def fetch_exp_cfg(self, conditions={}) -> dict:
+    r"""
+
+    Arguments:
+      pass
+
+    Return:
+      A dictionary mapping from path to experiments and list of configs
+    """
+    conditions = _prepare_conditions(conditions)
+
+    def get_attr(c, name):
+      if '.' in name:
+        for key in name.split('.'):
+          c = c.get(key)
+        return c
+      return c[name]
+
+    # prepare the path
     path = self._save_path
     exp_path = [
         os.path.join(path, name)
@@ -617,18 +644,29 @@ class Experimenter():
                        only_number=False,
                        convert_text=x.split('_')[-1].split('.')[0]).timestamp())
       if len(cfg) > 0:
-        ret[path] = cfg
+        if len(conditions) > 0:
+          last_cfg = cfg[-1]  # lastest config
+          with open(last_cfg, 'r') as f:
+            last_cfg = OmegaConf.load(f)
+          # filter the conditions
+          if all(
+              get_attr(last_cfg, key) in val
+              for key, val in conditions.items()):
+            ret[path] = cfg
+          del last_cfg
+        else:
+          ret[path] = cfg
     return ret
 
-  def random_model(self, seed=1):
-    exp_cfg = self.fetch_exp_cfg()
+  def sample_model(self, conditions={}, seed=1):
+    exp_cfg = self.fetch_exp_cfg(conditions)
     random.seed(seed)
     exp, cfg = random.choice(list(exp_cfg.items()))
     model = self.on_load_model(os.path.join(exp, 'model'))
     cfg = OmegaConf.load(cfg[-1])
     return model, cfg
 
-  def search(self, conditions={}, return_config=True):
+  def search(self, conditions={}, load_model=True, return_config=True):
     r"""
     Arguments:
       conditions : a Dictionary
@@ -638,34 +676,28 @@ class Experimenter():
       list of (model, config) tuple or list of loaded model
         (if `return_config=False`)
     """
-    conditions = [cond.split('=') for cond in _overrides(conditions)]
-    conditions = {
-        key: set([i.strip() for i in values.split(',')
-                 ]) for key, values in conditions
-    }
-    # ====== get all exp ====== #
-    exp_cfg = self.fetch_exp_cfg()
     # ====== filtering the model ====== #
     found_models = []
     found_cfg = []
-    for path, cfg in exp_cfg.items():
+    for path, cfg in self.fetch_exp_cfg(conditions).items():
       cfg = cfg[-1]  # lastest config
       with open(cfg, 'r') as f:
         cfg = OmegaConf.load(f)
-      # filter the conditions
-      if all(cfg[key] in val for key, val in conditions.items()):
-        found_models.append(os.path.join(path, 'model'))
-        found_cfg.append(cfg)
+      found_models.append(os.path.join(path, 'model'))
+      found_cfg.append(cfg)
     # ====== load the found models ====== #
     if len(found_models) == 0:
       raise RuntimeError("Cannot find model satisfying conditions: %s" %
                          str(conditions))
-    models = [self.on_load_model(path) for path in found_models]
+    if load_model:
+      found_models = [self.on_load_model(path) for path in found_models]
     if return_config:
-      models = list(zip(models, found_cfg))
-    return models
+      found_models = list(zip(found_models, found_cfg))
+    return found_models
 
   def summary(self, save_files=True) -> DataFrame:
+    r""" Save a table of experiment ID and all their attributes to an
+    excel file and a html file. """
     exp_cfg = self.fetch_exp_cfg()
     records = []
     index = []

@@ -73,6 +73,7 @@ def discrete_entropy(labels):
 
 def mutual_info_estimate(representations,
                          factors,
+                         continuous_representations=True,
                          continuous_factors=False,
                          n_neighbors=3,
                          random_state=1234):
@@ -103,7 +104,7 @@ def mutual_info_estimate(representations,
   def func(idx):
     mi = mutual_info(representations,
                      factors[:, idx],
-                     discrete_features=False,
+                     discrete_features=not continuous_representations,
                      n_neighbors=n_neighbors,
                      random_state=random_state)
     return idx, mi
@@ -196,6 +197,7 @@ def separated_attr_predictability(repr_train,
         pred = classifier.predict(np.expand_dims(x_i_test, axis=-1))
         score_matrix[i, j] = np.mean(pred == y_j_test)
   # ====== compute_avg_diff_top_two ====== #
+  # [num_latents, num_factors]
   sorted_matrix = np.sort(score_matrix, axis=0)
   return np.mean(sorted_matrix[-1, :] - sorted_matrix[-2, :])
 

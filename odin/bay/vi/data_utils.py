@@ -75,7 +75,7 @@ class Factor(object):
     else:
       factor_name = as_tuple(factor_name, t=str, N=num_factors)
     self.factors = factors
-    self.factor_name = [str(i).lower() for i in factor_name]
+    self.factor_name = [str(i) for i in factor_name]
     self.factor_labels = [np.unique(x) for x in factors.T]
     self.factor_sizes = [len(lab) for lab in self.factor_labels]
     if not isinstance(random_state, np.random.RandomState):
@@ -126,7 +126,7 @@ class Factor(object):
     if not isinstance(known, dict):
       known = dict(known)
     known = {
-        self.factor_name.index(k.lower())
+        self.factor_name.index(k)
         if isinstance(k, string_types) else int(k): v \
           for k, v in known.items()
     }
