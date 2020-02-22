@@ -56,6 +56,14 @@ class Interpolation(object):
     self.delayIn = max(delayIn, 0)
     self.delayOut = max(delayOut, 0)
 
+  @property
+  def mean(self):
+    return (self.vmin + self.vmax) / 2
+
+  @property
+  def range(self):
+    return np.abs(self.vmax - self.vmin)
+
   def __repr__(self):
     return self.__str__()
 
@@ -130,14 +138,14 @@ smoother = fade
 class power(Interpolation):
 
   def __init__(self,
-               power=2.,
-               inverse=False,
                vmin=0.,
                vmax=1.,
                norm=1,
                cyclical=False,
                delayIn=0,
-               delayOut=0):
+               delayOut=0,
+               power=2.,
+               inverse=False):
     super().__init__(vmin=vmin,
                      vmax=vmax,
                      norm=norm,
@@ -279,14 +287,14 @@ class swingOut(swingIn):
 class exp(Interpolation):
 
   def __init__(self,
-               base=2.,
-               power=5.,
                vmin=0.,
                vmax=1.,
                norm=1,
                cyclical=False,
                delayIn=0,
-               delayOut=0):
+               delayOut=0,
+               base=2.,
+               power=5.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
                      norm=norm,
@@ -335,16 +343,16 @@ class expOut(exp):
 class elastic(Interpolation):
 
   def __init__(self,
-               base=2.,
-               power=10.,
-               scale=1.,
-               bounces=7.,
                vmin=0.,
                vmax=1.,
                norm=1,
                cyclical=False,
                delayIn=0,
-               delayOut=0):
+               delayOut=0,
+               base=2.,
+               power=10.,
+               scale=1.,
+               bounces=7.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
                      norm=norm,

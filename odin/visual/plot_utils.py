@@ -137,3 +137,87 @@ def check_arg_length(dat, n, dtype, default, converter):
     assert len(dat) == n
   dat = [converter(d) for d in dat]
   return dat
+
+
+# ===========================================================================
+# Helpers
+# From DeepLearningTutorials: http://deeplearning.net
+# ===========================================================================
+def resize_images(x, shape):
+  from scipy.misc import imresize
+
+  reszie_func = lambda x, shape: imresize(x, shape, interp='bilinear')
+  if x.ndim == 4:
+
+    def reszie_func(x, shape):
+      # x: 3D
+      # The color channel is the first dimension
+      tmp = []
+      for i in x:
+        tmp.append(imresize(i, shape).reshape((-1,) + shape))
+      return np.swapaxes(np.vstack(tmp).T, 0, 1)
+
+  imgs = []
+  for i in x:
+    imgs.append(reszie_func(i, shape))
+  return imgs
+
+
+def tile_raster_images(X,
+                       tile_shape=None,
+                       tile_spacing=(2, 2),
+                       spacing_value=0.):
+  r''' This function create tile of images
+
+  Parameters
+  ----------
+  X : 3D-gray or 4D-color images
+      for color images, the color channel must be the second dimension
+  tile_shape : tuple
+      resized shape of images
+  tile_spacing : tuple
+      space betwen rows and columns of images
+  spacing_value : int, float
+      value used for spacing
+
+  '''
+  if X.ndim == 3:
+    img_shape = X.shape[1:]
+  elif X.ndim == 4:
+    img_shape = X.shape[2:]
+  else:
+    raise ValueError('Unsupport %d dimension images' % X.ndim)
+  if tile_shape is None:
+    tile_shape = img_shape
+  if tile_spacing is None:
+    tile_spacing = (2, 2)
+
+  if img_shape != tile_shape:
+    X = resize_images(X, tile_shape)
+  else:
+    X = [np.swapaxes(x.T, 0, 1) for x in X]
+
+  n = len(X)
+  n = int(np.ceil(np.sqrt(n)))
+
+  # create spacing
+  rows_spacing = np.zeros_like(X[0])[:tile_spacing[0], :] + spacing_value
+  nothing = np.vstack((np.zeros_like(X[0]), rows_spacing))
+  cols_spacing = np.zeros_like(nothing)[:, :tile_spacing[1]] + spacing_value
+
+  # ====== Append columns ====== #
+  rows = []
+  for i in range(n):  # each rows
+    r = []
+    for j in range(n):  # all columns
+      idx = i * n + j
+      if idx < len(X):
+        r.append(np.vstack((X[i * n + j], rows_spacing)))
+      else:
+        r.append(nothing)
+      if j != n - 1:  # cols spacing
+        r.append(cols_spacing)
+    rows.append(np.hstack(r))
+  # ====== Append rows ====== #
+  img = np.vstack(rows)[:-tile_spacing[0]]
+  return img

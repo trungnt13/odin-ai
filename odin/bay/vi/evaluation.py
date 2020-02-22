@@ -94,13 +94,12 @@ class Criticizer(vs.Visualizer):
     self._assert_sampled()
     return [z.variance().numpy() for z in self.representations]
 
-  def representations_sample(self, n=1):
+  def representations_sample(self, n=()):
     r""" Return the mean of learned representations distribution
     (i.e. the latent code) for training and testing """
     self._assert_sampled()
-    n = int(n)
     return [
-        z.sample(sample_shape=() if n == 1 else n, seed=self.randint).numpy()
+        z.sample(sample_shape=n, seed=self.randint).numpy()
         for z in self.representations
     ]
 
@@ -125,14 +124,12 @@ class Criticizer(vs.Visualizer):
     self._assert_sampled()
     return [[j.variance().numpy() for j in i] for i in self._reconstructions]
 
-  def reconstructions_sample(self, n=1):
+  def reconstructions_sample(self, n=()):
     r""" Return the mean of reconstructed distributions of inputs for
     training and testing """
     self._assert_sampled()
-    n = int(n)
-    return [[
-        j.sample(sample_shape=() if n == 1 else n, seed=self.randint).numpy()
-        for j in i]\
+    return [[j.sample(sample_shape=n, seed=self.randint).numpy()
+             for j in i]
             for i in self._reconstructions]
 
   @property
@@ -499,21 +496,6 @@ class Criticizer(vs.Visualizer):
                                                 random_state=self.randint)
     return sap
 
-  def importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
-    r""" Using ensemble algorithm to estimate the feature importance of each
-    pair of (representation, factor)
-
-    Return:
-      matrix `[num_latents, num_factors]`
-    """
-    z_train, z_test = self._latent_codes(mean)
-    f_train, f_test = self.factors
-    importance_matrix, _, _ = \
-      metrics.representation_importance_matrix(
-        z_train, f_train, z_test, f_test,
-        random_state=self.randint, algo=algo)
-    return importance_matrix
-
   def dci_scores(self, mean=True):
     r""" Disentanglement, Completeness, Informativeness """
     z_train, z_test = self._latent_codes(mean)
@@ -532,10 +514,25 @@ class Criticizer(vs.Visualizer):
         for z, qz in zip(samples, self.representations)
     ])
 
+  def importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
+    r""" Using ensemble algorithm to estimate the feature importance of each
+    pair of (representation, factor)
+
+    Return:
+      a matrix of shape `[n_codes, n_factors]`
+    """
+    z_train, z_test = self._latent_codes(mean)
+    f_train, f_test = self.factors
+    importance_matrix, _, _ = \
+      metrics.representation_importance_matrix(
+        z_train, f_train, z_test, f_test,
+        random_state=self.randint, algo=algo)
+    return importance_matrix
+
   def correlation_matrix(self, mean=True, corr_type='spearman'):
     r"""
     Returns:
-      correlation matrix `[n_codes, n_factors]` for both training and
+      correlation matrices `[n_codes, n_factors]` for both training and
         testing data
     """
     corr_type = str(corr_type).strip().lower()
@@ -617,6 +614,10 @@ class Criticizer(vs.Visualizer):
     return self
 
   def plot_code_factor_matrix(self, factors=None, original_factors=True):
+    r"""
+    factors : list of Integer or String. The index or name of factors taken
+      into account for analyzing.
+    """
     from matplotlib import pyplot as plt
     factors = self._check_factors(factors)
     Z = np.concatenate(self.representations_mean, axis=0)
@@ -645,9 +646,10 @@ class Criticizer(vs.Visualizer):
         mean = np.mean(f)
         ax.scatter(f,
                    z,
-                   s=8,
+                   s=6,
                    alpha=0.5,
-                   c=['r' if i > mean else 'b' for i in f])
+                   c=['r' if i > mean else 'b' for i in f],
+                   linewidths=0.)
         ax.grid(False)
         if fact_idx == 0:
           ax.set_ylabel(zname, fontsize=16)
@@ -658,16 +660,117 @@ class Criticizer(vs.Visualizer):
         fig)
     return self
 
-  def plot_uncertainty(self, n_samples=2, algo='umap', original_factors=True):
+  def plot_uncertainty_statistics(self, factors=None):
+    r"""
+    factors : list of Integer or String. The index or name of factors taken
+      into account for analyzing.
+    """
+    factors = self._check_factors(factors)
+    zmean = np.concatenate(self.representations_mean, axis=0)
+    zstd = np.sqrt(np.concatenate(self.representations_variance, axis=0))
+    labels = self.factor_name[factors]
+    factors = np.concatenate(self.original_factors, axis=0)[:, factors]
+    X = np.arange(zmean.shape[0])
+    # create the figure
+    nrow = self.n_representations
+    ncol = len(labels)
+    fig = vs.plot_figure(nrow=nrow * 4, ncol=ncol * 4, dpi=80)
+    plot = 1
+    for row, (code, mean, std) in enumerate(zip(self.code_name, zmean.T,
+                                                zstd.T)):
+      # prepare the code
+      ids = np.argsort(mean)
+      mean, std = mean[ids], std[ids]
+      # show the factors
+      for col, (name, y) in enumerate(zip(labels, factors.T)):
+        axes = []
+        # the variance
+        ax = vs.plot_subplot(nrow, ncol, plot)
+        ax.plot(mean, color='g', linestyle='--')
+        ax.fill_between(X, mean - 2 * std, mean + 2 * std, alpha=0.2, color='b')
+        if col == 0:
+          ax.set_ylabel(code)
+        if row == 0:
+          ax.set_title(name)
+        axes.append(ax)
+        # factor
+        y = y[ids]
+        ax = ax.twinx()
+        vs.plot_scatter_heatmap(x=X,
+                                y=y,
+                                val=y,
+                                size=12,
+                                colormap='bwr',
+                                alpha=0.5)
+        axes.append(ax)
+        # update plot index
+        for ax in axes:
+          ax.tick_params(axis='both',
+                         which='both',
+                         top=False,
+                         bottom=False,
+                         left=False,
+                         right=False,
+                         labeltop=False,
+                         labelleft=False,
+                         labelright=False,
+                         labelbottom=False)
+        plot += 1
+    fig.tight_layout()
+    self.add_figure("uncertainty_stats", fig)
+    return self
+
+  def plot_uncertainty_scatter(self, factors=None, n_samples=2, algo='umap'):
+    r"""
+    factors : list of Integer or String. The index or name of factors taken
+      into account for analyzing.
+    """
+    factors = self._check_factors(factors)
     # this all include tarin and test data separatedly
-    z_mean = self.representations_mean
-    z_var = self.representations_variance
-    z_samples = self.representations_sample(n_samples)
-    F = self.original_factors if original_factors else self.factors
-    z_mean = dimension_reduce(*z_mean, algo=algo)
-    vs.plot_scatter_heatmap(z_mean[0], val=F[0][:, self.index('CD8')])
-    vs.plot_save()
-    exit()
+    z_mean = np.concatenate(self.representations_mean)
+    z_var = np.concatenate(
+        [np.mean(var, axis=1) for var in self.representations_variance])
+    z_samples = [
+        z for z in np.concatenate(self.representations_sample(int(n_samples)),
+                                  axis=1)
+    ]
+    F = np.concatenate(self.original_factors, axis=0)[:, factors]
+    labels = self.factor_name[factors]
+    # preprocessing
+    inputs = tuple([z_mean] + z_samples)
+    Z = dimension_reduce(*inputs,
+                         algo=algo,
+                         n_components=2,
+                         return_model=False,
+                         random_state=self.randint)
+    V = utils.discretizing(z_var[:, np.newaxis], n_bins=10).ravel()
+    # the figure
+    nrow = 3
+    ncol = int(np.ceil(len(labels) / nrow))
+    fig = vs.plot_figure(nrow=nrow * 4, ncol=ncol * 4, dpi=80)
+    for idx, (name, y) in enumerate(zip(labels, F.T)):
+      ax = vs.plot_subplot(nrow, ncol, idx + 1)
+      for i, x in enumerate(Z):
+        kw = dict(val=y,
+                  colormap="coolwarm",
+                  ax=ax,
+                  x=x,
+                  grid=False,
+                  legend_enable=False,
+                  fontsize=12)
+        if i == 0:
+          vs.plot_scatter_heatmap(size=V,
+                                  size_range=(8., 64.),
+                                  alpha=0.5,
+                                  colorbar=True,
+                                  colorbar_horizontal=True,
+                                  title=name,
+                                  **kw)
+        else:
+          vs.plot_scatter_heatmap(size=4, marker='x', alpha=0.4, **kw)
+    fig.tight_layout()
+    self.add_figure("uncertainty_scatter_%s" % algo, fig)
+    return self
 
   ############## Methods for summarizing
   def __str__(self):

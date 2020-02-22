@@ -36,6 +36,8 @@ def fast_tsne(*X,
               method='barnes_hut',
               angle=0.5,
               n_jobs=4,
+              combined=True,
+              return_model=False,
               force_sklearn=False):
   r"""
   Arguments:
@@ -115,6 +117,9 @@ def fast_tsne(*X,
         This method is not very sensitive to changes in this parameter
         in the range of 0.2 - 0.8. Angle less than 0.2 has quickly increasing
         computation time and angle greater 0.8 has quickly increasing error.
+    return_model : a Boolean, if `True`, return the trained t-SNE model
+    combined : a Boolean, if `True`, combined all arrays into a single array
+      for training t-SNE.
   """
   assert len(X) > 0, "No input is given!"
   if isinstance(X[0], (tuple, list)):
@@ -124,8 +129,10 @@ def fast_tsne(*X,
   # ====== kwarg for creating T-SNE class ====== #
   kwargs = dict(locals())
   del kwargs['X']
-  n_samples = kwargs.pop('n_samples', None)
-  force_sklearn = kwargs.pop('force_sklearn', False)
+  combined = kwargs.pop('combined', combined)
+  return_model = kwargs.pop('return_model', return_model)
+  n_samples = kwargs.pop('n_samples', n_samples)
+  force_sklearn = kwargs.pop('force_sklearn', force_sklearn)
   # ====== downsampling ====== #
   if n_samples is not None:
     n_samples = int(n_samples)
@@ -170,24 +177,35 @@ def fast_tsne(*X,
   # ====== getting cached values ====== #
   results = []
   X_new = []
-  for i, x in enumerate(X):
+  X_size = []
+  if combined:
+    X_size = [x.shape[0] for x in X]
+    x = np.vstack(X) if len(X) > 1 else X[0]
     md5 = md5_checksum(x)
     key = _create_key(tsne_version, kwargs, md5)
     if key in _cached_values:
-      results.append((i, _cached_values[key]))
+      results.append((0, _cached_values[key]))
     else:
-      X_new.append((i, md5, x))
+      X_new.append((0, md5, x))
+  else:
+    for i, x in enumerate(X):
+      md5 = md5_checksum(x)
+      key = _create_key(tsne_version, kwargs, md5)
+      if key in _cached_values:
+        results.append((i, _cached_values[key]))
+      else:
+        X_new.append((i, md5, x))
 
   # ====== perform T-SNE ====== #
   def apply_tsne(j):
     idx, md5, x = j
     tsne = TSNE(**kwargs)
-    return (idx, md5, tsne.fit_transform(x))
+    return (idx, md5, tsne.fit_transform(x), tsne if return_model else None)
 
   # only 1 X, no need for MPI
   if len(X_new) == 1 or tsne_version in ('cuda', 'multicore'):
     for x in X_new:
-      idx, md5, x = apply_tsne(x)
+      idx, md5, x, model = apply_tsne(x)
       results.append((idx, x))
       _cached_values[_create_key(tsne_version, kwargs, md5)] = x
   else:
@@ -196,10 +214,19 @@ def fast_tsne(*X,
               batch=1,
               ncpu=min(len(X_new),
                        cpu_count() - 1))
-    for idx, md5, x in mpi:
+    model = []
+    for idx, md5, x, m in mpi:
       results.append((idx, x))
       _cached_values[_create_key(tsne_version, kwargs, md5)] = x
+      model.append(m)
   # ====== return and clean ====== #
-  results = sorted(results, key=lambda a: a[0])
-  results = [r[1] for r in results]
-  return results[0] if len(results) == 1 else results
+  if combined and len(X_size) > 1:
+    indices = [0] + np.cumsum(X_size).tolist()
+    results = [results[0][1][s:e] for s, e in zip(indices, indices[1:])]
+  else:
+    results = sorted(results, key=lambda a: a[0])
+    results = [r[1] for r in results]
+  results = results[0] if len(results) == 1 else results
+  if return_model:
+    return results, model
+  return results

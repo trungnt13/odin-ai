@@ -6,8 +6,10 @@ from numbers import Number
 import numpy as np
 from six import string_types
 
-from odin.visual.plot_utils import (check_arg_length, generate_random_colors,
-                                    to_axis, generate_random_marker)
+from odin.utils import as_tuple
+from odin.visual.plot_utils import (check_arg_length, generate_random_colormaps,
+                                    generate_random_colors,
+                                    generate_random_marker, to_axis)
 
 
 # ===========================================================================
@@ -45,9 +47,23 @@ def _validate_color_marker_size_legend(n_samples,
                                        color,
                                        marker,
                                        size,
-                                       is_colormap=False):
-  """ Return: colors, markers, sizes, legends """
+                                       is_colormap=False,
+                                       size_range=8,
+                                       random_seed=1234):
+  r""" Return: colors, markers, sizes, legends """
+  from odin.backend import interpolation
   from matplotlib.colors import LinearSegmentedColormap
+  # check size range
+  if isinstance(size, Number):
+    size_range = interpolation.const(vmax=size)
+  if isinstance(size_range, Number):
+    size_range = interpolation.const(vmax=size_range)
+  elif isinstance(size_range, interpolation.Interpolation):
+    pass
+  else:
+    vmin, vmax = as_tuple(size_range, N=2)
+    size_range = interpolation.linear(vmin=float(vmin), vmax=float(vmax))
+  # check others
   default_color = 'b'
   if isinstance(color, (string_types, LinearSegmentedColormap)):
     default_color = color
@@ -56,17 +72,15 @@ def _validate_color_marker_size_legend(n_samples,
   if isinstance(marker, string_types):
     default_marker = marker
     marker = None
-  default_size = 8
   legend = [
       [None] * n_samples,  # color
       [None] * n_samples,  # marker
-      [None] * n_samples
-  ]  # size
-  seed = 1234
-  create_label_map = lambda labs, def_val, fn_gen: \
-      ({labs[0]: def_val}
+      [None] * n_samples,  # size
+  ]
+  create_label_map = lambda labs, default_val, fn_gen: \
+      ({labs[0]: default_val}
        if len(labs) == 1 else
-       {i: j for i, j in zip(labs, fn_gen(len(labs), seed=seed))})
+       {i: j for i, j in zip(labs, fn_gen(len(labs), seed=random_seed))})
   # ====== check arguments ====== #
   if color is None:
     color = [0] * n_samples
@@ -76,33 +90,32 @@ def _validate_color_marker_size_legend(n_samples,
     marker = [0] * n_samples
   else:
     legend[1] = marker
+  #
   if isinstance(size, Number):
-    default_size = size
     size = [0] * n_samples
   elif size is None:
     size = [0] * n_samples
-  else:
+  else:  # given a list of labels
     legend[2] = size
+  size_range.norm = np.max(size)
   # ====== validate the length ====== #
-  assert len(color) == n_samples, \
-  "Given %d variable for `color`, but require %d samples" % (len(color), n_samples)
-  assert len(marker) == n_samples, \
-  "Given %d variable for `marker`, but require %d samples" % (len(marker), n_samples)
-  assert len(size) == n_samples, \
-  "Given %d variable for `size`, but require %d samples" % (len(size), n_samples)
+  for name, arr in [("color", color), ("marker", marker), ("size", size)]:
+    assert len(arr) == n_samples, \
+    "Given %d samples for `%s`, but require %d samples" % \
+      (len(arr), name, n_samples)
   # ====== labels set ====== #
   color_labels = np.unique(color)
   color_map = create_label_map(
       color_labels, default_color,
       generate_random_colormaps if is_colormap else generate_random_colors)
-
+  #
   marker_labels = np.unique(marker)
   marker_map = create_label_map(marker_labels, default_marker,
                                 generate_random_marker)
-
+  #
   size_labels = np.unique(size)
-  size_map = create_label_map(size_labels, default_size,
-                              lambda n, s: [default_size] * n)
+  size_map = create_label_map(size_labels, size_range.vmax,
+                              lambda n, seed: size_range(np.arange(n)).numpy())
   # ====== prepare legend ====== #
   legend_name = []
   legend_style = []
@@ -306,7 +319,12 @@ def plot_scatter_heatmap(x,
                          colormap='bwr',
                          marker='o',
                          size=4.0,
+                         size_range=(8., 25.),
                          alpha=0.8,
+                         linewidths=0.,
+                         linestyle='-',
+                         facecolors=None,
+                         edgecolors=None,
                          elev=None,
                          azim=None,
                          ticks_off=True,
@@ -348,7 +366,7 @@ def plot_scatter_heatmap(x,
   n_samples, x, y, z, val, marker, size = \
       _downsample_scatter_points(x, y, z, n_samples, val, marker, size)
   colormap, marker, size, legend = _validate_color_marker_size_legend(
-      n_samples, colormap, marker, size)
+      n_samples, colormap, marker, size, size_range=size_range)
   # ====== plotting each class ====== #
   axes = []
   legend_name = []
@@ -363,15 +381,18 @@ def plot_scatter_heatmap(x,
         if is_3D_mode:
           z_.append(z[i])
     # plot
-    kwargs = {
-        'c': val_,
-        'vmin': min_val,
-        'vmax': max_val,
-        'cmap': style[0],
-        'marker': style[1],
-        's': style[2],
-        'alpha': alpha
-    }
+    kwargs = dict(
+        c=val_,
+        vmin=min_val,
+        vmax=max_val,
+        cmap=style[0],
+        marker=style[1],
+        linewidths=linewidths,
+        linestyle=linestyle,
+        edgecolors=edgecolors,
+        s=style[2],
+        alpha=alpha,
+    )
     if is_3D_mode:
       _ = ax.scatter(x_, y_, z_, **kwargs)
     else:
@@ -444,8 +465,9 @@ def plot_scatter(x,
                  color='b',
                  marker='.',
                  size=4.0,
+                 size_range=(8., 25.),
                  alpha=1,
-                 linewidths=None,
+                 linewidths=0.,
                  linestyle='-',
                  facecolors=None,
                  edgecolors=None,
@@ -527,7 +549,7 @@ def plot_scatter(x,
   n_samples, x, y, z, color, marker, size = _downsample_scatter_points(
       x, y, z, n_samples, color, marker, size)
   color, marker, size, legend = _validate_color_marker_size_legend(
-      n_samples, color, marker, size)
+      n_samples, color, marker, size, size_range=size_range)
   # ====== plotting ====== #
   # group into color-marker then plot each set
   axes = []

@@ -14,8 +14,6 @@ from collections import OrderedDict, defaultdict
 
 import numpy as np
 
-from odin.visual.bashplot import print_bar, print_confusion
-
 try:
   from tqdm import __version__ as tqdm_version
   tqdm_version = int(tqdm_version.split(".")[0])
@@ -309,6 +307,7 @@ class Progbar(object):
       "confusion_matrix" in key.lower() or \
       "confusion-matrix" in key.lower() or \
       "confusion matrix" in key.lower():
+        from odin.visual.bashplot import print_confusion
         value = print_confusion(value, labels=self.labels,
                                 inc_stats=True)
       # just print out string representation

@@ -12,22 +12,45 @@ from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
 
 
-def dimension_reduce(*X, algo, n_components=2, random_state=1234, **kwargs):
+def dimension_reduce(*X,
+                     algo,
+                     n_components=2,
+                     return_model=False,
+                     random_state=1234,
+                     **kwargs):
+  r""" Unified interface for dimension reduction algorithms
+
+  Arguments:
+    X : the first array will be use for training, all inputs will be
+      transformed by the same model afterward.
+    algo : {'pca', 'umap', 'tsne', 'knn', 'kmean}
+    n_components : an Integer or None (all dimensions remained)
+    return_model : a Boolean. If `True`, return both transformed array and
+      trained models, otherwise, only return the array.
+    random_state : an Integer or `numpy.random.RandomState`
+    kwargs : specialized arguments for each algorithm
+
+  Returns:
+    transformed array and trained model (if `return_model=True`)
+  """
   algo = str(algo).strip().lower()
   if 'pca' in algo:
     outputs = fast_pca(*X,
                        n_components=n_components,
                        random_state=random_state,
+                       return_model=return_model,
                        **kwargs)
   elif 'umap' in algo:
     outputs = fast_umap(*X,
                         n_components=n_components,
                         random_state=random_state,
+                        return_model=return_model,
                         **kwargs)
   elif 'tsne' in algo:
     outputs = fast_tsne(*X,
                         n_components=n_components,
                         random_state=random_state,
+                        return_model=return_model,
                         **kwargs)
   elif 'knn' in algo:
     model = fast_knn(X[0], n_neighbors=n_components, **kwargs)

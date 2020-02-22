@@ -3,35 +3,33 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 
 
-def fast_umap(
-    *X,
-    n_components=2,
-    n_neighbors=12,
-    n_samples=None,
-    metric="euclidean",
-    n_epochs=None,
-    learning_rate=1.0,
-    init="spectral",
-    min_dist=0.1,
-    spread=1.0,
-    set_op_mix_ratio=1.0,
-    local_connectivity=1.0,
-    repulsion_strength=1.0,
-    negative_sample_rate=5,
-    transform_queue_size=4.0,
-    a=None,
-    b=None,
-    random_state=8,
-    metric_kwds=None,
-    angular_rp_forest=False,
-    target_n_neighbors=-1,
-    target_metric="categorical",
-    target_metric_kwds=None,
-    target_weight=0.5,
-    transform_seed=42,
-    return_model=False,
-    verbose=False,
-):
+def fast_umap(*X,
+              n_components=2,
+              n_neighbors=12,
+              n_samples=None,
+              metric="euclidean",
+              n_epochs=None,
+              learning_rate=1.0,
+              init="spectral",
+              min_dist=0.1,
+              spread=1.0,
+              set_op_mix_ratio=1.0,
+              local_connectivity=1.0,
+              repulsion_strength=1.0,
+              negative_sample_rate=5,
+              transform_queue_size=4.0,
+              a=None,
+              b=None,
+              random_state=8,
+              metric_kwds=None,
+              angular_rp_forest=False,
+              target_n_neighbors=-1,
+              target_metric="categorical",
+              target_metric_kwds=None,
+              target_weight=0.5,
+              transform_seed=42,
+              return_model=False,
+              verbose=False):
   r"""Uniform Manifold Approximation and Projection
 
   Finds a low dimensional embedding of the data that approximates
@@ -182,6 +180,11 @@ def fast_umap(
   del kwargs['X']
   n_samples = kwargs.pop('n_samples', None)
   return_model = kwargs.pop('return_model', False)
+  # check X
+  if isinstance(X[0], (tuple, list)):
+    X = X[0]
+  if not all(isinstance(x, np.ndarray) for x in X):
+    raise ValueError("`X` can only be list of numpy.ndarray or numpy.ndarray")
   # ====== downsampling ====== #
   if n_samples is not None:
     n_samples = int(n_samples)
