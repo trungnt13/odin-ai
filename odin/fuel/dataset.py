@@ -19,6 +19,7 @@ __all__ = [
     'Dataset',
 ]
 
+
 # ===========================================================================
 # Helper
 # ===========================================================================
@@ -34,21 +35,21 @@ def _infer_separator(path):
       if 1 < len(line.split(s)) < orig_length:
         return s
     raise RuntimeError("CSV file with the first line: `%s`, "
-                       "cannot match separator in known list: `%s`"
-                       % (line, str(all_sep)))
+                       "cannot match separator in known list: `%s`" %
+                       (line, str(all_sep)))
 
-_audio_ext = ('.3gp', '.aa', '.aac', '.aax', '.act', '.aiff',
-              '.amr', '.ape', '.au', '.awb', '.dct', '.dss',
-              '.dvf', '.flac', '.gsm', '.ivs', '.m4a', '.m4b',
-              '.m4p', '.mmf', '.mp3', '.mpc', '.msv', '.nsf',
-              '.ogg,', '.opus', '.raw', '.sln', '.tta', '.vox',
-              '.wav', '.wma', '.wv', '.webm', '.sph', '.pcm')
 
-_image_ext = ('.tif', '.tiff', '.gif', '.jpeg', '.jpg', '.jif',
-              '.jfif', '.jp2', '.jpx', '.j2k', '.j2c', '.fpx',
-              '.pcd', '.png', '.pdf')
+_audio_ext = ('.3gp', '.aa', '.aac', '.aax', '.act', '.aiff', '.amr', '.ape',
+              '.au', '.awb', '.dct', '.dss', '.dvf', '.flac', '.gsm', '.ivs',
+              '.m4a', '.m4b', '.m4p', '.mmf', '.mp3', '.mpc', '.msv', '.nsf',
+              '.ogg,', '.opus', '.raw', '.sln', '.tta', '.vox', '.wav', '.wma',
+              '.wv', '.webm', '.sph', '.pcm')
+
+_image_ext = ('.tif', '.tiff', '.gif', '.jpeg', '.jpg', '.jif', '.jfif', '.jp2',
+              '.jpx', '.j2k', '.j2c', '.fpx', '.pcd', '.png', '.pdf')
 
 _ignore_files = ('.DS_Store',)
+
 
 def _parse_data_descriptor(path, read_only):
   """ Return mapping: name -> (dtype, shape, Data, path) """
@@ -78,19 +79,21 @@ def _parse_data_descriptor(path, read_only):
         line = line[:-1]
         data.append(line.split(sep))
       data = np.array(data, dtype=str)
-    return [('.'.join(file_name.split('.')[:-1]),
-             ('csv', data.shape, data, path))]
+    return [('.'.join(file_name.split('.')[:-1]), ('csv', data.shape, data,
+                                                   path))]
   # ====== check if a file is Data ====== #
   try:
     dtype, shape = read_mmaparray_header(path)
-    data = MmapArray(path)
+    # ensure read-only mode here
+    kw = dict(mode='r') if read_only else dict()
+    data = MmapArray(path, **kw)
     assert np.dtype(dtype) == data.dtype and shape == data.shape, \
       "Metadata mismatch for MmapArray"
     return [(file_name, (data.dtype, data.shape, data, path))]
-  except Exception: # cannot read the header of MmapArray
+  except Exception:  # cannot read the header of MmapArray
     pass
   # ====== try to load pickle file if possible ====== #
-  try: # try with unpickling
+  try:  # try with unpickling
     with open(path, 'rb') as f:
       data = cPickle.load(f)
       shape_info = 0
@@ -98,16 +101,19 @@ def _parse_data_descriptor(path, read_only):
         shape_info = data.shape
       elif hasattr(data, '__len__'):
         shape_info = len(data)
-      return [(file_name, (str(data.dtype) if hasattr(data, 'dtype') else
-                           type(data).__name__,
-                           shape_info, data, path))]
+      return [
+          (file_name,
+           (str(data.dtype) if hasattr(data, 'dtype') else type(data).__name__,
+            shape_info, data, path))
+      ]
   except cPickle.UnpicklingError:
-    try: # try again with numpy load
+    try:  # try again with numpy load
       with open(path, 'rb') as f:
         data = np.load(f)
-        return [(file_name,
-        (str(data.dtype) if hasattr(data, 'dtype') else type(data).__name__,
-         len(data) if hasattr(data, '__len__') else 0, data, path))]
+        return [(file_name, (str(data.dtype)
+                             if hasattr(data, 'dtype') else type(data).__name__,
+                             len(data) if hasattr(data, '__len__') else 0, data,
+                             path))]
     except Exception:
       pass
   # ====== load memmap dict ====== #
@@ -134,7 +140,7 @@ def _parse_data_descriptor(path, read_only):
 # Datasets
 # ===========================================================================
 class Dataset(object):
-  """ This Dataset can automatically parse memmap (created by MmapData),
+  r""" This Dataset can automatically parse memmap (created by MmapData),
   MmapDict, pickled dictionary and hdf5 files and keep tracking the changes.
 
   Any file name with "readme" prefix will be parsed as text and showed as
@@ -172,9 +178,9 @@ class Dataset(object):
   def __init__(self, path, read_only=False, override=False):
     path = os.path.abspath(path)
     self.read_only = read_only
-    self._readme_info = [ctext('README:', 'yellow'),
-                         '------',
-                         '  No information!']
+    self._readme_info = [
+        ctext('README:', 'yellow'), '------', '  No information!'
+    ]
     self._readme_path = None
     # flag to check cPickle called with protocol 2
     self._new_args_called = False
@@ -185,8 +191,9 @@ class Dataset(object):
         print('Overrided old dataset at path:', path)
       if os.path.isfile(path) and '.zip' in os.path.basename(path):
         self._load_archive(path,
-            extract_path=path.replace(os.path.basename(path), ''),
-            read_only=read_only)
+                           extract_path=path.replace(os.path.basename(path),
+                                                     ''),
+                           read_only=read_only)
       else:
         self._set_path(path, self.read_only)
     else:
@@ -206,7 +213,7 @@ class Dataset(object):
       os.mkdir(path)
       os.mkdir(self.recipe_path)
       os.mkdir(self.index_path)
-      return # not thing to do more
+      return  # not thing to do more
     elif not os.path.isdir(path):
       raise ValueError('Dataset path must be a folder.')
     # ====== Load all Data ====== #
@@ -219,13 +226,12 @@ class Dataset(object):
           readme = readme_file.readlines()[:MAXIMUM_README_LINE]
           readme = ['  ' + i[:-1] for i in readme if len(i) > 0 and i != '\n']
           readme.append(' => For more information: ' + readme_path)
-          self._readme_info = [ctext('README:', 'yellow'),
-                               '------'] + readme
+          self._readme_info = [ctext('README:', 'yellow'), '------'] + readme
           self._readme_path = readme_path
       # parse data
-      data = _parse_data_descriptor(os.path.join(path, fname),
-                                    read_only)
-      if data is None: continue
+      data = _parse_data_descriptor(os.path.join(path, fname), read_only)
+      if data is None:
+        continue
       for key, d in data:
         if key in self._data_map:
           raise ValueError('Found duplicated data with follow info: '
@@ -272,8 +278,10 @@ class Dataset(object):
       if not os.path.exists(extract_path):
         os.mkdir(extract_path)
       maxlen = max([len(i) for i in allfile])
-      pb = Progbar(target=len(allfile), name="[Dataset] Loading Archive",
-                   print_summary=True, print_report=True)
+      pb = Progbar(target=len(allfile),
+                   name="[Dataset] Loading Archive",
+                   print_summary=True,
+                   print_report=True)
       for i, f in enumerate(allfile):
         zfile.extract(f, path=extract_path)
         pb['File'] = ('Unarchiving: %-' + str(maxlen) + 's') % f
@@ -320,10 +328,10 @@ class Dataset(object):
     size_bytes = 0
     for name, (dtype, shape, data, path) in self._data_map.items():
       try:
-        size_bytes += os.path.getsize(path) # in bytes
+        size_bytes += os.path.getsize(path)  # in bytes
       except Exception as e:
-        eprint("Cannot acquire file size information, file: %s; error: %s"
-               % (str(name), str(e)))
+        eprint("Cannot acquire file size information, file: %s; error: %s" %
+               (str(name), str(e)))
     return size_bytes / 1024. / 1024.
 
   def __len__(self):
@@ -366,8 +374,10 @@ class Dataset(object):
 
     files = set([_[-1] for _ in self._data_map.values()])
 
-    prog = Progbar(target=len(files), name="[Dataset] Archiving",
-                   print_report=True, print_summary=True)
+    prog = Progbar(target=len(files),
+                   name="[Dataset] Archiving",
+                   print_report=True,
+                   print_summary=True)
     maxlen = max([len(os.path.basename(i)) for i in files])
     for i, f in enumerate(files):
       zfile.write(f, os.path.basename(f))
@@ -378,8 +388,10 @@ class Dataset(object):
     return path
 
   # ==================== Data management ==================== #
-  def copy(self, destination,
-           indices_filter=None, data_filter=None,
+  def copy(self,
+           destination,
+           indices_filter=None,
+           data_filter=None,
            override=False):
     """ Copy the dataset to a new folder and closed
     the old dataset
@@ -393,13 +405,13 @@ class Dataset(object):
     for dtype, shape, data, path in self._data_map.values():
       if hasattr(data, 'flush'):
         data.flush()
-      elif data is not None: # Flush pickling data
+      elif data is not None:  # Flush pickling data
         with open(path, 'wb') as f:
           cPickle.dump(data, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
   def close(self, name=None):
     # ====== close all Data ====== #
-    if name is None: # close all files
+    if name is None:  # close all files
       for name, (dtype, shape, data, path) in list(self._data_map.items()):
         if hasattr(data, 'close'):
           data.close()
@@ -441,11 +453,11 @@ class Dataset(object):
       if prefix == key[:len(prefix)] and '_' + feat_name in key:
         indices = self[key]
     if indices is None:
-      raise RuntimeError("Cannot find prefix: '%s' for feature with name: '%s', "
-                         "all available name with given prefix are: %s" %
-                         (prefix, feat_name, ','.join([k for k in self.keys()
-                                                       if prefix == k[:len(k)]])
-                         ))
+      raise RuntimeError(
+          "Cannot find prefix: '%s' for feature with name: '%s', "
+          "all available name with given prefix are: %s" %
+          (prefix, feat_name, ','.join(
+              [k for k in self.keys() if prefix == k[:len(k)]])))
     return indices
 
   def __getitem__(self, key):
@@ -475,18 +487,16 @@ class Dataset(object):
     path = os.path.join(self.path, name)
     with open(path, 'wb') as f:
       pickle.dump(value, f)
-    self._data_map[name] = (
-      value.dtype if hasattr(value, 'dtype') else str(type(value)),
-      value.shape if hasattr(value, 'shape') else 'unknown',
-      value, path)
-
+    self._data_map[name] = (value.dtype if hasattr(value, 'dtype') else str(
+        type(value)), value.shape if hasattr(value, 'shape') else 'unknown',
+                            value, path)
 
   def get_md5_checksum(self, excluded_name=[]):
     from odin.utils.crypto import md5_checksum
     md5_text = ''
-    all_data_items = {i: j
-                      for i, j in self._data_map.items()
-                      if i not in excluded_name}
+    all_data_items = {
+        i: j for i, j in self._data_map.items() if i not in excluded_name
+    }
     for name, (dtype, shape, data, path) in sorted(all_data_items.items(),
                                                    key=lambda x: x[0]):
       md5_text += md5_checksum(path)
@@ -495,13 +505,12 @@ class Dataset(object):
   def __str__(self):
     padding = '  '
     # NOTE: each element in the list is one line
-    s = ['==========  ' +
-         ctext('Dataset:%s Total:%d Size:%.2f(MB)', 'magenta') %
-         (self.path, len(self._data_map), self.size) +
-         '  ==========']
+    s = [
+        '==========  ' + ctext('Dataset:%s Total:%d Size:%.2f(MB)', 'magenta') %
+        (self.path, len(self._data_map), self.size) + '  =========='
+    ]
     s += self._readme_info
-    s += [ctext('DATA:', 'yellow'),
-          '----']
+    s += [ctext('DATA:', 'yellow'), '----']
     # ====== Find longest string ====== #
     longest_name = 0
     longest_shape = 0
@@ -527,8 +536,7 @@ class Dataset(object):
       s.append(ctext('(Recipe) ', 'yellow') + '"%s"' % name)
       for rcp in recipe:
         rcp = str(rcp)
-        s.append('\n'.join([padding + line
-                            for line in rcp.split('\n')]))
+        s.append('\n'.join([padding + line for line in rcp.split('\n')]))
     # ====== add indices info ====== #
     for name, index in self._saved_indices.items():
       s.append(ctext('(Index) ', 'yellow') + '"%s"' % name)

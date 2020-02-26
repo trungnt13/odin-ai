@@ -80,11 +80,9 @@ class struct(dict):
 
 
 class bidict(dict):
-  """ Bi-directional dictionary (i.e. a <-> b)
-  Note
-  ----
-  When you iterate over this dictionary, it will be a doubled size
-  dictionary
+  r""" Bi-directional dictionary (i.e. a <-> b)
+  Note:
+    When you iterate over this dictionary, it will be a double-size dictionary
   """
 
   def __init__(self, *args, **kwargs):

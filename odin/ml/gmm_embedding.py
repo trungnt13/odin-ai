@@ -19,7 +19,6 @@ from odin.utils import (ArgController, Progbar, UnitTimer, auto_logging,
 from odin.visual import (Visualizer, generate_random_colors, merge_text_graph,
                          plot_confusion_matrix, plot_figure, plot_histogram,
                          plot_histogram_layers, plot_save, print_dist)
-from sisua.data.utils import standardize_protein_name
 
 os.environ['ODIN'] = 'gpu,float32,seed=5218'
 

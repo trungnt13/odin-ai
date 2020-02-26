@@ -111,6 +111,9 @@ def diagonal_beam_search(matrix, beam_size=-1):
   This is a more strict version of beam search since each beam cannot contain
   duplicated element.
 
+  The implementation is optimized for speed (not memory), the memory complexity
+  is: `O(beam_size * matrix.shape[1])`
+
   """
   ncol = matrix.shape[1]
   min_dim = min(matrix.shape)
