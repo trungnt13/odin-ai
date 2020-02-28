@@ -9,7 +9,7 @@ from bigarray import MmapArray, MmapArrayWriter
 from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
 from odin.ml.gmm_tmat import GMM, Tmatrix, _split_jobs
 from odin.utils import (Progbar, UnitTimer, batching, crypto, ctext,
-                        is_primitives, mpi, uuid)
+                        is_primitive, mpi, uuid)
 
 
 # ===========================================================================
@@ -506,7 +506,7 @@ class Ivector(DensityMixin, BaseEstimator, TransformerMixin):
       s += '\n'
     # list all attributes
     for k, v in sorted(self.__dict__.items(), key=lambda x: x[0]):
-      if is_primitives(v, inc_ndarray=False):
+      if is_primitive(v, inc_ndarray=False):
         s += "  %s: %s\n" % (ctext(k, 'cyan'), str(v))
     s = s[:-1] + '>'
     return s

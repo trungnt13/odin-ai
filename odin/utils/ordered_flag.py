@@ -9,9 +9,12 @@ class OrderedFlag(str, Enum):
 
   The seperator could be changed by override class method `_sep`
 
-  Note: during comparison, the order of elementes won't be taken into account,
-  i.e. `[1, 2] == [2, 1]`
-
+  Note:
+    - During comparison, the order of elementes won't be taken into account,
+      i.e. `[1, 2] == [2, 1]`
+    - The `.name` attribute could be different from `.value` attribute,
+      `OrderedFlag.name` will return an unique identity regardless the order,
+      i.e. "1_2" for both `[1, 2]` and `[2, 1]`
   """
 
   @classmethod
@@ -32,7 +35,7 @@ class OrderedFlag(str, Enum):
           raise ValueError("Invalid value: %s for %s" % (value, cls.__name__))
       # construct a singleton enum pseudo-member
       pseudo_member = str.__new__(cls)
-      pseudo_member._name_ = value
+      pseudo_member._name_ = sep.join(sorted(value.split(sep)))
       pseudo_member._value_ = value
       # use setdefault in case another thread already created a composite
       # with this value

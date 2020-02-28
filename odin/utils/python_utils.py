@@ -59,6 +59,33 @@ RE_NUMBER = re.compile(r'^[+-]*((\d*\.\d+)|(\d+))$')
 # ===========================================================================
 # Data structure
 # ===========================================================================
+class IndexedList(list):
+  r""" a list that support indexing using __getitem__ and __setitem__"""
+
+  def __contains__(self, key):
+    for k, v in self:
+      if k == key:
+        return True
+    return False
+
+  def __getitem__(self, key):
+    if isinstance(key, int):
+      return super().__getitem__(key)
+    found = []
+    for i in range(len(self))[::-1]:
+      k, v = self[i]
+      if k == key:
+        found.append(v)
+    if len(found) == 1:
+      return found[0]
+    elif len(found) > 0:
+      return tuple(found)
+    raise KeyError("Cannot find value with key: '%s'" % k)
+
+  def __setitem__(self, key, val):
+    self.append((key, val))
+
+
 class struct(dict):
   '''Flexible object can be assigned any attribtues'''
 
@@ -355,26 +382,25 @@ def is_bool(b):
   return isinstance(b, type(True))
 
 
-def is_primitives(x, inc_ndarray=True, exception_types=[]):
-  """Primitive types include: number, string, boolean, None
+def is_primitive(x, inc_ndarray=True, exception_types=[]):
+  r"""Primitive types include: number, string, boolean, None
   and numpy.ndarray (optional) and numpy.generic (optional)
 
-  Parameters
-  ----------
-  inc_ndarray: bool
-      if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
+  Arguments:
+    inc_ndarray: bool
+        if True, include `numpy.ndarray` and `numpy.generic` as a primitive types
   """
   # complex list or Mapping
   if isinstance(x, (tuple, list)):
     return all(
-        is_primitives(
+        is_primitive(
             i, inc_ndarray=inc_ndarray, exception_types=exception_types)
         for i in x)
   elif isinstance(x, Mapping):
     return all(
-        is_primitives(
+        is_primitive(
             i, inc_ndarray=inc_ndarray, exception_types=exception_types) and
-        is_primitives(
+        is_primitive(
             j, inc_ndarray=inc_ndarray, exception_types=exception_types)
         for i, j in x.items())
   # check for number, string, bool, and numpy array

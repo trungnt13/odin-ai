@@ -73,6 +73,11 @@ class OrderedFlagTest(unittest.TestCase):
     self.assertFalse(t1 != t4)
     self.assertFalse(t3 != t4)
 
+  def test_members(self):
+    t1 = Enum1.T1 | Enum1.T2
+    t2 = Enum1.T2 | Enum1.T1 | Enum1.T3
+    self.assertEqual(len(Enum1), 4)
+    self.assertEqual(len(list(Enum1)), 4)
 
 if __name__ == '__main__':
   unittest.main()

@@ -7,7 +7,8 @@ import numpy as np
 from six import string_types
 
 from odin.utils import as_tuple
-from odin.visual.plot_utils import (check_arg_length, generate_random_colormaps,
+from odin.visual.plot_utils import (check_arg_length, generate_palette_colors,
+                                    generate_random_colormaps,
                                     generate_random_colors,
                                     generate_random_marker, to_axis)
 
@@ -107,7 +108,8 @@ def _validate_color_marker_size_legend(n_samples,
   color_labels = np.unique(color)
   color_map = create_label_map(
       color_labels, default_color,
-      generate_random_colormaps if is_colormap else generate_random_colors)
+      generate_random_colormaps if is_colormap else generate_palette_colors)
+  # generate_random_colors
   #
   marker_labels = np.unique(marker)
   marker_map = create_label_map(marker_labels, default_marker,

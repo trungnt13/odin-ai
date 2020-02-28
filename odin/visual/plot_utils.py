@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import colorsys
 from collections import OrderedDict
 from numbers import Number
 
@@ -27,13 +28,32 @@ def get_all_named_colors(to_hsv=False):
   return colors
 
 
+def generate_palette_colors(n,
+                            seed=1234,
+                            lightness_value=None,
+                            return_hsl=False,
+                            return_hex=True):
+  import seaborn as sns
+  # six variations of the default theme: deep, muted, pastel, bright, dark,
+  # and colorblind.
+  colors = sns.color_palette(n_colors=int(n))  # RGB values
+  if seed is not None:
+    rand = np.random.RandomState(seed)
+    rand.shuffle(colors)
+  if return_hex:
+    colors = [
+        "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255), int(rgb[1] * 255),
+                                     int(rgb[2] * 255)) for rgb in colors
+    ]
+  return colors
+
+
 def generate_random_colors(n,
                            seed=1234,
                            lightness_value=None,
                            return_hsl=False,
                            return_hex=True):
-  if seed is not None:
-    rand = np.random.RandomState(seed)
+  rand = np.random.RandomState(seed)
   n = int(n)
   colors = []
   # we want maximizing the differences in hue
