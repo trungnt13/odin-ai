@@ -84,8 +84,9 @@ def _parse_data_descriptor(path, read_only):
   # ====== check if a file is Data ====== #
   try:
     dtype, shape = read_mmaparray_header(path)
-    # ensure read-only mode here
-    kw = dict(mode='r') if read_only else dict()
+    # ensure read-only mode here,
+    # i.e. change only applied in memory, not saved to disk
+    kw = dict(mode='c') if read_only else dict()
     data = MmapArray(path, **kw)
     assert np.dtype(dtype) == data.dtype and shape == data.shape, \
       "Metadata mismatch for MmapArray"

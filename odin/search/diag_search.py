@@ -75,7 +75,7 @@ def diagonal_bruteforce_search(matrix):
   return best_perm
 
 
-def diagonal_greedy_search(matrix):
+def diagonal_greedy_search(matrix, nonzeros=False):
   r""" Find the best permutation of columns to maximize the summization of
   diagonal entries.
 

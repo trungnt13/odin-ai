@@ -1,5 +1,5 @@
 from odin.ml.base import evaluate
-from odin.ml.cluster import fast_kmeans, fast_knn
+from odin.ml.cluster import fast_dbscan, fast_kmeans, fast_knn
 from odin.ml.decompositions import *
 from odin.ml.fast_tsne import fast_tsne
 from odin.ml.fast_umap import fast_umap
@@ -10,6 +10,34 @@ from odin.ml.ivector import Ivector
 from odin.ml.plda import PLDA
 from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
+
+
+def clustering(X,
+               algo,
+               n_clusters=8,
+               force_sklearn=False,
+               random_state=1234,
+               **kwargs):
+  algo = str(algo).strip().lower()
+  if 'kmean' in algo:
+    return fast_kmeans(X,
+                       n_clusters=n_clusters,
+                       random_state=random_state,
+                       force_sklearn=force_sklearn,
+                       **kwargs)
+  elif 'knn' in algo:
+    return fast_knn(X,
+                    n_clusters=n_clusters,
+                    random_state=random_state,
+                    force_sklearn=force_sklearn,
+                    **kwargs)
+  elif 'dbscan' in algo:
+    return fast_dbscan(X,
+                       n_clusters=n_clusters,
+                       random_state=random_state,
+                       force_sklearn=force_sklearn,
+                       **kwargs)
+  raise ValueError("No support for clustering algorithm with name: '%s'" % algo)
 
 
 def dimension_reduce(*X,

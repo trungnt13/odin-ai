@@ -41,7 +41,7 @@ dependencies = [
     'pytorch-lightning',  # for training pytorch module
     'bigarray>=0.2.1',
     'six>=1.9.0',
-    'scikit-learn>=0.18.0',
+    'scikit-learn==0.22.1',
     'matplotlib>=3.0.0',
     'decorator',
     'tqdm',
