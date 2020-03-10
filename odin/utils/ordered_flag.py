@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from numbers import Number
 
 
 class OrderedFlag(str, Enum):
@@ -33,6 +34,12 @@ class OrderedFlag(str, Enum):
       else:
         if not all(f in cls._value2member_map_ for f in flags if sep not in f):
           raise ValueError("Invalid value: %s for %s" % (value, cls.__name__))
+      # check for duplication
+      value = []
+      for f in flags:
+        if f not in value:
+          value.append(f)
+      value = sep.join(value)
       # construct a singleton enum pseudo-member
       pseudo_member = str.__new__(cls)
       pseudo_member._name_ = sep.join(sorted(value.split(sep)))
@@ -85,6 +92,15 @@ class OrderedFlag(str, Enum):
   def __iter__(self):
     for i in self._value_.split(self.__class__._sep()):
       yield self.__class__._value2member_map_[i]
+
+  def index(self, element):
+    return list(self).index(element)
+
+  def __getitem__(self, key):
+    if isinstance(key, Number):
+      return list(self)[key]
+    raise ValueError("No support for OrderedFlag indexing with key='%s'" %
+                     str(key))
 
   def __ne__(self, other):
     cls = self.__class__

@@ -24,7 +24,8 @@ class Visualizer(object):
     'ax must be instance of matplotlib.Axes, but given: %s' % str(type(ax))
     return ax
 
-  def get_figures(self) -> Dict[Text, 'Figure']:
+  @property
+  def figures(self) -> Dict[Text, 'Figure']:
     return _FIGURE_LIST[id(self)]
 
   def add_figure(self, name, fig):

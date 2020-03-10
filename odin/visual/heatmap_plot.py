@@ -1,7 +1,10 @@
 from __future__ import absolute_import, division, print_function
 
-import numpy as np
 import itertools
+from numbers import Number
+
+import numpy as np
+import scipy as sp
 
 from odin.visual.plot_utils import tile_raster_images, to_axis
 
@@ -393,3 +396,123 @@ def plot_weights4D(x, colormap="Greys"):
   axes = fig.get_axes()
   fig.colorbar(img, ax=axes)
   return fig
+
+
+def plot_distance_heatmap(X,
+                          labels,
+                          lognorm=True,
+                          colormap='hot',
+                          ax=None,
+                          legend_enable=True,
+                          legend_loc='upper center',
+                          legend_ncol=3,
+                          legend_colspace=0.2,
+                          fontsize=10,
+                          show_colorbar=True,
+                          title=None):
+  r"""
+
+  Arguments:
+    X : (n_samples, n_features). Coordination for scatter points
+    labels : (n_samples,). List of classes index or name
+  """
+  from matplotlib import pyplot as plt
+  from matplotlib.lines import Line2D
+  from odin import backend as K
+  import seaborn as sns
+  # prepare data
+  X = K.length_norm(X, axis=-1, epsilon=np.finfo(X.dtype).eps)
+  ax = to_axis(ax)
+  n_samples, n_dim = X.shape
+  # processing labels
+  labels = np.array(labels).ravel()
+  assert labels.shape[0] == n_samples, "labels must be 1-D array."
+  is_continuous = isinstance(labels[0], Number) and int(labels[0]) != labels[0]
+  # float values label (normalize -1 to 1) or binary classification
+  if is_continuous:
+    min_val = np.min(labels)
+    max_val = np.max(labels)
+    labels = 2 * (labels - min_val) / (max_val - min_val) - 1
+    n_labels = 2
+    labels_name = {'-1': 0, '+1': 1}
+  else:
+    labels_name = {name: i for i, name in enumerate(np.unique(labels))}
+    n_labels = len(labels_name)
+    labels = np.array([labels_name[name] for name in labels])
+  # ====== sorting label and X ====== #
+  order_X = np.vstack(
+      [x for _, x in sorted(zip(labels, X), key=lambda pair: pair[0])])
+  order_label = np.vstack(
+      [y for y, x in sorted(zip(labels, X), key=lambda pair: pair[0])])
+  distance = sp.spatial.distance_matrix(order_X, order_X)
+  if bool(lognorm):
+    distance = np.log1p(distance)
+  min_non_zero = np.min(distance[np.nonzero(distance)])
+  distance = np.clip(distance, a_min=min_non_zero, a_max=np.max(distance))
+  # ====== convert data to image ====== #
+  cm = plt.get_cmap(colormap)
+  distance_img = cm(distance)
+  # diagonal black line (i.e. zero distance)
+  # for i in range(n_samples):
+  #   distance_img[i, i] = (0, 0, 0, 1)
+  # labels colormap
+  width = max(int(0.032 * n_samples), 8)
+  if n_labels == 2:
+    cm = plt.get_cmap('bwr')
+    horz_bar = np.repeat(cm(order_label.T), repeats=width, axis=0)
+    vert_bar = np.repeat(cm(order_label), repeats=width, axis=1)
+    all_colors = np.array((cm(np.min(labels)), cm(np.max(labels))))
+  else: # use seaborn color palette here is better
+    cm = [i + (1.,) for i in sns.color_palette(n_colors=n_labels)]
+    c = np.stack([cm[i] for i in order_label.ravel()])
+    horz_bar = np.repeat(np.expand_dims(c, 0), repeats=width, axis=0)
+    vert_bar = np.repeat(np.expand_dims(c, 1), repeats=width, axis=1)
+    all_colors = cm
+  # image
+  final_img = np.zeros(shape=(n_samples + width, n_samples + width,
+                              distance_img.shape[2]),
+                       dtype=distance_img.dtype)
+  final_img[width:, width:] = distance_img
+  final_img[:width, width:] = horz_bar
+  final_img[width:, :width] = vert_bar
+  assert np.sum(final_img[:width, :width]) == 0, \
+  "Something wrong with my spacial coordination when writing this code!"
+  # ====== plotting ====== #
+  ax.imshow(final_img)
+  ax.axis('off')
+  # ====== legend ====== #
+  if bool(legend_enable):
+    legend_elements = [
+        Line2D([0], [0],
+               marker='o',
+               color=color,
+               label=name,
+               linewidth=0,
+               linestyle=None,
+               lw=0,
+               markerfacecolor=color,
+               markersize=fontsize // 2)
+        for color, name in zip(all_colors, labels_name.keys())
+    ]
+    ax.legend(handles=legend_elements,
+              markerscale=1.,
+              scatterpoints=1,
+              scatteryoffsets=[0.375, 0.5, 0.3125],
+              loc=legend_loc,
+              bbox_to_anchor=(0.5, -0.01),
+              ncol=int(legend_ncol),
+              columnspacing=float(legend_colspace),
+              labelspacing=0.,
+              fontsize=fontsize - 1,
+              handletextpad=0.1)
+  # ====== final configurations ====== #
+  if title is not None:
+    ax.set_title(str(title), fontsize=fontsize)
+  if show_colorbar:
+    from odin.visual import plot_colorbar
+    plot_colorbar(colormap,
+                  vmin=np.min(distance),
+                  vmax=np.max(distance),
+                  ax=ax,
+                  orientation='vertical')
+  return ax

@@ -324,11 +324,6 @@ class Experimenter():
   def configs(self) -> DictConfig:
     return deepcopy(self._configs)
 
-  @property
-  def args_help(self) -> dict:
-    r""" Return a mapping argument name to list of allowed values """
-    return {}
-
   ####################### Helpers
   def write_history(self, *msg):
     with open(os.path.join(self._save_path, 'history.txt'), 'a+') as f:
@@ -412,6 +407,11 @@ class Experimenter():
     return self
 
   ####################### Base methods
+  @property
+  def args_help(self) -> dict:
+    r""" Return a mapping argument name to list of allowed values """
+    return {}
+
   def on_load_data(self, cfg: DictConfig):
     r""" Cleaning """
     pass
@@ -580,9 +580,11 @@ class Experimenter():
         sys.argv += overrides
       # help for arguments
       if '--help' in sys.argv:
-        sys.argv.append("hydra.help.header='**** %s ****'" %
-                        self.__class__.__name__)
-        sys.argv.append("hydra.help.template=%s" % (_APP_HELP % hlp))
+        # sys.argv.append("hydra.help.header='**** %s ****'" %
+        #                 self.__class__.__name__)
+        # sys.argv.append("hydra.help.template=%s" % (_APP_HELP % hlp))
+        # TODO : fix bug here
+        pass
       # append the hydra log path
       job_fmt = "/${now:%d%b%y_%H%M%S}"
       sys.argv.insert(1, "hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)
@@ -660,6 +662,9 @@ class Experimenter():
 
   def sample_model(self, conditions={}, seed=1):
     exp_cfg = self.fetch_exp_cfg(conditions)
+    if len(exp_cfg) == 0:
+      raise RuntimeError("Cannot find model with configuration: %s" %
+                         str(conditions))
     random.seed(seed)
     exp, cfg = random.choice(list(exp_cfg.items()))
     model = self.on_load_model(os.path.join(exp, 'model'))

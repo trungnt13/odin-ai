@@ -48,7 +48,7 @@ class Factor(object):
 
   Arguments:
     factors : `[num_samples, num_factors]`, an Integer array
-    factor_name : None or `[num_factors]`, list of name for each factor
+    factors_name : None or `[num_factors]`, list of name for each factor
     random_state : an Integer or `np.ranomd.RandomState`
 
   Attributes:
@@ -59,7 +59,7 @@ class Factor(object):
     Google research: https://github.com/google-research/disentanglement_lib
   """
 
-  def __init__(self, factors, factor_name=None, random_state=1234):
+  def __init__(self, factors, factors_name=None, random_state=1234):
     if isinstance(factors, tf.data.Dataset):
       factors = tf.stack([x for x in factors])
     if tf.is_tensor(factors):
@@ -70,12 +70,21 @@ class Factor(object):
           "factors must be a matrix [n_obeservations, n_factor], but given shape: %s"
           % str(factors.shape))
     num_factors = factors.shape[1]
-    if factor_name is None:
-      factor_name = ['F%d' % i for i in range(num_factors)]
+    # factors_name
+    if factors_name is None:
+      factors_name = ['F%d' % i for i in range(num_factors)]
     else:
-      factor_name = as_tuple(factor_name, t=str, N=num_factors)
+      if hasattr(factors_name, 'numpy'):
+        factors_name = factors_name.numpy()
+      if hasattr(factors_name, 'tolist'):
+        factors_name = factors_name.tolist()
+      factors_name = tf.nest.flatten(factors_name)
+      assert all(isinstance(i, string_types) for i in factors_name), \
+        "All factors' name must be string types, but given: %s" % \
+          str(factors_name)
+    # store the attributes
     self.factors = factors
-    self.factor_name = [str(i) for i in factor_name]
+    self.factors_name = [str(i) for i in factors_name]
     self.factor_labels = [np.unique(x) for x in factors.T]
     self.factor_sizes = [len(lab) for lab in self.factor_labels]
     if not isinstance(random_state, np.random.RandomState):
@@ -84,7 +93,7 @@ class Factor(object):
 
   def __str__(self):
     text = 'Factor:'
-    for name, labels in zip(self.factor_name, self.factor_labels):
+    for name, labels in zip(self.factors_name, self.factor_labels):
       text += ' [%d]%s: %s\n' % (len(labels), name, ', '.join(
           [str(i) for i in labels]))
     return text
@@ -109,7 +118,7 @@ class Factor(object):
     r"""Sample a batch of factors with output shape `[num, num_factor]`.
 
     Arguments:
-      known : A Dictionary, mapping from factor_name/factor_index to
+      known : A Dictionary, mapping from factors_name/factor_index to
         factor_value/factor_value_index, this establishes a list of known
         factors to sample from the unknown factors.
       num : An Integer
@@ -126,7 +135,7 @@ class Factor(object):
     if not isinstance(known, dict):
       known = dict(known)
     known = {
-        self.factor_name.index(k)
+        self.factors_name.index(k)
         if isinstance(k, string_types) else int(k): v \
           for k, v in known.items()
     }

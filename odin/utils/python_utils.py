@@ -644,7 +644,7 @@ def select_path(*paths, default=None, create_new=False):
 # Warnings and Exception
 # ===========================================================================
 @contextmanager
-def catch_warnings_error(w):
+def catch_warnings_error(*w):
   """ This method turn any given warnings into exception
 
   use: `warnings.Warning` for all warnings
@@ -657,17 +657,31 @@ def catch_warnings_error(w):
   >>>   except RuntimeWarning as w:
   >>>     pass
   """
+  all_warnings = []
+  for i in w:
+    if isinstance(i, (tuple, list)):
+      all_warnings += list(i)
+    else:
+      all_warnings.append(i)
   with warnings.catch_warnings():
-    warnings.filterwarnings(action='error', category=w)
+    for w in all_warnings:
+      warnings.filterwarnings(action='ignore', category=w)
     yield
 
 
 @contextmanager
-def catch_warnings_ignore(w):
+def catch_warnings_ignore(*w):
   """ This method ignore any given warnings
 
   use: `warnings.Warning` for all warnings
   """
+  all_warnings = []
+  for i in w:
+    if isinstance(i, (tuple, list)):
+      all_warnings += list(i)
+    else:
+      all_warnings.append(i)
   with warnings.catch_warnings():
-    warnings.filterwarnings(action='ignore', category=w)
+    for w in all_warnings:
+      warnings.filterwarnings(action='ignore', category=w)
     yield
