@@ -16,8 +16,8 @@ def plot_heatmap(data,
                  yticklabels=None,
                  xlabel=None,
                  ylabel=None,
-                 colorbar_title=None,
-                 colorbar=False,
+                 cbar_title=None,
+                 cbar=False,
                  fontsize=12,
                  gridline=0,
                  hide_spines=True,
@@ -29,15 +29,16 @@ def plot_heatmap(data,
                                   maxcol=None,
                                   other="black"),
                  title=None):
+  r""" """
   from matplotlib import pyplot as plt
   ax = to_axis(ax, is_3D=False)
   ax.grid(False)
   fig = ax.get_figure()
   # figsize = fig.get_size_inches()
   # prepare labels
-  if xticklabels is None:
+  if xticklabels is None and yticklabels is not None:
     xticklabels = ["X#%d" % i for i in range(data.shape[1])]
-  if yticklabels is None:
+  if yticklabels is None and xticklabels is not None:
     yticklabels = ["Y#%d" % i for i in range(data.shape[0])]
   # Plot the heatmap
   im = ax.imshow(data,
@@ -46,35 +47,35 @@ def plot_heatmap(data,
                  aspect='equal',
                  origin='upper')
   # Create colorbar
-  if colorbar:
-    cbar = plt.colorbar(im, fraction=0.03, pad=0.02)
-    if colorbar_title is not None:
-      cbar.ax.set_ylabel(colorbar_title,
-                         rotation=-90,
-                         va="bottom",
-                         fontsize=fontsize)
-  # major ticks
-  ax.set_xticks(np.arange(data.shape[1]))
-  ax.set_xticklabels(xticklabels, fontsize=fontsize)
-  ax.set_yticks(np.arange(data.shape[0]))
-  ax.set_yticklabels(list(yticklabels), fontsize=fontsize)
-  # axis label
+  if cbar:
+    cb = plt.colorbar(im, fraction=0.03, pad=0.02)
+    if cbar_title is not None:
+      cb.ax.set_ylabel(cbar_title, rotation=-90, va="bottom", fontsize=fontsize)
+  ## major ticks
+  if xticklabels is not None and yticklabels is not None:
+    ax.set_xticks(np.arange(data.shape[1]))
+    ax.set_xticklabels(xticklabels, fontsize=fontsize)
+    ax.set_yticks(np.arange(data.shape[0]))
+    ax.set_yticklabels(list(yticklabels), fontsize=fontsize)
+    # Let the horizontal axes labeling appear on top.
+    ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(),
+             rotation=-30,
+             ha="right",
+             rotation_mode="anchor")
+  else:  # turn-off all ticks
+    ax.tick_params(top=False, bottom=False, labeltop=False, labelbottom=False)
+  ## axis label
   if ylabel is not None:
     ax.set_ylabel(ylabel, fontsize=fontsize + 1)
   if xlabel is not None:
     ax.set_xlabel(xlabel, fontsize=fontsize + 1)
-  # Let the horizontal axes labeling appear on top.
-  ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
-  # Rotate the tick labels and set their alignment.
-  plt.setp(ax.get_xticklabels(),
-           rotation=-30,
-           ha="right",
-           rotation_mode="anchor")
-  # Turn spines off
+  ## Turn spines off
   if hide_spines:
     for edge, spine in ax.spines.items():
       spine.set_visible(False)
-  # minor ticks and create white grid.
+  ## minor ticks and create white grid.
   # (if no minor ticks, the image will be cut-off)
   ax.set_xticks(np.arange(data.shape[1] + 1) - .5, minor=True)
   ax.set_yticks(np.arange(data.shape[0] + 1) - .5, minor=True)
@@ -83,7 +84,7 @@ def plot_heatmap(data,
     ax.tick_params(which="minor", bottom=False, left=False)
   # set the title
   if title is not None:
-    ax.set_title(str(title), fontsize=fontsize, weight='semibold')
+    ax.set_title(str(title), fontsize=fontsize + 2, weight='semibold')
   # prepare the annotation
   if annotation is not None and annotation is not False:
     if annotation is True:
@@ -130,7 +131,7 @@ def plot_confusion_matrix(cm,
                           cmap="Blues",
                           ax=None,
                           fontsize=12,
-                          colorbar=False,
+                          cbar=False,
                           title=None,
                           **kwargs):
   r"""
@@ -174,8 +175,8 @@ def plot_confusion_matrix(cm,
       cmap=cmap,
       ax=ax,
       fontsize=fontsize,
-      colorbar=colorbar,
-      colorbar_title="Accuracy",
+      cbar=cbar,
+      cbar_title="Accuracy",
       annotation=annotation,
       text_colors=dict(diag='magenta', other='black', minrow='red'),
       title='%s(F1: %.3f)' % ('' if title is None else str(title), F1_mean),
@@ -230,8 +231,7 @@ def plot_Cnorm(cnorm,
   return ax
 
 
-def plot_weights(x, ax=None, colormap="Greys", colorbar=False,
-                 keep_aspect=True):
+def plot_weights(x, ax=None, colormap="Greys", cbar=False, keep_aspect=True):
   r'''
   Parameters
   ----------
@@ -242,9 +242,9 @@ def plot_weights(x, ax=None, colormap="Greys", colorbar=False,
   colormap : str
       colormap alias from plt.cm.Greys = 'Greys' ('spectral')
       plt.cm.gist_heat
-  colorbar : bool, 'all'
-      whether adding colorbar to plot, if colorbar='all', call this
-      methods after you add all subplots will create big colorbar
+  cbar : bool, 'all'
+      whether adding cbar to plot, if cbar='all', call this
+      methods after you add all subplots will create big cbar
       for all your plots
   path : str
       if path is specified, save png image to given path
@@ -290,11 +290,11 @@ def plot_weights(x, ax=None, colormap="Greys", colorbar=False,
   img = ax.pcolorfast(x, cmap=colormap, alpha=0.8)
   plt.grid(True)
 
-  if colorbar == 'all':
+  if cbar == 'all':
     fig = ax.get_figure()
     axes = fig.get_axes()
     fig.colorbar(img, ax=axes)
-  elif colorbar:
+  elif cbar:
     plt.colorbar(img, ax=ax)
   return ax
 
@@ -344,7 +344,7 @@ def plot_weights3D(x, colormap="Greys"):
       # plt.grid(True)
 
   plt.tight_layout()
-  # colorbar
+  # cbar
   axes = fig.get_axes()
   fig.colorbar(img, ax=axes)
   return fig
@@ -408,7 +408,7 @@ def plot_distance_heatmap(X,
                           legend_ncol=3,
                           legend_colspace=0.2,
                           fontsize=10,
-                          show_colorbar=True,
+                          cbar=True,
                           title=None):
   r"""
 
@@ -462,7 +462,7 @@ def plot_distance_heatmap(X,
     horz_bar = np.repeat(cm(order_label.T), repeats=width, axis=0)
     vert_bar = np.repeat(cm(order_label), repeats=width, axis=1)
     all_colors = np.array((cm(np.min(labels)), cm(np.max(labels))))
-  else: # use seaborn color palette here is better
+  else:  # use seaborn color palette here is better
     cm = [i + (1.,) for i in sns.color_palette(n_colors=n_labels)]
     c = np.stack([cm[i] for i in order_label.ravel()])
     horz_bar = np.repeat(np.expand_dims(c, 0), repeats=width, axis=0)
@@ -508,7 +508,7 @@ def plot_distance_heatmap(X,
   # ====== final configurations ====== #
   if title is not None:
     ax.set_title(str(title), fontsize=fontsize)
-  if show_colorbar:
+  if cbar:
     from odin.visual import plot_colorbar
     plot_colorbar(colormap,
                   vmin=np.min(distance),

@@ -255,7 +255,7 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
     else:
       cm = plt.cm.get_cmap(style[0])
       val_ = color_normalizer(val_)
-      style[0] = cm(val_, alpha=alpha)
+      style[0] = cm(val_)
     # yield for plotting
     n_art = len(artist)
     yield ax, artist, x_, y_, z_, style
@@ -290,24 +290,32 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
   if len(artist) == len(legend):
     ## colorbar (only enable when colormap is provided)
     if is_colormap and cbar:
+      mappable = plt.cm.ScalarMappable(norm=color_normalizer, cmap=cm)
+      mappable.set_clim(vmin, vmax)
       cba = plt.colorbar(
-          artist[-1],
+          mappable,
+          ax=ax,
           shrink=0.99,
           pad=0.01,
           orientation='horizontal' if cbar_horizontal else 'vertical')
-      if cbar_ticks > 0:
+      if isinstance(cbar_ticks, Number):
         cbar_range = np.linspace(vmin, vmax, num=int(cbar_ticks))
+        cbar_ticks = ['%.2g' % i for i in cbar_range]
+      elif isinstance(cbar_ticks, (tuple, list, np.ndarray)):
+        cbar_range = np.linspace(vmin, vmax, num=len(cbar_ticks))
+        cbar_ticks = [str(i) for i in cbar_ticks]
+      else:
+        raise ValueError("No support for cbar_ticks='%s'" % str(cbar_ticks))
+      cba.set_ticks(cbar_range)
+      cba.set_ticklabels(cbar_ticks)
+      if cbar_title is not None:
+        # horizontal colorbar
         if cbar_horizontal:
-          cba.ax.set_xticks(cbar_range)
-          cba.ax.set_xticklabels(['%.2g' % i for i in cbar_range])
-          if cbar_title is not None:
-            cba.ax.set_xlabel(str(cbar_title))
+          cba.ax.set_xlabel(str(cbar_title), fontsize=fontsize + 1)
+        # vertical colorbar
         else:
-          cba.ax.set_yticks(cbar_range)
-          cba.ax.set_yticklabels(['%.2g' % i for i in cbar_range])
-          if cbar_title is not None:
-            cba.ax.set_ylabel(str(cbar_title))
-        cba.ax.tick_params(labelsize=fontsize)
+          cba.ax.set_ylabel(str(cbar_title), fontsize=fontsize + 1)
+      cba.ax.tick_params(labelsize=fontsize, labelrotation=-30)
     ## plot the legend
     if len(legend_name) > 0 and bool(legend_enable):
       markerscale = 1.5
@@ -426,6 +434,7 @@ def plot_scatter(x,
     title : {None, string} (default: None)
       specific title for the subplot
   """
+  from matplotlib import pyplot as plt
   for ax, artist, x, y, z, \
     (color, marker, size) in _prepare_scatter_points(**locals()):
     kwargs = dict(
@@ -435,6 +444,7 @@ def plot_scatter(x,
         linewidths=linewidths,
         linestyle=linestyle,
         edgecolors=edgecolors,
+        alpha=alpha,
     )
     if z is not None:  # 3D plot
       art = ax.scatter(x, y, z, **kwargs)

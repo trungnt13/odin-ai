@@ -19,7 +19,7 @@ from odin.bay import distributions as obd
 from odin.bay.distributions.negative_binomial_disp import NegativeBinomialDisp
 from odin.bay.distributions.zero_inflated import ZeroInflated
 
-__all__ = ['concat_distribution']
+__all__ = ['concat_distribution', 'slice_distribution']
 
 # ===========================================================================
 # Helpers
@@ -110,7 +110,7 @@ def _with_batch_dim(tensor, dist):
 
 
 # ===========================================================================
-# Special distribution cases
+# Special distribution cases for concatenation
 # ===========================================================================
 def _MVNdiag(dists, axis, kwargs):
   scale = [d.scale for d in dists]
@@ -149,9 +149,6 @@ def _MVNfull(dists, axis, kwargs):
   return obd.MultivariateNormalFullCovariance(**kwargs)
 
 
-# ===========================================================================
-# Concat multiple distributions
-# ===========================================================================
 def concat_distribution(dists: List[tfd.Distribution],
                         axis: Optional[int] = None,
                         validate_args: bool = False,
@@ -240,3 +237,32 @@ def concat_distribution(dists: List[tfd.Distribution],
   dist = dist_type(**params)
 
   return dist
+
+
+# ===========================================================================
+# Slice the distribution
+# ===========================================================================
+def slice_distribution(index, dist: tfd.Distribution,
+                       name=None) -> tfd.Distribution:
+  assert isinstance(dist, tfd.Distribution), \
+    "dist must be instance of Distribution, but given: %s" % str(type(dist))
+  if name is None:
+    name = dist.name
+  ## compound distribution
+  if isinstance(dist, tfd.Independent):
+    return tfd.Independent(
+        distribution=slice_distribution(index, dist.distribution),
+        reinterpreted_batch_ndims=dist.reinterpreted_batch_ndims,
+        name=name)
+  elif isinstance(dist, ZeroInflated):
+    return ZeroInflated(\
+      count_distribution=slice_distribution(index, dist.count_distribution),
+      inflated_distribution=slice_distribution(index, dist.inflated_distribution),
+      name=name)
+
+  # this is very ad-hoc solution
+  params = dist.parameters.copy()
+  for key, val in list(params.items()):
+    if isinstance(val, (np.ndarray, tf.Tensor)):
+      params[key] = tf.gather(val, indices=index, axis=0)
+  return dist.__class__(**params)

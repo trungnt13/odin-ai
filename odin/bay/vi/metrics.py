@@ -1,3 +1,18 @@
+# coding=utf-8
+# Copyright 2018 The DisentanglementLib Authors.  All rights reserved.
+# (https://github.com/google-research/disentanglement_lib)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
@@ -6,6 +21,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import mutual_info_score
 from sklearn.metrics.cluster import entropy as entropy1D
 
+from odin.bay.vi.downstream_metrics import *
 from odin.utils import catch_warnings_ignore
 from odin.utils.mpi import MPI, get_cpu_count
 
@@ -15,9 +31,12 @@ __all__ = [
     'mutual_info_score',
     'mutual_info_estimate',
     'mutual_info_gap',
-    'separated_attr_predictability',
-    'representation_importance_matrix',
+    'representative_importance_matrix',
     'dci_scores',
+    # downstream score
+    'separated_attr_predictability',
+    'beta_vae_score',
+    'factor_vae_score',
 ]
 
 
@@ -144,64 +163,6 @@ def mutual_info_gap(representations, factors):
   return np.mean(np.divide(sorted_m[0, :] - sorted_m[1, :], entropy_[:]))
 
 
-def separated_attr_predictability(repr_train,
-                                  factor_train,
-                                  repr_test,
-                                  factor_test,
-                                  continuous_factors=False,
-                                  random_state=1234):
-  r""" The SAP score
-
-  Arguments:
-    repr_train, repr_test : `[n_samples, n_latents]`, the continuous
-      latent representation.
-    factor_train, factor_test : `[n_samples, n_factors]`. The groundtruth
-      factors, could be continuous or discrete
-    continuous_factors : A Boolean, indicate if the factor is discrete or
-      continuous
-
-  Reference:
-    Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. Variational Inference of
-      Disentangled Latent Concepts from Unlabeled Observations.
-      arXiv:1711.00848 [cs, stat].
-
-  """
-  from sklearn.svm import LinearSVC
-  num_latents = repr_train.shape[1]
-  num_factors = factor_train.shape[1]
-  # ====== compute the score matrix ====== #
-  score_matrix = np.zeros([num_latents, num_factors])
-  for i in range(num_latents):
-    for j in range(num_factors):
-      x_i = repr_train[:, i]
-      y_j = factor_train[:, j]
-      if continuous_factors:
-        # Attribute is considered continuous.
-        cov_x_i_y_j = np.cov(x_i, y_j, ddof=1)
-        cov_x_y = cov_x_i_y_j[0, 1]**2
-        var_x = cov_x_i_y_j[0, 0]
-        var_y = cov_x_i_y_j[1, 1]
-        if var_x > 1e-12:
-          score_matrix[i, j] = cov_x_y * 1. / (var_x * var_y)
-        else:
-          score_matrix[i, j] = 0.
-      else:
-        # Attribute is considered discrete.
-        x_i_test = repr_test[:, i]
-        y_j_test = factor_test[:, j]
-        classifier = LinearSVC(C=0.01,
-                               max_iter=8000,
-                               class_weight="balanced",
-                               random_state=random_state)
-        classifier.fit(np.expand_dims(x_i, axis=-1), y_j)
-        pred = classifier.predict(np.expand_dims(x_i_test, axis=-1))
-        score_matrix[i, j] = np.mean(pred == y_j_test)
-  # ====== compute_avg_diff_top_two ====== #
-  # [num_latents, num_factors]
-  sorted_matrix = np.sort(score_matrix, axis=0)
-  return np.mean(sorted_matrix[-1, :] - sorted_matrix[-2, :])
-
-
 # ===========================================================================
 # Disentanglement, completeness, informativeness
 # ===========================================================================
@@ -209,7 +170,7 @@ def disentanglement_score(importance_matrix):
   r""" Compute the disentanglement score of the representation.
 
   Arguments:
-    importance_matrix : is of shape [num_latents, num_factors].
+    importance_matrix : is of shape `[num_latents, num_factors]`.
   """
   per_code = 1. - sp.stats.entropy(importance_matrix.T + 1e-11,
                                    base=importance_matrix.shape[1])
@@ -223,7 +184,7 @@ def completeness_score(importance_matrix):
   r""""Compute completeness of the representation.
 
   Arguments:
-    importance_matrix : is of shape [num_latents, num_factors].
+    importance_matrix : is of shape `[num_latents, num_factors]`.
   """
   per_factor = 1. - sp.stats.entropy(importance_matrix + 1e-11,
                                      base=importance_matrix.shape[0])
@@ -233,7 +194,7 @@ def completeness_score(importance_matrix):
   return np.sum(per_factor * factor_importance)
 
 
-def representation_importance_matrix(repr_train,
+def representative_importance_matrix(repr_train,
                                      factor_train,
                                      repr_test,
                                      factor_test,
@@ -279,17 +240,22 @@ def dci_scores(repr_train,
   r""" Disentanglement, completeness, informativeness
 
   Arguments:
-    pass
+    repr_train, repr_test : 2-D matrix `[n_samples, latent_dim]`
+    factor_train, factor_test : 2-D matrix `[n_samples, n_factors]`
 
   Return:
     tuple of 3 scores (disentanglement, completeness, informativeness), all
       scores are higher is better.
 
+  References:
+    Based on "A Framework for the Quantitative Evaluation of Disentangled
+    Representations" (https://openreview.net/forum?id=By-7dz-AZ).
+
   Note:
     This impelentation only return accuracy on test data as informativeness
       score
   """
-  importance, train_acc, test_acc = representation_importance_matrix(
+  importance, train_acc, test_acc = representative_importance_matrix(
       repr_train, factor_train, repr_test, factor_test, random_state)
   train_acc = np.mean(train_acc)
   test_acc = np.mean(test_acc)
@@ -298,3 +264,16 @@ def dci_scores(repr_train,
   c = completeness_score(importance)
   i = test_acc
   return d, c, i
+
+
+def relative_strength(mat):
+  r""" Computes relative strength score for both axes of a correlation matrix.
+
+  Arguments:
+    mat : a Matrix. Correlation matrix with values range from -1 to 1.
+  """
+  score_x = np.mean(np.nan_to_num(\
+    np.power(np.max(mat, axis=0), 2) / np.sum(mat, axis=0), copy=False, nan=0.0))
+  score_y = np.mean(np.nan_to_num(\
+    np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1), copy=False, nan=0.0))
+  return (score_x + score_y) / 2

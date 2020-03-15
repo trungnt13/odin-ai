@@ -162,8 +162,9 @@ def fast_tsne(*X,
         tsne_version = 'multicore'
       except ImportError:
         warnings.warn(
-            "Install MulticoreTSNE from `pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git`"
-            ' to accelerate the T-SNE on multiple CPU cores.')
+            "Install MulticoreTSNE from "
+            "`pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git`"
+            " to accelerate the T-SNE on multiple CPU cores.")
   if tsne_version is None:
     from sklearn.manifold import TSNE
     tsne_version = 'sklearn'

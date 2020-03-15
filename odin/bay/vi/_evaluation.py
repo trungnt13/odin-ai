@@ -1,8 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
-import inspect
 import re
 import warnings
+from collections import OrderedDict
 from numbers import Number
 
 import numpy as np
@@ -13,6 +13,7 @@ from sklearn.linear_model import Lasso
 from tensorflow_probability import distributions as tfd
 from tqdm import tqdm
 
+from odin import search
 from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import metrics, utils
 from odin.bay.vi.data_utils import Factor
@@ -22,16 +23,6 @@ from odin.utils import as_tuple
 
 
 class _Criticizer(object):
-  r""" Probabilistic criticizer for variational mdoel
-
-  Basic progress of evaluating probabilistic model given groundtruth factors:
-    - `sample_batch`
-    - `conditioning` on known factors
-
-  Attributes:
-    pass
-
-  """
 
   def __init__(self, vae: VariationalAutoencoder, random_state=1):
     super().__init__()
@@ -52,19 +43,7 @@ class _Criticizer(object):
     self._rand = random_state
     self._is_list_inputs = None
 
-  def copy(self, random_state=None):
-    r""" Shallow copy of Criticizer and all its sampled data """
-    crt = Criticizer(
-        self._vae,
-        random_state=self.randint if random_state is None else random_state)
-    for name in dir(self):
-      if '_' == name[0] and '__' != name[:2] and name != '_rand':
-        attr = getattr(self, name)
-        if not inspect.ismethod(attr):
-          setattr(crt, name, getattr(self, name))
-    return crt
-
-  def _assert_sampled(self):
+  def assert_sampled(self):
     if self._inputs is None or \
       self._factors is None or \
         self._representations is None:
@@ -74,39 +53,39 @@ class _Criticizer(object):
 
   @property
   def inputs(self):
-    self._assert_sampled()
+    self.assert_sampled()
     return self._inputs
 
   @property
   def is_list_inputs(self):
-    self._assert_sampled()
+    self.assert_sampled()
     return self._is_list_inputs
 
   @property
   def representations(self):
-    r""" Return the learned representations distribution (i.e. the latent code)
-    for training and testing """
-    self._assert_sampled()
+    r""" Return the learned representations `distribution`
+    (i.e. the latent code) for training and testing """
+    self.assert_sampled()
     return self._representations
 
   @property
   def representations_mean(self):
     r""" Return the mean of learned representations distribution
     (i.e. the latent code) for training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [z.mean().numpy() for z in self.representations]
 
   @property
   def representations_variance(self):
     r""" Return the variance of learned representations distribution
     (i.e. the latent code) for training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [z.variance().numpy() for z in self.representations]
 
   def representations_sample(self, n=()):
     r""" Return the mean of learned representations distribution
     (i.e. the latent code) for training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [
         z.sample(sample_shape=n, seed=self.randint).numpy()
         for z in self.representations
@@ -116,27 +95,27 @@ class _Criticizer(object):
   def reconstructions(self):
     r""" Return the reconstructed distributions of inputs for training and
     testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return self._reconstructions
 
   @property
   def reconstructions_mean(self):
     r""" Return the mean of reconstructed distributions of inputs for
     training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [[j.mean().numpy() for j in i] for i in self._reconstructions]
 
   @property
   def reconstructions_variance(self):
     r""" Return the variance of reconstructed distributions of inputs for
     training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [[j.variance().numpy() for j in i] for i in self._reconstructions]
 
   def reconstructions_sample(self, n=()):
     r""" Return the mean of reconstructed distributions of inputs for
     training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return [[j.sample(sample_shape=n, seed=self.randint).numpy()
              for j in i]
             for i in self._reconstructions]
@@ -145,7 +124,7 @@ class _Criticizer(object):
   def original_factors(self):
     r""" Return the training and testing original factors, i.e. the factors
     before discretizing """
-    self._assert_sampled()
+    self.assert_sampled()
     # the original factors is the same for all samples set
     return self._original_factors
 
@@ -155,7 +134,13 @@ class _Criticizer(object):
 
   @property
   def n_representations(self):
+    r""" return the number of latent codes """
     return self.representations[0].event_shape[0]
+
+  @property
+  def n_codes(self):
+    r""" same as `n_representations`, return the number of latent codes """
+    return self.n_representations
 
   @property
   def n_train(self):
@@ -171,17 +156,17 @@ class _Criticizer(object):
   def factors(self):
     r""" Return the target variable (i.e. the factors of variation) for
     training and testing """
-    self._assert_sampled()
+    self.assert_sampled()
     return self._factors
 
   @property
   def factors_name(self):
-    self._assert_sampled()
+    self.assert_sampled()
     # the dataset is unchanged, always at 0-th index
     return np.array(self._factors_name)
 
   @property
-  def code_name(self):
+  def codes_name(self):
     return np.array(["Code#%d" % i for i in range(self.n_representations)])
 
   @property
@@ -251,7 +236,7 @@ class _Criticizer(object):
       numpy.ndarray : traversed latent codes for training and testing,
         the shape is `[len(indices) * n_samples * num, n_representations]`
     """
-    self._assert_sampled()
+    self.assert_sampled()
     num = int(num)
     n_samples = int(n_samples)
     assert num > 1 and n_samples > 0, "num > 1 and n_samples > 0"
@@ -316,7 +301,7 @@ class _Criticizer(object):
     Return:
       a new Criticizer conditioned on the known factors
     """
-    self._assert_sampled()
+    self.assert_sampled()
     known = {
         int(k) if isinstance(k, Number) else self.index(str(k)): v
         for k, v in dict(known).items()
@@ -476,7 +461,7 @@ class _Criticizer(object):
     self._original_factors = (f_original[0][ids_train], f_original[1][ids_test])
     return self
 
-  ############## Metrics
+  ############## Helpers
   def _latent_codes(self, mean=True):
     if mean:
       return [i.mean().numpy() for i in self.representations]
@@ -485,13 +470,15 @@ class _Criticizer(object):
         for i in self.representations
     ]
 
-  def mutual_info_estimate(self, mean=True, n_neighbors=3):
+  ############## Metrics
+  def cal_mutual_info_est(self, mean=True, n_neighbors=3):
+    r""" Mututal information estimation using k-Nearest Neighbor """
     mi = []
     for z, f in zip(self._latent_codes(mean), self.factors):
       mi.append(metrics.mutual_info_estimate(z, f, n_neighbors=n_neighbors))
     return tuple(mi)
 
-  def mutual_info_gap(self, mean=True):
+  def cal_mutual_info_gap(self, mean=True):
     r"""
     Arguments:
       mean : a Boolean, if True use the mean of latent distribution for
@@ -506,7 +493,137 @@ class _Criticizer(object):
       mig.append(metrics.mutual_info_gap(z, f))
     return tuple(mig)
 
-  def separated_attr_predictability(self, mean=True):
+  def cal_dci_scores(self, mean=True):
+    r""" Disentanglement, Completeness, Informativeness
+
+    References:
+      Based on "A Framework for the Quantitative Evaluation of Disentangled
+      Representations" (https://openreview.net/forum?id=By-7dz-AZ).
+    """
+    z_train, z_test = self._latent_codes(mean)
+    f_train, f_test = self.factors
+    return metrics.dci_scores(z_train,
+                              f_train,
+                              z_test,
+                              f_test,
+                              random_state=self.randint)
+
+  def cal_total_correlation(self):
+    r""" Total correlation based on fitted Gaussian """
+    samples = [qz.sample(seed=self.randint) for qz in self.representations]
+    return tuple([
+        utils.total_correlation(z, qz).numpy()
+        for z, qz in zip(samples, self.representations)
+    ])
+
+  def cal_importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
+    r""" Using ensemble algorithm to estimate the feature importance of each
+    pair of (representation, factor)
+
+    Return:
+      a matrix of shape `[n_codes, n_factors]`
+    """
+    z_train, z_test = self._latent_codes(mean)
+    f_train, f_test = self.factors
+    importance_matrix, _, _ = \
+      metrics.representative_importance_matrix(
+        z_train, f_train, z_test, f_test,
+        random_state=self.randint, algo=algo)
+    return importance_matrix
+
+  def cal_density_matrix(self, n_samples=1000, lognorm=False, n_components=2):
+    r""" """
+    n_codes = self.n_codes
+    n_factors = self.n_factors
+    qZ = self.representations[0]
+    y = self.original_factors[0]
+    if lognorm:
+      y = np.log1p(y)
+    print(y)
+    exit()
+
+  def cal_relative_disentanglement_strength(self, mean=True, method='spearman'):
+    r""" Relative strength for both axes of correlation matrix """
+    corr_matrix = self.cal_correlation_matrix(mean=mean, method=method)
+    return metrics.relative_strength(corr_matrix)
+
+  def cal_correlation_matrix(self, mean=True, method='spearman', decode=False):
+    r""" Correlation matrix of `latent codes` (row) and `groundtruth factors`
+    (column).
+
+    Arguments:
+      mean : a Boolean. Using mean as the statistics, otherwise, sampling.
+      method : {'spearman', 'pearson', 'lasso', 'avg'}
+        spearman - rank or monotonic correlation
+        pearson - linear correlation
+        lasso - lasso regression
+        avg - compute all known method then taking average
+      decode : a Boolean. If True, reorganize the row of correlation matrix
+        for the best match between code-factor (i.e. the largest diagonal sum).
+        Note: the decoding is performed on train matrix, then applied to test
+        matrix
+
+    Returns:
+      train, test : correlation matrices `[n_codes, n_factors]`
+        for both training and testing data.
+        All entries are in `[0, 1]`.
+      (optional) OrderedDict mapping from decoded factor index to
+        latent code index.
+    """
+    method = str(method).strip().lower()
+    if method in ('avg', 'avr', 'average'):
+      method = 'average'
+    all_corr = ['spearman', 'lasso', 'pearson', 'average']
+    assert isinstance(mean, bool), "mean is boolean but given: %s" % mean
+    assert method in all_corr, \
+      "Support %s correlation but given method='%s'" % (str(all_corr), method)
+    # special average mode
+    if method == 'average':
+      mat = [
+          self.cal_correlation_matrix(mean=mean, method=corr, decode=False)
+          for corr in all_corr[:-1]
+      ]
+      n = len(all_corr) - 1
+      train = sum(i[0] for i in mat) / n
+      test = sum(i[1] for i in mat) / n
+    else:
+      # start form correlation matrix
+      z_train, z_test = self._latent_codes(mean)
+      f_train, f_test = self.factors
+
+      # helper function
+      def fn_corr(x1, x2):
+        if method == 'lasso':
+          model = Lasso(random_state=self.randint, alpha=0.1)
+          model.fit(x1, x2)
+          # coef_ is [n_target, n_features], so we need transpose here
+          corr_mat = np.transpose(np.absolute(model.coef_))
+        else:
+          corr_mat = np.empty(shape=(self.n_representations, self.n_factors),
+                              dtype=np.float64)
+          for code in range(self.n_representations):
+            for fact in range(self.n_factors):
+              x, y = x1[:, code], x2[:, fact]
+              if method == 'spearman':
+                corr = sp.stats.spearmanr(x, y, nan_policy="omit")[0]
+              elif method == 'pearson':
+                corr = sp.stats.pearsonr(x, y)[0]
+              elif method == 'lasso':
+                pass
+              corr_mat[code, fact] = corr
+        return corr_mat
+
+      train, test = fn_corr(z_train, f_train), fn_corr(z_test, f_test)
+    ## decoding and return
+    if decode:
+      ids = search.diagonal_beam_search(train.T)
+      train = train[ids, :]
+      test = test[ids, :]
+      return train, test, OrderedDict(zip(range(self.n_factors), ids))
+    return train, test
+
+  ############## Downstream scores
+  def cal_separated_attr_predictability(self, mean=True):
     r"""
     Reference:
       Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. Variational Inference of
@@ -523,89 +640,58 @@ class _Criticizer(object):
                                                 random_state=self.randint)
     return sap
 
-  def dci_scores(self, mean=True):
-    r""" Disentanglement, Completeness, Informativeness """
-    z_train, z_test = self._latent_codes(mean)
-    f_train, f_test = self.factors
-    return metrics.dci_scores(z_train,
-                              f_train,
-                              z_test,
-                              f_test,
-                              random_state=self.randint)
+  def cal_betavae_score(self, mean=True, n_samples=1000, verbose=False):
+    r""" BetaVAE based score
 
-  def total_correlation(self):
-    r""" Total correlation based on fitted Gaussian """
-    samples = [qz.sample(seed=self.randint) for qz in self.representations]
-    return tuple([
-        utils.total_correlation(z, qz).numpy()
-        for z, qz in zip(samples, self.representations)
-    ])
-
-  def importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
-    r""" Using ensemble algorithm to estimate the feature importance of each
-    pair of (representation, factor)
-
-    Return:
-      a matrix of shape `[n_codes, n_factors]`
-    """
-    z_train, z_test = self._latent_codes(mean)
-    f_train, f_test = self.factors
-    importance_matrix, _, _ = \
-      metrics.representation_importance_matrix(
-        z_train, f_train, z_test, f_test,
-        random_state=self.randint, algo=algo)
-    return importance_matrix
-
-  def correlation_matrix(self, mean=True, corr_type='spearman'):
-    r"""
     Returns:
-      correlation matrices `[n_codes, n_factors]` for both training and
-        testing data
+      accuracy for train and test data
     """
-    corr_type = str(corr_type).strip().lower()
-    all_corr = {'spearman', 'lasso', 'pearson'}
-    assert corr_type in all_corr, \
-      "Support %s correlation but given corr_type='%s'" % \
-        (str(all_corr), corr_type)
-    # start form correlation matrix
-    z_train, z_test = self._latent_codes(mean)
+    z_train, z_test = self.representations
     f_train, f_test = self.factors
+    score_train = metrics.beta_vae_score(z_train,
+                                         f_train,
+                                         n_samples=n_samples,
+                                         use_mean=mean,
+                                         random_state=self.randint,
+                                         verbose=verbose)
+    score_test = metrics.beta_vae_score(z_test,
+                                        f_test,
+                                        n_samples=n_samples,
+                                        use_mean=mean,
+                                        random_state=self.randint,
+                                        verbose=verbose)
+    return score_train, score_test
 
-    # helper function
-    def fn_corr(x1, x2):
-      if corr_type == 'lasso':
-        model = Lasso(random_state=self.randint, alpha=0.1)
-        model.fit(x1, x2)
-        # coef_ is [n_target, n_features], so we need transpose here
-        corr_mat = np.transpose(np.absolute(model.coef_))
-      else:
-        corr_mat = np.empty(shape=(self.n_representations, self.n_factors),
-                            dtype=np.float64)
-        for code in range(self.n_representations):
-          for fact in range(self.n_factors):
-            x, y = x1[:, code], x2[:, fact]
-            if corr_type == 'spearman':
-              corr = sp.stats.spearmanr(x, y, nan_policy="omit")[0]
-            elif corr_type == 'pearson':
-              corr = sp.stats.pearsonr(x, y)[0]
-            elif corr_type == 'lasso':
-              pass
-            corr_mat[code, fact] = corr
-      return corr_mat
+  def cal_factorvae_score(self, mean=True, n_samples=1000, verbose=False):
+    r""" FactorVAE based score
 
-    return fn_corr(z_train, f_train), fn_corr(z_test, f_test)
+    Returns:
+      accuracy for train and test data
+    """
+    z_train, z_test = self.representations
+    f_train, f_test = self.factors
+    score_train = metrics.factor_vae_score(z_train,
+                                           f_train,
+                                           n_samples=n_samples,
+                                           use_mean=mean,
+                                           random_state=self.randint,
+                                           verbose=verbose)
+    score_test = metrics.factor_vae_score(z_test,
+                                          f_test,
+                                          n_samples=n_samples,
+                                          use_mean=mean,
+                                          random_state=self.randint,
+                                          verbose=verbose)
+    return score_train, score_test
 
   ############## Methods for summarizing
   def __str__(self):
     text = [str(self._vae)]
     text.append(" Factor name: %s" % ', '.join(self.factors_name))
-    for name, data in [
-        ("Inputs", self.inputs),
-        ("Factors", self.factors),
-        ("Original Factors", self.original_factors),
-        ("Representations", self.representations),
-        ("Reconstructions", self.reconstructions),
-    ]:
+    for name, data in [("Inputs", self.inputs), ("Factors", self.factors),
+                       ("Original Factors", self.original_factors),
+                       ("Representations", self.representations),
+                       ("Reconstructions", self.reconstructions)]:
       text.append(" " + name)
       for d, x in zip(('train', 'test'), data):
         x = d + ' : ' + ', '.join([

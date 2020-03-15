@@ -295,7 +295,7 @@ def plot_epoch(task):
             [X_count_sum, W_count_sum],
             ['Original data (Count-sum)', 'Reconstruction (Count-sum)'])):
       ax = V.subplot(grid[6:10, (i * 3):(i * 3 + 3)])
-      V.plot_scatter_heatmap(x=x[:, 0], y=x[:, 1], val=count_sum,
+      V.plot_scatter(x=x[:, 0], y=x[:, 1], val=count_sum,
                              n_samples=2000, marker=y, ax=ax, size=8,
                              legend_enable=i == 0, legend_ncol=n_classes,
                              title=name, colorbar=True, fontsize=10)

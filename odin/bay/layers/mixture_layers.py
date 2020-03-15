@@ -31,6 +31,12 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
       `mean` in alternative approach.
     scale_activation: activation function for the success rate (default
       parameterization), or the non-negative dispersion (alternative approach).
+    covariance_type : {'tril', 'diag' (default), 'spherical'/'none'}
+        String describing the type of covariance parameters to use.
+        Must be one of:
+        'tril' - each component has its own general covariance matrix
+        'diag' - each component has its own diagonal covariance matrix
+        'spherical'/'none' - each component has its own single variance
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object.
       Default value: `tfd.Distribution.sample`.
@@ -148,7 +154,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
       event_size = tf.reduce_prod(event_shape)
       loc = loc_activation(params[..., :event_size])
       scale = scale_activation(params[..., event_size:])
-      scale_tril = tfp.bijectors.ScaleTriL(
+      scale_tril = tfp.bijectors.FillScaleTriL(
           diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()))
       components = tfp.distributions.MultivariateNormalTriL(
           loc=loc, scale_tril=scale_tril(scale))
