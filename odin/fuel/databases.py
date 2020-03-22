@@ -14,7 +14,7 @@ from collections import OrderedDict, Iterator, defaultdict, MutableMapping, Mapp
 
 import numpy as np
 
-from odin.utils import async, is_string, ctext
+from odin.utils import async_thread, is_string, ctext
 
 __all__ = [
   'NoSQL',
@@ -273,7 +273,7 @@ class MmapDict(NoSQL):
       # read dictionary
       file.seek(max_position)
       pickled_indices = file.read(dict_size)
-      self._indices_dict = async(_safe_loading_indices)(
+      self._indices_dict = async_thread(_safe_loading_indices)(
           pickled_indices, self.__class__.__name__, path)
     # ====== create new file from scratch ====== #
     else:

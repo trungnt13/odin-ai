@@ -27,12 +27,13 @@ import numpy
 from odin.utils import crypto, decorators, mpi
 from odin.utils.cache_utils import *
 from odin.utils.crypto import md5_checksum, md5_folder
-from odin.utils.mpi import MPI, SharedCounter, async, async_mpi, segment_list
+from odin.utils.mpi import (MPI, SharedCounter, async_mpi, async_thread,
+                            segment_list)
 from odin.utils.np_utils import *
+from odin.utils.ordered_flag import OrderedFlag
 from odin.utils.path_utils import *
 from odin.utils.progbar import Progbar, add_notification
 from odin.utils.python_utils import *
-from odin.utils.ordered_flag import OrderedFlag
 
 try:
   from numba import jit, autojit, vectorize, guvectorize

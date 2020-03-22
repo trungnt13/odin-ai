@@ -1,8 +1,8 @@
-from __future__ import absolute_import, division, print_function
-
 import tensorflow as tf
 from tensorflow.python import keras
 
+from odin.bay.vi.autoencoder.variational_autoencoder import \
+    VariationalAutoencoder
 from odin.bay.vi.utils import permute_dims
 from odin.networks import DenseNetwork
 
@@ -79,13 +79,5 @@ class FactorDiscriminator(keras.Model):
     return self.discriminator(inputs, training=training)
 
 
-class VariationalAutoencoder(keras.Model):
-
-  def sample(self, sample_shape=(), seed=1):
-    raise NotImplementedError
-
-  def encode(self, inputs, training=None, n_mcmc=None, **kwargs):
-    raise NotImplementedError
-
-  def decode(self, latents, training=None):
-    raise NotImplementedError
+class FactorVAE(VariationalAutoencoder):
+  pass

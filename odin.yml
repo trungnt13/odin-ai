@@ -1,23 +1,33 @@
+# conda env create -f=odin.yml
+# conda activate odin
 name: odin
 channels:
   - https://conda.anaconda.org/conda-forge
   - defaults
+
 dependencies:
-  - python=3.6
+  - python=3.7
   - matplotlib
   - ipython
   - pandas
-  - scikit-learn
+  - scikit-learn>=0.22.1
   - seaborn
   - tqdm
   - dill
 
   - pip:
+    - numba>=0.48.0
     - pycrypto==2.6.1
     - tensorflow==2.1.0
     - tensorflow-probability==0.9.0
-    - tensorflow-datasets
-    - tensorflow-addons==0.5.2
+    - tensorflow-datasets>=2.1.0
+    - tensorflow-addons>=0.8.3
     - torch==1.4.0
+    - torchvision>=0.5.0
     - pytorch-lightning
     - bigarray==0.2.1
+
+# Other helpful library:
+# pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git
+# conda install -c rapidsai -c nvidia -c conda-forge -c defaults rapids=0.12 python=3.7 cudatoolkit=10.1
+# pip install umap-learn

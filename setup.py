@@ -8,6 +8,7 @@ _TENSORFLOW_VERSION = '2.1.0'
 _TENSORFLOW_PROBABILITY_VERSION = '0.9.0'
 _TENSORFLOW_ADDONS_VERSION = '0.5.2'
 _PYTORCH_VERSION = '1.4.0'
+_TORCHVISION_VERSION = '1.4.0'
 
 
 # ===========================================================================
@@ -72,7 +73,7 @@ setup(
     long_description_content_type='text/x-rst',
     url='https://github.com/imito/odin-ai',
     author='Trung Ngo Trong',
-    author_email='trung@imito.ai',
+    author_email='trungnt13@gmail.com',
     license='MIT',
     classifiers=[
         'Development Status :: 3 - Alpha',
@@ -84,10 +85,7 @@ setup(
         'Topic :: Scientific/Engineering :: Bio-Informatics',
         'Topic :: Multimedia :: Sound/Audio :: Speech',
         'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.7',
         'Natural Language :: English',
         'Operating System :: MacOS :: MacOS X',
         'Operating System :: Microsoft :: Windows',

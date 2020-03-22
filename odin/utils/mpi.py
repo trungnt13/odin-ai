@@ -148,7 +148,7 @@ class _async_task(object):
         self._async_task.join(timeout=timeout)
     return self._result
 
-def async(func=None):
+def async_thread(func=None):
   """ This create and asynchronized result using Threading instead of
   multiprocessing, you can take advantage from share memory in threading
   for async-IO using this decorator.

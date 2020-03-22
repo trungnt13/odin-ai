@@ -7,13 +7,9 @@ import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 
 __all__ = ['GaussianMixture']
 
@@ -240,7 +236,8 @@ class GaussianMixture(MixtureSameFamily):
            max_samples=None,
            batch_shape=None,
            trainable=False,
-           return_sklearn=False):
+           return_sklearn=False,
+           name=None):
     r""" This method fit a sklearn GaussianMixture, then convert it to
     tensorflow_probability GaussianMixture. Hence, the method could be use
     to initialize a trainable GaussianMixture.
@@ -259,6 +256,7 @@ class GaussianMixture(MixtureSameFamily):
     max_samples = kwargs.pop('max_samples')
     batch_shape = kwargs.pop('batch_shape')
     trainable = bool(kwargs.pop('trainable'))
+    name = kwargs.pop('name')
     ## downsample X
     if max_samples is not None and max_samples < X.shape[0]:
       ids = np.random.choice(np.arange(X.shape[0]),
@@ -301,11 +299,12 @@ class GaussianMixture(MixtureSameFamily):
             multiples=batch_shape + [1 for _ in range(len(p.shape) - len(batch_shape))])
           for p in params
       ]
-    tfp_gmm = GaussianMixture(*params,
-                              covariance_type=cov,
-                              trainable=trainable,
-                              name='Mixture%sGaussian' %
-                              gmm.covariance_type.capitalize())
+    tfp_gmm = GaussianMixture(
+        *params,
+        covariance_type=cov,
+        trainable=trainable,
+        name='Mixture%sGaussian' %
+        gmm.covariance_type.capitalize() if name is None else str(name))
     if return_sklearn:
       return tfp_gmm, gmm
     return tfp_gmm

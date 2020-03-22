@@ -29,7 +29,7 @@ def plot_heatmap(data,
                                   maxcol=None,
                                   other="black"),
                  title=None):
-  r""" """
+  r""" Showing heatmap matrix """
   from matplotlib import pyplot as plt
   ax = to_axis(ax, is_3D=False)
   ax.grid(False)

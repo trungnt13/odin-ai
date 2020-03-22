@@ -10,14 +10,14 @@ import scipy as sp
 import tensorflow as tf
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import Lasso
-from tensorflow_probability import distributions as tfd
 from tqdm import tqdm
 
 from odin import search
+from odin.bay import distributions as tfd
 from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import metrics, utils
 from odin.bay.vi.data_utils import Factor
-from odin.bay.vi.variational_autoencoder import VariationalAutoencoder
+from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
 from odin.ml import dimension_reduce
 from odin.utils import as_tuple
 
@@ -228,6 +228,7 @@ class _Criticizer(object):
                  n_samples=2,
                  mode='linear'):
     r"""
+
     Arguments:
       indices : a list of Integer or None. The indices of latent code for
         traversing. If None, all latent codes are used.
@@ -531,16 +532,83 @@ class _Criticizer(object):
         random_state=self.randint, algo=algo)
     return importance_matrix
 
-  def cal_density_matrix(self, n_samples=1000, lognorm=False, n_components=2):
+  def cal_density_matrix(self,
+                         n_samples=1000,
+                         lognorm=False,
+                         n_components=2,
+                         normalize_by_code=True,
+                         decode=False):
     r""" """
+    n_samples = int(n_samples)
     n_codes = self.n_codes
     n_factors = self.n_factors
     qZ = self.representations[0]
     y = self.original_factors[0]
     if lognorm:
       y = np.log1p(y)
-    print(y)
-    exit()
+    ### train the Gaussian mixture on the factors
+    f_gmm = []
+    for fidx, (f, fname) in enumerate(zip(y.T, self.factors_name)):
+      gmm = tfd.GaussianMixture.init(f[:, np.newaxis],
+                                     n_components=n_components,
+                                     covariance_type='diag',
+                                     batch_shape=None,
+                                     name=fname)
+      f_gmm.append(gmm)
+    ### the code Gaussian
+    dist_type = type(qZ)
+    if isinstance(qZ, tfd.Independent):
+      dist_type = type(qZ.distribution)
+    support_type = (tfd.MultivariateNormalDiag, tfd.Normal)
+    if dist_type not in support_type:
+      raise RuntimeError(
+          "No support posterior distribution: %s, the support distributions are: %s"
+          % (str(dist_type), str(support_type)))
+    z_gau = []
+    for mean, stddev, code_name in zip(tf.transpose(qZ.mean()),
+                                       tf.transpose(qZ.stddev()),
+                                       self.codes_name):
+      mean = tf.cast(mean, tf.float64)
+      stddev = tf.cast(stddev, tf.float64)
+      z_gau.append(
+          tfd.Independent(tfd.Normal(loc=mean, scale=stddev, name=code_name),
+                          reinterpreted_batch_ndims=1))
+    ### calculate the KL divergence
+    density_matrix = np.empty(shape=(n_codes, n_factors), dtype=np.float64)
+    for zidx, gau in enumerate(z_gau):
+      for fidx, gmm in enumerate(f_gmm):
+        # non-analytic KL(q=gau||p=gmm)
+        samples = gau.sample(n_samples)
+        qllk = gau.log_prob(samples)
+        pllk = tf.reduce_sum(tf.reshape(
+            gmm.log_prob(tf.reshape(samples, (-1, 1))), (n_samples, -1)),
+                             axis=1)
+        kl = tf.reduce_mean(qllk - pllk)
+        density_matrix[zidx, fidx] = kl.numpy()
+    if bool(normalize_by_code):
+      density_matrix = density_matrix / \
+        np.sum(density_matrix, axis=1, keepdims=True)
+    ### decoding
+    if decode:
+      ids = search.diagonal_beam_search(density_matrix.T)
+      density_matrix = density_matrix[ids]
+      return density_matrix, ids
+    return density_matrix
+
+  def cal_disentangled_density(self,
+                               n_samples=1000,
+                               lognorm=False,
+                               n_components=2):
+    r""" Higher is better, this estimate the disparity between diagonal
+    components and off-diagonal components """
+    density_mat, ids = self.cal_density_matrix(n_samples=n_samples,
+                                               lognorm=lognorm,
+                                               n_components=n_components,
+                                               normalize_by_code=True,
+                                               decode=True)
+    diag = np.diagflat(np.diag(density_mat))
+    off_diag = density_mat - diag
+    return np.mean(diag) - np.mean(off_diag)
 
   def cal_relative_disentanglement_strength(self, mean=True, method='spearman'):
     r""" Relative strength for both axes of correlation matrix """

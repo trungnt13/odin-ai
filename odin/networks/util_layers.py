@@ -7,12 +7,15 @@ from tensorflow.python import keras
 from tensorflow.python.keras import Sequential
 from tensorflow.python.keras.engine.input_spec import InputSpec
 from tensorflow.python.keras.layers import (Activation, BatchNormalization,
-                                            Conv1D, Dense, Lambda, Layer)
+                                            Conv1D, Dense, Lambda, Layer,
+                                            Wrapper)
 from tensorflow.python.keras.utils import conv_utils
 from tensorflow.python.ops import variable_scope
 
 __all__ = [
     'Identity',
+    'ReshapeMCMC',
+    'ExpandDims',
     'Parallel',
     'BatchRenormalization',
     'Convolution1DTranspose',
@@ -170,14 +173,64 @@ class BatchRenormalization(BatchNormalization):
 class Identity(Layer):
 
   def __init__(self, name=None, **kwargs):
-    super(Identity, self).__init__(name=name, **kwargs)
+    super().__init__(name=name, **kwargs)
     self.supports_masking = True
 
-  def call(self, inputs, training=None):
+  def call(self, inputs, training=None, mask=None):
     return inputs
 
   def compute_output_shape(self, input_shape):
     return input_shape
+
+
+class ExpandDims(Layer):
+
+  def __init__(self, axis, name=None):
+    super().__init__(name=name)
+    self.axis = tf.nest.flatten(axis)
+
+  def call(self, inputs, **kwargs):
+    for ax in self.axis:
+      if tf.is_tensor(inputs):
+        inputs = tf.expand_dims(inputs, axis=ax)
+      else:
+        inputs = [tf.expand_dims(i, axis=ax) for i in inputs]
+    return inputs
+
+
+class ReshapeMCMC(Wrapper):
+  r""" This wrapper merge the sample dimensions into the batch dimension
+  so deep learning operators (e.g. convolution, recurrent, ...) could be
+  executed without modification.
+
+  For example, with `ndim=2`, `input_shape=(2, 1, 128, 5)`, the layer do
+  linear projection with 3 hidden units, then `output_shape=(2, 1, 128, 3)`,
+  and the inputs is reshaped to `(256, 5)` before feeding to the layer.
+  """
+
+  def __init__(self, layer, sample_ndim=1, name=None):
+    super().__init__(layer=layer, name=name)
+    self.sample_ndim = int(sample_ndim)
+
+  def call(self, inputs, **kwargs):
+    # This is a little hack to ignore MCMC dimension in the decoder
+    shape = tf.shape(inputs)
+    input_ndim = len(inputs.shape)
+    sample_ndim = self.sample_ndim
+    if sample_ndim > 0:
+      assert input_ndim >= sample_ndim + 2, \
+        "Number of MCMC dims is %d, but shape: %s" % (sample_ndim, str(shape))
+      # flatten the input
+      new_shape = tf.concat([(-1,), shape[-(sample_ndim - 1):]], axis=0)
+      inputs = tf.reshape(inputs, new_shape)
+      # create the outputs
+      inputs = self.layer(inputs, **kwargs)
+      # restore the sample shape
+      new_shape = tf.concat([(shape[0], shape[1], -1),
+                             tf.shape(inputs)[1:]],
+                            axis=0)
+      inputs = tf.reshape(inputs, new_shape)
+    return inputs
 
 
 class Parallel(Sequential):

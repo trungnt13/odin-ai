@@ -96,8 +96,8 @@ def kl_divergence(q,
                   reduce_axis=(),
                   reverse=True,
                   auto_remove_independent=True):
-  r""" Calculating KL(q(x)||p(x)) (if reverse=True) or
-  KL(p(x)||q(x)) (if reverse=False)
+  r""" Calculating `KL(q(x)||p(x))` (if reverse=True) or
+  `KL(p(x)||q(x))` (if reverse=False)
 
   Arguments:
     q : `tensorflow_probability.Distribution`, the approximated posterior
@@ -146,6 +146,7 @@ def kl_divergence(q,
   print(q.sample())
   ```
   """
+  ## removing Independent
   if auto_remove_independent:
     # only remove Independent if one is Indepedent and another is not.
     if isinstance(q, tfd.Independent) and not isinstance(p, tfd.Independent):
@@ -156,6 +157,7 @@ def kl_divergence(q,
     q, p = [q, p][::-1]
   if bool(analytic):
     return tfd.kl_divergence(q, p)
+  ## non-analytic KL
   # using MCMC sampling for estimating the KL
   if callable(q_sample):
     z = q_sample(q)

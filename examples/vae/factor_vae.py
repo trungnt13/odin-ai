@@ -181,7 +181,7 @@ class FactorVAE(keras.Model):
 # Create the network
 # ===========================================================================
 vae = FactorVAE(input_shape, zdim=ZDIM)
-discriminator = bay.vae.FactorDiscriminator(zdim=ZDIM, hdim=1000, nlayer=6)
+discriminator = bay.vi.FactorDiscriminator(zdim=ZDIM, hdim=1000, nlayer=6)
 opt_vae = tf.optimizers.Adam(learning_rate=1e-4,
                              beta_1=0.9,
                              beta_2=0.999,
