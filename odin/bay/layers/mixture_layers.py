@@ -81,21 +81,6 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     self.covariance = str(covariance).strip().lower()
 
   @staticmethod
-  def components_size(event_shape, covariance):
-    event_size = tf.convert_to_tensor(value=tf.reduce_prod(event_shape),
-                                      name='params_size',
-                                      dtype_hint=tf.int32)
-    event_size = dist_util.prefer_static_value(event_size)
-    covariance = covariance.lower()
-    if covariance == 'none':
-      return event_size + event_size
-    elif covariance == 'diag':  # only the diagonal
-      return event_size + event_size
-    elif covariance in ('full', 'tril'):  # lower triangle
-      return event_size + event_size * (event_size + 1) // 2
-    return NotImplementedError("No support for covariance: '%s'" % covariance)
-
-  @staticmethod
   def new(params,
           event_shape=(),
           n_components=2,
@@ -140,7 +125,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                                    scale=scale,
                                    validate_args=validate_args),
           reinterpreted_batch_ndims=tf.size(input=event_shape))
-    #
+    # Diagonal
     elif covariance == 'diag':
       def_name = 'MultivariateGaussianDiag'
       loc, scale = tf.split(params, 2, axis=-1)
@@ -148,7 +133,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
       scale = scale_activation(scale)
       components = tfp.distributions.MultivariateNormalDiag(loc=loc,
                                                             scale_diag=scale)
-    #
+    # lower-triangle
     elif covariance in ('full', 'tril'):
       def_name = 'MultivariateGaussianTriL'
       event_size = tf.reduce_prod(event_shape)
@@ -158,7 +143,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
           diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()))
       components = tfp.distributions.MultivariateNormalTriL(
           loc=loc, scale_tril=scale_tril(scale))
-    #
+    # error
     else:
       raise NotImplementedError("No support for covariance: '%s'" % covariance)
     ### the mixture distribution
@@ -167,7 +152,23 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
         components_distribution=components,
         name="Mixture%s" % def_name if name is None else str(name))
 
-  def params_size(self):
+  @staticmethod
+  def components_size(event_shape, covariance):
+    event_size = tf.convert_to_tensor(value=tf.reduce_prod(event_shape),
+                                      name='params_size',
+                                      dtype_hint=tf.int32)
+    event_size = dist_util.prefer_static_value(event_size)
+    covariance = covariance.lower()
+    if covariance == 'none':
+      return event_size + event_size
+    elif covariance == 'diag':  # only the diagonal
+      return event_size + event_size
+    elif covariance in ('full', 'tril'):  # lower triangle
+      return event_size + event_size * (event_size + 1) // 2
+    return NotImplementedError("No support for covariance: '%s'" % covariance)
+
+  @staticmethod
+  def params_size(event_shape, n_components, covariance):
     r"""Number of `params` needed to create a `MixtureNegativeBinomialLayer`
     distribution.
 
@@ -175,12 +176,12 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
      params_size: The number of parameters needed to create the mixture
        distribution.
     """
-    n_components = tf.convert_to_tensor(value=self.n_components,
+    n_components = tf.convert_to_tensor(value=n_components,
                                         name='n_components',
                                         dtype_hint=tf.int32)
     n_components = dist_util.prefer_static_value(n_components)
     component_params_size = MixtureGaussianLayer.components_size(
-        self.event_shape, self.covariance)
+        event_shape, covariance)
     return n_components + n_components * component_params_size
 
 

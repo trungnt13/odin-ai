@@ -38,6 +38,25 @@ __all__ = [
 ]
 
 
+def _params_size(layer, event_shape):
+  spec = inspect.getfullargspec(layer.params_size)
+  args = spec.args + spec.kwonlyargs
+  if 'event_size' == args[0]:
+    event_shape = tf.reduce_prod(event_shape)
+  # extra kwargs from function closure
+  kw = {}
+  if len(args) > 1:
+    fn = layer._make_distribution_fn
+    closures = {
+        k: v.cell_contents
+        for k, v in zip(fn.__code__.co_freevars, fn.__closure__)
+    }
+    for k in args[1:]:
+      if k in closures:
+        kw[k] = closures[k]
+  return layer.params_size(event_shape, **kw)
+
+
 class DenseDistribution(Dense):
   r""" Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
@@ -113,9 +132,7 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    params_size = self._posterior_layer.params_size() \
-      if 'self' in inspect.getfullargspec(post_layer.params_size).args else \
-        post_layer.params_size(event_shape)
+    params_size = _params_size(self._posterior_layer, event_shape)
     super(DenseDistribution,
           self).__init__(units=params_size,
                          activation=activation,
