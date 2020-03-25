@@ -16,8 +16,9 @@ from odin import search
 from odin.bay import distributions as tfd
 from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import metrics, utils
+from odin.bay.vi.autoencoder.variational_autoencoder import \
+    VariationalAutoencoder
 from odin.bay.vi.data_utils import Factor
-from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
 from odin.ml import dimension_reduce
 from odin.utils import as_tuple
 

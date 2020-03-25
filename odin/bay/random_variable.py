@@ -16,6 +16,8 @@ from odin.bay import layers as obl
 from odin.bay.distribution_alias import parse_distribution
 from odin.utils.cache_utils import cache_memory
 
+__all__ = ['RandomVariable']
+
 
 # ===========================================================================
 # Helper

@@ -102,7 +102,9 @@ def md5_folder(path,
   return digest
 
 
-def md5_checksum(file_or_path, chunksize=512 * 1024, base64_encode=False):
+def md5_checksum(file_or_path,
+                 chunksize=512 * 1024,
+                 base64_encode=False) -> str:
   r""" Calculating MD5 checksum
 
   Parameters

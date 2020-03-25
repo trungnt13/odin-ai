@@ -1,7 +1,13 @@
 import hashlib
 import os
+import shutil
+import tarfile
+import time
+import urllib
 import zipfile
 from functools import partial
+from numbers import Number
+from urllib.request import urlretrieve
 
 import numpy as np
 import requests
@@ -9,10 +15,15 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tqdm import tqdm
 
-from odin.utils import as_tuple, batching, get_all_files, get_datasetpath
+from bigarray import MmapArray, MmapArrayWriter
+from odin.utils import (as_tuple, batching, get_all_files, get_datasetpath,
+                        one_hot)
 from odin.utils.crypto import md5_checksum
 
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
 def download_file_from_google_drive(id, destination, chunk_size=32 * 1024):
   r""" Original code for dowloading the dataset:
   https://github.com/suvojit-0x55aa/celebA-HQ-dataset-download """
@@ -41,6 +52,26 @@ def download_file_from_google_drive(id, destination, chunk_size=32 * 1024):
         f.write(chunk)
 
 
+def _partition(part, train=None, valid=None, test=None, unlabeled=None):
+  part = str(part).lower().strip()
+  if 'train' in part:
+    ret = train
+  elif 'valid' in part:
+    ret = valid
+  elif 'test' in part:
+    ret = test
+  elif 'unlabeled' in part:
+    ret = unlabeled
+  else:
+    raise ValueError("No support for partition with name: '%s'" % part)
+  if ret is None:
+    raise ValueError("No data for parition with name: '%s'" % part)
+  return ret
+
+
+# ===========================================================================
+# Datasets
+# ===========================================================================
 class CelebA(object):
   r""" The dataset must be manually downloaded from Google Drive:
     https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFuzTm8
@@ -129,16 +160,19 @@ class CelebA(object):
                      prefetch=tf.data.experimental.AUTOTUNE,
                      cache='',
                      parallel=tf.data.experimental.AUTOTUNE,
-                     return_mode=0):
-    r"""
+                     partition='train',
+                     inc_labels=True) -> tf.data.Dataset:
+    r""" Data
+
     Arguments:
-      return_mode: An Integer. Determine which data will be returned
-          - 0 : only return the images `(tf.uint8, (64, 64, 3))`
-          - 1 : only return the labels `(tf.float64, (6,))`
-          - otherwise return both images and labels
+      partition : {'train', 'valid', 'test'}
+      inc_labels : a Boolean. If True, return both image and label, otherwise,
+        only image is returned.
 
     Return:
       train, valid, test: `tensorflow.data.Dataset`
+         - image `(tf.float32, (64, 64, 3))`
+         - label `(tf.float32, (40,))`
     """
     image_shape = [218, 178, 3]
     if image_size is not None:
@@ -147,9 +181,6 @@ class CelebA(object):
       # offset_height, offset_width, target_height, target_width
       crop_offset = ((height - image_size) // 2, 0, image_size, image_size)
 
-    if cache is not None:
-      cache = as_tuple(cache, N=3, t=str)
-
     def read(path):
       img = tf.io.decode_jpeg(tf.io.read_file(path))
       img.set_shape(image_shape)
@@ -157,40 +188,34 @@ class CelebA(object):
       if image_size is not None:
         img = tf.image.resize(img, (height, image_size),
                               preserve_aspect_ratio=True,
-                              antialias=True)
+                              antialias=False)
         if square_image:
           img = tf.image.crop_to_bounding_box(img, *crop_offset)
       return img
 
-    if return_mode == 1:
-      train = tf.data.Dataset.from_tensor_slices(self.train_attr)
-      valid = tf.data.Dataset.from_tensor_slices(self.valid_attr)
-      test = tf.data.Dataset.from_tensor_slices(self.test_attr)
-    else:
-      train = tf.data.Dataset.from_tensor_slices(self.train_files).map(
-          read, parallel)
-      valid = tf.data.Dataset.from_tensor_slices(self.valid_files).map(
-          read, parallel)
-      test = tf.data.Dataset.from_tensor_slices(self.test_files).map(
-          read, parallel)
+    ### select partition
+    images, attrs = _partition(
+        partition,
+        train=(self.train_files, self.train_attr),
+        valid=(self.valid_files, self.valid_attr),
+        test=(self.test_files, self.test_attr),
+    )
+    images = tf.data.Dataset.from_tensor_slices(images).map(read, parallel)
+    if inc_labels:
+      attrs = tf.data.Dataset.from_tensor_slices(self.train_attr)
 
-    datasets = [train, valid, test]
     if cache is not None:
-      datasets = [ds.cache(path) for ds, path in zip(datasets, cache)]
+      images = images.cache(str(cache))
     # return both image and attributes
-    if return_mode != 0:
-      datasets = [
-          tf.data.Dataset.zip((img, tf.data.Dataset.from_tensor_slices(att)))
-          for img, att in zip(datasets, (self.train_attr, self.valid_attr,
-                                         self.test_attr))
-      ]
+    if inc_labels:
+      images = tf.data.Dataset.zip((images, attrs))
     # shuffle must be called after cache
     if shuffle is not None:
-      datasets[0] = datasets[0].shuffle(int(shuffle))
-    datasets = [ds.batch(batch_size, drop_remainder) for ds in datasets]
+      images = images.shuffle(int(shuffle))
+    images = images.batch(batch_size, drop_remainder)
     if prefetch is not None:
-      datasets = [ds.prefetch(prefetch) for ds in datasets]
-    return tuple(datasets)
+      images = images.prefetch(prefetch)
+    return images
 
 
 class Shapes3D(object):
@@ -222,7 +247,6 @@ class Shapes3D(object):
                path='~/tensorflow_datasets/3dshapes.h5',
                cache_dir=None,
                seed=8):
-    from bigarray import MmapArrayWriter, MmapArray
     path = os.path.abspath(os.path.expanduser(path))
     assert os.path.exists(path), "Path to file %s must exists" % path
     self.path = path
@@ -257,8 +281,9 @@ class Shapes3D(object):
     rand = np.random.RandomState(seed=seed)
     n = len(self.images)
     ids = rand.permutation(n)
-    self.train_indices = ids[:int(0.6 * n)]
-    self.valid_indices = ids[int(0.6 * n):int(0.8 * n)]
+    # train:70% valid:10% test:20%
+    self.train_indices = ids[:int(0.7 * n)]
+    self.valid_indices = ids[int(0.7 * n):int(0.8 * n)]
     self.test_indices = ids[int(0.8 * n):]
 
   @staticmethod
@@ -280,7 +305,8 @@ class Shapes3D(object):
                      prefetch=tf.data.experimental.AUTOTUNE,
                      cache='',
                      parallel=tf.data.experimental.AUTOTUNE,
-                     return_mode=0):
+                     partition='train',
+                     inc_labels=True) -> tf.data.Dataset:
     r""" Create tensorflow dataset for train, valid and test
       The images are normalized in range [-1, 1]
 
@@ -304,51 +330,48 @@ class Shapes3D(object):
         be processed sequentially. If the value `tf.data.experimental.AUTOTUNE`
         is used, then the number of parallel calls is set dynamically based
         on available CPU.
-      return_mode: An Integer. Determine which data will be returned
-          - 0 : only return the images `(tf.uint8, (64, 64, 3))`
-          - 1 : only return the labels `(tf.float64, (6,))`
-          - otherwise return both images and labels
+      partition : {'train', 'valid', 'test'}
+      inc_labels : a Boolean. If True, return both image and label, otherwise,
+        only image is returned.
+
+    Return:
+      train, valid, test: `tensorflow.data.Dataset`
+         - image `(tf.float32, (64, 64, 3))`
+         - label `(tf.float32, (6,))`
     """
-    if cache is not None:
-      cache = as_tuple(cache, N=3, t=str)
-    if return_mode == 0:  # only images
-      types = tf.uint8
-      shapes = tf.TensorShape(self.images.shape[1:])
-    elif return_mode == 1:  # only labels
-      types = tf.float64
-      shapes = tf.TensorShape(self.labels.shape[1:])
-    else:  # both images and labels, note: a tuple must be used here
-      types = (tf.uint8, tf.float64)
-      shapes = (tf.TensorShape(self.images.shape[1:]),
-                tf.TensorShape(self.labels.shape[1:]))
+    # both images and labels, note: a tuple must be used here
+    types = (tf.uint8, tf.float32)
+    shapes = (tf.TensorShape(self.images.shape[1:]),
+              tf.TensorShape(self.labels.shape[1:]))
+    if not inc_labels:
+      types = types[0]
+      shapes = shapes[0]
 
     def gen(indices):
       for i in indices:
-        if return_mode == 0:
-          yield self.images[i]
-        elif return_mode == 1:
-          yield self.labels[i]
+        if inc_labels:
+          yield self.images[i], tf.cast(self.labels[i], dtype=tf.float32)
         else:
-          yield self.images[i], self.labels[i]
+          yield self.images[i]
 
     base_dataset = lambda ids: tf.data.Dataset.from_generator(
         partial(gen, indices=ids), output_types=types, output_shapes=shapes
     ).batch(batch_size, drop_remainder).map(Shapes3D.process, parallel)
-
-    train = base_dataset(self.train_indices)
-    valid = base_dataset(self.valid_indices)
-    test = base_dataset(self.test_indices)
+    ### get the right partition
+    indices = _partition(
+        partition,
+        train=self.train_indices,
+        valid=self.valid_indices,
+        test=self.test_indices,
+    )
+    ds = base_dataset(indices)
     if cache is not None:
-      train = train.cache(cache[0])
-      valid = valid.cache(cache[1])
-      test = test.cache(cache[2])
+      ds = ds.cache(str(cache))
     if shuffle is not None:
-      train = train.shuffle(shuffle)
+      ds = ds.shuffle(shuffle)
     if prefetch is not None:
-      train = train.prefetch(prefetch)
-      valid = valid.prefetch(prefetch)
-      test = test.prefetch(prefetch)
-    return train, valid, test
+      ds = ds.prefetch(prefetch)
+    return ds
 
   def validate_data(self, path=None):
     if path is None:
@@ -379,6 +402,7 @@ class LegoFaces(object):
   def __init__(self, path):
     super().__init__()
 
+
 class SLT10(object):
   r""" Overview
    - 10 classes: airplane, bird, car, cat, deer, dog, horse, monkey,
@@ -399,4 +423,120 @@ class SLT10(object):
   Link:
     http://ai.stanford.edu/~acoates/stl10
   """
-  pass
+  URL = "http://ai.stanford.edu/~acoates/stl10/stl10_binary.tar.gz"
+  MD5 = "91f7769df0f17e558f3565bffb0c7dfb"
+  MD5_EXTRACTED = "6d49c882f94d0659c0aea2ac58068e9c"
+  IMAGE_SHAPE = (3, 96, 96)
+
+  def __init__(self, path="~/slt10"):
+    path = os.path.abspath(os.path.expanduser(path))
+    if not os.path.exists(path):
+      os.makedirs(path)
+    assert os.path.isdir(path), "path to '%s' is not a directory" % path
+    self.path = path
+    filename = SLT10.URL.split('/')[-1]
+    filepath = os.path.join(self.path, filename)
+    ### download
+    if os.path.exists(filepath):
+      if md5_checksum(filepath) != SLT10.MD5:
+        os.remove(filepath)
+    if not os.path.exists(filepath):
+      prog = tqdm(desc="Download", total=-1, unit="MB")
+
+      def _progress(count, block_size, total_size):
+        # to MB
+        total_size = total_size / 1024. / 1024.
+        block_size = block_size / 1024. / 1024.
+        if prog.total < 0:
+          prog.total = total_size
+        prog.update(block_size)
+
+      filepath, _ = urlretrieve(SLT10.URL, filepath, reporthook=_progress)
+    ### extract the data
+    # All files include:
+    # class_names.txt  fold_indices.txt
+    # test_X.bin  test_y.bin
+    # train_X.bin  train_y.bin
+    # unlabeled_X.bin
+    data_path = os.path.join(self.path,
+                             os.path.basename(filename).split('.')[0])
+    self.data_path = data_path
+    if os.path.exists(data_path):
+      if md5_checksum(data_path) != SLT10.MD5_EXTRACTED:
+        shutil.rmtree(data_path)
+    if not os.path.exists(data_path):
+      with tarfile.open(filepath, 'r:gz') as f:
+        print("Extracting image files ...")
+        f.extractall(self.path)
+    ### read all the images
+    self.bin_files = {
+        name.split('.')[0]: os.path.join(data_path, name)
+        for name in os.listdir(data_path)
+        if '.bin' in name
+    }
+    with open(os.path.join(data_path, "class_names.txt"), 'r') as f:
+      self.class_names = np.array([line.strip() for line in f])
+
+  def create_dataset(self,
+                     batch_size=64,
+                     image_size=64,
+                     drop_remainder=False,
+                     shuffle=1000,
+                     prefetch=tf.data.experimental.AUTOTUNE,
+                     cache='',
+                     parallel=tf.data.experimental.AUTOTUNE,
+                     partition='train',
+                     inc_labels=True) -> tf.data.Dataset:
+    r"""
+    Arguments:
+      partition : {'train', 'valid', 'test'}
+      inc_labels : a Boolean. If True, return both image and label, otherwise,
+        only image is returned.
+
+    Return :
+      train, test, unlabeled : `tensorflow.data.Dataset`
+        image - `(tf.float32, (64, 64, 3))`
+        label - `(tf.float32, (10,))`
+    """
+    if isinstance(image_size, Number) and image_size == 96:
+      image_size = None
+    ### select partition
+    images_path, labels_path = _partition(
+        partition,
+        train=(self.bin_files['train_X'], self.bin_files['train_y']),
+        test=(self.bin_files['test_X'], self.bin_files['test_y']),
+        unlabeled=(self.bin_files['unlabeled_X'], None),
+    )
+    X = np.reshape(np.fromfile(images_path, dtype=np.uint8),
+                   (-1,) + SLT10.IMAGE_SHAPE)
+    if labels_path is None:  # unlabled data
+      inc_labels = False
+    if inc_labels:
+      y = np.fromfile(labels_path, dtype=np.uint8) - 1
+      y = one_hot(y, len(self.class_names)).astype(np.float32)
+    ### read and resize the data
+    def resize(img):
+      img = tf.clip_by_value(tf.cast(img, tf.float32) / 255., 1e-6, 1. - 1e-6)
+      img = tf.transpose(img, perm=(1, 2, 0))
+      if image_size is not None:
+        img = tf.image.resize(img, (image_size, image_size),
+                              preserve_aspect_ratio=False,
+                              antialias=False)
+      return img
+
+    ### processing
+    images = tf.data.Dataset.from_tensor_slices(X).map(resize, parallel)
+    if inc_labels:
+      labels = tf.data.Dataset.from_tensor_slices(y)
+    if cache is not None:
+      images = images.cache(str(cache))
+    # return both image and attributes
+    if inc_labels:
+      images = tf.data.Dataset.zip((images, labels))
+    # shuffle must be called after cache
+    if shuffle is not None:
+      images = images.shuffle(int(shuffle))
+    images = images.batch(batch_size, drop_remainder)
+    if prefetch is not None:
+      images = images.prefetch(prefetch)
+    return images
