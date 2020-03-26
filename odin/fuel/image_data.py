@@ -7,66 +7,18 @@ import urllib
 import zipfile
 from functools import partial
 from numbers import Number
-from urllib.request import urlretrieve
 
 import numpy as np
-import requests
 import tensorflow as tf
-import tensorflow_datasets as tfds
 from tqdm import tqdm
 
 from bigarray import MmapArray, MmapArrayWriter
+from odin.fuel._image_data1 import (BinarizedAlphaDigits, BinarizedMNIST,
+                                    _partition)
 from odin.utils import (as_tuple, batching, get_all_files, get_datasetpath,
                         one_hot)
 from odin.utils.crypto import md5_checksum
-
-
-# ===========================================================================
-# Helpers
-# ===========================================================================
-def download_file_from_google_drive(id, destination, chunk_size=32 * 1024):
-  r""" Original code for dowloading the dataset:
-  https://github.com/suvojit-0x55aa/celebA-HQ-dataset-download """
-  URL = "https://docs.google.com/uc?export=download"
-  URL = "https://drive.google.com/uc?id="
-  session = requests.Session()
-
-  response = session.get(URL, params={'id': id}, stream=True)
-
-  token = None
-  for key, value in response.cookies.items():
-    if key.startswith('download_warning'):
-      token = value
-  if token:
-    params = {'id': id, 'confirm': token}
-    response = session.get(URL, params=params, stream=True)
-
-  total_size = int(response.headers.get('content-length', 0))
-  with open(destination, "wb") as f:
-    for chunk in tqdm(response.iter_content(chunk_size),
-                      total=total_size,
-                      unit='B',
-                      unit_scale=True,
-                      desc=destination):
-      if chunk:  # filter out keep-alive new chunks
-        f.write(chunk)
-
-
-def _partition(part, train=None, valid=None, test=None, unlabeled=None):
-  part = str(part).lower().strip()
-  if 'train' in part:
-    ret = train
-  elif 'valid' in part:
-    ret = valid
-  elif 'test' in part:
-    ret = test
-  elif 'unlabeled' in part:
-    ret = unlabeled
-  else:
-    raise ValueError("No support for partition with name: '%s'" % part)
-  if ret is None:
-    raise ValueError("No data for parition with name: '%s'" % part)
-  return ret
+from odin.utils.net_utils import download_and_extract, download_google_drive
 
 
 # ===========================================================================
@@ -424,57 +376,24 @@ class SLT10(object):
     http://ai.stanford.edu/~acoates/stl10
   """
   URL = "http://ai.stanford.edu/~acoates/stl10/stl10_binary.tar.gz"
-  MD5 = "91f7769df0f17e558f3565bffb0c7dfb"
-  MD5_EXTRACTED = "6d49c882f94d0659c0aea2ac58068e9c"
+  MD5_DOWNLOAD = "91f7769df0f17e558f3565bffb0c7dfb"
+  MD5_EXTRACT = "6d49c882f94d0659c0aea2ac58068e9c"
   IMAGE_SHAPE = (3, 96, 96)
 
   def __init__(self, path="~/slt10"):
-    path = os.path.abspath(os.path.expanduser(path))
-    if not os.path.exists(path):
-      os.makedirs(path)
-    assert os.path.isdir(path), "path to '%s' is not a directory" % path
-    self.path = path
-    filename = SLT10.URL.split('/')[-1]
-    filepath = os.path.join(self.path, filename)
-    ### download
-    if os.path.exists(filepath):
-      if md5_checksum(filepath) != SLT10.MD5:
-        os.remove(filepath)
-    if not os.path.exists(filepath):
-      prog = tqdm(desc="Download", total=-1, unit="MB")
-
-      def _progress(count, block_size, total_size):
-        # to MB
-        total_size = total_size / 1024. / 1024.
-        block_size = block_size / 1024. / 1024.
-        if prog.total < 0:
-          prog.total = total_size
-        prog.update(block_size)
-
-      filepath, _ = urlretrieve(SLT10.URL, filepath, reporthook=_progress)
-    ### extract the data
-    # All files include:
-    # class_names.txt  fold_indices.txt
-    # test_X.bin  test_y.bin
-    # train_X.bin  train_y.bin
-    # unlabeled_X.bin
-    data_path = os.path.join(self.path,
-                             os.path.basename(filename).split('.')[0])
-    self.data_path = data_path
-    if os.path.exists(data_path):
-      if md5_checksum(data_path) != SLT10.MD5_EXTRACTED:
-        shutil.rmtree(data_path)
-    if not os.path.exists(data_path):
-      with tarfile.open(filepath, 'r:gz') as f:
-        print("Extracting image files ...")
-        f.extractall(self.path)
+    self.path, self.extract_path = download_and_extract(
+        path,
+        SLT10.URL,
+        extract=True,
+        md5_download=SLT10.MD5_DOWNLOAD,
+        md5_extract=SLT10.MD5_EXTRACT)
     ### read all the images
     self.bin_files = {
-        name.split('.')[0]: os.path.join(data_path, name)
-        for name in os.listdir(data_path)
+        name.split('.')[0]: os.path.join(self.extract_path, name)
+        for name in os.listdir(self.extract_path)
         if '.bin' in name
     }
-    with open(os.path.join(data_path, "class_names.txt"), 'r') as f:
+    with open(os.path.join(self.extract_path, "class_names.txt"), 'r') as f:
       self.class_names = np.array([line.strip() for line in f])
 
   def create_dataset(self,

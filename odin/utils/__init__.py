@@ -29,6 +29,7 @@ from odin.utils.cache_utils import *
 from odin.utils.crypto import md5_checksum, md5_folder
 from odin.utils.mpi import (MPI, SharedCounter, async_mpi, async_thread,
                             segment_list)
+from odin.utils.net_utils import *
 from odin.utils.np_utils import *
 from odin.utils.ordered_flag import OrderedFlag
 from odin.utils.path_utils import *
@@ -414,9 +415,12 @@ def signal_handling(sigint=None, sigtstp=None, sigquit=None):
   orig_tstp = signal.getsignal(signal.SIGTSTP)
   orig_quit = signal.getsignal(signal.SIGQUIT)
 
-  if sigint is not None: signal.signal(signal.SIGINT, sigint)
-  if sigtstp is not None: signal.signal(signal.SIGTSTP, sigtstp)
-  if sigquit is not None: signal.signal(signal.SIGQUIT, sigquit)
+  if sigint is not None:
+    signal.signal(signal.SIGINT, sigint)
+  if sigtstp is not None:
+    signal.signal(signal.SIGTSTP, sigtstp)
+  if sigquit is not None:
+    signal.signal(signal.SIGQUIT, sigquit)
 
   yield
   # reset
@@ -924,54 +928,6 @@ def flatten_list(x, level=None):
 
 
 # ===========================================================================
-# Online
-# ===========================================================================
-def get_file(fname, origin, outdir, verbose=False):
-  r'''
-  Arguments:
-    fname: output file name
-    origin: url, link
-    outdir: path to output dir
-  '''
-  from six.moves.urllib.request import urlretrieve
-  from six.moves.urllib.error import HTTPError, URLError
-  fpath = os.path.join(outdir, fname)
-  # ====== remove empty folder ====== #
-  if os.path.exists(fpath):
-    if os.path.isdir(fpath) and len(os.listdir(fpath)) == 0:
-      shutil.rmtree(fpath)
-  # ====== download package ====== #
-  if not os.path.exists(fpath):
-    if verbose:
-      prog = Progbar(target=-1,
-                     name="Downloading: %s" % os.path.basename(origin),
-                     print_report=True,
-                     print_summary=True)
-
-    def dl_progress(count, block_size, total_size):
-      if verbose:
-        if prog.target < 0:
-          prog.target = total_size
-        else:
-          prog.add(count * block_size - prog.seen_so_far)
-
-    ###
-    error_msg = 'URL fetch failure on {}: {} -- {}'
-    try:
-      try:
-        urlretrieve(origin, fpath, dl_progress)
-      except URLError as e:
-        raise Exception(error_msg.format(origin, e.errno, e.reason))
-      except HTTPError as e:
-        raise Exception(error_msg.format(origin, e.code, e.msg))
-    except (Exception, KeyboardInterrupt) as e:
-      if os.path.exists(fpath):
-        os.remove(fpath)
-      raise
-  return fpath
-
-
-# ===========================================================================
 # Package utils
 # ===========================================================================
 def package_installed(name, version=None):
@@ -1109,7 +1065,8 @@ def ordered_set(seq):
   seen = {}
   result = []
   for marker in seq:
-    if marker in seen: continue
+    if marker in seen:
+      continue
     seen[marker] = 1
     result.append(marker)
   return result
@@ -1367,7 +1324,8 @@ def exec_commands(cmds, print_progress=True):
   failed: list of failed command
 
   '''
-  if not cmds: return []  # empty list
+  if not cmds:
+    return []  # empty list
   if not isinstance(cmds, (list, tuple)):
     cmds = [cmds]
   else:

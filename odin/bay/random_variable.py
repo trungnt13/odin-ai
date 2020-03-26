@@ -72,7 +72,7 @@ def _default_prior(event_shape, layer, prior):
                        eq=True,
                        order=False,
                        unsafe_hash=False,
-                       frozen=True)
+                       frozen=False)
 class RandomVariable:
   r""" Description of a random variable for the Bayesian model.
 
@@ -117,7 +117,9 @@ class RandomVariable:
   kwargs: dict = dataclasses.field(default_factory=dict)
 
   def __post_init__(self):
-    assert isinstance(self.posterior, string_types)
+    self.posterior = str(self.posterior)
+    self.event_shape = tf.nest.flatten(self.event_shape)
+    self.name = str(self.name)
 
   ######## Basic methods
   def keys(self):
@@ -204,7 +206,9 @@ class RandomVariable:
     return False
 
   ######## create posterior distribution
-  def create_posterior(self, name=None) -> obl.DistributionLambda:
+  def create_posterior(self,
+                       input_shape=None,
+                       name=None) -> obl.DistributionLambda:
     r""" Initiate a Distribution for the random variable """
     prior = self.prior
     event_shape = tf.nest.flatten(self.event_shape)
@@ -228,8 +232,13 @@ class RandomVariable:
       activation = 'linear'
     # ====== create distribution layers ====== #
     activation = kwargs.pop('activation', activation)
+    kw = {}
+    if input_shape is not None:
+      kw['input_shape'] = input_shape
+    ### create the layer
     if posterior in ('mdn', 'mixdiag', 'mixfull', 'mixtril'):
       kwargs.pop('covariance', None)
+      kwargs.update(kw)
       layer = obl.MixtureDensityNetwork(event_shape,
                                         loc_activation=activation,
                                         scale_activation='softplus1',
@@ -242,14 +251,14 @@ class RandomVariable:
                                         **kwargs)
       layer.set_prior()
     else:
-      layer = obl.DenseDistribution(
-          event_shape,
-          posterior=distribution_layer,
-          prior=_default_prior(event_shape, distribution_layer, prior),
-          activation=activation,
-          posterior_kwargs=kwargs,
-          name=name,
-      )
+      layer = obl.DenseDistribution(event_shape,
+                                    posterior=distribution_layer,
+                                    prior=_default_prior(
+                                        event_shape, distribution_layer, prior),
+                                    activation=activation,
+                                    posterior_kwargs=kwargs,
+                                    name=name,
+                                    **kw)
     ### custom loss as log_prob
     if llk_fn is not None:
       layer.log_prob = types.MethodType(llk_fn, layer)

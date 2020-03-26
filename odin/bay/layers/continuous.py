@@ -493,10 +493,10 @@ class MultivariateNormalLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(
-            t, event_size, covariance, parse_activation(loc_activation, self),
-            parse_activation(scale_activation, self), validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, tf.reduce_prod(event_size), covariance,
+                                 parse_activation(loc_activation, self),
+                                 parse_activation(scale_activation, self),
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -510,28 +510,34 @@ class MultivariateNormalLayer(DistributionLambda):
     covariance = str(covariance).lower().strip()
     assert covariance in ('full', 'tril', 'diag'), \
     "No support for given covariance: '%s'" % covariance
-    floc = loc_activation
-    fscale = scale_activation
+    if name is None:
+      name = "MultivariateNormal%s" % covariance.capitalize()
+    # parameters
     params = tf.convert_to_tensor(value=params, name='params')
+    loc = loc_activation(params[..., :event_size])
+    scale = scale_activation(params[..., event_size:])
+    ### the distribution
     if covariance == 'tril':
-      scale_tril = tfb.ScaleTriL(diag_shift=np.array(
-          1e-5, params.dtype.as_numpy_dtype()),
-                                 validate_args=validate_args)
-      return tfd.MultivariateNormalTriL(loc=floc(params[..., :event_size]),
-                                        scale_tril=scale_tril(
-                                            fscale(params[..., event_size:])),
-                                        validate_args=validate_args)
+      scale_tril = tfb.FillScaleTriL(
+          diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()),
+          validate_args=validate_args,
+      )
+      return tfd.MultivariateNormalTriL(loc=loc,
+                                        scale_tril=scale_tril(scale),
+                                        validate_args=validate_args,
+                                        name=name)
     elif covariance == 'diag':
-      return tfd.MultivariateNormalDiag(loc=floc(params[..., :event_size]),
-                                        scale_diag=fscale(
-                                            params[..., event_size:]),
-                                        validate_args=validate_args)
+      return tfd.MultivariateNormalDiag(loc=loc,
+                                        scale_diag=scale,
+                                        validate_args=validate_args,
+                                        name=name)
     elif covariance == 'full':
-      return tfd.MultivariateNormalFullCovariance(
-          loc=floc(params[..., :event_size]),
-          covariance_matrix=tf.reshape(fscale(params[..., event_size:]),
-                                       (event_size, event_size)),
-          validate_args=validate_args)
+      return tfd.MultivariateNormalFullCovariance(loc=loc,
+                                                  covariance_matrix=tf.reshape(
+                                                      scale,
+                                                      (event_size, event_size)),
+                                                  validate_args=validate_args,
+                                                  name=name)
 
   @staticmethod
   def params_size(event_size, covariance='diag', name=None):

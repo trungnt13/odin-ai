@@ -9,7 +9,6 @@ dependencies:
   - python=3.7
   - matplotlib
   - ipython
-  - pandas
   - scikit-learn>=0.22.1
   - seaborn
   - tqdm
@@ -26,6 +25,7 @@ dependencies:
     - torchvision>=0.5.0
     - pytorch-lightning
     - bigarray==0.2.1
+    - pandas>=1.0.3
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git

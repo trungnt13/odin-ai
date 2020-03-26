@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -183,7 +179,7 @@ class DenseDistribution(Dense):
                          self.__class__.__name__)
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
-  def call(self, inputs, training=None, n_mcmc=1, projection=True, prior=None):
+  def call(self, inputs, training=None, n_mcmc=(), projection=True, prior=None):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
@@ -195,12 +191,17 @@ class DenseDistribution(Dense):
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
     # modifying the Lambda to return given number of n_mcmc samples
-    self._n_mcmc[0] = n_mcmc
+    self._n_mcmc.clear()
+    for i in tf.nest.flatten(n_mcmc):
+      self._n_mcmc.append(i)
+    # create posterior distribution
     posterior = self.posterior_layer(params, training=training)
     self._last_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(
-        posterior, prior=self.prior if prior is None else prior, n_mcmc=n_mcmc)
+        posterior,
+        prior=self.prior if prior is None else prior,
+        n_mcmc=tf.cast(tf.reduce_prod(self._n_mcmc), tf.int32))
     return posterior
 
   def kl_divergence(self, prior=None, analytic=True, n_mcmc=1, reverse=True):

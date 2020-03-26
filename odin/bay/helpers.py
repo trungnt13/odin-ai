@@ -175,8 +175,8 @@ class KLdivergence:
   r""" This class freezes the arguments of `kl_divergence` so it could be call
   later without the required arguments.
 
-  Calculating KL(q(x)||p(x)) (if reverse=True) or
-  KL(p(x)||q(x)) (if reverse=False)
+    - Calculating KL(q(x)||p(x)) (if reverse=True) or
+    - KL(p(x)||q(x)) (if reverse=False)
 
   Arguments:
     posterior : `tensorflow_probability.Distribution`, the approximated

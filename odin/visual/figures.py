@@ -22,11 +22,11 @@ from scipy import stats
 from six import string_types
 from six.moves import range, zip
 
-from odin.visual.plot_utils import *
 from odin.visual.heatmap_plot import *
+from odin.visual.histogram_plot import *
+from odin.visual.plot_utils import *
 from odin.visual.scatter_plot import *
 from odin.visual.stats_plot import *
-from odin.visual.histogram_plot import *
 
 # try:
 #     import seaborn # import seaborn for pretty plot
@@ -831,16 +831,16 @@ def plot_spectrogram(x,
 
 
 def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
-  '''
+  r"""
   Parameters
   ----------
   x : 2D-gray or 3D-color images, or list of (2D, 3D images)
-      for color image the color channel is second dimension
+      for color image the color channel is the first dimension
   tile_shape : tuple
       resized shape of images
   tile_spacing : tuple
       space betwen rows and columns of images
-  '''
+  """
   from matplotlib import pyplot as plt
   if not isinstance(X, (tuple, list)):
     X = [X]

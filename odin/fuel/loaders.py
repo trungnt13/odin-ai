@@ -144,10 +144,6 @@ class DataLoader(object):
 # ===========================================================================
 # Images dataset
 # ===========================================================================
-class MNIST(DataLoader):
-  pass
-
-
 class MNIST_original(DataLoader):
   pass
 
