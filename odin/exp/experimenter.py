@@ -15,16 +15,6 @@ from contextlib import contextmanager
 from copy import deepcopy
 from numbers import Number
 
-from hydra._internal.config_loader import ConfigLoader
-from hydra._internal.core_plugins import BasicLauncher
-from hydra._internal.hydra import Hydra, HydraConfig
-from hydra._internal.pathlib import Path
-from hydra._internal.utils import (create_config_search_path, get_args_parser,
-                                   run_hydra)
-from hydra.plugins.common.utils import (configure_log, filter_overrides,
-                                        run_job, setup_globals,
-                                        split_config_path)
-from omegaconf import DictConfig, OmegaConf, open_dict
 from pandas import DataFrame
 from six import string_types
 
@@ -32,6 +22,21 @@ from odin.utils import (as_tuple, clean_folder, get_all_files,
                         get_formatted_datetime)
 from odin.utils.crypto import md5_checksum, md5_folder
 from odin.utils.mpi import MPI
+
+try:
+  from hydra._internal.config_loader import ConfigLoader
+  from hydra._internal.core_plugins import BasicLauncher
+  from hydra._internal.hydra import Hydra, HydraConfig
+  from hydra._internal.pathlib import Path
+  from hydra._internal.utils import (create_config_search_path, get_args_parser,
+                                     run_hydra)
+  from hydra.plugins.common.utils import (configure_log, filter_overrides,
+                                          run_job, setup_globals,
+                                          split_config_path)
+  from omegaconf import DictConfig, OmegaConf, open_dict
+except ImportError as e:
+  raise ImportError(
+      "Experimenter requires hydra-core library, 'pip install hydra-core'")
 
 # ===========================================================================
 # Helpers
@@ -61,6 +66,7 @@ $CONFIG
 
 """
 
+YAML_REGEX = re.compile(r"\w+: \w+")
 
 def _abspath(path):
   if '$' in path:
@@ -175,56 +181,33 @@ def _to_sqltype(obj):
 
 
 # ===========================================================================
-# SQLlite
-# ===========================================================================
-class ExperimentManager():
-
-  def __init__(self, exp):
-    assert isinstance(exp, Experimenter), \
-      "exp must be instance of Experimenter, but given: %s" % str(type(exp))
-    self.path = _abspath(os.path.join(exp._save_path, 'exp.log'))
-
-  def update_status(self):
-    pass
-
-  def close(self):
-    pass
-
-
-class SQLExperimentManager(ExperimentManager):
-
-  @property
-  def connection(self) -> sqlite3.Connection:
-    if not hasattr(self, '_connection'):
-      self._connection = sqlite3.connect(self.path,
-                                         timeout=self.timeout,
-                                         check_same_thread=True)
-    return self._connection
-
-  @contextmanager
-  def cursor(self) -> sqlite3.Cursor:
-    if not hasattr(self, '_cursor'):
-      self._cursor = self.connection.cursor()
-    yield self._cursor
-    self._connection.commit()
-
-  def close(self):
-    if hasattr(self, '_connection'):
-      if hasattr(self, '_cursor'):
-        self._cursor.close()
-        del self._cursor
-      self._connection.close()
-      del self._connection
-
-
-# ===========================================================================
 # Main class
 # ===========================================================================
 _INSTANCES = {}
 
 
 class Experimenter():
-  r"""
+  r""" Experiment management using hydra
+
+  Arguments:
+    save_path : path to a folder for saving the experiments
+    config_path : path to a folder contains all yaml configurations files
+    ncpu : number of process when multirun (-m) option is enable.
+    exclude_keys : list of String. Keys will be excluded when hashing
+      the configuration to create experiments' ID.
+    consistent_model : a Boolean. If True, check if MD5 of saved model
+      is the same as MD5 of loaded model.
+
+  Methods:
+    on_load_data(cfg: DictConfig)
+      called at the beginning, everytime, for loading data
+    on_create_model(cfg: DictConfig)
+      called only when first train a model with given configuration
+    on_load_model(path: str)
+      called when pretrained model detected
+    on_train(cfg: DictConfig, model_path: str)
+      call when training start
+
   """
 
   def __init__(self,
@@ -237,14 +220,23 @@ class Experimenter():
     if hasattr(self, '_configs'):
       return
     self.ncpu = int(ncpu)
-    # ====== check save path ====== #
+    ### check save path
     self._save_path = _abspath(save_path)
     if os.path.isfile(self._save_path):
       raise ValueError("save_path='%s' must be a folder" % self._save_path)
     if not os.path.exists(self._save_path):
       os.mkdir(self._save_path)
-    self._manager = ExperimentManager(self)
-    # ====== load configs ====== #
+    ### load configs
+    # the config given by string
+    if not os.path.exists(config_path) and \
+      len(YAML_REGEX.findall(config_path)) > 1:
+      config_dir = os.path.join(self.save_path, "configs")
+      if not os.path.exists(config_dir):
+        os.makedirs(config_dir)
+      path = os.path.join(config_dir, 'base.yaml')
+      with open(path, 'w') as f:
+        f.write(config_path.strip())
+      config_path = path
     self.config_path = _abspath(config_path)
     assert os.path.isfile(self.config_path), \
       "Config file does not exist: %s" % self.config_path
@@ -252,6 +244,7 @@ class Experimenter():
     self.config_loader = ConfigLoader(config_search_path=search_path,
                                       default_strict=False)
     self._configs = self.load_configuration()
+    ### others
     self._all_keys = set(_all_keys(self._configs, base=""))
     self._exclude_keys = as_tuple(exclude_keys, t=string_types)
     self.consistent_model = bool(consistent_model)
@@ -309,12 +302,12 @@ class Experimenter():
 
   ####################### Property
   @property
-  def exclude_keys(self):
-    return self._exclude_keys
+  def save_path(self):
+    return self._save_path
 
   @property
-  def manager(self) -> ExperimentManager:
-    return self._manager
+  def exclude_keys(self):
+    return self._exclude_keys
 
   @property
   def db_path(self):
@@ -421,10 +414,6 @@ class Experimenter():
     pass
 
   def on_load_model(self, path: str):
-    r""" Cleaning """
-    pass
-
-  def on_train(self, cfg: DictConfig):
     r""" Cleaning """
     pass
 

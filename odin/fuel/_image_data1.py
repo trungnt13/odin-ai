@@ -44,7 +44,6 @@ class BinarizedMNIST(object):
 
   def create_dataset(self,
                      batch_size=64,
-                     image_size=64,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,

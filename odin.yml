@@ -26,6 +26,8 @@ dependencies:
     - pytorch-lightning
     - bigarray==0.2.1
     - pandas>=1.0.3
+    - hydra-core
+
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git
