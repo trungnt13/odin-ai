@@ -25,10 +25,33 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
   return ret
 
 
+class ImageDataset:
+
+  @property
+  def shape(self):
+    raise NotImplementedError()
+
+  @property
+  def is_binary(self):
+    raise NotImplementedError()
+
+  def create_dataset(self,
+                     batch_size=64,
+                     drop_remainder=False,
+                     shuffle=1000,
+                     prefetch=tf.data.experimental.AUTOTUNE,
+                     cache='',
+                     parallel=None,
+                     partition='train',
+                     inc_labels=False,
+                     **kwargs) -> tf.data.Dataset:
+    raise NotImplementedError()
+
+
 # ===========================================================================
 # Dataset
 # ===========================================================================
-class BinarizedMNIST(object):
+class BinarizedMNIST(ImageDataset):
   r""" BinarizedMNIST """
 
   def __init__(self):
@@ -37,6 +60,10 @@ class BinarizedMNIST(object):
         name='binarized_mnist',
         split=['train', 'validation', 'test'],
         as_supervised=False)
+
+  @property
+  def is_binary(self):
+    return True
 
   @property
   def shape(self):

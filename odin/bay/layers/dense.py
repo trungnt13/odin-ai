@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -146,7 +150,10 @@ class DenseDistribution(Dense):
 
   @property
   def event_shape(self):
-    return tf.nest.flatten(self._event_shape)
+    shape = self._event_shape
+    if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape)):
+      shape = tf.nest.flatten(shape)
+    return shape
 
   @property
   def event_size(self):

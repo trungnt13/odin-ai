@@ -1,10 +1,10 @@
+import inspect
 import os
 import pickle
 import sys
 import warnings
 from collections import defaultdict
 from numbers import Number
-import inspect
 
 import numpy as np
 import tensorflow as tf
@@ -13,11 +13,32 @@ from tensorflow.python.eager.def_function import Function
 
 from odin.utils import as_tuple
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
 _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
 _CHECKPOINT_MANAGER = {}
 
+def _validate_optimize(func):
+  assert callable(func), "optimize must be callable."
+  if isinstance(func, Function):
+    args = func.function_spec.arg_names
+  else:
+    spec = inspect.getfullargspec(func)
+    args = spec.args + spec.kwonlyargs
+  template = ['tape', 'training', 'n_iter']
+  assert 'tape' in args, \
+    "tape (i.e. GradientTape) must be in arguments list of optimize function."
+  args = args[2:] if 'self' == args[0] else args[1:]
+  assert all(a in template for a in args), \
+    "optimize function must has the following arguments: %s; but given: %s"\
+      % (template, args)
+  return args
 
+# ===========================================================================
+# Main
+# ===========================================================================
 class Trainer(object):
   r""" Simple training procedure """
 
@@ -266,21 +287,6 @@ class Trainer(object):
       return Trainer.SIGNAL_TERMINATE
 
   @staticmethod
-  def validate_optimize(func):
-    assert callable(func), "optimize must be callable."
-    if isinstance(func, Function):
-      args = func.function_spec.arg_names
-    else:
-      args = inspect.getfullargspec(func).args
-    template = ['tape', 'training', 'n_iter']
-    assert 'tape' in args, \
-      "tape (i.e. GradientTape) must be in arguments list of optimize function."
-    assert all(a in template for a in args[1:]), \
-      "optimize function must has the following arguments: %s; but given: %s"\
-        % (template, args)
-    return args
-
-  @staticmethod
   def apply_gradients(tape, optimizer, loss, model_or_weights):
     r"""
     Arguments:
@@ -394,7 +400,7 @@ class Trainer(object):
                               name='n_iter')
 
   def fit(self,
-          ds,
+          train_ds,
           optimize,
           valid_ds=None,
           valid_freq=1000,
@@ -407,11 +413,11 @@ class Trainer(object):
     r""" A simplified fitting API
 
     Arugments:
-      ds : tf.data.Dataset. Training dataset.
+      train_ds : tf.data.Dataset. Training dataset.
       optimize : Callable. Optimization function, return loss and a list of
         metrics. The input arguments must be:
           - ('inputs', 'tape', 'training', 'n_iter');
-        and the function returns:
+        and the function must returns:
           - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
       valid_ds : tf.data.Dataset. Validation dataset
       valid_freq : Integer. The frequency of validation task, based on number
@@ -423,22 +429,27 @@ class Trainer(object):
         (in second).
       max_iter : An Interger or `None`. Maximum number of iteration for
         training. If `max_iter <= 0`, iterate the training data until the end.
-      callback : Callable. The callback will be called after every fixed number
-        of iteration according to `valid_freq`.
+      callback : Callable take no input arguments.
+        The callback will be called after every fixed number of iteration
+        according to `valid_freq`.
+
+    Example:
+      def optimize(inputs, tape, n_iter, training):
+        return loss, dict(llk=0, div=0, elbo=0)
     """
     autograph = int(autograph)
     output_stream = sys.stdout
     if log_path is not None:
       output_stream = 'file://%s' % log_path
     ### Prepare the data
-    assert isinstance(ds, tf.data.Dataset), \
-      'ds must be instance of tf.data.Datasets'
+    assert isinstance(train_ds, tf.data.Dataset), \
+      'train_ds must be instance of tf.data.Datasets'
     if valid_ds is not None:
       assert isinstance(valid_ds, tf.data.Dataset), \
         'valid_ds must be instance of tf.data.Datasets'
     valid_freq = int(valid_freq)
     ### optimizing function
-    optimize_args = Trainer.validate_optimize(optimize)
+    optimize_args = _validate_optimize(optimize)
 
     ### helper function for training iteration
     def step(n_iter, inputs, training):
@@ -497,7 +508,7 @@ class Trainer(object):
       start_time = tf.timestamp()
       last_iter = tf.identity(self.n_iter)
       total_iter = 0
-      for inputs in ds:
+      for inputs in train_ds:
         self.n_iter.assign_add(1.)
         # ====== validation ====== #
         if self.n_iter % valid_freq == 0:
@@ -553,6 +564,7 @@ class Trainer(object):
     ### train and return
     # train = tf.function(train)
     train()
+    return self
 
   def plot_learning_curves(self,
                            path="/tmp/tmp.pdf",

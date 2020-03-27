@@ -189,8 +189,12 @@ class KLdivergence:
     reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in
       other word, placing low probability to where data does not occur).
-      Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
-      at anywhere data occur (i.e. averagely fitting the data).
+      Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
+      propagation place high probability at anywhere data occur
+      (i.e. averagely fitting the data).
+    keepdims : a Boolean. If True, expand the dimension to preserve the MCMC
+      dimension in case of analytic KL.
+
   Note:
     this class return 0. if the prior is not given (i.e. prior=None)
   """
@@ -200,12 +204,14 @@ class KLdivergence:
                prior=None,
                analytic=False,
                n_mcmc=1,
-               reverse=True):
+               reverse=True,
+               keepdims=False):
     self.posterior = posterior
     self.prior = prior
     self.analytic = bool(analytic)
-    self.n_mcmc = int(n_mcmc)
+    self.n_mcmc = tf.reduce_prod(n_mcmc)
     self.reverse = bool(reverse)
+    self.keepdims = bool(keepdims)
 
   def __str__(self):
     return '<KL post:%s prior:%s analytic:%s reverse:%s #mcmc:%d>' % \
@@ -215,16 +221,25 @@ class KLdivergence:
   def __repr__(self):
     return self.__str__()
 
-  def __call__(self, prior=None, analytic=None, n_mcmc=None, reverse=None):
+  def __call__(self,
+               prior=None,
+               analytic=None,
+               n_mcmc=None,
+               reverse=None,
+               keepdims=False):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
     n_mcmc = self.n_mcmc if n_mcmc is None else int(n_mcmc)
     reverse = self.reverse if reverse is None else bool(reverse)
+    keepdims = self.keepdims if keepdims is None else bool(keepdims)
     if prior is None:
       return 0.
-    return kl_divergence(q=self.posterior,
-                         p=prior,
-                         analytic=analytic,
-                         reverse=reverse,
-                         q_sample=n_mcmc,
-                         auto_remove_independent=True)
+    div = kl_divergence(q=self.posterior,
+                        p=prior,
+                        analytic=analytic,
+                        reverse=reverse,
+                        q_sample=n_mcmc,
+                        auto_remove_independent=True)
+    if tf.rank(div) > 0 and analytic and keepdims:
+      div = tf.expand_dims(div, axis=0)
+    return div

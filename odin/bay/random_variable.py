@@ -6,6 +6,7 @@ import types
 from copy import deepcopy
 from typing import List
 
+import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 from six import string_types
@@ -118,7 +119,10 @@ class RandomVariable:
 
   def __post_init__(self):
     self.posterior = str(self.posterior)
-    self.event_shape = tf.nest.flatten(self.event_shape)
+    shape = self.event_shape
+    if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape) or
+            isinstance(shape, np.ndarray)):
+      self.event_shape = tf.nest.flatten(self.event_shape)
     self.name = str(self.name)
 
   ######## Basic methods
@@ -211,7 +215,7 @@ class RandomVariable:
                        name=None) -> obl.DistributionLambda:
     r""" Initiate a Distribution for the random variable """
     prior = self.prior
-    event_shape = tf.nest.flatten(self.event_shape)
+    event_shape = self.event_shape
     posterior = self.posterior
     kwargs = dict(self.kwargs)
     llk_fn = None  # custom log_prob

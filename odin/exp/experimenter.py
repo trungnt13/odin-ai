@@ -68,6 +68,7 @@ $CONFIG
 
 YAML_REGEX = re.compile(r"\w+: \w+")
 
+
 def _abspath(path):
   if '$' in path:
     if not re.search(r"\$\{\w+\}", path):
@@ -191,7 +192,9 @@ class Experimenter():
 
   Arguments:
     save_path : path to a folder for saving the experiments
-    config_path : path to a folder contains all yaml configurations files
+    config_path : String. Two option for providing the configuration file
+      - path to a yaml file : base configuraition
+      - the yaml content itself, stored in string
     ncpu : number of process when multirun (-m) option is enable.
     exclude_keys : list of String. Keys will be excluded when hashing
       the configuration to create experiments' ID.
@@ -203,7 +206,7 @@ class Experimenter():
       called at the beginning, everytime, for loading data
     on_create_model(cfg: DictConfig)
       called only when first train a model with given configuration
-    on_load_model(path: str)
+    on_load_model(cfg: DictConfig, path: str)
       called when pretrained model detected
     on_train(cfg: DictConfig, model_path: str)
       call when training start
@@ -248,6 +251,17 @@ class Experimenter():
     self._all_keys = set(_all_keys(self._configs, base=""))
     self._exclude_keys = as_tuple(exclude_keys, t=string_types)
     self.consistent_model = bool(consistent_model)
+    self._train_mode = True
+
+  def train(self):
+    r""" Prepare this experimenter for training models """
+    self._train_mode = True
+    return self
+
+  def eval(self):
+    r""" Prevent further changes to models, and prepare for evaluation """
+    self._train_mode = False
+    return self
 
   ####################### Static helpers
   @staticmethod
@@ -413,7 +427,7 @@ class Experimenter():
     r""" Cleaning """
     pass
 
-  def on_load_model(self, path: str):
+  def on_load_model(self, cfg: DictConfig, model_path: str):
     r""" Cleaning """
     pass
 
@@ -447,7 +461,7 @@ class Experimenter():
             md5_saved = f.read().strip()
           assert md5_loaded == md5_saved, \
             "MD5 of saved model mismatch, probably files are corrupted"
-        model = self.on_load_model(model_path)
+        model = self.on_load_model(cfg, model_path)
         if model is None:
           raise RuntimeError(
               "The implementation of on_load_model must return the loaded model."
@@ -656,7 +670,7 @@ class Experimenter():
                          str(conditions))
     random.seed(seed)
     exp, cfg = random.choice(list(exp_cfg.items()))
-    model = self.on_load_model(os.path.join(exp, 'model'))
+    model = self.on_load_model(cfg, os.path.join(exp, 'model'))
     cfg = OmegaConf.load(cfg[-1])
     return model, cfg
 
@@ -684,7 +698,10 @@ class Experimenter():
       raise RuntimeError("Cannot find model satisfying conditions: %s" %
                          str(conditions))
     if load_model:
-      found_models = [self.on_load_model(path) for path in found_models]
+      found_models = [
+          self.on_load_model(cfg, path)
+          for cfg, path in zip(found_cfg, found_models)
+      ]
     if return_config:
       found_models = list(zip(found_models, found_cfg))
     return found_models

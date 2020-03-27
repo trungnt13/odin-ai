@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from bigarray import MmapArray, MmapArrayWriter
 from odin.fuel._image_data1 import (BinarizedAlphaDigits, BinarizedMNIST,
-                                    _partition)
+                                    ImageDataset, _partition)
 from odin.utils import (as_tuple, batching, get_all_files, get_datasetpath,
                         one_hot)
 from odin.utils.crypto import md5_checksum
@@ -24,7 +24,7 @@ from odin.utils.net_utils import download_and_extract, download_google_drive
 # ===========================================================================
 # Datasets
 # ===========================================================================
-class CelebA(object):
+class CelebA(ImageDataset):
   r""" The dataset must be manually downloaded from Google Drive:
     https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFuzTm8
 
@@ -100,6 +100,14 @@ class CelebA(object):
     self.test_attr = np.array(test_attr)
 
   @property
+  def shape(self):
+    return (218, 178, 3)
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
   def attribute_name(self):
     return self._header
 
@@ -170,7 +178,7 @@ class CelebA(object):
     return images
 
 
-class Shapes3D(object):
+class Shapes3D(ImageDataset):
   r""" The dataset must be manually downloaded from GCS at
     https://console.cloud.google.com/storage/browser/3d-shapes
 
@@ -237,6 +245,14 @@ class Shapes3D(object):
     self.train_indices = ids[:int(0.7 * n)]
     self.valid_indices = ids[int(0.7 * n):int(0.8 * n)]
     self.test_indices = ids[int(0.8 * n):]
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
+  def shape(self):
+    return (64, 64, 3)
 
   @staticmethod
   def process(*ims):
@@ -355,7 +371,7 @@ class LegoFaces(object):
     super().__init__()
 
 
-class SLT10(object):
+class SLT10(ImageDataset):
   r""" Overview
    - 10 classes: airplane, bird, car, cat, deer, dog, horse, monkey,
       ship, truck.
@@ -395,6 +411,14 @@ class SLT10(object):
     }
     with open(os.path.join(self.extract_path, "class_names.txt"), 'r') as f:
       self.class_names = np.array([line.strip() for line in f])
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
+  def shape(self):
+    return (96, 96, 3)
 
   def create_dataset(self,
                      batch_size=64,

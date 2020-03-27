@@ -27,6 +27,14 @@ __all__ = [
 # ===========================================================================
 # Helpers
 # ===========================================================================
+def _shape(shape):
+  if shape is not None:
+    if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape) or
+            isinstance(shape, np.ndarray)):
+      shape = tf.nest.flatten(shape)
+  return shape
+
+
 def _as_arg_tuples(*args):
   ref = as_tuple(args[0], t=int)
   n = len(ref)
@@ -51,8 +59,7 @@ def _rank_and_input_shape(rank, input_shape, start_layers):
         first._batch_input_shape = (None,) + tuple(input_shape)
       input_shape = None
     elif rank is not None:
-      if not isinstance(input_shape, tf.TensorShape):
-        input_shape = tf.nest.flatten(input_shape)
+      input_shape = _shape(input_shape)
       if rank != (len(input_shape) - 1):
         raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
                          (rank, str(input_shape), len(input_shape) - 1))
@@ -531,10 +538,9 @@ class AutoencoderConfig(dict):
     encoder = None
     decoder = None
     ### prepare the shape
-    input_shape = tf.nest.flatten(input_shape)
+    input_shape = _shape(input_shape)
     input_ndim = len(input_shape)
-    if latent_shape is not None:
-      latent_shape = tf.nest.flatten(latent_shape)
+    latent_shape = _shape(latent_shape)
     ### network config
     if self.pyramid:
       units = [int(self.hidden_dim / 2**i) for i in range(1, self.nlayers + 1)]
