@@ -2,6 +2,7 @@ from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.factor_vae import *
 from odin.bay.vi.autoencoder.grammar_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
+from odin.bay.vi.autoencoder.dip_vae import *
 from odin.networks import (ConvNetwork, DeconvNetwork, DenseNetwork,
                            NetworkConfig)
 
@@ -71,7 +72,7 @@ def get_vae(name=None) -> VariationalAutoencoder:
       else:
         all_vae.append(val)
   if vae is None:
-    if name == 'none':
+    if name == 'nonetype':
       return sorted(all_vae, key=lambda cls: cls.__name__)
     raise ValueError("Cannot find VAE with name '%s', all VAE are: %s" %
                      (name, ", ".join([i.__name__ for i in all_vae])))

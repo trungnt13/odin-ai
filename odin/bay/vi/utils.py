@@ -11,7 +11,7 @@ from tensorflow_probability.python.distributions import Distribution, Normal
 __all__ = [
     'discretizing',
     'permute_dims',
-    'dip_loss',
+    'disentangled_prior_loss',
     'total_correlation',
 ]
 
@@ -138,10 +138,10 @@ def permute_dims(z):
                       perm=tf.concat([tf.range(1, tf.rank(z)), (0,)], axis=0))
 
 
-def dip_loss(qZ_X: Distribution,
-             only_mean=False,
-             lambda_offdiag=2.,
-             lambda_diag=1.):
+def disentangled_prior_loss(qZ_X: Distribution,
+                            only_mean=False,
+                            lambda_offdiag=2.,
+                            lambda_diag=1.):
   r""" Disentangled inferred prior (DIP) matches the covariance of the prior
   distributions with the inferred prior
 
