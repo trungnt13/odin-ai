@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+import types
+
 # Dependency imports
 import numpy as np
 import tensorflow as tf
@@ -69,15 +71,20 @@ class DeterministicLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
+               log_prob=None,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(DeterministicLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, validate_args),
+        lambda t: type(self).new(t, event_shape, log_prob, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), validate_args=False, name=None):
+  def new(params,
+          event_shape=(),
+          log_prob=None,
+          validate_args=False,
+          name='Deterministic'):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
@@ -88,8 +95,12 @@ class DeterministicLayer(DistributionLambda):
         event_shape,
     ],
                              axis=0)
-    return tfd.Deterministic(loc=tf.reshape(params, output_shape),
-                             validate_args=validate_args)
+    dist = tfd.Deterministic(loc=tf.reshape(params, output_shape),
+                             validate_args=validate_args,
+                             name=name)
+    if log_prob is not None and callable(log_prob):
+      dist.log_prob = types.MethodType(log_prob, dist)
+    return dist
 
   @staticmethod
   def params_size(event_shape, name=None):
@@ -108,16 +119,21 @@ class VectorDeterministicLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
+               log_prob=None,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(VectorDeterministicLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, validate_args),
+        lambda t: type(self).new(t, event_shape, log_prob, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
-  def new(params, event_shape=(), validate_args=False, name=None):
-    r"""Create the distribution instance from a `params` vector."""
+  def new(params,
+          event_shape=(),
+          log_prob=None,
+          validate_args=False,
+          name='VectorDeterministic'):
+    r""" Create the distribution instance from a `params` vector. """
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
@@ -127,8 +143,12 @@ class VectorDeterministicLayer(DistributionLambda):
         event_shape,
     ],
                              axis=0)
-    return tfd.VectorDeterministic(loc=tf.reshape(params, output_shape),
-                                   validate_args=validate_args)
+    dist = tfd.VectorDeterministic(loc=tf.reshape(params, output_shape),
+                                   validate_args=validate_args,
+                                   name=name)
+    if log_prob is not None and callable(log_prob):
+      dist.log_prob = types.MethodType(log_prob, dist)
+    return dist
 
   @staticmethod
   def params_size(event_shape, name=None):

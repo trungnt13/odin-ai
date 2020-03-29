@@ -1,39 +1,28 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
+from typing import Optional, Union
 
 import tensorflow as tf
 from tensorflow.python import keras
-from tensorflow.python.keras import layers
+from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import distributions as tfd
 
 from odin.bay.helpers import KLdivergence
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.utils import permute_dims
-from odin.networks import AutoencoderConfig
+from odin.networks import NetworkConfig
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
 def _check_rv(rv):
-  assert isinstance(rv, (RandomVariable, layers.Layer)), \
+  assert isinstance(rv, (RandomVariable, Layer)), \
     "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
       "but given: %s" % str(type(rv))
   if isinstance(rv, RandomVariable):
     rv = rv.create_posterior()
-  ### make sure it is probabilistic layer
-  spec = inspect.getfullargspec(rv.call)
-  args = spec.args + spec.kwonlyargs
-  requires = ['n_mcmc', 'training']
-  if not all(i in args for i in requires):
-    raise ValueError("Invalid latent layer of type: %s, require probabilistic "
-                     "layer with call method arguments: %s, but given: %s" %
-                     (str(type(rv)), requires, str(args)))
-  if not (hasattr(rv, 'sample') and callable(rv.sample)):
-    raise ValueError(
-        "latent layer of type: %s, must has sample method for sampling from prior."
-        % str(type(rv)))
   ### get the event_shape
   shape = rv.event_shape if hasattr(rv, 'event_shape') else rv.output_shape
   return rv, shape
@@ -48,7 +37,7 @@ class VariationalAutoencoder(keras.Model):
   Arguments:
     encoder : `Layer`.
     decoder : `Layer`.
-    config : `AutoencoderConfig`.
+    config : `NetworkConfig`.
     outputs : `RandomVariable` or `Layer`.
     latents : `RandomVariable` or `Layer`.
 
@@ -64,43 +53,56 @@ class VariationalAutoencoder(keras.Model):
       deterministic variable)
   """
 
-  def __init__(self,
-               encoder: layers.Layer = None,
-               decoder: layers.Layer = None,
-               config: AutoencoderConfig = AutoencoderConfig(),
-               output=RandomVariable(event_shape=64,
-                                     posterior='gaus',
-                                     name="InputVariable"),
-               latent=RandomVariable(event_shape=10,
-                                     posterior='diag',
-                                     name="LatentVariable"),
-               **kwargs):
+  def __init__(
+      self,
+      encoder: Union[Layer, NetworkConfig] = None,
+      decoder: Union[Layer, NetworkConfig] = None,
+      config: Optional[NetworkConfig] = NetworkConfig(),
+      output: Union[Layer,
+                    RandomVariable] = RandomVariable(event_shape=64,
+                                                     posterior='gaus',
+                                                     name="InputVariable"),
+      latent: Union[Layer,
+                    RandomVariable] = RandomVariable(event_shape=10,
+                                                     posterior='diag',
+                                                     name="LatentVariable"),
+      **kwargs):
     ### check latent and input distribution
     latent, latent_shape = _check_rv(latent)
     output, input_shape = _check_rv(output)
     super().__init__(**kwargs)
     self.latent_layer = latent
     self.output_layer = output
+    spec = inspect.getfullargspec(latent.call)
+    self.latent_args = set(spec.args + spec.kwonlyargs)
+    spec = inspect.getfullargspec(output.call)
+    self.output_args = set(spec.args + spec.kwonlyargs)
     ### already got the encoder and decoder
     if config is None:
       if encoder is None and decoder is None:
         raise ValueError(
             "Either provide both encoder, decoder or only the config.")
+      if isinstance(encoder, NetworkConfig):
+        encoder = encoder.create_network(input_shape=input_shape,
+                                         name="Encoder")
+      if isinstance(decoder, NetworkConfig):
+        decoder = decoder.create_network(input_shape=latent_shape,
+                                         name="Decoder")
     ### create the network from config
     else:
-      assert isinstance(config, AutoencoderConfig), \
-        "config must be instance of AutoencoderConfig but given: %s" % \
+      assert isinstance(config, NetworkConfig), \
+        "config must be instance of NetworkConfig but given: %s" % \
           str(type(config))
       assert input_shape is not None, \
-        "Input shape must be provided in case AutoencoderConfig is specified."
+        "Input shape must be provided in case NetworkConfig is specified."
       encoder, decoder = config.create_network(input_shape=input_shape,
                                                latent_shape=latent_shape)
     ### check type
-    assert isinstance(encoder, layers.Layer), \
-      "encoder must be instance of keras.layers.Layer, but given: %s" % \
+    assert isinstance(encoder, Layer), \
+      "encoder must be instance of keras.Layer, but given: %s" % \
         str(type(encoder))
-    assert isinstance(decoder, layers.Layer), \
-      "decoder must be instance of keras.layers.Layer, but given: %s" % \
+    assert isinstance(decoder, Layer), \
+      "decoder must be instance of keras.Layer, but given: %s" % \
         str(type(decoder))
     self.encoder = encoder
     self.decoder = decoder
@@ -119,7 +121,11 @@ class VariationalAutoencoder(keras.Model):
   def encode(self, inputs, training=None, n_mcmc=(), **kwargs):
     r""" Encoding inputs to latent codes """
     e = self.encoder(inputs, training=training, **kwargs)
-    qZ_X = self.latent_layer(e, training=training, n_mcmc=n_mcmc, **kwargs)
+    if 'training' in self.latent_args:
+      kwargs['training'] = training
+    if 'n_mcmc' in self.latent_args:
+      kwargs['n_mcmc'] = n_mcmc
+    qZ_X = self.latent_layer(e, **kwargs)
     return qZ_X
 
   def decode(self, latents, training=None, **kwargs):
@@ -164,10 +170,41 @@ class VariationalAutoencoder(keras.Model):
     # create the output distribution
     if not list_outputs:
       outputs = outputs[0]
-    outputs = self.output_layer(outputs, training=training)
+    if 'training' in self.output_args:
+      outputs = self.output_layer(outputs, training=training)
+    else:
+      outputs = self.output_layer(outputs)
     return outputs
 
-  def elbo(self, X, pX_Z, qZ_X, analytic=False, reverse=True, n_mcmc=1):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs):
+    r""" The basic components of all ELBO """
+    X = [tf.convert_to_tensor(x) for x in tf.nest.flatten(X)]
+    pX_Z = tf.nest.flatten(pX_Z)
+    qZ_X = tf.nest.flatten(qZ_X)
+    dtype = X[0].dtype
+    ### llk
+    llk = tf.convert_to_tensor(0., dtype=dtype)
+    for x, pX in zip(X, pX_Z):
+      llk += pX.log_prob(x)
+    ### kl
+    div = tf.convert_to_tensor(0., dtype=dtype)
+    for qZ in qZ_X:
+      div += qZ.KL_divergence(analytic=analytic,
+                              reverse=reverse,
+                              n_mcmc=n_mcmc,
+                              keepdims=True)
+    return llk, div
+
+  def elbo(self,
+           X,
+           pX_Z,
+           qZ_X,
+           analytic=False,
+           reverse=True,
+           n_mcmc=1,
+           iw=False,
+           return_components=False,
+           **kwargs):
     r""" Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO).
 
@@ -185,6 +222,10 @@ class VariationalAutoencoder(keras.Model):
         Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
         propagation place high probability at anywhere data occur
         (i.e. averagely fitting the data).
+      iw : a Boolean. If True, the final ELBO is importance weighted sampled.
+        This won't be applied if `return_components=True` or `rank(elbo)` <= 1.
+      return_components : a Boolean. If True return the log-likelihood and the
+        KL-divergence instead of final ELBO.
 
     Return:
       log-likelihood : a `Tensor` of shape [sample_shape, batch_size].
@@ -193,22 +234,13 @@ class VariationalAutoencoder(keras.Model):
       divergence : a `Tensor` of shape [n_mcmc, batch_size].
         The reversed KL-divergence or rate
     """
-    X = [tf.convert_to_tensor(x) for x in tf.nest.flatten(X)]
-    pX_Z = tf.nest.flatten(pX_Z)
-    qZ_X = tf.nest.flatten(qZ_X)
-    dtype = X[0].dtype
-    ### llk
-    llk = tf.convert_to_tensor(0., dtype=dtype)
-    for x, pX in zip(X, pX_Z):
-      llk += pX.log_prob(x)
-    ### kl
-    div = tf.convert_to_tensor(0., dtype=dtype)
-    for qZ in qZ_X:
-      div += qZ.KL_divergence(analytic=analytic,
-                              reverse=reverse,
-                              n_mcmc=n_mcmc,
-                              keepdims=True)
-    return llk, div
+    llk, div = self._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs)
+    if return_components:
+      return llk, div
+    elbo = llk - div
+    if iw and tf.rank(elbo) > 1:
+      elbo = self.importance_weighted(elbo, axis=0)
+    return elbo
 
   def importance_weighted(self, elbo, axis=0):
     r""" VAE objective can lead to overly simplified representations which
@@ -234,3 +266,22 @@ class VariationalAutoencoder(keras.Model):
     qZ_X = self.encode(inputs, training=training, n_mcmc=n_mcmc)
     pX_Z = self.decode(qZ_X, training=training)
     return pX_Z, qZ_X
+
+  def __str__(self):
+    clses = [
+        i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
+    ]
+    text = "%s" % "->".join([i.__name__ for i in clses[::-1]])
+    ## encoder
+    text += "\n Encoder:\n  "
+    text += "\n  ".join(str(self.encoder).split('\n'))
+    ## Decoder
+    text += "\n Decoder:\n  "
+    text += "\n  ".join(str(self.decoder).split('\n'))
+    ## Latent
+    text += "\n Latent:\n  "
+    text += "\n  ".join(str(self.latent_layer).split('\n'))
+    ## Ouput
+    text += "\n Output:\n  "
+    text += "\n  ".join(str(self.output_layer).split('\n'))
+    return text

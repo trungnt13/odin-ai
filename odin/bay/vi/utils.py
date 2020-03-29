@@ -103,7 +103,16 @@ def discretizing(*factors,
 
 
 def permute_dims(z):
-  r""" Permutation of latent dimensions Algorithm(1)
+  r""" Permutation of latent dimensions Algorithm(1):
+
+  ```
+    input: matrix-(batch_dim, latent_dim)
+    output: matrix-(batch_dim, latent_dim)
+
+    foreach latent_dim:
+      shuffle points along batch_dim
+  ```
+
 
   Arguments:
     z : A Tensor `[batch_size, latent_dim]`
@@ -112,19 +121,21 @@ def permute_dims(z):
     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
       arXiv:1802.05983 [cs, stat].
   """
-  batch_dim, latent_dim = z.shape
+  shape = z.shape
+  batch_dim, latent_dim = shape[-2:]
   perm = tf.TensorArray(dtype=z.dtype,
                         size=latent_dim,
                         dynamic_size=False,
                         clear_after_read=False,
-                        element_shape=(batch_dim,))
-  ids = tf.range(z.shape[0], dtype=tf.int32)
+                        element_shape=shape[:-1])
+  ids = tf.range(batch_dim, dtype=tf.int32)
   # iterate over latent dimension
   for i in tf.range(latent_dim):
     # shuffle among minibatch
-    z_i = tf.gather(z[:, i], tf.random.shuffle(ids))
+    z_i = tf.gather(z[..., i], tf.random.shuffle(ids), axis=-1)
     perm = perm.write(i, z_i)
-  return tf.transpose(perm.stack())
+  return tf.transpose(perm.stack(),
+                      perm=tf.concat([tf.range(1, tf.rank(z)), (0,)], axis=0))
 
 
 def dip_loss(qZ_X: Distribution,

@@ -11,6 +11,7 @@ from tensorflow.python.keras.layers import (Activation, BatchNormalization,
                                             Wrapper)
 from tensorflow.python.keras.utils import conv_utils
 from tensorflow.python.ops import variable_scope
+from tensorflow_probability.python.distributions import Distribution
 
 __all__ = [
     'Identity',
@@ -206,30 +207,61 @@ class ReshapeMCMC(Wrapper):
   For example, with `ndim=2`, `input_shape=(2, 1, 128, 5)`, the layer do
   linear projection with 3 hidden units, then `output_shape=(2, 1, 128, 3)`,
   and the inputs is reshaped to `(256, 5)` before feeding to the layer.
+
+  Arguments:
+    layer : `keras.layers.Layer`. The original layer
+    sample_ndim : an Integer. Number of dimensions for the sample shape.
+    keepdims : a Boolean. If True, reshape the outputs to keep the original
+      sample shape
   """
 
-  def __init__(self, layer, sample_ndim=1, name=None):
+  def __init__(self, layer, sample_ndim=1, keepdims=True, name=None):
     super().__init__(layer=layer, name=name)
     self.sample_ndim = int(sample_ndim)
+    self.keepdims = bool(keepdims)
+
+  def __repr__(self):
+    return self.layer.__repr__()
+
+  def __str__(self):
+    return self.layer.__str__()
+
+  def _prepare_input(self, x, **kwargs):
+    if isinstance(x, Distribution):
+      batch_shape = x.batch_shape
+      event_shape = x.event_shape
+      shape = tf.concat([batch_shape, event_shape], axis=0)
+      x = tf.convert_to_tensor(x)
+      input_ndim = tf.rank(x)
+      sample_ndim = tf.rank(x) - shape.shape[0]
+      shape = tf.shape(x)
+    else:
+      shape = tf.shape(x)
+      input_ndim = tf.rank(x)
+      sample_ndim = self.sample_ndim
+    return x, shape, input_ndim, sample_ndim
 
   def call(self, inputs, **kwargs):
     # This is a little hack to ignore MCMC dimension in the decoder
-    shape = tf.shape(inputs)
-    input_ndim = len(inputs.shape)
-    sample_ndim = self.sample_ndim
+    inputs, shape, input_ndim, sample_ndim = self._prepare_input(inputs)
+    keepdims = kwargs.pop('keepdims', self.keepdims)
+    sample_ndim = kwargs.pop('sample_ndim', sample_ndim)
     if sample_ndim > 0:
-      assert input_ndim >= sample_ndim + 2, \
-        "Number of MCMC dims is %d, but shape: %s" % (sample_ndim, str(shape))
+      # +2 for minimum of batch_shape + event_shape
+      if input_ndim < sample_ndim + 2:
+        raise RuntimeError("Number of MCMC dims is %d, but shape: %s" %
+                           (sample_ndim, str(shape)))
       # flatten the input
-      new_shape = tf.concat([(-1,), shape[-(sample_ndim - 1):]], axis=0)
+      new_shape = tf.concat([(-1,), shape[-sample_ndim:]], axis=0)
       inputs = tf.reshape(inputs, new_shape)
       # create the outputs
       inputs = self.layer(inputs, **kwargs)
       # restore the sample shape
-      new_shape = tf.concat([(shape[0], shape[1], -1),
-                             tf.shape(inputs)[1:]],
-                            axis=0)
-      inputs = tf.reshape(inputs, new_shape)
+      if keepdims:
+        new_shape = tf.concat(
+            [shape[:sample_ndim],
+             (-1,), tf.shape(inputs)[1:]], axis=0)
+        inputs = tf.reshape(inputs, new_shape)
     return inputs
 
 

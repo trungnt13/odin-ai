@@ -98,14 +98,14 @@ class VaeExperimenter(Experimenter):
     self.z_rv = bay.RandomVariable(event_shape=cfg.zdim,
                                    posterior='diag',
                                    name="Latent")
-    self.network = networks.AutoencoderConfig(hidden_dim=64,
-                                              nlayers=2,
-                                              input_dropout=0.3)
+    self.network = networks.NetworkConfig(units=64,
+                                          nlayers=2,
+                                          input_dropout=0.3)
 
   def on_create_model(self, cfg):
-    model = autoencoder.BetaVAE(output=self.x_rv,
-                                latent=self.z_rv,
-                                config=self.network)
+    model = autoencoder.FactorVAE(output=self.x_rv,
+                                  latent=self.z_rv,
+                                  config=self.network)
     self.model = model
     self.optimizer = tf.optimizers.Adam(learning_rate=0.001,
                                         beta_1=0.9,
@@ -114,13 +114,14 @@ class VaeExperimenter(Experimenter):
                                         amsgrad=False)
 
   def on_load_model(self, cfg, path):
-    model = autoencoder.BetaVAE(output=self.x_rv,
-                                latent=self.z_rv,
-                                config=self.network)
+    model = autoencoder.FactorVAE(output=self.x_rv,
+                                  latent=self.z_rv,
+                                  config=self.network)
     self.model = model
 
   def on_train(self, cfg, model_path):
     trainer = Trainer()
+    exit()
     trainer.fit(self.train.repeat(cfg.epochs),
                 optimize=self.optimize,
                 valid_ds=self.valid,

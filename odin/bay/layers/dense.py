@@ -257,9 +257,11 @@ class DenseDistribution(Dense):
     return self.__str__()
 
   def __str__(self):
-    return "<Dense shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
+    text = "<Dense shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
       (self.event_shape, self.units, self.posterior_layer.name, str(self.prior),
        self._dropout, str(self._posterior_kwargs))
+    text = text.replace("tfp.distributions.", "")
+    return text
 
   def get_config(self):
     config = super().get_config()

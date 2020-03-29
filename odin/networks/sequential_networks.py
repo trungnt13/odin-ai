@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import dataclasses
 import types
 from copy import deepcopy
+from numbers import Number
 
 import numpy as np
 import tensorflow as tf
@@ -12,6 +13,7 @@ from tensorflow.python.keras.layers.convolutional import Conv as _Conv
 
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
+from odin.backend.keras_helpers import layer2text
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
 from odin.utils import as_tuple
@@ -20,7 +22,8 @@ __all__ = [
     'SequentialNetwork',
     'DenseNetwork',
     'ConvNetwork',
-    'AutoencoderConfig',
+    'DeconvNetwork',
+    'NetworkConfig',
 ]
 
 
@@ -98,6 +101,18 @@ class SequentialNetwork(keras.Sequential):
   @classmethod
   def from_config(cls, config, custom_objects=None):
     return cls.from_config(config, custom_objects)
+
+  def _to_string(self):
+    text = ""
+    for l in self.layers:
+      text += layer2text(l, inc_name=False) + '\n'
+    return text[:-1]
+
+  def __repr__(self):
+    return self._to_string()
+
+  def __str__(self):
+    return self._to_string()
 
 
 # ===========================================================================
@@ -452,12 +467,12 @@ class DeconvNetwork(SequentialNetwork):
                        order=False,
                        unsafe_hash=False,
                        frozen=True)
-class AutoencoderConfig(dict):
+class NetworkConfig(dict):
   r""" A dataclass for storing the autoencoder networks (encoder and decoder)
   configuration
 
   Arguments:
-    hidden_dim : An Integer, number of hidden units for each hidden layers
+    units : An Integer, number of hidden units for each hidden layers
     nlayers : An Integer, number of hidden layers
     activation : a String, alias of activation function
     input_dropout : A Scalar [0., 1.], dropout rate, if 0., turn-off dropout.
@@ -474,14 +489,11 @@ class AutoencoderConfig(dict):
     use_conv : A Boolean, if `True`, use convolutional encoder and decoder
     kernel_size : An Integer, kernel size for convolution network
     strides : An Integer, stride step for convoltion
-    conv_proj : An Integer, number of hidden units for the `Dense` projection
-      layer right after convolutional network.
-    sample_ndim : an Integer, if True, use stochastic encoder and decoder for
-      variational autoencoder, i.e. intepret the first (or more) dimension(s)
-      as sample shape from MCMC sampling.
+    projection : An Integer, number of hidden units for the `Dense`
+      linear projection layer right after convolutional network.
   """
 
-  hidden_dim: int = 64
+  units: int = 64
   nlayers: int = 2
   activation: str = 'relu'
   input_dropout: float = 0.3
@@ -492,11 +504,15 @@ class AutoencoderConfig(dict):
   batchnorm: bool = True
   linear_decoder: bool = False
   pyramid: bool = False
-  use_conv: bool = False
+  network: str = 'dense'
   kernel_size: int = 5
   strides: int = 2
-  conv_proj: int = 128
-  sample_ndim: int = 0
+  projection: int = None
+
+  def __post_init__(self):
+    network_types = ('deconv', 'conv', 'dense', 'lstm', 'gru', 'rnn')
+    assert self.network in network_types, \
+      "Given network '%s', only support: %s" % (self.network, network_types)
 
   def keys(self):
     for i in dataclasses.fields(self):
@@ -542,12 +558,17 @@ class AutoencoderConfig(dict):
     input_ndim = len(input_shape)
     latent_shape = _shape(latent_shape)
     ### network config
-    if self.pyramid:
-      units = [int(self.hidden_dim / 2**i) for i in range(1, self.nlayers + 1)]
-    else:
-      units = [self.hidden_dim] * self.nlayers
-    ### convolution network
-    if self.use_conv:
+    units = self.units
+    if isinstance(units, Number):
+      if self.pyramid:
+        units = [int(units / 2**i) for i in range(1, self.nlayers + 1)]
+      else:
+        units = [units] * self.nlayers
+    elif self.pyramid:
+      raise ValueError("pyramid mode only support when a single number is "
+                       "provided for units, but given: %s" % str(units))
+    ### start layers for Convolution and Deconvolution
+    if 'conv' in self.network:
       assert input_ndim in (1, 2, 3), \
         "Only support 2-D, 3-D or 4-D inputs, but given: %s" % str(input_shape)
       start_layers = []
@@ -559,6 +580,17 @@ class AutoencoderConfig(dict):
       else:
         rank = input_ndim - 1
         n_channels = input_shape[-1]
+      # projection
+      end_layers = []
+      if self.projection is not None:
+        end_layers = [
+            keras.layers.Flatten(),
+            keras.layers.Dense(self.projection,
+                               activation='linear',
+                               use_bias=True)
+        ]
+    ### convolution network
+    if self.network == 'conv':
       # create the encoder
       encoder = ConvNetwork(units[::-1],
                             rank=rank,
@@ -573,18 +605,16 @@ class AutoencoderConfig(dict):
                             output_dropout=self.encoder_dropout,
                             layer_dropout=self.layer_dropout,
                             start_layers=start_layers,
+                            end_layers=end_layers,
                             input_shape=input_shape,
-                            end_layers=[
-                                keras.layers.Flatten(),
-                                keras.layers.Dense(self.conv_proj,
-                                                   activation=self.activation,
-                                                   use_bias=True)
-                            ],
                             name=encoder_name)
       # get the last convolution shape
       eshape = encoder.layers[-3].output_shape[1:]
       # Create the decoder
       if not self.linear_decoder and latent_shape is not None:
+        if self.projection is None:
+          raise ValueError(
+              "projection must be provided in case of decoding convolution.")
         decoder = DeconvNetwork(
             units[1:] + [n_channels],
             rank=rank,
@@ -599,8 +629,8 @@ class AutoencoderConfig(dict):
             output_dropout=self.decoder_dropout,
             layer_dropout=self.layer_dropout,
             start_layers=[
-                keras.layers.Dense(self.conv_proj,
-                                   activation=self.activation,
+                keras.layers.Dense(self.projection,
+                                   activation='linear',
                                    use_bias=True,
                                    input_shape=latent_shape),
                 keras.layers.Dense(np.prod(eshape),
@@ -611,7 +641,7 @@ class AutoencoderConfig(dict):
             end_layers=[keras.layers.Reshape(input_shape)],
             name=decoder_name)
     ### dense network
-    else:
+    elif self.network == 'dense':
       encoder = DenseNetwork(units=units,
                              activation=self.activation,
                              flatten=True if input_ndim > 1 else False,
@@ -632,13 +662,32 @@ class AutoencoderConfig(dict):
                                layer_dropout=self.layer_dropout,
                                input_shape=latent_shape,
                                name=decoder_name)
+    ### deconv
+    elif self.network == 'deconv':
+      encoder = DeconvNetwork(units[::-1],
+                              rank=rank,
+                              kernel_size=self.kernel_size,
+                              strides=self.strides,
+                              padding='same',
+                              dilation_rate=1,
+                              activation=self.activation,
+                              use_bias=True,
+                              batchnorm=self.batchnorm,
+                              input_dropout=self.input_dropout,
+                              output_dropout=self.encoder_dropout,
+                              layer_dropout=self.layer_dropout,
+                              start_layers=start_layers,
+                              end_layers=end_layers,
+                              input_shape=input_shape,
+                              name=encoder_name)
+      if not self.linear_decoder and latent_shape is not None:
+        raise ValueError("Deconv network doesn't support decoding.")
+    ### others
+    else:
+      raise NotImplementedError("No implementation for network of type: '%s'" %
+                                self.network)
     # ====== linear decoder ====== #
-    if latent_shape is not None:
-      if self.linear_decoder:
-        decoder = Identity(name=decoder_name, input_shape=latent_shape)
-      elif self.sample_ndim > 0:
-        decoder = ReshapeMCMC(decoder,
-                              sample_ndim=self.sample_ndim,
-                              name=decoder_name)
+    if latent_shape is not None and self.linear_decoder:
+      decoder = Identity(name=decoder_name, input_shape=latent_shape)
     # ====== return ====== #
     return encoder, decoder

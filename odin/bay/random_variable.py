@@ -103,6 +103,9 @@ class RandomVariable:
       - 'cosine_similarity'
       - 'mean_absolute_error'
       - 'mean_squared_error'
+    projection : a Boolean. If True, use a fully connected feedforward network
+      to project the input to a desire number of parameters for the
+      distribution.
     name : a String. Identity of the random variable.
     kwargs : a Dictionary. Keyword arguments for initializing the
       `DistributionLambda` of the posterior.
@@ -114,6 +117,7 @@ class RandomVariable:
   event_shape: List[int] = ()
   posterior: str = 'gaus'
   prior: str = None
+  projection: bool = True
   name: str = 'RandomVariable'
   kwargs: dict = dataclasses.field(default_factory=dict)
 
@@ -217,53 +221,73 @@ class RandomVariable:
     prior = self.prior
     event_shape = self.event_shape
     posterior = self.posterior
-    kwargs = dict(self.kwargs)
-    llk_fn = None  # custom log_prob
+    posterior_kwargs = dict(self.kwargs)
     name = self.name if name is None else str(name)
     # ====== deterministic distribution with loss function from tensorflow ====== #
     if posterior in dir(tf.losses) or posterior in dir(keras.activations):
       distribution_layer = obl.VectorDeterministicLayer
       if posterior in dir(tf.losses):
-        activation = kwargs.pop('activation', 'relu')
+        activation = posterior_kwargs.pop('activation', 'relu')
         fn = tf.losses.get(str(posterior))
       else:  # just activation function, loss default MSE
         activation = keras.activations.get(self.posterior)
-        fn = tf.losses.get(kwargs.pop('loss', 'mse'))
-      llk_fn = lambda self, y_true: -fn(y_true, self.posterior.mean())
+        fn = tf.losses.get(posterior_kwargs.pop('loss', 'mse'))
+      posterior_kwargs['log_prob'] = \
+        lambda self, y_true: -fn(y_true, self.mean())
     # ====== probabilistic loss ====== #
     else:
       distribution_layer = parse_distribution(self.posterior)[0]
       activation = 'linear'
     # ====== create distribution layers ====== #
-    activation = kwargs.pop('activation', activation)
+    activation = posterior_kwargs.pop('activation', activation)
     kw = {}
     if input_shape is not None:
       kw['input_shape'] = input_shape
     ### create the layer
+    ## mixture distributions
     if posterior in ('mdn', 'mixdiag', 'mixfull', 'mixtril'):
-      kwargs.pop('covariance', None)
-      kwargs.update(kw)
-      layer = obl.MixtureDensityNetwork(event_shape,
-                                        loc_activation=activation,
-                                        scale_activation='softplus1',
-                                        covariance=dict(
-                                            mdn='none',
-                                            mixdiag='diag',
-                                            mixfull='tril',
-                                            mixtril='tril')[posterior],
-                                        name=name,
-                                        **kwargs)
-      layer.set_prior()
+      posterior_kwargs.pop('covariance', None)
+      posterior_kwargs.update(kw)
+      # dense network for projection
+      if self.projection:
+        layer = obl.MixtureDensityNetwork(event_shape,
+                                          loc_activation=activation,
+                                          scale_activation='softplus1',
+                                          covariance=dict(
+                                              mdn='none',
+                                              mixdiag='diag',
+                                              mixfull='tril',
+                                              mixtril='tril')[posterior],
+                                          name=name,
+                                          **posterior_kwargs)
+        layer.set_prior()
+      # Just the mixture layer
+      else:
+        layer = obl.MixtureGaussianLayer(event_shape=event_shape,
+                                         loc_activation=activation,
+                                         scale_activation='softplus1',
+                                         covariance=dict(
+                                             mdn='none',
+                                             mixdiag='diag',
+                                             mixfull='tril',
+                                             mixtril='tril')[posterior],
+                                         name=name,
+                                         **posterior_kwargs)
+    ## non-mixture distribution
     else:
-      layer = obl.DenseDistribution(event_shape,
-                                    posterior=distribution_layer,
-                                    prior=_default_prior(
-                                        event_shape, distribution_layer, prior),
-                                    activation=activation,
-                                    posterior_kwargs=kwargs,
-                                    name=name,
-                                    **kw)
-    ### custom loss as log_prob
-    if llk_fn is not None:
-      layer.log_prob = types.MethodType(llk_fn, layer)
+      if self.projection:
+        layer = obl.DenseDistribution(event_shape,
+                                      posterior=distribution_layer,
+                                      prior=_default_prior(
+                                          event_shape, distribution_layer,
+                                          prior),
+                                      activation=activation,
+                                      posterior_kwargs=posterior_kwargs,
+                                      name=name,
+                                      **kw)
+      else:
+        layer = distribution_layer(event_shape, name=name, **posterior_kwargs)
+    ### set attributes
+    if not hasattr(layer, 'event_shape'):
+      layer.event_shape = event_shape
     return layer
