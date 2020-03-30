@@ -51,11 +51,11 @@ def layer2text(layer, inc_name=False):
   from tensorflow.python.keras.layers.convolutional import Conv
   text = str(layer)
   cls_name = layer.__class__.__name__
-  cls_name = cls_name.replace('Transpose', 'Tran')
+  cls_name = cls_name[:10]
   if inc_name:
-    name = '[%s:%s]' % (cls_name, layer.name)
+    name = '[%-10s:%s]' % (cls_name, layer.name)
   else:
-    name = '[%s] ' % cls_name
+    name = '[%-10s] ' % cls_name
   ## Dense
   if isinstance(layer, keras.layers.Dense):
     text = '%sunits:%d bias:%s activ:%s' % \
@@ -74,7 +74,7 @@ def layer2text(layer, inc_name=False):
     text = '%sp=%.2f' % (name, layer.rate)
   ## BatchNorm
   elif isinstance(layer, keras.layers.BatchNormalization):
-    text = '[%s] axis=%s center:%s scale:%s trainable:%s' % \
+    text = '[%-10s] axis=%s center:%s scale:%s trainable:%s' % \
       ('BatchRenorm' if layer.renorm else 'BatchNorm',
        [i for i in tf.nest.flatten(layer.axis)],
        layer.center, layer.scale, layer.trainable)

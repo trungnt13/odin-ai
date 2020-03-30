@@ -536,6 +536,88 @@ class NetworkConfig(dict):
     obj = deepcopy(self)
     return dataclasses.replace(obj, **kwargs)
 
+  ################ Create the networks
+  def _units(self):
+    units = self.units
+    if isinstance(units, Number):
+      if self.pyramid:
+        units = [int(units / 2**i) for i in range(1, self.nlayers + 1)]
+      else:
+        units = [units] * self.nlayers
+    elif self.pyramid:
+      raise ValueError("pyramid mode only support when a single number is "
+                       "provided for units, but given: %s" % str(units))
+    return units
+
+  def create_autoencoder(self, input_shape, latent_shape, name=None):
+    encoder_name = None if name is None else "%s_%s" % (name, "encoder")
+    decoder_name = None if name is None else "%s_%s" % (name, "decoder")
+    encoder = self.create_network(input_shape=input_shape, name=encoder_name)
+    decoder = self.create_decoder(encoder=encoder,
+                                  latent_shape=latent_shape,
+                                  name=decoder_name)
+    return encoder, decoder
+
+  def create_decoder(self, encoder, latent_shape, name=None):
+    if name is None:
+      name = "Decoder"
+    latent_shape = _shape(latent_shape)
+    units = self._units()
+    input_shape = encoder.input_shape[1:]
+    n_channels = input_shape[-1]
+    rank = 1 if len(input_shape) == 2 else 2
+    # ====== linear decoder ====== #
+    if self.linear_decoder:
+      return Identity(name=name, input_shape=latent_shape)
+    ### convolution network
+    if self.network == 'conv':
+      # get the last convolution shape
+      eshape = encoder.layers[-3].output_shape[1:]
+      start_layers = []
+      if self.projection is not None:
+        start_layers = [
+            keras.layers.Dense(self.projection,
+                               activation='linear',
+                               use_bias=True,
+                               input_shape=latent_shape),
+            keras.layers.Dense(np.prod(eshape),
+                               activation=self.activation,
+                               use_bias=True),
+            keras.layers.Reshape(eshape),
+        ]
+      else:
+        start_layers = [keras.layers.InputLayer(input_shape=latent_shape)]
+      decoder = DeconvNetwork(list(units[1:]) + [n_channels],
+                              rank=rank,
+                              kernel_size=self.kernel_size,
+                              strides=self.strides,
+                              padding='same',
+                              dilation_rate=1,
+                              activation=self.activation,
+                              use_bias=True,
+                              batchnorm=self.batchnorm,
+                              input_dropout=self.latent_dropout,
+                              output_dropout=self.decoder_dropout,
+                              layer_dropout=self.layer_dropout,
+                              start_layers=start_layers,
+                              end_layers=[keras.layers.Reshape(input_shape)],
+                              name=name)
+    ### dense network
+    elif self.network == 'dense':
+      decoder = DenseNetwork(units=units[::-1],
+                             activation=self.activation,
+                             use_bias=True,
+                             batchnorm=self.batchnorm,
+                             input_dropout=self.latent_dropout,
+                             output_dropout=self.decoder_dropout,
+                             layer_dropout=self.layer_dropout,
+                             input_shape=latent_shape,
+                             name=name)
+    ### deconv
+    elif self.network == 'deconv':
+      raise ValueError("Deconv network doesn't support decoding.")
+    return decoder
+
   def create_network(self, input_shape, latent_shape=None, name=None):
     r"""
     Arguments:
@@ -549,24 +631,12 @@ class NetworkConfig(dict):
       encoder : keras.Sequential
       decoder : keras.Sequential or None (in case latent_shape is None)
     """
-    encoder_name = None if name is None else "%s_%s" % (name, "encoder")
-    decoder_name = None if name is None else "%s_%s" % (name, "decoder")
-    encoder = None
-    decoder = None
+    if name is None:
+      name = "Encoder"
     ### prepare the shape
     input_shape = _shape(input_shape)
     input_ndim = len(input_shape)
-    latent_shape = _shape(latent_shape)
-    ### network config
-    units = self.units
-    if isinstance(units, Number):
-      if self.pyramid:
-        units = [int(units / 2**i) for i in range(1, self.nlayers + 1)]
-      else:
-        units = [units] * self.nlayers
-    elif self.pyramid:
-      raise ValueError("pyramid mode only support when a single number is "
-                       "provided for units, but given: %s" % str(units))
+    units = self._units()
     ### start layers for Convolution and Deconvolution
     if 'conv' in self.network:
       assert input_ndim in (1, 2, 3), \
@@ -607,39 +677,7 @@ class NetworkConfig(dict):
                             start_layers=start_layers,
                             end_layers=end_layers,
                             input_shape=input_shape,
-                            name=encoder_name)
-      # get the last convolution shape
-      eshape = encoder.layers[-3].output_shape[1:]
-      # Create the decoder
-      if not self.linear_decoder and latent_shape is not None:
-        if self.projection is None:
-          raise ValueError(
-              "projection must be provided in case of decoding convolution.")
-        decoder = DeconvNetwork(
-            units[1:] + [n_channels],
-            rank=rank,
-            kernel_size=self.kernel_size,
-            strides=self.strides,
-            padding='same',
-            dilation_rate=1,
-            activation=self.activation,
-            use_bias=True,
-            batchnorm=self.batchnorm,
-            input_dropout=self.latent_dropout,
-            output_dropout=self.decoder_dropout,
-            layer_dropout=self.layer_dropout,
-            start_layers=[
-                keras.layers.Dense(self.projection,
-                                   activation='linear',
-                                   use_bias=True,
-                                   input_shape=latent_shape),
-                keras.layers.Dense(np.prod(eshape),
-                                   activation=self.activation,
-                                   use_bias=True),
-                keras.layers.Reshape(eshape),
-            ],
-            end_layers=[keras.layers.Reshape(input_shape)],
-            name=decoder_name)
+                            name=name)
     ### dense network
     elif self.network == 'dense':
       encoder = DenseNetwork(units=units,
@@ -651,17 +689,7 @@ class NetworkConfig(dict):
                              output_dropout=self.encoder_dropout,
                              layer_dropout=self.layer_dropout,
                              input_shape=input_shape,
-                             name=encoder_name)
-      if not self.linear_decoder and latent_shape is not None:
-        decoder = DenseNetwork(units=units[::-1],
-                               activation=self.activation,
-                               use_bias=True,
-                               batchnorm=self.batchnorm,
-                               input_dropout=self.latent_dropout,
-                               output_dropout=self.decoder_dropout,
-                               layer_dropout=self.layer_dropout,
-                               input_shape=latent_shape,
-                               name=decoder_name)
+                             name=name)
     ### deconv
     elif self.network == 'deconv':
       encoder = DeconvNetwork(units[::-1],
@@ -679,15 +707,10 @@ class NetworkConfig(dict):
                               start_layers=start_layers,
                               end_layers=end_layers,
                               input_shape=input_shape,
-                              name=encoder_name)
-      if not self.linear_decoder and latent_shape is not None:
-        raise ValueError("Deconv network doesn't support decoding.")
+                              name=name)
     ### others
     else:
       raise NotImplementedError("No implementation for network of type: '%s'" %
                                 self.network)
-    # ====== linear decoder ====== #
-    if latent_shape is not None and self.linear_decoder:
-      decoder = Identity(name=decoder_name, input_shape=latent_shape)
     # ====== return ====== #
-    return encoder, decoder
+    return encoder

@@ -3,6 +3,7 @@ from odin.bay.vi.autoencoder.dip_vae import *
 from odin.bay.vi.autoencoder.factor_vae import *
 from odin.bay.vi.autoencoder.grammar_vae import *
 from odin.bay.vi.autoencoder.info_vae import *
+from odin.bay.vi.autoencoder.self_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.networks import (ConvNetwork, DeconvNetwork, DenseNetwork,
                            NetworkConfig)
@@ -13,6 +14,7 @@ def create_image_encoder_decoder(image_shape=(64, 64),
                                  activation='relu',
                                  projection_dim=256,
                                  latent_dim=10,
+                                 batchnorm=False,
                                  distribution='gaus',
                                  name="Image"):
   r""" Initialized the Convolutional encoder and decoder often used in
@@ -27,7 +29,7 @@ def create_image_encoder_decoder(image_shape=(64, 64),
   encoder = ConvNetwork(filters=[32, 32, 64, 64],
                         kernel_size=[4, 4, 4, 4],
                         strides=[2, 2, 2, 2],
-                        batchnorm=False,
+                        batchnorm=bool(batchnorm),
                         activation=activation,
                         end_layers=[
                             keras.layers.Flatten(),
@@ -41,7 +43,7 @@ def create_image_encoder_decoder(image_shape=(64, 64),
                           kernel_size=[4, 4, 4, 4],
                           strides=[2, 2, 2, 2],
                           activation=[activation] * 3 + ['linear'],
-                          batchnorm=False,
+                          batchnorm=bool(batchnorm),
                           start_layers=[
                               keras.layers.Dense(256, activation='relu'),
                               keras.layers.Dense(int(np.prod(encoder_shape)),

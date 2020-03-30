@@ -15,6 +15,9 @@ class InfoVAE(BetaVAE):
   Reference:
     Zhao, S., Song, J., Ermon, S., et al. "InfoVAE: Balancing Learning and
       Inference in Variational Autoencoders".
+    Shengjia Zhao. "A Tutorial on Information Maximizing Variational
+      Autoencoders (InfoVAE)".
+      https://ermongroup.github.io/blog/a-tutorial-on-mmd-variational-autoencoders
   """
 
   def __init__(self,
@@ -41,7 +44,7 @@ class InfoVAE(BetaVAE):
 
 
 class IFVAE(BetaVAE):
-  r"""
+  r""" Adversarial information factorized VAE
 
   Reference:
     Creswell, A., Mohamied, Y., Sengupta, B., Bharath, A.A., 2018.
