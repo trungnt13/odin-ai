@@ -1,11 +1,20 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
+from tensorflow_probability.python.distributions import Distribution
 
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.utils import permute_dims
 from odin.networks import DenseNetwork, NetworkConfig, ReshapeMCMC
+
+
+def _samples(qZ_X):
+  qZ_X = tf.nest.flatten(qZ_X)
+  shape = tf.concat([qZ_X[0].batch_shape, qZ_X[0].event_shape], axis=0)
+  z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
+  sample_ndim = tf.rank(z) - shape.shape[0]
+  return z, sample_ndim
 
 
 class FactorDiscriminator(ReshapeMCMC):
@@ -64,7 +73,8 @@ class FactorDiscriminator(ReshapeMCMC):
     # adding log_softmax here could provide more stable loss than minimizing
     # the logit directly
     # tf.nn.log_softmax
-    d_z = self(qZ_X, training=training)
+    z, ndim = _samples(qZ_X)
+    d_z = self(z, sample_ndim=ndim, training=training)
     return tf.reduce_mean(d_z[..., 1] - d_z[..., 0])
 
   def dtc_loss(self, qZ_X, training=None):
@@ -76,15 +86,14 @@ class FactorDiscriminator(ReshapeMCMC):
 
     """
     # we don't want the gradient to be propagated to the encoder
-    shape = tf.concat([qZ_X.batch_shape, qZ_X.event_shape], axis=0)
-    z = tf.stop_gradient(qZ_X)
-    sample_ndim = tf.rank(z) - shape.shape[0]
-    d_z = tf.nn.log_softmax(self(z, training=training, sample_ndim=sample_ndim),
+    z, ndim = _samples(qZ_X)
+    z = tf.stop_gradient(z)
+    d_z = tf.nn.log_softmax(self(z, training=training, sample_ndim=ndim),
                             axis=-1)
     z_perm = permute_dims(z)
     d_zperm = tf.nn.log_softmax(self(z_perm,
                                      training=training,
-                                     sample_ndim=sample_ndim),
+                                     sample_ndim=ndim),
                                 axis=-1)
     loss = 0.5 * tf.reduce_mean(d_z[..., 0] + d_zperm[..., 1])
     return loss
@@ -119,10 +128,11 @@ class FactorVAE(BetaVAE):
                **kwargs):
     super().__init__(beta=beta, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
-    self.discriminator = FactorDiscriminator(
-        latent_dim=int(np.prod(self.latent_layer.event_shape)),
-        **discriminator,
-    )
+    # all latents will be concatenated
+    latent_dim = np.prod(
+        sum(np.array(layer.event_shape) for layer in self.latent_layers))
+    self.discriminator = FactorDiscriminator(latent_dim=latent_dim,
+                                             **discriminator)
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)

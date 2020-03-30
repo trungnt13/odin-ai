@@ -33,13 +33,16 @@ class InfoVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+    # select right divergence
     if self.divergence == 'mmd':
-      d = maximum_mean_discrepancy(qZ=qZ_X,
-                                   pZ=qZ_X.KL_divergence.prior,
-                                   **self.divergence_kw)
+      fn = maximum_mean_discrepancy
     else:
       raise NotImplementedError("No support for divergence family: '%s'" %
                                 self.divergence)
+    # repeat for each latent
+    d = tf.constant(0., dtype=div.dtype)
+    for q in tf.nest.flatten(qZ_X):
+      d += fn(qZ=q, pZ=q.KL_divergence.prior, **self.divergence_kw)
     return llk, div + (self.gamma - self.beta) * d
 
 

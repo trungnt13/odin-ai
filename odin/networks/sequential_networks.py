@@ -550,6 +550,7 @@ class NetworkConfig(dict):
     return units
 
   def create_autoencoder(self, input_shape, latent_shape, name=None):
+    r""" Create both encoder and decoder at once """
     encoder_name = None if name is None else "%s_%s" % (name, "encoder")
     decoder_name = None if name is None else "%s_%s" % (name, "decoder")
     encoder = self.create_network(input_shape=input_shape, name=encoder_name)
@@ -559,6 +560,15 @@ class NetworkConfig(dict):
     return encoder, decoder
 
   def create_decoder(self, encoder, latent_shape, name=None):
+    r"""
+    Arguments:
+      latent_shape : a tuple of Integer. Shape of latent without the batch
+         dimensions.
+      name : a String (optional).
+
+    Returns:
+      decoder : keras.Sequential
+    """
     if name is None:
       name = "Decoder"
     latent_shape = _shape(latent_shape)
@@ -618,18 +628,15 @@ class NetworkConfig(dict):
       raise ValueError("Deconv network doesn't support decoding.")
     return decoder
 
-  def create_network(self, input_shape, latent_shape=None, name=None):
+  def create_network(self, input_shape, name=None):
     r"""
     Arguments:
       input_shape : a tuple of Integer. Shape of input without the batch
-         dimensions.
-      latent_shape : a tuple of Integer. Shape of latent without the batch
          dimensions.
       name : a String (optional).
 
     Returns:
       encoder : keras.Sequential
-      decoder : keras.Sequential or None (in case latent_shape is None)
     """
     if name is None:
       name = "Encoder"

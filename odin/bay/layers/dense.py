@@ -147,6 +147,8 @@ class DenseDistribution(Dense):
                          **kwargs)
     # store the distribution from last call
     self._last_distribution = None
+    # if 'input_shape' in kwargs and not self.built:
+    #   self.build(kwargs['input_shape'])
 
   @property
   def event_shape(self):

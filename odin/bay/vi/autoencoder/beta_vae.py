@@ -41,7 +41,9 @@ class BetaTCVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    tc = total_correlation(tf.convert_to_tensor(qZ_X), qZ_X)
+    tc = tf.constant(0., dtype=div.dtype)
+    for q in tf.nest.flatten(qZ_X):
+      tc += total_correlation(tf.convert_to_tensor(q), q)
     div += (self.beta - 1.) * tc
     return llk, div
 

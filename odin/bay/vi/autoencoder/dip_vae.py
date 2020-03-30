@@ -38,9 +38,12 @@ class DIPVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    dip = disentangled_inferred_prior_loss(qZ_X,
-                                           only_mean=self.only_mean,
-                                           lambda_offdiag=self.lambda_offdiag,
-                                           lambda_diag=self.lambda_diag)
+    dip = tf.constant(0, dtype=div.dtype)
+    for q in tf.nest.flatten(qZ_X):
+      dip += disentangled_inferred_prior_loss(
+          q,
+          only_mean=self.only_mean,
+          lambda_offdiag=self.lambda_offdiag,
+          lambda_diag=self.lambda_diag)
     div = div + dip
     return llk, div

@@ -17,12 +17,12 @@ from odin.networks import NetworkConfig
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _check_rv(rv):
+def _check_rv(rv, input_shape):
   assert isinstance(rv, (RandomVariable, Layer)), \
     "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
       "but given: %s" % str(type(rv))
   if isinstance(rv, RandomVariable):
-    rv = rv.create_posterior()
+    rv = rv.create_posterior(input_shape=input_shape)
   ### get the event_shape
   shape = rv.event_shape if hasattr(rv, 'event_shape') else rv.output_shape
   return rv, shape
@@ -102,20 +102,32 @@ class VariationalAutoencoder(keras.Model):
     name = kwargs.pop('name', None)
     if name is None:
       name = type(self).__name__
-    ### check latent and input distribution
-    all_latents = [_check_rv(z) for z in tf.nest.flatten(latents)]
-    all_outputs = [_check_rv(x) for x in tf.nest.flatten(outputs)]
     super().__init__(**kwargs)
-    self.latent_layers = [z[0] for z in all_latents]
-    self.output_layers = [x[0] for x in all_outputs]
-    # arguments for call
-    self.latent_args = [_get_args(i) for i in self.latent_layers]
-    self.output_args = [_get_args(i) for i in self.output_layers]
-    # input shape
+    ### First, infer the right input_shape
+    outputs = tf.nest.flatten(outputs)
     if input_shape is None:
-      input_shape = [shape for _, shape in all_outputs]
-      if len(all_outputs) == 1:
+      input_shape = [
+          o.event_shape if hasattr(o, 'event_shape') else o.output_shape
+          for o in outputs
+      ]
+      if len(outputs) == 1:
         input_shape = input_shape[0]
+    ### Then, create the encoder, so we know the input_shape to latent layers
+    if config is None:
+      if isinstance(encoder, NetworkConfig):
+        encoder = encoder.create_network(input_shape, name="Encoder")
+    else:
+      assert isinstance(config, NetworkConfig), \
+        "config must be instance of NetworkConfig but given: %s" % \
+          str(type(config))
+      encoder = config.create_network(input_shape)
+    ### check latent and input distribution
+    all_latents = [
+        _check_rv(z, input_shape=encoder.output_shape[1:])
+        for z in tf.nest.flatten(latents)
+    ]
+    self.latent_layers = [z[0] for z in all_latents]
+    self.latent_args = [_get_args(i) for i in self.latent_layers]
     # validate method for latent reduction
     assert isinstance(reduce_latent, string_types) or \
       callable(reduce_latent) or reduce_latent is None,\
@@ -139,26 +151,17 @@ class VariationalAutoencoder(keras.Model):
       ]
       latent_shape = list(reduce_latent(zs).shape[1:])
     self.reduce_latent = reduce_latent
-    ### already got the encoder and decoder
+    ### Create the decoder
     if config is None:
-      if encoder is None and decoder is None:
-        raise ValueError(
-            "Either provide both encoder, decoder or only the config.")
-      if isinstance(encoder, NetworkConfig):
-        encoder = encoder.create_network(input_shape=input_shape,
-                                         name="Encoder")
       if isinstance(decoder, NetworkConfig):
-        decoder = decoder.create_network(input_shape=latent_shape,
-                                         name="Decoder")
-    ### create the network from config
+        decoder = decoder.create_network(latent_shape, name="Decoder")
     else:
-      assert isinstance(config, NetworkConfig), \
-        "config must be instance of NetworkConfig but given: %s" % \
-          str(type(config))
-      assert input_shape is not None, \
-        "Input shape must be provided in case NetworkConfig is specified."
-      encoder, decoder = config.create_network(input_shape=input_shape,
-                                               latent_shape=latent_shape)
+      decoder = config.create_decoder(encoder=encoder,
+                                      latent_shape=latent_shape)
+    ### Finally the output distributions
+    all_outputs = [_check_rv(x, decoder.output_shape[1:]) for x in outputs]
+    self.output_layers = [x[0] for x in all_outputs]
+    self.output_args = [_get_args(i) for i in self.output_layers]
     ### check type
     assert isinstance(encoder, Layer), \
       "encoder must be instance of keras.Layer, but given: %s" % \
@@ -168,6 +171,12 @@ class VariationalAutoencoder(keras.Model):
         str(type(decoder))
     self.encoder = encoder
     self.decoder = decoder
+    ### build the latent and output layers
+    for layer in self.latent_layers + self.output_layers:
+      if hasattr(layer, '_batch_input_shape') and not layer.built:
+        shape = [1 if i is None else i for i in layer._batch_input_shape]
+        x = tf.ones(shape=shape, dtype=layer.dtype)
+        layer(x)  # call this dummy input to build the layer
 
   @property
   def input_shape(self):
