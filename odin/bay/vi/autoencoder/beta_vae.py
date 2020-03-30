@@ -3,6 +3,7 @@ import tensorflow as tf
 from odin.backend import interpolation as _interp
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
+from odin.bay.vi.losses import total_correlation
 
 
 class BetaVAE(VariationalAutoencoder):
@@ -16,13 +17,32 @@ class BetaVAE(VariationalAutoencoder):
       ICLR'17
   """
 
-  def __init__(self, beta=1.0, name='BetaVAE', **kwargs):
-    super().__init__(name=name, **kwargs)
+  def __init__(self, beta=1.0, **kwargs):
+    super().__init__(**kwargs)
     self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
     div = self.beta * div
+    return llk, div
+
+
+class BetaTCVAE(BetaVAE):
+  r""" Extend the beta-VAE with total correlation loss added.
+
+  Based on Equation (4) with alpha = gamma = 1
+  If alpha = gamma = 1, Eq. 4 can be written as `ELBO + (1 - beta) * TC`.
+
+  Reference:
+    Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. "Isolating Sources
+      of Disentanglement in Variational Autoencoders".
+      arXiv:1802.04942 [cs, stat].
+  """
+
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+    tc = total_correlation(tf.convert_to_tensor(qZ_X), qZ_X)
+    div += (self.beta - 1.) * tc
     return llk, div
 
 
@@ -54,9 +74,8 @@ class AnnealedVAE(VariationalAutoencoder):
                c_max=100,
                iter_max=100,
                interpolation='linear',
-               name='AnnealedVAE',
                **kwargs):
-    super().__init__(name=name, **kwargs)
+    super().__init__(**kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.c_max = tf.convert_to_tensor(c_max, dtype=self.dtype, name='c_max')
     self.interpolation = _interp.get(str(interpolation))(

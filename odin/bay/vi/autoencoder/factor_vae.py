@@ -116,9 +116,8 @@ class FactorVAE(BetaVAE):
                discriminator=dict(units=1000, nlayers=6),
                gamma=1.0,
                beta=1.0,
-               name="FactorVAE",
                **kwargs):
-    super().__init__(beta=beta, name=name, **kwargs)
+    super().__init__(beta=beta, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.discriminator = FactorDiscriminator(
         latent_dim=int(np.prod(self.latent_layer.event_shape)),

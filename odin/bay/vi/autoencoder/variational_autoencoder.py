@@ -8,9 +8,7 @@ from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import distributions as tfd
 
-from odin.bay.helpers import KLdivergence
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.utils import permute_dims
 from odin.networks import NetworkConfig
 
 
@@ -67,6 +65,9 @@ class VariationalAutoencoder(keras.Model):
                                                      posterior='diag',
                                                      name="LatentVariable"),
       **kwargs):
+    name = kwargs.pop('name', None)
+    if name is None:
+      name = type(self).__name__
     ### check latent and input distribution
     latent, latent_shape = _check_rv(latent)
     output, input_shape = _check_rv(output)
