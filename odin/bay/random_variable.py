@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import types
 from copy import deepcopy
+from numbers import Number
 from typing import List
 
 import numpy as np
@@ -34,14 +35,29 @@ def _args_and_defaults(func):
   return spec.args + spec.kwonlyargs, defaults
 
 
-def _default_prior(event_shape, layer, prior):
-  if prior is not None:
+def _default_prior(event_shape, posterior, prior, posterior_kwargs):
+  if isinstance(prior, obd.Distribution):
     return prior
+  layer, dist = parse_distribution(posterior)
+  if isinstance(prior, dict):
+    kw = dict(prior)
+    prior = None
+  else:
+    kw = {}
+  event_size = int(np.prod(event_shape))
+
+  ## helper function
+  def _kwargs(**args):
+    for k, v in args.items():
+      if k not in kw:
+        kw[k] = v
+    return kw
+
   ## Normal
   if layer == obl.GaussianLayer:
     prior = obd.Independent(
-        obd.Normal(loc=tf.zeros(shape=event_shape),
-                   scale=tf.ones(shape=event_shape)), 1)
+        obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                             scale=tf.ones(shape=event_shape))), 1)
   ## Multivariate Normal
   elif issubclass(layer, obl.MultivariateNormalLayer):
     cov = layer._partial_kwargs['covariance']
@@ -49,19 +65,57 @@ def _default_prior(event_shape, layer, prior):
       loc = tf.zeros(shape=event_shape)
       if tf.rank(loc) == 0:
         loc = tf.expand_dims(loc, axis=-1)
-      prior = obd.MultivariateNormalDiag(loc=loc, scale_identity_multiplier=1.)
+      prior = obd.MultivariateNormalDiag(
+          **_kwargs(loc=loc, scale_identity_multiplier=1.))
     else:  # low-triangle covariance
       bijector = tfp.bijectors.FillScaleTriL(
           diag_bijector=tfp.bijectors.Identity(), diag_shift=1e-5)
       size = tf.reduce_prod(event_shape)
       loc = tf.zeros(shape=[size])
       scale_tril = bijector.forward(tf.ones(shape=[size * (size + 1) // 2]))
-      prior = obd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
+      prior = obd.MultivariateNormalTriL(
+          **_kwargs(loc=loc, scale_tril=scale_tril))
   ## Log Normal
   elif layer == obl.LogNormalLayer:
     prior = obd.Independent(
-        obd.LogNormal(loc=tf.zeros(shape=event_shape),
-                      scale=tf.ones(shape=event_shape)), 1)
+        obd.LogNormal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                                scale=tf.ones(shape=event_shape))), 1)
+  ## mixture
+  elif issubclass(layer, obl.MixtureGaussianLayer):
+    if hasattr(layer, '_partial_kwargs'):
+      cov = layer._partial_kwargs['covariance']
+    else:
+      cov = 'none'
+    n_components = int(posterior_kwargs.get('n_components', 2))
+    if cov == 'diag':
+      scale_shape = [n_components, event_size]
+      fn = lambda l, s: obd.MultivariateNormalDiag(loc=l,
+                                                   scale_diag=tf.nn.softplus(s))
+    elif cov == 'none':
+      scale_shape = [n_components, event_size]
+      fn = lambda l, s: obd.Independent(
+          obd.Normal(loc=l, scale=tf.math.softplus(s)), 1)
+    elif cov in ('full', 'tril'):
+      scale_shape = [n_components, event_size * (event_size + 1) // 2]
+      fn = lambda l, s: obd.MultivariateNormalTriL(
+          loc=l,
+          scale_tril=tfp.bijectors.FillScaleTriL(diag_shift=1e-5)
+          (tf.math.softplus(s)))
+    loc = tf.cast(tf.fill([n_components, event_size], 0.), dtype=tf.float32)
+    log_scale = tf.cast(tf.fill(scale_shape, np.log(np.expm1(1.))),
+                        dtype=tf.float32)
+    mixture_logits = tf.cast(tf.fill([n_components], 1.), dtype=tf.float32)
+    prior = obd.MixtureSameFamily(
+        components_distribution=fn(loc, log_scale),
+        mixture_distribution=obd.Categorical(logits=mixture_logits))
+  ## discrete
+  elif dist in (obd.OneHotCategorical, obd.Categorical) or \
+    layer == obl.RelaxedOneHotCategoricalLayer:
+    prior = dist(**_kwargs(logits=np.log([1. / event_size] * event_size),
+                           dtype=tf.float32))
+  elif dist == obd.Dirichlet:
+    prior = dist(**_kwargs(concentration=[1.] * event_size))
+  ## other
   return prior
 
 
@@ -128,6 +182,9 @@ class RandomVariable:
             isinstance(shape, np.ndarray)):
       self.event_shape = tf.nest.flatten(self.event_shape)
     self.name = str(self.name)
+    ### create prior
+    self.prior = _default_prior(self.event_shape, self.posterior, self.prior,
+                                self.kwargs)
 
   ######## Basic methods
   def keys(self):
@@ -259,8 +316,8 @@ class RandomVariable:
                                               mixfull='tril',
                                               mixtril='tril')[posterior],
                                           name=name,
+                                          prior=prior,
                                           **posterior_kwargs)
-        layer.set_prior()
       # Just the mixture layer
       else:
         layer = obl.MixtureGaussianLayer(event_shape=event_shape,
@@ -278,9 +335,7 @@ class RandomVariable:
       if self.projection:
         layer = obl.DenseDistribution(event_shape,
                                       posterior=distribution_layer,
-                                      prior=_default_prior(
-                                          event_shape, distribution_layer,
-                                          prior),
+                                      prior=prior,
                                       activation=activation,
                                       posterior_kwargs=posterior_kwargs,
                                       name=name,

@@ -283,7 +283,7 @@ class MixtureDensityNetwork(DenseDistribution):
 
   def __init__(self,
                units,
-               n_components=8,
+               n_components=2,
                covariance='none',
                loc_activation='linear',
                scale_activation='softplus1',
@@ -302,7 +302,6 @@ class MixtureDensityNetwork(DenseDistribution):
     self.n_components = n_components
     super().__init__(event_shape=units,
                      posterior='mixgaussian',
-                     prior=None,
                      posterior_kwargs=dict(n_components=int(n_components),
                                            covariance=str(covariance),
                                            loc_activation=loc_activation,

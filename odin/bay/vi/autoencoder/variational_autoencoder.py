@@ -207,7 +207,7 @@ class VariationalAutoencoder(keras.Model):
       if 'n_mcmc' in args:
         kw['n_mcmc'] = n_mcmc
       qZ_X.append(latent(e, **kw))
-    return qZ_X if len(qZ_X) == 1 else tuple(qZ_X)
+    return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
   def decode(self, latents, training=None, **kwargs):
     r""" Decoding latent codes, this does not guarantee output the

@@ -14,10 +14,8 @@ from odin.utils.python_utils import multikeysdict, partialclass
 # TODO: better specifying complex distribution
 # mapping from alias to
 _dist_mapping = multikeysdict({
-    ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
-    ('zibernoulli', 'zeroinflatedbernoulli'):
-        (obl.ZIBernoulliLayer, tfd.Bernoulli),
-    ('normal', 'gaussian', 'norm', 'gaus', 'gauss'): (obl.NormalLayer, tfd.Normal),
+    ('normal', 'gaussian', 'norm', 'gaus', 'gauss'):
+        (obl.NormalLayer, tfd.Normal),
     ('diag', 'normaldiag', 'gaussiandiag'):
         (partialclass(obl.MultivariateNormalLayer,
                       covariance='diag'), tfd.MultivariateNormalDiag),
@@ -90,13 +88,22 @@ _dist_mapping = multikeysdict({
     ('pois', 'poisson'): (obl.PoissonLayer, tfd.Poisson),
     ('zip', 'zipois', 'zipoisson', 'zeroinflatedpoisson'):
         (obl.ZIPoissonLayer, tfd.Poisson),
-    # ====== Dirichlet ====== #
+    # ====== Dirichlet and beta ====== #
     'dirichlet': (obl.DirichletLayer, tfd.Dirichlet),
-    'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
-    ('cat', 'categorical', 'discrete'): (obl.CategoricalLayer, tfd.Categorical),
     'deterministic': (obl.DeterministicLayer, tfd.Deterministic),
     'vdeterministic': (obl.VectorDeterministicLayer, tfd.VectorDeterministic),
     'beta': (obl.BetaLayer, tfd.Beta),
+    # ====== Discrete distribution ====== #
+    'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
+    ('cat', 'categorical', 'discrete'): (obl.CategoricalLayer, tfd.Categorical),
+    # ====== Gumbel ====== #
+    ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
+    ('zibernoulli', 'zeroinflatedbernoulli'):
+        (obl.ZIBernoulliLayer, tfd.Bernoulli),
+    ('relaxedbern', 'relaxedbernoulli'):
+        (obl.RelaxedBernoulliLayer, tfd.Bernoulli),
+    ('relaxedsoftmax', 'relaxedonehot'):
+        (obl.RelaxedOneHotCategoricalLayer, tfd.OneHotCategorical),
 })
 
 
