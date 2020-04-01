@@ -1,12 +1,15 @@
 from __future__ import absolute_import, division, print_function
 
 import collections
+import inspect
 from enum import Flag, auto
 from numbers import Number
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import array_ops
 from tensorflow_probability import distributions as tfd
+from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     _get_convert_to_tensor_fn, _serialize)
 from tensorflow_probability.python.layers.internal import \
@@ -16,7 +19,73 @@ from tensorflow_probability.python.layers.internal import \
 
 from odin.bay import distributions as obd
 
-__all__ = ['print_dist', 'coercible_tensor', 'kl_divergence']
+__all__ = [
+    'print_dist',
+    'coercible_tensor',
+    'kl_divergence',
+    'is_binary_distribution',
+    'is_discrete_distribution',
+    'is_mixture_distribution',
+    'is_zeroinflated_distribution',
+]
+
+
+# ===========================================================================
+# distribution type
+# ===========================================================================
+def _dist(dist):
+  # distribution layer
+  if isinstance(dist, DistributionLambda):
+    dist = dist((array_ops.empty(shape=(1, dist.params_size((1,))),
+                                 dtype=tf.float32)))
+  elif inspect.isclass(dist) and issubclass(dist, DistributionLambda):
+    dist = dist()(array_ops.empty(shape=(1, dist.params_size((1,))),
+                                  dtype=tf.float32))
+  # distribution object
+  if not inspect.isclass(dist):
+    assert isinstance(dist, tfd.Distribution), \
+      "dist must be instance of Distribution, but given: %s" % str(type(dist))
+    while isinstance(dist, tfd.Independent):
+      dist = dist.distribution
+    dist = type(dist)
+  # remove unecessary classes
+  dist = [
+      t for t in type.mro(dist)
+      if issubclass(t, tfd.Distribution) and t not in (
+          tfd.Independent, tfd.Distribution, tfd.TransformedDistribution,
+          dtc._TensorCoercible)
+  ]
+  return dist
+
+
+def is_binary_distribution(dist):
+  for dist in _dist(dist):
+    if issubclass(dist, (obd.OneHotCategorical, obd.RelaxedOneHotCategorical,
+                         obd.Bernoulli, obd.RelaxedBernoulli)):
+      return True
+  return False
+
+
+def is_discrete_distribution(dist):
+  for dist in _dist(dist):
+    if issubclass(dist, (obd.Poisson, obd.NegativeBinomial,
+                         obd.NegativeBinomialDisp, obd.Categorical)):
+      return True
+  raise NotImplementedError()
+
+
+def is_mixture_distribution(dist):
+  for dist in _dist(dist):
+    if issubclass(dist, (obd.Mixture, obd.MixtureSameFamily)):
+      return True
+  return False
+
+
+def is_zeroinflated_distribution(dist):
+  for dist in _dist(dist):
+    if issubclass(dist, obd.ZeroInflated):
+      return True
+  return False
 
 
 # ===========================================================================
@@ -161,10 +230,8 @@ def kl_divergence(q,
   # using MCMC sampling for estimating the KL
   if callable(q_sample):
     z = q_sample(q)
-  elif isinstance(q_sample, Number) or tf.is_tensor(q_sample):
-    z = q.sample((tf.convert_to_tensor(q_sample, tf.int64),))
   else:
-    z = q_sample
+    z = q.sample(q_sample)
   # calculate the output, then perform reduction
   kl = q.log_prob(z) - p.log_prob(z)
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
@@ -209,7 +276,7 @@ class KLdivergence:
     self.posterior = posterior
     self.prior = prior
     self.analytic = bool(analytic)
-    self.n_mcmc = tf.reduce_prod(n_mcmc)
+    self.n_mcmc = n_mcmc
     self.reverse = bool(reverse)
     self.keepdims = bool(keepdims)
 
@@ -229,7 +296,7 @@ class KLdivergence:
                keepdims=False):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
-    n_mcmc = self.n_mcmc if n_mcmc is None else int(n_mcmc)
+    n_mcmc = self.n_mcmc if n_mcmc is None else n_mcmc
     reverse = self.reverse if reverse is None else bool(reverse)
     keepdims = self.keepdims if keepdims is None else bool(keepdims)
     if prior is None:

@@ -1,6 +1,10 @@
+import inspect
+
 import numpy as np
 import tensorflow as tf
 from tensorflow_probability.python.distributions import Distribution, Normal
+
+from odin.bay.helpers import kl_divergence
 
 __all__ = [
     'disentangled_inferred_prior_loss',
@@ -11,6 +15,25 @@ __all__ = [
 ]
 
 
+# ===========================================================================
+# Helper
+# ===========================================================================
+def get_divergence(name):
+  div = dict(dip=disentangled_inferred_prior_loss,
+             tc=total_correlation,
+             mmd=maximum_mean_discrepancy,
+             kl=kl_divergence)
+  name = str(name).strip().lower()
+  if name not in div:
+    raise ValueError(
+        "Cannot find divergence with name: '%s', all available are: %s" %
+        (name, ', '.join(div.keys())))
+  return div[name]
+
+
+# ===========================================================================
+# Losses
+# ===========================================================================
 def disentangled_inferred_prior_loss(qZ_X: Distribution,
                                      only_mean=False,
                                      lambda_offdiag=2.,

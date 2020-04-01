@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -28,7 +24,9 @@ from tensorflow_probability.python.layers.distribution_layer import (
 
 from odin import backend as bk
 from odin.bay.distribution_alias import parse_distribution
-from odin.bay.helpers import KLdivergence, kl_divergence
+from odin.bay.helpers import (KLdivergence, is_binary_distribution,
+                              is_discrete_distribution, is_mixture_distribution,
+                              is_zeroinflated_distribution, kl_divergence)
 from odin.bay.layers.continuous import VectorDeterministicLayer
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
 
@@ -149,6 +147,22 @@ class DenseDistribution(Dense):
     self._last_distribution = None
     # if 'input_shape' in kwargs and not self.built:
     #   self.build(kwargs['input_shape'])
+
+  @property
+  def is_binary(self):
+    return is_binary_distribution(self.posterior_layer)
+
+  @property
+  def is_discrete(self):
+    return is_discrete_distribution(self.posterior_layer)
+
+  @property
+  def is_mixture(self):
+    return is_mixture_distribution(self.posterior_layer)
+
+  @property
+  def is_zero_inflated(self):
+    return is_zeroinflated_distribution(self.posterior_layer)
 
   @property
   def event_shape(self):

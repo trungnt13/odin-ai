@@ -1,102 +1,16 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow_probability.python.distributions import Distribution
 
-from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.utils import permute_dims
-from odin.networks import DenseNetwork, NetworkConfig, ReshapeMCMC
+from odin.bay.vi.autoencoder.discriminator import FactorDiscriminator
+from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 
-def _samples(qZ_X):
-  qZ_X = tf.nest.flatten(qZ_X)
-  shape = tf.concat([qZ_X[0].batch_shape, qZ_X[0].event_shape], axis=0)
-  z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
-  sample_ndim = tf.rank(z) - shape.shape[0]
-  return z, sample_ndim
+class FactorStep(TrainStep):
 
-
-class FactorDiscriminator(ReshapeMCMC):
-  r""" The main goal is minimizing the total correlation (the mutual information
-    which quantifies the redundancy or dependency among latent variables).
-
-    We use a discriminator to estimate TC
-
-  Arguments:
-    latent_dim : an Integer, the number of latent units used in VAE.
-    hdim : an Integer, the number of hidden units for the discriminator.
-    nlayer : an Integer, the number of layers.
-    activation : Callable or String, activation function of each layer.
-
-  Reference:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
-      arXiv:1802.05983 [cs, stat].
-  """
-
-  def __init__(self,
-               latent_dim,
-               batchnorm=True,
-               units=1024,
-               nlayers=6,
-               activation=tf.nn.leaky_relu):
-    # 1: real sample for q(z) and 0: fake sample from q(z-)
-    super().__init__(
-        layer=DenseNetwork(
-            units=[int(units)] * nlayers,
-            activation=activation,
-            batchnorm=bool(batchnorm),
-            flatten=True,
-            end_layers=[keras.layers.Dense(2, activation='linear')],
-            input_shape=(latent_dim,)),
-        sample_ndim=1,
-        keepdims=True,
-        name="Discriminator",
-    )
-
-  def tc(self, qZ_X, training=None):
-    r""" Total correlation Eq(3)
-      `TC(z) = KL(q(z)||q(z-)) = E_q(z)[log(q(z) / q(z-))]`
-
-    Note:
-      In many implementation, `log(q(z-)) - log(q(z))` is returned as `total
-      correlation loss`, here, we return `log(q(z)) - log(q(z-))` as for
-      the construction of the ELBO in Eq(2)
-
-    Arguments:
-      z : a Tensor, [batch_dim, latent_dim]
-
-    Return:
-      TC(z) : a scalar, approximation of the density-ratio that arises in the
-        KL-term.
-    """
-    # adding log_softmax here could provide more stable loss than minimizing
-    # the logit directly
-    # tf.nn.log_softmax
-    z, ndim = _samples(qZ_X)
-    d_z = self(z, sample_ndim=ndim, training=training)
-    return tf.reduce_mean(d_z[..., 1] - d_z[..., 0])
-
-  def dtc_loss(self, qZ_X, training=None):
-    r""" Discriminated total correlation loss Algorithm(2)
-
-      Minimize the probablity of:
-       - `q(z)` misclassified as `D(z)[:, 0]`
-       - `q(z-)` misclassified as `D(z)[:, 1]`
-
-    """
-    # we don't want the gradient to be propagated to the encoder
-    z, ndim = _samples(qZ_X)
-    z = tf.stop_gradient(z)
-    d_z = tf.nn.log_softmax(self(z, training=training, sample_ndim=ndim),
-                            axis=-1)
-    z_perm = permute_dims(z)
-    d_zperm = tf.nn.log_softmax(self(z_perm,
-                                     training=training,
-                                     sample_ndim=ndim),
-                                axis=-1)
-    loss = 0.5 * tf.reduce_mean(d_z[..., 0] + d_zperm[..., 1])
-    return loss
+  def __call__(self):
+    dtc_loss = self.vae.dtc_loss(self.inputs, training=True)
+    return dtc_loss, []
 
 
 class FactorVAE(BetaVAE):
@@ -131,18 +45,61 @@ class FactorVAE(BetaVAE):
     # all latents will be concatenated
     latent_dim = np.prod(
         sum(np.array(layer.event_shape) for layer in self.latent_layers))
-    self.discriminator = FactorDiscriminator(latent_dim=latent_dim,
+    self.discriminator = FactorDiscriminator(input_shape=(latent_dim,),
                                              **discriminator)
+    # VAE and discriminator must be trained separatedly so we split
+    # their params here
+    self.disc_params = self.discriminator.trainable_variables
+    exclude = set(id(p) for p in self.disc_params)
+    self.vae_params = [
+        p for p in self.trainable_variables if id(p) not in exclude
+    ]
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    total_correlation = self.discriminator.tc(qZ_X, training=training)
-    div = self.gamma * total_correlation
-    return llk, div
+    total_correlation = self.discriminator.total_correlation(qZ_X,
+                                                             training=training)
+    return llk, div + self.gamma * total_correlation
 
   def dtc_loss(self, qZ_X, training=None):
-    r""" Discriminated total correlation loss Algorithm(2) """
+    r""" Discrimination loss between real and permuted codes Algorithm(2) """
     return self.discriminator.dtc_loss(qZ_X, training=training)
+
+  def train_steps(self,
+                  inputs,
+                  n_mcmc=(),
+                  iw=False,
+                  elbo_kw=dict()) -> TrainStep:
+    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
+
+    Example:
+    ```
+    vae = FactorVAE()
+    x = vae.sample_data()
+    vae_step, discriminator_step = list(vae.train_steps(x))
+    # optimizer VAE with total correlation loss
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(vae_step.parameters)
+      loss, metrics = vae_step()
+      tape.gradient(loss, vae_step.parameters)
+    # optimizer the discriminator
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(discriminator_step.parameters)
+      loss, metrics = discriminator_step()
+      tape.gradient(loss, discriminator_step.parameters)
+    ```
+    """
+    # first step optimize VAE with total correlation loss
+    step1 = TrainStep(vae=self,
+                      inputs=inputs,
+                      n_mcmc=n_mcmc,
+                      iw=iw,
+                      elbo_kw=elbo_kw,
+                      parameters=self.vae_params)
+    yield step1
+    # second step optimize the discriminator for discriminate permuted code
+    step2 = FactorStep(vae=self, inputs=step1.qZ_X, parameters=self.disc_params)
+    yield step2
 
   def __str__(self):
     text = super().__str__()

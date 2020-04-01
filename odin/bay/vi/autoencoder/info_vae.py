@@ -7,7 +7,8 @@ from tensorflow_probability.python.distributions import (Distribution,
 
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.losses import maximum_mean_discrepancy
+from odin.bay.vi.autoencoder.discriminator import FactorDiscriminator
+from odin.bay.vi.losses import get_divergence
 
 
 class InfoVAE(BetaVAE):
@@ -40,11 +41,7 @@ class InfoVAE(BetaVAE):
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
     # select right divergence
-    if self.divergence == 'mmd':
-      fn = maximum_mean_discrepancy
-    else:
-      raise NotImplementedError("No support for divergence family: '%s'" %
-                                self.divergence)
+    fn = get_divergence(self.divergence)
     # repeat for each latent
     d = tf.constant(0., dtype=div.dtype)
     for q in tf.nest.flatten(qZ_X):
@@ -94,25 +91,76 @@ class MutualInfoVAE(BetaVAE):
   def __init__(self,
                beta=1.0,
                gamma=1.0,
-               code=OneHotCategorical(logits=np.log([1. / 10] * 10),
-                                      dtype=tf.float32,
-                                      name="Code"),
+               latents=RandomVariable(event_shape=10,
+                                      posterior='diag',
+                                      name="LatentVariable"),
+               code=RandomVariable(event_shape=10,
+                                   posterior='diag',
+                                   name='Code'),
                **kwargs):
-    super().__init__(beta=beta, **kwargs)
-    if isinstance(code, Number):
-      code = np.log([1. / code] * int(code))
-    if isinstance(code, (tuple, list, np.ndarray)) or tf.is_tensor(code):
-      code = tf.convert_to_tensor(code, dtype=self.dtype)
-      if tf.math.abs(tf.reduce_sum(code) - 1.) < 1e-8:
-        code = tf.math.log(code)
-      code = OneHotCategorical(logits=code, dtype=self.dtype, name="Code")
-    assert isinstance(code, Distribution), \
-      "code must be instance of Distribution, given: %s" % str(type(code))
-    assert code.batch_shape == (), \
-      "code batch_shape must be (), but given: %s" % str(code.batch_shape)
-    self.code = code
+    latents = tf.nest.flatten(latents)
+    latents.append(code)
+    self.is_binary_code = code.is_binary
+    super().__init__(beta=beta,
+                     latents=latents,
+                     reduce_latent='concat',
+                     **kwargs)
+    self.code = self.latent_layers[-1]
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    return llk, div
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
+    # don't take KL of qC_X
+    llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse, n_mcmc)
+    # the latents
+    z = tf.concat([q.sample() for q in qZ_X[:-1]], axis=-1)
+    # mutual information code
+    qC_X = qZ_X[-1]
+    c_prime = qC_X.KL_divergence.prior.sample(z.shape[:-1])
+    if self.is_binary_code:
+      c_prime = tf.clip_by_value(c_prime, 1e-8, 1. - 1e-8)
+    # decoding
+    z_prime = tf.concat([z, c_prime], axis=-1)
+    pX_Zprime = self.decode(z_prime, training=training)
+    qC_Xprime = self.encode(pX_Zprime, training=training)[-1]
+    # mutual information
+    mi = qC_Xprime.log_prob(c_prime)
+    return llk + self.gamma * mi, div
+
+
+# class AuxInfoVAE(BetaVAE):
+#   r""" Maximizing mutual information VAE via auxliary code
+
+#   Reference:
+#     Chen, X., Chen, X., Duan, Y., et al. (2016) "InfoGAN: Interpretable
+#       Representation Learning by Information Maximizing Generative
+#       Adversarial Nets". URL : http://arxiv.org/ abs/1606.03657.
+#     Creswell, A., Mohamied, Y., Sengupta, B., Bharath, A.A., (2018).
+#       "Adversarial Information Factorization". arXiv:1711.05175 [cs].
+#   """
+
+#   def __init__(self,
+#                beta=1.0,
+#                gamma=1.0,
+#                latents=RandomVariable(event_shape=10,
+#                                       posterior='diag',
+#                                       name="Latent"),
+#                code=RandomVariable(event_shape=10,
+#                                    posterior='diag',
+#                                    name='Code'),
+#                learnable_code=False,
+#                **kwargs):
+#     self.learnable_code = bool(learnable_code)
+#     latents = tf.nest.flatten(latents)
+#     if self.learnable_code:
+#       latents.append(code)
+#     super().__init__(beta=beta,
+#                      latents=latents,
+#                      reduce_latent='concat',
+#                      **kwargs)
+#     self.code = self.latent_layers[-1]
+#     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
+
+#   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
+#     # don't take KL of qC_X
+#     llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse, n_mcmc)
+#     return llk, div

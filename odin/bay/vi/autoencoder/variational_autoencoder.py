@@ -58,6 +58,46 @@ def _reduce_latents(latents, mode):
   return mode(latents)
 
 
+class TrainStep:
+  r""" A single train step (iteration) for Variational Autoencoder,
+  when called will return:
+
+    - a scalar for loss
+    - a list of Tensor or scale of metrics
+  """
+
+  def __init__(self,
+               vae,
+               inputs,
+               n_mcmc=(),
+               iw=False,
+               elbo_kw=dict(),
+               parameters=None):
+    self.vae = vae
+    self.parameters = (vae.trainable_variables
+                       if parameters is None else parameters)
+    self.inputs = inputs
+    self.n_mcmc = n_mcmc
+    self.iw = iw
+    self.elbo_kw = elbo_kw
+
+  def __call__(self):
+    pX_Z, qZ_X = self.vae(self.inputs, training=True, n_mcmc=self.n_mcmc)
+    # store so it could be reused
+    self.pX_Z = pX_Z
+    self.qZ_X = qZ_X
+    llk, div = self.vae.elbo(self.inputs,
+                             pX_Z,
+                             qZ_X,
+                             return_components=True,
+                             **self.elbo_kw)
+    elbo = llk - div
+    if self.iw and tf.rank(elbo) > 1:
+      elbo = self.vae.importance_weighted(elbo, axis=0)
+    loss = -tf.reduce_mean(elbo)
+    return loss, (llk, div)
+
+
 # ===========================================================================
 # Model
 # ===========================================================================
@@ -191,6 +231,17 @@ class VariationalAutoencoder(keras.Model):
     samples = []
     for latent in self.latent_layers:
       s = latent.sample(sample_shape=sample_shape, seed=seed)
+      if tf.rank(s) == 1:  # at-least 2D
+        s = tf.expand_dims(s, axis=0)
+      samples.append(s)
+    return samples[0] if len(samples) == 1 else tuple(samples)
+
+  def sample_data(self, sample_shape=(), seed=1):
+    r""" Sample from p(X) given that the prior of X is known, this could be
+    wrong since `RandomVariable` often has a default prior. """
+    samples = []
+    for output in self.output_layers:
+      s = output.sample(sample_shape=sample_shape, seed=seed)
       if tf.rank(s) == 1:  # at-least 2D
         s = tf.expand_dims(s, axis=0)
       samples.append(s)
@@ -351,6 +402,36 @@ class VariationalAutoencoder(keras.Model):
     iw_dim = tf.cast(elbo.shape[axis], dtype=dtype)
     elbo = tf.reduce_logsumexp(elbo, axis=axis) - tf.math.log(iw_dim)
     return elbo
+
+  def train_steps(self,
+                  inputs,
+                  n_mcmc=(),
+                  iw=False,
+                  elbo_kw=dict()) -> TrainStep:
+    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
+
+    Example:
+    ```
+    vae = FactorVAE()
+    x = vae.sample_data()
+    vae_step, discriminator_step = list(vae.train_steps(x))
+    # optimizer VAE with total correlation loss
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(vae_step.parameters)
+      loss, metrics = vae_step()
+      tape.gradient(loss, vae_step.parameters)
+    # optimizer the discriminator
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(discriminator_step.parameters)
+      loss, metrics = discriminator_step()
+      tape.gradient(loss, discriminator_step.parameters)
+    ```
+    """
+    yield TrainStep(vae=self,
+                    inputs=inputs,
+                    n_mcmc=n_mcmc,
+                    iw=iw,
+                    elbo_kw=elbo_kw)
 
   def __str__(self):
     clses = [

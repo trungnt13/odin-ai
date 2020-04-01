@@ -16,6 +16,9 @@ from tensorflow.python import array_ops, keras
 from odin.bay import distributions as obd
 from odin.bay import layers as obl
 from odin.bay.distribution_alias import parse_distribution
+from odin.bay.helpers import (is_binary_distribution, is_discrete_distribution,
+                              is_mixture_distribution,
+                              is_zeroinflated_distribution)
 from odin.utils.cache_utils import cache_memory
 
 __all__ = ['RandomVariable']
@@ -250,16 +253,22 @@ class RandomVariable:
   @property
   def is_mixture(self):
     dist = self._dummy_dist()
-    if isinstance(dist, (obd.Mixture, obd.MixtureSameFamily)):
-      return True
-    return False
+    return is_mixture_distribution(dist)
+
+  @property
+  def is_binary(self):
+    dist = self._dummy_dist()
+    return is_binary_distribution(dist)
+
+  @property
+  def is_discrete(self):
+    dist = self._dummy_dist()
+    return is_discrete_distribution(dist)
 
   @property
   def is_zero_inflated(self):
     dist = self._dummy_dist()
-    if isinstance(dist, obd.ZeroInflated):
-      return True
-    return False
+    return is_zeroinflated_distribution(dist)
 
   @property
   def is_deterministic(self):

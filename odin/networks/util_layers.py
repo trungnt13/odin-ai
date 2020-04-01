@@ -252,7 +252,7 @@ class ReshapeMCMC(Wrapper):
         raise RuntimeError("Number of MCMC dims is %d, but shape: %s" %
                            (sample_ndim, str(shape)))
       # flatten the input
-      new_shape = tf.concat([(-1,), shape[-sample_ndim:]], axis=0)
+      new_shape = tf.concat([(-1,), shape[(sample_ndim + 1):]], axis=0)
       inputs = tf.reshape(inputs, new_shape)
       # create the outputs
       inputs = self.layer(inputs, **kwargs)

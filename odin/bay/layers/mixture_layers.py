@@ -168,7 +168,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     return NotImplementedError("No support for covariance: '%s'" % covariance)
 
   @staticmethod
-  def params_size(event_shape, n_components, covariance):
+  def params_size(event_shape, n_components=2, covariance='diag'):
     r"""Number of `params` needed to create a `MixtureNegativeBinomialLayer`
     distribution.
 
