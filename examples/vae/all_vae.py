@@ -30,6 +30,8 @@ np.random.seed(8)
 
 # ===========================================================================
 # Configuration
+# TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
+# vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae
 # ===========================================================================
 CONFIG = \
 r"""
@@ -40,7 +42,6 @@ ds: binarizedmnist
 conv: False
 batch_size: 64
 epochs: 200
-kw: {}
 """
 
 
@@ -52,7 +53,7 @@ class VaeExperimenter(Experimenter):
   def __init__(self):
     super().__init__(save_path='/tmp/vaeexp',
                      config_path=CONFIG,
-                     exclude_keys=["epochs", "batch_size", "kw"])
+                     exclude_keys=["epochs", "batch_size"])
 
   ####### Utility methods
   def optimize(self, inputs, tape, n_iter, training):

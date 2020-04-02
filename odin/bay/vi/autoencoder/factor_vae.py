@@ -37,7 +37,7 @@ class FactorVAE(BetaVAE):
 
   def __init__(self,
                discriminator=dict(units=1000, nlayers=6),
-               gamma=1.0,
+               gamma=10.0,
                beta=1.0,
                **kwargs):
     super().__init__(beta=beta, **kwargs)
@@ -57,7 +57,8 @@ class FactorVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    div['tc'] = self.discriminator.total_correlation(qZ_X, training=training)
+    div['tc'] = self.gamma * self.discriminator.total_correlation(
+        qZ_X, training=training)
     return llk, div
 
   def dtc_loss(self, qZ_X, training=None):

@@ -17,7 +17,7 @@ class BetaVAE(VariationalAutoencoder):
       ICLR'17
   """
 
-  def __init__(self, beta=1.0, **kwargs):
+  def __init__(self, beta=10.0, **kwargs):
     super().__init__(**kwargs)
     self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
 
@@ -73,16 +73,16 @@ class AnnealedVAE(VariationalAutoencoder):
 
   def __init__(self,
                gamma=1.0,
-               c_max=100,
-               iter_max=100,
+               c_min=0.,
+               c_max=25.,
+               iter_max=1000,
                interpolation='linear',
                **kwargs):
     super().__init__(**kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
-    self.c_max = tf.convert_to_tensor(c_max, dtype=self.dtype, name='c_max')
     self.interpolation = _interp.get(str(interpolation))(
-        vmin=tf.convert_to_tensor(0, self.dtype),
-        vmax=self.c_max,
+        vmin=tf.constant(c_min, self.dtype),
+        vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
