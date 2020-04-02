@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -91,11 +91,21 @@ class TrainStep:
                              qZ_X,
                              return_components=True,
                              **self.elbo_kw)
-    elbo = llk - div
+    # sum all the components log-likelihood and divergence
+    llk_sum = tf.constant(0., dtype=self.vae.dtype)
+    div_sum = tf.constant(0., dtype=self.vae.dtype)
+    for x in llk.values():
+      llk_sum += x
+    for x in div.values():
+      div_sum += x
+    elbo = llk_sum - div_sum
     if self.iw and tf.rank(elbo) > 1:
       elbo = self.vae.importance_weighted(elbo, axis=0)
     loss = -tf.reduce_mean(elbo)
-    return loss, (llk, div)
+    # metrics
+    metrics = llk
+    metrics.update(div)
+    return loss, metrics
 
 
 # ===========================================================================
@@ -123,22 +133,22 @@ class VariationalAutoencoder(keras.Model):
       deterministic variable)
   """
 
-  def __init__(
-      self,
-      encoder: Union[Layer, NetworkConfig] = None,
-      decoder: Union[Layer, NetworkConfig] = None,
-      config: Optional[NetworkConfig] = NetworkConfig(),
-      outputs: Union[Layer,
-                     RandomVariable] = RandomVariable(event_shape=64,
-                                                      posterior='gaus',
-                                                      name="InputVariable"),
-      latents: Union[Layer,
-                     RandomVariable] = RandomVariable(event_shape=10,
-                                                      posterior='diag',
-                                                      name="LatentVariable"),
-      reduce_latent='concat',
-      input_shape=None,
-      **kwargs):
+  def __init__(self,
+               encoder: Union[Layer, NetworkConfig] = None,
+               decoder: Union[Layer, NetworkConfig] = None,
+               config: Optional[NetworkConfig] = NetworkConfig(),
+               outputs: Union[Layer,
+                              RandomVariable] = RandomVariable(event_shape=64,
+                                                               posterior='gaus',
+                                                               name="Input"),
+               latents: Union[Layer,
+                              RandomVariable] = RandomVariable(event_shape=10,
+                                                               posterior='diag',
+                                                               name="Latent"),
+               reduce_latent='concat',
+               input_shape=None,
+               step=0.,
+               **kwargs):
     name = kwargs.pop('name', None)
     if name is None:
       name = type(self).__name__
@@ -153,9 +163,13 @@ class VariationalAutoencoder(keras.Model):
       if len(outputs) == 1:
         input_shape = input_shape[0]
     ### Then, create the encoder, so we know the input_shape to latent layers
-    if config is None:
+    if encoder is not None:
       if isinstance(encoder, NetworkConfig):
         encoder = encoder.create_network(input_shape, name="Encoder")
+      elif hasattr(encoder, 'input_shape'):
+        assert list(encoder.input_shape[1:]) == input_shape, \
+          "encoder has input_shape=%s but VAE input_shape=%s" % \
+            (str(encoder.input_shape[1:]), str(input_shape))
     else:
       assert isinstance(config, NetworkConfig), \
         "config must be instance of NetworkConfig but given: %s" % \
@@ -192,9 +206,13 @@ class VariationalAutoencoder(keras.Model):
       latent_shape = list(reduce_latent(zs).shape[1:])
     self.reduce_latent = reduce_latent
     ### Create the decoder
-    if config is None:
+    if decoder is not None:
       if isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
+      elif hasattr(decoder, 'input_shape'):
+        assert list(decoder.input_shape[1:]) == latent_shape, \
+          "decoder has input_shape=%s but latent_shape=%s" % \
+            (str(decoder.input_shape[1:]), str(latent_shape))
     else:
       decoder = config.create_decoder(encoder=encoder,
                                       latent_shape=latent_shape)
@@ -217,6 +235,14 @@ class VariationalAutoencoder(keras.Model):
         shape = [1 if i is None else i for i in layer._batch_input_shape]
         x = tf.ones(shape=shape, dtype=layer.dtype)
         layer(x)  # call this dummy input to build the layer
+    ### the training step
+    self.step = tf.Variable(step,
+                            dtype=self.dtype,
+                            trainable=False,
+                            name="Step")
+    self.latent_names = [i.name for i in self.latent_layers]
+    # keras already use output_names, cannot override it
+    self.variable_names = [i.name for i in self.output_layers]
 
   @property
   def input_shape(self):
@@ -319,21 +345,17 @@ class VariationalAutoencoder(keras.Model):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs):
     r""" The basic components of all ELBO """
-    X = [tf.convert_to_tensor(x) for x in tf.nest.flatten(X)]
-    pX_Z = tf.nest.flatten(pX_Z)
-    qZ_X = tf.nest.flatten(qZ_X)
-    dtype = X[0].dtype
     ### llk
-    llk = tf.convert_to_tensor(0., dtype=dtype)
-    for x, pX in zip(X, pX_Z):
-      llk += pX.log_prob(x)
+    llk = {}
+    for name, x, pX in zip(self.variable_names, X, pX_Z):
+      llk['llk_%s' % name] = pX.log_prob(x)
     ### kl
-    div = tf.convert_to_tensor(0., dtype=dtype)
-    for qZ in qZ_X:
-      div += qZ.KL_divergence(analytic=analytic,
-                              reverse=reverse,
-                              n_mcmc=n_mcmc,
-                              keepdims=True)
+    div = {}
+    for name, qZ in zip(self.latent_names, qZ_X):
+      div['kl_%s' % name] = qZ.KL_divergence(analytic=analytic,
+                                             reverse=reverse,
+                                             n_mcmc=n_mcmc,
+                                             keepdims=True)
     return llk, div
 
   def elbo(self,
@@ -369,16 +391,26 @@ class VariationalAutoencoder(keras.Model):
         KL-divergence instead of final ELBO.
 
     Return:
-      log-likelihood : a `Tensor` of shape [sample_shape, batch_size].
+      log-likelihood : dictionary of `Tensor` of shape [sample_shape, batch_size].
         The sample shape could be ommited in case `n_mcmc=()`.
         The log-likelihood or distortion
-      divergence : a `Tensor` of shape [n_mcmc, batch_size].
+      divergence : dictionary `Tensor` of shape [n_mcmc, batch_size].
         The reversed KL-divergence or rate
     """
+    X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
+    pX_Z = tf.nest.flatten(pX_Z)
+    qZ_X = tf.nest.flatten(qZ_X)
     llk, div = self._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs)
     if return_components:
       return llk, div
-    elbo = llk - div
+    # sum all the components log-likelihood and divergence
+    llk_sum = tf.constant(0., dtype=self.dtype)
+    div_sum = tf.constant(0., dtype=self.dtype)
+    for x in llk.values():
+      llk_sum += x
+    for x in div.values():
+      div_sum += x
+    elbo = llk_sum - div_sum
     if iw and tf.rank(elbo) > 1:
       elbo = self.importance_weighted(elbo, axis=0)
     return elbo
@@ -427,6 +459,7 @@ class VariationalAutoencoder(keras.Model):
       tape.gradient(loss, discriminator_step.parameters)
     ```
     """
+    self.step.assign_add(1)
     yield TrainStep(vae=self,
                     inputs=inputs,
                     n_mcmc=n_mcmc,

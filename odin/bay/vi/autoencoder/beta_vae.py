@@ -23,7 +23,7 @@ class BetaVAE(VariationalAutoencoder):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    div = self.beta * div
+    div = {key: self.beta * val for key, val in div.items()}
     return llk, div
 
 
@@ -31,7 +31,8 @@ class BetaTCVAE(BetaVAE):
   r""" Extend the beta-VAE with total correlation loss added.
 
   Based on Equation (4) with alpha = gamma = 1
-  If alpha = gamma = 1, Eq. 4 can be written as `ELBO + (1 - beta) * TC`.
+  If alpha = gamma = 1, Eq. 4 can be written as
+    `ELBO = LLK - (KL + (beta - 1) * TC)`.
 
   Reference:
     Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. "Isolating Sources
@@ -41,10 +42,9 @@ class BetaTCVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    tc = tf.constant(0., dtype=div.dtype)
-    for q in tf.nest.flatten(qZ_X):
-      tc += total_correlation(tf.convert_to_tensor(q), q)
-    div += (self.beta - 1.) * tc
+    for name, q in zip(self.latent_names, qZ_X):
+      tc = total_correlation(tf.convert_to_tensor(q), q)
+      div['tc_%s' % name] = (self.beta - 1.) * tc
     return llk, div
 
 
@@ -85,8 +85,9 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=self.c_max,
         norm=int(iter_max))
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, n_iter=0):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    c = self.interpolation(n_iter)
-    div = self.gamma * tf.math.abs(div - c)
+    # step : training step, updated when call `.train_steps()`
+    c = self.interpolation(self.step)
+    div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}
     return llk, div

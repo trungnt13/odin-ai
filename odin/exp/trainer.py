@@ -20,6 +20,7 @@ _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
 _CHECKPOINT_MANAGER = {}
 
+
 def _validate_optimize(func):
   assert callable(func), "optimize must be callable."
   if isinstance(func, Function):
@@ -35,6 +36,7 @@ def _validate_optimize(func):
     "optimize function must has the following arguments: %s; but given: %s"\
       % (template, args)
   return args
+
 
 # ===========================================================================
 # Main
@@ -405,6 +407,7 @@ class Trainer(object):
           valid_ds=None,
           valid_freq=1000,
           persistent_tape=True,
+          compile_graph=True,
           autograph=True,
           logging_interval=2,
           log_path=None,
@@ -466,8 +469,9 @@ class Trainer(object):
       assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
       return loss, metrics
 
-    if autograph and not isinstance(optimize, Function):
-      step = tf.function(step)
+    ### create autograph version of optimize
+    if compile_graph and not isinstance(optimize, Function):
+      step = tf.function(step, autograph=bool(autograph))
 
     def valid():
       epoch_loss = []

@@ -307,6 +307,6 @@ class KLdivergence:
                         reverse=reverse,
                         q_sample=n_mcmc,
                         auto_remove_independent=True)
-    if tf.rank(div) > 0 and analytic and keepdims:
+    if analytic and keepdims:
       div = tf.expand_dims(div, axis=0)
     return div

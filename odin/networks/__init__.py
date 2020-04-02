@@ -1,5 +1,6 @@
-from odin.networks import attention_mechanism
-from odin.networks.attention import *
+# TODO: Fix overlap import with odin.bay here
+# from odin.networks import attention_mechanism
+# from odin.networks.attention import *
 from odin.networks.cudnn_rnn import *
 from odin.networks.math_layers import *
 from odin.networks.positional_encoder import *

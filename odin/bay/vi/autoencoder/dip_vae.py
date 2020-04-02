@@ -5,7 +5,7 @@ from odin.bay.vi.losses import disentangled_inferred_prior_loss
 
 
 class DIPVAE(BetaVAE):
-  r""" Implementation of disentangled prior VAE
+  r""" Implementation of disentangled infered prior VAE
 
   Arguments:
     only_mean : A Boolean. If `True`, applying DIP constraint only on the
@@ -38,12 +38,10 @@ class DIPVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    dip = tf.constant(0, dtype=div.dtype)
-    for q in tf.nest.flatten(qZ_X):
-      dip += disentangled_inferred_prior_loss(
-          q,
-          only_mean=self.only_mean,
-          lambda_offdiag=self.lambda_offdiag,
-          lambda_diag=self.lambda_diag)
-    div = div + dip
+    for name, q in zip(self.latent_names, qZ_X):
+      dip = disentangled_inferred_prior_loss(q,
+                                             only_mean=self.only_mean,
+                                             lambda_offdiag=self.lambda_offdiag,
+                                             lambda_diag=self.lambda_diag)
+      div['dip_%s' % name] = dip
     return llk, div

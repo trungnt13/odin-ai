@@ -167,10 +167,8 @@ def pairwise_distances(x, y, keepdims=True):
                   "The last dimension of x and y must be equal")
   feat_dim = shape_x[-1]
   # reshape to 2-D
-  if tf.rank(x) > 2:
-    x = tf.reshape(x, (-1, feat_dim))
-  if tf.rank(y) > 2:
-    y = tf.reshape(y, (-1, feat_dim))
+  x = tf.cond(tf.rank(x) > 2, lambda: tf.reshape(x, (-1, feat_dim)), lambda: x)
+  y = tf.cond(tf.rank(y) > 2, lambda: tf.reshape(y, (-1, feat_dim)), lambda: y)
   # distance
   x = tf.expand_dims(x, axis=1)
   d = x - y
@@ -181,32 +179,26 @@ def pairwise_distances(x, y, keepdims=True):
   return d
 
 
-def gaussian_kernel(x, y, sigmas=None):
+def gaussian_kernel(x, y, sigma=None):
   r""" Gaussian radial basis function
 
   Arguments:
     x : a Tensor [num_samples, num_features]
     y : a Tensor [num_samples, num_features]
-    sigmas: a Tensor of floats which denote the widths of each of the
-      gaussians in the kernel.
+    sigma : a Scalar which denote the width of the Gaussian in the kernel.
 
   Reference:
     Radial basis function kernel :
       https://en.wikipedia.org/wiki/Radial_basis_function_kernel
   """
   d = pairwise_distances(x, y, keepdims=False)
-  if sigmas is None:
+  if sigma is None:
     gamma = 1. / tf.cast(tf.shape(x)[-1], dtype=d.dtype)
   else:
-    sigmas = tf.convert_to_tensor(sigmas, dtype=d.dtype)
-    gamma = 1. / (2. * tf.square(sigmas))
+    sigma = tf.convert_to_tensor(sigma, dtype=d.dtype)
+    gamma = 1. / (2. * tf.square(sigma))
   # L2-norm
   d = tf.reduce_sum(tf.square(d), axis=-1)
-  # make sure gamma is broadcastable
-  if tf.rank(gamma) == 0:
-    gamma = tf.expand_dims(gamma, axis=0)
-  for _ in tf.range(tf.rank(d)):
-    gamma = tf.expand_dims(gamma, axis=0)
   return tf.reduce_sum(tf.math.exp(-tf.expand_dims(d, axis=-1) * gamma),
                        axis=-1)
 
@@ -217,11 +209,11 @@ def linear_kernel(x, y):
 
 
 def polynomial_kernel(x, y, d=2):
+  raise NotImplementedError()
   d = pairwise_distances(x, y, keepdims=False)
-  return tf.math.abs(tf.reduce_sum(d, axis=-1))
 
 
-def maximum_mean_discrepancy(qZ, pZ, nq=10, np=10, seed=1, kernel='gaussian'):
+def maximum_mean_discrepancy(qZ, pZ, nq=(), np=100, kernel='gaussian'):
   r""" is a distance-measure between distributions p(X) and q(Y) which is
   defined as the squared distance between their embeddings in the a
   "reproducing kernel Hilbert space".
@@ -247,8 +239,8 @@ def maximum_mean_discrepancy(qZ, pZ, nq=10, np=10, seed=1, kernel='gaussian'):
   assert isinstance(
       pZ, Distribution
   ), 'pZ must be instance of tensorflow_probability.Distribution'
-  x = qZ.sample(int(nq), seed=seed)
-  y = pZ.sample(int(np), seed=seed)
+  x = qZ.sample(nq)
+  y = pZ.sample(np)
   if kernel == 'gaussian':
     kernel = gaussian_kernel
   elif kernel == 'linear':

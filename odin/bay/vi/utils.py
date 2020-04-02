@@ -99,6 +99,7 @@ def discretizing(*factors,
   return factors
 
 
+@tf.function(autograph=True)
 def permute_dims(z):
   r""" Permutation of latent dimensions Algorithm(1):
 

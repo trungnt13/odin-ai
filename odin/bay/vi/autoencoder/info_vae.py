@@ -13,6 +13,12 @@ from odin.bay.vi.losses import get_divergence
 
 class InfoVAE(BetaVAE):
   r"""
+  For MNIST, the authors used scaling coefficient lambda(gamma)=1000, and
+  information preference alpha=0.
+
+  Increase `np` (number of prior samples) in `divergence_kw` to reduce the
+  variance of MMD estimation.
+
   Arguments:
     alpha : a Scalar. Equal to `1 - beta`
     gamma : a Scalar. This is the value of lambda in the paper
@@ -29,24 +35,32 @@ class InfoVAE(BetaVAE):
 
   def __init__(self,
                alpha=0.0,
-               gamma=1.0,
+               gamma=1000.0,
                divergence='mmd',
-               divergence_kw=dict(kernel='gaussian', nq=10, np=10),
+               divergence_kw=dict(kernel='gaussian', nq=(), np=100),
                **kwargs):
     super().__init__(beta=1 - alpha, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
-    self.divergence = str(divergence)
+    # select right divergence
+    self.divergence_name = str(divergence)
+    self.divergence = get_divergence(self.divergence_name)
     self.divergence_kw = dict(divergence_kw)
+
+  @property
+  def alpha(self):
+    return 1 - self.beta
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    # select right divergence
-    fn = get_divergence(self.divergence)
     # repeat for each latent
-    d = tf.constant(0., dtype=div.dtype)
-    for q in tf.nest.flatten(qZ_X):
-      d += fn(qZ=q, pZ=q.KL_divergence.prior, **self.divergence_kw)
-    return llk, div + (self.gamma - self.beta) * d
+    for name, q in zip(self.latent_names, qZ_X):
+      info_div = (self.gamma - self.beta) * self.divergence(
+          qZ=q,
+          pZ=q.KL_divergence.prior,
+          **self.divergence_kw,
+      )
+      div['%s_%s' % (self.divergence_name, name)] = info_div
+    return llk, div
 
 
 class IFVAE(BetaVAE):
@@ -68,17 +82,12 @@ class InfoMaxVAE(BetaVAE):
     Hjelm, R.D., Fedorov, A., et al. 2019. "Learning Deep Representations by
       Mutual Information Estimation and Maximization". ICLR'19.
   """
-
-  def __init__(self, beta=1.0, alpha=1.0, **kwargs):
-    super().__init__(beta=beta, **kwargs)
-
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    return llk, div
+  pass
 
 
 class MutualInfoVAE(BetaVAE):
-  r"""
+  r""" Lambda is replaced as gamma in this implementaiton
+
   Reference:
     Ducau, F.N., Trénous, S. "Mutual Information in Variational Autoencoders".
       https://github.com/fducau/infoVAE.
@@ -93,7 +102,7 @@ class MutualInfoVAE(BetaVAE):
                gamma=1.0,
                latents=RandomVariable(event_shape=10,
                                       posterior='diag',
-                                      name="LatentVariable"),
+                                      name="Latent"),
                code=RandomVariable(event_shape=10,
                                    posterior='diag',
                                    name='Code'),
@@ -124,7 +133,8 @@ class MutualInfoVAE(BetaVAE):
     qC_Xprime = self.encode(pX_Zprime, training=training)[-1]
     # mutual information
     mi = qC_Xprime.log_prob(c_prime)
-    return llk + self.gamma * mi, div
+    llk['mi'] = self.gamma * mi
+    return llk, div
 
 
 # class AuxInfoVAE(BetaVAE):

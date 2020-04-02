@@ -185,9 +185,6 @@ class RandomVariable:
             isinstance(shape, np.ndarray)):
       self.event_shape = tf.nest.flatten(self.event_shape)
     self.name = str(self.name)
-    ### create prior
-    self.prior = _default_prior(self.event_shape, self.posterior, self.prior,
-                                self.kwargs)
 
   ######## Basic methods
   def keys(self):
@@ -280,11 +277,16 @@ class RandomVariable:
     return False
 
   ######## create posterior distribution
+  def create_prior(self) -> obd.Distribution:
+    return _default_prior(self.event_shape, self.posterior, self.prior,
+                          self.kwargs)
+
   def create_posterior(self,
                        input_shape=None,
                        name=None) -> obl.DistributionLambda:
     r""" Initiate a Distribution for the random variable """
-    prior = self.prior
+    prior = _default_prior(self.event_shape, self.posterior, self.prior,
+                           self.kwargs)
     event_shape = self.event_shape
     posterior = self.posterior
     posterior_kwargs = dict(self.kwargs)

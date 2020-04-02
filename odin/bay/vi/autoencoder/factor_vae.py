@@ -10,7 +10,7 @@ class FactorStep(TrainStep):
 
   def __call__(self):
     dtc_loss = self.vae.dtc_loss(self.inputs, training=True)
-    return dtc_loss, []
+    return dtc_loss, dict(dtc=dtc_loss)
 
 
 class FactorVAE(BetaVAE):
@@ -57,9 +57,8 @@ class FactorVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
-    total_correlation = self.discriminator.total_correlation(qZ_X,
-                                                             training=training)
-    return llk, div + self.gamma * total_correlation
+    div['tc'] = self.discriminator.total_correlation(qZ_X, training=training)
+    return llk, div
 
   def dtc_loss(self, qZ_X, training=None):
     r""" Discrimination loss between real and permuted codes Algorithm(2) """
@@ -89,6 +88,7 @@ class FactorVAE(BetaVAE):
       tape.gradient(loss, discriminator_step.parameters)
     ```
     """
+    self.step.assign_add(1.)
     # first step optimize VAE with total correlation loss
     step1 = TrainStep(vae=self,
                       inputs=inputs,

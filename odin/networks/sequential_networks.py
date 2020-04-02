@@ -95,12 +95,20 @@ class SequentialNetwork(keras.Sequential):
     """
     raise NotImplementedError
 
-  def get_config(self):
-    return super().get_config()
+  # def get_config(self):
+  #   cfg = super().get_config()
+  #   if hasattr(self, 'input_shape'):
+  #     cfg['layers'][0]['config']['batch_input_shape'] = self.input_shape
+  #     cfg['layers'][0]['config']['input_shape'] = self.input_shape[1:]
+  #     cfg['build_input_shape'] = self.input_shape
+  #   return cfg
 
-  @classmethod
-  def from_config(cls, config, custom_objects=None):
-    return cls.from_config(config, custom_objects)
+  # @classmethod
+  # def from_config(cls, config, custom_objects=None):
+  #   layer = super().from_config(config, custom_objects)
+  #   if 'build_input_shape' in config:
+  #     layer.build(config['build_input_shape'])
+  #   return layer
 
   def _to_string(self):
     text = ""
