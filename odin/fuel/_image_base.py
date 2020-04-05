@@ -9,6 +9,7 @@ from odin.utils.net_utils import download_and_extract
 # Helpers
 # ===========================================================================
 def _partition(part, train=None, valid=None, test=None, unlabeled=None):
+  r""" A function for automatically select the right data partition """
   part = str(part).lower().strip()
   if 'train' in part:
     ret = train

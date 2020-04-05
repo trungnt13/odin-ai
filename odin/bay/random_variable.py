@@ -308,7 +308,7 @@ class RandomVariable:
       activation = 'linear'
     # ====== create distribution layers ====== #
     activation = posterior_kwargs.pop('activation', activation)
-    kw = {}
+    kw = dict(disable_projection=not self.projection)
     if input_shape is not None:
       kw['input_shape'] = input_shape
     ### create the layer
@@ -317,42 +317,26 @@ class RandomVariable:
       posterior_kwargs.pop('covariance', None)
       posterior_kwargs.update(kw)
       # dense network for projection
-      if self.projection:
-        layer = obl.MixtureDensityNetwork(event_shape,
-                                          loc_activation=activation,
-                                          scale_activation='softplus1',
-                                          covariance=dict(
-                                              mdn='none',
-                                              mixdiag='diag',
-                                              mixfull='tril',
-                                              mixtril='tril')[posterior],
-                                          name=name,
-                                          prior=prior,
-                                          **posterior_kwargs)
-      # Just the mixture layer
-      else:
-        layer = obl.MixtureGaussianLayer(event_shape=event_shape,
-                                         loc_activation=activation,
-                                         scale_activation='softplus1',
-                                         covariance=dict(
-                                             mdn='none',
-                                             mixdiag='diag',
-                                             mixfull='tril',
-                                             mixtril='tril')[posterior],
-                                         name=name,
-                                         **posterior_kwargs)
+      layer = obl.MixtureDensityNetwork(event_shape,
+                                        loc_activation=activation,
+                                        scale_activation='softplus1',
+                                        covariance=dict(
+                                            mdn='none',
+                                            mixdiag='diag',
+                                            mixfull='tril',
+                                            mixtril='tril')[posterior],
+                                        name=name,
+                                        prior=prior,
+                                        **posterior_kwargs)
     ## non-mixture distribution
     else:
-      if self.projection:
-        layer = obl.DenseDistribution(event_shape,
-                                      posterior=distribution_layer,
-                                      prior=prior,
-                                      activation=activation,
-                                      posterior_kwargs=posterior_kwargs,
-                                      name=name,
-                                      **kw)
-      else:
-        layer = distribution_layer(event_shape, name=name, **posterior_kwargs)
+      layer = obl.DenseDistribution(event_shape,
+                                    posterior=distribution_layer,
+                                    prior=prior,
+                                    activation=activation,
+                                    posterior_kwargs=posterior_kwargs,
+                                    name=name,
+                                    **kw)
     ### set attributes
     if not hasattr(layer, 'event_shape'):
       layer.event_shape = event_shape

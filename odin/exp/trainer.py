@@ -406,6 +406,7 @@ class Trainer(object):
           optimize,
           valid_ds=None,
           valid_freq=1000,
+          valid_interval=0,
           persistent_tape=True,
           compile_graph=True,
           autograph=True,
@@ -423,8 +424,9 @@ class Trainer(object):
         and the function must returns:
           - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
       valid_ds : tf.data.Dataset. Validation dataset
-      valid_freq : Integer. The frequency of validation task, based on number
-        of iteration in training.
+      valid_freq : an Integer. The frequency of validation task, based on
+        the current number of iteration.
+      valid_interval : a Scalar. The number of second until next validation.
       persistent_tape : Boolean. Using persistent GradientTape, so multiple
         call to gradient is feasible.
       autograph : Boolean. Enable static graph for the `optimize` function.
@@ -450,7 +452,10 @@ class Trainer(object):
     if valid_ds is not None:
       assert isinstance(valid_ds, tf.data.Dataset), \
         'valid_ds must be instance of tf.data.Datasets'
-    valid_freq = int(valid_freq)
+    valid_freq = max(1, int(valid_freq))
+    valid_interval = float(valid_interval)
+    if valid_interval > 0:  # prefer the interval
+      valid_freq = 1
     ### optimizing function
     optimize_args = _validate_optimize(optimize)
 
@@ -510,14 +515,18 @@ class Trainer(object):
     def train():
       total_time = 0.
       start_time = tf.timestamp()
+      start_time_valid = start_time
       last_iter = tf.identity(self.n_iter)
       total_iter = 0
       for inputs in train_ds:
+        timestamp = tf.timestamp()
         self.n_iter.assign_add(1.)
         # ====== validation ====== #
-        if self.n_iter % valid_freq == 0:
+        interval = timestamp - start_time_valid
+        if self.n_iter % valid_freq == 0 and interval >= valid_interval:
+          start_time_valid = timestamp
           if valid_ds is not None:
-            total_time += tf.cast(tf.timestamp() - start_time, tf.float32)
+            total_time += tf.cast(interval, tf.float32)
             # finish the validation
             valid_loss, valid_metrics = valid()
             self.valid_loss.append(valid_loss.numpy())
@@ -532,7 +541,7 @@ class Trainer(object):
                      sep="",
                      output_stream=output_stream)
             # reset start_time
-            start_time = tf.timestamp()
+            start_time = timestamp
           # callback always called
           signal = callback()
           if signal == Trainer.SIGNAL_TERMINATE:
@@ -542,7 +551,7 @@ class Trainer(object):
         self.train_loss.append(loss.numpy())
         for k, v in metrics.items():
           self.train_metrics[k].append(v)
-        interval = tf.cast(tf.timestamp() - start_time, tf.float32)
+        interval = tf.cast(timestamp - start_time, tf.float32)
         # ====== logging ====== #
         if interval >= logging_interval:
           total_time += interval
@@ -558,7 +567,7 @@ class Trainer(object):
                    "(it/s)",
                    sep="",
                    output_stream=output_stream)
-          start_time = tf.timestamp()
+          start_time = timestamp
           last_iter = tf.identity(self.n_iter)
         # ====== check maximum iteration ====== #
         total_iter += 1
@@ -572,14 +581,16 @@ class Trainer(object):
 
   def plot_learning_curves(self,
                            path="/tmp/tmp.pdf",
-                           summary_steps=100,
+                           summary_steps=[100, 10],
                            show_validation=True,
                            dpi=180):
     r""" Learning curves
 
     Arguments:
       path: save path for the figure
-      summary_steps: number of iteration for estimating the mean and variance
+      summary_steps: a tuple of Integer.
+        Number of iteration for estimating the mean and variance for training
+        and validation.
     """
     from odin import visual as vs
     from matplotlib import pyplot as plt
@@ -647,6 +658,6 @@ class Trainer(object):
     for ax, step in zip(subplots[-2:], summary_steps):
       ax.set_xlabel("#Iter * %d" % step)
     plt.tight_layout()
-    vs.plot_save(path, figs=[fig], dpi=dpi, clear_all=False)
+    fig.savefig(path, dpi=dpi)
     plt.close(fig)
     return self

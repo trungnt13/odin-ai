@@ -1,7 +1,7 @@
 from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.dip_vae import *
 from odin.bay.vi.autoencoder.factor_vae import *
-from odin.bay.vi.autoencoder.grammar_vae import *
+# from odin.bay.vi.autoencoder.grammar_vae import *
 from odin.bay.vi.autoencoder.info_vae import *
 from odin.bay.vi.autoencoder.self_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *

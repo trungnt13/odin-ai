@@ -6,7 +6,9 @@ import tensorflow as tf
 from tensorflow.python import keras
 from tensorflow.python.keras import Model
 from tensorflow.python.keras.layers import Layer
+from tensorflow.python.keras.layers.convolutional import Conv
 from tensorflow.python.util import nest
+from tensorflow_probability.python.layers import DistributionLambda
 
 __all__ = [
     'copy_keras_metadata', 'has_keras_meta', 'add_trainable_weights',
@@ -48,7 +50,6 @@ def add_trainable_weights(layer, *variables):
 
 def layer2text(layer, inc_name=False):
   assert isinstance(layer, keras.layers.Layer)
-  from tensorflow.python.keras.layers.convolutional import Conv
   text = str(layer)
   cls_name = layer.__class__.__name__
   cls_name = cls_name[:10]
@@ -57,7 +58,11 @@ def layer2text(layer, inc_name=False):
   else:
     name = '[%-10s] ' % cls_name
   ## Dense
-  if isinstance(layer, keras.layers.Dense):
+  if isinstance(layer, keras.Sequential):
+    text = "%sbuilt:%s\n" % (name, layer.built)
+    text += "\n".join([layer2text(i, inc_name=False) for i in layer.layers])
+    return text
+  elif isinstance(layer, keras.layers.Dense):
     text = '%sunits:%d bias:%s activ:%s' % \
       (name, layer.units, layer.use_bias, layer.activation.__name__)
   ## Conv
@@ -78,6 +83,19 @@ def layer2text(layer, inc_name=False):
       ('BatchRenorm' if layer.renorm else 'BatchNorm',
        [i for i in tf.nest.flatten(layer.axis)],
        layer.center, layer.scale, layer.trainable)
+  ## Distribution layer
+  elif isinstance(layer, DistributionLambda):
+    fn = layer._make_distribution_fn
+    cls_name = type(layer).__name__
+    layer = dict(layer.get_config())
+    del layer['function']
+    del layer['module']
+    del layer['function_type']
+    del layer['make_distribution_fn']
+    layer.update(inspect.getclosurevars(fn).nonlocals)
+    layer.pop('self', None)
+    layer['class'] = cls_name
+    text = "\n".join(["%s:%s" % (str(i), str(j)) for i, j in layer.items()])
   ## Lambda
   elif isinstance(layer, keras.layers.Lambda):
     spec = inspect.getfullargspec(layer.function)

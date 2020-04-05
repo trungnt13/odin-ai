@@ -5,6 +5,7 @@ import pickle
 from functools import partial
 
 import numpy as np
+import seaborn as sns
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
@@ -17,7 +18,7 @@ from odin import backend as bk
 from odin import bay, networks
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import autoencoder
+from odin.bay.vi import Criticizer, autoencoder
 from odin.exp import Experimenter, Trainer
 from odin.fuel import get_dataset
 from odin.utils import ArgController, as_tuple
@@ -27,11 +28,11 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 tf.random.set_seed(8)
 np.random.seed(8)
-
+sns.set()
 # ===========================================================================
 # Configuration
 # TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
-# vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae
+# vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae ds=binarizedmnist,shapes3d -m -ncpu 4
 # ===========================================================================
 CONFIG = \
 r"""
@@ -40,7 +41,7 @@ zdim: 10
 zdist: diag
 ds: binarizedmnist
 conv: False
-batch_size: 64
+batch_size: 128
 epochs: 200
 """
 
@@ -71,12 +72,28 @@ class VaeExperimenter(Experimenter):
     return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
 
   def callback(self):
-    pass
+    # sampled images
+    step = int(self.model.step.numpy())
+    pX_Z = self.model.decode(self.z_samples, training=False)
+    X = pX_Z.mean().numpy()
+    if X.shape[-1] == 1:
+      X = np.squeeze(X, axis=-1)
+    else:
+      X = np.transpose(X, (0, 3, 1, 2))
+    fig = vs.plot_figure(nrow=16, ncol=16, dpi=80)
+    vs.plot_images(X, fig=fig, title="#Iter: %d" % step)
+    fig.savefig(os.path.join(self.output_path, 'img_%d.png' % step), dpi=80)
+    plt.close(fig)
+    del X
+    # learning curves
+    self.trainer.plot_learning_curves(
+        path=os.path.join(self.output_path, 'learning_curves.png'),
+        summary_steps=[100, 5],
+    )
 
   ####### Experiementer methods
   def on_load_data(self, cfg):
     dataset = get_dataset(cfg.ds)()
-    self.is_binary = dataset.is_binary
     train = dataset.create_dataset(partition='train', inc_labels=False)
     valid = dataset.create_dataset(partition='valid', inc_labels=False)
     test = dataset.create_dataset(partition='test', inc_labels=False)
@@ -84,7 +101,7 @@ class VaeExperimenter(Experimenter):
     x_valid = [x for x in valid.take(1)][0][:16]
     ### input description
     input_spec = tf.data.experimental.get_structure(train)
-    plt.figure(figsize=(12, 12))
+    fig = plt.figure(figsize=(12, 12))
     for i, x in enumerate(x_valid.numpy()):
       if x.shape[-1] == 1:
         x = np.squeeze(x, axis=-1)
@@ -92,7 +109,8 @@ class VaeExperimenter(Experimenter):
       plt.imshow(x, cmap='Greys_r' if x.ndim == 2 else None)
       plt.axis('off')
     plt.tight_layout()
-    vs.plot_save(os.path.join(self.save_path, '%s.pdf' % cfg.ds))
+    fig.savefig(os.path.join(self.save_path, '%s.pdf' % cfg.ds))
+    plt.close(fig)
     ### store
     self.input_dtype = input_spec.dtype
     self.input_shape = input_spec.shape[1:]
@@ -101,7 +119,7 @@ class VaeExperimenter(Experimenter):
   def on_create_model(self, cfg):
     x_rv = bay.RandomVariable(
         event_shape=self.input_shape,
-        posterior='bernoulli' if self.is_binary else "gaus",
+        posterior='bernoulli',
         projection=False,
         name="Image",
     )
@@ -123,6 +141,8 @@ class VaeExperimenter(Experimenter):
                                               latents=z_rv,
                                               encoder=encoder,
                                               decoder=decoder)
+    self.z_samples = self.model.sample_prior(16, seed=1)
+    self.criticizer = Criticizer(self.model, random_state=1)
     # maximum two optimizer, in case we use factor VAE
     self.optimizers = [
         tf.optimizers.Adam(learning_rate=0.001,
@@ -141,15 +161,22 @@ class VaeExperimenter(Experimenter):
     self.on_create_model(cfg)
 
   def on_train(self, cfg, model_path):
-    trainer = Trainer()
+    assert model_path == self.get_model_path(cfg)
+    self.output_path = self.get_output_path(cfg)
+    self.trainer = Trainer()
+    # just save the first image
+    self.callback()
     # we use generator here so turn-off autograph
-    trainer.fit(self.train.repeat(cfg.epochs),
-                optimize=self.optimize,
-                valid_ds=self.valid,
-                valid_freq=2000,
-                callback=self.callback,
-                compile_graph=True,
-                autograph=False)
+    # valid_interval will ensure the same frequency for different dataset
+    self.trainer.fit(self.train.repeat(cfg.epochs),
+                     optimize=self.optimize,
+                     valid_ds=self.valid,
+                     valid_freq=1,
+                     valid_interval=30,
+                     logging_interval=2,
+                     callback=self.callback,
+                     compile_graph=True,
+                     autograph=False)
 
 
 # ===========================================================================

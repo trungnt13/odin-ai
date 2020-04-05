@@ -91,3 +91,13 @@ class AnnealedVAE(VariationalAutoencoder):
     c = self.interpolation(self.step)
     div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}
     return llk, div
+
+
+class CyclicalAnnealingVAE(BetaVAE):
+  r"""
+  Reference:
+    Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.
+      "Cyclical Annealing Schedule: A Simple Approach to Mitigating KL
+      Vanishing". arXiv:1903.10145 [cs, stat].
+  """
+  pass

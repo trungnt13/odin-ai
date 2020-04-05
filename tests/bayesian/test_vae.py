@@ -32,6 +32,52 @@ class VAETest(unittest.TestCase):
         all(i == j for i, j in zip(sorted(x.numpy().ravel()),
                                    sorted(z.numpy().ravel()))))
 
+  def test_all_models(self):
+    all_vae = autoencoder.get_vae()
+
+    for vae_cls in all_vae:
+      for latents in [
+          (autoencoder.RandomVariable(10, name="Latent1"),
+           autoencoder.RandomVariable(10, name="Latent2")),
+          autoencoder.RandomVariable(10, name="Latent1"),
+      ]:
+        for n_mcmc in [
+            (),
+            2,
+            (4, 2, 3),
+        ]:
+          vae_name = str(vae_cls)
+          print(vae_name, n_mcmc)
+          try:
+            if isinstance(vae_cls, autoencoder.VariationalAutoencoder):
+              vae = vae_cls
+            else:
+              vae = vae_cls(latents=latents)
+            params = vae.trainable_variables
+            if hasattr(vae, 'discriminator'):
+              disc_params = set(
+                  id(v) for v in vae.discriminator.trainable_variables)
+              params = [i for i in params if id(i) not in disc_params]
+            s = vae.sample_prior()
+            px = vae.decode(s)
+            x = vae.sample_data(5)
+            with tf.GradientTape(watch_accessed_variables=False) as tape:
+              tape.watch(params)
+              px, qz = vae(x, n_mcmc=n_mcmc)
+              elbo = vae.elbo(x, px, qz, n_mcmc=n_mcmc)
+            grads = tape.gradient(elbo, params)
+            for p, g in zip(params, grads):
+              assert g is not None, \
+                "Gradient is None, param:%s shape:%s" % (p.name, p.shape)
+              g = g.numpy()
+              assert np.all(np.logical_not(np.isnan(g))), \
+                "NaN gradient param:%s shape:%s" % (p.name, p.shape)
+              assert np.all(np.isfinite(g)), \
+                "Infinite gradient param:%s shape:%s" % (p.name, p.shape)
+          except Exception as e:
+            # print(e)
+            raise e
+
 
 if __name__ == '__main__':
   unittest.main()

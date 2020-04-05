@@ -70,9 +70,10 @@ class BernoulliLayer(tfl.DistributionLambda):
         value=event_shape, name='event_shape', dtype_hint=tf.int32),
                                              tensor_name='event_shape')
     new_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(input=event_shape)],
         event_shape,
-    ], axis=0)
+    ],
+                          axis=0)
     dist = tfd.Independent(
         tfd.Bernoulli(logits=tf.reshape(params, new_shape),
                       dtype=dtype or params.dtype.base_dtype,
@@ -135,7 +136,7 @@ class ZIBernoulliLayer(tfl.DistributionLambda):
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -402,7 +403,7 @@ class RelaxedBernoulliLayer(tfl.DistributionLambda):
         value=event_shape, name='event_shape', dtype_hint=tf.int32),
                                              tensor_name='event_shape')
     new_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ], axis=0)
     params = tf.reshape(params, new_shape)

@@ -22,12 +22,11 @@ class Criticizer(_Criticizer, vs.Visualizer):
     - `conditioning` on known factors
 
   Arguments:
-    vae : `odin.bay.vi.VariationalAutoencoder`
-    random_state :
+    vae : `odin.bay.vi.VariationalAutoencoder`.
+    random_state : a Scalar. Random seed to ensure reproducibility.
 
   Attributes:
     pass
-
   """
 
   def copy(self, random_state=None):

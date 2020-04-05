@@ -91,7 +91,7 @@ class DeterministicLayer(DistributionLambda):
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -139,7 +139,7 @@ class VectorDeterministicLayer(DistributionLambda):
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -252,14 +252,14 @@ class GaussianLayer(DistributionLambda):
           loc_activation,
           scale_activation,
           validate_args,
-          name=None):
+          name="GaussianLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -270,16 +270,16 @@ class GaussianLayer(DistributionLambda):
                                       scale=scale_params,
                                       validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="GaussianLayer_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 2 * _event_size(event_shape,
-                           name=name or 'GaussianLayer_params_size')
+    return 2 * _event_size(event_shape, name=name)
 
 
 class LogNormalLayer(DistributionLambda):
@@ -320,14 +320,14 @@ class LogNormalLayer(DistributionLambda):
           loc_activation,
           scale_activation,
           validate_args=False,
-          name=None):
+          name="LogNormalLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -338,16 +338,17 @@ class LogNormalLayer(DistributionLambda):
                                          scale=scale_params,
                                          validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="LogNormal_params_size"):
     """The number of `params` needed to create a single distribution."""
     with tf1.name_scope(name, 'LogNormal_params_size', [event_shape]):
       event_shape = tf.convert_to_tensor(value=event_shape,
                                          name='event_shape',
                                          dtype=tf.int32)
-      return 2 * _event_size(event_shape, name=name or 'LogNormal_params_size')
+      return 2 * _event_size(event_shape, name=name)
 
 
 class GammaLayer(DistributionLambda):
@@ -387,14 +388,14 @@ class GammaLayer(DistributionLambda):
           concentration_activation,
           rate_activation,
           validate_args=False,
-          name=None):
+          name="GammaLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -406,15 +407,16 @@ class GammaLayer(DistributionLambda):
                                      rate=rate,
                                      validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="Gamma_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 2 * _event_size(event_shape, name=name or 'Gamma_params_size')
+    return 2 * _event_size(event_shape, name=name)
 
 
 class BetaLayer(DistributionLambda):

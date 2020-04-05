@@ -9,9 +9,11 @@ from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import distributions as tfd
+from tensorflow_probability.python import layers as tfl
 
+from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
-from odin.networks import NetworkConfig
+from odin.networks import NetworkConfig, SequentialNetwork
 
 
 # ===========================================================================
@@ -58,6 +60,17 @@ def _reduce_latents(latents, mode):
   return mode(latents)
 
 
+def _net2str(net):
+  if isinstance(net, keras.Sequential):
+    return layer2text(net)
+  elif isinstance(net, tfl.DistributionLambda):
+    return layer2text(net)
+  return str(net)
+
+
+# ===========================================================================
+# Training step
+# ===========================================================================
 class TrainStep:
   r""" A single train step (iteration) for Variational Autoencoder,
   when called will return:
@@ -210,9 +223,9 @@ class VariationalAutoencoder(keras.Model):
       if isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
       elif hasattr(decoder, 'input_shape'):
-        assert list(decoder.input_shape[1:]) == latent_shape, \
+        assert list(decoder.input_shape[-1:]) == latent_shape, \
           "decoder has input_shape=%s but latent_shape=%s" % \
-            (str(decoder.input_shape[1:]), str(latent_shape))
+            (str(decoder.input_shape[-1:]), str(latent_shape))
     else:
       decoder = config.create_decoder(encoder=encoder,
                                       latent_shape=latent_shape)
@@ -234,6 +247,7 @@ class VariationalAutoencoder(keras.Model):
       if hasattr(layer, '_batch_input_shape') and not layer.built:
         shape = [1 if i is None else i for i in layer._batch_input_shape]
         x = tf.ones(shape=shape, dtype=layer.dtype)
+        print(layer)
         layer(x)  # call this dummy input to build the layer
     ### the training step
     self.step = tf.Variable(step,
@@ -272,6 +286,10 @@ class VariationalAutoencoder(keras.Model):
         s = tf.expand_dims(s, axis=0)
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
+
+  def generate(self, sample_shape=(), seed=1, training=None, **kwargs):
+    z = self.sample_prior(sample_shape, seed)
+    return self.decode(z, training=training, **kwargs)
 
   def encode(self, inputs, training=None, n_mcmc=(), **kwargs):
     r""" Encoding inputs to latent codes """
@@ -466,6 +484,9 @@ class VariationalAutoencoder(keras.Model):
                     iw=iw,
                     elbo_kw=elbo_kw)
 
+  def fit(self):
+    raise NotImplementedError()
+
   def __str__(self):
     clses = [
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
@@ -473,16 +494,16 @@ class VariationalAutoencoder(keras.Model):
     text = "%s" % "->".join([i.__name__ for i in clses[::-1]])
     ## encoder
     text += "\n Encoder:\n  "
-    text += "\n  ".join(str(self.encoder).split('\n'))
+    text += "\n  ".join(_net2str(self.encoder).split('\n'))
     ## Decoder
     text += "\n Decoder:\n  "
-    text += "\n  ".join(str(self.decoder).split('\n'))
+    text += "\n  ".join(_net2str(self.decoder).split('\n'))
     ## Latent
     for i, latent in enumerate(self.latent_layers):
       text += "\n Latent#%d:\n  " % i
-      text += "\n  ".join(str(latent).split('\n'))
+      text += "\n  ".join(_net2str(latent).split('\n'))
     ## Ouput
     for i, output in enumerate(self.output_layers):
       text += "\n Output#%d:\n  " % i
-      text += "\n  ".join(str(output).split('\n'))
+      text += "\n  ".join(_net2str(output).split('\n'))
     return text

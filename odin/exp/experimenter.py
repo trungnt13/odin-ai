@@ -516,14 +516,18 @@ class Experimenter():
         break
     # check reset
     for idx, arg in enumerate(list(sys.argv)):
-      if '--reset' == arg:
-        if len(get_all_files(self._save_path)) > 0:
-          old_exps = '\n'.join(
-              [" - %s" % i for i in os.listdir(self._save_path)])
+      if arg in ('--reset', '--clear', '--clean'):
+        configs_filter = lambda f: 'configs' != f.split('/')[-1]
+        if len(get_all_files(self._save_path, filter_func=configs_filter)) > 0:
+          old_exps = '\n'.join([
+              " - %s" % i
+              for i in os.listdir(self._save_path)
+              if configs_filter(i)
+          ])
           inp = input("<Enter> to clear all exists experiments:"
                       "\n%s\n'n' to cancel, otherwise continue:" % old_exps)
           if inp.strip().lower() != 'n':
-            clean_folder(self._save_path, verbose=True)
+            clean_folder(self._save_path, filter=configs_filter, verbose=True)
         sys.argv.pop(idx)
     # check multirun
     is_multirun = any(',' in ovr for ovr in overrides) or \

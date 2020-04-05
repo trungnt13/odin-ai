@@ -91,6 +91,7 @@ class DenseDistribution(Dense):
                activity_regularizer=None,
                kernel_constraint=None,
                bias_constraint=None,
+               disable_projection=False,
                **kwargs):
     assert prior is None or isinstance(prior, Distribution), \
       "prior can be None or instance of tensorflow_probability.Distribution"
@@ -131,6 +132,7 @@ class DenseDistribution(Dense):
     kwargs['name'] = name
     # params_size could be static function or method
     params_size = _params_size(self._posterior_layer, event_shape)
+    self._disable_projection = bool(disable_projection)
     super(DenseDistribution,
           self).__init__(units=params_size,
                          activation=activation,
@@ -147,6 +149,12 @@ class DenseDistribution(Dense):
     self._last_distribution = None
     # if 'input_shape' in kwargs and not self.built:
     #   self.build(kwargs['input_shape'])
+
+  def build(self, input_shape):
+    if self._disable_projection:
+      self.built = True
+    else:
+      super().build(input_shape)
 
   @property
   def is_binary(self):
@@ -206,7 +214,7 @@ class DenseDistribution(Dense):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
-    if projection:
+    if projection and not self._disable_projection:
       params = super().call(inputs)
     else:
       params = inputs
@@ -273,8 +281,9 @@ class DenseDistribution(Dense):
     return self.__str__()
 
   def __str__(self):
-    text = "<Dense shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
-      (self.event_shape, self.units, self.posterior_layer.name, str(self.prior),
+    text = "<Dense proj:%s shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
+      (not self._disable_projection, self.event_shape, self.units,
+       self.posterior_layer.name, str(self.prior),
        self._dropout, str(self._posterior_kwargs))
     text = text.replace("tfp.distributions.", "")
     return text
@@ -287,6 +296,7 @@ class DenseDistribution(Dense):
     config['prior'] = self._prior
     config['dropout'] = self._dropout
     config['posterior_kwargs'] = self._posterior_kwargs
+    config['disable_projection'] = self._disable_projection
     return config
 
 

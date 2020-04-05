@@ -68,14 +68,14 @@ class NegativeBinomialLayer(DistributionLambda):
           count_activation=tf.exp,
           dispersion='full',
           validate_args=False,
-          name=None):
-    """Create the distribution instance from a `params` vector."""
+          name="NegativeBinomialLayer"):
+    r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -95,16 +95,16 @@ class NegativeBinomialLayer(DistributionLambda):
         if dispersion == 'full' else logits_params,
         validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="NegativeBinomial_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 2 * _event_size(event_shape,
-                           name=name or 'NegativeBinomial_params_size')
+    return 2 * _event_size(event_shape, name=name)
 
 
 class NegativeBinomialDispLayer(DistributionLambda):
@@ -159,14 +159,14 @@ class NegativeBinomialDispLayer(DistributionLambda):
           disp_activation=softplus1,
           dispersion='full',
           validate_args=False,
-          name=None):
+          name="NegativeBinomialDispLayer"):
     """ Create the distribution instance from a `params` vector. """
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -187,16 +187,16 @@ class NegativeBinomialDispLayer(DistributionLambda):
         if dispersion == 'full' else disp_params,
         validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="NegativeBinomialDisp_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 2 * _event_size(event_shape,
-                           name=name or 'NegativeBinomialDisp_params_size')
+    return 2 * _event_size(event_shape, name=name)
 
 
 # ===========================================================================
@@ -221,14 +221,14 @@ class ZIPoissonLayer(DistributionLambda):
           event_shape=(),
           activation=tf.identity,
           validate_args=False,
-          name=None):
+          name="ZIPoissonLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -240,16 +240,16 @@ class ZIPoissonLayer(DistributionLambda):
                                             logits_params, output_shape),
                                         validate_args=validate_args),
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="ZeroInflatedPoisson_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 2 * _event_size(
-        event_shape, name=name or 'ZeroInflatedNegativeBinomial_params_size')
+    return 2 * _event_size(event_shape, name=name)
 
 
 class ZINegativeBinomialLayer(DistributionLambda):
@@ -295,14 +295,14 @@ class ZINegativeBinomialLayer(DistributionLambda):
           count_activation=tf.exp,
           dispersion='full',
           validate_args=False,
-          name=None):
+          name="ZINegativeBinomialLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -327,16 +327,17 @@ class ZINegativeBinomialLayer(DistributionLambda):
                         validate_args=validate_args)
     return tfd.Independent(zinb,
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(
+      event_shape=(), name="ZeroInflatedNegativeBinomial_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 3 * _event_size(
-        event_shape, name=name or 'ZeroInflatedNegativeBinomial_params_size')
+    return 3 * _event_size(event_shape, name=name)
 
 
 class ZINegativeBinomialDispLayer(DistributionLambda):
@@ -387,14 +388,14 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
           disp_activation=softplus1,
           dispersion='full',
           validate_args=False,
-          name=None):
+          name="ZINegativeBinomialDispLayer"):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
+        tf.shape(input=params)[:-tf.size(event_shape)],
         event_shape,
     ],
                              axis=0)
@@ -421,13 +422,13 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                         validate_args=validate_args)
     return tfd.Independent(zinb,
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args)
+                           validate_args=validate_args,
+                           name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name=None):
+  def params_size(event_shape=(), name="ZINegativeBinomialDisp_params_size"):
     """The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype=tf.int32)
-    return 3 * _event_size(event_shape,
-                           name=name or 'ZINegativeBinomialDisp_params_size')
+    return 3 * _event_size(event_shape, name=name)
