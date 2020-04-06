@@ -230,9 +230,7 @@ class DenseDistribution(Dense):
     self._last_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(
-        posterior,
-        prior=self.prior if prior is None else prior,
-        n_mcmc=tf.cast(tf.reduce_prod(self._n_mcmc), tf.int32))
+        posterior, prior=self.prior if prior is None else prior, n_mcmc=None)
     return posterior
 
   def kl_divergence(self, prior=None, analytic=True, n_mcmc=1, reverse=True):

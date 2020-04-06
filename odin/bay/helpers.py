@@ -230,6 +230,8 @@ def kl_divergence(q,
   # using MCMC sampling for estimating the KL
   if callable(q_sample):
     z = q_sample(q)
+  elif q_sample is None:  # TensorCoercible
+    z = tf.convert_to_tensor(q)
   else:
     z = q.sample(q_sample)
   # calculate the output, then perform reduction
@@ -291,12 +293,12 @@ class KLdivergence:
   def __call__(self,
                prior=None,
                analytic=None,
-               n_mcmc=None,
+               n_mcmc=-1,
                reverse=None,
                keepdims=False):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
-    n_mcmc = self.n_mcmc if n_mcmc is None else n_mcmc
+    n_mcmc = self.n_mcmc if n_mcmc == -1 else n_mcmc
     reverse = self.reverse if reverse is None else bool(reverse)
     keepdims = self.keepdims if keepdims is None else bool(keepdims)
     if prior is None:

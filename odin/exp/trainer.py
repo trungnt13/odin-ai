@@ -32,7 +32,7 @@ def _validate_optimize(func):
   assert 'tape' in args, \
     "tape (i.e. GradientTape) must be in arguments list of optimize function."
   args = args[2:] if 'self' == args[0] else args[1:]
-  assert all(a in template for a in args), \
+  assert all(a in args for a in template), \
     "optimize function must has the following arguments: %s; but given: %s"\
       % (template, args)
   return args
@@ -436,7 +436,7 @@ class Trainer(object):
         training. If `max_iter <= 0`, iterate the training data until the end.
       callback : Callable take no input arguments.
         The callback will be called after every fixed number of iteration
-        according to `valid_freq`.
+        according to `valid_freq`, or fixed duration defined by `valid_interval`
 
     Example:
       def optimize(inputs, tape, n_iter, training):
@@ -519,12 +519,10 @@ class Trainer(object):
       last_iter = tf.identity(self.n_iter)
       total_iter = 0
       for inputs in train_ds:
-        timestamp = tf.timestamp()
         self.n_iter.assign_add(1.)
         # ====== validation ====== #
-        interval = timestamp - start_time_valid
+        interval = tf.timestamp() - start_time_valid
         if self.n_iter % valid_freq == 0 and interval >= valid_interval:
-          start_time_valid = timestamp
           if valid_ds is not None:
             total_time += tf.cast(interval, tf.float32)
             # finish the validation
@@ -541,7 +539,10 @@ class Trainer(object):
                      sep="",
                      output_stream=output_stream)
             # reset start_time
-            start_time = timestamp
+            start_time = tf.timestamp()
+          # reset the start time here, otherwise, we are end of time,
+          # after validation
+          start_time_valid = tf.timestamp()
           # callback always called
           signal = callback()
           if signal == Trainer.SIGNAL_TERMINATE:
@@ -551,7 +552,7 @@ class Trainer(object):
         self.train_loss.append(loss.numpy())
         for k, v in metrics.items():
           self.train_metrics[k].append(v)
-        interval = tf.cast(timestamp - start_time, tf.float32)
+        interval = tf.cast(tf.timestamp() - start_time, tf.float32)
         # ====== logging ====== #
         if interval >= logging_interval:
           total_time += interval
@@ -567,7 +568,7 @@ class Trainer(object):
                    "(it/s)",
                    sep="",
                    output_stream=output_stream)
-          start_time = timestamp
+          start_time = tf.timestamp()
           last_iter = tf.identity(self.n_iter)
         # ====== check maximum iteration ====== #
         total_iter += 1

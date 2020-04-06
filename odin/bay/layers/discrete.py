@@ -90,7 +90,7 @@ class BernoulliLayer(tfl.DistributionLambda):
 
   @staticmethod
   def params_size(event_shape=(), name='BernoulliLayer_params_size'):
-    """The number of `params` needed to create a single distribution."""
+    r"""The number of `params` needed to create a single distribution."""
     event_shape = tf.convert_to_tensor(value=event_shape,
                                        name='event_shape',
                                        dtype_hint=tf.int32)

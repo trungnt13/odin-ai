@@ -8,8 +8,8 @@ from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 class FactorStep(TrainStep):
 
-  def __call__(self):
-    dtc_loss = self.vae.dtc_loss(self.inputs, training=True)
+  def __call__(self, training=True):
+    dtc_loss = self.vae.dtc_loss(self.inputs, training=training)
     return dtc_loss, dict(dtc=dtc_loss)
 
 

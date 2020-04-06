@@ -13,6 +13,7 @@ from tensorflow_probability.python import layers as tfl
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
+from odin.exp import Trainer
 from odin.networks import NetworkConfig, SequentialNetwork
 
 
@@ -68,6 +69,38 @@ def _net2str(net):
   return str(net)
 
 
+def _to_optimizer(optimizer, learning_rate, clipnorm):
+  optimizer = tf.nest.flatten(optimizer)
+  learning_rate = tf.nest.flatten(learning_rate)
+  clipnorm = tf.nest.flatten(clipnorm)
+  if len(learning_rate) == 1:
+    learning_rate = learning_rate * len(optimizer)
+  if len(clipnorm) == 1:
+    clipnorm = clipnorm * len(clipnorm)
+  ## create the optimizer
+  all_optimizers = []
+  for opt, lr, clip in zip(optimizer, learning_rate, clipnorm):
+    # string
+    if isinstance(opt, string_types):
+      config = dict(learning_rate=float(lr))
+      if clip is not None:
+        config['clipnorm'] = clip
+      opt = tf.optimizers.get({'class_name': opt, 'config': config})
+    # the instance
+    elif isinstance(opt, tf.optimizers.Optimizer):
+      pass
+    # type
+    elif inspect.isclass(opt) and issubclass(opt, tf.optimizers.Optimizer):
+      opt = opt(learning_rate=float(learning_rate)) \
+        if clipnorm is None else \
+        opt(learning_rate=float(learning_rate), clipnorm=clipnorm)
+    # no support
+    else:
+      raise ValueError("No support for optimizer: %s" % str(opt))
+    all_optimizers.append(opt)
+  return all_optimizers
+
+
 # ===========================================================================
 # Training step
 # ===========================================================================
@@ -94,8 +127,8 @@ class TrainStep:
     self.iw = iw
     self.elbo_kw = elbo_kw
 
-  def __call__(self):
-    pX_Z, qZ_X = self.vae(self.inputs, training=True, n_mcmc=self.n_mcmc)
+  def __call__(self, training=True):
+    pX_Z, qZ_X = self.vae(self.inputs, training=training, n_mcmc=self.n_mcmc)
     # store so it could be reused
     self.pX_Z = pX_Z
     self.qZ_X = qZ_X
@@ -247,13 +280,13 @@ class VariationalAutoencoder(keras.Model):
       if hasattr(layer, '_batch_input_shape') and not layer.built:
         shape = [1 if i is None else i for i in layer._batch_input_shape]
         x = tf.ones(shape=shape, dtype=layer.dtype)
-        print(layer)
         layer(x)  # call this dummy input to build the layer
     ### the training step
     self.step = tf.Variable(step,
                             dtype=self.dtype,
                             trainable=False,
                             name="Step")
+    self._trainstep_kw = dict()
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
@@ -321,12 +354,12 @@ class VariationalAutoencoder(keras.Model):
       tf.assert_equal(
           s0, s, "Sample shape from all latent variable must be the same.")
     sample_shape = sample_shape[0]
-    # remove sample_shape from latent
-    latents = [
-        z if len(sample_shape) == 0 else tf.reshape(
-            z, tf.concat([(-1,), s[1:]], axis=0))
-        for z, s in zip(latents, shapes)
-    ]
+    # remove sample_shape from latent, assume only 1 dimension for batch
+    if len(sample_shape) > 0:
+      latents = [
+          tf.reshape(z, tf.concat([(-1,), s[1:]], axis=0))
+          for z, s in zip(latents, shapes)
+      ]
     # decoding
     d = self.decoder(
         _reduce_latents(latents, self.reduce_latent)
@@ -361,7 +394,7 @@ class VariationalAutoencoder(keras.Model):
     pX_Z = self.decode(qZ_X, training=training)
     return pX_Z, qZ_X
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc=None, **kwargs):
     r""" The basic components of all ELBO """
     ### llk
     llk = {}
@@ -382,7 +415,7 @@ class VariationalAutoencoder(keras.Model):
            qZ_X,
            analytic=False,
            reverse=True,
-           n_mcmc=1,
+           n_mcmc=None,
            iw=False,
            return_components=False,
            **kwargs):
@@ -484,8 +517,70 @@ class VariationalAutoencoder(keras.Model):
                     iw=iw,
                     elbo_kw=elbo_kw)
 
-  def fit(self):
-    raise NotImplementedError()
+  def optimize(self,
+               inputs,
+               tape=None,
+               n_iter=None,
+               training=True,
+               optimizer=None):
+    if optimizer is None:
+      optimizer = tf.nest.flatten(self.optimizer)
+    all_metrics = {}
+    total_loss = 0.
+    for opt, step in zip(optimizer,
+                         self.train_steps(inputs, **self._trainstep_kw)):
+      loss, metrics = step(training=training)
+      # update metrics and loss
+      all_metrics.update(metrics)
+      total_loss += loss
+      if tape is not None:
+        Trainer.apply_gradients(tape, opt, loss, step.parameters)
+        # tape need to be reseted for next
+        tape.reset()
+    return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
+
+  def fit(
+      self,
+      train: tf.data.Dataset,
+      valid: Optional[tf.data.Dataset] = None,
+      valid_freq=1000,
+      valid_interval=0,
+      optimizer='adam',
+      learning_rate=1e-4,
+      clipnorm=None,
+      epochs=2,
+      max_iter=-1,
+      n_mcmc=(),  # for ELBO
+      analytic=False,  # for ELBO
+      iw=False,  # for ELBO
+      callback=lambda: None,
+      compile_graph=True,
+      autograph=False,
+      logging_interval=2,
+      log_path=None):
+    trainer = Trainer()
+    self.trainer = trainer
+    if optimizer is not None:
+      self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
+    if self.optimizer is None:
+      raise RuntimeError("No optimizer found!")
+    self._trainstep_kw = dict(n_mcmc=n_mcmc,
+                              iw=iw,
+                              elbo_kw=dict(analytic=analytic))
+    trainer.fit(train_ds=train.repeat(int(epochs)) if epochs > 1 else train,
+                optimize=self.optimize,
+                valid_ds=valid,
+                valid_freq=valid_freq,
+                valid_interval=valid_interval,
+                persistent_tape=True,
+                compile_graph=compile_graph,
+                autograph=autograph,
+                logging_interval=logging_interval,
+                log_path=log_path,
+                max_iter=max_iter,
+                callback=callback)
+    self._trainstep_kw = dict()
+    return self
 
   def __str__(self):
     clses = [
