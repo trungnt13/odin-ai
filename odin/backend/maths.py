@@ -130,8 +130,7 @@ def length_norm(x, axis=-1, epsilon=1e-12, ord=2):
 
 
 def calc_white_mat(X):
-  """ calculates the whitening transformation for cov matrix X
-  """
+  r""" calculates the whitening transformation for cov matrix X """
   return tf.linalg.cholesky(tf.linalg.inv(X))
 
 
@@ -225,9 +224,8 @@ def selu(x):
   chose by solving Eq.(4) and Eq.(5), with the fixed point
   `(mean, variance) = (0, 1)`, which is typical for activation normalization.
 
-  Reference
-  ---------
-  [1] Klambauer, G., Unterthiner, T., Mayr, A., Hochreiter, S., 2017.
+  Reference:
+    Klambauer, G., Unterthiner, T., Mayr, A., Hochreiter, S., 2017.
       Self-Normalizing Neural Networks. arXiv:1706.02515 [cs, stat].
 
   """
@@ -268,19 +266,13 @@ def softplus_inverse(x):
   return np.log(1 - np.exp(-x)) + x
 
 
-def softplus(x, beta=1, threshold=20):
-  r""" math::`f(x) = \frac{1}{beta} * log(exp^{beta * x} + 1)`
-  threshold : values above this revert to a linear function
-  """
+def softplus(x):
+  r"""  Softplus function: `ln(1 + exp(x))` """
   if tf.is_tensor(x):
-    mask = (x * beta) > threshold
-    beta = tf.cast(beta, dtype=x.dtype)
-    return tf.where(mask, x, 1 / beta * tf.nn.softplus(x * beta))
+    return tf.math.softplus(x)
   if torch.is_tensor(x):
-    return torch.nn.functional.softplus(x, beta=beta, threshold=threshold)
-  return torch.nn.functional.softplus(torch.from_numpy(x),
-                                      beta=beta,
-                                      threshold=threshold).numpy()
+    return torch.nn.functional.softplus(x)
+  return torch.nn.functional.softplus(torch.from_numpy(x)).numpy()
 
 
 def softplus1(x):

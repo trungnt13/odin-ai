@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -106,22 +110,15 @@ class DenseDistribution(Dense):
     # process the posterior
     # TODO: support give instance of DistributionLambda directly
     if inspect.isclass(posterior) and issubclass(posterior, DistributionLambda):
-      post_layer = posterior
+      post_layer_cls = posterior
     else:
-      post_layer, _ = parse_distribution(posterior)
-    self._n_mcmc = [1]
-    self._posterior_layer = post_layer(
-        event_shape,
-        convert_to_tensor_fn=partial(Distribution.sample,
-                                     sample_shape=self._n_mcmc) \
-          if convert_to_tensor_fn == Distribution.sample else \
-            convert_to_tensor_fn,
-        **posterior_kwargs)
+      post_layer_cls, _ = parse_distribution(posterior)
     # create layers
-    self._convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
+    self._convert_to_tensor_fn = convert_to_tensor_fn
     self._posterior = posterior
     self._prior = prior
     self._event_shape = event_shape
+    self._posterior_class = post_layer_cls
     self._posterior_kwargs = posterior_kwargs
     self._dropout = dropout
     # set more descriptive name
@@ -131,7 +128,7 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    params_size = _params_size(self._posterior_layer, event_shape)
+    params_size = _params_size(self.posterior_layer(), event_shape)
     self._disable_projection = bool(disable_projection)
     super(DenseDistribution,
           self).__init__(units=params_size,
@@ -192,9 +189,14 @@ class DenseDistribution(Dense):
     assert isinstance(p, (Distribution, type(None)))
     self._prior = p
 
-  @property
-  def posterior_layer(self):
-    return self._posterior_layer
+  def posterior_layer(self, sample_shape=()):
+    if self._convert_to_tensor_fn == Distribution.sample:
+      fn = partial(Distribution.sample, sample_shape=sample_shape)
+    else:
+      fn = self._convert_to_tensor_fn
+    return self._posterior_class(self._event_shape,
+                                 convert_to_tensor_fn=fn,
+                                 **self._posterior_kwargs)
 
   @property
   def posterior(self):
@@ -210,7 +212,12 @@ class DenseDistribution(Dense):
                          self.__class__.__name__)
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
-  def call(self, inputs, training=None, n_mcmc=(), projection=True, prior=None):
+  def call(self,
+           inputs,
+           training=None,
+           sample_shape=(),
+           projection=True,
+           prior=None):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
@@ -221,19 +228,22 @@ class DenseDistribution(Dense):
     # applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
-    # modifying the Lambda to return given number of n_mcmc samples
-    self._n_mcmc.clear()
-    for i in tf.nest.flatten(n_mcmc):
-      self._n_mcmc.append(i)
-    # create posterior distribution
-    posterior = self.posterior_layer(params, training=training)
+    # create posterior distribution (this will create a new layer everytime)
+    posterior = self.posterior_layer(sample_shape=sample_shape)(
+        params, training=training)
     self._last_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(
-        posterior, prior=self.prior if prior is None else prior, n_mcmc=None)
+        posterior,
+        prior=self.prior if prior is None else prior,
+        sample_shape=None) # None mean reuse samples here
     return posterior
 
-  def kl_divergence(self, prior=None, analytic=True, n_mcmc=1, reverse=True):
+  def kl_divergence(self,
+                    prior=None,
+                    analytic=True,
+                    sample_shape=1,
+                    reverse=True):
     r""" KL(q||p) where `p` is the posterior distribution returned from last
     call
 
@@ -243,11 +253,11 @@ class DenseDistribution(Dense):
       analytic : `bool` (default=`True`). Using closed form solution for
         calculating divergence, otherwise, sampling with MCMC
       reverse : `bool`. If `True`, calculate `KL(q||p)` else `KL(p||q)`
-      n_mcmc : `int` (default=`1`)
+      sample_shape : `int` (default=`1`)
         number of MCMC sample if `analytic=False`
 
     Return:
-      kullback_divergence : Tensor [n_mcmc, batch_size, ...]
+      kullback_divergence : Tensor [sample_shape, batch_size, ...]
     """
     if prior is None:
       prior = self._prior
@@ -261,13 +271,13 @@ class DenseDistribution(Dense):
                                  p=prior,
                                  analytic=bool(analytic),
                                  reverse=reverse,
-                                 q_sample=int(n_mcmc),
+                                 q_sample=sample_shape,
                                  auto_remove_independent=True)
     if analytic:
       kullback_div = tf.expand_dims(kullback_div, axis=0)
-      if n_mcmc > 1:
+      if isinstance(sample_shape, Number) and sample_shape > 1:
         ndims = kullback_div.shape.ndims
-        kullback_div = tf.tile(kullback_div, [n_mcmc] + [1] * (ndims - 1))
+        kullback_div = tf.tile(kullback_div, [sample_shape] + [1] * (ndims - 1))
     return kullback_div
 
   def log_prob(self, x):
@@ -281,7 +291,7 @@ class DenseDistribution(Dense):
   def __str__(self):
     text = "<Dense proj:%s shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
       (not self._disable_projection, self.event_shape, self.units,
-       self.posterior_layer.name, str(self.prior),
+       self._posterior_class.__name__, str(self.prior),
        self._dropout, str(self._posterior_kwargs))
     text = text.replace("tfp.distributions.", "")
     return text

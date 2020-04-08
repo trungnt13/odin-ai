@@ -6,7 +6,8 @@ from odin.bay.vi.autoencoder.info_vae import *
 from odin.bay.vi.autoencoder.self_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.networks import *
-
+from odin.bay.vi.autoencoder.vq_vae import *
+from odin.bay.vi.autoencoder.lda_vae import *
 
 def get_vae(name=None) -> VariationalAutoencoder:
   import inspect

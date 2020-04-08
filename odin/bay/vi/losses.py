@@ -63,7 +63,7 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
   z_mean = qZ_X.mean()
   shape = z_mean.shape
   if len(shape) > 2:
-    # [n_mcmc * batch_size, zdim]
+    # [sample_shape * batch_size, zdim]
     z_mean = tf.reshape(
         z_mean, (tf.cast(tf.reduce_prod(shape[:-1]), tf.int32),) + shape[-1:])
   expectation_z_mean_z_mean_t = tf.reduce_mean(tf.expand_dims(z_mean, 2) *
@@ -87,9 +87,9 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
     mean_zcov = tf.reduce_mean(tf.linalg.diag(z_var), axis=0)
     z_cov = cov_zmean + mean_zcov
   # Eq(6) and Eq(7)
-  # z_cov [n_mcmc, zdim, zdim]
-  # z_cov_diag [n_mcmc, zdim]
-  # z_cov_offdiag [n_mcmc, zdim, zdim]
+  # z_cov [sample_shape, zdim, zdim]
+  # z_cov_diag [sample_shape, zdim]
+  # z_cov_offdiag [sample_shape, zdim, zdim]
   z_cov_diag = tf.linalg.diag_part(z_cov)
   z_cov_offdiag = z_cov - tf.linalg.diag(z_cov_diag)
   return lambda_offdiag * tf.reduce_sum(z_cov_offdiag ** 2) + \

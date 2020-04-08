@@ -86,7 +86,7 @@ class Attention(keras.Model):
                scale_initializer='vaswani',
                scale_tied=True,
                scale_trainable=False,
-               n_mcmc=1,
+               sample_shape=1,
                temperature=0.5,
                temperature_trainable=False,
                name=None):
@@ -98,7 +98,7 @@ class Attention(keras.Model):
     self.dropout = dropout
     self.temporal_dropout = bool(temporal_dropout)
     # ====== for hard attention ====== #
-    self.n_mcmc = int(n_mcmc)
+    self.sample_shape = int(sample_shape)
     self.temperature_trainable = temperature_trainable
     self.temperature = bk.variable(initial_value=temperature,
                                    trainable=temperature_trainable,
@@ -210,7 +210,7 @@ class Attention(keras.Model):
                                        residual=self.residual,
                                        dropout=self.dropout,
                                        temporal_dropout=self.temporal_dropout,
-                                       n_mcmc=self.n_mcmc,
+                                       sample_shape=self.sample_shape,
                                        temperature=self.temperature,
                                        training=training)
       ### attention heads regularization

@@ -200,7 +200,7 @@ class _Criticizer(object):
         inputs = tf.nest.flatten(inputs)
       elif isinstance(inputs, (tuple, list)):
         inputs = inputs[0]
-    latents = self._vae.encode(inputs, training=False, n_mcmc=1)
+    latents = self._vae.encode(inputs, training=False, sample_shape=1)
     # only support single returned latent variable now
     for z in tf.nest.flatten(latents):
       assert isinstance(z, tfd.Distribution), \

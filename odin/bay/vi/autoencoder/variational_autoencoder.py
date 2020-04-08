@@ -115,7 +115,7 @@ class TrainStep:
   def __init__(self,
                vae,
                inputs,
-               n_mcmc=(),
+               sample_shape=(),
                iw=False,
                elbo_kw=dict(),
                parameters=None):
@@ -123,12 +123,14 @@ class TrainStep:
     self.parameters = (vae.trainable_variables
                        if parameters is None else parameters)
     self.inputs = inputs
-    self.n_mcmc = n_mcmc
+    self.sample_shape = sample_shape
     self.iw = iw
     self.elbo_kw = elbo_kw
 
   def __call__(self, training=True):
-    pX_Z, qZ_X = self.vae(self.inputs, training=training, n_mcmc=self.n_mcmc)
+    pX_Z, qZ_X = self.vae(self.inputs,
+                          training=training,
+                          sample_shape=self.sample_shape)
     # store so it could be reused
     self.pX_Z = pX_Z
     self.qZ_X = qZ_X
@@ -324,20 +326,16 @@ class VariationalAutoencoder(keras.Model):
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 
-  def encode(self, inputs, training=None, n_mcmc=(), **kwargs):
+  def encode(self, inputs, training=None, sample_shape=(), **kwargs):
     r""" Encoding inputs to latent codes """
     e = self.encoder(inputs, training=training, **kwargs)
-    qZ_X = []
-    for latent, args in zip(self.latent_layers, self.latent_args):
-      kw = dict(kwargs)
-      if 'training' in args:
-        kw['training'] = training
-      if 'n_mcmc' in args:
-        kw['n_mcmc'] = n_mcmc
-      qZ_X.append(latent(e, **kw))
+    qZ_X = [
+        latent(e, training=training, sample_shape=sample_shape)
+        for latent in self.latent_layers
+    ]
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def decode(self, latents, training=None, **kwargs):
+  def decode(self, latents, training=None, sample_shape=(), **kwargs):
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     # convert all latents to Tensor
@@ -345,56 +343,42 @@ class VariationalAutoencoder(keras.Model):
     if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
       list_latents = False
     latents = tf.nest.flatten(latents)
-    shapes = [_latent_shape(z) for z in latents]
-    latents = [tf.convert_to_tensor(z) for z in latents]
-    # all sample shape must be the same
-    sample_shape = [z.shape[:-s.shape[0]] for z, s in zip(latents, shapes)]
-    s0 = sample_shape[0]
-    for s in sample_shape:
-      tf.assert_equal(
-          s0, s, "Sample shape from all latent variable must be the same.")
-    sample_shape = sample_shape[0]
-    # remove sample_shape from latent, assume only 1 dimension for batch
-    if len(sample_shape) > 0:
-      latents = [
-          tf.reshape(z, tf.concat([(-1,), s[1:]], axis=0))
-          for z, s in zip(latents, shapes)
-      ]
     # decoding
-    d = self.decoder(
+    outputs = self.decoder(
         _reduce_latents(latents, self.reduce_latent)
         if list_latents else latents[0],
         training=training,
         **kwargs,
     )
-    list_outputs = False
-    if not tf.is_tensor(d):
-      list_outputs = True
     # get back the sample shape
-    outputs = []
-    for x in tf.nest.flatten(d):
-      if tf.is_tensor(x):
-        shape = tf.concat([sample_shape, (-1,), x.shape[1:]], axis=0)
-        x = tf.reshape(x, shape)
-      outputs.append(x)
+    list_outputs = False
+    if not tf.is_tensor(outputs):
+      list_outputs = True
+    sample_shape = tf.nest.flatten(sample_shape)
+    if len(sample_shape) > 0:
+      outputs = [
+          tf.reshape(o, tf.concat([sample_shape, (-1,), o.shape[1:]], axis=0))
+          for o in tf.nest.flatten(outputs)
+      ]
     # create the output distribution
     if not list_outputs:
       outputs = outputs[0]
-    dist = []
-    for layer, args in zip(self.output_layers, self.output_args):
-      if 'training' in args:
-        o = layer(outputs, training=training)
-      else:
-        o = layer(outputs)
-      dist.append(o)
+    dist = [layer(outputs, training=training) for layer in self.output_layers]
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
 
-  def call(self, inputs, training=None, n_mcmc=()):
-    qZ_X = self.encode(inputs, training=training, n_mcmc=n_mcmc)
-    pX_Z = self.decode(qZ_X, training=training)
+  def call(self, inputs, training=None, sample_shape=()):
+    qZ_X = self.encode(inputs, training=training, sample_shape=sample_shape)
+    pX_Z = self.decode(qZ_X, training=training, sample_shape=sample_shape)
     return pX_Z, qZ_X
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc=None, **kwargs):
+  def _elbo(self,
+            X,
+            pX_Z,
+            qZ_X,
+            analytic,
+            reverse,
+            sample_shape=None,
+            **kwargs):
     r""" The basic components of all ELBO """
     ### llk
     llk = {}
@@ -405,7 +389,7 @@ class VariationalAutoencoder(keras.Model):
     for name, qZ in zip(self.latent_names, qZ_X):
       div['kl_%s' % name] = qZ.KL_divergence(analytic=analytic,
                                              reverse=reverse,
-                                             n_mcmc=n_mcmc,
+                                             sample_shape=sample_shape,
                                              keepdims=True)
     return llk, div
 
@@ -415,7 +399,7 @@ class VariationalAutoencoder(keras.Model):
            qZ_X,
            analytic=False,
            reverse=True,
-           n_mcmc=None,
+           sample_shape=None,
            iw=False,
            return_components=False,
            **kwargs):
@@ -428,7 +412,7 @@ class VariationalAutoencoder(keras.Model):
     Arguments:
       analytic : bool (default: False)
         if True, use the close-form solution  for
-      n_mcmc : {Tensor, Number}
+      sample_shape : {Tensor, Number}
         number of MCMC samples for MCMC estimation of KL-divergence
       reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
         (or p_model) by greedily filling in the highest modes of data (or, in
@@ -440,20 +424,29 @@ class VariationalAutoencoder(keras.Model):
         This won't be applied if `return_components=True` or `rank(elbo)` <= 1.
       return_components : a Boolean. If True return the log-likelihood and the
         KL-divergence instead of final ELBO.
+      return_elbo : a Boolean. If True, gather the components (log-likelihood
+        and KL-divergence) to form and return ELBO.
 
     Return:
       log-likelihood : dictionary of `Tensor` of shape [sample_shape, batch_size].
-        The sample shape could be ommited in case `n_mcmc=()`.
+        The sample shape could be ommited in case `sample_shape=()`.
         The log-likelihood or distortion
-      divergence : dictionary `Tensor` of shape [n_mcmc, batch_size].
+      divergence : dictionary `Tensor` of shape [sample_shape, batch_size].
         The reversed KL-divergence or rate
     """
     X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)
-    llk, div = self._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc, **kwargs)
+    llk, div = self._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape,
+                          **kwargs)
+    if not (isinstance(llk, dict) and isinstance(div, dict)):
+      raise RuntimeError(
+          "When overriding VariationalAutoencoder _elbo method must return "
+          "dictionaries for log-likelihood and KL-divergence.")
+    ## only return the components, no need else here but it is clearer
     if return_components:
       return llk, div
+    ## calculate the ELBO
     # sum all the components log-likelihood and divergence
     llk_sum = tf.constant(0., dtype=self.dtype)
     div_sum = tf.constant(0., dtype=self.dtype)
@@ -464,7 +457,7 @@ class VariationalAutoencoder(keras.Model):
     elbo = llk_sum - div_sum
     if iw and tf.rank(elbo) > 1:
       elbo = self.importance_weighted(elbo, axis=0)
-    return elbo
+    return elbo, llk_sum, div_sum
 
   def importance_weighted(self, elbo, axis=0):
     r""" VAE objective can lead to overly simplified representations which
@@ -488,7 +481,7 @@ class VariationalAutoencoder(keras.Model):
 
   def train_steps(self,
                   inputs,
-                  n_mcmc=(),
+                  sample_shape=(),
                   iw=False,
                   elbo_kw=dict()) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (smilar to GAN)
@@ -513,16 +506,11 @@ class VariationalAutoencoder(keras.Model):
     self.step.assign_add(1)
     yield TrainStep(vae=self,
                     inputs=inputs,
-                    n_mcmc=n_mcmc,
+                    sample_shape=sample_shape,
                     iw=iw,
                     elbo_kw=elbo_kw)
 
-  def optimize(self,
-               inputs,
-               tape=None,
-               n_iter=None,
-               training=True,
-               optimizer=None):
+  def optimize(self, inputs, tape=None, training=True, optimizer=None):
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
@@ -550,7 +538,7 @@ class VariationalAutoencoder(keras.Model):
       clipnorm=None,
       epochs=2,
       max_iter=-1,
-      n_mcmc=(),  # for ELBO
+      sample_shape=(),  # for ELBO
       analytic=False,  # for ELBO
       iw=False,  # for ELBO
       callback=lambda: None,
@@ -564,7 +552,7 @@ class VariationalAutoencoder(keras.Model):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
-    self._trainstep_kw = dict(n_mcmc=n_mcmc,
+    self._trainstep_kw = dict(sample_shape=sample_shape,
                               iw=iw,
                               elbo_kw=dict(analytic=analytic))
     trainer.fit(train_ds=train.repeat(int(epochs)) if epochs > 1 else train,

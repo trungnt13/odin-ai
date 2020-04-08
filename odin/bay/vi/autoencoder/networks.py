@@ -13,6 +13,9 @@ def create_mnist_autoencoder(latent_dim=10, base_depth=32, activation='relu'):
   r""" Common autoencoder configuration for Binarized MNIST """
   image_shape = (28, 28, 1)
   conv = partial(keras.layers.Conv2D, padding="SAME", activation=activation)
+  deconv = partial(keras.layers.Conv2DTranspose,
+                   padding="SAME",
+                   activation=activation)
 
   encoder_net = keras.Sequential([
       conv(base_depth, 5, 1, input_shape=image_shape),
@@ -24,11 +27,6 @@ def create_mnist_autoencoder(latent_dim=10, base_depth=32, activation='relu'):
       keras.layers.Dense(2 * latent_dim, activation=None),
   ],
                                  name="EncoderNet")
-
-  deconv = partial(keras.layers.Conv2DTranspose,
-                   padding="SAME",
-                   activation=activation)
-  conv = partial(keras.layers.Conv2D, padding="SAME", activation=activation)
   # Collapse the sample and batch dimension and convert to rank-4 tensor for
   # use with a convolutional decoder network.
   decoder_net = keras.Sequential([

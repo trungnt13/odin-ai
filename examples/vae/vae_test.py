@@ -12,10 +12,11 @@ from tensorflow.python import keras
 from tensorflow_probability.python import distributions as tfd
 
 from odin import visual as vs
-from odin.bay import RandomVariable
-from odin.bay.vi import autoencoder
+from odin.bay import RandomVariable, coercible_tensor
+from odin.bay.vi.autoencoder import (BetaVAE, VariationalAutoencoder,
+                                     create_mnist_autoencoder)
 from odin.exp import Trainer
-from odin.fuel import BinarizedMNIST, YDisentanglement
+from odin.fuel import BinarizedMNIST
 
 sns.set()
 
@@ -38,9 +39,10 @@ save_path = "/tmp/vae_test"
 base_depth = 32
 latent_size = 16
 activation = 'relu'
-n_samples = 16
+n_samples = 2
 mixture_components = 1
 epochs = 20
+max_iter = 8000
 z_prior = tfd.MultivariateNormalDiag(loc=[0.] * latent_size,
                                      scale_identity_multiplier=1.).sample(16)
 
@@ -133,7 +135,7 @@ def make_mixture_prior():
     # See the module docstring for why we don't learn the parameters here.
     return tfd.MultivariateNormalDiag(loc=tf.zeros([latent_size]),
                                       scale_identity_multiplier=1.0)
-
+  raise NotImplementedError()
   loc = tf.compat.v1.get_variable(name="loc",
                                   shape=[mixture_components, latent_size])
   raw_scale_diag = tf.compat.v1.get_variable(
@@ -178,11 +180,11 @@ class TFPVAE(keras.Model):
     elbo = tf.reduce_mean(input_tensor=elbo_local)
     loss = -elbo
     # iw
-    importance_weighted_elbo = tf.reduce_mean(
-        input_tensor=tf.reduce_logsumexp(input_tensor=elbo_local, axis=0) -
-        tf.math.log(tf.cast(n_samples, dtype=tf.float32)))
-    return (loss, importance_weighted_elbo, avg_distortion, avg_rate,
-            approx_posterior, decoder_likelihood)
+    # importance_weighted_elbo = tf.reduce_mean(
+    #     input_tensor=tf.reduce_logsumexp(input_tensor=elbo_local, axis=0) -
+    #     tf.math.log(tf.cast(n_samples, dtype=tf.float32)))
+    return (loss, avg_distortion, avg_rate, approx_posterior,
+            decoder_likelihood)
 
   def decode(self, z):
     logits = self.decoder(z)
@@ -195,9 +197,9 @@ tfp_vae = TFPVAE()
 # ===========================================================================
 # ODIN vae
 # ===========================================================================
-encoder, decoder = autoencoder.create_mnist_autoencoder(latent_dim=latent_size,
-                                                        base_depth=base_depth,
-                                                        activation=activation)
+encoder, decoder = create_mnist_autoencoder(latent_dim=latent_size,
+                                            base_depth=base_depth,
+                                            activation=activation)
 outputs = RandomVariable(event_shape=image_shape,
                          posterior='bernoulli',
                          projection=False,
@@ -206,40 +208,23 @@ latents = RandomVariable(event_shape=latent_size,
                          posterior='diag',
                          projection=False,
                          name="Latent")
-odin_vae = autoencoder.BetaVAE(beta=1,
-                               encoder=encoder,
-                               decoder=decoder,
-                               outputs=outputs,
-                               latents=latents)
 
-# ===========================================================================
-# Test fit method
-# ===========================================================================
-odin_fit = autoencoder.BetaVAE(beta=1,
-                               encoder=encoder,
-                               decoder=decoder,
-                               outputs=outputs,
-                               latents=latents)
+odin_vae = BetaVAE(beta=1,
+                   encoder=encoder,
+                   decoder=decoder,
+                   outputs=outputs,
+                   latents=latents)
 
-
-def fit_callback():
-  save_figures("autofit", odin_fit, odin_fit.trainer)
-
-
-odin_fit.fit(train,
-             test,
-             epochs=epochs,
-             n_mcmc=n_samples,
-             valid_interval=60,
-             callback=fit_callback)
+for v1, v2 in zip(tfp_vae.trainable_variables, odin_vae.trainable_variables):
+  assert v1.name.split('/')[-1] == v2.name.split('/')[-1]
+  assert v1.shape == v2.shape
 
 
 # ===========================================================================
 # Training
 # ===========================================================================
-def train_model(model):
+def train_model(model, name):
   trainer = Trainer()
-  name = type(model).__name__.lower()
   optimizer = tf.optimizers.Adam(learning_rate=0.001,
                                  beta_1=0.9,
                                  beta_2=0.999,
@@ -251,34 +236,34 @@ def train_model(model):
 
   def get_loss(inputs):
     if isinstance(model, TFPVAE):
-      loss, _, llk, div = model(inputs)[:4]
+      loss, llk, div = model(inputs)[:3]
       llk = -llk
     else:
-      pX_Z, qZ_X = model(inputs, n_mcmc=n_samples)
-      components = model.elbo(inputs, pX_Z, qZ_X, return_components=True)
-      llk = tf.constant(0., dtype=model.dtype)
-      div = tf.constant(0., dtype=model.dtype)
-      for x in components[0].values():
-        llk += x
-      for x in components[1].values():
-        div += x
-      loss = -tf.reduce_mean(llk - div)
-      llk = tf.reduce_mean(llk)
-      div = tf.reduce_mean(div)
-    return loss, dict(llk=llk, kl=div)
+      # This is important normalization
+      pX_Z, qZ_X = model(2 * tf.cast(inputs, dtype=tf.float32) - 1,
+                         sample_shape=n_samples)
+      elbo, llk, div = model.elbo(inputs,
+                                  pX_Z,
+                                  qZ_X,
+                                  return_components=False,
+                                  iw=False)
+      loss = -tf.reduce_mean(elbo)
+    return loss, dict(llk=tf.reduce_mean(llk), kl=tf.reduce_mean(div))
 
-  def optimize(inputs, tape, training, n_iter):
+  def optimize(inputs, tape):
     loss, metrics = get_loss(inputs)
     Trainer.apply_gradients(tape, optimizer, loss, model)
     return loss, metrics
 
   trainer.fit(train.repeat(epochs),
               valid_ds=test,
-              valid_interval=60,
+              valid_interval=45,
               optimize=optimize,
               compile_graph=True,
-              callback=callback)
+              max_iter=max_iter,
+              callback=callback,
+              log_tag=name)
 
 
-train_model(odin_vae)
-train_model(tfp_vae)
+train_model(odin_vae, "betavae")
+train_model(tfp_vae, "tfpvae")

@@ -21,8 +21,8 @@ class BetaVAE(VariationalAutoencoder):
     super().__init__(**kwargs)
     self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
 
@@ -40,8 +40,8 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     for name, q in zip(self.latent_names, qZ_X):
       tc = total_correlation(tf.convert_to_tensor(q), q)
       div['tc_%s' % name] = (self.beta - 1.) * tc
@@ -85,8 +85,8 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
     div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}

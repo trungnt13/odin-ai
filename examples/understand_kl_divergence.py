@@ -73,20 +73,20 @@ def plot_posteriors(posterior, prior, n=1000):
   # this is very hard-coded function
   plt.figure(figsize=(12, 8))
   sns.kdeplot(prior.sample(int(n)).numpy(), label="Prior")
-  for post, analytic, reverse, n_mcmc in posterior:
+  for post, analytic, reverse, sample_shape in posterior:
     sns.kdeplot(post.sample(int(n)).numpy(),
                 linestyle='-' if reverse else '--',
                 label='%s-%s mcmc:%d' % ('KL(q||p)' if reverse else 'KL(p||q)',
-                                         'A' if analytic else 'S', n_mcmc))
+                                         'A' if analytic else 'S', sample_shape))
 
 
 def plot_histories(posterior, histories):
   plt.figure(figsize=(24, 5))
-  for idx, (post, analytic, reverse, n_mcmc) in enumerate(posterior):
+  for idx, (post, analytic, reverse, sample_shape) in enumerate(posterior):
     ax = plt.subplot(1, len(posterior), idx + 1)
     hist = histories[idx]
     name = '%s-%s mcmc:%d' % \
-        ('KL(q||p)' if reverse else 'KL(p||q)', 'A' if analytic else 'S', n_mcmc)
+        ('KL(q||p)' if reverse else 'KL(p||q)', 'A' if analytic else 'S', sample_shape)
     loc = np.asarray([i[1] for i in hist])
     plt.plot(loc, label='loc', linestyle='-' if reverse else '--')
     scale = np.asarray([i[2] for i in hist])
@@ -180,10 +180,10 @@ for n in [2, 3, 5]:
       (create_mixture_posterior(n=n), False, False, 100),
   ]
   histories = []
-  for post, analytic, reverse, n_mcmc in posterior:
-    print("Training:", analytic, reverse, n_mcmc)
+  for post, analytic, reverse, sample_shape in posterior:
+    print("Training:", analytic, reverse, sample_shape)
     h = minimize(lambda: kl_divergence(
-        q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=n_mcmc), [
+        q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=sample_shape), [
             post.components_distribution.loc, post.components_distribution.scale
         ],
                  verbose=False)
@@ -208,10 +208,10 @@ posterior = [
     (create_posterior(), False, False, 100),
 ]
 histories = []
-for post, analytic, reverse, n_mcmc in posterior:
-  print("Training:", analytic, reverse, n_mcmc)
+for post, analytic, reverse, sample_shape in posterior:
+  print("Training:", analytic, reverse, sample_shape)
   h = minimize(lambda: kl_divergence(
-      q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=n_mcmc),
+      q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=sample_shape),
                [post.loc, post.scale],
                verbose=False)
   histories.append(h)
@@ -234,10 +234,10 @@ posterior = [
     (create_posterior(), False, False, 100)
 ]
 histories = []
-for post, analytic, reverse, n_mcmc in posterior:
-  print("Training:", analytic, reverse, n_mcmc)
+for post, analytic, reverse, sample_shape in posterior:
+  print("Training:", analytic, reverse, sample_shape)
   h = minimize(lambda: kl_divergence(
-      q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=n_mcmc),
+      q=post, p=prior, analytic=analytic, reverse=reverse, q_sample=sample_shape),
                [post.loc, post.scale],
                verbose=False)
   histories.append(h)

@@ -191,7 +191,7 @@ def kl_divergence(q,
   Returns:
     A Tensor with the batchwise KL-divergence between `distribution_a`
       and `distribution_b`.  The shape is `[batch_dims]` for analytic KL,
-      otherwise, `[n_mcmc, batch_dims]`.
+      otherwise, `[sample_shape, batch_dims]`.
 
   Example:
   ```python
@@ -253,7 +253,7 @@ class KLdivergence:
     prior : `tensorflow_probability.Distribution`, the prior distribution
     analytic : bool (default: False)
       if True, use the close-form solution  for
-    n_mcmc : {Tensor, Number}
+    sample_shape : {Tensor, Number}
       number of MCMC samples for MCMC estimation of KL-divergence
     reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in
@@ -272,20 +272,20 @@ class KLdivergence:
                posterior,
                prior=None,
                analytic=False,
-               n_mcmc=1,
+               sample_shape=(),
                reverse=True,
                keepdims=False):
     self.posterior = posterior
     self.prior = prior
     self.analytic = bool(analytic)
-    self.n_mcmc = n_mcmc
+    self.sample_shape = sample_shape
     self.reverse = bool(reverse)
     self.keepdims = bool(keepdims)
 
   def __str__(self):
     return '<KL post:%s prior:%s analytic:%s reverse:%s #mcmc:%d>' % \
       (self.posterior.__class__.__name__, self.prior.__class__.__name__,
-       self.analytic, self.reverse, self.n_mcmc)
+       self.analytic, self.reverse, self.sample_shape)
 
   def __repr__(self):
     return self.__str__()
@@ -293,12 +293,12 @@ class KLdivergence:
   def __call__(self,
                prior=None,
                analytic=None,
-               n_mcmc=-1,
+               sample_shape=-1,
                reverse=None,
                keepdims=False):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
-    n_mcmc = self.n_mcmc if n_mcmc == -1 else n_mcmc
+    sample_shape = self.sample_shape if sample_shape == -1 else sample_shape
     reverse = self.reverse if reverse is None else bool(reverse)
     keepdims = self.keepdims if keepdims is None else bool(keepdims)
     if prior is None:
@@ -307,7 +307,7 @@ class KLdivergence:
                         p=prior,
                         analytic=analytic,
                         reverse=reverse,
-                        q_sample=n_mcmc,
+                        q_sample=sample_shape,
                         auto_remove_independent=True)
     if analytic and keepdims:
       div = tf.expand_dims(div, axis=0)

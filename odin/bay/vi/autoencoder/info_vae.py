@@ -50,8 +50,8 @@ class InfoVAE(BetaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):
       info_div = (self.gamma - self.beta) * self.divergence(
@@ -117,9 +117,17 @@ class MutualInfoVAE(BetaVAE):
     self.code = self.latent_layers[-1]
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
+  def _elbo(self,
+            X,
+            pX_Z,
+            qZ_X,
+            analytic,
+            reverse,
+            sample_shape,
+            training=None):
     # don't take KL of qC_X
-    llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse, n_mcmc)
+    llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse,
+                             sample_shape)
     # the latents
     z = tf.concat([q.sample() for q in qZ_X[:-1]], axis=-1)
     # mutual information code

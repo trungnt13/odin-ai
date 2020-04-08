@@ -90,7 +90,7 @@ class AttentionModelTest(unittest.TestCase):
                                          residual=True,
                                          dropout=0.3,
                                          training=True,
-                                         n_mcmc=2)
+                                         sample_shape=2)
                     grads = bk.grad(out, [query, key, value], tape=tape)
                   # for name, x, g in zip(["Query", "Key", "Value"], [q, k, v],
                   #                       grads):
@@ -145,12 +145,12 @@ class AttentionModelTest(unittest.TestCase):
               ]:
                 for hards in [
                     dict(
-                        n_mcmc=1,
+                        sample_shape=1,
                         temperature=0.5,
                         temperature_trainable=False,
                     ),
                     dict(
-                        n_mcmc=5,
+                        sample_shape=5,
                         temperature=1.0,
                         temperature_trainable=True,
                     )

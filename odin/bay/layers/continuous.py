@@ -507,7 +507,7 @@ class MultivariateNormalLayer(DistributionLambda):
   """
 
   def __init__(self,
-               event_size,
+               event_shape,
                covariance='diag',
                loc_activation='identity',
                scale_activation='softplus1',
@@ -515,21 +515,22 @@ class MultivariateNormalLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(t, tf.reduce_prod(event_size), covariance,
+        lambda t: type(self).new(t, event_shape, covariance,
                                  parse_activation(loc_activation, self),
                                  parse_activation(scale_activation, self),
                                  validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
-          event_size,
+          event_shape,
           covariance,
           loc_activation=tf.identity,
           scale_activation=softplus1,
           validate_args=False,
           name=None):
-    """Create the distribution instance from a `params` vector."""
+    r"""Create the distribution instance from a `params` vector."""
     covariance = str(covariance).lower().strip()
+    event_size = tf.reduce_prod(event_shape)
     assert covariance in ('full', 'tril', 'diag'), \
     "No support for given covariance: '%s'" % covariance
     if name is None:

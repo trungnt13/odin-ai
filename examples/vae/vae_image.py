@@ -146,12 +146,12 @@ class VAE(keras.Model):
     img = deprocess(pZ.mean())
     return img
 
-  def call(self, inputs, training=None, n_mcmc=1):
+  def call(self, inputs, training=None, sample_shape=1):
     E = self.encoder(inputs, training=training)
-    qZ = self.qZ_X(E, training=training, n_mcmc=n_mcmc)
+    qZ = self.qZ_X(E, training=training, sample_shape=sample_shape)
     Z = tf.reshape(qZ, (-1, qZ.shape[-1]))
     D = self.decoder(Z, training=training)
-    output_shape = tf.concat([(n_mcmc, -1), tf.shape(D)[1:]], 0)
+    output_shape = tf.concat([(sample_shape, -1), tf.shape(D)[1:]], 0)
     D = tf.reshape(D, output_shape)
     pX = self.pX_Z(D)
     return pX, qZ

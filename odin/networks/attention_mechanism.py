@@ -431,7 +431,7 @@ class AttentionMechanism(IntFlag):
             residual=False,
             dropout=0,
             temporal_dropout=False,
-            n_mcmc=1,
+            sample_shape=1,
             temperature=0.5,
             training=None):
     r"""Applies attention scores to the given value tensor.
@@ -452,7 +452,7 @@ class AttentionMechanism(IntFlag):
       dropout : Float. Dropout probability of the attention scores.
       temporal_dropout : Boolean. If `True`, using the same dropout mask along
         temporal axis (i.e. the 1-st dimension)
-      n_mcmc (`Integer`) : number of mcmc samples for estimating the gradient
+      sample_shape (`Integer`) : number of mcmc samples for estimating the gradient
         of hard attention
       temperature: An 0-D `Tensor`, representing the temperature
         of a set of RelaxedOneHotCategorical distributions. The temperature
@@ -460,16 +460,16 @@ class AttentionMechanism(IntFlag):
 
     Returns:
       attended sequence: Tensor of shape
-        * `[n_mcmc, num_heads, batch_size, Tq, dim]` for (hard + multi-heads)
-        * `[n_mcmc, batch_size, Tq, dim]` for (hard + no-head)
+        * `[sample_shape, num_heads, batch_size, Tq, dim]` for (hard + multi-heads)
+        * `[sample_shape, batch_size, Tq, dim]` for (hard + no-head)
         * `[num_heads, batch_size, Tq, dim]` for (soft + multi-heads)
         * `[batch_size, Tq, dim]` for (soft + no-head)
       attention distribution : for soft attention, return Tensor of shape
         * `[num_heads, batch_size, Tq]` for self-attention
         * `[num_heads, batch_size, Tq, Tv]` for inter-attention.
         for hard attention, return one-hot categorical distribution of shape
-        * `[n_mcmc, num_heads, batch_size, Tq]` for self-attention
-        * `[n_mcmc, num_heads, batch_size, Tq, Tv]` for inter-attention.
+        * `[sample_shape, num_heads, batch_size, Tq]` for self-attention
+        * `[sample_shape, num_heads, batch_size, Tq, Tv]` for inter-attention.
         if multi-heads attention wasn't used, omit the `[num_heads]`.
     """
     num_heads = _get_num_heads(scores)
@@ -524,7 +524,7 @@ class AttentionMechanism(IntFlag):
           temperature=temperature,
           logits=bk.squeeze(scores, axis=-1)
           if scores.shape[-1] == 1 else scores)
-      fsample = partial(bay.Distribution.sample, sample_shape=n_mcmc)
+      fsample = partial(bay.Distribution.sample, sample_shape=sample_shape)
       attention_distribution = bay.coercible_tensor(
           attention_distribution, convert_to_tensor_fn=fsample)
     ### hard attention
@@ -533,7 +533,7 @@ class AttentionMechanism(IntFlag):
           logits=bk.squeeze(scores, axis=-1)
           if scores.shape[-1] == 1 else scores,
           dtype=value.dtype)
-      fsample = partial(bay.Distribution.sample, sample_shape=n_mcmc)
+      fsample = partial(bay.Distribution.sample, sample_shape=sample_shape)
       attention_distribution = bay.coercible_tensor(
           attention_distribution, convert_to_tensor_fn=fsample)
     # ======  dropout the attention scores ====== #

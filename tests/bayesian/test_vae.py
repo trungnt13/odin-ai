@@ -41,13 +41,13 @@ class VAETest(unittest.TestCase):
            autoencoder.RandomVariable(10, name="Latent2")),
           autoencoder.RandomVariable(10, name="Latent1"),
       ]:
-        for n_mcmc in [
+        for sample_shape in [
             (),
             2,
             (4, 2, 3),
         ]:
           vae_name = str(vae_cls)
-          print(vae_name, n_mcmc)
+          print(vae_name, sample_shape)
           try:
             if isinstance(vae_cls, autoencoder.VariationalAutoencoder):
               vae = vae_cls
@@ -63,8 +63,8 @@ class VAETest(unittest.TestCase):
             x = vae.sample_data(5)
             with tf.GradientTape(watch_accessed_variables=False) as tape:
               tape.watch(params)
-              px, qz = vae(x, n_mcmc=n_mcmc)
-              elbo = vae.elbo(x, px, qz, n_mcmc=n_mcmc)
+              px, qz = vae(x, sample_shape=sample_shape)
+              elbo = vae.elbo(x, px, qz, sample_shape=sample_shape)
             grads = tape.gradient(elbo, params)
             for p, g in zip(params, grads):
               assert g is not None, \

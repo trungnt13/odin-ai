@@ -55,8 +55,15 @@ class FactorVAE(BetaVAE):
         p for p in self.trainable_variables if id(p) not in exclude
     ]
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, n_mcmc, training=None):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, n_mcmc)
+  def _elbo(self,
+            X,
+            pX_Z,
+            qZ_X,
+            analytic,
+            reverse,
+            sample_shape,
+            training=None):
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     div['tc'] = self.gamma * self.discriminator.total_correlation(
         qZ_X, training=training)
     return llk, div
@@ -67,7 +74,7 @@ class FactorVAE(BetaVAE):
 
   def train_steps(self,
                   inputs,
-                  n_mcmc=(),
+                  sample_shape=(),
                   iw=False,
                   elbo_kw=dict()) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (smilar to GAN)
@@ -93,7 +100,7 @@ class FactorVAE(BetaVAE):
     # first step optimize VAE with total correlation loss
     step1 = TrainStep(vae=self,
                       inputs=inputs,
-                      n_mcmc=n_mcmc,
+                      sample_shape=sample_shape,
                       iw=iw,
                       elbo_kw=elbo_kw,
                       parameters=self.vae_params)

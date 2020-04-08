@@ -32,9 +32,9 @@ def _validate_optimize(func):
   assert 'tape' in args, \
     "tape (i.e. GradientTape) must be in arguments list of optimize function."
   args = args[2:] if 'self' == args[0] else args[1:]
-  assert all(a in args for a in template), \
-    "optimize function must has the following arguments: %s; but given: %s"\
-      % (template, args)
+  # assert all(a in args for a in template), \
+  #   "optimize function must has the following arguments: %s; but given: %s"\
+  #     % (template, args)
   return args
 
 
@@ -411,6 +411,7 @@ class Trainer(object):
           compile_graph=True,
           autograph=True,
           logging_interval=2,
+          log_tag='',
           log_path=None,
           max_iter=-1,
           callback=lambda: None):
@@ -446,6 +447,8 @@ class Trainer(object):
     output_stream = sys.stdout
     if log_path is not None:
       output_stream = 'file://%s' % log_path
+    if len(log_tag) > 0:
+      log_tag += " "
     ### Prepare the data
     assert isinstance(train_ds, tf.data.Dataset), \
       'train_ds must be instance of tf.data.Datasets'
@@ -498,7 +501,9 @@ class Trainer(object):
           it_per_sec = tf.cast(
               (it - last_it) / tf.cast(end_time - start_time, tf.float32),
               tf.int32)
-          tf.print(" [Valid] #",
+          tf.print(" ",
+                   log_tag,
+                   "[Valid] #",
                    it + 1,
                    " ",
                    it_per_sec,
@@ -530,7 +535,9 @@ class Trainer(object):
             self.valid_loss.append(valid_loss.numpy())
             for k, v in valid_metrics.items():
               self.valid_metrics[k].append(v)
-            tf.print(" [Valid#",
+            tf.print(" ",
+                     log_tag,
+                     "[Valid#",
                      len(self.valid_loss),
                      "]",
                      " loss:%.4f" % valid_loss,
@@ -556,7 +563,8 @@ class Trainer(object):
         # ====== logging ====== #
         if interval >= logging_interval:
           total_time += interval
-          tf.print("#",
+          tf.print(log_tag,
+                   "#",
                    self.n_iter,
                    " loss:%.4f" % loss,
                    " metr:",
@@ -658,7 +666,7 @@ class Trainer(object):
     # set the xlabels
     for ax, step in zip(subplots[-2:], summary_steps):
       ax.set_xlabel("#Iter * %d" % step)
-    plt.tight_layout()
+    fig.tight_layout()
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
     return self

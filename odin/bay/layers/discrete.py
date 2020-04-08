@@ -82,10 +82,6 @@ class BernoulliLayer(tfl.DistributionLambda):
         validate_args=validate_args,
         name=name,
     )
-    dist._logits = dist.distribution._logits
-    dist._probs = dist.distribution._probs
-    dist.logits = tfd.Bernoulli.logits
-    dist.probs = tfd.Bernoulli.probs
     return dist
 
   @staticmethod
