@@ -284,10 +284,9 @@ def softplus(x, beta=1, threshold=20):
 
 
 def softplus1(x):
-  r""" `softplus(x) + softplus_inverse(1.0)`
+  r""" `softplus(x + softplus_inverse(1.0))`
   e.g. positive standard deviation for normal distributions """
-  # tf.math.softplus(x) + tfp.math.softplus_inverse(1.0)
-  return softplus(x) + softplus_inverse(1.0)
+  return softplus(x + softplus_inverse(1.0))
 
 
 def sigmoid(x):
