@@ -45,7 +45,6 @@ epochs = 20
 max_iter = 8000
 z_prior = tfd.MultivariateNormalDiag(loc=[0.] * latent_size,
                                      scale_identity_multiplier=1.).sample(16)
-
 # delete existed files
 if not os.path.exists(save_path):
   os.makedirs(save_path)

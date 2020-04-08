@@ -351,18 +351,18 @@ class VariationalAutoencoder(keras.Model):
         **kwargs,
     )
     # get back the sample shape
-    list_outputs = False
-    if not tf.is_tensor(outputs):
-      list_outputs = True
     sample_shape = tf.nest.flatten(sample_shape)
     if len(sample_shape) > 0:
+      list_outputs = False
+      if not tf.is_tensor(outputs):
+        list_outputs = True
       outputs = [
           tf.reshape(o, tf.concat([sample_shape, (-1,), o.shape[1:]], axis=0))
           for o in tf.nest.flatten(outputs)
       ]
+      if not list_outputs:
+        outputs = outputs[0]
     # create the output distribution
-    if not list_outputs:
-      outputs = outputs[0]
     dist = [layer(outputs, training=training) for layer in self.output_layers]
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
 
