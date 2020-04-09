@@ -37,12 +37,12 @@ sns.set()
 CONFIG = \
 r"""
 vae: betavae
-zdim: 10
-zdist: diag
+latent_size: 16
 ds: binarizedmnist
-conv: False
-batch_size: 128
-epochs: 200
+sample_shape: 8
+batch_size: 64
+epochs: 100
+max_iter: 8000
 """
 
 
@@ -54,23 +54,9 @@ class VaeExperimenter(Experimenter):
   def __init__(self):
     super().__init__(save_path='/tmp/vaeexp',
                      config_path=CONFIG,
-                     exclude_keys=["epochs", "batch_size"])
+                     exclude_keys=["epochs", "batch_size", "max_iter"])
 
   ####### Utility methods
-  def optimize(self, inputs, tape, n_iter, training):
-    all_metrics = {}
-    total_loss = 0.
-    for opt, step in zip(self.optimizers, self.model.train_steps(inputs)):
-      loss, metrics = step()
-      Trainer.apply_gradients(tape, opt, loss, step.parameters)
-      # update metrics and loss
-      all_metrics.update(metrics)
-      total_loss += loss
-      # tape need to be reseted for next
-      if tape is not None:
-        tape.reset()
-    return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
-
   def callback(self):
     # sampled images
     step = int(self.model.step.numpy())
@@ -86,9 +72,9 @@ class VaeExperimenter(Experimenter):
     plt.close(fig)
     del X
     # learning curves
-    self.trainer.plot_learning_curves(
+    self.model.trainer.plot_learning_curves(
         path=os.path.join(self.output_path, 'learning_curves.png'),
-        summary_steps=[100, 5],
+        summary_steps=[100, 10],
     )
 
   ####### Experiementer methods
@@ -123,60 +109,43 @@ class VaeExperimenter(Experimenter):
         projection=False,
         name="Image",
     )
-    z_rv = bay.RandomVariable(event_shape=cfg.zdim,
-                              posterior=cfg.zdist,
+    z_rv = bay.RandomVariable(event_shape=cfg.latent_size,
+                              posterior='diag',
                               name="Latent")
     if cfg.vae in ('mutualinfovae',):
-      latent_dim = cfg.zdim * 2
+      latent_size = cfg.latent_size * 2
     else:
-      latent_dim = cfg.zdim
-    encoder, decoder = autoencoder.create_image_autoencoder(
-        image_shape=self.input_shape[:-1],
-        channels=self.input_shape[-1],
-        latent_dim=latent_dim,
-        conv=cfg.conv,
-        distribution=x_rv.posterior,
-    )
+      latent_size = cfg.latent_size
+    # create the network
+    fn = autoencoder.create_mnist_autoencoder if 'mnist' in cfg.ds else \
+      autoencoder.create_image_autoencoder
+    encoder, decoder = fn(image_shape=self.input_shape,
+                          latent_size=latent_size,
+                          distribution=x_rv.posterior)
+    # create the model and criticizer
     self.model = autoencoder.get_vae(cfg.vae)(outputs=x_rv,
                                               latents=z_rv,
                                               encoder=encoder,
                                               decoder=decoder)
     self.z_samples = self.model.sample_prior(16, seed=1)
     self.criticizer = Criticizer(self.model, random_state=1)
-    # maximum two optimizer, in case we use factor VAE
-    self.optimizers = [
-        tf.optimizers.Adam(learning_rate=0.001,
-                           beta_1=0.9,
-                           beta_2=0.999,
-                           epsilon=1e-07,
-                           amsgrad=False),
-        tf.optimizers.Adam(learning_rate=0.001,
-                           beta_1=0.9,
-                           beta_2=0.999,
-                           epsilon=1e-07,
-                           amsgrad=False),
-    ]
 
   def on_load_model(self, cfg, path):
     self.on_create_model(cfg)
 
   def on_train(self, cfg, model_path):
-    assert model_path == self.get_model_path(cfg)
+    self.model_path = self.get_model_path(cfg)
     self.output_path = self.get_output_path(cfg)
-    self.trainer = Trainer()
-    # just save the first image
-    self.callback()
-    # we use generator here so turn-off autograph
-    # valid_interval will ensure the same frequency for different dataset
-    self.trainer.fit(self.train.repeat(cfg.epochs),
-                     optimize=self.optimize,
-                     valid_ds=self.valid,
-                     valid_freq=1,
-                     valid_interval=30,
-                     logging_interval=2,
-                     callback=self.callback,
-                     compile_graph=True,
-                     autograph=False)
+    self.model.fit(self.train,
+                   self.valid,
+                   optimizer=['adam', 'adam'],
+                   learning_rate=0.001,
+                   epochs=cfg.epochs,
+                   max_iter=cfg.max_iter,
+                   sample_shape=cfg.sample_shape,
+                   valid_interval=45,
+                   logging_interval=2,
+                   callback=self.callback)
 
 
 # ===========================================================================

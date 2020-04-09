@@ -338,20 +338,29 @@ class VariationalAutoencoder(keras.Model):
   def decode(self, latents, training=None, sample_shape=(), **kwargs):
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
+    sample_shape = tf.nest.flatten(sample_shape)
     # convert all latents to Tensor
     list_latents = True
     if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
       list_latents = False
     latents = tf.nest.flatten(latents)
+    # remove sample_shape
+    if len(sample_shape) > 0:
+      # if we call tf.convert_to_tensor or tf.reshape directly here the llk
+      # could go worse for some unknown reason, but using keras layers is ok!
+      ndim = len(sample_shape) + 1
+      reshape = keras.layers.Lambda(lambda x: tf.reshape(
+          x, tf.concat([(-1,), tf.shape(x)[ndim:]], axis=0)))
+      latents = [reshape(z) for z in latents]
     # decoding
+    latents = _reduce_latents(
+        latents, self.reduce_latent) if list_latents else latents[0]
     outputs = self.decoder(
-        _reduce_latents(latents, self.reduce_latent)
-        if list_latents else latents[0],
+        latents,
         training=training,
         **kwargs,
     )
     # get back the sample shape
-    sample_shape = tf.nest.flatten(sample_shape)
     if len(sample_shape) > 0:
       list_outputs = False
       if not tf.is_tensor(outputs):
@@ -534,7 +543,7 @@ class VariationalAutoencoder(keras.Model):
       valid_freq=1000,
       valid_interval=0,
       optimizer='adam',
-      learning_rate=1e-4,
+      learning_rate=1e-3,
       clipnorm=None,
       epochs=2,
       max_iter=-1,
@@ -545,6 +554,7 @@ class VariationalAutoencoder(keras.Model):
       compile_graph=True,
       autograph=False,
       logging_interval=2,
+      log_tag='',
       log_path=None):
     trainer = Trainer()
     self.trainer = trainer
@@ -564,6 +574,7 @@ class VariationalAutoencoder(keras.Model):
                 compile_graph=compile_graph,
                 autograph=autograph,
                 logging_interval=logging_interval,
+                log_tag=log_tag,
                 log_path=log_path,
                 max_iter=max_iter,
                 callback=callback)

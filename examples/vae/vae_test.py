@@ -196,8 +196,9 @@ tfp_vae = TFPVAE()
 # ===========================================================================
 # ODIN vae
 # ===========================================================================
-encoder, decoder = create_mnist_autoencoder(latent_dim=latent_size,
+encoder, decoder = create_mnist_autoencoder(latent_size=latent_size,
                                             base_depth=base_depth,
+                                            center0=True,
                                             activation=activation)
 outputs = RandomVariable(event_shape=image_shape,
                          posterior='bernoulli',
@@ -213,10 +214,18 @@ odin_vae = BetaVAE(beta=1,
                    decoder=decoder,
                    outputs=outputs,
                    latents=latents)
-
 for v1, v2 in zip(tfp_vae.trainable_variables, odin_vae.trainable_variables):
   assert v1.name.split('/')[-1] == v2.name.split('/')[-1]
   assert v1.shape == v2.shape
+
+# odin_vae.fit(train,
+#              test,
+#              epochs=100,
+#              max_iter=8000,
+#              valid_interval=45,
+#              optimizer='adam',
+#              learning_rate=0.001,
+#              sample_shape=n_samples)
 
 
 # ===========================================================================
@@ -239,8 +248,7 @@ def train_model(model, name):
       llk = -llk
     else:
       # This is important normalization
-      pX_Z, qZ_X = model(2 * tf.cast(inputs, dtype=tf.float32) - 1,
-                         sample_shape=n_samples)
+      pX_Z, qZ_X = model(inputs, sample_shape=n_samples)
       elbo, llk, div = model.elbo(inputs,
                                   pX_Z,
                                   qZ_X,
@@ -256,7 +264,7 @@ def train_model(model, name):
 
   trainer.fit(train.repeat(epochs),
               valid_ds=test,
-              valid_interval=45,
+              valid_interval=int(30 * max(1, np.log(n_samples))),
               optimize=optimize,
               compile_graph=True,
               max_iter=max_iter,

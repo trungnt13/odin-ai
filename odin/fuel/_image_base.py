@@ -87,7 +87,7 @@ class BinarizedMNIST(ImageDataset):
 
     Return :
       train, test, unlabeled : `tensorflow.data.Dataset`
-        image - `(tf.float32, (64, 64, 3))`
+        image - `(tf.float32, (28, 28, 1))`
         label - `(tf.float32, (10,))`
     """
     ds = _partition(partition,

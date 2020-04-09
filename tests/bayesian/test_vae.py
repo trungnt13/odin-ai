@@ -8,6 +8,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from odin.bay import vi
+from odin.bay.vi import autoencoder
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -34,7 +35,6 @@ class VAETest(unittest.TestCase):
 
   def test_all_models(self):
     all_vae = autoencoder.get_vae()
-
     for vae_cls in all_vae:
       for latents in [
           (autoencoder.RandomVariable(10, name="Latent1"),
@@ -46,7 +46,7 @@ class VAETest(unittest.TestCase):
             2,
             (4, 2, 3),
         ]:
-          vae_name = str(vae_cls)
+          vae_name = vae_cls.__name__
           print(vae_name, sample_shape)
           try:
             if isinstance(vae_cls, autoencoder.VariationalAutoencoder):
@@ -64,18 +64,17 @@ class VAETest(unittest.TestCase):
             with tf.GradientTape(watch_accessed_variables=False) as tape:
               tape.watch(params)
               px, qz = vae(x, sample_shape=sample_shape)
-              elbo = vae.elbo(x, px, qz, sample_shape=sample_shape)
+              elbo, llk, div = vae.elbo(x, px, qz)
             grads = tape.gradient(elbo, params)
             for p, g in zip(params, grads):
               assert g is not None, \
-                "Gradient is None, param:%s shape:%s" % (p.name, p.shape)
+                  "Gradient is None, param:%s shape:%s" % (p.name, p.shape)
               g = g.numpy()
               assert np.all(np.logical_not(np.isnan(g))), \
-                "NaN gradient param:%s shape:%s" % (p.name, p.shape)
+                              "NaN gradient param:%s shape:%s" % (p.name, p.shape)
               assert np.all(np.isfinite(g)), \
-                "Infinite gradient param:%s shape:%s" % (p.name, p.shape)
+                  "Infinite gradient param:%s shape:%s" % (p.name, p.shape)
           except Exception as e:
-            # print(e)
             raise e
 
 
