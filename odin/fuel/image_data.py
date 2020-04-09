@@ -13,7 +13,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from bigarray import MmapArray, MmapArrayWriter
-from odin.fuel._image_base import (BinarizedAlphaDigits, BinarizedMNIST,
+from odin.fuel._image_base import (MNIST, BinarizedAlphaDigits, BinarizedMNIST,
                                    ImageDataset, _partition)
 from odin.fuel._image_synthesize import YDisentanglement
 from odin.utils import (as_tuple, batching, get_all_files, get_datasetpath,
@@ -186,11 +186,11 @@ class Shapes3D(ImageDataset):
   All the factors are:
     ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
   Values per factor:
-    'floor_hue': 10,
-    'wall_hue': 10,
-    'object_hue': 10,
-    'scale': 8,
-    'shape': 4,
+    'floor_hue': 10
+    'wall_hue': 10
+    'object_hue': 10
+    'scale': 8
+    'shape': 4
     'orientation': 15
   Pixel range [0, 255]
 
@@ -255,18 +255,6 @@ class Shapes3D(ImageDataset):
   def shape(self):
     return (64, 64, 3)
 
-  @staticmethod
-  def process(*ims):
-    r""" Normalizing the image to range [0., 1.] dtype tf.float32"""
-    if len(ims) == 2:
-      ims, lab = ims
-      return tf.clip_by_value(tf.cast(ims, tf.float32) / 255., 1e-6,
-                              1. - 1e-6), lab
-    ims = ims[0]
-    if len(ims.shape) == 4:
-      return tf.clip_by_value(tf.cast(ims, tf.float32) / 255., 1e-6, 1. - 1e-6)
-    return ims
-
   def create_dataset(self,
                      batch_size=128,
                      drop_remainder=False,
@@ -323,9 +311,21 @@ class Shapes3D(ImageDataset):
         else:
           yield self.images[i]
 
+    def process(*ims):
+      r""" Normalizing the image to range [0., 1.] dtype tf.float32"""
+      if len(ims) == 2:
+        ims, lab = ims
+        return tf.clip_by_value(
+            tf.cast(ims, tf.float32) / 255., 1e-6, 1. - 1e-6), lab
+      ims = ims[0]
+      if len(ims.shape) == 4:
+        return tf.clip_by_value(
+            tf.cast(ims, tf.float32) / 255., 1e-6, 1. - 1e-6)
+      return ims
+
     base_dataset = lambda ids: tf.data.Dataset.from_generator(
         partial(gen, indices=ids), output_types=types, output_shapes=shapes
-    ).batch(batch_size, drop_remainder).map(Shapes3D.process, parallel)
+    ).batch(batch_size, drop_remainder).map(process, parallel)
     ### get the right partition
     indices = _partition(
         partition,
@@ -353,6 +353,78 @@ class Shapes3D(ImageDataset):
         assert np.all(self.images[start:end] == images1[start:end]) and \
           np.all(self.labels[start:end] == labels1[start:end])
     return self
+
+
+class dSprites(ImageDataset):
+  r"""
+
+  Attributes:
+    label_orientation: ()
+    label_scale: ()
+    label_shape: ()
+    label_x_position: ()
+    label_y_position: ()
+    value_orientation: ()
+    value_scale: ()
+    value_shape: ()
+    value_x_position: ()
+    value_y_position: ()
+  """
+
+  def __init__(self):
+    super().__init__()
+    import tensorflow_datasets as tfds
+    self.train, self.valid, self.test = tfds.load(
+        "dsprites",
+        split=["train[:80%]", "train[80%:85%]", "train[85%:]"],
+        shuffle_files=True)
+    self.attributes = [
+        'label_orientation', 'label_scale', 'label_shape', 'label_x_position',
+        'label_y_position', 'value_orientation', 'value_scale', 'value_shape',
+        'value_x_position', 'value_y_position'
+    ]
+
+  @property
+  def is_binary(self):
+    return True
+
+  @property
+  def shape(self):
+    return (64, 64, 1)
+
+  def create_dataset(self,
+                     batch_size=64,
+                     drop_remainder=False,
+                     shuffle=1000,
+                     prefetch=tf.data.experimental.AUTOTUNE,
+                     cache='',
+                     parallel=None,
+                     partition='train',
+                     inc_labels=False,
+                     **kwargs) -> tf.data.Dataset:
+    ds = _partition(partition,
+                    train=self.train,
+                    valid=self.valid,
+                    test=self.test)
+
+    def _process(data):
+      image = tf.cast(data['image'], tf.float32)
+      if inc_labels:
+        label = tf.convert_to_tensor([data[i] for i in self.attributes],
+                                     dtype=tf.float32)
+        return image, label
+      return image
+
+    ds = ds.map(_process, parallel)
+    if cache is not None:
+      ds = ds.cache(str(cache))
+    # shuffle must be called after cache
+    if shuffle is not None:
+      ds = ds.shuffle(int(shuffle))
+    ds = ds.batch(batch_size, drop_remainder)
+    if prefetch is not None:
+      ds = ds.prefetch(prefetch)
+    return ds
 
 
 class MultidSprites(object):

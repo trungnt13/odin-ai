@@ -62,7 +62,7 @@ def create_mnist_autoencoder(image_shape=(28, 28, 1),
   return encoder_net, decoder_net
 
 
-def create_image_autoencoder(image_shape=(28, 28, 1),
+def create_image_autoencoder(image_shape=(64, 64, 1),
                              latent_size=10,
                              projection_dim=256,
                              activation='relu',

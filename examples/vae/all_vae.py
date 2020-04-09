@@ -32,18 +32,32 @@ sns.set()
 # ===========================================================================
 # Configuration
 # TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
-# vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae ds=binarizedmnist,shapes3d -m -ncpu 4
+# vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae
+# ds=mnist,shapes3d,dsprites -m -ncpu 3
 # ===========================================================================
 CONFIG = \
 r"""
 vae: betavae
-latent_size: 16
+latent_size: 10
 ds: binarizedmnist
 sample_shape: 8
 batch_size: 64
 epochs: 100
-max_iter: 8000
+max_iter: 10000
 """
+
+
+def save_images(pX_Z, name, step, path):
+  X = pX_Z.mean().numpy()
+  if X.shape[-1] == 1:
+    X = np.squeeze(X, axis=-1)
+  else:
+    X = np.transpose(X, (0, 3, 1, 2))
+  fig = vs.plot_figure(nrow=16, ncol=16, dpi=60)
+  vs.plot_images(X, fig=fig, title="[%s]#Iter: %d" % (name, step))
+  fig.savefig(path, dpi=60)
+  plt.close(fig)
+  del X
 
 
 # ===========================================================================
@@ -58,23 +72,23 @@ class VaeExperimenter(Experimenter):
 
   ####### Utility methods
   def callback(self):
-    # sampled images
+    name = type(self.model).__name__
     step = int(self.model.step.numpy())
+    # criticizer
+    # self.criticizer.sample_batch()
+    # reconstructed images
+    pX_Z, _ = self.model(self.x_test, training=False)
+    save_images(pX_Z, name, step,
+                os.path.join(self.output_path, 'reconstruct_%d.png' % step))
+    # sampled images
     pX_Z = self.model.decode(self.z_samples, training=False)
-    X = pX_Z.mean().numpy()
-    if X.shape[-1] == 1:
-      X = np.squeeze(X, axis=-1)
-    else:
-      X = np.transpose(X, (0, 3, 1, 2))
-    fig = vs.plot_figure(nrow=16, ncol=16, dpi=80)
-    vs.plot_images(X, fig=fig, title="#Iter: %d" % step)
-    fig.savefig(os.path.join(self.output_path, 'img_%d.png' % step), dpi=80)
-    plt.close(fig)
-    del X
+    save_images(pX_Z, name, step,
+                os.path.join(self.output_path, 'sample_%d.png' % step))
     # learning curves
     self.model.trainer.plot_learning_curves(
         path=os.path.join(self.output_path, 'learning_curves.png'),
         summary_steps=[100, 10],
+        dpi=60,
     )
 
   ####### Experiementer methods
@@ -82,9 +96,10 @@ class VaeExperimenter(Experimenter):
     dataset = get_dataset(cfg.ds)()
     train = dataset.create_dataset(partition='train', inc_labels=False)
     valid = dataset.create_dataset(partition='valid', inc_labels=False)
-    test = dataset.create_dataset(partition='test', inc_labels=False)
+    test = dataset.create_dataset(partition='test', inc_labels=True)
     # sample
     x_valid = [x for x in valid.take(1)][0][:16]
+    self.x_test = [xy[0] for xy in test.take(1)][0][:16]
     ### input description
     input_spec = tf.data.experimental.get_structure(train)
     fig = plt.figure(figsize=(12, 12))
@@ -134,7 +149,6 @@ class VaeExperimenter(Experimenter):
     self.on_create_model(cfg)
 
   def on_train(self, cfg, model_path):
-    self.model_path = self.get_model_path(cfg)
     self.output_path = self.get_output_path(cfg)
     self.model.fit(self.train,
                    self.valid,
@@ -143,8 +157,9 @@ class VaeExperimenter(Experimenter):
                    epochs=cfg.epochs,
                    max_iter=cfg.max_iter,
                    sample_shape=cfg.sample_shape,
-                   valid_interval=45,
+                   valid_interval=30,
                    logging_interval=2,
+                   log_tag="[%s,%s]" % (cfg.vae, cfg.ds),
                    callback=self.callback)
 
 

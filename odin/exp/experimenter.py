@@ -738,6 +738,8 @@ class Experimenter():
     if save_files:
       with open(os.path.join(self._save_path, 'summary.html'), 'w') as f:
         f.write(df.to_html())
+      with open(os.path.join(self._save_path, 'summary.txt'), 'w') as f:
+        f.write(df.to_string(index=False))
       try:
         df.to_excel(os.path.join(self._save_path, 'summary.xlsx'))
       except ModuleNotFoundError as e:

@@ -28,6 +28,9 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
 
 class ImageDataset:
 
+  def normalize_255(self, image):
+    return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
+
   @property
   def shape(self):
     raise NotImplementedError()
@@ -100,6 +103,8 @@ class BinarizedMNIST(ImageDataset):
 
     def _process_dict(data):
       image = tf.cast(data['image'], tf.float32)
+      if not self.is_binary:
+        image = self.normalize_255(image)
       if inc_labels:
         label = tf.cast(data['label'], tf.float32)
         return image, label
@@ -107,6 +112,8 @@ class BinarizedMNIST(ImageDataset):
 
     def _process_tuple(*data):
       image = tf.cast(data[0], tf.float32)
+      if not self.is_binary:
+        image = self.normalize_255(image)
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
         return image, label
@@ -123,6 +130,26 @@ class BinarizedMNIST(ImageDataset):
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
     return ds
+
+
+class MNIST(BinarizedMNIST):
+  r""" MNIST """
+
+  def __init__(self):
+    import tensorflow_datasets as tfds
+    self.train, self.valid, self.test = tfds.load(
+        name='mnist',
+        split=['train[:90%]', 'train[90%:]', 'test'],
+        shuffle_files=True,
+        as_supervised=True)
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
+  def shape(self):
+    return (28, 28, 1)
 
 
 class BinarizedAlphaDigits(BinarizedMNIST):
