@@ -184,7 +184,7 @@ class _Criticizer(object):
     factor matrix """
     return self._factors_name.index(str(factors_name))
 
-  def encode(self, inputs, first_latent=True):
+  def encode(self, inputs, sample_shape=(), first_latent=True):
     r""" Encode inputs to latent codes
 
     Arguments:
@@ -200,7 +200,9 @@ class _Criticizer(object):
         inputs = tf.nest.flatten(inputs)
       elif isinstance(inputs, (tuple, list)):
         inputs = inputs[0]
-    latents = self._vae.encode(inputs, training=False, sample_shape=1)
+    latents = self._vae.encode(inputs,
+                               training=False,
+                               sample_shape=sample_shape)
     # only support single returned latent variable now
     for z in tf.nest.flatten(latents):
       assert isinstance(z, tfd.Distribution), \
@@ -211,9 +213,11 @@ class _Criticizer(object):
       return latents[0]
     return latents
 
-  def decode(self, latents):
+  def decode(self, latents, sample_shape=()):
     r""" Decode the latents into reconstruction distribution """
-    outputs = self._vae.decode(latents, training=False)
+    outputs = self._vae.decode(latents,
+                               training=False,
+                               sample_shape=sample_shape)
     for o in tf.nest.flatten(outputs):
       assert isinstance(o, tfd.Distribution), \
         "vae decode method must return reconstruction distribution, but " + \
@@ -344,7 +348,7 @@ class _Criticizer(object):
 
   def sample_batch(self,
                    inputs,
-                   factors,
+                   factors=None,
                    discretizing=False,
                    n_bins=5,
                    strategy='quantile',
@@ -352,7 +356,7 @@ class _Criticizer(object):
                    train_percent=0.8,
                    n_samples=1000,
                    batch_size=32,
-                   verbose=False):
+                   verbose=True):
     r"""
     Arguments:
       inputs : list of `ndarray`. Inputs to the model
@@ -376,9 +380,39 @@ class _Criticizer(object):
     Returns:
       `Criticizer` with sampled data
     """
-    assert len(factors.shape) == 2, "factors must be a matrix"
+    ### inputs is a tensorflow Dataset, convert everything to numpy
+    if isinstance(inputs, tf.data.Dataset):
+      n_inputs = len(inputs.output_types)
+      struct = tf.data.experimental.get_structure(inputs)
+      if verbose:
+        inputs = tqdm(inputs, desc="Reading data")
+      if factors is None:  # include factors
+        assert len(struct) >= 2
+        x, y = [list() for _ in range((n_inputs - 1))], []
+        for data in inputs:
+          for i, j in enumerate(data[:-1]):
+            x[i].append(j)
+          y.append(data[-1])
+        inputs = [tf.concat(i, axis=0).numpy() for i in x]
+        if n_inputs == 2:
+          inputs = inputs[0]
+        factors = tf.concat(y, axis=0).numpy()
+      else:  # factors separated
+        x = [list() for _ in range(n_inputs)]
+        for data in inputs:
+          for i, j in enumerate(tf.nest.flatten(data)):
+            x[i].append(j)
+        inputs = [tf.concat(i, axis=0).numpy() for i in x]
+        if n_inputs == 1:
+          inputs = inputs[0]
+        if isinstance(factors, tf.data.Dataset):
+          if verbose:
+            factors = tqdm(factors, desc="Reading factors")
+          factors = tf.concat([i for i in factors], axis=0)
+    # post-processing
     is_list_inputs = isinstance(inputs, (tuple, list))
     inputs = tf.nest.flatten(inputs)
+    assert len(factors.shape) == 2, "factors must be a matrix"
     # ====== split train test ====== #
     ids = self.random_state.permutation(factors.shape[0])
     split = int(train_percent * factors.shape[0])

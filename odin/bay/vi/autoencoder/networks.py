@@ -75,6 +75,14 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
 
   By default, the image_shape and channels are configurated for binarized MNIST
   """
+  if tuple(image_shape[:2]) == (28, 28):
+    return create_mnist_autoencoder(image_shape=image_shape,
+                                    latent_size=latent_size,
+                                    base_depth=32,
+                                    activation=activation,
+                                    center0=center0,
+                                    distribution=distribution,
+                                    distribution_kw=distribution_kw)
   n_params = _nparams(distribution, distribution_kw)
   if len(image_shape) == 2:
     image_shape = list(image_shape) + [1]
@@ -123,8 +131,9 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
                                name="Encoder")
     decoder = keras.Sequential(
         [keras.layers.InputLayer(input_shape=(latent_size,))] +
-        [dense(i) for i in units] +
-        [dense(int(np.prod(image_shape) * n_params), activation='linear'),
-         keras.layers.Reshape(image_shape)],
+        [dense(i) for i in units] + [
+            dense(int(np.prod(image_shape) * n_params), activation='linear'),
+            keras.layers.Reshape(image_shape)
+        ],
         name="Decoder")
   return encoder, decoder

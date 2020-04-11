@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import os
 import shutil
@@ -15,9 +16,9 @@ from tqdm import tqdm
 from bigarray import MmapArray, MmapArrayWriter
 from odin.fuel._image_base import (MNIST, BinarizedAlphaDigits, BinarizedMNIST,
                                    ImageDataset, _partition)
+from odin.fuel._image_lego_faces import LegoFaces
 from odin.fuel._image_synthesize import YDisentanglement
-from odin.utils import (as_tuple, batching, get_all_files, get_datasetpath,
-                        one_hot)
+from odin.utils import as_tuple, batching, get_datasetpath, one_hot
 from odin.utils.crypto import md5_checksum
 from odin.utils.net_utils import download_and_extract, download_google_drive
 
@@ -55,44 +56,56 @@ class CelebA(ImageDataset):
     assert os.path.isdir(path), "'%s' must be a directory" % path
     zip_path = os.path.join(path, 'img_align_celeba.zip')
     attr_path = os.path.join(path, 'list_attr_celeba.txt')
+    attr_cache = attr_path + '.npz'
     part_path = os.path.join(path, 'list_eval_partition.txt')
     for i in [zip_path, attr_path, part_path]:
       assert os.path.exists(i), "'%s' must exists" % i
-    # ====== read the attr ====== #
-    with open(attr_path, 'r') as f:
-      text = [[i for i in line.strip().split(' ') if len(i) > 0] for line in f]
-      self._header = np.array(text[1])
-      attributes = np.array(text[2:])[:, 1:]
-    # ====== read the partition ====== #
+    ### read the attr
+    if not os.path.exists(attr_cache):
+      with open(attr_path, 'r') as f:
+        text = [[i for i in line.strip().split(' ') if len(i) > 0] for line in f
+               ]
+        header = np.array(text[1])
+        attributes = np.array(text[2:])[:, 1:]
+      with open(attr_cache, 'wb') as f:
+        np.savez(f, header=header, attributes=attributes.astype(np.int8))
+    else:
+      with open(attr_cache, 'rb') as f:
+        data = np.load(f)
+        header = data['header']
+        attributes = data['attributes']
+    self._header = header
+    attributes = attributes.astype(np.float32)
+    ### read the partition
     with open(part_path, 'r') as f:
       partition = np.array([line.strip().split(' ') for line in f])[:, 1:]
-    # ====== extracting the data ====== #
+    ### extracting the data
     image_path = os.path.join(path, 'img_align_celeba')
-    image_files = get_all_files(image_path,
-                                filter_func=lambda x: '.jpg' == x[-4:])
+    image_files = glob.glob(image_path + "/*.jpg", recursive=True)
     if len(image_files) != 202599:
+      print("Extracting 202599 image files ...")
       with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(path)
-      image_files = get_all_files(image_path,
-                                  filter_func=lambda x: '.jpg' == x[-4:])
+      image_files = glob.glob(image_path + '/*.jpg', recursive=True)
     image_files = np.array(sorted(image_files))
     assert image_files.shape[0] == attributes.shape[0] == partition.shape[0]
-    # ====== splitting the data ====== #
+    ### splitting the data
     attributes = attributes.astype('float32')
     train_files, train_attr = [], []
     valid_files, valid_attr = [], []
     test_files, test_attr = [], []
     for path, attr, part in zip(image_files, attributes, partition):
       part = int(part[0])
-      if part == 0:
+      if part == 0:  # train
         train_files.append(path)
         train_attr.append(attr)
-      elif part == 1:
+      elif part == 1:  # valid
         valid_files.append(path)
         valid_attr.append(attr)
-      else:
+      else:  # test
         test_files.append(path)
         test_attr.append(attr)
+    ### store the attributes
     self.train_files = np.array(train_files)
     self.valid_files = np.array(valid_files)
     self.test_files = np.array(test_files)
@@ -109,7 +122,7 @@ class CelebA(ImageDataset):
     return False
 
   @property
-  def attribute_name(self):
+  def labels(self):
     return self._header
 
   def create_dataset(self,
@@ -126,6 +139,8 @@ class CelebA(ImageDataset):
     r""" Data
 
     Arguments:
+      image_size : an Integer. The smallest dimension of a downsampled image.
+      square_image : a Boolean. If True, crop the downsampled image to a square.
       partition : {'train', 'valid', 'test'}
       inc_labels : a Boolean. If True, return both image and label, otherwise,
         only image is returned.
@@ -135,7 +150,7 @@ class CelebA(ImageDataset):
          - image `(tf.float32, (64, 64, 3))`
          - label `(tf.float32, (40,))`
     """
-    image_shape = [218, 178, 3]
+    image_shape = self.shape
     if image_size is not None:
       image_size = int(image_size)
       height = int(float(image_size) / image_shape[1] * image_shape[0])
@@ -145,7 +160,8 @@ class CelebA(ImageDataset):
     def read(path):
       img = tf.io.decode_jpeg(tf.io.read_file(path))
       img.set_shape(image_shape)
-      img = tf.clip_by_value(tf.cast(img, tf.float32) / 255., 1e-6, 1. - 1e-6)
+      img = tf.cast(img, tf.float32)
+      img = self.normalize_255(img)
       if image_size is not None:
         img = tf.image.resize(img, (height, image_size),
                               preserve_aspect_ratio=True,
@@ -246,6 +262,12 @@ class Shapes3D(ImageDataset):
     self.train_indices = ids[:int(0.7 * n)]
     self.valid_indices = ids[int(0.7 * n):int(0.8 * n)]
     self.test_indices = ids[int(0.8 * n):]
+
+  @property
+  def labels(self):
+    return np.array([
+        'floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation'
+    ])
 
   @property
   def is_binary(self):
@@ -358,17 +380,19 @@ class Shapes3D(ImageDataset):
 class dSprites(ImageDataset):
   r"""
 
-  Attributes:
+  Discrete attributes:
     label_orientation: ()
     label_scale: ()
     label_shape: ()
     label_x_position: ()
     label_y_position: ()
-    value_orientation: ()
-    value_scale: ()
-    value_shape: ()
-    value_x_position: ()
-    value_y_position: ()
+
+  Continuous attributes
+    value_orientation: 40 values in [0, 2pi]
+    value_scale:  6 values linearly spaced in [0.5, 1]
+    value_shape: square, ellipse, heart
+    value_x_position:  32 values in [0, 1]
+    value_y_position:  32 values in [0, 1]
   """
 
   def __init__(self):
@@ -378,11 +402,18 @@ class dSprites(ImageDataset):
         "dsprites",
         split=["train[:80%]", "train[80%:85%]", "train[85%:]"],
         shuffle_files=True)
-    self.attributes = [
+    self._discrete_factors = np.array([
         'label_orientation', 'label_scale', 'label_shape', 'label_x_position',
-        'label_y_position', 'value_orientation', 'value_scale', 'value_shape',
-        'value_x_position', 'value_y_position'
-    ]
+        'label_y_position'
+    ])
+    self._continuous_factors = np.array([
+        'value_orientation', 'value_scale', 'value_shape', 'value_x_position',
+        'value_y_position'
+    ])
+
+  @property
+  def labels(self):
+    return self._discrete_factors
 
   @property
   def is_binary(self):
@@ -401,16 +432,19 @@ class dSprites(ImageDataset):
                      parallel=None,
                      partition='train',
                      inc_labels=False,
+                     continuous_factors=False,
                      **kwargs) -> tf.data.Dataset:
     ds = _partition(partition,
                     train=self.train,
                     valid=self.valid,
                     test=self.test)
+    factors = self._continuous_factors if continuous_factors else \
+      self._discrete_factors
 
     def _process(data):
       image = tf.cast(data['image'], tf.float32)
       if inc_labels:
-        label = tf.convert_to_tensor([data[i] for i in self.attributes],
+        label = tf.convert_to_tensor([data[i] for i in factors],
                                      dtype=tf.float32)
         return image, label
       return image
@@ -435,13 +469,6 @@ class MultidSprites(object):
                cache_dir=None,
                seed=8):
     pass
-
-
-class LegoFaces(object):
-  r""" https://www.echevarria.io/blog/lego-face-vae/index.html """
-
-  def __init__(self, path):
-    super().__init__()
 
 
 class SLT10(ImageDataset):
@@ -484,6 +511,13 @@ class SLT10(ImageDataset):
     }
     with open(os.path.join(self.extract_path, "class_names.txt"), 'r') as f:
       self.class_names = np.array([line.strip() for line in f])
+
+  @property
+  def labels(self):
+    return [
+        'airplane', 'bird', 'car', 'cat', 'deer', 'dog', 'horse', 'monkey',
+        'ship', 'truck'
+    ]
 
   @property
   def is_binary(self):

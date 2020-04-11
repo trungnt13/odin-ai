@@ -10,7 +10,7 @@ from odin.ml.ivector import Ivector
 from odin.ml.plda import PLDA
 from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
-
+from odin.ml.neural_nlp import *
 
 def clustering(X,
                algo,

@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import tensorflow as tf
 
 from odin.utils.net_utils import download_and_extract
@@ -30,6 +31,14 @@ class ImageDataset:
 
   def normalize_255(self, image):
     return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
+
+  @property
+  def n_labels(self):
+    return len(self.labels)
+
+  @property
+  def labels(self):
+    return np.array([])
 
   @property
   def shape(self):
@@ -100,6 +109,7 @@ class BinarizedMNIST(ImageDataset):
     struct = tf.data.experimental.get_structure(ds)
     if len(struct) == 1:
       inc_labels = False
+    ids = tf.range(self.n_labels, dtype=tf.float32)
 
     def _process_dict(data):
       image = tf.cast(data['image'], tf.float32)
@@ -116,6 +126,8 @@ class BinarizedMNIST(ImageDataset):
         image = self.normalize_255(image)
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
+        if len(label.shape) == 0:
+          label = tf.cast(ids == label, tf.float32)
         return image, label
       return image
 
@@ -142,6 +154,10 @@ class MNIST(BinarizedMNIST):
         split=['train[:90%]', 'train[90%:]', 'test'],
         shuffle_files=True,
         as_supervised=True)
+
+  @property
+  def labels(self):
+    return np.array([str(i) for i in range(10)])
 
   @property
   def is_binary(self):

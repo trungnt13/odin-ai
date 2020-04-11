@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -292,6 +292,13 @@ class VariationalAutoencoder(keras.Model):
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
+    self._compiled_call = None
+
+  @property
+  def compiled_call(self) -> Callable:
+    if self._compiled_call is None:
+      self._compiled_call = tf.function(self.call, autograph=False)
+    return self._compiled_call
 
   @property
   def input_shape(self):
@@ -379,6 +386,22 @@ class VariationalAutoencoder(keras.Model):
     qZ_X = self.encode(inputs, training=training, sample_shape=sample_shape)
     pX_Z = self.decode(qZ_X, training=training, sample_shape=sample_shape)
     return pX_Z, qZ_X
+
+  @tf.function(autograph=False)
+  def marginal_log_prob(self, inputs, training=False, sample_shape=100):
+    r""" marginal log-likelihood of shape [batch_size]
+    """
+    sample_shape = tf.cast(tf.reduce_prod(sample_shape), tf.int32)
+    iw_const = tf.math.log(tf.cast(sample_shape, self.dtype))
+    pX_Z, qZ_X = self.call(inputs, training=training, sample_shape=sample_shape)
+    llk = []
+    for i, (p,
+            x) in enumerate(zip(tf.nest.flatten(pX_Z),
+                                tf.nest.flatten(inputs))):
+      batch_llk = p.log_prob(x)
+      batch_llk = tf.reduce_logsumexp(batch_llk, axis=0) - iw_const
+      llk.append(batch_llk)
+    return llk[0] if len(llk) == 1 else llk
 
   def _elbo(self,
             X,
