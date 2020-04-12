@@ -33,17 +33,17 @@ sns.set()
 # Configuration
 # TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
 # vae=betavae,betatcvae,annealedvae,infovae,mutualinfovae,factorvae
-# ds=mnist,shapes3d,dsprites -m -ncpu 3
+# ds=mnist,shapes3d,dsprites,legofaces -m -ncpu 2
 # ===========================================================================
 CONFIG = \
 r"""
 vae: betavae
 latent_size: 10
-ds: binarizedmnist
+ds: mnist
 sample_shape: 8
 batch_size: 64
-epochs: 100
-max_iter: 10000
+epochs: 500
+max_iter: 12000
 """
 
 

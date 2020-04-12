@@ -253,7 +253,7 @@ class Shapes3D(ImageDataset):
             lab.write(labels[start:end])
     # ====== load the data ====== #
     self.images = MmapArray(image_path)
-    self.labels = MmapArray(label_path)
+    self.factors = MmapArray(label_path)
     # ====== split the dataset ====== #
     rand = np.random.RandomState(seed=seed)
     n = len(self.images)
@@ -321,7 +321,7 @@ class Shapes3D(ImageDataset):
     # both images and labels, note: a tuple must be used here
     types = (tf.uint8, tf.float32)
     shapes = (tf.TensorShape(self.images.shape[1:]),
-              tf.TensorShape(self.labels.shape[1:]))
+              tf.TensorShape(self.factors.shape[1:]))
     if not inc_labels:
       types = types[0]
       shapes = shapes[0]
@@ -329,7 +329,7 @@ class Shapes3D(ImageDataset):
     def gen(indices):
       for i in indices:
         if inc_labels:
-          yield self.images[i], tf.cast(self.labels[i], dtype=tf.float32)
+          yield self.images[i], tf.cast(self.factors[i], dtype=tf.float32)
         else:
           yield self.images[i]
 
@@ -373,7 +373,7 @@ class Shapes3D(ImageDataset):
       labels1 = dataset['labels']
       for start, end in tqdm(list(batching(8000, n=self.images.shape[0]))):
         assert np.all(self.images[start:end] == images1[start:end]) and \
-          np.all(self.labels[start:end] == labels1[start:end])
+          np.all(self.factors[start:end] == labels1[start:end])
     return self
 
 

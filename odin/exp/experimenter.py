@@ -617,11 +617,11 @@ class Experimenter():
     return self
 
   ####################### For evaluation
-  def fetch_exp_cfg(self, conditions={}) -> dict:
+  def fetch_exp_cfg(self, conditions={}, require_model=True) -> dict:
     r"""
 
     Arguments:
-      pass
+      require_model : a Boolean. If True, only return exp with saved model
 
     Return:
       A dictionary mapping from path to experiments and list of configs
@@ -642,8 +642,10 @@ class Experimenter():
         for name in os.listdir(path)
         if 'exp_' == name[:4]
     ]
-    exp_path = list(
-        filter(lambda x: os.path.isdir(os.path.join(x, 'model')), exp_path))
+    # filter path with require_model
+    if require_model:
+      exp_path = list(
+          filter(lambda x: os.path.isdir(os.path.join(x, 'model')), exp_path))
     ret = {}
     for path in exp_path:
       cfg = sorted([
@@ -713,12 +715,13 @@ class Experimenter():
   def summary(self, save_files=True) -> DataFrame:
     r""" Save a table of experiment ID and all their attributes to an
     excel file and a html file. """
-    exp_cfg = self.fetch_exp_cfg()
+    exp_cfg = self.fetch_exp_cfg(require_model=False)
     records = []
     index = []
     for path, cfg in exp_cfg.items():
       index.append(os.path.basename(path))
-      report = {"#run": len(cfg)}
+      model_exist = os.path.isdir(os.path.join(path, 'model'))
+      report = {"#run": len(cfg), "model": str(model_exist)[0]}
       cfg = [("",
               Experimenter.remove_keys(OmegaConf.load(cfg[-1]),
                                        copy=False,
