@@ -1,4 +1,5 @@
 import glob
+import inspect
 import os
 import re
 import shutil
@@ -6,13 +7,16 @@ import warnings
 import zipfile
 from collections import Counter
 from functools import partial
+from itertools import chain
 from urllib.request import urlretrieve
 
 import numpy as np
+import tensorflow as tf
+from six import string_types
 from urllib3 import PoolManager
 from urllib3.exceptions import InsecureRequestWarning
 
-from odin.fuel._image_base import ImageDataset
+from odin.fuel._image_base import ImageDataset, _partition
 from odin.utils.crypto import md5_folder
 from odin.utils.mpi import MPI
 
@@ -20,6 +24,29 @@ from odin.utils.mpi import MPI
 # ===========================================================================
 # Helpers
 # ===========================================================================
+def _resize(img, image_size, outpath=None):
+  name = ""
+  if isinstance(img, string_types):
+    from PIL import Image
+    name = os.path.basename(img)
+    img = Image.open(img, mode="r")
+  elif isinstance(img, np.ndarray):
+    from PIL import Image
+    img = Image.fromarray(img)
+  img = img.resize((int(image_size), int(image_size)))
+  # save the output image
+  if outpath is not None:
+    outpath = os.path.join(outpath, name)
+    img.save(outpath, "JPEG", quality=90)
+    del img
+    img = outpath
+  else:
+    arr = np.array(img)
+    del img
+    img = arr
+  return img
+
+
 def scrap_lego_faces(metadata, path, resize=64, n_processes=4):
   r""" This function does not filter out bad images """
   from tqdm import tqdm
@@ -116,42 +143,139 @@ def _process_desc(s):
   return s
 
 
-def _extract_factors(description: str, freq_threshold: int = 2):
+# ===========================================================================
+# Heuristic classification of factors
+# ===========================================================================
+ATTRIBUTES = [
+    ('female', 'beauty'),
+    ('male', 'beard', 'moustache', 'goatee', 'stubble', 'sideburns', 'angular'),
+    # beard
+    'beard',
+    'moustache',
+    'goatee',
+    'stubble',
+    # themes
+    'exo',  # exo-force lego
+    'hp',  # harry porter
+    'potc',  # pirate of the Caribiean
+    'lotr',  # lord of the ring
+    'sw',  # star war
+    'chima',
+    'evil',
+    'skull',
+    'batman',
+    'nba',
+    'jack',
+    'joker',
+    ('skywalker', 'anakin'),
+    'tiger',
+    'robin',
+    'darth',
+    'pilot',
+    'captain',
+    'lion',
+    'alien',
+    # different smiling
+    ('dimple', 'dimples'),
+    ('smile', 'smiling'),
+    'grin',
+    # eyebrow
+    'unibrow',
+    # glasses
+    'glasses',
+    'sunglasses',
+    'goggles',
+    'eyepatch',
+    # faceware
+    'balaclava',
+    ('tattoo', 'tattoos'),
+    'fur',
+    'mask',
+    'metal',
+    'paint',
+    ('scar', 'scars'),
+    'freckles',
+    'wrinkles',
+    'sweat',
+    # headwear
+    'headband',
+    'headset',
+    # teeth
+    'fangs',
+    ('wink', 'winking'),
+    # hairs
+    'curly',
+    'bushy',
+    'messy',
+    # emotions
+    'angry',
+    'determined',
+    ('scowl', 'scowling'),
+    'happy',
+    'neutral',
+    # others
+    'emmet',
+    # colors
+    'white',
+    'brown',
+    'red',
+    'black',
+    'orange',
+    'green',
+    'gray',
+    'azure',
+    # open mouth
+    ['openmouth', lambda s: 'open' in s and 'mouth' in s and 'closed' not in s]
+]
+
+
+def _extract_factors(images, descriptions, freq_threshold: int = 10):
   from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-  from sklearn.decomposition import PCA
-  from sklearn.manifold import TSNE
-  from odin.ml import Transformer
-  from odin import visual as vs
-  from matplotlib import pyplot as plt
-  import seaborn as sns
-  sns.set()
-  bert = Transformer()
-  description = [
-      i for i in re.sub(r"[^a-zA-Z\d\s:]", "", description).strip().split(" ")
-      if len(i) > 1
+  descriptions = [[
+      w
+      for w in re.sub(r"[^a-zA-Z\d\s:]", "", desc).strip().split(" ")
+      if len(w) > 0 and w not in ENGLISH_STOP_WORDS
   ]
-  count = Counter(description)
-  count = {
-      i: j
-      for i, j in count.items()
-      if j > freq_threshold and i not in ENGLISH_STOP_WORDS
-  }
-  text = list(count.keys())
-  embedding = np.mean(bert.transform(text, max_len=1), axis=1)
-  embedding = TSNE().fit_transform(
-      PCA(n_components=None).fit_transform(embedding))
-  fig = plt.figure(figsize=(12, 12))
-  for (x, y), s in zip(embedding, text):
-    plt.scatter(x, y, s=1, alpha=0.001)
-    plt.text(x,
-             y,
-             s,
-             verticalalignment='center',
-             horizontalalignment='center',
-             fontsize=4,
-             color='red',
-             alpha=0.6)
-  fig.savefig('/tmp/tmp.png', dpi=180)
+                  for desc in descriptions]
+  # filtering by number of occurences
+  count = Counter(chain(*descriptions))
+  count = {i: j for i, j in count.items() if j > freq_threshold}
+  descriptions = [[w for w in desc if w in count] for desc in descriptions]
+  # extract the factors
+  factors = np.array([[
+      a in desc if isinstance(a, string_types) else \
+        (a[1](desc) if isinstance(a, list) else any(i in desc for i in a))
+      for a in ATTRIBUTES
+  ]
+                      for desc in descriptions],
+                     dtype=np.float32)
+  ids = np.arange(len(factors))[np.sum(factors, axis=-1) == 0]
+  assert len(ids) == 0, "Some images have zero factors: %s" % \
+    '; '.join('%s-%s' % (os.path.basename(images[i]), descriptions[i]) for i in ids)
+  # just plot images for each word
+  # from matplotlib import pyplot as plt
+  # from PIL import Image
+  # count = [
+  #     word
+  #     for word, _ in sorted(count.items(), key=lambda x: x[1], reverse=True)
+  # ]
+  # for word in count:
+  #   ids = [(img, i) for img, i in zip(images, descriptions) if word in i]
+  #   np.random.shuffle(ids)
+  #   print(word, ":", len(ids))
+  #   fig = plt.figure(figsize=(10, 10))
+  #   for i in range(9):
+  #     if i >= len(ids):
+  #       break
+  #     plt.subplot(3, 3, i + 1)
+  #     img, desc = ids[i]
+  #     plt.imshow(np.array(Image.open(img)))
+  #     plt.title(' '.join(desc), fontsize=6)
+  #     plt.axis('off')
+  #   plt.tight_layout()
+  #   fig.savefig('/tmp/tmp_%s.png' % word, dpi=80)
+  #   plt.close(fig)
+  return factors
 
 
 # ===========================================================================
@@ -168,7 +292,7 @@ class LegoFaces(ImageDataset):
   DATASET = r"https://github.com/iechevarria/lego-face-VAE/raw/master/dataset.zip"
   MD5 = r"2ea2f858cbbed72e1a7348676921a3ac"
 
-  def __init__(self, path="~/tensorflow_datasets/lego_faces"):
+  def __init__(self, path="~/tensorflow_datasets/lego_faces", image_size=64):
     super().__init__()
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
@@ -195,8 +319,27 @@ class LegoFaces(ImageDataset):
       with zipfile.ZipFile(zip_path, mode="r") as f:
         print("Extract all lego faces images ...")
         f.extractall(path)
-    ### load all images
+    ### load all images, downsample if necessary
     images = glob.glob(image_folder + '/*.jpg', recursive=True)
+    if image_size != 128:
+      image_folder = image_folder + '_%d' % int(image_size)
+      if not os.path.exists(image_folder):
+        os.mkdir(image_folder)
+      if len(os.listdir(image_folder)) != len(images):
+        shutil.rmtree(image_folder)
+        os.mkdir(image_folder)
+        from tqdm import tqdm
+        images = [
+            i for i in tqdm(MPI(jobs=images,
+                                func=partial(_resize,
+                                             image_size=image_size,
+                                             outpath=image_folder),
+                                ncpu=3,
+                                batch=1),
+                            total=len(images),
+                            desc="Resizing images to %d" % image_size)
+        ]
+    ### extract the heuristic factors
     metadata = {
         part_id: desc
         for part_id, desc in zip(metadata["Number"], metadata["Name"])
@@ -211,4 +354,82 @@ class LegoFaces(ImageDataset):
         desc = metadata[name[0]]
       images_desc[path] = _process_desc(desc)
     ### tokenizing the description
-    factors = _extract_factors(' '.join(images_desc.values()))
+    from PIL import Image
+
+    def imread(p):
+      img = Image.open(p, mode='r')
+      arr = np.array(img, dtype=np.uint8)
+      del img
+      return arr
+
+    self.image_size = image_size
+    self.images = np.stack(
+        [i for i in MPI(jobs=images, func=imread, ncpu=2, batch=1)])
+    self.factors = _extract_factors(list(images_desc.keys()),
+                                    list(images_desc.values()))
+    ### split the dataset
+    rand = np.random.RandomState(seed=1)
+    n = len(self.images)
+    ids = rand.permutation(n)
+    self.train = (self.images[:int(0.8 * n)], self.factors[:int(0.8 * n)])
+    self.valid = (self.images[int(0.8 * n):int(0.9 * n)],
+                  self.factors[int(0.8 * n):int(0.9 * n)])
+    self.test = (self.images[int(0.9 * n):], self.factors[int(0.9 * n):])
+
+  @property
+  def labels(self):
+    return np.array(
+        [a if isinstance(a, string_types) else a[0] for a in ATTRIBUTES])
+
+  @property
+  def shape(self):
+    return (self.image_size, self.image_size, 3)
+
+  @property
+  def is_binary(self):
+    return False
+
+  def create_dataset(self,
+                     batch_size=64,
+                     drop_remainder=False,
+                     shuffle=1000,
+                     prefetch=tf.data.experimental.AUTOTUNE,
+                     cache='',
+                     parallel=None,
+                     partition='train',
+                     inc_labels=False) -> tf.data.Dataset:
+    r"""
+    Arguments:
+      partition : {'train', 'valid', 'test'}
+      inc_labels : a Boolean. If True, return both image and label, otherwise,
+        only image is returned.
+
+    Return :
+      train, test, unlabeled : `tensorflow.data.Dataset`
+        image - `(tf.float32, (28, 28, 1))`
+        label - `(tf.float32, (10,))`
+    """
+    X, y = _partition(partition,
+                    train=self.train,
+                    valid=self.valid,
+                    test=self.test)
+
+
+    def _process(image):
+      image = tf.cast(image, tf.float32)
+      image = self.normalize_255(image)
+      return image
+
+    ds = tf.data.Dataset.from_tensor_slices(X)
+    ds = ds.map(_process)
+    if inc_labels:
+      ds = tf.data.Dataset.zip((ds, tf.data.Dataset.from_tensor_slices(y)))
+    if cache is not None:
+      ds = ds.cache(str(cache))
+    # shuffle must be called after cache
+    if shuffle is not None:
+      ds = ds.shuffle(int(shuffle))
+    ds = ds.batch(batch_size, drop_remainder)
+    if prefetch is not None:
+      ds = ds.prefetch(prefetch)
+    return ds

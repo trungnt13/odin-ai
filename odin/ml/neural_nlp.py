@@ -117,3 +117,8 @@ class Transformer(BaseEstimator, TransformerMixin):
 
   def fit(self, X, y=None):
     raise NotImplementedError()
+
+
+class EmojiRecognizer(BaseEstimator, TransformerMixin):
+  r""" https://medium.com/huggingface/understanding-emotions-from-keras-to-pytorch-3ccb61d5a983 """
+  pass
