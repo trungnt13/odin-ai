@@ -8,6 +8,7 @@ import zipfile
 from collections import Counter
 from functools import partial
 from itertools import chain
+from numbers import Number
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -286,13 +287,18 @@ class LegoFaces(ImageDataset):
   Links:
     https://www.echevarria.io/blog/lego-face-vae/index.html
     https://github.com/iechevarria/lego-face-VAE
+
+  To remove all image with background, set `background_threshold=0`
   """
 
   METADATA = r"https://raw.githubusercontent.com/iechevarria/lego-face-VAE/master/dataset_scripts/minifig-heads.csv"
   DATASET = r"https://github.com/iechevarria/lego-face-VAE/raw/master/dataset.zip"
   MD5 = r"2ea2f858cbbed72e1a7348676921a3ac"
 
-  def __init__(self, path="~/tensorflow_datasets/lego_faces", image_size=64):
+  def __init__(self,
+               path="~/tensorflow_datasets/lego_faces",
+               image_size=64,
+               background_threshold=255):
     super().__init__()
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
@@ -367,6 +373,13 @@ class LegoFaces(ImageDataset):
         [i for i in MPI(jobs=images, func=imread, ncpu=2, batch=1)])
     self.factors = _extract_factors(list(images_desc.keys()),
                                     list(images_desc.values()))
+    ### remove images with background
+    ids = np.array([
+        True if np.min(i) <= int(background_threshold) else False
+        for i in self.images
+    ])
+    self.images = self.images[ids]
+    self.factors = self.factors[ids]
     ### split the dataset
     rand = np.random.RandomState(seed=1)
     n = len(self.images)
@@ -410,10 +423,9 @@ class LegoFaces(ImageDataset):
         label - `(tf.float32, (10,))`
     """
     X, y = _partition(partition,
-                    train=self.train,
-                    valid=self.valid,
-                    test=self.test)
-
+                      train=self.train,
+                      valid=self.valid,
+                      test=self.test)
 
     def _process(image):
       image = tf.cast(image, tf.float32)
