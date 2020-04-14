@@ -13,8 +13,8 @@ from tensorflow_probability.python import layers as tfl
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
-from odin.networks import NetworkConfig, SequentialNetwork
 from odin.exp.trainer import Trainer
+from odin.networks import NetworkConfig, SequentialNetwork
 
 
 # ===========================================================================
@@ -340,6 +340,8 @@ class VariationalAutoencoder(keras.Model):
     return samples[0] if len(samples) == 1 else tuple(samples)
 
   def generate(self, sample_shape=(), seed=1, training=None, **kwargs):
+    r""" Randomly generate outputs by sampling from prior distribution then
+    decode it. """
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 
@@ -533,11 +535,13 @@ class VariationalAutoencoder(keras.Model):
     vae = FactorVAE()
     x = vae.sample_data()
     vae_step, discriminator_step = list(vae.train_steps(x))
+
     # optimizer VAE with total correlation loss
     with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(vae_step.parameters)
       loss, metrics = vae_step()
       tape.gradient(loss, vae_step.parameters)
+
     # optimizer the discriminator
     with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(discriminator_step.parameters)
@@ -552,7 +556,7 @@ class VariationalAutoencoder(keras.Model):
                     iw=iw,
                     elbo_kw=elbo_kw)
 
-  def optimize(self, inputs, tape=None, training=True, optimizer=None):
+  def optimize(self, inputs, training=True, optimizer=None):
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
@@ -561,14 +565,19 @@ class VariationalAutoencoder(keras.Model):
     n_optimizer = len(optimizer)
     for i, step in enumerate(self.train_steps(inputs, **self._trainstep_kw)):
       opt = optimizer[i % n_optimizer]
-      loss, metrics = step(training=training)
+      parameters = step.parameters
+      # this somehow more inconvenient than pytorch
+      if training:
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
+          tape.watch(parameters)
+          loss, metrics = step(training=training)
+      else:
+        tape = None
+        loss, metrics = step(training=training)
+      Trainer.apply_gradients(tape, opt, loss, parameters)
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss
-      if tape is not None:
-        Trainer.apply_gradients(tape, opt, loss, step.parameters)
-        # tape need to be reseted for next
-        tape.reset()
     return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
 
   def fit(
@@ -605,7 +614,6 @@ class VariationalAutoencoder(keras.Model):
                 valid_ds=valid,
                 valid_freq=valid_freq,
                 valid_interval=valid_interval,
-                persistent_tape=True,
                 compile_graph=compile_graph,
                 autograph=autograph,
                 logging_interval=logging_interval,

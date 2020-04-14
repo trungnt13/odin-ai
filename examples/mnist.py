@@ -8,7 +8,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tensorflow import keras
 
-from odin.backend import Trainer
+from odin.exp import Trainer
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -49,15 +49,17 @@ opt = tf.optimizers.Adam(learning_rate=0.001,
                          amsgrad=False)
 
 
-def optimize(inputs, tape):
+def optimize(inputs, training):
   X, y_true = inputs
-  y_pred = network(X, training=tape is not None)
-  loss = tf.reduce_mean(
-      tf.losses.sparse_categorical_crossentropy(y_true, y_pred))
-  acc = tf.cast(y_true == tf.cast(tf.argmax(y_pred, axis=-1), tf.float32),
-                tf.float32)
-  acc = tf.reduce_sum(acc) / tf.cast(tf.shape(y_true)[0], tf.float32)
-  Trainer.apply_gradients(tape, opt, loss, network)
+  with tf.GradientTape(watch_accessed_variables=bool(training)) as tape:
+    y_pred = network(X, training=training)
+    loss = tf.reduce_mean(
+        tf.losses.sparse_categorical_crossentropy(y_true, y_pred))
+    acc = tf.cast(y_true == tf.cast(tf.argmax(y_pred, axis=-1), tf.float32),
+                  tf.float32)
+    acc = tf.reduce_sum(acc) / tf.cast(tf.shape(y_true)[0], tf.float32)
+    if training:
+      Trainer.apply_gradients(tape, opt, loss, network)
   return loss, acc
 
 

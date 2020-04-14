@@ -5,17 +5,18 @@ from functools import partial
 
 import numpy as np
 import tensorflow as tf
-from librosa import magphase, stft
-from librosa.core import amplitude_to_db
-from librosa.display import specshow
 from matplotlib import pyplot as plt
 from tensorflow.python import keras
 from tqdm import tqdm
 
+from librosa import magphase, stft
+from librosa.core import amplitude_to_db
+from librosa.display import specshow
 from odin import bay
 from odin import networks as net
 from odin import visual as vs
-from odin.backend import Trainer, interpolation
+from odin.backend import interpolation
+from odin.exp import Trainer
 from odin.fuel import AudioFeatureLoader
 from odin.utils import partialclass
 
@@ -150,16 +151,17 @@ optimizer = tf.optimizers.Adam(learning_rate=0.001,
 # ===========================================================================
 # Training
 # ===========================================================================
-def optimize(X, tape=None, training=None, n_iter=None):
-  beta = BETA(trainer.n_iter)
-  pX, qZ = vae(X, training=training)
-  KL = qZ.KL_divergence(analytic=True)
-  LLK = pX.log_prob(X)
-  # ELBO = tf.reduce_mean(tf.reduce_logsumexp(LLK - KL, axis=0))
-  ELBO = tf.reduce_mean(LLK - beta * KL, axis=0)
-  loss = -ELBO
-
-  Trainer.apply_gradients(tape, optimizer, loss, vae)
+def optimize(X, training=None, n_iter=None):
+  with tf.GradientTape() as tape:
+    beta = BETA(trainer.n_iter)
+    pX, qZ = vae(X, training=training)
+    KL = qZ.KL_divergence(analytic=True)
+    LLK = pX.log_prob(X)
+    # ELBO = tf.reduce_mean(tf.reduce_logsumexp(LLK - KL, axis=0))
+    ELBO = tf.reduce_mean(LLK - beta * KL, axis=0)
+    loss = -ELBO
+    if training:
+      Trainer.apply_gradients(tape, optimizer, loss, vae)
   return loss, dict(llk=tf.reduce_mean(LLK), kl=tf.reduce_mean(KL), beta=beta)
 
 

@@ -28,9 +28,7 @@ def _validate_optimize(func):
   else:
     spec = inspect.getfullargspec(func)
     args = spec.args + spec.kwonlyargs
-  template = ['tape', 'training', 'n_iter']
-  assert 'tape' in args, \
-    "tape (i.e. GradientTape) must be in arguments list of optimize function."
+  template = ['training', 'n_iter']
   args = args[2:] if 'self' == args[0] else args[1:]
   # assert all(a in args for a in template), \
   #   "optimize function must has the following arguments: %s; but given: %s"\
@@ -304,7 +302,7 @@ class Trainer(object):
     """
     if tape is None:
       return
-    assert isinstance(tape, tf.GradientTape)
+    assert isinstance(tape, tf.GradientTape), "tape must be tf.GradientTape"
     assert isinstance(optimizer, tf.optimizers.Optimizer)
     model_or_weights = tf.nest.flatten(model_or_weights)
     weights = []
@@ -407,7 +405,6 @@ class Trainer(object):
           valid_ds=None,
           valid_freq=1000,
           valid_interval=0,
-          persistent_tape=True,
           compile_graph=True,
           autograph=True,
           logging_interval=2,
@@ -428,8 +425,6 @@ class Trainer(object):
       valid_freq : an Integer. The frequency of validation task, based on
         the current number of iteration.
       valid_interval : a Scalar. The number of second until next validation.
-      persistent_tape : Boolean. Using persistent GradientTape, so multiple
-        call to gradient is feasible.
       autograph : Boolean. Enable static graph for the `optimize` function.
       logging_interval : Scalar. Interval for print out log information
         (in second).
@@ -469,11 +464,7 @@ class Trainer(object):
         kw['n_iter'] = n_iter
       if 'training' in optimize_args:
         kw['training'] = training
-      if training:  # for training
-        with tf.GradientTape(persistent=persistent_tape) as tape:
-          loss, metrics = optimize(inputs, tape=tape, **kw)
-      else:  # for validation
-        loss, metrics = optimize(inputs, tape=None, **kw)
+      loss, metrics = optimize(inputs, **kw)
       assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
       return loss, metrics
 

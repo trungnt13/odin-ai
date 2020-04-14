@@ -257,9 +257,11 @@ def train_model(model, name):
       loss = -tf.reduce_mean(elbo)
     return loss, dict(llk=tf.reduce_mean(llk), kl=tf.reduce_mean(div))
 
-  def optimize(inputs, tape):
-    loss, metrics = get_loss(inputs)
-    Trainer.apply_gradients(tape, optimizer, loss, model)
+  def optimize(inputs, training):
+    with tf.GradientTape() as tape:
+      loss, metrics = get_loss(inputs)
+      if training:
+        Trainer.apply_gradients(tape, optimizer, loss, model)
     return loss, metrics
 
   trainer.fit(train.repeat(epochs),
