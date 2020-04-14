@@ -35,7 +35,10 @@ try:
                                           split_config_path)
   from omegaconf import DictConfig, OmegaConf, open_dict
 except ImportError as e:
-  raise ImportError(
+  BasicLauncher = object
+  DictConfig = dict
+  OmegaConf = dict
+  warnings.warn(
       "Experimenter requires hydra-core library, 'pip install hydra-core'")
 
 # ===========================================================================

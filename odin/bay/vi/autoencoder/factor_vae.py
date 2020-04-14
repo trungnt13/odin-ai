@@ -36,7 +36,7 @@ class FactorVAE(BetaVAE):
   """
 
   def __init__(self,
-               discriminator=dict(units=1000, nlayers=6),
+               discriminator=dict(units=1000, n_layers=5),
                gamma=10.0,
                beta=1.0,
                **kwargs):
@@ -67,6 +67,12 @@ class FactorVAE(BetaVAE):
     div['tc'] = self.gamma * self.discriminator.total_correlation(
         qZ_X, training=training)
     return llk, div
+
+  def total_correlation(self, qZ_X, training=None):
+    r""" Using the discriminator output to estimate total correlation of
+    the latents
+    """
+    return self.discriminator.total_correlation(qZ_X, training=training)
 
   def dtc_loss(self, qZ_X, training=None):
     r""" Discrimination loss between real and permuted codes Algorithm(2) """

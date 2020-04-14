@@ -21,7 +21,9 @@ class InfoVAE(BetaVAE):
 
   Arguments:
     alpha : a Scalar. Equal to `1 - beta`
+      Higher value of alpha places lower weight on the KL-divergence
     gamma : a Scalar. This is the value of lambda in the paper
+      Higher value of gamma place more weight on the Info-divergence (i.e. MMD)
     divergence : a String. Divergences families, for now only support 'mmd'
       i.e. maximum-mean discrepancy.
 
@@ -35,9 +37,11 @@ class InfoVAE(BetaVAE):
 
   def __init__(self,
                alpha=0.0,
-               gamma=1000.0,
+               gamma=100.0,
                divergence='mmd',
-               divergence_kw=dict(kernel='gaussian', nq=(), np=100),
+               divergence_kw=dict(kernel='gaussian',
+                                  q_sample_shape=None,
+                                  p_sample_shape=100),
                **kwargs):
     super().__init__(beta=1 - alpha, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')

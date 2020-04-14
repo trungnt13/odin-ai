@@ -13,8 +13,8 @@ from tensorflow_probability.python import layers as tfl
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
-from odin.exp import Trainer
 from odin.networks import NetworkConfig, SequentialNetwork
+from odin.exp.trainer import Trainer
 
 
 # ===========================================================================

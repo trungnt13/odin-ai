@@ -15,7 +15,7 @@ class FactorDiscriminator(DenseNetwork):
   Arguments:
     latent_dim : an Integer, the number of latent units used in VAE.
     hdim : an Integer, the number of hidden units for the discriminator.
-    nlayer : an Integer, the number of layers.
+    n_layer : an Integer, the number of hidden layers.
     activation : Callable or String, activation function of each layer.
 
   Reference:
@@ -25,19 +25,19 @@ class FactorDiscriminator(DenseNetwork):
 
   def __init__(self,
                input_shape,
-               batchnorm=True,
-               units=1024,
-               nlayers=6,
-               noutputs=2,
+               batchnorm=False,
+               units=1000,
+               n_layers=5,
+               n_outputs=2,
                activation=tf.nn.leaky_relu):
-    # 1: real sample for q(z) (or last unit in case noutputs > 2) and
+    # 1: real sample for q(z) (or last unit in case n_outputs > 2) and
     # 0: fake sample from q(z-)
     super().__init__(
-        units=[int(units)] * nlayers,
+        units=[int(units)] * n_layers,
         activation=activation,
         batchnorm=bool(batchnorm),
         flatten=True,
-        end_layers=[keras.layers.Dense(int(noutputs), activation='linear')],
+        end_layers=[keras.layers.Dense(int(n_outputs), activation='linear')],
         input_shape=input_shape,
         name="Discriminator",
     )
@@ -59,7 +59,7 @@ class FactorDiscriminator(DenseNetwork):
       the construction of the ELBO in Eq(2)
 
     Arguments:
-      z : a Tensor, [batch_dim, latent_dim]
+      qZ_X : a Tensor, [batch_dim, latent_dim] or Distribution
 
     Return:
       TC(z) : a scalar, approximation of the density-ratio that arises in the

@@ -213,7 +213,11 @@ def polynomial_kernel(x, y, d=2):
   d = pairwise_distances(x, y, keepdims=False)
 
 
-def maximum_mean_discrepancy(qZ, pZ, nq=(), np=100, kernel='gaussian'):
+def maximum_mean_discrepancy(qZ: Distribution,
+                             pZ: Distribution,
+                             q_sample_shape=(),
+                             p_sample_shape=100,
+                             kernel='gaussian'):
   r""" is a distance-measure between distributions p(X) and q(Y) which is
   defined as the squared distance between their embeddings in the a
   "reproducing kernel Hilbert space".
@@ -239,8 +243,13 @@ def maximum_mean_discrepancy(qZ, pZ, nq=(), np=100, kernel='gaussian'):
   assert isinstance(
       pZ, Distribution
   ), 'pZ must be instance of tensorflow_probability.Distribution'
-  x = qZ.sample(nq)
-  y = pZ.sample(np)
+  # prepare the samples
+  if q_sample_shape is None:  # reuse sampled examples
+    x = tf.convert_to_tensor(qZ)
+  else:
+    x = qZ.sample(q_sample_shape)
+  y = pZ.sample(p_sample_shape)
+  # select the kernel
   if kernel == 'gaussian':
     kernel = gaussian_kernel
   elif kernel == 'linear':

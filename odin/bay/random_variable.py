@@ -160,9 +160,9 @@ class RandomVariable:
       - 'cosine_similarity'
       - 'mean_absolute_error'
       - 'mean_squared_error'
-    projection : a Boolean. If True, use a fully connected feedforward network
-      to project the input to a desire number of parameters for the
-      distribution.
+    projection : a Boolean (default: False)
+      If True, use a fully connected feedforward network to project the input
+      to a desire number of parameters for the distribution.
     name : a String. Identity of the random variable.
     kwargs : a Dictionary. Keyword arguments for initializing the
       `DistributionLambda` of the posterior.
@@ -174,7 +174,7 @@ class RandomVariable:
   event_shape: List[int] = ()
   posterior: str = 'gaus'
   prior: str = None
-  projection: bool = True
+  projection: bool = False
   name: str = 'RandomVariable'
   kwargs: dict = dataclasses.field(default_factory=dict)
 
