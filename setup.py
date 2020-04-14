@@ -3,50 +3,31 @@ from os import path
 from setuptools import find_packages, setup
 
 _ODIN_VERSION_ = '1.2.3'
-
 _TENSORFLOW_VERSION = '2.1.0'
 _TENSORFLOW_PROBABILITY_VERSION = '0.9.0'
 _TENSORFLOW_ADDONS_VERSION = '0.5.2'
 _PYTORCH_VERSION = '1.4.0'
 _TORCHVISION_VERSION = '1.4.0'
 
-
-# ===========================================================================
-# Packages check
-# ===========================================================================
-def get_tensorflow_version():
-  import subprocess
-  try:
-    task = subprocess.Popen(["nvcc", "--version"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-    out = task.stdout.read()
-    if "Cuda" in str(out, 'utf-8'):
-      return "tensorflow==%s" % _TENSORFLOW_VERSION
-  except FileNotFoundError:
-    pass
-  return "tensorflow-cpu==%s" % _TENSORFLOW_VERSION
-
-
 # ===========================================================================
 # Dependencies
 # ===========================================================================
 dependencies = [
     'numpy>=1.0.0',
-    get_tensorflow_version(),
+    "tensorflow==%s" % _TENSORFLOW_VERSION,
     'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
-    'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
+    # 'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
     'tensorflow-datasets',
     'torch==%s' % _PYTORCH_VERSION,
-    'hydra-core', # for easy configuration
-    'pytorch-lightning',  # for training pytorch module
+    'hydra-core',  # for easy configuration
+    # 'pytorch-lightning',  # for training pytorch module
     'bigarray>=0.2.1',
     'six>=1.9.0',
     'scikit-learn==0.22.1',
     'matplotlib>=3.0.0',
     'decorator',
     'tqdm',
-    'dill',
+    # 'dill',
     'pyyaml',
     'pycrypto',
 ]
