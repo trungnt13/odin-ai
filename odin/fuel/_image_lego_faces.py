@@ -345,6 +345,8 @@ class LegoFaces(ImageDataset):
                             total=len(images),
                             desc="Resizing images to %d" % image_size)
         ]
+      else:
+        images = glob.glob(image_folder + '/*.jpg', recursive=True)
     ### extract the heuristic factors
     metadata = {
         part_id: desc

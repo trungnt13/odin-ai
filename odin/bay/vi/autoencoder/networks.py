@@ -17,6 +17,13 @@ def _nparams(distribution, distribution_kw):
       tf.reduce_prod(distribution.params_size(1, **distribution_kw)).numpy())
 
 
+class Center0Image(keras.layers.Layer):
+  r"""Normalize the image pixel to [-1, 1]"""
+
+  def call(self, inputs, **kwargs):
+    return 2. * inputs - 1.
+
+
 def create_mnist_autoencoder(image_shape=(28, 28, 1),
                              latent_size=10,
                              base_depth=32,
@@ -32,7 +39,7 @@ def create_mnist_autoencoder(image_shape=(28, 28, 1),
                    activation=activation)
   start = [keras.layers.InputLayer(input_shape=image_shape)]
   if center0:
-    start.append(keras.layers.Lambda(lambda inputs: 2 * inputs - 1))
+    start.append(Center0Image())
 
   encoder_net = keras.Sequential(start + [
       conv(base_depth, 5, 1),
@@ -90,7 +97,7 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
 
   start = [keras.layers.InputLayer(input_shape=image_shape)]
   if center0:
-    start.append(keras.layers.Lambda(lambda inputs: 2 * inputs - 1))
+    start.append(Center0Image())
   ### Convoltional networks
   if conv:
     conv = partial(keras.layers.Conv2D,

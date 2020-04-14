@@ -283,9 +283,9 @@ class KLdivergence:
     self.keepdims = bool(keepdims)
 
   def __str__(self):
-    return '<KL post:%s prior:%s analytic:%s reverse:%s #mcmc:%d>' % \
+    return '<KL post:%s prior:%s analytic:%s reverse:%s sample:%s>' % \
       (self.posterior.__class__.__name__, self.prior.__class__.__name__,
-       self.analytic, self.reverse, self.sample_shape)
+       self.analytic, self.reverse, str(self.sample_shape))
 
   def __repr__(self):
     return self.__str__()

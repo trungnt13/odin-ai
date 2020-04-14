@@ -109,7 +109,16 @@ class TrainStep:
   when called will return:
 
     - a scalar for loss
-    - a list of Tensor or scale of metrics
+    - a dictionary of Tensor for monitoring metrics
+
+  Arguments:
+    vae : `VariationalAutoencoder`
+    inputs : a list of input `Tensor`
+    sample_shape : MCMC sample shape
+    iw : a Boolean. If True, enable importance weight sampling
+    elbo_kw : a Dictionary. Keyword arguments for elbo function
+    parameters : optimizing parameters, if None, all parameters of VAE are
+      optimized
   """
 
   def __init__(self,
@@ -120,6 +129,7 @@ class TrainStep:
                elbo_kw=dict(),
                parameters=None):
     self.vae = vae
+    assert isinstance(vae, VariationalAutoencoder)
     self.parameters = (vae.trainable_variables
                        if parameters is None else parameters)
     self.inputs = inputs
@@ -313,7 +323,7 @@ class VariationalAutoencoder(keras.Model):
     samples = []
     for latent in self.latent_layers:
       s = latent.sample(sample_shape=sample_shape, seed=seed)
-      if tf.rank(s) == 1:  # at-least 2D
+      if len(s.shape) < 2:  # at-least 2D
         s = tf.expand_dims(s, axis=0)
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
@@ -547,8 +557,10 @@ class VariationalAutoencoder(keras.Model):
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
     total_loss = 0.
-    for opt, step in zip(optimizer,
-                         self.train_steps(inputs, **self._trainstep_kw)):
+    optimizer = tf.nest.flatten(optimizer)
+    n_optimizer = len(optimizer)
+    for i, step in enumerate(self.train_steps(inputs, **self._trainstep_kw)):
+      opt = optimizer[i % n_optimizer]
       loss, metrics = step(training=training)
       # update metrics and loss
       all_metrics.update(metrics)

@@ -37,6 +37,10 @@ class CelebA(ImageDataset):
 
   Argument:
     path : path to the folder contained the three files.
+    image_size : (optional) an Integer.
+      The smallest dimension of a downsampled image. if `None`, original size
+      (218, 178) is kept.
+    square_image : a Boolean. If True, crop the downsampled image to a square.
 
   Attributes:
     train_files, valid_files, test_files : `numpy.ndarray`, list of path
@@ -50,7 +54,12 @@ class CelebA(ImageDataset):
       Conference on Computer Vision (ICCV)
   """
 
-  def __init__(self, path="~/tensorflow_datasets/celeb_a"):
+  def __init__(self,
+               path="~/tensorflow_datasets/celeb_a",
+               image_size=64,
+               square_image=True):
+    self.image_size = image_size
+    self.square_image = bool(square_image)
     path = os.path.abspath(os.path.expanduser(path))
     self.path = path
     assert os.path.isdir(path), "'%s' must be a directory" % path
@@ -114,8 +123,17 @@ class CelebA(ImageDataset):
     self.test_attr = np.array(test_attr)
 
   @property
-  def shape(self):
+  def original_shape(self):
     return (218, 178, 3)
+
+  @property
+  def shape(self):
+    if self.image_size is None:
+      return self.original_shape
+    h, w = self.original_shape[:2]
+    image_size = int(self.image_size)
+    return (image_size if self.square_image else int(float(image_size) / w * h),
+            image_size, 3)
 
   @property
   def is_binary(self):
@@ -127,8 +145,6 @@ class CelebA(ImageDataset):
 
   def create_dataset(self,
                      batch_size=64,
-                     image_size=64,
-                     square_image=True,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,
@@ -136,11 +152,10 @@ class CelebA(ImageDataset):
                      parallel=tf.data.experimental.AUTOTUNE,
                      partition='train',
                      inc_labels=True) -> tf.data.Dataset:
-    r""" Data
+    r""" The default argument will downsize and crop the image to square size
+    (64, 64)
 
     Arguments:
-      image_size : an Integer. The smallest dimension of a downsampled image.
-      square_image : a Boolean. If True, crop the downsampled image to a square.
       partition : {'train', 'valid', 'test'}
       inc_labels : a Boolean. If True, return both image and label, otherwise,
         only image is returned.
@@ -150,7 +165,8 @@ class CelebA(ImageDataset):
          - image `(tf.float32, (64, 64, 3))`
          - label `(tf.float32, (40,))`
     """
-    image_shape = self.shape
+    image_shape = self.original_shape
+    image_size = self.image_size
     if image_size is not None:
       image_size = int(image_size)
       height = int(float(image_size) / image_shape[1] * image_shape[0])
@@ -166,7 +182,7 @@ class CelebA(ImageDataset):
         img = tf.image.resize(img, (height, image_size),
                               preserve_aspect_ratio=True,
                               antialias=False)
-        if square_image:
+        if self.square_image:
           img = tf.image.crop_to_bounding_box(img, *crop_offset)
       return img
 
@@ -258,10 +274,10 @@ class Shapes3D(ImageDataset):
     rand = np.random.RandomState(seed=seed)
     n = len(self.images)
     ids = rand.permutation(n)
-    # train:70% valid:10% test:20%
-    self.train_indices = ids[:int(0.7 * n)]
-    self.valid_indices = ids[int(0.7 * n):int(0.8 * n)]
-    self.test_indices = ids[int(0.8 * n):]
+    # train:85% valid:5% test:10%
+    self.train_indices = ids[:int(0.85 * n)]
+    self.valid_indices = ids[int(0.85 * n):int(0.9 * n)]
+    self.test_indices = ids[int(0.9 * n):]
 
   @property
   def labels(self):
@@ -278,7 +294,7 @@ class Shapes3D(ImageDataset):
     return (64, 64, 3)
 
   def create_dataset(self,
-                     batch_size=128,
+                     batch_size=64,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,
@@ -335,19 +351,13 @@ class Shapes3D(ImageDataset):
 
     def process(*ims):
       r""" Normalizing the image to range [0., 1.] dtype tf.float32"""
-      if len(ims) == 2:
+      if inc_labels:
         ims, lab = ims
-        return tf.clip_by_value(
-            tf.cast(ims, tf.float32) / 255., 1e-6, 1. - 1e-6), lab
-      ims = ims[0]
-      if len(ims.shape) == 4:
-        return tf.clip_by_value(
-            tf.cast(ims, tf.float32) / 255., 1e-6, 1. - 1e-6)
-      return ims
+        ims = tf.cast(ims, tf.float32)
+        return self.normalize_255(ims), lab
+      ims = tf.cast(ims[0], tf.float32)
+      return self.normalize_255(ims)
 
-    base_dataset = lambda ids: tf.data.Dataset.from_generator(
-        partial(gen, indices=ids), output_types=types, output_shapes=shapes
-    ).batch(batch_size, drop_remainder).map(process, parallel)
     ### get the right partition
     indices = _partition(
         partition,
@@ -355,7 +365,10 @@ class Shapes3D(ImageDataset):
         valid=self.valid_indices,
         test=self.test_indices,
     )
-    ds = base_dataset(indices)
+    ds = tf.data.Dataset.from_generator(
+        partial(gen, indices), output_types=types,
+        output_shapes=shapes).batch(batch_size,
+                                    drop_remainder).map(process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
     if shuffle is not None:
@@ -400,7 +413,7 @@ class dSprites(ImageDataset):
     import tensorflow_datasets as tfds
     self.train, self.valid, self.test = tfds.load(
         "dsprites",
-        split=["train[:80%]", "train[80%:85%]", "train[85%:]"],
+        split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
         shuffle_files=True)
     self._discrete_factors = np.array([
         'label_orientation', 'label_scale', 'label_shape', 'label_x_position',

@@ -721,7 +721,11 @@ class Experimenter():
     for path, cfg in exp_cfg.items():
       index.append(os.path.basename(path))
       model_exist = os.path.isdir(os.path.join(path, 'model'))
-      report = {"#run": len(cfg), "model": str(model_exist)[0]}
+      report = {
+          "expid": os.path.basename(path),
+          "#run": len(cfg),
+          "model": str(model_exist)[0]
+      }
       cfg = [("",
               Experimenter.remove_keys(OmegaConf.load(cfg[-1]),
                                        copy=False,

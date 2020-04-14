@@ -29,6 +29,32 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
 
 class ImageDataset:
 
+  def sample_images(self, save_path=None, dpi=80, n_samples=25, seed=1):
+    n = int(np.sqrt(n_samples))
+    assert n * n == n_samples, "Sqrt of n_samples is not an integer"
+    train = self.create_dataset(batch_size=n_samples,
+                                partition='train',
+                                inc_labels=False)
+    images = [x for x in train.take(10)]
+    rand = np.random.RandomState(seed=seed)
+    images = images[rand.choice(10)].numpy()
+    # plot and save the figure
+    if save_path is not None:
+      plot_images = images
+      if plot_images.shape[-1] == 1:
+        plot_images = np.squeeze(plot_images, axis=-1)
+      from matplotlib import pyplot as plt
+      fig = plt.figure(figsize=(16, 16))
+      for i in range(n_samples):
+        plt.subplot(n, n, i + 1)
+        img = plot_images[i]
+        plt.imshow(img)
+        plt.axis('off')
+      plt.tight_layout()
+      fig.savefig(save_path, dpi=int(dpi))
+      plt.close(fig)
+    return images
+
   def normalize_255(self, image):
     return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
 

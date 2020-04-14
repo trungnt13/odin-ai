@@ -354,13 +354,16 @@ class _Criticizer(object):
                    strategy='quantile',
                    factors_name=None,
                    train_percent=0.8,
-                   n_samples=1000,
+                   n_samples=[2000, 1000],
                    batch_size=32,
                    verbose=True):
-    r"""
+    r""" Sample a batch of training and testing for evaluation of VAE
+
     Arguments:
-      inputs : list of `ndarray`. Inputs to the model
-      factors : a `ndarray`. Groundtruth factor
+      inputs : list of `ndarray` or `tensorflow.data.Dataset`.
+        Inputs to the model, note all data will be loaded in-memory
+      factors : a `ndarray` or `tensorflow.data.Dataset`.
+        a matrix of groundtruth factors, note all data will be loaded in-memory
       discretizing : if True, turn continuous factors into discrete
       n_bins : int or array-like, shape (n_features,) (default=5)
         The number of bins to produce. Raises ValueError if ``n_bins < 2``.
@@ -382,12 +385,13 @@ class _Criticizer(object):
     """
     ### inputs is a tensorflow Dataset, convert everything to numpy
     if isinstance(inputs, tf.data.Dataset):
-      n_inputs = len(inputs.output_types)
-      struct = tf.data.experimental.get_structure(inputs)
+      struct = tf.nest.flatten(tf.data.experimental.get_structure(inputs))
+      n_inputs = len(struct)
       if verbose:
         inputs = tqdm(inputs, desc="Reading data")
       if factors is None:  # include factors
-        assert len(struct) >= 2
+        assert n_inputs >= 2, \
+          "factors are not included in the dataset: %s" % str(inputs)
         x, y = [list() for _ in range((n_inputs - 1))], []
         for data in inputs:
           for i, j in enumerate(data[:-1]):
@@ -460,7 +464,7 @@ class _Criticizer(object):
           x.append(i)
           inps.append(i)
         # latents representation
-        z = self.encode(inps, first_latent=False)
+        z = self.encode(inps, sample_shape=(), first_latent=False)
         Os.append(tf.nest.flatten(self.decode(z)))
         Zs.append(z[0] if isinstance(z, (tuple, list)) else z)
         # update the couter
@@ -470,9 +474,10 @@ class _Criticizer(object):
       Ys = np.concatenate(Ys, axis=0)
       Zs = concat_distribution(Zs, name="Latents")
       Os = [
-          concat_distribution([j[i]
-                               for j in Os], name="Output%d" % i)
-          for i in range(len(Os[0]))
+          concat_distribution(
+              [j[i] for j in Os],
+              name="Output%d" % i,
+          ) for i in range(len(Os[0]))
       ]
       return Xs, Ys, Zs, Os, np.concatenate(indices, axis=0)
 
