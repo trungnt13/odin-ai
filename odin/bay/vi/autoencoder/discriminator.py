@@ -29,7 +29,8 @@ class FactorDiscriminator(DenseNetwork):
                units=1000,
                n_layers=5,
                n_outputs=2,
-               activation=tf.nn.leaky_relu):
+               activation=tf.nn.leaky_relu,
+               name="FactorDiscriminator"):
     # 1: real sample for q(z) (or last unit in case n_outputs > 2) and
     # 0: fake sample from q(z-)
     super().__init__(
@@ -39,7 +40,7 @@ class FactorDiscriminator(DenseNetwork):
         flatten=True,
         end_layers=[keras.layers.Dense(int(n_outputs), activation='linear')],
         input_shape=input_shape,
-        name="Discriminator",
+        name=name,
     )
     self.input_ndim = len(self.input_shape) - 1
 
@@ -54,9 +55,9 @@ class FactorDiscriminator(DenseNetwork):
       `TC(z) = KL(q(z)||q(z-)) = E_q(z)[log(q(z) / q(z-))]`
 
     Note:
-      In many implementation, `log(q(z-)) - log(q(z))` is returned as `total
-      correlation loss`, here, we return `log(q(z)) - log(q(z-))` as for
-      the construction of the ELBO in Eq(2)
+      In many implementation, `log(q(z-)) - log(q(z))` is referred as `total
+      correlation loss`, here, we return `log(q(z)) - log(q(z-))` as the total
+      correlation for the construction of the ELBO in Eq(2)
 
     Arguments:
       qZ_X : a Tensor, [batch_dim, latent_dim] or Distribution
@@ -69,23 +70,39 @@ class FactorDiscriminator(DenseNetwork):
     # the logit directly
     # tf.nn.log_softmax
     d_z = self(self._to_samples(qZ_X), training=training)
-    return tf.reduce_mean(d_z[..., -1] - tf.reduce_sum(d_z[..., :-1], axis=-1))
+    return tf.reduce_mean(d_z[..., -1] - d_z[..., 0])
 
-  def dtc_loss(self, qZ_X, training=None):
+  def dtc_loss(self, qZ_X, qZ_Xprime=None, training=None):
     r""" Discriminated total correlation loss Algorithm(2)
 
       Minimize the probablity of:
        - `q(z)` misclassified as `D(z)[:, 0]`
-       - `q(z-)` misclassified as `D(z)[:, 1]`
+       - `q(z')` misclassified as `D(z')[:, 1]`
 
+    Arguments:
+      qZ_X : `Tensor` or `Distribution`.
+        Samples of the latents from first batch
+      qZ_Xprime : `Tensor` or `Distribution` (optional).
+        Samples of the latents from second batch, this will be permuted.
+        If not given, then reuse `qZ_X`.
+
+    Return:
+      scalar - loss value for training the discriminator
     """
     # we don't want the gradient to be propagated to the encoder
     z = self._to_samples(qZ_X)
     z = tf.stop_gradient(z)
-    d_z = tf.nn.log_softmax(self(z, training=training), axis=-1)
+    z_logits = self(z, training=training)
+    d_z = -tf.nn.log_softmax(z_logits, axis=-1)  # must be negative here
+    #
+    if qZ_Xprime is not None:
+      z = self._to_samples(qZ_Xprime)
+      z = tf.stop_gradient(z)
     z_perm = permute_dims(z)
-    d_zperm = tf.nn.log_softmax(self(z_perm, training=training), axis=-1)
+    zperm_logits = self(z_perm, training=training)
+    d_zperm = -tf.nn.log_softmax(zperm_logits, axis=-1)
     # reduce the negative of d_z, and the positive of d_zperm
-    loss = 0.5 * tf.reduce_mean(
-        tf.reduce_sum(d_z[..., :-1], axis=-1) + d_zperm[..., -1])
+    # this equal to cross_entropy(d_z, zeros) + cross_entropy(d_zperm, ones)
+    loss = 0.5 * (tf.reduce_mean(d_z[..., 0]) +
+                  tf.reduce_mean(d_zperm[..., -1]))
     return loss
