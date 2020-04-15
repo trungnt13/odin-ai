@@ -581,10 +581,10 @@ class Trainer(object):
     return self
 
   def plot_learning_curves(self,
-                           path="/tmp/tmp.pdf",
+                           path="/tmp/tmp.png",
                            summary_steps=[100, 10],
                            show_validation=True,
-                           dpi=180):
+                           dpi=100):
     r""" Learning curves
 
     Arguments:

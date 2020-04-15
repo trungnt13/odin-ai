@@ -100,7 +100,7 @@ _dist_mapping = multikeysdict({
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):
         (obl.ZIBernoulliLayer, tfd.Bernoulli),
-    ('relaxedbern', 'relaxedbernoulli'):
+    ('relaxedbern', 'relaxedsigmoid', 'relaxedbernoulli'):
         (obl.RelaxedBernoulliLayer, tfd.Bernoulli),
     ('relaxedsoftmax', 'relaxedonehot'):
         (obl.RelaxedOneHotCategoricalLayer, tfd.OneHotCategorical),

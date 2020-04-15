@@ -90,7 +90,17 @@ class InfoMaxVAE(BetaVAE):
 
 
 class MutualInfoVAE(BetaVAE):
-  r""" Lambda is replaced as gamma in this implementaiton
+  r""" Lambda is replaced as gamma in this implementation
+
+  The algorithm of MI-VAE is as following:
+  ```
+  1. Compute q(z,c|x) and the KL-Divergence from the prior p(z).
+  2. Generatea sample (z, c) from the approximate posterior q.
+  3. Compute the conditional p(x|z) and incur the reconstruction loss.
+  4. Resample (z_prime, c_prime) ~ p(c,z) from the prior.
+  5. Recompute the conditional p(x|z_prime, c_prime) and generate a sample x_prime.
+  6. Recompute the approximate posterior q(c|x_prime) and incur the loss for the MI lower bound.
+  ```
 
   Reference:
     Ducau, F.N., Trénous, S. "Mutual Information in Variational Autoencoders".
@@ -104,12 +114,15 @@ class MutualInfoVAE(BetaVAE):
   def __init__(self,
                beta=1.0,
                gamma=1.0,
-               latents=RandomVariable(event_shape=10,
+               latents=RandomVariable(event_shape=5,
                                       posterior='diag',
+                                      projection=True,
                                       name="Latent"),
-               code=RandomVariable(event_shape=10,
+               code=RandomVariable(event_shape=5,
                                    posterior='diag',
+                                   projection=True,
                                    name='Code'),
+               resample_zprime=False,
                **kwargs):
     latents = tf.nest.flatten(latents)
     latents.append(code)
@@ -120,6 +133,7 @@ class MutualInfoVAE(BetaVAE):
                      **kwargs)
     self.code = self.latent_layers[-1]
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
+    self.resample_zprime = bool(resample_zprime)
 
   def _elbo(self,
             X,
@@ -132,18 +146,28 @@ class MutualInfoVAE(BetaVAE):
     # don't take KL of qC_X
     llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse,
                              sample_shape)
-    # the latents
-    z = tf.concat([q.sample() for q in qZ_X[:-1]], axis=-1)
+    # the latents, in the implementation, the author reuse z samples here,
+    # but in the algorithm, z_prime is re-sampled from the prior.
+    # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
+    # only change factor here.
+    if not self.resample_zprime:
+      z_prime = tf.concat([tf.convert_to_tensor(q) for q in qZ_X[:-1]], axis=-1)
+      batch_shape = z_prime.shape[:-1]
+    else:
+      batch_shape = qZ_X[0].batch_shape
+      z_prime = tf.concat(
+          [q.KL_divergence.prior.sample(batch_shape) for q in qZ_X[:-1]],
+          axis=-1)
     # mutual information code
     qC_X = qZ_X[-1]
-    c_prime = qC_X.KL_divergence.prior.sample(z.shape[:-1])
+    c_prime = qC_X.KL_divergence.prior.sample(batch_shape)
     if self.is_binary_code:
       c_prime = tf.clip_by_value(c_prime, 1e-8, 1. - 1e-8)
     # decoding
-    z_prime = tf.concat([z, c_prime], axis=-1)
-    pX_Zprime = self.decode(z_prime, training=training)
+    samples = tf.concat([z_prime, c_prime], axis=-1)
+    pX_Zprime = self.decode(samples, training=training)
     qC_Xprime = self.encode(pX_Zprime, training=training)[-1]
-    # mutual information
+    # mutual information (we want to maximize this, hence, add it to the llk)
     mi = qC_Xprime.log_prob(c_prime)
     llk['mi'] = self.gamma * mi
     return llk, div

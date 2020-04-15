@@ -298,6 +298,7 @@ class VariationalAutoencoder(keras.Model):
                             trainable=False,
                             name="Step")
     self._trainstep_kw = dict()
+    self.trainer = None
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
