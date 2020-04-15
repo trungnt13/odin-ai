@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import tensorflow as tf
 
@@ -33,6 +35,15 @@ class FactorVAE(BetaVAE):
       dtc_loss = vae.dtc_loss(qZ_X, training=True)
       dis_optimizer.apply_gradients(dtc_loss, dis.parameters)
   ```
+
+  Note:
+    It is recommended to use the same optimizers configuration like in the
+    paper: `Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999)` for the VAE
+    and `Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)` for the
+    discriminator.
+
+    Discriminator's Adam has learning rate 1e-4 for dSprites and 1e-5 for
+    Shapes3D and other colored image datasets.
 
   Reference:
     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
@@ -132,6 +143,34 @@ class FactorVAE(BetaVAE):
                        sample_shape=sample_shape,
                        parameters=self.disc_params)
     yield step2
+
+  def fit(
+      self,
+      train: tf.data.Dataset,
+      valid: Optional[tf.data.Dataset] = None,
+      valid_freq=1000,
+      valid_interval=0,
+      optimizer=[
+          tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
+          tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
+      ],
+      learning_rate=1e-3,
+      clipnorm=None,
+      epochs=2,
+      max_iter=-1,
+      sample_shape=(),  # for ELBO
+      analytic=False,  # for ELBO
+      iw=False,  # for ELBO
+      callback=lambda: None,
+      compile_graph=True,
+      autograph=False,
+      logging_interval=2,
+      log_tag='',
+      log_path=None):
+    kw = dict(locals())
+    del kw['self']
+    del kw['__class__']
+    super().fit(**kw)
 
   def __str__(self):
     text = super().__str__()

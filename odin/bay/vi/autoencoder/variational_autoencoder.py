@@ -13,7 +13,6 @@ from tensorflow_probability.python import layers as tfl
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
-from odin.exp.trainer import Trainer
 from odin.networks import NetworkConfig, SequentialNetwork
 
 
@@ -571,10 +570,12 @@ class VariationalAutoencoder(keras.Model):
         with tf.GradientTape(watch_accessed_variables=False) as tape:
           tape.watch(parameters)
           loss, metrics = step(training=training)
+        # applying the gradients
+        gradients = tape.gradient(loss, parameters)
+        opt.apply_gradients(zip(gradients, parameters))
       else:
         tape = None
         loss, metrics = step(training=training)
-      Trainer.apply_gradients(tape, opt, loss, parameters)
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss
@@ -600,6 +601,7 @@ class VariationalAutoencoder(keras.Model):
       logging_interval=2,
       log_tag='',
       log_path=None):
+    from odin.exp.trainer import Trainer
     trainer = Trainer()
     self.trainer = trainer
     if optimizer is not None:
@@ -609,7 +611,10 @@ class VariationalAutoencoder(keras.Model):
     self._trainstep_kw = dict(sample_shape=sample_shape,
                               iw=iw,
                               elbo_kw=dict(analytic=analytic))
-    trainer.fit(train_ds=train.repeat(int(epochs)) if epochs > 1 else train,
+    # if already called repeat, then no need to repeat more
+    if hasattr(train, 'repeat'):
+      train = train.repeat(int(epochs)) if epochs > 1 else train
+    trainer.fit(train_ds=train,
                 optimize=self.optimize,
                 valid_ds=valid,
                 valid_freq=valid_freq,

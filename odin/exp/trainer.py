@@ -9,6 +9,7 @@ from numbers import Number
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
+from tensorflow.python.data.ops.iterator_ops import OwnedIterator
 from tensorflow.python.eager.def_function import Function
 
 from odin.utils import as_tuple
@@ -445,10 +446,10 @@ class Trainer(object):
     if len(log_tag) > 0:
       log_tag += " "
     ### Prepare the data
-    assert isinstance(train_ds, tf.data.Dataset), \
+    assert isinstance(train_ds, (tf.data.Dataset, OwnedIterator)), \
       'train_ds must be instance of tf.data.Datasets'
     if valid_ds is not None:
-      assert isinstance(valid_ds, tf.data.Dataset), \
+      assert isinstance(valid_ds, (tf.data.Dataset, OwnedIterator)), \
         'valid_ds must be instance of tf.data.Datasets'
     valid_freq = max(1, int(valid_freq))
     valid_interval = float(valid_interval)
