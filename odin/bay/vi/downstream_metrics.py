@@ -91,7 +91,7 @@ def _sampling_helper(representations,
   n_codes = representations.event_shape[0]
   n_factors = factors.shape[1]
   indices = np.arange(size, dtype=np.int64)
-  ## create mapping factor -> representation
+  ## create mapping factor -> representation_index
   code_map = defaultdict(list)
   for idx, y in enumerate(factors.T):
     for sample_idx, i in enumerate(y):
@@ -114,14 +114,15 @@ def _sampling_helper(representations,
     from tqdm import tqdm
     prog = tqdm(total=n_samples, desc=str(desc), unit='sample')
   while count < n_samples:
-    index = rand.randint(n_factors)
+    factor_index = rand.randint(n_factors)
     ## betaVAE sampling
     if strategy == 'betavae':
-      y = factors[rand.choice(indices, size=batch_size, replace=True)][:, index]
+      y = factors[rand.choice(indices, size=batch_size,
+                              replace=True)][:, factor_index]
       obs1 = []
       obs2 = []
       for i in y:
-        sample_indices = code_map[(index, i)]
+        sample_indices = code_map[(factor_index, i)]
         if len(sample_indices) >= 2:
           s1, s2 = rand.choice(sample_indices, size=2, replace=False)
           obs1.append(s1)
@@ -132,21 +133,21 @@ def _sampling_helper(representations,
         obs2 = slice_distribution(obs2, representations)
         feat = np.mean(np.abs(repr_fn(obs1) - repr_fn(obs2)), axis=0)
         features[count, :] = feat
-        labels[count] = index
+        labels[count] = factor_index
         count += 1
         if verbose:
           prog.update(1)
     ## factorVAE sampling
     elif strategy == 'factorvae':
-      y = factors[rand.randint(size, dtype=np.int64), index]
-      obs_ids = code_map[(index, y)]
+      y = factors[rand.randint(size, dtype=np.int64), factor_index]
+      obs_ids = code_map[(factor_index, y)]
       if len(obs_ids) > 1:
         obs_ids = rand.choice(obs_ids, size=batch_size, replace=True)
         obs = slice_distribution(obs_ids, representations)
         local_var = np.var(repr_fn(obs), axis=0, ddof=1)
         features[count] = np.argmin(local_var[active_dims] /
                                     global_var[active_dims])
-        labels[count] = index
+        labels[count] = factor_index
         count += 1
         if verbose:
           prog.update(1)

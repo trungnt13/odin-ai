@@ -15,6 +15,8 @@
 # limitations under the License.
 from __future__ import absolute_import, division, print_function
 
+import warnings
+
 import numpy as np
 import scipy as sp
 from sklearn.ensemble import GradientBoostingClassifier
@@ -120,6 +122,7 @@ def mutual_info_estimate(representations,
   # iterate over each factor
   mi_matrix = np.empty(shape=(num_latents, num_factors), dtype=np.float64)
 
+  # repeat for each factor
   def func(idx):
     mi = mutual_info(representations,
                      factors[:, idx],
@@ -128,8 +131,8 @@ def mutual_info_estimate(representations,
                      random_state=random_state)
     return idx, mi
 
-  for i, mi in MPI(list(range(num_factors)),
-                   func,
+  for i, mi in MPI(jobs=list(range(num_factors)),
+                   func=func,
                    ncpu=max(1,
                             get_cpu_count() - 1),
                    batch=1):
@@ -172,8 +175,8 @@ def disentanglement_score(importance_matrix):
   Arguments:
     importance_matrix : is of shape `[num_latents, num_factors]`.
   """
-  per_code = 1. - sp.stats.entropy(importance_matrix.T + 1e-11,
-                                   base=importance_matrix.shape[1])
+  per_code = 1. - sp.stats.entropy(
+      importance_matrix + 1e-11, base=importance_matrix.shape[1], axis=1)
   if importance_matrix.sum() == 0.:
     importance_matrix = np.ones_like(importance_matrix)
   code_importance = importance_matrix.sum(axis=1) / importance_matrix.sum()
@@ -186,8 +189,8 @@ def completeness_score(importance_matrix):
   Arguments:
     importance_matrix : is of shape `[num_latents, num_factors]`.
   """
-  per_factor = 1. - sp.stats.entropy(importance_matrix + 1e-11,
-                                     base=importance_matrix.shape[0])
+  per_factor = 1. - sp.stats.entropy(
+      importance_matrix + 1e-11, base=importance_matrix.shape[0], axis=0)
   if importance_matrix.sum() == 0.:
     importance_matrix = np.ones_like(importance_matrix)
   factor_importance = importance_matrix.sum(axis=0) / importance_matrix.sum()
@@ -246,6 +249,12 @@ def dci_scores(repr_train,
   Return:
     tuple of 3 scores (disentanglement, completeness, informativeness), all
       scores are higher is better.
+      - disentanglement score: The degree to which a representation factorises
+        or disentangles the underlying factors of variatio
+      - completeness score: The degree to which each underlying factor is
+        captured by a single code variable.
+      - informativeness score: test accuracy of a factor recognizer trained
+        on train data
 
   References:
     Based on "A Framework for the Quantitative Evaluation of Disentangled
@@ -272,8 +281,12 @@ def relative_strength(mat):
   Arguments:
     mat : a Matrix. Correlation matrix with values range from -1 to 1.
   """
-  score_x = np.mean(np.nan_to_num(\
-    np.power(np.max(mat, axis=0), 2) / np.sum(mat, axis=0), copy=False, nan=0.0))
-  score_y = np.mean(np.nan_to_num(\
-    np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1), copy=False, nan=0.0))
+  with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
+    score_x = np.mean(np.nan_to_num(\
+      np.power(np.max(mat, axis=0), 2) / np.sum(mat, axis=0),
+      copy=False, nan=0.0))
+    score_y = np.mean(np.nan_to_num(\
+      np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1),
+      copy=False, nan=0.0))
   return (score_x + score_y) / 2

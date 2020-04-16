@@ -244,6 +244,8 @@ def concat_distribution(dists: List[tfd.Distribution],
 # ===========================================================================
 def slice_distribution(index, dist: tfd.Distribution,
                        name=None) -> tfd.Distribution:
+  r""" Apply indexing on distribution parameters and return another
+  `Distribution` """
   assert isinstance(dist, tfd.Distribution), \
     "dist must be instance of Distribution, but given: %s" % str(type(dist))
   if name is None:

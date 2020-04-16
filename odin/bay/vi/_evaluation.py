@@ -15,7 +15,7 @@ from tqdm import tqdm
 from odin import search
 from odin.bay import distributions as tfd
 from odin.bay.distributions.utils import concat_distribution
-from odin.bay.vi import metrics, utils
+from odin.bay.vi import losses, metrics, utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
 from odin.bay.vi.data_utils import Factor
@@ -64,7 +64,7 @@ class _Criticizer(object):
 
   @property
   def representations(self):
-    r""" Return the learned representations `distribution`
+    r""" Return the learned representations `Distribution`
     (i.e. the latent code) for training and testing """
     self.assert_sampled()
     return self._representations
@@ -94,7 +94,7 @@ class _Criticizer(object):
 
   @property
   def reconstructions(self):
-    r""" Return the reconstructed distributions of inputs for training and
+    r""" Return the reconstructed `Distributions` of inputs for training and
     testing """
     self.assert_sampled()
     return self._reconstructions
@@ -511,151 +511,8 @@ class _Criticizer(object):
         for i in self.representations
     ]
 
-  ############## Metrics
-  def cal_mutual_info_est(self, mean=True, n_neighbors=3):
-    r""" Mututal information estimation using k-Nearest Neighbor """
-    mi = []
-    for z, f in zip(self._latent_codes(mean), self.factors):
-      mi.append(metrics.mutual_info_estimate(z, f, n_neighbors=n_neighbors))
-    return tuple(mi)
-
-  def cal_mutual_info_gap(self, mean=True):
-    r"""
-    Arguments:
-      mean : a Boolean, if True use the mean of latent distribution for
-        calculating the mutual information gap
-
-    Reference:
-      Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. Isolating Sources of
-        Disentanglement in Variational Autoencoders. arXiv:1802.04942 [cs, stat].
-    """
-    mig = []
-    for z, f in zip(self._latent_codes(mean), self.factors):
-      mig.append(metrics.mutual_info_gap(z, f))
-    return tuple(mig)
-
-  def cal_dci_scores(self, mean=True):
-    r""" Disentanglement, Completeness, Informativeness
-
-    References:
-      Based on "A Framework for the Quantitative Evaluation of Disentangled
-      Representations" (https://openreview.net/forum?id=By-7dz-AZ).
-    """
-    z_train, z_test = self._latent_codes(mean)
-    f_train, f_test = self.factors
-    return metrics.dci_scores(z_train,
-                              f_train,
-                              z_test,
-                              f_test,
-                              random_state=self.randint)
-
-  def cal_total_correlation(self):
-    r""" Total correlation based on fitted Gaussian """
-    samples = [qz.sample(seed=self.randint) for qz in self.representations]
-    return tuple([
-        utils.total_correlation(z, qz).numpy()
-        for z, qz in zip(samples, self.representations)
-    ])
-
-  def cal_importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
-    r""" Using ensemble algorithm to estimate the feature importance of each
-    pair of (representation, factor)
-
-    Return:
-      a matrix of shape `[n_codes, n_factors]`
-    """
-    z_train, z_test = self._latent_codes(mean)
-    f_train, f_test = self.factors
-    importance_matrix, _, _ = \
-      metrics.representative_importance_matrix(
-        z_train, f_train, z_test, f_test,
-        random_state=self.randint, algo=algo)
-    return importance_matrix
-
-  def cal_density_matrix(self,
-                         n_samples=1000,
-                         lognorm=False,
-                         n_components=2,
-                         normalize_by_code=True,
-                         decode=False):
-    r""" """
-    n_samples = int(n_samples)
-    n_codes = self.n_codes
-    n_factors = self.n_factors
-    qZ = self.representations[0]
-    y = self.original_factors[0]
-    if lognorm:
-      y = np.log1p(y)
-    ### train the Gaussian mixture on the factors
-    f_gmm = []
-    for fidx, (f, fname) in enumerate(zip(y.T, self.factors_name)):
-      gmm = tfd.GaussianMixture.init(f[:, np.newaxis],
-                                     n_components=n_components,
-                                     covariance_type='diag',
-                                     batch_shape=None,
-                                     name=fname)
-      f_gmm.append(gmm)
-    ### the code Gaussian
-    dist_type = type(qZ)
-    if isinstance(qZ, tfd.Independent):
-      dist_type = type(qZ.distribution)
-    support_type = (tfd.MultivariateNormalDiag, tfd.Normal)
-    if dist_type not in support_type:
-      raise RuntimeError(
-          "No support posterior distribution: %s, the support distributions are: %s"
-          % (str(dist_type), str(support_type)))
-    z_gau = []
-    for mean, stddev, code_name in zip(tf.transpose(qZ.mean()),
-                                       tf.transpose(qZ.stddev()),
-                                       self.codes_name):
-      mean = tf.cast(mean, tf.float64)
-      stddev = tf.cast(stddev, tf.float64)
-      z_gau.append(
-          tfd.Independent(tfd.Normal(loc=mean, scale=stddev, name=code_name),
-                          reinterpreted_batch_ndims=1))
-    ### calculate the KL divergence
-    density_matrix = np.empty(shape=(n_codes, n_factors), dtype=np.float64)
-    for zidx, gau in enumerate(z_gau):
-      for fidx, gmm in enumerate(f_gmm):
-        # non-analytic KL(q=gau||p=gmm)
-        samples = gau.sample(n_samples)
-        qllk = gau.log_prob(samples)
-        pllk = tf.reduce_sum(tf.reshape(
-            gmm.log_prob(tf.reshape(samples, (-1, 1))), (n_samples, -1)),
-                             axis=1)
-        kl = tf.reduce_mean(qllk - pllk)
-        density_matrix[zidx, fidx] = kl.numpy()
-    if bool(normalize_by_code):
-      density_matrix = density_matrix / \
-        np.sum(density_matrix, axis=1, keepdims=True)
-    ### decoding
-    if decode:
-      ids = search.diagonal_beam_search(density_matrix.T)
-      density_matrix = density_matrix[ids]
-      return density_matrix, ids
-    return density_matrix
-
-  def cal_disentangled_density(self,
-                               n_samples=1000,
-                               lognorm=False,
-                               n_components=2):
-    r""" Higher is better, this estimate the disparity between diagonal
-    components and off-diagonal components """
-    density_mat, ids = self.cal_density_matrix(n_samples=n_samples,
-                                               lognorm=lognorm,
-                                               n_components=n_components,
-                                               normalize_by_code=True,
-                                               decode=True)
-    diag = np.diagflat(np.diag(density_mat))
-    off_diag = density_mat - diag
-    return np.mean(diag) - np.mean(off_diag)
-
-  def cal_relative_disentanglement_strength(self, mean=True, method='spearman'):
-    r""" Relative strength for both axes of correlation matrix """
-    corr_matrix = self.cal_correlation_matrix(mean=mean, method=method)
-    return metrics.relative_strength(corr_matrix)
-
-  def cal_correlation_matrix(self, mean=True, method='spearman', decode=False):
+  ############## Matrices
+  def create_correlation_matrix(self, mean=True, method='spearman', decode=False):
     r""" Correlation matrix of `latent codes` (row) and `groundtruth factors`
     (column).
 
@@ -688,7 +545,7 @@ class _Criticizer(object):
     # special average mode
     if method == 'average':
       mat = [
-          self.cal_correlation_matrix(mean=mean, method=corr, decode=False)
+          self.create_correlation_matrix(mean=mean, method=corr, decode=False)
           for corr in all_corr[:-1]
       ]
       n = len(all_corr) - 1
@@ -730,6 +587,241 @@ class _Criticizer(object):
       return train, test, OrderedDict(zip(range(self.n_factors), ids))
     return train, test
 
+  def create_mutualinfo_matrix(self, mean=True, n_neighbors=3):
+    r""" Mututal information estimation using k-Nearest Neighbor
+
+    Return:
+      matrix `[num_latents, num_factors]`, estimated mutual information between
+        each representation and each factors
+    """
+    mi = []
+    # iterate over train and test data
+    for z, f in zip(self._latent_codes(mean), self.factors):
+      mi.append(metrics.mutual_info_estimate(z, f, n_neighbors=n_neighbors))
+    train, test = mi
+    return train, test
+
+  def create_importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
+    r""" Using ensemble algorithm to estimate the feature importance of each
+    pair of (representation, factor)
+
+    Return:
+      a matrix of shape `[n_codes, n_factors]`
+    """
+    z_train, z_test = self._latent_codes(mean)
+    f_train, f_test = self.factors
+    importance_matrix, _, _ = \
+      metrics.representative_importance_matrix(
+        z_train, f_train, z_test, f_test,
+        random_state=self.randint, algo=algo)
+    return importance_matrix
+
+  def create_divergence_matrix(self,
+                                    n_samples=1000,
+                                    lognorm=True,
+                                    n_components=2,
+                                    normalize_per_code=True,
+                                    decode=False):
+    r""" Using GMM fitted on the factors to estimate the divergence to each
+    latent code.
+
+    It means calculating the divergence: `DKL(q(z|x)||p(y))`, where:
+      - q(z|x) is latent code of Gaussian distribution
+      - p(y) is factor of Gaussian mixture model with `n_components`
+
+    The calculation is repeated for each pair of (code, factor). This method is
+    recommended for factors that are continuous values.
+
+    Return:
+      a matrix of shape `[n_codes, n_factors]`
+    """
+    n_samples = int(n_samples)
+    n_codes = self.n_codes
+    n_factors = self.n_factors
+    matrices = []
+    for qZ, y in zip(self.representations, self.original_factors):
+      ### normalizing the factors
+      if lognorm:
+        y = np.log1p(y)
+      # standardizing for each factor
+      y = (y - np.mean(y, axis=0, keepdims=True)) / (
+          np.std(y, axis=0, keepdims=True) + 1e-10)
+      ### train the Gaussian mixture on the factors
+      f_gmm = []
+      for fidx, (f, fname) in enumerate(zip(y.T, self.factors_name)):
+        gmm = tfd.GaussianMixture.init(f[:, np.newaxis],
+                                       n_components=n_components,
+                                       covariance_type='diag',
+                                       batch_shape=None,
+                                       dtype=tf.float64,
+                                       name=fname)
+        f_gmm.append(gmm)
+      ### the code Gaussian
+      dist_type = type(qZ)
+      if isinstance(qZ, tfd.Independent):
+        dist_type = type(qZ.distribution)
+      support_type = (tfd.MultivariateNormalDiag, tfd.Normal)
+      if dist_type not in support_type:
+        raise RuntimeError(
+            "No support posterior distribution: %s, the support distributions are: %s"
+            % (str(dist_type), str(support_type)))
+      z_gau = []
+      for mean, stddev, code_name in zip(tf.transpose(qZ.mean()),
+                                         tf.transpose(qZ.stddev()),
+                                         self.codes_name):
+        mean = tf.cast(mean, tf.float64)
+        stddev = tf.cast(stddev, tf.float64)
+        z_gau.append(
+            tfd.Independent(tfd.Normal(loc=mean, scale=stddev, name=code_name),
+                            reinterpreted_batch_ndims=1))
+      ### calculate the KL divergence
+      density_matrix = np.empty(shape=(n_codes, n_factors), dtype=np.float64)
+      for zidx, gau in enumerate(z_gau):
+        for fidx, gmm in enumerate(f_gmm):
+          # non-analytic KL(q=gau||p=gmm)
+          samples = gau.sample(n_samples)
+          qllk = gau.log_prob(samples)
+          pllk = tf.reduce_sum(tf.reshape(
+              gmm.log_prob(tf.reshape(samples, (-1, 1))), (n_samples, -1)),
+                               axis=1)
+          kl = tf.reduce_mean(qllk - pllk)
+          density_matrix[zidx, fidx] = kl.numpy()
+      if bool(normalize_per_code):
+        density_matrix = density_matrix / np.sum(
+            density_matrix, axis=1, keepdims=True)
+      matrices.append(density_matrix)
+    ### decoding and return
+    train, test = matrices
+    if decode:
+      ids = search.diagonal_beam_search(train.T)
+      train = train[ids]
+      test = test[ids]
+      return train, test, ids
+    return train, test
+
+  ############## Metrics
+  def cal_dcmi_scores(self, mean=True, n_neighbors=3):
+    r""" The same method is used for D.C.I scores, however, this metrics use
+    mutual information matrix (estimated by nearest neighbor method)
+    instead of importance matrix
+
+    Return:
+      tuple of 2 scalars:
+        - disentanglement score of mutual information
+        - completeness score of mutual information
+    """
+    train, test = self.create_mutualinfo_matrix(mean=mean,
+                                              n_neighbors=n_neighbors)
+    d = (metrics.disentanglement_score(train) +
+         metrics.disentanglement_score(test)) / 2.
+    c = (metrics.completeness_score(train) +
+         metrics.completeness_score(test)) / 2.
+    return d, c
+
+  def cal_mutual_info_gap(self, mean=True):
+    r"""
+    Arguments:
+      mean : a Boolean, if True use the mean of latent distribution for
+        calculating the mutual information gap
+
+    Return:
+      a tuple of 2 scalars: mutual information gap for train and test set
+
+    Reference:
+      Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. Isolating Sources of
+        Disentanglement in Variational Autoencoders. arXiv:1802.04942 [cs, stat].
+    """
+    mig = []
+    for z, f in zip(self._latent_codes(mean), self.factors):
+      mig.append(metrics.mutual_info_gap(z, f))
+    return tuple(mig)
+
+  def cal_dci_scores(self, mean=True):
+    r""" Disentanglement, Completeness, Informativeness
+
+    Return:
+      tuple of 3 scalars:
+        - disentanglement score: The degree to which a representation factorises
+          or disentangles the underlying factors of variatio
+        - completeness score: The degree to which each underlying factor is
+          captured by a single code variable.
+        - informativeness score: test accuracy of a factor recognizer trained
+          on train data
+
+    References:
+      Based on "A Framework for the Quantitative Evaluation of Disentangled
+      Representations" (https://openreview.net/forum?id=By-7dz-AZ).
+    """
+    z_train, z_test = self._latent_codes(mean)
+    f_train, f_test = self.factors
+    return metrics.dci_scores(z_train,
+                              f_train,
+                              z_test,
+                              f_test,
+                              random_state=self.randint)
+
+  def cal_total_correlation(self):
+    r""" Estimation of total correlation based on fitted Gaussian
+
+    Return:
+      tuple of 2 scalars: total correlation estimation for train and test set
+    """
+    samples = [qz.sample(seed=self.randint) for qz in self.representations]
+    return tuple([
+        losses.total_correlation(z, qz).numpy()
+        for z, qz in zip(samples, self.representations)
+    ])
+
+  def cal_dcd_scores(self, n_samples=1000, lognorm=True, n_components=2):
+    r""" Same as D.C.I but use density matrix instead of importance matrix
+    """
+    # smaller is better
+    train, test = self.create_divergence_matrix(n_samples=n_samples,
+                                                     lognorm=lognorm,
+                                                     n_components=n_components,
+                                                     normalize_per_code=True,
+                                                     decode=False)
+    # diag = np.diagflat(np.diag(density_mat))
+    # higher is better
+    train = 1. - train
+    test = 1 - test
+    d = (metrics.disentanglement_score(train) +
+         metrics.disentanglement_score(test)) / 2.
+    c = (metrics.completeness_score(train) +
+         metrics.completeness_score(test)) / 2.
+    return d, c
+
+  def cal_dcc_scores(self, mean=True, method='spearman'):
+    r""" Same as D.C.I but use correlation matrix instead of importance matrix
+    """
+    train, test = self.create_correlation_matrix(mean=mean,
+                                              method=method,
+                                              decode=False)
+    train = np.abs(train)
+    test = np.abs(test)
+    d = (metrics.disentanglement_score(train) +
+         metrics.disentanglement_score(test)) / 2.
+    c = (metrics.completeness_score(train) +
+         metrics.completeness_score(test)) / 2.
+    return d, c
+
+  def cal_relative_disentanglement_strength(self, mean=True, method='spearman'):
+    r""" Relative strength for both axes of correlation matrix.
+    Basically, is the mean of normalized maximum correlation per code, and
+    per factor
+
+    Arguments:
+      method : {'spearman', 'pearson', 'lasso', 'avg'}
+          spearman - rank or monotonic correlation
+          pearson - linear correlation
+          lasso - lasso regression
+
+    Return:
+      a scalar - higher is better
+    """
+    corr_matrix = self.create_correlation_matrix(mean=mean, method=method)
+    return metrics.relative_strength(corr_matrix)
+
   ############## Downstream scores
   def cal_separated_attr_predictability(self, mean=True):
     r"""
@@ -748,11 +840,12 @@ class _Criticizer(object):
                                                 random_state=self.randint)
     return sap
 
-  def cal_betavae_score(self, mean=True, n_samples=1000, verbose=False):
-    r""" BetaVAE based score
+  def cal_betavae_score(self, mean=True, n_samples=10000, verbose=False):
+    r""" The Beta-VAE score train a logistic regression to detect the invariant
+    factor based on the absolute difference in the representations.
 
     Returns:
-      accuracy for train and test data
+      tuple of 2 scalars: accuracy for train and test data
     """
     z_train, z_test = self.representations
     f_train, f_test = self.factors
@@ -770,11 +863,11 @@ class _Criticizer(object):
                                         verbose=verbose)
     return score_train, score_test
 
-  def cal_factorvae_score(self, mean=True, n_samples=1000, verbose=False):
+  def cal_factorvae_score(self, mean=True, n_samples=10000, verbose=False):
     r""" FactorVAE based score
 
     Returns:
-      accuracy for train and test data
+      tuple of 2 scalars: accuracy for train and test data
     """
     z_train, z_test = self.representations
     f_train, f_test = self.factors
@@ -793,6 +886,60 @@ class _Criticizer(object):
     return score_train, score_test
 
   ############## Methods for summarizing
+  def summary(self,
+              n_samples=10000,
+              n_neighbors=3,
+              n_components=2,
+              save_path=None,
+              verbose=True):
+    r""" Create a report of all quantitative metrics
+
+    Arguments:
+      save_path : a String (optional). Path to an YAML file for saving the
+        scores
+    """
+    scores = {}
+    for i, s in enumerate(
+        self.cal_dcd_scores(n_samples=n_samples, n_components=n_components)):
+      scores['dcd_%d' % i] = s
+    for i, s in enumerate(self.cal_dcmi_scores(n_neighbors=n_neighbors)):
+      scores['dcmi_%d' % i] = s
+    for i, s in enumerate(self.cal_dcc_scores()):
+      scores['dcc_%d' % i] = s
+    for i, s in enumerate(self.cal_dci_scores()):
+      scores['dci_%d' % i] = s
+    #
+    betavae = self.cal_betavae_score(n_samples=n_samples, verbose=verbose)
+    scores['betavae_train'] = betavae[0]
+    scores['betavae_test'] = betavae[1]
+    #
+    factorvae = self.cal_factorvae_score(n_samples=n_samples, verbose=verbose)
+    scores['factorvae_train'] = factorvae[0]
+    scores['factorvae_test'] = factorvae[1]
+    #
+    scores['rds_spearman'] = self.cal_relative_disentanglement_strength(
+        method='spearman')
+    scores['rds_pearson'] = self.cal_relative_disentanglement_strength(
+        method='pearson')
+    scores['rds_lasso'] = self.cal_relative_disentanglement_strength(
+        method='lasso')
+    #
+    tc = self.cal_total_correlation()
+    scores['tc_train'] = tc[0]
+    scores['tc_test'] = tc[1]
+    #
+    scores['sap'] = self.cal_separated_attr_predictability()
+    #
+    mig = self.cal_mutual_info_gap()
+    scores['mig_train'] = mig[0]
+    scores['mig_test'] = mig[1]
+    #
+    if save_path is not None:
+      with open(save_path, 'w') as f:
+        for k, v in sorted(scores.items(), key=lambda x: x[0]):
+          f.write("%s: %g\n" % (k, v))
+    return scores
+
   def __str__(self):
     text = [str(self._vae)]
     text.append(" Factor name: %s" % ', '.join(self.factors_name))

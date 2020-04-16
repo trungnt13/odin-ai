@@ -237,6 +237,7 @@ class GaussianMixture(MixtureSameFamily):
            batch_shape=None,
            trainable=False,
            return_sklearn=False,
+           dtype=tf.float32,
            name=None):
     r""" This method fit a sklearn GaussianMixture, then convert it to
     tensorflow_probability GaussianMixture. Hence, the method could be use
@@ -257,6 +258,7 @@ class GaussianMixture(MixtureSameFamily):
     batch_shape = kwargs.pop('batch_shape')
     trainable = bool(kwargs.pop('trainable'))
     name = kwargs.pop('name')
+    dtype = kwargs.pop('dtype')
     ## downsample X
     if max_samples is not None and max_samples < X.shape[0]:
       ids = np.random.choice(np.arange(X.shape[0]),
@@ -288,6 +290,7 @@ class GaussianMixture(MixtureSameFamily):
       scale = np.sqrt(covariance)
     scale = tf.convert_to_tensor(scale)
     params = [loc, scale, logits]
+    params = [tf.cast(p, dtype) for p in params]
     ## create the GMM with given batch_shape
     if batch_shape is not None:
       batch_shape = tf.nest.flatten(batch_shape)

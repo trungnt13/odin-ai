@@ -8,7 +8,8 @@ from tensorflow_probability.python.distributions import (Distribution,
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.discriminator import FactorDiscriminator
-from odin.bay.vi.losses import get_divergence
+from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
+from odin.bay.vi.utils import permute_dims
 
 
 class InfoVAE(BetaVAE):
@@ -104,7 +105,7 @@ class MutualInfoVAE(BetaVAE):
 
   Reference:
     Ducau, F.N., Trénous, S. "Mutual Information in Variational Autoencoders".
-      https://github.com/fducau/infoVAE.
+      (2017) https://github.com/fducau/infoVAE.
     Chen, X., Chen, X., Duan, Y., et al. (2016) "InfoGAN: Interpretable
       Representation Learning by Information Maximizing Generative
       Adversarial Nets". URL : http://arxiv.org/ abs/1606.03657.
@@ -170,4 +171,40 @@ class MutualInfoVAE(BetaVAE):
     # mutual information (we want to maximize this, hence, add it to the llk)
     mi = qC_Xprime.log_prob(c_prime)
     llk['mi'] = self.gamma * mi
+    return llk, div
+
+
+class FactorInfoVAE(BetaVAE):
+  r""" This idea combining FactorVAE (Kim et al. 2018) and
+  MutualInfoVAE (Ducau et al. 2017)
+
+  Reference:
+    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+      arXiv:1802.05983 [cs, stat].
+    Ducau, F.N., Trénous, S., 2017."Mutual Information in Variational
+      Autoencoders". https://github.com/fducau/infoVAE.
+  """
+
+  def __init__(self, beta=1.0, gamma=1.0, **kwargs):
+    super().__init__(beta=beta, **kwargs)
+    self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
+
+  def _elbo(self,
+            X,
+            pX_Z,
+            qZ_X,
+            analytic,
+            reverse,
+            sample_shape,
+            training=None):
+    # don't take KL of qC_X
+    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    z_prime = [permute_dims(q) for q in qZ_X]
+    pX_Zprime = self.decode(z_prime, training=training)
+    qZ_Xprime = self.encode(pX_Zprime, training=training)
+    div['mmd'] = self.gamma * maximum_mean_discrepancy(
+        qZ=qZ_Xprime,
+        pZ=qZ_X[0].KL_divergence.prior,
+        q_sample_shape=None,
+        p_sample_shape=100)
     return llk, div
