@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
+import os
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -207,6 +208,7 @@ class VariationalAutoencoder(keras.Model):
                step=0.,
                **kwargs):
     name = kwargs.pop('name', None)
+    path = kwargs.pop('path', None)
     if name is None:
       name = type(self).__name__
     super().__init__(**kwargs)
@@ -303,6 +305,14 @@ class VariationalAutoencoder(keras.Model):
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
     self._compiled_call = None
+    ### load saved weights if available
+    if path is not None and isinstance(path, string_types) and \
+      os.path.isfile(path):
+      self.load_weights(path)
+
+  @property
+  def is_fitted(self):
+    return self.step.numpy() > 0
 
   @property
   def compiled_call(self) -> Callable:
@@ -600,8 +610,11 @@ class VariationalAutoencoder(keras.Model):
       compile_graph=True,
       autograph=False,
       logging_interval=2,
+      skip_fitted=False,
       log_tag='',
       log_path=None):
+    if self.is_fitted and skip_fitted:
+      return self
     from odin.exp.trainer import Trainer
     trainer = Trainer()
     self.trainer = trainer
