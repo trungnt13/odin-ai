@@ -290,3 +290,4 @@ def relative_strength(mat):
       np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1),
       copy=False, nan=0.0))
   return (score_x + score_y) / 2
+

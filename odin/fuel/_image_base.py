@@ -29,7 +29,14 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
 
 class ImageDataset:
 
-  def sample_images(self, save_path=None, dpi=80, n_samples=25, seed=1):
+  def sample_images(self,
+                    save_path=None,
+                    dpi=80,
+                    n_samples=25,
+                    return_labels=False,
+                    seed=1):
+    r""" Sample a subset of image from training set """
+    # TODO: return_labels
     n = int(np.sqrt(n_samples))
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,

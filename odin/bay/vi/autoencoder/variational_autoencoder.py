@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import glob
 import inspect
 import os
 from typing import Callable, List, Optional, Union
@@ -209,6 +210,9 @@ class VariationalAutoencoder(keras.Model):
                **kwargs):
     name = kwargs.pop('name', None)
     path = kwargs.pop('path', None)
+    optimizer = kwargs.pop('optimizer', None)
+    learning_rate = kwargs.pop('learning_rate', 1e-4)
+    clipnorm = kwargs.pop('clipnorm', None)
     if name is None:
       name = type(self).__name__
     super().__init__(**kwargs)
@@ -306,9 +310,23 @@ class VariationalAutoencoder(keras.Model):
     self.variable_names = [i.name for i in self.output_layers]
     self._compiled_call = None
     ### load saved weights if available
-    if path is not None and isinstance(path, string_types) and \
-      os.path.isfile(path):
-      self.load_weights(path)
+    if optimizer is not None:
+      self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
+    else:
+      self.optimizer = None
+    if path is not None and isinstance(path, string_types):
+      files = glob.glob(path + '*')
+      if len(files) > 0 and all(os.path.isfile(f) for f in files):
+        self.load_weights(path)
+
+  def save_weights(self, filepath, overwrite=True):
+    r""" Just copy this function here to fix the `save_format` to 'tf'
+
+    Since saving 'h5' will drop certain variables.
+    """
+    return super().save_weights(filepath=filepath,
+                                overwrite=overwrite,
+                                save_format='tf')
 
   @property
   def is_fitted(self):
@@ -414,7 +432,7 @@ class VariationalAutoencoder(keras.Model):
     r""" marginal log-likelihood of shape [batch_size]
     """
     sample_shape = tf.cast(tf.reduce_prod(sample_shape), tf.int32)
-    iw_const = tf.math.log(tf.cast(sample_shape, self.dtype))
+    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
     pX_Z, qZ_X = self.call(inputs, training=training, sample_shape=sample_shape)
     llk = []
     for i, (p,
@@ -533,6 +551,8 @@ class VariationalAutoencoder(keras.Model):
     elbo = tf.reduce_logsumexp(elbo, axis=axis) - tf.math.log(iw_dim)
     return elbo
 
+  ################## For training
+
   def train_steps(self,
                   inputs,
                   sample_shape=(),
@@ -596,13 +616,13 @@ class VariationalAutoencoder(keras.Model):
       self,
       train: tf.data.Dataset,
       valid: Optional[tf.data.Dataset] = None,
-      valid_freq=1000,
+      valid_freq=500,
       valid_interval=0,
       optimizer='adam',
       learning_rate=1e-3,
       clipnorm=None,
-      epochs=2,
-      max_iter=-1,
+      epochs=-1,
+      max_iter=1000,
       sample_shape=(),  # for ELBO
       analytic=False,  # for ELBO
       iw=False,  # for ELBO
@@ -618,7 +638,8 @@ class VariationalAutoencoder(keras.Model):
     from odin.exp.trainer import Trainer
     trainer = Trainer()
     self.trainer = trainer
-    if optimizer is not None:
+    # create the optimizer
+    if optimizer is not None and self.optimizer is None:
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
@@ -627,7 +648,7 @@ class VariationalAutoencoder(keras.Model):
                               elbo_kw=dict(analytic=analytic))
     # if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
-      train = train.repeat(int(epochs)) if epochs > 1 else train
+      train = train.repeat(int(epochs))
     trainer.fit(train_ds=train,
                 optimize=self.optimize,
                 valid_ds=valid,
@@ -644,10 +665,10 @@ class VariationalAutoencoder(keras.Model):
     return self
 
   def __str__(self):
-    clses = [
+    cls = [
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
-    text = "%s" % "->".join([i.__name__ for i in clses[::-1]])
+    text = "%s" % "->".join([i.__name__ for i in cls[::-1]])
     ## encoder
     text += "\n Encoder:\n  "
     text += "\n  ".join(_net2str(self.encoder).split('\n'))

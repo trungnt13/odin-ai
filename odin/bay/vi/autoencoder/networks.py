@@ -64,6 +64,7 @@ def create_mnist_autoencoder(image_shape=(28, 28, 1),
       deconv(base_depth, 5, 2),
       deconv(base_depth, 5),
       conv(image_shape[-1] * n_params, 5, activation=None),
+      keras.layers.Flatten(),
   ],
                                  name="Decoder")
   return encoder_net, decoder_net
@@ -126,6 +127,7 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
         deconv(32, 4, 2),
         deconv(32, 4, 2),
         deconv(channels * n_params, 4, 2, activation='linear'),
+        keras.layers.Flatten(),
     ],
                                name="Decoder")
   ### Dense networks

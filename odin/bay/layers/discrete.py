@@ -128,14 +128,16 @@ class ZIBernoulliLayer(tfl.DistributionLambda):
           name='ZIBernoulliLayer'):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype=tf.int32),
-                                             tensor_name='event_shape')
-    output_shape = tf.concat([
-        tf.shape(input=params)[:-tf.size(event_shape)],
-        event_shape,
-    ],
-                             axis=0)
+    event_shape = dist_util.expand_to_vector(
+        tf.convert_to_tensor(value=event_shape,
+                             name='event_shape',
+                             dtype=tf.int32),
+        tensor_name='event_shape',
+    )
+    output_shape = tf.concat(
+        [tf.shape(input=params)[:-1], event_shape],
+        axis=0,
+    )
     (bernoulli_params, rate_params) = tf.split(params, 2, axis=-1)
     bernoulli_params = tf.reshape(bernoulli_params, output_shape)
     bern = tfd.Bernoulli(logits=bernoulli_params if given_logits else None,
@@ -146,15 +148,11 @@ class ZIBernoulliLayer(tfl.DistributionLambda):
                           validate_args=validate_args)
     return tfd.Independent(zibern,
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           validate_args=validate_args,
                            name=name)
 
   @staticmethod
   def params_size(event_shape=(), name='ZeroInflatedBernoulli_params_size'):
-    """The number of `params` needed to create a single distribution."""
-    event_shape = tf.convert_to_tensor(value=event_shape,
-                                       name='event_shape',
-                                       dtype=tf.int32)
+    r"""The number of `params` needed to create a single distribution."""
     return 2 * _event_size(event_shape, name=name)
 
 
@@ -395,13 +393,16 @@ class RelaxedBernoulliLayer(tfl.DistributionLambda):
           name='RelaxedBernoulliLayer'):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype_hint=tf.int32),
-                                             tensor_name='event_shape')
-    new_shape = tf.concat([
-        tf.shape(input=params)[:-tf.size(event_shape)],
-        event_shape,
-    ], axis=0)
+    event_shape = dist_util.expand_to_vector(
+        tf.convert_to_tensor(value=event_shape,
+                             name='event_shape',
+                             dtype_hint=tf.int32),
+        tensor_name='event_shape',
+    )
+    new_shape = tf.concat(
+        [tf.shape(input=params)[:-1], event_shape],
+        axis=0,
+    )
     params = tf.reshape(params, new_shape)
     dist = tfd.Independent(
         tfd.RelaxedBernoulli(temperature=temperature,
@@ -409,15 +410,11 @@ class RelaxedBernoulliLayer(tfl.DistributionLambda):
                              probs=params if probs_input else None,
                              validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
-        validate_args=validate_args,
         name=name,
     )
     return dist
 
   @staticmethod
   def params_size(event_shape=(), name='RelaxedBernoulliLayer_params_size'):
-    """The number of `params` needed to create a single distribution."""
-    event_shape = tf.convert_to_tensor(value=event_shape,
-                                       name='event_shape',
-                                       dtype_hint=tf.int32)
+    r"""The number of `params` needed to create a single distribution."""
     return _event_size(event_shape, name=name)

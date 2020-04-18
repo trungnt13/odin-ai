@@ -467,7 +467,7 @@ class _Criticizer(object):
         z = self.encode(inps, sample_shape=(), first_latent=False)
         Os.append(tf.nest.flatten(self.decode(z)))
         Zs.append(z[0] if isinstance(z, (tuple, list)) else z)
-        # update the couter
+        # update the counter
         n += len(y)
       # aggregate all data
       Xs = [np.concatenate(x, axis=0) for x in Xs]
@@ -512,7 +512,10 @@ class _Criticizer(object):
     ]
 
   ############## Matrices
-  def create_correlation_matrix(self, mean=True, method='spearman', decode=False):
+  def create_correlation_matrix(self,
+                                mean=True,
+                                method='spearman',
+                                decode=False):
     r""" Correlation matrix of `latent codes` (row) and `groundtruth factors`
     (column).
 
@@ -601,7 +604,9 @@ class _Criticizer(object):
     train, test = mi
     return train, test
 
-  def create_importance_matrix(self, mean=True, algo=GradientBoostingClassifier):
+  def create_importance_matrix(self,
+                               mean=True,
+                               algo=GradientBoostingClassifier):
     r""" Using ensemble algorithm to estimate the feature importance of each
     pair of (representation, factor)
 
@@ -617,11 +622,11 @@ class _Criticizer(object):
     return importance_matrix
 
   def create_divergence_matrix(self,
-                                    n_samples=1000,
-                                    lognorm=True,
-                                    n_components=2,
-                                    normalize_per_code=True,
-                                    decode=False):
+                               n_samples=1000,
+                               lognorm=True,
+                               n_components=2,
+                               normalize_per_code=True,
+                               decode=False):
     r""" Using GMM fitted on the factors to estimate the divergence to each
     latent code.
 
@@ -711,7 +716,7 @@ class _Criticizer(object):
         - completeness score of mutual information
     """
     train, test = self.create_mutualinfo_matrix(mean=mean,
-                                              n_neighbors=n_neighbors)
+                                                n_neighbors=n_neighbors)
     d = (metrics.disentanglement_score(train) +
          metrics.disentanglement_score(test)) / 2.
     c = (metrics.completeness_score(train) +
@@ -777,10 +782,10 @@ class _Criticizer(object):
     """
     # smaller is better
     train, test = self.create_divergence_matrix(n_samples=n_samples,
-                                                     lognorm=lognorm,
-                                                     n_components=n_components,
-                                                     normalize_per_code=True,
-                                                     decode=False)
+                                                lognorm=lognorm,
+                                                n_components=n_components,
+                                                normalize_per_code=True,
+                                                decode=False)
     # diag = np.diagflat(np.diag(density_mat))
     # higher is better
     train = 1. - train
@@ -795,8 +800,8 @@ class _Criticizer(object):
     r""" Same as D.C.I but use correlation matrix instead of importance matrix
     """
     train, test = self.create_correlation_matrix(mean=mean,
-                                              method=method,
-                                              decode=False)
+                                                 method=method,
+                                                 decode=False)
     train = np.abs(train)
     test = np.abs(test)
     d = (metrics.disentanglement_score(train) +
@@ -884,6 +889,22 @@ class _Criticizer(object):
                                           random_state=self.randint,
                                           verbose=verbose)
     return score_train, score_test
+
+  ##############  Posterior predictive check (PPC)
+  def posterior_predictive_check(n_samples=100):
+    r""" PPC - "simulating replicated data under the fitted model and then
+    comparing these to the observed data"
+
+    In other word, using posterior predictive to "look for systematic
+    discrepancies between real and simulated data"
+
+    Reference:
+      Gelman and Hill, 2007, p. 158. "Data Analysis Using Regression and
+        Multilevel/Hierarchical Models".
+      Gelman et al. 2004, p. 169. "Bayesian Data Analysis".
+      Clivio, O., Boyeau, P., Lopez, R., et al. (2019.) "Should we zero-inflate
+        scVI?" https://yoseflab.github.io/2019/06/25/ZeroInflation/
+    """
 
   ############## Methods for summarizing
   def summary(self,
